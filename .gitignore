@@ -8,6 +8,7 @@ desktop.ini
 .vscode/
 *.swp
 *.swo
+*.code-workspace
 
 # Logs
 *.log
@@ -16,6 +17,7 @@ npm-debug.log*
 # Build outputs
 dist/
 build/
+*.zip
 
 # Dependencies (if any added later)
 node_modules/
@@ -29,7 +31,7 @@ node_modules/
 *.tmp
 *.temp
 
-# Memory bank (Cursor AI context)
+# Memory bank (Cursor AI context - internal notes)
 memory-bank/
 
 # Playwright MCP screenshots
@@ -37,3 +39,9 @@ memory-bank/
 
 # Internal documentation (not for distribution)
 doc/
+
+# Temporary assets/screenshots from development
+assets/
+
+# Cursor rules (personal settings)
+.cursorrules

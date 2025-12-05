@@ -1,13 +1,14 @@
 # Webpage to PDF - Chrome Extension
 
-Extract articles from web pages using AI and save as PDF, EPUB, FB2, or Markdown with optional translation.
+Extract articles from web pages using AI and save as PDF, EPUB, FB2, Markdown, or Audio (MP3) with optional translation.
 
 ## Features
 
 - **AI Content Extraction** - Two modes: AI Extract (thorough) and AI Selector (fast)
 - **Multi-Provider AI** - OpenAI, Google Gemini, Anthropic Claude
-- **Multiple Export Formats** - PDF, EPUB, FB2, Markdown
-- **Translation** - Translate articles to 11 languages
+- **Multiple Export Formats** - PDF, EPUB, FB2, Markdown, Audio (MP3)
+- **Audio Export** - Text-to-speech via OpenAI with 11 voices and speed control
+- **Translation** - Translate articles to 11 languages (works with all formats including audio)
 - **Image Translation** - AI-powered text translation on images using Gemini
 - **Smart Language Detection** - Automatically skips translation if article already in target language
 - **Clean Output** - Removes ads, navigation, sidebars, comments, avatars
@@ -85,6 +86,7 @@ Extract articles from web pages using AI and save as PDF, EPUB, FB2, or Markdown
 | **EPUB** | E-reader compatible, embedded images | Kindle, Kobo, Apple Books |
 | **FB2** | FictionBook format, embedded images | PocketBook, FBReader |
 | **Markdown** | Plain text with formatting | Note-taking, editing |
+| **Audio (MP3)** | Text-to-speech via OpenAI TTS | Listening on the go, accessibility |
 
 ### Page Layout (PDF only)
 
@@ -122,6 +124,15 @@ Extract articles from web pages using AI and save as PDF, EPUB, FB2, or Markdown
 - Requires Google Gemini API key
 - Detects text on images and translates it
 - Only available when translation is enabled
+
+### Audio Settings
+
+| Setting | Options | Description |
+|---------|---------|-------------|
+| **Voice** | nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse | 11 voices with different characteristics |
+| **Speed** | 0.5x - 2.0x | Playback speed control |
+
+Audio uses OpenAI's `gpt-4o-mini-tts` model. Text is automatically cleaned (URLs, code removed) and split into chunks for processing.
 
 ## PDF Customization
 
@@ -207,7 +218,7 @@ Click **⚙️ Settings** → **Import/Export Settings**:
 Click **📊 Stats** in the popup to view:
 - **Total saved** - All-time count
 - **This month** - Current month saves
-- **By format** - PDF, EPUB, FB2, Markdown breakdown
+- **By format** - PDF, EPUB, FB2, Markdown, Audio breakdown
 - **Recent history** - Last 10 saves with clickable links to original articles
   - Click title to open original article
   - Click ✕ to delete individual entries
@@ -240,8 +251,8 @@ scripts/
 
 ## Version
 
-Current: v2.3.0
+Current: v2.6.0
 
 ## License
 
-Personal use only.
+MIT License - see [LICENSE](LICENSE) file.

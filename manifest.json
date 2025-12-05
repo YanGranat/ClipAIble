@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Webpage to PDF",
-  "version": "2.4.0",
-  "description": "Extract article content from webpage and save as PDF using AI",
+  "version": "2.6.0",
+  "description": "Extract articles using AI and save as PDF, EPUB, FB2, Markdown, or Audio (MP3)",
   "permissions": [
     "activeTab",
     "storage",
