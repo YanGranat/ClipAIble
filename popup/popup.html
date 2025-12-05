@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webpage to PDF</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>Webpage to PDF</h1>
+      <p class="subtitle">Extract article and save as PDF</p>
+    </header>
+
+    <main class="main">
+      <!-- API Keys Section -->
+      <section class="section api-section" id="apiSection">
+        <div class="api-key-group">
+          <label for="apiKey">OpenAI API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="apiKey" 
+              placeholder="sk-..."
+              autocomplete="off"
+            >
+            <button id="toggleApiKey" class="btn-icon" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+          </div>
+        </div>
+        <div class="api-divider">or</div>
+        <div class="api-key-group">
+          <label for="claudeApiKey">Claude API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="claudeApiKey" 
+              placeholder="sk-ant-..."
+              autocomplete="off"
+            >
+            <button id="toggleClaudeApiKey" class="btn-icon" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+          </div>
+        </div>
+        <div class="api-divider">or</div>
+        <div class="api-key-group">
+          <label for="geminiApiKey">Gemini API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="geminiApiKey" 
+              placeholder="AIza..."
+              autocomplete="off"
+            >
+            <button id="toggleGeminiApiKey" class="btn-icon" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+          </div>
+        </div>
+        <div class="api-key-group" id="googleApiGroup" style="display: none;">
+          <label for="googleApiKey">Google AI API Key <span class="optional-badge">for image translation</span></label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="googleApiKey" 
+              placeholder="AIza..."
+              autocomplete="off"
+            >
+            <button id="toggleGoogleApiKey" class="btn-icon" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+          </div>
+        </div>
+        <button id="saveApiKey" class="btn btn-secondary">Save Keys</button>
+      </section>
+
+      <!-- Status Section -->
+      <section class="section status-section" id="statusSection">
+        <div class="status-indicator" id="statusIndicator">
+          <span class="status-dot"></span>
+          <span class="status-text" id="statusText">Ready</span>
+        </div>
+        <div class="progress-container" id="progressContainer" style="display: none;">
+          <div class="progress-bar" id="progressBar"></div>
+          <span class="progress-text" id="progressText">0%</span>
+        </div>
+      </section>
+
+      <!-- Action Button -->
+      <section class="section action-section">
+        <button id="savePdfBtn" class="btn btn-primary">
+          <span class="btn-icon-left" id="saveIcon">📄</span>
+          <span id="saveText">Save as PDF</span>
+        </button>
+        <button id="cancelBtn" class="btn btn-danger" style="display: none;">
+          <span class="btn-icon-left">✕</span>
+          Cancel
+        </button>
+      </section>
+
+      <!-- Settings & Stats Toggle -->
+      <section class="section settings-toggle">
+        <button id="toggleSettings" class="btn btn-text">
+          ⚙️ Settings
+        </button>
+        <button id="toggleStats" class="btn btn-text">
+          📊 Stats
+        </button>
+      </section>
+
+      <!-- Stats Panel (Hidden by default) -->
+      <section class="section stats-panel" id="statsPanel">
+        <div class="stats-header">
+          <h3>Statistics</h3>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-card stat-total">
+            <div class="stat-value" id="statTotal">0</div>
+            <div class="stat-label">Total saved</div>
+          </div>
+          <div class="stat-card stat-month">
+            <div class="stat-value" id="statMonth">0</div>
+            <div class="stat-label">This month</div>
+          </div>
+        </div>
+        
+        <div class="stats-section">
+          <div class="stats-section-title">By format</div>
+          <div class="stats-formats" id="statsFormats">
+            <div class="format-stat">
+              <span class="format-icon">📄</span>
+              <span class="format-name">PDF</span>
+              <span class="format-count" id="formatPdf">0</span>
+            </div>
+            <div class="format-stat">
+              <span class="format-icon">📚</span>
+              <span class="format-name">EPUB</span>
+              <span class="format-count" id="formatEpub">0</span>
+            </div>
+            <div class="format-stat">
+              <span class="format-icon">📖</span>
+              <span class="format-name">FB2</span>
+              <span class="format-count" id="formatFb2">0</span>
+            </div>
+            <div class="format-stat">
+              <span class="format-icon">📝</span>
+              <span class="format-name">MD</span>
+              <span class="format-count" id="formatMarkdown">0</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="stats-section">
+          <div class="stats-section-title">Recent history</div>
+          <div class="stats-history" id="statsHistory">
+            <div class="stats-empty">No data yet</div>
+          </div>
+        </div>
+        
+        <div class="stats-footer">
+          <span class="stats-last-saved" id="statsLastSaved">Last saved: Never</span>
+          <span class="stats-avg-time" id="statsAvgTime">Avg: 0s</span>
+        </div>
+        
+        <button id="clearStatsBtn" class="btn btn-reset-small btn-full">Clear Statistics</button>
+        
+        <div class="stats-section stats-section-cache">
+          <div class="stats-section-title">Selector Cache</div>
+          <div class="cache-info">
+            <span class="cache-stat">
+              <span class="cache-value" id="cacheDomains">0</span> domains cached
+            </span>
+          </div>
+          <div class="cache-domains-list" id="cacheDomainsList">
+            <div class="stats-empty">No cached domains</div>
+          </div>
+        </div>
+        
+        <button id="clearCacheBtn" class="btn btn-reset-small btn-full">Clear Cache</button>
+      </section>
+
+      <!-- Settings Panel (Hidden by default, uses CSS max-height animation) -->
+      <section class="section settings-panel" id="settingsPanel">
+        <div class="setting-item">
+          <label for="modeSelect">Extraction Mode</label>
+          <select id="modeSelect">
+            <option value="selector">AI Selector (faster, exact text)</option>
+            <option value="extract">AI Extract (full processing)</option>
+          </select>
+          <p class="setting-hint" id="modeHint">AI finds article blocks, script extracts content</p>
+        </div>
+        <div class="setting-item" id="useCacheGroup">
+          <label class="checkbox-label">
+            <input type="checkbox" id="useCache" checked>
+            <span class="checkbox-text">Use cached selectors</span>
+          </label>
+          <p class="setting-hint">Skip AI for sites you've saved before</p>
+        </div>
+        <div class="setting-item">
+          <label for="modelSelect">AI Model</label>
+          <select id="modelSelect">
+            <option value="gpt-5.1">GPT-5.1</option>
+            <option value="gpt-5.1-high">GPT-5.1 (high)</option>
+            <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+            <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="outputFormat">Output Format</label>
+          <select id="outputFormat">
+            <option value="pdf">PDF</option>
+            <option value="epub">EPUB (e-readers)</option>
+            <option value="fb2">FB2 (e-readers)</option>
+            <option value="markdown">Markdown</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="generateToc">
+            <span class="checkbox-text">Generate Table of Contents</span>
+          </label>
+          <p class="setting-hint">Auto-create TOC from article headings</p>
+        </div>
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="generateAbstract">
+            <span class="checkbox-text">Generate Abstract</span>
+          </label>
+            <p class="setting-hint">AI-generated brief summary (2-3 paragraphs)</p>
+        </div>
+        <div class="setting-item" id="pageModeGroup">
+          <label for="pageMode">Page Layout</label>
+          <select id="pageMode">
+            <option value="single">Single long page</option>
+            <option value="multi">Multiple pages (A4)</option>
+          </select>
+        </div>
+        <div class="setting-item">
+          <label for="languageSelect">PDF Language</label>
+          <select id="languageSelect">
+            <option value="auto">Auto (original)</option>
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+            <option value="uk">Українська</option>
+            <option value="de">Deutsch</option>
+            <option value="fr">Français</option>
+            <option value="es">Español</option>
+            <option value="it">Italiano</option>
+            <option value="pt">Português</option>
+            <option value="zh">中文</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+          </select>
+          <p class="setting-hint" id="languageHint">Keep original language or translate</p>
+        </div>
+        <div class="setting-item" id="translateImagesGroup" style="display: none;">
+          <label class="checkbox-label">
+            <input type="checkbox" id="translateImages">
+            <span class="checkbox-text">Translate images with text</span>
+          </label>
+          <p class="setting-hint">Uses Google Gemini AI to translate text on images</p>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="setting-item">
+          <label for="stylePreset">Style Preset</label>
+          <select id="stylePreset">
+            <option value="custom">Custom</option>
+            <option value="dark">Dark (default)</option>
+            <option value="light">Light</option>
+            <option value="sepia">Sepia</option>
+            <option value="contrast">High Contrast</option>
+          </select>
+          <p class="setting-hint">Quick style presets for PDF</p>
+        </div>
+        <div class="setting-item">
+          <label for="fontFamily">PDF Font</label>
+          <div class="input-with-reset">
+            <div class="custom-select" id="fontFamilyContainer">
+              <div class="custom-select-trigger" id="fontFamilyTrigger">
+                <span class="custom-select-value" id="fontFamilyValue">Default (Segoe UI)</span>
+                <span class="custom-select-arrow">▾</span>
+              </div>
+              <div class="custom-select-options" id="fontFamilyOptions">
+                <div class="custom-select-option selected" data-value="" style="font-family: 'Segoe UI', sans-serif">Default (Segoe UI)</div>
+                <div class="custom-select-option" data-value="Arial" style="font-family: Arial, sans-serif">Arial</div>
+                <div class="custom-select-option" data-value="Georgia" style="font-family: Georgia, serif">Georgia</div>
+                <div class="custom-select-option" data-value="Times New Roman" style="font-family: 'Times New Roman', serif">Times New Roman</div>
+                <div class="custom-select-option" data-value="Verdana" style="font-family: Verdana, sans-serif">Verdana</div>
+                <div class="custom-select-option" data-value="Tahoma" style="font-family: Tahoma, sans-serif">Tahoma</div>
+                <div class="custom-select-option" data-value="Trebuchet MS" style="font-family: 'Trebuchet MS', sans-serif">Trebuchet MS</div>
+                <div class="custom-select-option" data-value="Palatino Linotype" style="font-family: 'Palatino Linotype', serif">Palatino Linotype</div>
+                <div class="custom-select-option" data-value="Garamond" style="font-family: Garamond, serif">Garamond</div>
+                <div class="custom-select-option" data-value="Courier New" style="font-family: 'Courier New', monospace">Courier New</div>
+                <div class="custom-select-option" data-value="Comic Sans MS" style="font-family: 'Comic Sans MS', cursive">Comic Sans MS</div>
+              </div>
+            </div>
+            <input type="hidden" id="fontFamily" value="">
+            <button class="btn-reset-inline" data-reset="fontFamily" title="Reset to default">↺</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label for="fontSize">PDF Font Size</label>
+          <div class="input-with-reset">
+            <input type="text" id="fontSize" placeholder="31" class="text-input text-input-short" value="31">
+            <span class="input-suffix">px</span>
+            <button class="btn-reset-inline" data-reset="fontSize" title="Reset to default">↺</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label for="bgColor">PDF Background Color</label>
+          <div class="color-row">
+            <input type="color" id="bgColor" value="#303030">
+            <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input">
+            <button class="btn-reset-inline" data-reset="bgColor">↺</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label for="textColor">PDF Text Color</label>
+          <div class="color-row">
+            <input type="color" id="textColor" value="#b9b9b9">
+            <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input">
+            <button class="btn-reset-inline" data-reset="textColor">↺</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label for="headingColor">PDF Heading Color</label>
+          <div class="color-row">
+            <input type="color" id="headingColor" value="#cfcfcf">
+            <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input">
+            <button class="btn-reset-inline" data-reset="headingColor">↺</button>
+          </div>
+        </div>
+        <div class="setting-item">
+          <label for="linkColor">PDF Link Color</label>
+          <div class="color-row">
+            <input type="color" id="linkColor" value="#6cacff">
+            <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input">
+            <button class="btn-reset-inline" data-reset="linkColor">↺</button>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="setting-item">
+          <label for="themeSelect">Theme</label>
+          <select id="themeSelect">
+            <option value="auto">Auto (system)</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+          <p class="setting-hint">Choose popup theme</p>
+        </div>
+        <div class="settings-divider"></div>
+        <button id="resetStylesBtn" class="btn btn-reset">Reset All to Default</button>
+        <div class="settings-divider"></div>
+        <div class="setting-item">
+          <label>Import/Export Settings</label>
+          <div class="import-export-buttons">
+            <button id="exportSettingsBtn" class="btn btn-secondary btn-small">Export Settings</button>
+            <button id="importSettingsBtn" class="btn btn-secondary btn-small">Import Settings</button>
+          </div>
+          <p class="setting-hint">Export includes: settings (without API keys), optional stats & cache</p>
+          <input type="file" id="importFileInput" accept=".json" style="display: none;">
+        </div>
+      </section>
+    </main>
+
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
+
