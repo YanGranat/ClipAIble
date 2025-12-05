@@ -1487,3 +1487,68 @@ body[data-theme="light"] .toast {
   }
 }
 
+/* Slider Container for Audio Speed */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-container input[type="range"] {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.3);
+  outline: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+
+.slider-container input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #4f8cff;
+  cursor: pointer;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
+}
+
+.slider-container input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.slider-container input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+body[data-theme="light"] .slider-container input[type="range"] {
+  background: #e5e7eb;
+}
+
+body[data-theme="light"] .slider-container input[type="range"]::-webkit-slider-thumb {
+  background: var(--accent-primary);
+  border: 2px solid #fff;
+}
+
+.slider-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4f8cff;
+  min-width: 40px;
+  text-align: right;
+}
+
+body[data-theme="light"] .slider-value {
+  color: var(--accent-primary);
+}
+
+/* Responsive format stats grid for 5 items */
+.stats-formats {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+

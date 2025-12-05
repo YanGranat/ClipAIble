@@ -28,6 +28,7 @@ import { generateMarkdown } from './generation/markdown.js';
 import { generatePdf, generatePdfWithDebugger } from './generation/pdf.js';
 import { generateEpub } from './generation/epub.js';
 import { generateFb2 } from './generation/fb2.js';
+import { generateAudio } from './generation/audio.js';
 import { recordSave, getFormattedStats, clearStats, deleteHistoryItem } from './stats/index.js';
 import { 
   getCachedSelectors, 
@@ -562,6 +563,18 @@ async function startArticleProcessing(data) {
           generateToc: data.generateToc || false,
           generateAbstract: data.generateAbstract || false,
           abstract: result.abstract || '',
+          language: effectiveLanguage
+        }, updateState);
+      } else if (outputFormat === 'audio') {
+        updateState({ status: 'Generating audio...', progress: 65 });
+        return generateAudio({
+          content: result.content,
+          title: result.title,
+          apiKey: data.apiKey,
+          model: data.model,
+          voice: data.audioVoice || 'nova',
+          speed: data.audioSpeed || 1.0,
+          format: data.audioFormat || 'mp3',
           language: effectiveLanguage
         }, updateState);
       } else {

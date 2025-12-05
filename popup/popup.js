@@ -23,7 +23,9 @@ const STORAGE_KEYS = {
   TEXT_COLOR: 'pdf_text_color',
   HEADING_COLOR: 'pdf_heading_color',
   LINK_COLOR: 'pdf_link_color',
-  THEME: 'popup_theme'
+  THEME: 'popup_theme',
+  AUDIO_VOICE: 'audio_voice',
+  AUDIO_SPEED: 'audio_speed'
 };
 
 // Default style values
@@ -135,7 +137,12 @@ const elements = {
   statusText: null,
   progressContainer: null,
   progressBar: null,
-  progressText: null
+  progressText: null,
+  audioVoice: null,
+  audioVoiceGroup: null,
+  audioSpeed: null,
+  audioSpeedGroup: null,
+  audioSpeedValue: null
 };
 
 // State polling interval
@@ -257,6 +264,11 @@ async function init() {
   elements.progressBar = document.getElementById('progressBar');
   elements.progressText = document.getElementById('progressText');
   elements.themeSelect = document.getElementById('themeSelect');
+  elements.audioVoice = document.getElementById('audioVoice');
+  elements.audioVoiceGroup = document.getElementById('audioVoiceGroup');
+  elements.audioSpeed = document.getElementById('audioSpeed');
+  elements.audioSpeedGroup = document.getElementById('audioSpeedGroup');
+  elements.audioSpeedValue = document.getElementById('audioSpeedValue');
   
   // Add themeSelect to elements object for consistency
   if (!elements.themeSelect) {
@@ -297,7 +309,9 @@ async function loadSettings() {
     STORAGE_KEYS.TEXT_COLOR,
     STORAGE_KEYS.HEADING_COLOR,
     STORAGE_KEYS.LINK_COLOR,
-    STORAGE_KEYS.THEME
+    STORAGE_KEYS.THEME,
+    STORAGE_KEYS.AUDIO_VOICE,
+    STORAGE_KEYS.AUDIO_SPEED
   ]);
   
   // Load and mask API keys
@@ -429,6 +443,18 @@ async function loadSettings() {
   
   if (result[STORAGE_KEYS.THEME]) {
     elements.themeSelect.value = result[STORAGE_KEYS.THEME];
+  }
+  
+  // Load audio settings
+  if (result[STORAGE_KEYS.AUDIO_VOICE]) {
+    elements.audioVoice.value = result[STORAGE_KEYS.AUDIO_VOICE];
+  }
+  
+  if (result[STORAGE_KEYS.AUDIO_SPEED]) {
+    elements.audioSpeed.value = result[STORAGE_KEYS.AUDIO_SPEED];
+    if (elements.audioSpeedValue) {
+      elements.audioSpeedValue.textContent = result[STORAGE_KEYS.AUDIO_SPEED] + 'x';
+    }
   }
   
   // Apply preset colors to ensure consistency (fixes color mismatch after preset change)
@@ -942,6 +968,21 @@ function setupEventListeners() {
       applyTheme();
     });
   });
+  
+  // Audio settings handlers
+  elements.audioVoice.addEventListener('change', () => {
+    debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, elements.audioVoice.value);
+  });
+  
+  elements.audioSpeed.addEventListener('input', () => {
+    const speed = parseFloat(elements.audioSpeed.value).toFixed(1);
+    elements.audioSpeedValue.textContent = speed + 'x';
+  });
+  
+  elements.audioSpeed.addEventListener('change', () => {
+    const speed = parseFloat(elements.audioSpeed.value).toFixed(1);
+    debouncedSaveSettings(STORAGE_KEYS.AUDIO_SPEED, speed);
+  });
 }
 
 // Apply theme based on user preference or system preference
@@ -1081,6 +1122,7 @@ function updateOutputFormatUI() {
   const format = elements.outputFormat.value;
   const isPdf = format === 'pdf';
   const isEpub = format === 'epub';
+  const isAudio = format === 'audio';
   const showStyleSettings = isPdf; // Only PDF has style settings
   
   // Update button text and icon based on format
@@ -1088,11 +1130,20 @@ function updateOutputFormatUI() {
     pdf: { icon: '📄', text: 'Save as PDF' },
     epub: { icon: '📚', text: 'Save as EPUB' },
     fb2: { icon: '📖', text: 'Save as FB2' },
-    markdown: { icon: '📝', text: 'Save as Markdown' }
+    markdown: { icon: '📝', text: 'Save as Markdown' },
+    audio: { icon: '🔊', text: 'Save as Audio' }
   };
   const config = formatConfig[format] || formatConfig.pdf;
   elements.saveIcon.textContent = config.icon;
   elements.saveText.textContent = config.text;
+  
+  // Show/hide audio settings
+  if (elements.audioVoiceGroup) {
+    elements.audioVoiceGroup.style.display = isAudio ? 'flex' : 'none';
+  }
+  if (elements.audioSpeedGroup) {
+    elements.audioSpeedGroup.style.display = isAudio ? 'flex' : 'none';
+  }
   
   // Show/hide PDF-specific settings (page mode only for PDF)
   elements.pageModeGroup.style.display = isPdf ? 'flex' : 'none';
@@ -1503,7 +1554,11 @@ async function handleSavePdf() {
         textColor: elements.textColor.value,
         headingColor: elements.headingColor.value,
         linkColor: elements.linkColor.value,
-        tabId: tab.id
+        tabId: tab.id,
+        // Audio settings
+        audioVoice: elements.audioVoice?.value || 'nova',
+        audioSpeed: parseFloat(elements.audioSpeed?.value || 1.0),
+        audioFormat: 'mp3'
       }
     });
 
@@ -1632,6 +1687,7 @@ function displayStats(stats) {
   document.getElementById('formatEpub').textContent = stats.byFormat?.epub || 0;
   document.getElementById('formatFb2').textContent = stats.byFormat?.fb2 || 0;
   document.getElementById('formatMarkdown').textContent = stats.byFormat?.markdown || 0;
+  document.getElementById('formatAudio').textContent = stats.byFormat?.audio || 0;
   
   // Update history
   const historyContainer = document.getElementById('statsHistory');
