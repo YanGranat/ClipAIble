@@ -14,7 +14,8 @@ function getDefaultStats() {
       pdf: 0,
       epub: 0,
       fb2: 0,
-      markdown: 0
+      markdown: 0,
+      audio: 0
     },
     byMonth: {},  // { "2025-12": 5, "2025-11": 3 }
     topSites: {}, // { "medium.com": 12, "habr.com": 5 }

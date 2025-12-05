@@ -4,26 +4,45 @@ import { log, logError } from '../utils/logging.js';
 import { exportStats } from '../stats/index.js';
 import { getCacheStats } from '../cache/selectors.js';
 
+// Settings that can be exported/imported
+// NOTE: API keys are NEVER included for security reasons
 const STORAGE_KEYS_TO_EXPORT = [
-  'openai_api_key',
-  'claude_api_key',
-  'gemini_api_key',
-  'google_api_key',
+  // AI settings
   'openai_model',
   'extraction_mode',
   'use_selector_cache',
+  
+  // Output settings
   'output_format',
   'generate_toc',
+  'generate_abstract',
   'page_mode',
   'pdf_language',
   'translate_images',
+  
+  // Audio settings
+  'audio_voice',
+  'audio_speed',
+  
+  // PDF style settings
   'pdf_style_preset',
   'pdf_font_family',
   'pdf_font_size',
   'pdf_bg_color',
   'pdf_text_color',
   'pdf_heading_color',
-  'pdf_link_color'
+  'pdf_link_color',
+  
+  // UI settings
+  'popup_theme'
+];
+
+// API key names - ALWAYS excluded from export for security
+const API_KEY_NAMES = [
+  'openai_api_key',
+  'claude_api_key', 
+  'gemini_api_key',
+  'google_api_key'
 ];
 
 /**
@@ -41,21 +60,14 @@ export async function exportSettings(includeStats = false, includeCache = false)
     const settings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     
     const exportData = {
-      version: '2.4.0',
+      version: '2.6.0',
       exportDate: new Date().toISOString(),
       settings: {}
     };
     
-    // API key names - ALWAYS excluded for security
-    const apiKeyNames = ['openai_api_key', 'claude_api_key', 'gemini_api_key', 'google_api_key'];
-    
-    // Copy settings (exclude empty values and API keys for security)
+    // Copy settings (exclude empty values)
+    // Note: API keys are NOT in STORAGE_KEYS_TO_EXPORT, so they're never exported
     for (const key of STORAGE_KEYS_TO_EXPORT) {
-      // Always skip API keys - never export them
-      if (apiKeyNames.includes(key)) {
-        continue;
-      }
-      
       if (settings[key] !== undefined && settings[key] !== null && settings[key] !== '') {
         exportData.settings[key] = settings[key];
       }
@@ -134,6 +146,12 @@ export async function importSettings(jsonData, options = {}) {
     const settingsToImport = {};
     
     for (const key of STORAGE_KEYS_TO_EXPORT) {
+      // Security: Skip any API keys that might be in the import file
+      if (API_KEY_NAMES.includes(key)) {
+        log('Skipping API key import for security', { key });
+        continue;
+      }
+      
       if (data.settings[key] !== undefined) {
         if (overwriteExisting || !currentSettings[key]) {
           settingsToImport[key] = data.settings[key];
@@ -141,6 +159,14 @@ export async function importSettings(jsonData, options = {}) {
         } else {
           result.settingsSkipped++;
         }
+      }
+    }
+    
+    // Security: Double-check that no API keys are being imported
+    for (const apiKey of API_KEY_NAMES) {
+      if (settingsToImport[apiKey]) {
+        delete settingsToImport[apiKey];
+        log('Removed API key from import for security', { key: apiKey });
       }
     }
     

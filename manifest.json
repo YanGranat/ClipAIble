@@ -39,8 +39,7 @@
       "resources": [
         "config/pdf-styles.css", 
         "print/print.html", 
-        "lib/*",
-        "scripts/extraction/page-script.js"
+        "lib/*"
       ],
       "matches": ["<all_urls>"]
     }

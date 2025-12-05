@@ -1,258 +1,334 @@
-# Webpage to PDF - Chrome Extension
+# 📄 Webpage to PDF
 
-Extract articles from web pages using AI and save as PDF, EPUB, FB2, Markdown, or Audio (MP3) with optional translation.
+> **AI-Powered Article Extractor** — Save web articles as PDF, EPUB, FB2, Markdown, or Audio (MP3) with optional translation to 11 languages.
 
-## Features
+![Version](https://img.shields.io/badge/version-2.6.0-blue)
+![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
+![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
-- **AI Content Extraction** - Two modes: AI Extract (thorough) and AI Selector (fast)
-- **Multi-Provider AI** - OpenAI, Google Gemini, Anthropic Claude
-- **Multiple Export Formats** - PDF, EPUB, FB2, Markdown, Audio (MP3)
-- **Audio Export** - Text-to-speech via OpenAI with 11 voices and speed control
-- **Translation** - Translate articles to 11 languages (works with all formats including audio)
-- **Image Translation** - AI-powered text translation on images using Gemini
-- **Smart Language Detection** - Automatically skips translation if article already in target language
-- **Clean Output** - Removes ads, navigation, sidebars, comments, avatars
-- **Image Support** - Downloads and embeds article images with captions
-- **Table of Contents** - Auto-generated TOC with proper heading hierarchy
-- **Internal Links** - Preserves footnotes and anchor links
-- **Style Presets** - Dark, Light, Sepia, High Contrast themes (PDF)
-- **Full Customization** - Font family, size, colors for background/text/headings/links
-- **Two Page Modes** - Single continuous page or multiple A4 pages (PDF)
-- **Context Menu** - Right-click to save article as PDF
-- **Statistics Dashboard** - Track saves, formats, history with links to originals
-- **Offline Mode** - Cached selectors by domain, no AI needed for repeat sites
-- **Settings Import/Export** - Backup and restore all settings, statistics, and cache
-- **Processing Timer** - Shows elapsed time during generation
-- **Cancel Button** - Stop processing at any time
-- **Reliable** - State persists even if you switch tabs
+---
 
-## Installation
+## ✨ Features
 
-1. Clone or download this repository
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable **Developer mode** (toggle in top right)
+### 🤖 AI-Powered Extraction
+- **Two extraction modes**: AI Selector (fast, reusable) and AI Extract (thorough, for complex pages)
+- **Multi-provider support**: OpenAI GPT, Google Gemini, Anthropic Claude
+- **Smart content detection**: Automatically finds article body, removes ads, navigation, comments
+- **Internal links preserved**: Footnotes, references, and anchor links work in output
+
+### 📚 Multiple Export Formats
+
+| Format | Best For | Features |
+|--------|----------|----------|
+| **PDF** | Archiving, printing | Full styling, themes, fonts, colors |
+| **EPUB** | E-readers (Kindle, Kobo) | Embedded images, metadata |
+| **FB2** | E-readers (PocketBook) | Russian e-reader standard |
+| **Markdown** | Notes, editing | Clean plain text with formatting |
+| **Audio (MP3)** | Listening on the go | AI narration with 11 voices |
+
+### 🎧 Audio Export (Text-to-Speech)
+- **OpenAI TTS** via `gpt-4o-mini-tts` model
+- **11 natural voices**: nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
+- **Speed control**: 0.5x to 2.0x
+- **Smart text preparation**: AI cleans content for natural narration (removes code, URLs, etc.)
+- **Multi-language pronunciation**: Correct accent for 11 languages
+
+### 🌍 Translation
+- **11 languages**: English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese, Japanese, Korean
+- **Smart detection**: Automatically skips translation if article already in target language
+- **Image translation**: Translates text on images using Google Gemini
+- **Metadata localization**: Dates, labels adapted to target language
+
+### 🎨 PDF Customization
+- **4 style presets**: Dark, Light, Sepia, High Contrast
+- **Custom colors**: Background, text, headings, links
+- **Fonts**: 11 font families
+- **Page modes**: Single continuous page or multi-page A4
+
+### ⚡ Smart Features
+- **Offline mode**: Cached selectors — no AI needed for repeat sites
+- **Statistics dashboard**: Track saves, view history
+- **Table of Contents**: Auto-generated from headings
+- **Abstract generation**: AI-written 2-3 paragraph summary
+- **Context menu**: Right-click "Save article as PDF"
+- **Processing timer**: See elapsed time
+- **Cancel button**: Stop anytime
+
+### 🔒 Security
+- **API keys encrypted** with AES-256-GCM (Web Crypto API)
+- **Keys never exported** — excluded from settings backup
+- **All data stored locally** — nothing sent to third parties
+
+---
+
+## 📦 Installation
+
+### From Source (Developer Mode)
+
+1. **Clone or download** this repository
+2. Open Chrome → `chrome://extensions/`
+3. Enable **Developer mode** (top right toggle)
 4. Click **Load unpacked**
 5. Select the `webpage_to_pdf` folder
 
-## Setup
+### Requirements
 
-1. Click the extension icon in Chrome toolbar
-2. Enter API key for your preferred provider:
-   - **OpenAI** - For GPT models
-   - **Google Gemini** - For Gemini models
-   - **Anthropic Claude** - For Claude models
-3. Click **Save Keys**
+- Google Chrome or Chromium-based browser (Edge, Brave, Arc)
+- API key from at least one provider:
+  - [OpenAI API](https://platform.openai.com/api-keys)
+  - [Google Gemini API](https://aistudio.google.com/apikey)
+  - [Anthropic Claude API](https://console.anthropic.com/)
 
-## Usage
+---
 
-### Via Popup
-1. Navigate to any webpage with an article
-2. Click the extension icon
-3. Select **Output Format**: PDF, EPUB, FB2, or Markdown
-4. Configure other settings if needed
-5. Click **Save as PDF/EPUB/FB2/Markdown**
-6. Wait for processing (progress bar shows status)
-7. File downloads automatically
+## 🚀 Quick Start
+
+1. **Click the extension icon** in Chrome toolbar
+2. **Enter your API key** (OpenAI, Gemini, or Claude)
+3. **Click "Save Keys"**
+4. **Navigate to any article**
+5. **Click extension icon** → **"Save as PDF"**
+6. Done! File downloads automatically.
 
 ### Via Context Menu
-1. Navigate to any webpage with an article
-2. Right-click anywhere on the page
-3. Select **Save article as PDF**
-4. PDF generates with your saved settings
 
-## Settings
+Right-click anywhere on a webpage → **"Save article as PDF"**
+
+---
+
+## ⚙️ Settings
 
 ### Extraction Mode
 
-| Mode | Description | Best For |
-|------|-------------|----------|
-| **AI Selector** | AI finds article blocks, local script extracts content | Most websites, faster |
-| **AI Extract** | AI extracts and processes all content | Complex pages (Notion, SPAs) |
+| Mode | Speed | Best For |
+|------|-------|----------|
+| **AI Selector** | ⚡ Fast | Most websites, blogs, news |
+| **AI Extract** | 🐢 Slower | Complex pages (Notion, SPAs, paywalled content) |
+
+**How AI Selector works:**
+1. AI analyzes page structure once
+2. Returns CSS selectors for article content
+3. Local script extracts using those selectors
+4. Selectors cached for future use (no AI needed next time!)
 
 ### AI Models
 
 | Provider | Model | Notes |
 |----------|-------|-------|
-| OpenAI | GPT-5.1 | High quality |
+| OpenAI | GPT-5.1 | Balanced quality/speed |
 | OpenAI | GPT-5.1 (high) | Best quality, slower |
-| Anthropic | Claude Sonnet 4.5 | High quality, 32k output |
+| Anthropic | Claude Sonnet 4.5 | Great for long articles (32k output) |
 | Google | Gemini 3 Pro | Fast, good for selectors |
-
-### Output Formats
-
-| Format | Description | Best For |
-|--------|-------------|----------|
-| **PDF** | Customizable styling, internal links | Archiving, printing |
-| **EPUB** | E-reader compatible, embedded images | Kindle, Kobo, Apple Books |
-| **FB2** | FictionBook format, embedded images | PocketBook, FBReader |
-| **Markdown** | Plain text with formatting | Note-taking, editing |
-| **Audio (MP3)** | Text-to-speech via OpenAI TTS | Listening on the go, accessibility |
-
-### Page Layout (PDF only)
-
-- **Single long page** - One continuous page, good for digital reading
-- **Multiple pages (A4)** - Standard A4 format, good for printing
-
-### Language Options
-
-| Language | Code |
-|----------|------|
-| Auto (original) | - |
-| English | en |
-| Russian | ru |
-| Ukrainian | uk |
-| German | de |
-| French | fr |
-| Spanish | es |
-| Italian | it |
-| Portuguese | pt |
-| Chinese | zh |
-| Japanese | ja |
-| Korean | ko |
-
-### Style Presets
-
-| Preset | Description |
-|--------|-------------|
-| **Dark** | Dark gray background (#303030), light text |
-| **Light** | Soft white (#f8f9fa), modern clean design |
-| **Sepia** | Warm cream (#faf4e8), e-reader style |
-| **High Contrast** | Black/white with gold headings, accessibility |
-
-### Image Translation
-
-- Requires Google Gemini API key
-- Detects text on images and translates it
-- Only available when translation is enabled
 
 ### Audio Settings
 
-| Setting | Options | Description |
-|---------|---------|-------------|
-| **Voice** | nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse | 11 voices with different characteristics |
-| **Speed** | 0.5x - 2.0x | Playback speed control |
+| Voice | Description |
+|-------|-------------|
+| **nova** | Female, warm (default) |
+| **alloy** | Neutral |
+| **echo** | Male |
+| **fable** | Expressive |
+| **onyx** | Male, deep |
+| **shimmer** | Female, clear |
+| **coral** | Female, friendly |
+| **sage** | Neutral, calm |
+| **ash** | Male, authoritative |
+| **ballad** | Expressive, dramatic |
+| **verse** | Rhythmic |
 
-Audio uses OpenAI's `gpt-4o-mini-tts` model. Text is automatically cleaned (URLs, code removed) and split into chunks for processing.
+**Speed:** 0.5x (slow) → 1.0x (normal) → 2.0x (fast)
 
-## PDF Customization
+### Style Presets (PDF)
 
-### Via Popup Settings
+| Preset | Background | Text | Headings | Links |
+|--------|------------|------|----------|-------|
+| **Dark** | `#303030` | `#b9b9b9` | `#cfcfcf` | `#6cacff` |
+| **Light** | `#f8f9fa` | `#212529` | `#1a1a2e` | `#0066cc` |
+| **Sepia** | `#faf4e8` | `#5b4636` | `#3d2914` | `#8b4513` |
+| **High Contrast** | `#000000` | `#ffffff` | `#ffd700` | `#00ffff` |
 
-- **Font Family** - Choose from system fonts
-- **Font Size** - Adjust base font size
-- **Background Color** - Page background
-- **Text Color** - Main text color
-- **Heading Color** - H1-H6 colors
-- **Link Color** - Hyperlink color
+---
 
-### Via CSS
+## 📊 Statistics & Cache
 
-Edit `config/pdf-styles.css` for advanced customization:
+Click **📊 Stats** to view:
+- **Total saved** — all-time count
+- **This month** — current month saves
+- **By format** — PDF, EPUB, FB2, Markdown, Audio breakdown
+- **Recent history** — last 10 saves with links to originals
+- **Selector cache** — cached domains for offline mode
 
-```css
-:root {
-  --font-family-body: 'Segoe UI', sans-serif;
-  --font-size-base: 31px;
-  --color-text: #b9b9b9;
-  --color-background: #303030;
-  --line-height: 1.6;
-}
-```
+### Offline Mode (Selector Cache)
 
-## Troubleshooting
+When you save from a site, the extension caches AI-generated selectors:
+
+- **Second visit = instant** — no AI call needed
+- **Auto-invalidation** — if extraction fails, cache clears automatically
+- **Trust system** — more successful extractions = more trusted cache
+- **Manual control** — delete individual domains or clear all
+
+---
+
+## 💾 Settings Import/Export
+
+**⚙️ Settings** → **Import/Export**
+
+- **Export**: Download all settings as JSON
+  - Optional: include statistics
+  - Optional: include selector cache
+  - ⚠️ API keys are NEVER exported (security)
+  
+- **Import**: Restore from JSON file
+  - Choose what to import
+  - Option to overwrite existing
+
+---
+
+## 🔧 Troubleshooting
 
 ### "Extracted content is empty"
 - Try switching to **AI Extract** mode
 - For dynamic sites, scroll page to load all content first
+- Check if site uses heavy JavaScript rendering
 
 ### "API key not valid"
 - Verify the API key is correct for selected model
-- Gemini keys start with "AIza"
+- OpenAI keys start with `sk-`
+- Gemini keys start with `AIza`
+- Claude keys start with `sk-ant-`
 
 ### Images not appearing
 - Some websites block cross-origin requests
-- Small images (<100px) and avatars are filtered out
+- Small images (<100px) and avatars are filtered out intentionally
+
+### Audio generation takes too long
+- Long articles are split into chunks (4-6k chars each)
+- Each chunk is converted separately and stitched
+- Progress bar shows conversion status
 
 ### Translation issues
 - Large articles are split into chunks automatically
 - If already in target language, translation is skipped
-- Failed chunks preserve original text
+- Failed chunks preserve original text (graceful degradation)
 
-### Author name shows garbage
-- Author names are transliterated, not translated
-- If AI is unsure, original name is preserved
+---
 
-## Offline Mode (Selector Cache)
-
-The extension caches AI-generated selectors by domain. When you save an article from the same site again:
-
-- **No API call needed** — uses cached selectors
-- **Instant extraction** — shows "⚡ Using cached selectors"
-- **Auto-invalidation** — if extraction fails, cache is cleared for that domain
-- **Success tracking** — more successful extractions = more trusted cache
-- **User control** — checkbox "Use cached selectors" in Settings (enabled by default)
-  - When disabled: always calls AI for fresh selectors
-  - Cache still saves for future use when you re-enable it
-
-Cache management in **📊 Stats** panel:
-- Number of cached domains
-- List of cached domains with age
-- Delete individual domains from cache
-
-## Settings Import/Export
-
-Click **⚙️ Settings** → **Import/Export Settings**:
-
-- **Export Settings** — Download all settings as JSON
-  - Optional: include statistics
-  - Optional: include selector cache
-  - File named with date: `webpage-to-pdf-settings-2025-12-05.json`
-
-- **Import Settings** — Restore from JSON file
-  - Choose what to import (settings, stats, cache)
-  - Option to overwrite existing settings
-  - Automatic reload after import
-
-## Statistics
-
-Click **📊 Stats** in the popup to view:
-- **Total saved** - All-time count
-- **This month** - Current month saves
-- **By format** - PDF, EPUB, FB2, Markdown, Audio breakdown
-- **Recent history** - Last 10 saves with clickable links to original articles
-  - Click title to open original article
-  - Click ✕ to delete individual entries
-
-## Architecture
-
-The extension uses a modular ES module architecture:
+## 🏗️ Architecture
 
 ```
-scripts/
-├── background.js          # Main service worker
-├── utils/                 # Logging, config, HTML, images
-├── api/                   # OpenAI, Claude, Gemini APIs
-├── state/                 # Processing state management
-├── extraction/            # Content extraction
-├── translation/           # Text/image translation
-├── stats/                 # Statistics tracking
-├── cache/                 # Selector caching
-├── settings/              # Import/export
-└── generation/            # PDF, EPUB, FB2, Markdown generation
+webpage_to_pdf/
+├── manifest.json          # Extension manifest (v3)
+├── popup/
+│   ├── popup.html         # Main UI
+│   ├── popup.css          # Styling
+│   └── popup.js           # UI logic
+├── scripts/
+│   ├── background.js      # Service worker (main orchestrator)
+│   ├── api/
+│   │   ├── index.js       # API routing
+│   │   ├── openai.js      # OpenAI integration
+│   │   ├── claude.js      # Anthropic integration
+│   │   ├── gemini.js      # Google integration
+│   │   └── tts.js         # Text-to-Speech (OpenAI)
+│   ├── extraction/
+│   │   ├── prompts.js     # AI prompts for extraction
+│   │   └── html-utils.js  # HTML processing utilities
+│   ├── translation/
+│   │   └── index.js       # Translation & language detection
+│   ├── generation/
+│   │   ├── pdf.js         # PDF generation
+│   │   ├── epub.js        # EPUB generation
+│   │   ├── fb2.js         # FB2 generation
+│   │   ├── markdown.js    # Markdown generation
+│   │   ├── audio.js       # Audio orchestration
+│   │   └── audio-prep.js  # Text preparation for TTS
+│   ├── cache/
+│   │   └── selectors.js   # Selector caching (offline mode)
+│   ├── stats/
+│   │   └── index.js       # Statistics tracking
+│   ├── settings/
+│   │   └── import-export.js
+│   └── utils/
+│       ├── config.js      # Configuration constants
+│       ├── encryption.js  # API key encryption
+│       ├── logging.js     # Debug logging
+│       └── ...
+├── print/
+│   ├── print.html         # PDF rendering page
+│   └── print.js           # PDF generation logic
+├── config/
+│   └── pdf-styles.css     # PDF styling
+├── lib/
+│   └── jszip.min.js       # ZIP library for EPUB/FB2
+└── icons/
+    └── icon*.png          # Extension icons
 ```
 
-## Requirements
+---
 
-- Google Chrome or Chromium-based browser
-- API key from at least one provider:
-  - OpenAI API key
-  - Google Gemini API key
-  - Anthropic Claude API key
+## 🔐 Security & Privacy
 
-## Version
+### Data Flow
+1. **Your API key** → encrypted with AES-256-GCM → stored in `chrome.storage.local`
+2. **Page content** → sent to your chosen AI provider → response processed locally
+3. **Generated file** → saved directly to your computer
 
-Current: v2.6.0
+### What's NOT Collected
+- ❌ No analytics or tracking
+- ❌ No remote logging
+- ❌ No data sent to our servers (we don't have any!)
+- ❌ API keys never leave your browser (except to the AI provider you chose)
 
-## License
+### Encryption Details
+- **Algorithm**: AES-256-GCM
+- **Key derivation**: PBKDF2 with 100,000 iterations
+- **Salt**: Extension-specific (based on runtime ID)
+- **IV**: Random 12 bytes per encryption
 
-MIT License - see [LICENSE](LICENSE) file.
+---
+
+## 📋 Permissions Explained
+
+| Permission | Why Needed |
+|------------|------------|
+| `activeTab` | Read article content from current tab |
+| `storage` | Save settings and statistics locally |
+| `scripting` | Inject content extraction script |
+| `downloads` | Save generated files to computer |
+| `debugger` | Generate PDF using Chrome's print API |
+| `alarms` | Keep service worker alive during long operations |
+| `contextMenus` | Add "Save as PDF" to right-click menu |
+| `<all_urls>` | Extract from any website, download images |
+
+See [PERMISSIONS.md](PERMISSIONS.md) for detailed explanations.
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/amazing-feature`
+3. Commit your changes: `git commit -m 'Add amazing feature'`
+4. Push to the branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+---
+
+## 📜 License
+
+MIT License — see [LICENSE](LICENSE) file.
+
+---
+
+## 🙏 Acknowledgments
+
+- [JSZip](https://stuk.github.io/jszip/) — ZIP generation for EPUB/FB2
+- [OpenAI](https://openai.com/) — GPT models and TTS
+- [Google](https://ai.google.dev/) — Gemini models
+- [Anthropic](https://anthropic.com/) — Claude models
+
+---
+
+<p align="center">
+  Made with ❤️ for readers who prefer their articles offline
+</p>
