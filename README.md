@@ -2,6 +2,8 @@
 
 > **AI-Powered Article Extractor** — Clip any article from the web and save it as PDF, EPUB, FB2, Markdown, or Audio. Translate to 11 languages. Works on any website.
 
+**🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.uk.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
+
 ![Version](https://img.shields.io/badge/version-2.7.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
@@ -12,11 +14,11 @@
 
 ClipAIble uses AI to intelligently extract article content from any webpage — removing ads, navigation, popups, and clutter. Then it exports to your preferred format:
 
-- 📄 **PDF** — Beautiful, customizable styling
-- 📚 **EPUB** — For Kindle, Kobo, Apple Books
-- 📖 **FB2** — For PocketBook, FBReader
-- 📝 **Markdown** — Plain text for notes
-- 🎧 **Audio (MP3)** — Listen with AI narration
+- 📄 **PDF** — Beautiful styling with customization options
+- 📚 **EPUB** — Compatible with Kindle, Kobo, Apple Books
+- 📖 **FB2** — Compatible with PocketBook, FBReader
+- 📝 **Markdown** — Plain text format for notes
+- 🎧 **Audio (MP3)** — Listen with AI-powered narration
 
 All formats support **translation to 11 languages** — even translating text on images!
 
@@ -26,32 +28,32 @@ All formats support **translation to 11 languages** — even translating text on
 
 ### 🤖 AI-Powered Extraction
 - **Two modes**: AI Selector (fast, reusable) and AI Extract (thorough)
-- **Multi-provider**: OpenAI GPT, Google Gemini, Anthropic Claude
-- **Smart detection**: Finds article body, removes junk automatically
+- **Multiple providers**: OpenAI GPT, Google Gemini, Anthropic Claude
+- **Smart detection**: Finds main article content, removes unnecessary elements automatically
 - **Preserves structure**: Headings, images, code blocks, tables, footnotes
 
 ### 🎧 Audio Export
 - **2 TTS providers**: OpenAI TTS and ElevenLabs
 - **20+ voices**: 11 OpenAI voices + 9 ElevenLabs voices
-- **Speed control**: 0.5x to 2.0x
-- **Multi-language pronunciation**: Correct accent for each language
+- **Speed adjustment**: 0.5x to 2.0x
+- **Multi-language pronunciation**: Correct pronunciation for each language
 - **Smart text cleanup**: AI removes URLs, code, and non-speech content
 
 ### 🌍 Translation
 - **11 languages**: EN, RU, UK, DE, FR, ES, IT, PT, ZH, JA, KO
-- **Smart detection**: Skips if article already in target language
+- **Smart detection**: Skips translation if article already in target language
 - **Image translation**: Translates text on images (via Gemini)
 - **Localized metadata**: Dates and labels adapt to language
 
 ### 🎨 PDF Customization
 - **4 presets**: Dark, Light, Sepia, High Contrast
-- **Custom colors**: Background, text, headings, links
+- **Customizable colors**: Background, text, headings, links
 - **11 fonts** to choose from
-- **Page modes**: Single continuous or multi-page A4
+- **Page modes**: Single continuous page or multi-page A4 format
 
 ### ⚡ Smart Features
-- **Offline mode**: Cached selectors — no AI needed for repeat sites
-- **Statistics**: Track saves, view history
+- **Offline mode**: Selector caching — no AI needed for repeat visits
+- **Statistics**: Track number of saves, view history
 - **Table of Contents**: Auto-generated from headings
 - **Abstract**: AI-written 2-3 paragraph summary
 - **Context menu**: Right-click → "Save article as PDF"
@@ -60,7 +62,7 @@ All formats support **translation to 11 languages** — even translating text on
 ### 🔒 Security
 - **API keys encrypted** with AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs)
 - **Keys never exported** — excluded from settings backup
-- **All data local** — nothing sent to third parties
+- **All data stored locally** — nothing sent to third parties
 
 ---
 
@@ -118,7 +120,7 @@ All formats support **translation to 11 languages** — even translating text on
 | **Gemini** | Fast extraction, Image translation | ❌ | ✅ |
 | **Claude** | Long articles, Complex pages | ❌ | ❌ |
 
-**Recommendation:** Start with OpenAI for full features (extraction + audio).
+**Recommendation:** Start with OpenAI to get all features (extraction + audio).
 
 ---
 
@@ -130,7 +132,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **Save as PDF** (or choose another format)
 5. Done! File downloads automatically
 
-**Pro tip:** Right-click anywhere → **"Save article as PDF"**
+**Tip:** Right-click anywhere → **"Save article as PDF"**
 
 ---
 
@@ -243,7 +245,7 @@ clipaible/
 
 - **Encryption**: AES-256-GCM via Web Crypto API
 - **Key derivation**: PBKDF2, 100,000 iterations
-- **No tracking**: Zero analytics, zero remote logging
+- **No tracking**: No analytics, no remote logging
 - **Local only**: All data stays in your browser
 
 ---
@@ -257,7 +259,7 @@ clipaible/
 | `scripting` | Inject extraction script |
 | `downloads` | Save generated files |
 | `debugger` | Generate PDFs via Chrome print API |
-| `alarms` | Keep worker alive during long tasks |
+| `alarms` | Keep worker active during long tasks |
 | `contextMenus` | Right-click menu |
 
 See [PERMISSIONS.md](PERMISSIONS.md) for details.

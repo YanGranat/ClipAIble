@@ -10,78 +10,82 @@
   <div class="container">
     <header class="header">
       <h1>ClipAIble</h1>
-      <p class="subtitle">AI-powered article extractor</p>
+      <p class="subtitle" data-i18n="subtitle">AI-powered article extractor</p>
     </header>
 
     <main class="main">
       <!-- API Keys Section -->
       <section class="section api-section" id="apiSection">
         <div class="api-key-group">
-          <label for="apiKey">OpenAI API Key</label>
+          <label for="apiKey" data-i18n="openaiApiKey">OpenAI API Key</label>
           <div class="input-group">
             <input 
               type="password" 
               id="apiKey" 
+              data-i18n-placeholder="enterOpenAiApiKey"
               placeholder="sk-..."
               autocomplete="off"
             >
-            <button id="toggleApiKey" class="btn-icon" title="Show/Hide">
+            <button id="toggleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
           </div>
         </div>
-        <div class="api-divider">or</div>
+        <div class="api-divider" data-i18n="or">or</div>
         <div class="api-key-group">
-          <label for="claudeApiKey">Claude API Key</label>
+          <label for="claudeApiKey" data-i18n="claudeApiKey">Claude API Key</label>
           <div class="input-group">
             <input 
               type="password" 
               id="claudeApiKey" 
+              data-i18n-placeholder="enterClaudeApiKey"
               placeholder="sk-ant-..."
               autocomplete="off"
             >
-            <button id="toggleClaudeApiKey" class="btn-icon" title="Show/Hide">
+            <button id="toggleClaudeApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
           </div>
         </div>
-        <div class="api-divider">or</div>
+        <div class="api-divider" data-i18n="or">or</div>
         <div class="api-key-group">
-          <label for="geminiApiKey">Gemini API Key</label>
+          <label for="geminiApiKey" data-i18n="geminiApiKey">Gemini API Key</label>
           <div class="input-group">
             <input 
               type="password" 
               id="geminiApiKey" 
+              data-i18n-placeholder="enterGeminiApiKey"
               placeholder="AIza..."
               autocomplete="off"
             >
-            <button id="toggleGeminiApiKey" class="btn-icon" title="Show/Hide">
+            <button id="toggleGeminiApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
           </div>
         </div>
         <div class="api-key-group" id="googleApiGroup" style="display: none;">
-          <label for="googleApiKey">Google AI API Key <span class="optional-badge">for image translation</span></label>
+          <label for="googleApiKey"><span data-i18n="googleApiKey">Google AI API Key</span> <span class="optional-badge" data-i18n="optionalBadge">for image translation</span></label>
           <div class="input-group">
             <input 
               type="password" 
               id="googleApiKey" 
+              data-i18n-placeholder="enterGoogleApiKey"
               placeholder="AIza..."
               autocomplete="off"
             >
-            <button id="toggleGoogleApiKey" class="btn-icon" title="Show/Hide">
+            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
           </div>
         </div>
-        <button id="saveApiKey" class="btn btn-secondary">Save Keys</button>
+        <button id="saveApiKey" class="btn btn-secondary" data-i18n="saveKeys">Save Keys</button>
       </section>
 
       <!-- Status Section -->
       <section class="section status-section" id="statusSection">
         <div class="status-indicator" id="statusIndicator">
           <span class="status-dot"></span>
-          <span class="status-text" id="statusText">Ready</span>
+          <span class="status-text" id="statusText" data-i18n="ready">Ready</span>
         </div>
         <div class="progress-container" id="progressContainer" style="display: none;">
           <div class="progress-bar" id="progressBar"></div>
@@ -93,42 +97,42 @@
       <section class="section action-section">
         <button id="savePdfBtn" class="btn btn-primary">
           <span class="btn-icon-left" id="saveIcon">📄</span>
-          <span id="saveText">Save as PDF</span>
+          <span id="saveText" data-i18n="saveAsPdf">Save as PDF</span>
         </button>
         <button id="cancelBtn" class="btn btn-danger" style="display: none;">
           <span class="btn-icon-left">✕</span>
-          Cancel
+          <span data-i18n="cancel">Cancel</span>
         </button>
       </section>
 
       <!-- Settings & Stats Toggle -->
       <section class="section settings-toggle">
         <button id="toggleSettings" class="btn btn-text">
-          ⚙️ Settings
+          ⚙️ <span data-i18n="settings">Settings</span>
         </button>
         <button id="toggleStats" class="btn btn-text">
-          📊 Stats
+          📊 <span data-i18n="statistics">Stats</span>
         </button>
       </section>
 
       <!-- Stats Panel (Hidden by default) -->
       <section class="section stats-panel" id="statsPanel">
         <div class="stats-header">
-          <h3>Statistics</h3>
+          <h3 data-i18n="statistics">Statistics</h3>
         </div>
         <div class="stats-grid">
           <div class="stat-card stat-total">
             <div class="stat-value" id="statTotal">0</div>
-            <div class="stat-label">Total saved</div>
+            <div class="stat-label" data-i18n="totalSaved">Total saved</div>
           </div>
           <div class="stat-card stat-month">
             <div class="stat-value" id="statMonth">0</div>
-            <div class="stat-label">This month</div>
+            <div class="stat-label" data-i18n="thisMonth">This month</div>
           </div>
         </div>
         
         <div class="stats-section">
-          <div class="stats-section-title">By format</div>
+          <div class="stats-section-title" data-i18n="byFormat">By format</div>
           <div class="stats-formats" id="statsFormats">
             <div class="format-stat">
               <span class="format-icon">📄</span>
@@ -159,9 +163,9 @@
         </div>
         
         <div class="stats-section">
-          <div class="stats-section-title">Recent history</div>
+          <div class="stats-section-title" data-i18n="recentHistory">Recent history</div>
           <div class="stats-history" id="statsHistory">
-            <div class="stats-empty">No data yet</div>
+            <div class="stats-empty" data-i18n="noDataYet">No data yet</div>
           </div>
         </div>
         
@@ -170,49 +174,66 @@
           <span class="stats-avg-time" id="statsAvgTime">Avg: 0s</span>
         </div>
         
-        <button id="clearStatsBtn" class="btn btn-reset-small btn-full">Clear Statistics</button>
+        <button id="clearStatsBtn" class="btn btn-reset-small btn-full" data-i18n="clearStatistics">Clear Statistics</button>
         
         <div class="stats-section stats-section-cache">
-          <div class="stats-section-title">Selector Cache</div>
+          <div class="stats-section-title" data-i18n="selectorCache">Selector Cache</div>
           <div class="setting-item" style="margin-bottom: 12px;">
             <label class="checkbox-label">
               <input type="checkbox" id="enableCache">
-              <span class="checkbox-text">Enable selector caching</span>
+              <span class="checkbox-text" data-i18n="enableSelectorCaching">Enable selector caching</span>
             </label>
-            <p class="setting-hint">Cache selectors for faster subsequent extractions</p>
+            <p class="setting-hint" data-i18n="cacheSelectorsHint">Cache selectors for faster subsequent extractions</p>
           </div>
           <div class="cache-info">
             <span class="cache-stat">
-              <span class="cache-value" id="cacheDomains">0</span> domains cached
+              <span class="cache-value" id="cacheDomains">0</span> <span data-i18n="domainsCached">domains cached</span>
             </span>
           </div>
           <div class="cache-domains-list" id="cacheDomainsList">
-            <div class="stats-empty">No cached domains</div>
+            <div class="stats-empty" data-i18n="noCachedDomains">No cached domains</div>
           </div>
         </div>
         
-        <button id="clearCacheBtn" class="btn btn-reset-small btn-full">Clear Cache</button>
+        <button id="clearCacheBtn" class="btn btn-reset-small btn-full" data-i18n="clearCache">Clear Cache</button>
       </section>
 
       <!-- Settings Panel (Hidden by default, uses CSS max-height animation) -->
       <section class="section settings-panel" id="settingsPanel">
         <div class="setting-item">
-          <label for="modeSelect">Extraction Mode</label>
-          <select id="modeSelect">
-            <option value="selector">AI Selector (faster, exact text)</option>
-            <option value="extract">AI Extract (full processing)</option>
+          <label for="uiLanguageSelect" data-i18n="extensionLanguage">Extension Language</label>
+          <select id="uiLanguageSelect">
+            <option value="en">English</option>
+            <option value="ru">Russian</option>
+            <option value="uk">Ukrainian</option>
+            <option value="de">German</option>
+            <option value="fr">French</option>
+            <option value="es">Spanish</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="zh">Chinese</option>
+            <option value="ja">Japanese</option>
+            <option value="ko">Korean</option>
           </select>
-          <p class="setting-hint" id="modeHint">AI finds article blocks, script extracts content</p>
+          <p class="setting-hint" data-i18n="changeExtensionLanguage">Change extension interface language</p>
+        </div>
+        <div class="setting-item">
+          <label for="modeSelect" data-i18n="extractionMode">Extraction Mode</label>
+          <select id="modeSelect">
+            <option value="selector" data-i18n="aiSelectorFaster">AI Selector (faster, exact text)</option>
+            <option value="extract" data-i18n="aiExtractFull">AI Extract (full processing)</option>
+          </select>
+          <p class="setting-hint" id="modeHint" data-i18n="extractionModeHint">AI finds article blocks, script extracts content</p>
         </div>
         <div class="setting-item" id="useCacheGroup">
           <label class="checkbox-label">
             <input type="checkbox" id="useCache" checked>
-            <span class="checkbox-text">Use cached selectors</span>
+            <span class="checkbox-text" data-i18n="useCachedSelectors">Use cached selectors</span>
           </label>
-          <p class="setting-hint">Skip AI for sites you've saved before</p>
+          <p class="setting-hint" data-i18n="useCachedSelectorsHint">Skip AI for sites you've saved before</p>
         </div>
         <div class="setting-item">
-          <label for="modelSelect">AI Model</label>
+          <label for="modelSelect" data-i18n="model">AI Model</label>
           <select id="modelSelect">
             <option value="gpt-5.1">GPT-5.1</option>
             <option value="gpt-5.1-high">GPT-5.1 (high)</option>
@@ -221,51 +242,51 @@
           </select>
         </div>
         <div class="setting-item">
-          <label for="outputFormat">Output Format</label>
+          <label for="outputFormat" data-i18n="outputFormat">Output Format</label>
           <select id="outputFormat">
-            <option value="pdf">PDF</option>
-            <option value="epub">EPUB (e-readers)</option>
-            <option value="fb2">FB2 (e-readers)</option>
-            <option value="markdown">Markdown</option>
-            <option value="audio">Audio (MP3)</option>
+            <option value="pdf" data-i18n="saveAsPdf">PDF</option>
+            <option value="epub" data-i18n="epubEreaders">EPUB (e-readers)</option>
+            <option value="fb2" data-i18n="fb2Ereaders">FB2 (e-readers)</option>
+            <option value="markdown" data-i18n="saveAsMarkdown">Markdown</option>
+            <option value="audio" data-i18n="audioMp3">Audio (MP3)</option>
           </select>
         </div>
         <!-- Audio Settings (Hidden by default) -->
         <div class="setting-item" id="audioProviderGroup" style="display: none;">
-          <label for="audioProvider">TTS Provider</label>
+          <label for="audioProvider" data-i18n="ttsProvider">TTS Provider</label>
           <select id="audioProvider">
-            <option value="openai">OpenAI TTS</option>
-            <option value="elevenlabs">ElevenLabs</option>
+            <option value="openai" data-i18n="openaiTts">OpenAI TTS</option>
+            <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs</option>
           </select>
-          <p class="setting-hint">Choose text-to-speech provider</p>
+          <p class="setting-hint" data-i18n="ttsProviderHint">Choose text-to-speech provider</p>
         </div>
         <div class="setting-item" id="elevenlabsApiKeyGroup" style="display: none;">
-          <label for="elevenlabsApiKey">ElevenLabs API Key</label>
+          <label for="elevenlabsApiKey" data-i18n="elevenlabsApiKey">ElevenLabs API Key</label>
           <div class="input-group">
             <input 
               type="password" 
               id="elevenlabsApiKey" 
+              data-i18n-placeholder="enterElevenlabsApiKey"
               placeholder="Enter ElevenLabs API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" title="Show/Hide">
+            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
-            <button type="button" id="saveElevenlabsApiKey" class="btn btn-small">Save</button>
+            <button type="button" id="saveElevenlabsApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint">Get your API key from <a href="https://elevenlabs.io" target="_blank">elevenlabs.io</a></p>
+          <p class="setting-hint"><span data-i18n="getElevenlabsKeyFrom">Get your API key from</span> <a href="https://elevenlabs.io" target="_blank">elevenlabs.io</a></p>
         </div>
         <div class="setting-item" id="elevenlabsModelGroup" style="display: none;">
-          <label for="elevenlabsModel">ElevenLabs Model</label>
+          <label for="elevenlabsModel" data-i18n="elevenlabsModel">ElevenLabs Model</label>
           <select id="elevenlabsModel">
-            <option value="eleven_multilingual_v2">Multilingual v2 (stable, natural)</option>
-            <option value="eleven_v3">v3 (most expressive)</option>
-            <option value="eleven_turbo_v2_5">Turbo v2.5 (fast)</option>
+            <option value="eleven_multilingual_v2" data-i18n="multilingualV2">Multilingual v2 (stable, natural)</option>
+            <option value="eleven_v3" data-i18n="v3">v3 (most expressive)</option>
+            <option value="eleven_turbo_v2_5" data-i18n="turboV25">Turbo v2.5 (fast)</option>
           </select>
-          <p class="setting-hint">v3 is most expressive, Turbo is fastest</p>
         </div>
         <div class="setting-item" id="audioVoiceGroup" style="display: none;">
-          <label for="audioVoice">Voice</label>
+          <label for="audioVoice" data-i18n="voice">Voice</label>
           <select id="audioVoice">
             <!-- OpenAI voices (default) -->
             <option value="nova">Nova (female, warm)</option>
@@ -280,39 +301,37 @@
             <option value="ballad">Ballad (expressive, dramatic)</option>
             <option value="verse">Verse (rhythmic)</option>
           </select>
-          <p class="setting-hint">Select narrator voice for audio</p>
         </div>
         <div class="setting-item" id="audioSpeedGroup" style="display: none;">
-          <label for="audioSpeed">Speech Speed</label>
+          <label for="audioSpeed" data-i18n="speed">Speech Speed</label>
           <div class="slider-container">
             <input type="range" id="audioSpeed" min="0.5" max="2" step="0.1" value="1">
             <span class="slider-value" id="audioSpeedValue">1.0x</span>
           </div>
-          <p class="setting-hint">0.5x (slow) to 2x (fast)</p>
         </div>
         <div class="setting-item">
           <label class="checkbox-label">
             <input type="checkbox" id="generateToc">
-            <span class="checkbox-text">Generate Table of Contents</span>
+            <span class="checkbox-text" data-i18n="generateToc">Generate Table of Contents</span>
           </label>
-          <p class="setting-hint">Auto-create TOC from article headings</p>
+          <p class="setting-hint" data-i18n="generateTocHint">Auto-create TOC from article headings</p>
         </div>
         <div class="setting-item">
           <label class="checkbox-label">
             <input type="checkbox" id="generateAbstract">
-            <span class="checkbox-text">Generate Abstract</span>
+            <span class="checkbox-text" data-i18n="generateAbstract">Generate Abstract</span>
           </label>
-            <p class="setting-hint">AI-generated brief summary (2-3 paragraphs)</p>
+            <p class="setting-hint" data-i18n="generateAbstractHint">AI-generated brief summary (2-3 paragraphs)</p>
         </div>
         <div class="setting-item" id="pageModeGroup">
-          <label for="pageMode">Page Layout</label>
+          <label for="pageMode" data-i18n="pageLayout">Page Layout</label>
           <select id="pageMode">
-            <option value="single">Single long page</option>
-            <option value="multi">Multiple pages (A4)</option>
+            <option value="single" data-i18n="singleLongPage">Single long page</option>
+            <option value="multi" data-i18n="multiplePagesA4">Multiple pages (A4)</option>
           </select>
         </div>
         <div class="setting-item">
-          <label for="languageSelect">Target Language</label>
+          <label for="languageSelect" data-i18n="targetLanguage">Target Language</label>
           <select id="languageSelect">
             <option value="auto">Auto (original)</option>
             <option value="en">English</option>
@@ -327,37 +346,37 @@
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
           </select>
-          <p class="setting-hint" id="languageHint">Keep original or translate to selected language</p>
+          <p class="setting-hint" id="languageHint" data-i18n="keepOriginalOrTranslate">Keep original or translate to selected language</p>
         </div>
         <div class="setting-item" id="translateImagesGroup" style="display: none;">
           <label class="checkbox-label">
             <input type="checkbox" id="translateImages">
-            <span class="checkbox-text">Translate images with text</span>
+            <span class="checkbox-text" data-i18n="translateImages">Translate images with text</span>
           </label>
-          <p class="setting-hint">Uses Google Gemini AI to translate text on images</p>
+          <p class="setting-hint" data-i18n="translateImagesHint">Uses Google Gemini AI to translate text on images</p>
         </div>
         <div class="settings-divider"></div>
         <div class="setting-item">
-          <label for="stylePreset">Style Preset</label>
+          <label for="stylePreset" data-i18n="stylePreset">Style Preset</label>
           <select id="stylePreset">
-            <option value="custom">Custom</option>
-            <option value="dark">Dark (default)</option>
-            <option value="light">Light</option>
-            <option value="sepia">Sepia</option>
-            <option value="contrast">High Contrast</option>
+            <option value="custom" data-i18n="custom">Custom</option>
+            <option value="dark" data-i18n="dark">Dark (default)</option>
+            <option value="light" data-i18n="light">Light</option>
+            <option value="sepia" data-i18n="sepia">Sepia</option>
+            <option value="contrast" data-i18n="highContrast">High Contrast</option>
           </select>
-          <p class="setting-hint">Quick style presets for PDF</p>
+          <p class="setting-hint" data-i18n="quickStylePresets">Quick style presets for PDF</p>
         </div>
         <div class="setting-item">
-          <label for="fontFamily">PDF Font</label>
+          <label for="fontFamily" data-i18n="pdfFont">PDF Font</label>
           <div class="input-with-reset">
             <div class="custom-select" id="fontFamilyContainer">
               <div class="custom-select-trigger" id="fontFamilyTrigger">
-                <span class="custom-select-value" id="fontFamilyValue">Default (Segoe UI)</span>
+                <span class="custom-select-value" id="fontFamilyValue" data-i18n="defaultSegoeUi">Default (Segoe UI)</span>
                 <span class="custom-select-arrow">▾</span>
               </div>
               <div class="custom-select-options" id="fontFamilyOptions">
-                <div class="custom-select-option selected" data-value="" style="font-family: 'Segoe UI', sans-serif">Default (Segoe UI)</div>
+                <div class="custom-select-option selected" data-value="" style="font-family: 'Segoe UI', sans-serif" data-i18n="defaultSegoeUi">Default (Segoe UI)</div>
                 <div class="custom-select-option" data-value="Arial" style="font-family: Arial, sans-serif">Arial</div>
                 <div class="custom-select-option" data-value="Georgia" style="font-family: Georgia, serif">Georgia</div>
                 <div class="custom-select-option" data-value="Times New Roman" style="font-family: 'Times New Roman', serif">Times New Roman</div>
@@ -371,69 +390,69 @@
               </div>
             </div>
             <input type="hidden" id="fontFamily" value="">
-            <button class="btn-reset-inline" data-reset="fontFamily" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="fontFamily" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
-          <label for="fontSize">PDF Font Size</label>
+          <label for="fontSize" data-i18n="pdfFontSize">PDF Font Size</label>
           <div class="input-with-reset">
             <input type="text" id="fontSize" placeholder="31" class="text-input text-input-short" value="31">
             <span class="input-suffix">px</span>
-            <button class="btn-reset-inline" data-reset="fontSize" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="fontSize" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
-          <label for="bgColor">PDF Background Color</label>
+          <label for="bgColor" data-i18n="pdfBackgroundColor">PDF Background Color</label>
           <div class="color-row">
             <input type="color" id="bgColor" value="#303030">
             <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input">
-            <button class="btn-reset-inline" data-reset="bgColor">↺</button>
+            <button class="btn-reset-inline" data-reset="bgColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
-          <label for="textColor">PDF Text Color</label>
+          <label for="textColor" data-i18n="pdfTextColor">PDF Text Color</label>
           <div class="color-row">
             <input type="color" id="textColor" value="#b9b9b9">
             <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input">
-            <button class="btn-reset-inline" data-reset="textColor">↺</button>
+            <button class="btn-reset-inline" data-reset="textColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
-          <label for="headingColor">PDF Heading Color</label>
+          <label for="headingColor" data-i18n="pdfHeadingColor">PDF Heading Color</label>
           <div class="color-row">
             <input type="color" id="headingColor" value="#cfcfcf">
             <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input">
-            <button class="btn-reset-inline" data-reset="headingColor">↺</button>
+            <button class="btn-reset-inline" data-reset="headingColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
-          <label for="linkColor">PDF Link Color</label>
+          <label for="linkColor" data-i18n="pdfLinkColor">PDF Link Color</label>
           <div class="color-row">
             <input type="color" id="linkColor" value="#6cacff">
             <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input">
-            <button class="btn-reset-inline" data-reset="linkColor">↺</button>
+            <button class="btn-reset-inline" data-reset="linkColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="setting-item">
-          <label for="themeSelect">Theme</label>
+          <label for="themeSelect" data-i18n="theme">Theme</label>
           <select id="themeSelect">
-            <option value="auto">Auto (system)</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
+            <option value="auto" data-i18n="auto">Auto (system)</option>
+            <option value="dark" data-i18n="darkTheme">Dark</option>
+            <option value="light" data-i18n="lightTheme">Light</option>
           </select>
-          <p class="setting-hint">Choose popup theme</p>
+          <p class="setting-hint" data-i18n="choosePopupTheme">Choose popup theme</p>
         </div>
         <div class="settings-divider"></div>
-        <button id="resetStylesBtn" class="btn btn-reset">Reset All to Default</button>
+        <button id="resetStylesBtn" class="btn btn-reset" data-i18n="resetAllToDefault">Reset All to Default</button>
         <div class="settings-divider"></div>
         <div class="setting-item">
-          <label>Import/Export Settings</label>
+          <label data-i18n="importExportSettings">Import/Export Settings</label>
           <div class="import-export-buttons">
-            <button id="exportSettingsBtn" class="btn btn-secondary btn-small">Export Settings</button>
-            <button id="importSettingsBtn" class="btn btn-secondary btn-small">Import Settings</button>
+            <button id="exportSettingsBtn" class="btn btn-secondary btn-small" data-i18n="exportSettings">Export Settings</button>
+            <button id="importSettingsBtn" class="btn btn-secondary btn-small" data-i18n="importSettings">Import Settings</button>
           </div>
-          <p class="setting-hint">Export includes: settings (without API keys), optional stats & cache</p>
+          <p class="setting-hint" data-i18n="exportHint">Export includes: settings (without API keys), optional stats & cache</p>
           <input type="file" id="importFileInput" accept=".json" style="display: none;">
         </div>
       </section>

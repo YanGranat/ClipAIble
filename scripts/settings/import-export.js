@@ -36,7 +36,8 @@ const STORAGE_KEYS_TO_EXPORT = [
   'pdf_link_color',
   
   // UI settings
-  'popup_theme'
+  'popup_theme',
+  'ui_language'
 ];
 
 // API key names - ALWAYS excluded from export for security

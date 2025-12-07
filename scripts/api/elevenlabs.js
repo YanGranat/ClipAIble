@@ -131,13 +131,10 @@ export async function textToSpeech(text, apiKey, options = {}) {
       stability: 0.5,
       similarity_boost: 0.75,
       style: 0.0,
-      use_speaker_boost: true
+      use_speaker_boost: true,
+      speed: validSpeed // Add speed parameter (0.25-4.0, default: 1.0)
     }
   };
-  
-  // Add speed if not default (ElevenLabs doesn't have direct speed control in v1 API,
-  // but we can use voice_settings for some control)
-  // Note: Speed control may not be available in all models
   
   const url = `${ELEVENLABS_CONFIG.API_URL}/${voiceId}`;
   

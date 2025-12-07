@@ -1,6 +1,7 @@
 // Popup script for ClipAIble extension
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
+import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
 
 const STORAGE_KEYS = {
   API_KEY: 'openai_api_key',
@@ -24,6 +25,7 @@ const STORAGE_KEYS = {
   HEADING_COLOR: 'pdf_heading_color',
   LINK_COLOR: 'pdf_link_color',
   THEME: 'popup_theme',
+  UI_LANGUAGE: 'ui_language',
   AUDIO_PROVIDER: 'audio_provider',
   ELEVENLABS_API_KEY: 'elevenlabs_api_key',
   ELEVENLABS_MODEL: 'elevenlabs_model',
@@ -142,6 +144,8 @@ const elements = {
   progressContainer: null,
   progressBar: null,
   progressText: null,
+  themeSelect: null,
+  uiLanguageSelect: null,
   audioProvider: null,
   audioProviderGroup: null,
   elevenlabsApiKey: null,
@@ -215,6 +219,105 @@ function updateTimerDisplay() {
   }
 }
 
+// Apply UI localization
+async function applyLocalization() {
+  const langCode = await getUILanguage();
+  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+  
+  // Apply translations to elements with data-i18n attribute
+  document.querySelectorAll('[data-i18n]').forEach(element => {
+    const key = element.getAttribute('data-i18n');
+    const translation = locale[key] || UI_LOCALES.en[key] || key;
+    
+    if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'password')) {
+      // For inputs, check if they have a separate placeholder key
+      if (element.hasAttribute('data-i18n-placeholder')) {
+        const placeholderKey = element.getAttribute('data-i18n-placeholder');
+        element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+      } else {
+        element.placeholder = translation;
+      }
+    } else if (element.tagName === 'OPTION') {
+      // Options are handled separately
+    } else {
+      element.textContent = translation;
+    }
+  });
+  
+  // Handle elements with only data-i18n-placeholder (no data-i18n)
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+    if (!element.hasAttribute('data-i18n')) {
+      const placeholderKey = element.getAttribute('data-i18n-placeholder');
+      element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+    }
+  });
+  
+  // Handle select options with data-i18n
+  document.querySelectorAll('select option[data-i18n]').forEach(option => {
+    const key = option.getAttribute('data-i18n');
+    const translation = locale[key] || UI_LOCALES.en[key] || key;
+    option.textContent = translation;
+  });
+  
+  // Update select options for language selector
+  if (elements.uiLanguageSelect) {
+    const langNames = {
+      'en': 'english',
+      'ru': 'russian',
+      'uk': 'ukrainian',
+      'de': 'german',
+      'fr': 'french',
+      'es': 'spanish',
+      'it': 'italian',
+      'pt': 'portuguese',
+      'zh': 'chinese',
+      'ja': 'japanese',
+      'ko': 'korean'
+    };
+    
+    elements.uiLanguageSelect.innerHTML = '';
+    Object.keys(UI_LOCALES).forEach(lang => {
+      const option = document.createElement('option');
+      option.value = lang;
+      const langKey = langNames[lang] || 'english';
+      option.textContent = locale[langKey] || UI_LOCALES.en[langKey] || lang;
+      if (lang === langCode) option.selected = true;
+      elements.uiLanguageSelect.appendChild(option);
+    });
+  }
+  
+  // Update title attributes
+  document.querySelectorAll('[data-i18n-title]').forEach(element => {
+    const key = element.getAttribute('data-i18n-title');
+    element.title = locale[key] || UI_LOCALES.en[key] || key;
+  });
+  
+  // Update specific dynamic elements
+  if (elements.modeHint) {
+    const mode = elements.modeSelect?.value || 'selector';
+    elements.modeHint.textContent = mode === 'selector' 
+      ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
+      : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
+  }
+  
+  // Update output format button text
+  if (elements.saveText) {
+    const format = elements.outputFormat?.value || 'pdf';
+    const formatKeys = {
+      pdf: 'saveAsPdf',
+      epub: 'saveAsEpub',
+      fb2: 'saveAsFb2',
+      markdown: 'saveAsMarkdown',
+      audio: 'saveAsAudio'
+    };
+    const formatKey = formatKeys[format] || 'saveAsPdf';
+    elements.saveText.textContent = locale[formatKey] || UI_LOCALES.en[formatKey];
+  }
+  
+  // Update document language
+  document.documentElement.lang = langCode;
+}
+
 // Initialize popup
 async function init() {
   // Get DOM elements
@@ -277,6 +380,7 @@ async function init() {
   elements.progressBar = document.getElementById('progressBar');
   elements.progressText = document.getElementById('progressText');
   elements.themeSelect = document.getElementById('themeSelect');
+  elements.uiLanguageSelect = document.getElementById('uiLanguageSelect');
   elements.audioProvider = document.getElementById('audioProvider');
   elements.audioProviderGroup = document.getElementById('audioProviderGroup');
   elements.elevenlabsApiKey = document.getElementById('elevenlabsApiKey');
@@ -297,6 +401,7 @@ async function init() {
   }
   
   await loadSettings();
+  await applyLocalization();
   applyTheme();
   setupEventListeners();
   
@@ -331,6 +436,7 @@ async function loadSettings() {
     STORAGE_KEYS.HEADING_COLOR,
     STORAGE_KEYS.LINK_COLOR,
     STORAGE_KEYS.THEME,
+    STORAGE_KEYS.UI_LANGUAGE,
     STORAGE_KEYS.AUDIO_PROVIDER,
     STORAGE_KEYS.ELEVENLABS_API_KEY,
     STORAGE_KEYS.ELEVENLABS_MODEL,
@@ -474,6 +580,12 @@ async function loadSettings() {
     elements.themeSelect.value = result[STORAGE_KEYS.THEME];
   }
   
+  if (result[STORAGE_KEYS.UI_LANGUAGE] && elements.uiLanguageSelect) {
+    elements.uiLanguageSelect.value = result[STORAGE_KEYS.UI_LANGUAGE];
+  } else if (elements.uiLanguageSelect) {
+    elements.uiLanguageSelect.value = 'en';
+  }
+  
   // Load audio settings
   if (result[STORAGE_KEYS.AUDIO_PROVIDER]) {
     elements.audioProvider.value = result[STORAGE_KEYS.AUDIO_PROVIDER];
@@ -493,7 +605,7 @@ async function loadSettings() {
       if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
         console.warn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
         elements.elevenlabsApiKey.value = '';
-        elements.elevenlabsApiKey.placeholder = 'Key was corrupted, please re-enter';
+        elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
         await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
       } else {
         elements.elevenlabsApiKey.value = maskApiKey(decrypted);
@@ -503,7 +615,7 @@ async function loadSettings() {
       console.error('Failed to decrypt ElevenLabs API key:', error);
       // Clear corrupted key - user needs to re-enter
       elements.elevenlabsApiKey.value = '';
-      elements.elevenlabsApiKey.placeholder = 'Key corrupted, please re-enter';
+      elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
       await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
     }
   }
@@ -715,25 +827,35 @@ function setupEventListeners() {
   });
 
   elements.clearStatsBtn.addEventListener('click', async () => {
-    if (confirm('Clear all statistics? This cannot be undone.')) {
+    const langCode = await getUILanguage();
+    const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+    const clearStatsConfirm = locale.clearAllStatisticsConfirm || UI_LOCALES.en.clearAllStatisticsConfirm;
+    if (confirm(clearStatsConfirm)) {
       await chrome.runtime.sendMessage({ action: 'clearStats' });
       await loadAndDisplayStats();
-      showToast('Statistics cleared', 'success');
+      const locale = await t('statisticsCleared');
+      showToast(locale, 'success');
     }
   });
 
   elements.clearCacheBtn.addEventListener('click', async () => {
-    if (confirm('Clear selector cache? Next extractions will use AI.')) {
+    const langCode = await getUILanguage();
+    const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+    const clearCacheConfirm = locale.clearSelectorCacheConfirm || UI_LOCALES.en.clearSelectorCacheConfirm;
+    if (confirm(clearCacheConfirm)) {
       await chrome.runtime.sendMessage({ action: 'clearSelectorCache' });
       await loadAndDisplayStats();
-      showToast('Cache cleared', 'success');
+      const locale = await t('cacheCleared');
+      showToast(locale, 'success');
     }
   });
 
   elements.exportSettingsBtn.addEventListener('click', async () => {
     try {
-      const includeStats = confirm('Include statistics in export?');
-      const includeCache = confirm('Include selector cache in export?');
+      const langCode = await getUILanguage();
+      const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+      const includeStats = confirm(locale.includeStatisticsInExport || UI_LOCALES.en.includeStatisticsInExport);
+      const includeCache = confirm(locale.includeSelectorCacheInExport || UI_LOCALES.en.includeSelectorCacheInExport);
       // Note: API keys are NEVER exported for security reasons
       
       elements.exportSettingsBtn.disabled = true;
@@ -760,13 +882,16 @@ function setupEventListeners() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       
-      showToast('Settings exported successfully', 'success');
+      const settingsExportedText = await t('settingsExportedSuccessfully');
+      showToast(settingsExportedText, 'success');
     } catch (error) {
       console.error('Export failed:', error);
-      showToast('Export failed: ' + error.message, 'error');
+      const exportFailedText = await t('exportFailed');
+      showToast(`${exportFailedText}: ${error.message}`, 'error');
     } finally {
       elements.exportSettingsBtn.disabled = false;
-      elements.exportSettingsBtn.textContent = 'Export Settings';
+      const exportSettingsText = await t('exportSettings');
+      elements.exportSettingsBtn.textContent = exportSettingsText;
     }
   });
 
@@ -793,12 +918,13 @@ function setupEventListeners() {
       }
       
       // Ask what to import
-      const importStats = data.statistics && confirm('Import statistics?');
-      const importCache = data.selectorCache && confirm('Import selector cache?');
-      const overwriteExisting = confirm('Overwrite existing settings?');
+      const importStats = data.statistics && confirm(await t('importStatistics'));
+      const importCache = data.selectorCache && confirm(await t('importSelectorCache'));
+      const overwriteExisting = confirm(await t('overwriteExistingSettings'));
       
       elements.importSettingsBtn.disabled = true;
-      elements.importSettingsBtn.textContent = 'Importing...';
+      const importingText = await t('importing');
+      elements.importSettingsBtn.textContent = importingText;
       
       const response = await chrome.runtime.sendMessage({
         action: 'importSettings',
@@ -837,10 +963,12 @@ function setupEventListeners() {
       
     } catch (error) {
       console.error('Import failed:', error);
-      showToast('Import failed: ' + error.message, 'error');
+      const importFailedText = await t('importFailed');
+      showToast(`${importFailedText}: ${error.message}`, 'error');
     } finally {
       elements.importSettingsBtn.disabled = false;
-      elements.importSettingsBtn.textContent = 'Import Settings';
+      const importSettingsText = await t('importSettings');
+      elements.importSettingsBtn.textContent = importSettingsText;
       elements.importFileInput.value = ''; // Reset input
     }
   });
@@ -850,8 +978,8 @@ function setupEventListeners() {
   });
 
   elements.modeSelect.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.MODE, elements.modeSelect.value, () => {
-      updateModeHint();
+    debouncedSaveSettings(STORAGE_KEYS.MODE, elements.modeSelect.value, async () => {
+      await updateModeHint();
       updateCacheVisibility();
     });
   });
@@ -874,8 +1002,8 @@ function setupEventListeners() {
   }
 
   elements.outputFormat.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.outputFormat.value, () => {
-      updateOutputFormatUI();
+    debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.outputFormat.value, async () => {
+      await updateOutputFormatUI();
     });
   });
 
@@ -1055,6 +1183,16 @@ function setupEventListeners() {
     });
   });
   
+  if (elements.uiLanguageSelect) {
+    elements.uiLanguageSelect.addEventListener('change', async () => {
+      const langCode = elements.uiLanguageSelect.value;
+      await setUILanguage(langCode);
+      await applyLocalization();
+      // Reload settings to update all UI text
+      await loadSettings();
+    });
+  }
+  
   // Audio settings handlers
   if (elements.elevenlabsModel) {
     elements.elevenlabsModel.addEventListener('change', () => {
@@ -1230,7 +1368,8 @@ async function resetStyleSetting(type) {
       await chrome.storage.local.set({ [STORAGE_KEYS.LINK_COLOR]: DEFAULT_STYLES.linkColor });
       break;
   }
-  showToast('Reset to default', 'success');
+  const resetText = await t('resetToDefault');
+  showToast(resetText, 'success');
 }
 
 // Reset all style settings to defaults
@@ -1256,15 +1395,18 @@ async function resetAllStyles() {
     [STORAGE_KEYS.LINK_COLOR]: DEFAULT_STYLES.linkColor
   });
   
-  showToast('All styles reset to default', 'success');
+  const allStylesResetText = await t('allStylesReset');
+  showToast(allStylesResetText, 'success');
 }
 
 // Handle Cancel button click
 async function handleCancel() {
   try {
     await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
-    showToast('Processing cancelled', 'success');
-    setStatus('ready', 'Cancelled');
+    const cancelledText = await t('processingCancelled');
+    showToast(cancelledText, 'success');
+    const readyText = await t('ready');
+    setStatus('ready', readyText);
     setProgress(0, false);
     elements.savePdfBtn.disabled = false;
     elements.cancelBtn.style.display = 'none';
@@ -1287,9 +1429,13 @@ function setCustomSelectValue(value) {
 }
 
 // Update mode hint text
-function updateModeHint() {
+async function updateModeHint() {
   const mode = elements.modeSelect.value;
-  elements.modeHint.textContent = MODE_HINTS[mode] || '';
+  const langCode = await getUILanguage();
+  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+  elements.modeHint.textContent = mode === 'selector' 
+    ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
+    : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
 }
 
 // Show/hide cache option based on mode
@@ -1300,7 +1446,7 @@ function updateCacheVisibility() {
 }
 
 // Update UI based on output format selection
-function updateOutputFormatUI() {
+async function updateOutputFormatUI() {
   const format = elements.outputFormat.value;
   const isPdf = format === 'pdf';
   const isEpub = format === 'epub';
@@ -1308,12 +1454,14 @@ function updateOutputFormatUI() {
   const showStyleSettings = isPdf; // Only PDF has style settings
   
   // Update button text and icon based on format
+  const langCode = await getUILanguage();
+  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
   const formatConfig = {
-    pdf: { icon: '📄', text: 'Save as PDF' },
-    epub: { icon: '📚', text: 'Save as EPUB' },
-    fb2: { icon: '📖', text: 'Save as FB2' },
-    markdown: { icon: '📝', text: 'Save as Markdown' },
-    audio: { icon: '🔊', text: 'Save as Audio' }
+    pdf: { icon: '📄', text: locale.saveAsPdf || UI_LOCALES.en.saveAsPdf },
+    epub: { icon: '📚', text: locale.saveAsEpub || UI_LOCALES.en.saveAsEpub },
+    fb2: { icon: '📖', text: locale.saveAsFb2 || UI_LOCALES.en.saveAsFb2 },
+    markdown: { icon: '📝', text: locale.saveAsMarkdown || UI_LOCALES.en.saveAsMarkdown },
+    audio: { icon: '🔊', text: locale.saveAsAudio || UI_LOCALES.en.saveAsAudio }
   };
   const config = formatConfig[format] || formatConfig.pdf;
   elements.saveIcon.textContent = config.icon;
@@ -1440,7 +1588,8 @@ async function saveApiKey() {
   const hasGemini = geminiApiKey && !geminiApiKey.startsWith('****');
   
   if (!hasOpenAI && !hasClaude && !hasGemini) {
-    showToast('Please enter at least one API key', 'error');
+    const pleaseEnterKeyText = await t('pleaseEnterAtLeastOneApiKey');
+    showToast(pleaseEnterKeyText, 'error');
     return;
   }
 
@@ -1454,13 +1603,15 @@ async function saveApiKey() {
     } else if (!apiKey.startsWith('****')) {
       // New key provided, validate and encrypt
       if (!apiKey.startsWith('sk-')) {
-        showToast('Invalid OpenAI API key format (should start with sk-)', 'error');
+        const invalidOpenAiKeyText = await t('invalidOpenAiKeyFormat');
+        showToast(invalidOpenAiKeyText, 'error');
         return;
       }
       try {
         keysToSave[STORAGE_KEYS.API_KEY] = await encryptApiKey(apiKey);
       } catch (error) {
-        showToast('Failed to encrypt API key', 'error');
+        const failedToEncryptText = await t('failedToEncryptApiKey');
+        showToast(failedToEncryptText, 'error');
         console.error('Encryption error:', error);
         return;
       }
@@ -1473,13 +1624,15 @@ async function saveApiKey() {
       keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = elements.claudeApiKey.dataset.encrypted;
     } else if (!claudeApiKey.startsWith('****')) {
       if (!claudeApiKey.startsWith('sk-ant-')) {
-        showToast('Invalid Claude API key format (should start with sk-ant-)', 'error');
+        const invalidClaudeKeyText = await t('invalidClaudeKeyFormat');
+        showToast(invalidClaudeKeyText, 'error');
         return;
       }
       try {
         keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = await encryptApiKey(claudeApiKey);
       } catch (error) {
-        showToast('Failed to encrypt API key', 'error');
+        const failedToEncryptText = await t('failedToEncryptApiKey');
+        showToast(failedToEncryptText, 'error');
         console.error('Encryption error:', error);
         return;
       }
@@ -1492,13 +1645,15 @@ async function saveApiKey() {
       keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = elements.geminiApiKey.dataset.encrypted;
     } else if (!geminiApiKey.startsWith('****')) {
       if (!geminiApiKey.startsWith('AIza')) {
-        showToast('Invalid Gemini API key format (should start with AIza)', 'error');
+        const invalidGeminiKeyText = await t('invalidGeminiKeyFormat');
+        showToast(invalidGeminiKeyText, 'error');
         return;
       }
       try {
         keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = await encryptApiKey(geminiApiKey);
       } catch (error) {
-        showToast('Failed to encrypt API key', 'error');
+        const failedToEncryptText = await t('failedToEncryptApiKey');
+        showToast(failedToEncryptText, 'error');
         console.error('Encryption error:', error);
         return;
       }
@@ -1511,13 +1666,15 @@ async function saveApiKey() {
       keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = elements.googleApiKey.dataset.encrypted;
     } else if (!googleApiKey.startsWith('****')) {
       if (!googleApiKey.startsWith('AIza')) {
-        showToast('Invalid Google API key format (should start with AIza)', 'error');
+        const invalidGoogleKeyText = await t('invalidGoogleKeyFormat');
+        showToast(invalidGoogleKeyText, 'error');
         return;
       }
       try {
         keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = await encryptApiKey(googleApiKey);
       } catch (error) {
-        showToast('Failed to encrypt API key', 'error');
+        const failedToEncryptText = await t('failedToEncryptApiKey');
+        showToast(failedToEncryptText, 'error');
         console.error('Encryption error:', error);
         return;
       }
@@ -1525,14 +1682,15 @@ async function saveApiKey() {
   }
 
   await chrome.storage.local.set(keysToSave);
-  showToast('API keys saved', 'success');
+  const apiKeysSavedText = await t('apiKeysSaved');
+  showToast(apiKeysSavedText, 'success');
 }
 
 // Check current processing state from background or storage
 async function checkProcessingState() {
   try {
     const state = await chrome.runtime.sendMessage({ action: 'getState' });
-    updateUIFromState(state);
+    await updateUIFromState(state);
   } catch (error) {
     console.error('Error getting state from background:', error);
     // Fallback: try to load from storage
@@ -1576,7 +1734,7 @@ function startStatePolling() {
       if (stateChanged) {
         // State changed - reset adaptive polling
         noChangeCount = 0;
-        updateUIFromState(state);
+        await updateUIFromState(state);
         lastState = state;
         
         // Use faster polling when processing
@@ -1606,7 +1764,7 @@ function startStatePolling() {
             const timeSinceUpdate = Date.now() - (stored.processingState.lastUpdate || 0);
             if (timeSinceUpdate < 2 * 60 * 1000) {
               console.log('Using state from storage');
-              updateUIFromState(stored.processingState);
+              await updateUIFromState(stored.processingState);
             }
           }
         } catch (e) {
@@ -1626,7 +1784,7 @@ function startStatePolling() {
 }
 
 // Update UI based on processing state
-function updateUIFromState(state) {
+async function updateUIFromState(state) {
   if (!state) return;
   
   if (state.isProcessing) {
@@ -1651,14 +1809,16 @@ function updateUIFromState(state) {
     elements.savePdfBtn.disabled = false;
     elements.savePdfBtn.style.display = 'block';
     elements.cancelBtn.style.display = 'none';
-    setStatus('ready', 'PDF saved successfully!');
+    const pdfSavedText = await t('pdfSavedSuccessfully');
+    setStatus('ready', pdfSavedText);
     setProgress(0, false); // Hide progress bar immediately
   } else {
     stopTimerDisplay();
     elements.savePdfBtn.disabled = false;
     elements.savePdfBtn.style.display = 'block';
     elements.cancelBtn.style.display = 'none';
-    setStatus('ready', 'Ready');
+    const readyText = await t('ready');
+    setStatus('ready', readyText);
     setProgress(0, false);
   }
 }
@@ -1686,12 +1846,12 @@ async function handleSavePdf() {
         apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
       } catch (error) {
         console.error('Failed to decrypt OpenAI API key:', error);
-        showToast('Failed to decrypt API key. Please re-enter it.', 'error');
+        showToast(await t('failedToDecryptApiKey'), 'error');
         return;
       }
     }
     if (!apiKey) {
-      showToast('Please enter OpenAI API key for GPT models', 'error');
+      showToast(await t('pleaseEnterOpenAiApiKey'), 'error');
       return;
     }
   } else if (provider === 'claude') {
@@ -1702,12 +1862,12 @@ async function handleSavePdf() {
         apiKey = await decryptApiKey(elements.claudeApiKey.dataset.encrypted);
       } catch (error) {
         console.error('Failed to decrypt Claude API key:', error);
-        showToast('Failed to decrypt API key. Please re-enter it.', 'error');
+        showToast(await t('failedToDecryptApiKey'), 'error');
         return;
       }
     }
     if (!apiKey) {
-      showToast('Please enter Claude API key for Claude models', 'error');
+      showToast(await t('pleaseEnterClaudeApiKey'), 'error');
       return;
     }
   } else if (provider === 'gemini') {
@@ -1718,12 +1878,12 @@ async function handleSavePdf() {
         apiKey = await decryptApiKey(elements.geminiApiKey.dataset.encrypted);
       } catch (error) {
         console.error('Failed to decrypt Gemini API key:', error);
-        showToast('Failed to decrypt API key. Please re-enter it.', 'error');
+        showToast(await t('failedToDecryptApiKey'), 'error');
         return;
       }
     }
     if (!apiKey) {
-      showToast('Please enter Gemini API key for Gemini models', 'error');
+      showToast(await t('pleaseEnterGeminiApiKey'), 'error');
       return;
     }
   }
@@ -1736,7 +1896,7 @@ async function handleSavePdf() {
       throw new Error('No active tab found');
     }
 
-    setStatus('processing', 'Extracting page content...');
+    setStatus('processing', await t('extractingPageContent'));
     setProgress(0);
     elements.savePdfBtn.disabled = true;
 
@@ -1909,7 +2069,7 @@ async function loadAndDisplayStats() {
     ]);
     
     if (statsResponse && statsResponse.stats) {
-      displayStats(statsResponse.stats);
+      await displayStats(statsResponse.stats);
     }
     
     if (cacheResponse && cacheResponse.stats) {
@@ -1920,7 +2080,7 @@ async function loadAndDisplayStats() {
   }
 }
 
-function displayStats(stats) {
+async function displayStats(stats) {
   // Update main counters
   document.getElementById('statTotal').textContent = stats.totalSaved || 0;
   document.getElementById('statMonth').textContent = stats.thisMonth || 0;
@@ -1966,12 +2126,18 @@ function displayStats(stats) {
       });
     });
   } else {
-    historyContainer.innerHTML = '<div class="stats-empty">No data yet</div>';
+    const noDataText = await t('noDataYet');
+    historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
   }
   
   // Update footer
-  document.getElementById('statsLastSaved').textContent = `Last: ${stats.lastSavedText || 'Never'}`;
-  document.getElementById('statsAvgTime').textContent = `Avg: ${stats.avgProcessingTime || 0}s`;
+  const langCode = await getUILanguage();
+  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+  const lastSavedText = locale.lastSaved || UI_LOCALES.en.lastSaved;
+  const neverText = locale.never || UI_LOCALES.en.never;
+  const avgText = locale.avg || UI_LOCALES.en.avg;
+  document.getElementById('statsLastSaved').textContent = `${lastSavedText}: ${stats.lastSavedText || neverText}`;
+  document.getElementById('statsAvgTime').textContent = `${avgText}: ${stats.avgProcessingTime || 0}s`;
 }
 
 function escapeHtml(text) {
@@ -1992,7 +2158,7 @@ function formatRelativeDate(date) {
   return date.toLocaleDateString();
 }
 
-function displayCacheStats(stats) {
+async function displayCacheStats(stats) {
   const domainsEl = document.getElementById('cacheDomains');
   if (domainsEl) {
     domainsEl.textContent = stats.validDomains || 0;
@@ -2002,7 +2168,8 @@ function displayCacheStats(stats) {
   const domainsListEl = document.getElementById('cacheDomainsList');
   if (domainsListEl && stats.domains) {
     if (stats.domains.length === 0) {
-      domainsListEl.innerHTML = '<div class="stats-empty">No cached domains</div>';
+      const noCachedDomainsText = await t('noCachedDomains');
+      domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
     } else {
       domainsListEl.innerHTML = stats.domains.map(item => {
         if (item.invalidated) return ''; // Skip invalidated domains
@@ -2013,7 +2180,7 @@ function displayCacheStats(stats) {
             <div class="cache-domain-meta">
               <span>${item.age}</span>
             </div>
-            <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" title="Delete from cache">✕</button>
+            <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" data-i18n-title="deleteFromCache">✕</button>
           </div>
         `;
       }).filter(html => html).join('');
@@ -2024,10 +2191,14 @@ function displayCacheStats(stats) {
           e.preventDefault();
           e.stopPropagation();
           const domain = btn.dataset.domain;
-          if (confirm(`Delete "${domain}" from cache?`)) {
+          const langCode = await getUILanguage();
+          const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+          const deleteConfirm = (locale.deleteDomainFromCache || UI_LOCALES.en.deleteDomainFromCache).replace('{domain}', domain);
+          if (confirm(deleteConfirm)) {
             await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
             await loadAndDisplayStats();
-            showToast('Domain removed from cache', 'success');
+            const domainRemovedText = await t('domainRemovedFromCache');
+            showToast(domainRemovedText, 'success');
           }
         });
       });
