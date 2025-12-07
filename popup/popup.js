@@ -1,6 +1,6 @@
 // Popup script for ClipAIble extension
 
-import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted } from '../scripts/utils/encryption.js';
+import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 
 const STORAGE_KEYS = {
   API_KEY: 'openai_api_key',
@@ -24,6 +24,9 @@ const STORAGE_KEYS = {
   HEADING_COLOR: 'pdf_heading_color',
   LINK_COLOR: 'pdf_link_color',
   THEME: 'popup_theme',
+  AUDIO_PROVIDER: 'audio_provider',
+  ELEVENLABS_API_KEY: 'elevenlabs_api_key',
+  ELEVENLABS_MODEL: 'elevenlabs_model',
   AUDIO_VOICE: 'audio_voice',
   AUDIO_SPEED: 'audio_speed'
 };
@@ -139,6 +142,14 @@ const elements = {
   progressContainer: null,
   progressBar: null,
   progressText: null,
+  audioProvider: null,
+  audioProviderGroup: null,
+  elevenlabsApiKey: null,
+  toggleElevenlabsApiKey: null,
+  saveElevenlabsApiKey: null,
+  elevenlabsApiKeyGroup: null,
+  elevenlabsModel: null,
+  elevenlabsModelGroup: null,
   audioVoice: null,
   audioVoiceGroup: null,
   audioSpeed: null,
@@ -266,6 +277,14 @@ async function init() {
   elements.progressBar = document.getElementById('progressBar');
   elements.progressText = document.getElementById('progressText');
   elements.themeSelect = document.getElementById('themeSelect');
+  elements.audioProvider = document.getElementById('audioProvider');
+  elements.audioProviderGroup = document.getElementById('audioProviderGroup');
+  elements.elevenlabsApiKey = document.getElementById('elevenlabsApiKey');
+  elements.toggleElevenlabsApiKey = document.getElementById('toggleElevenlabsApiKey');
+  elements.saveElevenlabsApiKey = document.getElementById('saveElevenlabsApiKey');
+  elements.elevenlabsApiKeyGroup = document.getElementById('elevenlabsApiKeyGroup');
+  elements.elevenlabsModel = document.getElementById('elevenlabsModel');
+  elements.elevenlabsModelGroup = document.getElementById('elevenlabsModelGroup');
   elements.audioVoice = document.getElementById('audioVoice');
   elements.audioVoiceGroup = document.getElementById('audioVoiceGroup');
   elements.audioSpeed = document.getElementById('audioSpeed');
@@ -312,6 +331,9 @@ async function loadSettings() {
     STORAGE_KEYS.HEADING_COLOR,
     STORAGE_KEYS.LINK_COLOR,
     STORAGE_KEYS.THEME,
+    STORAGE_KEYS.AUDIO_PROVIDER,
+    STORAGE_KEYS.ELEVENLABS_API_KEY,
+    STORAGE_KEYS.ELEVENLABS_MODEL,
     STORAGE_KEYS.AUDIO_VOICE,
     STORAGE_KEYS.AUDIO_SPEED
   ]);
@@ -453,6 +475,43 @@ async function loadSettings() {
   }
   
   // Load audio settings
+  if (result[STORAGE_KEYS.AUDIO_PROVIDER]) {
+    elements.audioProvider.value = result[STORAGE_KEYS.AUDIO_PROVIDER];
+  } else {
+    elements.audioProvider.value = 'openai'; // Default
+  }
+  
+  // Update voice list based on provider
+  updateVoiceList(elements.audioProvider.value);
+  
+  // Load and mask ElevenLabs API key
+  if (result[STORAGE_KEYS.ELEVENLABS_API_KEY]) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.ELEVENLABS_API_KEY]);
+      
+      // Check if decrypted value is a mask (corrupted data in storage)
+      if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
+        console.warn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
+        elements.elevenlabsApiKey.value = '';
+        elements.elevenlabsApiKey.placeholder = 'Key was corrupted, please re-enter';
+        await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
+      } else {
+        elements.elevenlabsApiKey.value = maskApiKey(decrypted);
+        elements.elevenlabsApiKey.dataset.encrypted = result[STORAGE_KEYS.ELEVENLABS_API_KEY];
+      }
+    } catch (error) {
+      console.error('Failed to decrypt ElevenLabs API key:', error);
+      // Clear corrupted key - user needs to re-enter
+      elements.elevenlabsApiKey.value = '';
+      elements.elevenlabsApiKey.placeholder = 'Key corrupted, please re-enter';
+      await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_MODEL]) {
+    elements.elevenlabsModel.value = result[STORAGE_KEYS.ELEVENLABS_MODEL];
+  }
+  
   if (result[STORAGE_KEYS.AUDIO_VOICE]) {
     elements.audioVoice.value = result[STORAGE_KEYS.AUDIO_VOICE];
   }
@@ -463,6 +522,9 @@ async function loadSettings() {
       elements.audioSpeedValue.textContent = result[STORAGE_KEYS.AUDIO_SPEED] + 'x';
     }
   }
+  
+  // Update UI visibility based on provider
+  updateAudioProviderUI();
   
   // Apply preset colors to ensure consistency (fixes color mismatch after preset change)
   const currentPreset = elements.stylePreset.value;
@@ -501,11 +563,11 @@ function setupEventListeners() {
         } catch (error) {
           console.error('Failed to decrypt API key:', error);
           // If decryption fails, try to use current value if it's not masked
-          if (!input.value.startsWith('••••')) {
+          if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
         }
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         // Key is already visible or not masked
         input.dataset.decrypted = input.value;
       }
@@ -515,7 +577,7 @@ function setupEventListeners() {
       // Hide key
       if (input.dataset.decrypted) {
         input.value = maskApiKey(input.dataset.decrypted);
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
         input.value = maskApiKey(input.value);
       }
@@ -537,11 +599,11 @@ function setupEventListeners() {
           input.dataset.decrypted = decrypted;
         } catch (error) {
           console.error('Failed to decrypt API key:', error);
-          if (!input.value.startsWith('••••')) {
+          if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
         }
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
       }
       input.type = 'text';
@@ -550,7 +612,7 @@ function setupEventListeners() {
       // Hide key
       if (input.dataset.decrypted) {
         input.value = maskApiKey(input.dataset.decrypted);
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
         input.value = maskApiKey(input.value);
       }
@@ -572,11 +634,11 @@ function setupEventListeners() {
           input.dataset.decrypted = decrypted;
         } catch (error) {
           console.error('Failed to decrypt API key:', error);
-          if (!input.value.startsWith('••••')) {
+          if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
         }
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
       }
       input.type = 'text';
@@ -585,7 +647,7 @@ function setupEventListeners() {
       // Hide key
       if (input.dataset.decrypted) {
         input.value = maskApiKey(input.dataset.decrypted);
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
         input.value = maskApiKey(input.value);
       }
@@ -607,11 +669,11 @@ function setupEventListeners() {
           input.dataset.decrypted = decrypted;
         } catch (error) {
           console.error('Failed to decrypt API key:', error);
-          if (!input.value.startsWith('••••')) {
+          if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
         }
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
       }
       input.type = 'text';
@@ -620,7 +682,7 @@ function setupEventListeners() {
       // Hide key
       if (input.dataset.decrypted) {
         input.value = maskApiKey(input.dataset.decrypted);
-      } else if (input.value && !input.value.startsWith('••••')) {
+      } else if (input.value && !input.value.startsWith('****')) {
         input.dataset.decrypted = input.value;
         input.value = maskApiKey(input.value);
       }
@@ -994,6 +1056,12 @@ function setupEventListeners() {
   });
   
   // Audio settings handlers
+  if (elements.elevenlabsModel) {
+    elements.elevenlabsModel.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_MODEL, elements.elevenlabsModel.value);
+    });
+  }
+  
   elements.audioVoice.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, elements.audioVoice.value);
   });
@@ -1007,6 +1075,96 @@ function setupEventListeners() {
     const speed = parseFloat(elements.audioSpeed.value).toFixed(1);
     debouncedSaveSettings(STORAGE_KEYS.AUDIO_SPEED, speed);
   });
+  
+  // Audio provider handler
+  if (elements.audioProvider) {
+    elements.audioProvider.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value, () => {
+        updateVoiceList(elements.audioProvider.value);
+        updateAudioProviderUI();
+      });
+    });
+  }
+  
+  // ElevenLabs API key handlers
+  if (elements.toggleElevenlabsApiKey) {
+    elements.toggleElevenlabsApiKey.addEventListener('click', async () => {
+      const input = elements.elevenlabsApiKey;
+      const isPassword = input.type === 'password';
+      const eyeIcon = elements.toggleElevenlabsApiKey.querySelector('.eye-icon');
+      
+      if (isPassword) {
+        if (input.dataset.encrypted) {
+          try {
+            const decrypted = await decryptApiKey(input.dataset.encrypted);
+            input.value = decrypted;
+            input.dataset.decrypted = decrypted;
+          } catch (error) {
+            console.error('Failed to decrypt ElevenLabs API key:', error);
+            if (!input.value.startsWith('****')) {
+              input.dataset.decrypted = input.value;
+            }
+          }
+        } else if (input.value && !input.value.startsWith('****')) {
+          input.dataset.decrypted = input.value;
+        }
+        input.type = 'text';
+        if (eyeIcon) eyeIcon.textContent = '🔒';
+      } else {
+        if (input.dataset.decrypted) {
+          input.value = maskApiKey(input.dataset.decrypted);
+        } else {
+          input.value = maskApiKey(input.value);
+        }
+        input.type = 'password';
+        if (eyeIcon) eyeIcon.textContent = '👁';
+      }
+    });
+  }
+  
+  if (elements.saveElevenlabsApiKey) {
+    elements.saveElevenlabsApiKey.addEventListener('click', async () => {
+      const key = elements.elevenlabsApiKey.value.trim();
+      if (!key) {
+        alert('Please enter an ElevenLabs API key');
+        return;
+      }
+      
+      // Skip if key is masked (already saved)
+      if (key.startsWith('****') || key.startsWith('••••')) {
+        alert('API key already saved. To change it, clear the field and enter a new key.');
+        return;
+      }
+      
+      // Validate API key is ASCII only (required for HTTP headers)
+      if (!/^[\x20-\x7E]+$/.test(key)) {
+        alert('Invalid API key format. Key should contain only standard characters (letters, numbers, underscores).');
+        return;
+      }
+      
+      // Validate key looks like ElevenLabs format (typically starts with sk_ or is alphanumeric)
+      if (key.length < 10) {
+        alert('API key seems too short. Please check and enter the complete key.');
+        return;
+      }
+      
+      try {
+        const encrypted = await encryptApiKey(key);
+        await chrome.storage.local.set({ [STORAGE_KEYS.ELEVENLABS_API_KEY]: encrypted });
+        elements.elevenlabsApiKey.value = maskApiKey(key);
+        elements.elevenlabsApiKey.type = 'password';
+        elements.elevenlabsApiKey.dataset.encrypted = encrypted;
+        if (elements.toggleElevenlabsApiKey) {
+          elements.toggleElevenlabsApiKey.textContent = '👁';
+        }
+        console.log('ElevenLabs API key saved successfully');
+        alert('ElevenLabs API key saved!');
+      } catch (error) {
+        console.error('Failed to save ElevenLabs API key:', error);
+        alert('Failed to save API key. Please try again.');
+      }
+    });
+  }
 }
 
 // Apply theme based on user preference or system preference
@@ -1162,40 +1320,98 @@ function updateOutputFormatUI() {
   elements.saveText.textContent = config.text;
   
   // Show/hide audio settings
+  if (elements.audioProviderGroup) {
+    elements.audioProviderGroup.style.display = isAudio ? 'flex' : 'none';
+  }
+  if (elements.elevenlabsApiKeyGroup) {
+    elements.elevenlabsApiKeyGroup.style.display = isAudio ? 'flex' : 'none';
+    updateAudioProviderUI();
+  }
   if (elements.audioVoiceGroup) {
     elements.audioVoiceGroup.style.display = isAudio ? 'flex' : 'none';
   }
   if (elements.audioSpeedGroup) {
     elements.audioSpeedGroup.style.display = isAudio ? 'flex' : 'none';
   }
+}
+
+// Update voice list based on TTS provider
+function updateVoiceList(provider) {
+  if (!elements.audioVoice) return;
   
-  // Show/hide PDF-specific settings (page mode only for PDF)
-  elements.pageModeGroup.style.display = isPdf ? 'flex' : 'none';
+  const currentValue = elements.audioVoice.value;
+  elements.audioVoice.innerHTML = '';
   
-  // Hide style settings for non-PDF formats (find all color/font settings)
-  const styleSettings = document.querySelectorAll('[id$="Color"], [id="fontFamily"], [id="fontSize"]');
-  styleSettings.forEach(el => {
-    const settingItem = el.closest('.setting-item');
-    if (settingItem) {
-      settingItem.style.display = showStyleSettings ? 'flex' : 'none';
+  if (provider === 'elevenlabs') {
+    // ElevenLabs voices (popular voices)
+    const elevenlabsVoices = [
+      { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (female, clear)' },
+      { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi (female, strong)' },
+      { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (female, warm)' },
+      { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (male, deep)' },
+      { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli (female, young)' },
+      { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh (male, calm)' },
+      { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold (male, authoritative)' },
+      { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (male, expressive)' },
+      { id: 'yoZ06aMxZJJ28mfd3POQ', name: 'Sam (male, friendly)' }
+    ];
+    
+    elevenlabsVoices.forEach(voice => {
+      const option = document.createElement('option');
+      option.value = voice.id;
+      option.textContent = voice.name;
+      elements.audioVoice.appendChild(option);
+    });
+    
+    // Set default if current value is not valid
+    if (!elevenlabsVoices.find(v => v.id === currentValue)) {
+      elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM'; // Rachel
+    } else {
+      elements.audioVoice.value = currentValue;
     }
-  });
-  
-  // Hide reset styles button for non-PDF
-  if (elements.resetStylesBtn) {
-    elements.resetStylesBtn.style.display = showStyleSettings ? 'block' : 'none';
+  } else {
+    // OpenAI voices
+    const openaiVoices = [
+      { value: 'nova', name: 'Nova (female, warm)' },
+      { value: 'alloy', name: 'Alloy (neutral)' },
+      { value: 'echo', name: 'Echo (male)' },
+      { value: 'fable', name: 'Fable (expressive)' },
+      { value: 'onyx', name: 'Onyx (male, deep)' },
+      { value: 'shimmer', name: 'Shimmer (female, clear)' },
+      { value: 'coral', name: 'Coral (female, friendly)' },
+      { value: 'sage', name: 'Sage (neutral, calm)' },
+      { value: 'ash', name: 'Ash (male, authoritative)' },
+      { value: 'ballad', name: 'Ballad (expressive, dramatic)' },
+      { value: 'verse', name: 'Verse (rhythmic)' }
+    ];
+    
+    openaiVoices.forEach(voice => {
+      const option = document.createElement('option');
+      option.value = voice.value;
+      option.textContent = voice.name;
+      elements.audioVoice.appendChild(option);
+    });
+    
+    // Set default if current value is not valid
+    if (!openaiVoices.find(v => v.value === currentValue)) {
+      elements.audioVoice.value = 'nova';
+    } else {
+      elements.audioVoice.value = currentValue;
+    }
   }
+}
+
+// Update UI visibility based on audio provider
+function updateAudioProviderUI() {
+  if (!elements.audioProvider || !elements.elevenlabsApiKeyGroup) return;
   
-  // Hide style preset for non-PDF
-  const presetItem = elements.stylePreset?.closest('.setting-item');
-  if (presetItem) {
-    presetItem.style.display = showStyleSettings ? 'flex' : 'none';
-  }
+  const provider = elements.audioProvider.value;
+  const isElevenLabs = provider === 'elevenlabs';
   
-  // Hide divider before style settings for non-PDF
-  const dividers = document.querySelectorAll('.settings-divider');
-  if (dividers.length >= 2) {
-    dividers[1].style.display = showStyleSettings ? 'block' : 'none';
+  // Show/hide ElevenLabs-specific fields
+  elements.elevenlabsApiKeyGroup.style.display = isElevenLabs ? 'flex' : 'none';
+  if (elements.elevenlabsModelGroup) {
+    elements.elevenlabsModelGroup.style.display = isElevenLabs ? 'flex' : 'none';
   }
 }
 
@@ -1219,9 +1435,9 @@ async function saveApiKey() {
   const googleApiKey = elements.googleApiKey.value.trim();
   
   // Check if at least one main API key is provided (not masked)
-  const hasOpenAI = apiKey && !apiKey.startsWith('••••');
-  const hasClaude = claudeApiKey && !claudeApiKey.startsWith('••••');
-  const hasGemini = geminiApiKey && !geminiApiKey.startsWith('••••');
+  const hasOpenAI = apiKey && !apiKey.startsWith('****');
+  const hasClaude = claudeApiKey && !claudeApiKey.startsWith('****');
+  const hasGemini = geminiApiKey && !geminiApiKey.startsWith('****');
   
   if (!hasOpenAI && !hasClaude && !hasGemini) {
     showToast('Please enter at least one API key', 'error');
@@ -1233,9 +1449,9 @@ async function saveApiKey() {
   // Validate and save OpenAI key
   if (apiKey) {
     // If masked (user didn't change it), keep existing encrypted value
-    if (apiKey.startsWith('••••') && elements.apiKey.dataset.encrypted) {
+    if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
       keysToSave[STORAGE_KEYS.API_KEY] = elements.apiKey.dataset.encrypted;
-    } else if (!apiKey.startsWith('••••')) {
+    } else if (!apiKey.startsWith('****')) {
       // New key provided, validate and encrypt
       if (!apiKey.startsWith('sk-')) {
         showToast('Invalid OpenAI API key format (should start with sk-)', 'error');
@@ -1253,9 +1469,9 @@ async function saveApiKey() {
   
   // Validate and save Claude key
   if (claudeApiKey) {
-    if (claudeApiKey.startsWith('••••') && elements.claudeApiKey.dataset.encrypted) {
+    if (claudeApiKey.startsWith('****') && elements.claudeApiKey.dataset.encrypted) {
       keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = elements.claudeApiKey.dataset.encrypted;
-    } else if (!claudeApiKey.startsWith('••••')) {
+    } else if (!claudeApiKey.startsWith('****')) {
       if (!claudeApiKey.startsWith('sk-ant-')) {
         showToast('Invalid Claude API key format (should start with sk-ant-)', 'error');
         return;
@@ -1272,9 +1488,9 @@ async function saveApiKey() {
   
   // Validate and save Gemini key
   if (geminiApiKey) {
-    if (geminiApiKey.startsWith('••••') && elements.geminiApiKey.dataset.encrypted) {
+    if (geminiApiKey.startsWith('****') && elements.geminiApiKey.dataset.encrypted) {
       keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = elements.geminiApiKey.dataset.encrypted;
-    } else if (!geminiApiKey.startsWith('••••')) {
+    } else if (!geminiApiKey.startsWith('****')) {
       if (!geminiApiKey.startsWith('AIza')) {
         showToast('Invalid Gemini API key format (should start with AIza)', 'error');
         return;
@@ -1291,9 +1507,9 @@ async function saveApiKey() {
   
   // Save Google API key for image translation if provided
   if (googleApiKey) {
-    if (googleApiKey.startsWith('••••') && elements.googleApiKey.dataset.encrypted) {
+    if (googleApiKey.startsWith('****') && elements.googleApiKey.dataset.encrypted) {
       keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = elements.googleApiKey.dataset.encrypted;
-    } else if (!googleApiKey.startsWith('••••')) {
+    } else if (!googleApiKey.startsWith('****')) {
       if (!googleApiKey.startsWith('AIza')) {
         showToast('Invalid Google API key format (should start with AIza)', 'error');
         return;
@@ -1465,7 +1681,7 @@ async function handleSavePdf() {
   if (provider === 'openai') {
     apiKey = elements.apiKey.value.trim();
     // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('••••') && elements.apiKey.dataset.encrypted) {
+    if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
       try {
         apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
       } catch (error) {
@@ -1481,7 +1697,7 @@ async function handleSavePdf() {
   } else if (provider === 'claude') {
     apiKey = elements.claudeApiKey.value.trim();
     // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('••••') && elements.claudeApiKey.dataset.encrypted) {
+    if (apiKey.startsWith('****') && elements.claudeApiKey.dataset.encrypted) {
       try {
         apiKey = await decryptApiKey(elements.claudeApiKey.dataset.encrypted);
       } catch (error) {
@@ -1497,7 +1713,7 @@ async function handleSavePdf() {
   } else if (provider === 'gemini') {
     apiKey = elements.geminiApiKey.value.trim();
     // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('••••') && elements.geminiApiKey.dataset.encrypted) {
+    if (apiKey.startsWith('****') && elements.geminiApiKey.dataset.encrypted) {
       try {
         apiKey = await decryptApiKey(elements.geminiApiKey.dataset.encrypted);
       } catch (error) {
@@ -1542,7 +1758,7 @@ async function handleSavePdf() {
     // Get Google API key if needed
     let googleApiKey = elements.googleApiKey.value.trim();
     // If masked, decrypt the encrypted version from dataset
-    if (googleApiKey.startsWith('••••') && elements.googleApiKey.dataset.encrypted) {
+    if (googleApiKey.startsWith('****') && elements.googleApiKey.dataset.encrypted) {
       try {
         googleApiKey = await decryptApiKey(elements.googleApiKey.dataset.encrypted);
       } catch (error) {
@@ -1580,9 +1796,12 @@ async function handleSavePdf() {
         linkColor: elements.linkColor.value,
         tabId: tab.id,
         // Audio settings
+        audioProvider: elements.audioProvider?.value || 'openai',
         audioVoice: elements.audioVoice?.value || 'nova',
         audioSpeed: parseFloat(elements.audioSpeed?.value || 1.0),
-        audioFormat: 'mp3'
+        audioFormat: 'mp3',
+        elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
+        elevenlabsModel: elements.elevenlabsModel?.value || 'eleven_multilingual_v2'
       }
     });
 

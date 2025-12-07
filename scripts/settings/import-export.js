@@ -21,6 +21,8 @@ const STORAGE_KEYS_TO_EXPORT = [
   'translate_images',
   
   // Audio settings
+  'audio_provider',
+  'elevenlabs_model',
   'audio_voice',
   'audio_speed',
   
@@ -42,7 +44,8 @@ const API_KEY_NAMES = [
   'openai_api_key',
   'claude_api_key', 
   'gemini_api_key',
-  'google_api_key'
+  'google_api_key',
+  'elevenlabs_api_key'
 ];
 
 /**
@@ -60,7 +63,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
     const settings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     
     const exportData = {
-      version: '2.6.0',
+      version: '2.7.0',
       exportDate: new Date().toISOString(),
       settings: {}
     };

@@ -148,11 +148,23 @@ export async function decryptApiKey(encryptedBase64) {
 
 /**
  * Mask API key for display (shows only last 4 characters)
+ * Uses asterisks (*) for ASCII compatibility
  * @param {string} key - API key (encrypted or plain)
- * @returns {string} Masked key (e.g., "••••abcd")
+ * @returns {string} Masked key (e.g., "****abcd")
  */
 export function maskApiKey(key) {
-  if (!key || typeof key !== 'string') return '••••';
-  if (key.length <= 4) return '••••';
-  return '••••' + key.slice(-4);
+  if (!key || typeof key !== 'string') return '****';
+  if (key.length <= 4) return '****';
+  return '****' + key.slice(-4);
+}
+
+/**
+ * Check if value is a masked key (starts with mask pattern)
+ * @param {string} value - Value to check
+ * @returns {boolean} True if masked
+ */
+export function isMaskedKey(value) {
+  if (!value || typeof value !== 'string') return false;
+  // Check for both old (••••) and new (****) mask patterns
+  return value.startsWith('****') || value.startsWith('••••');
 }

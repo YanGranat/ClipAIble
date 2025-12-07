@@ -37,7 +37,7 @@ This document explains why each permission is required by ClipAIble.
 **Why needed:** To extract content from any website you visit. The extension needs to:
 1. Read the page HTML to find article content
 2. Download images embedded in articles
-3. Make API calls to AI providers (OpenAI, Google, Anthropic)
+3. Make API calls to AI providers (OpenAI, Google, Anthropic, ElevenLabs)
 
 ## Data Privacy
 

@@ -1,9 +1,33 @@
-// OpenAI Text-to-Speech API module for ClipAIble extension
+// Text-to-Speech API module for ClipAIble extension
+// Supports OpenAI and ElevenLabs providers
 
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
+import { textToSpeech as elevenlabsTTS, ELEVENLABS_CONFIG } from './elevenlabs.js';
+
+/**
+ * Convert text to speech using TTS API (OpenAI or ElevenLabs)
+ * @param {string} text - Text to convert
+ * @param {string} apiKey - API key (OpenAI or ElevenLabs)
+ * @param {Object} options - TTS options
+ * @param {string} options.provider - Provider: 'openai' or 'elevenlabs' (default: 'openai')
+ * @param {string} options.voice - Voice to use (OpenAI: voice name, ElevenLabs: voice ID)
+ * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0)
+ * @param {string} options.format - Output format (default: 'mp3')
+ * @param {string} options.instructions - Voice style instructions (OpenAI only)
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ */
+export async function textToSpeech(text, apiKey, options = {}) {
+  const { provider = 'openai' } = options;
+  
+  if (provider === 'elevenlabs') {
+    return textToSpeechElevenLabs(text, apiKey, options);
+  } else {
+    return textToSpeechOpenAI(text, apiKey, options);
+  }
+}
 
 /**
  * Convert text to speech using OpenAI TTS API
@@ -16,7 +40,7 @@ import { AUDIO_CONFIG } from '../generation/audio-prep.js';
  * @param {string} options.instructions - Voice style instructions (optional, only for gpt-4o-mini-tts)
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
-export async function textToSpeech(text, apiKey, options = {}) {
+async function textToSpeechOpenAI(text, apiKey, options = {}) {
   const {
     voice = AUDIO_CONFIG.DEFAULT_VOICE,
     speed = AUDIO_CONFIG.DEFAULT_SPEED,
@@ -151,7 +175,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
  * @param {number} maxLength - Maximum length per chunk
  * @returns {Array<string>} Array of text parts
  */
-function splitIfTooLong(text, maxLength = AUDIO_CONFIG.TTS_MAX_INPUT) {
+function splitIfTooLong(text, maxLength) {
   if (text.length <= maxLength) {
     return [text];
   }
@@ -189,10 +213,32 @@ function splitIfTooLong(text, maxLength = AUDIO_CONFIG.TTS_MAX_INPUT) {
 }
 
 /**
+ * Convert text to speech using ElevenLabs TTS API
+ * @param {string} text - Text to convert (max 5000 characters)
+ * @param {string} apiKey - ElevenLabs API key
+ * @param {Object} options - TTS options
+ * @param {string} options.voice - Voice ID to use (default: Rachel)
+ * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0)
+ * @param {string} options.format - Output format (default: 'mp3_44100_128')
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ */
+async function textToSpeechElevenLabs(text, apiKey, options = {}) {
+  const {
+    voice = ELEVENLABS_CONFIG.DEFAULT_VOICE_ID,
+    speed = ELEVENLABS_CONFIG.DEFAULT_SPEED,
+    format = ELEVENLABS_CONFIG.DEFAULT_FORMAT,
+    elevenlabsModel = ELEVENLABS_CONFIG.DEFAULT_MODEL
+  } = options;
+  
+  return elevenlabsTTS(text, apiKey, { voiceId: voice, speed, format, modelId: elevenlabsModel });
+}
+
+/**
  * Convert multiple text chunks to speech and concatenate
  * @param {Array<{text: string, index: number}>} chunks - Prepared text chunks
- * @param {string} apiKey - OpenAI API key
+ * @param {string} apiKey - API key (OpenAI or ElevenLabs)
  * @param {Object} options - TTS options
+ * @param {string} options.provider - Provider: 'openai' or 'elevenlabs' (default: 'openai')
  * @param {Function} updateState - State update callback
  * @returns {Promise<ArrayBuffer>} Concatenated audio data
  */
@@ -201,10 +247,13 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     throw new Error('No chunks provided for TTS');
   }
   
+  const provider = options.provider || 'openai';
+  const maxInput = provider === 'elevenlabs' ? ELEVENLABS_CONFIG.MAX_INPUT : AUDIO_CONFIG.TTS_MAX_INPUT;
+  
   // Expand chunks that exceed TTS limit
   const expandedChunks = [];
   for (const chunk of chunks) {
-    const parts = splitIfTooLong(chunk.text);
+    const parts = splitIfTooLong(chunk.text, maxInput);
     for (let i = 0; i < parts.length; i++) {
       expandedChunks.push({
         text: parts[i],
@@ -293,10 +342,20 @@ function concatenateAudioBuffers(buffers) {
 
 /**
  * Get MIME type for audio format
- * @param {string} format - Audio format (mp3, opus, aac, flac, wav, pcm)
+ * @param {string} format - Audio format (mp3, opus, aac, flac, wav, pcm, or ElevenLabs format)
  * @returns {string} MIME type
  */
 export function getAudioMimeType(format) {
+  // Handle ElevenLabs formats
+  if (format.startsWith('mp3')) {
+    return 'audio/mpeg';
+  } else if (format.startsWith('pcm')) {
+    return 'audio/pcm';
+  } else if (format.startsWith('ulaw')) {
+    return 'audio/basic';
+  }
+  
+  // OpenAI formats
   const mimeTypes = {
     'mp3': 'audio/mpeg',
     'opus': 'audio/opus',
@@ -314,6 +373,16 @@ export function getAudioMimeType(format) {
  * @returns {string} File extension
  */
 export function getAudioExtension(format) {
+  // Handle ElevenLabs formats
+  if (format.startsWith('mp3')) {
+    return 'mp3';
+  } else if (format.startsWith('pcm')) {
+    return 'pcm';
+  } else if (format.startsWith('ulaw')) {
+    return 'ulaw';
+  }
+  
+  // OpenAI formats
   const extensions = {
     'mp3': 'mp3',
     'opus': 'opus',

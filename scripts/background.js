@@ -571,15 +571,42 @@ async function startArticleProcessing(data) {
         }, updateState);
       } else if (outputFormat === 'audio') {
         updateState({ status: 'Generating audio...', progress: 65 });
+        
+        // Get TTS API key based on provider
+        const ttsProvider = data.audioProvider || 'openai';
+        let ttsApiKey = data.apiKey; // Default to main API key (OpenAI)
+        
+        if (ttsProvider === 'elevenlabs') {
+          // Decrypt ElevenLabs API key if provided
+          if (data.elevenlabsApiKey) {
+            try {
+              ttsApiKey = await decryptApiKey(data.elevenlabsApiKey);
+              log('ElevenLabs API key decrypted', { 
+                keyLength: ttsApiKey?.length,
+                isAscii: /^[\x00-\x7F]*$/.test(ttsApiKey || ''),
+                prefix: ttsApiKey?.substring(0, 3) + '...'
+              });
+            } catch (error) {
+              logError('Failed to decrypt ElevenLabs API key', error);
+              throw new Error('Invalid ElevenLabs API key. Please check your settings.');
+            }
+          } else {
+            throw new Error('ElevenLabs API key is required. Please add it in settings.');
+          }
+        }
+        
         return generateAudio({
           content: result.content,
           title: result.title,
-          apiKey: data.apiKey,
+          apiKey: data.apiKey, // For text preparation
+          ttsApiKey: ttsApiKey, // For TTS conversion
           model: data.model,
+          provider: ttsProvider,
           voice: data.audioVoice || 'nova',
           speed: data.audioSpeed || 1.0,
           format: data.audioFormat || 'mp3',
-          language: effectiveLanguage
+          language: effectiveLanguage,
+          elevenlabsModel: data.elevenlabsModel || 'eleven_multilingual_v2'
         }, updateState);
       } else {
         updateState({ status: 'Generating PDF...', progress: 65 });

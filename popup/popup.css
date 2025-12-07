@@ -919,9 +919,36 @@ body[data-theme="light"] .btn-reset:hover {
 }
 
 .btn-small {
-  flex: 1;
   padding: 8px 12px;
   font-size: 12px;
+}
+
+/* Save button in input group */
+.input-group .btn-small {
+  flex: none;
+  background: var(--accent-primary, #4f8cff);
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.input-group .btn-small:hover {
+  background: #3d7aed;
+  transform: translateY(-1px);
+}
+
+.input-group .btn-small:active {
+  transform: translateY(0);
+}
+
+body[data-theme="light"] .input-group .btn-small {
+  background: var(--accent-primary);
+}
+
+body[data-theme="light"] .input-group .btn-small:hover {
+  background: var(--accent-hover);
 }
 
 /* ========================================

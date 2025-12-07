@@ -25,11 +25,13 @@ const LANGUAGE_TTS_INSTRUCTIONS = {
  * @param {Object} params - Generation parameters
  * @param {Array} params.content - Content items from extraction
  * @param {string} params.title - Article title
- * @param {string} params.apiKey - OpenAI API key
+ * @param {string} params.apiKey - API key for text preparation (OpenAI/Claude/Gemini)
+ * @param {string} params.ttsApiKey - API key for TTS (OpenAI or ElevenLabs)
  * @param {string} params.model - Model for text preparation (e.g., 'gpt-5.1')
- * @param {string} params.voice - TTS voice (default: 'nova')
+ * @param {string} params.provider - TTS provider: 'openai' or 'elevenlabs' (default: 'openai')
+ * @param {string} params.voice - TTS voice (OpenAI: voice name, ElevenLabs: voice ID)
  * @param {number} params.speed - TTS speed 0.25-4.0 (default: 1.0)
- * @param {string} params.format - Audio format: mp3, opus, aac, flac (default: 'mp3')
+ * @param {string} params.format - Audio format (default: 'mp3')
  * @param {string} params.language - Target language for TTS pronunciation (default: 'auto')
  * @param {Function} updateState - State update callback
  * @returns {Promise<void>} Triggers download when complete
@@ -39,11 +41,14 @@ export async function generateAudio(params, updateState) {
     content,
     title,
     apiKey,
+    ttsApiKey,
     model,
+    provider = 'openai',
     voice = AUDIO_CONFIG.DEFAULT_VOICE,
     speed = AUDIO_CONFIG.DEFAULT_SPEED,
     format = 'mp3',
-    language = 'auto'
+    language = 'auto',
+    elevenlabsModel = 'eleven_multilingual_v2'
   } = params;
   
   // Generate TTS instructions based on language
@@ -53,10 +58,12 @@ export async function generateAudio(params, updateState) {
     title, 
     contentItems: content?.length,
     model,
+    provider,
     voice,
     speed,
     format,
     language,
+    elevenlabsModel: provider === 'elevenlabs' ? elevenlabsModel : undefined,
     hasInstructions: !!instructions
   });
   
@@ -65,7 +72,11 @@ export async function generateAudio(params, updateState) {
   }
   
   if (!apiKey) {
-    throw new Error('No API key provided');
+    throw new Error('No API key provided for text preparation');
+  }
+  
+  if (!ttsApiKey) {
+    throw new Error(`No ${provider} API key provided for TTS`);
   }
   
   // Step 1: Prepare content for audio (using main model like GPT-5.1)
@@ -92,16 +103,16 @@ export async function generateAudio(params, updateState) {
     totalCharacters: preparedChunks.reduce((sum, c) => sum + c.text.length, 0)
   });
   
-  // Step 2: Convert chunks to speech (using gpt-4o-mini-tts)
+  // Step 2: Convert chunks to speech (using selected TTS provider)
   updateState?.({ 
-    status: 'Converting to speech...', 
+    status: `Converting to speech using ${provider === 'elevenlabs' ? 'ElevenLabs' : 'OpenAI'}...`, 
     progress: 60 
   });
   
   const audioBuffer = await chunksToSpeech(
     preparedChunks,
-    apiKey,
-    { voice, speed, format, instructions },
+    ttsApiKey,
+    { provider, voice, speed, format, instructions, elevenlabsModel },
     updateState
   );
   

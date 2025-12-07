@@ -231,9 +231,43 @@
           </select>
         </div>
         <!-- Audio Settings (Hidden by default) -->
+        <div class="setting-item" id="audioProviderGroup" style="display: none;">
+          <label for="audioProvider">TTS Provider</label>
+          <select id="audioProvider">
+            <option value="openai">OpenAI TTS</option>
+            <option value="elevenlabs">ElevenLabs</option>
+          </select>
+          <p class="setting-hint">Choose text-to-speech provider</p>
+        </div>
+        <div class="setting-item" id="elevenlabsApiKeyGroup" style="display: none;">
+          <label for="elevenlabsApiKey">ElevenLabs API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="elevenlabsApiKey" 
+              placeholder="Enter ElevenLabs API key"
+              autocomplete="off"
+            >
+            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+            <button type="button" id="saveElevenlabsApiKey" class="btn btn-small">Save</button>
+          </div>
+          <p class="setting-hint">Get your API key from <a href="https://elevenlabs.io" target="_blank">elevenlabs.io</a></p>
+        </div>
+        <div class="setting-item" id="elevenlabsModelGroup" style="display: none;">
+          <label for="elevenlabsModel">ElevenLabs Model</label>
+          <select id="elevenlabsModel">
+            <option value="eleven_multilingual_v2">Multilingual v2 (stable, natural)</option>
+            <option value="eleven_v3">v3 (most expressive)</option>
+            <option value="eleven_turbo_v2_5">Turbo v2.5 (fast)</option>
+          </select>
+          <p class="setting-hint">v3 is most expressive, Turbo is fastest</p>
+        </div>
         <div class="setting-item" id="audioVoiceGroup" style="display: none;">
           <label for="audioVoice">Voice</label>
           <select id="audioVoice">
+            <!-- OpenAI voices (default) -->
             <option value="nova">Nova (female, warm)</option>
             <option value="alloy">Alloy (neutral)</option>
             <option value="echo">Echo (male)</option>

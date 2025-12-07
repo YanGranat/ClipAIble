@@ -2,7 +2,7 @@
 
 > **AI-Powered Article Extractor** — Clip any article from the web and save it as PDF, EPUB, FB2, Markdown, or Audio. Translate to 11 languages. Works on any website.
 
-![Version](https://img.shields.io/badge/version-2.6.0-blue)
+![Version](https://img.shields.io/badge/version-2.7.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -31,7 +31,8 @@ All formats support **translation to 11 languages** — even translating text on
 - **Preserves structure**: Headings, images, code blocks, tables, footnotes
 
 ### 🎧 Audio Export
-- **11 natural voices** via OpenAI TTS
+- **2 TTS providers**: OpenAI TTS and ElevenLabs
+- **20+ voices**: 11 OpenAI voices + 9 ElevenLabs voices
 - **Speed control**: 0.5x to 2.0x
 - **Multi-language pronunciation**: Correct accent for each language
 - **Smart text cleanup**: AI removes URLs, code, and non-speech content
@@ -57,7 +58,7 @@ All formats support **translation to 11 languages** — even translating text on
 - **Cancel anytime**: Stop processing with one click
 
 ### 🔒 Security
-- **API keys encrypted** with AES-256-GCM
+- **API keys encrypted** with AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs)
 - **Keys never exported** — excluded from settings backup
 - **All data local** — nothing sent to third parties
 
