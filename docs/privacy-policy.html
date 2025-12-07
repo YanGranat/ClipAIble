@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy - ClipAIble</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2563eb;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .last-updated {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        h2 {
+            color: #1f2937;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+        }
+        
+        h2:first-of-type {
+            border-top: none;
+            padding-top: 0;
+        }
+        
+        p {
+            margin-bottom: 15px;
+            color: #4b5563;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        
+        tr:hover {
+            background: #f9fafb;
+        }
+        
+        ul {
+            margin: 15px 0;
+            padding-left: 25px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+            color: #4b5563;
+        }
+        
+        .check {
+            color: #10b981;
+            font-weight: bold;
+        }
+        
+        .cross {
+            color: #ef4444;
+            font-weight: bold;
+        }
+        
+        .summary {
+            background: #eff6ff;
+            border-left: 4px solid #2563eb;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 4px;
+        }
+        
+        .summary p {
+            margin: 0;
+            color: #1e40af;
+            font-weight: 500;
+        }
+        
+        a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+        
+        a:hover {
+            text-decoration: underline;
+        }
+        
+        code {
+            background: #f3f4f6;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Privacy Policy for ClipAIble</h1>
+        <p class="last-updated"><strong>Last updated:</strong> December 2025</p>
+        
+        <h2>Overview</h2>
+        <p>ClipAIble is a browser extension that extracts articles from web pages and saves them in various formats. This privacy policy explains what data we collect and how we handle it.</p>
+        
+        <h2>Data Collection</h2>
+        <p><strong>ClipAIble does NOT collect any personal data.</strong> All data is stored locally in your browser using Chrome's storage API.</p>
+        
+        <h2>What We Store Locally</h2>
+        <p>The following data is stored <strong>only on your device</strong>:</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Data</th>
+                    <th>Purpose</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>API keys</td>
+                    <td>Encrypted with AES-256-GCM, used to call AI providers</td>
+                </tr>
+                <tr>
+                    <td>Settings</td>
+                    <td>Your preferences (theme, fonts, colors, language)</td>
+                </tr>
+                <tr>
+                    <td>Statistics</td>
+                    <td>Save counts and history (for your reference)</td>
+                </tr>
+                <tr>
+                    <td>Selector cache</td>
+                    <td>Cached CSS selectors for faster repeat extractions</td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <h2>What We DO NOT Do</h2>
+        <ul>
+            <li><span class="cross">❌</span> We do NOT send any data to our servers (we don't have any)</li>
+            <li><span class="cross">❌</span> We do NOT track your browsing history</li>
+            <li><span class="cross">❌</span> We do NOT collect analytics or telemetry</li>
+            <li><span class="cross">❌</span> We do NOT share any data with third parties</li>
+            <li><span class="cross">❌</span> We do NOT store your article content</li>
+        </ul>
+        
+        <h2>Third-Party Services</h2>
+        <p>When you use ClipAIble, article content is sent <strong>only</strong> to the AI provider YOU configure:</p>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>Provider</th>
+                    <th>When Used</th>
+                    <th>Their Privacy Policy</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>OpenAI</td>
+                    <td>If you use GPT models or OpenAI TTS</td>
+                    <td><a href="https://openai.com/privacy" target="_blank">openai.com/privacy</a></td>
+                </tr>
+                <tr>
+                    <td>Google</td>
+                    <td>If you use Gemini models</td>
+                    <td><a href="https://policies.google.com/privacy" target="_blank">policies.google.com</a></td>
+                </tr>
+                <tr>
+                    <td>Anthropic</td>
+                    <td>If you use Claude models</td>
+                    <td><a href="https://www.anthropic.com/privacy" target="_blank">anthropic.com/privacy</a></td>
+                </tr>
+                <tr>
+                    <td>ElevenLabs</td>
+                    <td>If you use ElevenLabs TTS</td>
+                    <td><a href="https://elevenlabs.io/privacy" target="_blank">elevenlabs.io/privacy</a></td>
+                </tr>
+            </tbody>
+        </table>
+        
+        <p><strong>You control which provider receives your data</strong> by choosing which API key to use.</p>
+        
+        <h2>API Key Security</h2>
+        <p>Your API keys are protected:</p>
+        <ul>
+            <li><span class="check">✅</span> Encrypted using AES-256-GCM before storage</li>
+            <li><span class="check">✅</span> Encryption key derived using PBKDF2 (100,000 iterations)</li>
+            <li><span class="check">✅</span> Never included in settings exports</li>
+            <li><span class="check">✅</span> Never transmitted except to the AI provider you configured</li>
+            <li><span class="check">✅</span> Can only be decrypted within your browser instance</li>
+        </ul>
+        
+        <h2>Data Retention</h2>
+        <ul>
+            <li>All data remains on your device until you clear it</li>
+            <li>Uninstalling the extension removes all stored data</li>
+            <li>You can clear statistics and cache anytime from the Stats panel</li>
+        </ul>
+        
+        <h2>Children's Privacy</h2>
+        <p>ClipAIble is not directed at children under 13. We do not knowingly collect any information from children.</p>
+        
+        <h2>Changes to This Policy</h2>
+        <p>We may update this privacy policy occasionally. Changes will be reflected in the "Last updated" date.</p>
+        
+        <h2>Open Source</h2>
+        <p>ClipAIble is open source. You can review the code to verify our privacy practices in this <a href="https://github.com/YanGranat/ClipAIble" target="_blank">repository</a>.</p>
+        
+        <h2>Contact</h2>
+        <p>For questions about this privacy policy, please open an issue on <a href="https://github.com/YanGranat/ClipAIble/issues" target="_blank">GitHub</a>.</p>
+        
+        <div class="summary">
+            <p><strong>Summary:</strong> ClipAIble stores everything locally, encrypts your API keys, and only sends article content to the AI provider you choose. We have no servers and collect no data.</p>
+        </div>
+    </div>
+</body>
+</html>
+
