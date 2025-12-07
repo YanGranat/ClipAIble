@@ -1472,8 +1472,22 @@ async function updateOutputFormatUI() {
     elements.audioProviderGroup.style.display = isAudio ? 'flex' : 'none';
   }
   if (elements.elevenlabsApiKeyGroup) {
-    elements.elevenlabsApiKeyGroup.style.display = isAudio ? 'flex' : 'none';
-    updateAudioProviderUI();
+    // Hide ElevenLabs API key group if not audio format
+    if (!isAudio) {
+      elements.elevenlabsApiKeyGroup.style.display = 'none';
+    } else {
+      // Only update provider UI if audio format is selected
+      updateAudioProviderUI();
+    }
+  }
+  if (elements.elevenlabsModelGroup) {
+    // Hide ElevenLabs model group if not audio format
+    if (!isAudio) {
+      elements.elevenlabsModelGroup.style.display = 'none';
+    } else {
+      // Update provider UI will handle showing/hiding based on provider
+      updateAudioProviderUI();
+    }
   }
   if (elements.audioVoiceGroup) {
     elements.audioVoiceGroup.style.display = isAudio ? 'flex' : 'none';
@@ -1553,10 +1567,21 @@ function updateVoiceList(provider) {
 function updateAudioProviderUI() {
   if (!elements.audioProvider || !elements.elevenlabsApiKeyGroup) return;
   
+  // Only show ElevenLabs fields if audio format is selected
+  const format = elements.outputFormat?.value;
+  if (format !== 'audio') {
+    // If not audio format, hide all ElevenLabs fields
+    elements.elevenlabsApiKeyGroup.style.display = 'none';
+    if (elements.elevenlabsModelGroup) {
+      elements.elevenlabsModelGroup.style.display = 'none';
+    }
+    return;
+  }
+  
   const provider = elements.audioProvider.value;
   const isElevenLabs = provider === 'elevenlabs';
   
-  // Show/hide ElevenLabs-specific fields
+  // Show/hide ElevenLabs-specific fields only when audio format is selected
   elements.elevenlabsApiKeyGroup.style.display = isElevenLabs ? 'flex' : 'none';
   if (elements.elevenlabsModelGroup) {
     elements.elevenlabsModelGroup.style.display = isElevenLabs ? 'flex' : 'none';
@@ -1961,7 +1986,7 @@ async function handleSavePdf() {
         audioSpeed: parseFloat(elements.audioSpeed?.value || 1.0),
         audioFormat: 'mp3',
         elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
-        elevenlabsModel: elements.elevenlabsModel?.value || 'eleven_multilingual_v2'
+        elevenlabsModel: elements.elevenlabsModel?.value || 'eleven_v3'
       }
     });
 

@@ -11,8 +11,8 @@ export const ELEVENLABS_CONFIG = {
   // API endpoint
   API_URL: 'https://api.elevenlabs.io/v1/text-to-speech',
   
-  // Default model (eleven_multilingual_v2 supports 29 languages)
-  DEFAULT_MODEL: 'eleven_multilingual_v2',
+  // Default model (eleven_v3 is most expressive, supports 70+ languages)
+  DEFAULT_MODEL: 'eleven_v3',
   
   // Available models
   MODELS: [

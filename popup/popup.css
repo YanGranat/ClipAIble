@@ -542,8 +542,27 @@ body[data-theme="light"] .setting-item select option:hover {
   line-height: 1.3;
 }
 
+.setting-hint a {
+  color: #888;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.setting-hint a:hover {
+  color: #aaa;
+  text-decoration: underline;
+}
+
 body[data-theme="light"] .setting-hint {
   color: var(--text-muted);
+}
+
+body[data-theme="light"] .setting-hint a {
+  color: #6b7280;
+}
+
+body[data-theme="light"] .setting-hint a:hover {
+  color: #4b5563;
 }
 
 /* Checkbox styling */

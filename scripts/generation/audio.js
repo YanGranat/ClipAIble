@@ -48,7 +48,7 @@ export async function generateAudio(params, updateState) {
     speed = AUDIO_CONFIG.DEFAULT_SPEED,
     format = 'mp3',
     language = 'auto',
-    elevenlabsModel = 'eleven_multilingual_v2'
+    elevenlabsModel = 'eleven_v3'
   } = params;
   
   // Generate TTS instructions based on language

@@ -606,7 +606,7 @@ async function startArticleProcessing(data) {
           speed: data.audioSpeed || 1.0,
           format: data.audioFormat || 'mp3',
           language: effectiveLanguage,
-          elevenlabsModel: data.elevenlabsModel || 'eleven_multilingual_v2'
+          elevenlabsModel: data.elevenlabsModel || 'eleven_v3'
         }, updateState);
       } else {
         updateState({ status: 'Generating PDF...', progress: 65 });
