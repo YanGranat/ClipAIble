@@ -1,4 +1,4 @@
-// Statistics module for Webpage to PDF extension
+// Statistics module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';
 

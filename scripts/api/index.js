@@ -1,4 +1,4 @@
-// API router for Webpage to PDF extension
+// API router for ClipAIble extension
 
 import { log } from '../utils/logging.js';
 import { decryptApiKey } from '../utils/encryption.js';

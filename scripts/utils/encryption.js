@@ -18,7 +18,7 @@ async function getEncryptionKey() {
 
   try {
     // Use extension runtime ID as base material
-    const runtimeId = chrome.runtime.id || 'webpage-to-pdf-default';
+    const runtimeId = chrome.runtime.id || 'clipaible-default';
     const keyMaterial = await crypto.subtle.importKey(
       'raw',
       new TextEncoder().encode(runtimeId),
@@ -31,7 +31,7 @@ async function getEncryptionKey() {
     const key = await crypto.subtle.deriveKey(
       {
         name: 'PBKDF2',
-        salt: new TextEncoder().encode('webpage-to-pdf-salt-v1'),
+        salt: new TextEncoder().encode('clipaible-salt-v1'),
         iterations: 100000,
         hash: 'SHA-256'
       },

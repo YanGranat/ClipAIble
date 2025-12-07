@@ -7,6 +7,11 @@ const STORAGE_KEY = 'selector_cache';
 const MAX_CACHED_DOMAINS = 100;
 const MIN_SUCCESS_FOR_TRUST = 2; // Need at least 2 successes before fully trusting cache
 
+// NOTE: Cache has NO TTL (time-to-live) - this is intentional!
+// Selectors invalidate on extraction failure via invalidateCache().
+// If selectors work, there's no reason to expire them.
+// User can clear cache manually if needed. See systemPatterns.md.
+
 /**
  * Extract domain from URL
  * @param {string} url 
@@ -48,11 +53,29 @@ async function saveCache(cache) {
 }
 
 /**
+ * Check if caching is enabled
+ * @returns {Promise<boolean>}
+ */
+async function isCachingEnabled() {
+  try {
+    const result = await chrome.storage.local.get(['use_selector_cache']);
+    return result.use_selector_cache !== false; // Default: true
+  } catch {
+    return true; // Default: enabled if error
+  }
+}
+
+/**
  * Get cached selectors for a URL
  * @param {string} url - Page URL
  * @returns {Promise<Object|null>} Cached selectors or null
  */
 export async function getCachedSelectors(url) {
+  // Check if caching is enabled
+  if (!(await isCachingEnabled())) {
+    return null;
+  }
+  
   const domain = extractDomain(url);
   if (!domain) return null;
   
@@ -92,6 +115,12 @@ export async function getCachedSelectors(url) {
  * @param {Object} selectors - Selectors object from AI
  */
 export async function cacheSelectors(url, selectors) {
+  // Check if caching is enabled
+  if (!(await isCachingEnabled())) {
+    log('Caching disabled, skipping cache save');
+    return;
+  }
+  
   const domain = extractDomain(url);
   if (!domain || !selectors) return;
   
@@ -145,6 +174,11 @@ export async function cacheSelectors(url, selectors) {
  * @param {string} url - Page URL
  */
 export async function markCacheSuccess(url) {
+  // Check if caching is enabled
+  if (!(await isCachingEnabled())) {
+    return;
+  }
+  
   const domain = extractDomain(url);
   if (!domain) return;
   

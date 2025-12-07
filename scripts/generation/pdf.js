@@ -1,4 +1,4 @@
-// PDF generation module for Webpage to PDF extension
+// PDF generation module for ClipAIble extension
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { escapeAttr } from '../utils/html.js';

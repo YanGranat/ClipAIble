@@ -1,4 +1,4 @@
-// Claude API module for Webpage to PDF extension
+// Claude API module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';

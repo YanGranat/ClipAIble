@@ -1,4 +1,4 @@
-// Configuration constants for Webpage to PDF extension
+// Configuration constants for ClipAIble extension
 
 export const CONFIG = {
   // Content processing
@@ -164,33 +164,8 @@ export const PDF_LOCALIZATION = {
 // Special marker that AI returns when text is already in target language
 export const NO_TRANSLATION_MARKER = '[NO_TRANSLATION_NEEDED]';
 
-// Style presets for PDF
-export const STYLE_PRESETS = {
-  dark: {
-    bgColor: '#303030',
-    textColor: '#b9b9b9',
-    headingColor: '#cfcfcf',
-    linkColor: '#6cacff'
-  },
-  light: {
-    bgColor: '#f8f9fa',
-    textColor: '#212529',
-    headingColor: '#1a1a2e',
-    linkColor: '#0066cc'
-  },
-  sepia: {
-    bgColor: '#faf4e8',
-    textColor: '#5b4636',
-    headingColor: '#3d2914',
-    linkColor: '#8b4513'
-  },
-  contrast: {
-    bgColor: '#000000',
-    textColor: '#ffffff',
-    headingColor: '#ffd700',
-    linkColor: '#00ffff'
-  }
-};
+// Note: STYLE_PRESETS are defined in popup/popup.js (UI layer)
+// They are not needed in config.js as PDF generation uses colors passed from popup
 
 /**
  * Get locale string from language code

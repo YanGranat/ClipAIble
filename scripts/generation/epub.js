@@ -1,4 +1,4 @@
-// EPUB generation module for Webpage to PDF extension
+// EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
 
 import { log, logError } from '../utils/logging.js';
@@ -68,7 +68,7 @@ export async function generateEpub(data, updateState) {
   zip.file('OEBPS/content.xhtml', contentXhtml);
   
   // 6. Generate TOC navigation
-  const navXhtml = generateNavXhtml(safeTitle, headings, generateToc);
+  const navXhtml = generateNavXhtml(safeTitle, headings, generateToc, langCode);
   zip.file('OEBPS/nav.xhtml', navXhtml);
   
   // 7. Generate NCX for EPUB 2 compatibility
@@ -192,13 +192,15 @@ function addImagesToOpf(opf, imageManifest) {
 /**
  * Generate navigation document (EPUB 3)
  */
-function generateNavXhtml(title, headings, generateToc) {
+function generateNavXhtml(title, headings, generateToc, language = 'en') {
   const escapedTitle = escapeXml(title);
+  const l10n = PDF_LOCALIZATION[language] || PDF_LOCALIZATION['en'];
+  const contentsLabel = l10n.contents || 'Contents';
   
   let tocHtml = '';
   if (generateToc && headings.length > 0) {
     tocHtml = `    <nav epub:type="toc" id="toc">
-      <h2>Contents</h2>
+      <h2>${escapeXml(contentsLabel)}</h2>
       <ol>
 ${headings.map(h => {
   const indent = '        '.repeat(h.level - 1);
@@ -208,7 +210,7 @@ ${headings.map(h => {
     </nav>`;
   } else {
     tocHtml = `    <nav epub:type="toc" id="toc">
-      <h2>Contents</h2>
+      <h2>${escapeXml(contentsLabel)}</h2>
       <ol>
         <li><a href="content.xhtml">${escapedTitle}</a></li>
       </ol>

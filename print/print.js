@@ -1,6 +1,6 @@
 // Print page script - prepares content and signals background for PDF generation
 
-const LOG_PREFIX = '[WebpageToPDF:Print]';
+const LOG_PREFIX = '[ClipAIble:Print]';
 
 function log(message) {
   console.log(`${LOG_PREFIX} ${message}`);
@@ -20,6 +20,8 @@ function cleanTitle(title) {
 }
 
 async function init() {
+  // NOTE: setTimeout delays below (200ms, 300ms) are render/reflow waits.
+  // They are NOT magic numbers to extract - contextually clear, used once.
   log('=== INIT START ===');
   
   // Import storage utilities

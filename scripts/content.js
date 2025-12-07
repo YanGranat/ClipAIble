@@ -1,4 +1,4 @@
-// Content script for Webpage to PDF extension
+// Content script for ClipAIble extension
 // This script is injected into web pages to extract content
 
 (function() {

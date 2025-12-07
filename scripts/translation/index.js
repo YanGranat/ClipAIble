@@ -1,4 +1,4 @@
-// Translation module for Webpage to PDF extension
+// Translation module for ClipAIble extension
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG, LANGUAGE_NAMES, NO_TRANSLATION_MARKER } from '../utils/config.js';
@@ -331,6 +331,9 @@ Rules:
         return processTranslationResult(translations, texts);
       }
       
+      // Count mismatch - graceful degradation, NOT a bug!
+      // processTranslationResult will return original text when translated is null.
+      // User gets partial translation rather than error. See systemPatterns.md.
       logWarn('Translation count mismatch', { expected: texts.length, got: translations.length });
       const paddedTranslations = [];
       for (let i = 0; i < texts.length; i++) {
@@ -1048,12 +1051,12 @@ Example outputs: ru, en, uk, de`;
         const result = await response.json();
         langCode = result.choices?.[0]?.message?.content?.trim().toLowerCase();
       }
-    } else if (provider === 'anthropic') {
+    } else if (provider === 'claude') {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': decryptedApiKey,
+          'X-Api-Key': decryptedApiKey,
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true'
         },
@@ -1069,7 +1072,7 @@ Example outputs: ru, en, uk, de`;
         const result = await response.json();
         langCode = result.content?.[0]?.text?.trim().toLowerCase();
       }
-    } else if (provider === 'google') {
+    } else if (provider === 'gemini') {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${decryptedApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

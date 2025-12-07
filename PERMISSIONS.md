@@ -1,6 +1,6 @@
 # Extension Permissions Explained
 
-This document explains why each permission is required by the Webpage to PDF extension.
+This document explains why each permission is required by ClipAIble.
 
 ## Permissions
 

@@ -1,6 +1,6 @@
-// Logging utility for Webpage to PDF extension
+// Logging utility for ClipAIble extension
 
-const LOG_PREFIX = '[WebpageToPDF]';
+const LOG_PREFIX = '[ClipAIble]';
 
 /**
  * Log info message with timestamp

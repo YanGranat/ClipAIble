@@ -943,9 +943,9 @@ body[data-theme="light"] .stats-panel {
 }
 
 .stats-panel.open {
-  max-height: 500px;
+  max-height: none;
   opacity: 1;
-  overflow-y: auto;
+  overflow: visible;
   padding-top: 12px;
   padding-bottom: 12px;
 }
@@ -1417,25 +1417,21 @@ body[data-theme="light"] .btn-reset-small:hover {
   margin-bottom: 0;
 }
 
-/* Stats Panel Scrollbar */
-.stats-panel::-webkit-scrollbar,
+/* Stats History Scrollbar */
 .stats-history::-webkit-scrollbar {
   width: 4px;
 }
 
-.stats-panel::-webkit-scrollbar-track,
 .stats-history::-webkit-scrollbar-track {
   background: rgba(0, 0, 0, 0.2);
   border-radius: 2px;
 }
 
-.stats-panel::-webkit-scrollbar-thumb,
 .stats-history::-webkit-scrollbar-thumb {
   background: rgba(79, 140, 255, 0.3);
   border-radius: 2px;
 }
 
-.stats-panel::-webkit-scrollbar-thumb:hover,
 .stats-history::-webkit-scrollbar-thumb:hover {
   background: rgba(79, 140, 255, 0.5);
 }

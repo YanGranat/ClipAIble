@@ -212,7 +212,7 @@ export async function importSettings(jsonData, options = {}) {
  * @param {string} jsonData - JSON string
  * @param {string} filename - Filename
  */
-export function downloadSettings(jsonData, filename = 'webpage-to-pdf-settings.json') {
+export function downloadSettings(jsonData, filename = 'clipaible-settings.json') {
   const blob = new Blob([jsonData], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

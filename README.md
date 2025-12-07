@@ -1,6 +1,6 @@
-# 📄 Webpage to PDF
+# ✂️ ClipAIble
 
-> **AI-Powered Article Extractor** — Save web articles as PDF, EPUB, FB2, Markdown, or Audio (MP3) with optional translation to 11 languages.
+> **AI-Powered Article Extractor** — Clip any article from the web and save it as PDF, EPUB, FB2, Markdown, or Audio. Translate to 11 languages. Works on any website.
 
 ![Version](https://img.shields.io/badge/version-2.6.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
@@ -8,327 +8,277 @@
 
 ---
 
-## ✨ Features
+## ✨ What is ClipAIble?
+
+ClipAIble uses AI to intelligently extract article content from any webpage — removing ads, navigation, popups, and clutter. Then it exports to your preferred format:
+
+- 📄 **PDF** — Beautiful, customizable styling
+- 📚 **EPUB** — For Kindle, Kobo, Apple Books
+- 📖 **FB2** — For PocketBook, FBReader
+- 📝 **Markdown** — Plain text for notes
+- 🎧 **Audio (MP3)** — Listen with AI narration
+
+All formats support **translation to 11 languages** — even translating text on images!
+
+---
+
+## 🚀 Features
 
 ### 🤖 AI-Powered Extraction
-- **Two extraction modes**: AI Selector (fast, reusable) and AI Extract (thorough, for complex pages)
-- **Multi-provider support**: OpenAI GPT, Google Gemini, Anthropic Claude
-- **Smart content detection**: Automatically finds article body, removes ads, navigation, comments
-- **Internal links preserved**: Footnotes, references, and anchor links work in output
+- **Two modes**: AI Selector (fast, reusable) and AI Extract (thorough)
+- **Multi-provider**: OpenAI GPT, Google Gemini, Anthropic Claude
+- **Smart detection**: Finds article body, removes junk automatically
+- **Preserves structure**: Headings, images, code blocks, tables, footnotes
 
-### 📚 Multiple Export Formats
-
-| Format | Best For | Features |
-|--------|----------|----------|
-| **PDF** | Archiving, printing | Full styling, themes, fonts, colors |
-| **EPUB** | E-readers (Kindle, Kobo) | Embedded images, metadata |
-| **FB2** | E-readers (PocketBook) | Russian e-reader standard |
-| **Markdown** | Notes, editing | Clean plain text with formatting |
-| **Audio (MP3)** | Listening on the go | AI narration with 11 voices |
-
-### 🎧 Audio Export (Text-to-Speech)
-- **OpenAI TTS** via `gpt-4o-mini-tts` model
-- **11 natural voices**: nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
+### 🎧 Audio Export
+- **11 natural voices** via OpenAI TTS
 - **Speed control**: 0.5x to 2.0x
-- **Smart text preparation**: AI cleans content for natural narration (removes code, URLs, etc.)
-- **Multi-language pronunciation**: Correct accent for 11 languages
+- **Multi-language pronunciation**: Correct accent for each language
+- **Smart text cleanup**: AI removes URLs, code, and non-speech content
 
 ### 🌍 Translation
-- **11 languages**: English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese, Japanese, Korean
-- **Smart detection**: Automatically skips translation if article already in target language
-- **Image translation**: Translates text on images using Google Gemini
-- **Metadata localization**: Dates, labels adapted to target language
+- **11 languages**: EN, RU, UK, DE, FR, ES, IT, PT, ZH, JA, KO
+- **Smart detection**: Skips if article already in target language
+- **Image translation**: Translates text on images (via Gemini)
+- **Localized metadata**: Dates and labels adapt to language
 
 ### 🎨 PDF Customization
-- **4 style presets**: Dark, Light, Sepia, High Contrast
+- **4 presets**: Dark, Light, Sepia, High Contrast
 - **Custom colors**: Background, text, headings, links
-- **Fonts**: 11 font families
-- **Page modes**: Single continuous page or multi-page A4
+- **11 fonts** to choose from
+- **Page modes**: Single continuous or multi-page A4
 
 ### ⚡ Smart Features
 - **Offline mode**: Cached selectors — no AI needed for repeat sites
-- **Statistics dashboard**: Track saves, view history
+- **Statistics**: Track saves, view history
 - **Table of Contents**: Auto-generated from headings
-- **Abstract generation**: AI-written 2-3 paragraph summary
-- **Context menu**: Right-click "Save article as PDF"
-- **Processing timer**: See elapsed time
-- **Cancel button**: Stop anytime
+- **Abstract**: AI-written 2-3 paragraph summary
+- **Context menu**: Right-click → "Save article as PDF"
+- **Cancel anytime**: Stop processing with one click
 
 ### 🔒 Security
-- **API keys encrypted** with AES-256-GCM (Web Crypto API)
+- **API keys encrypted** with AES-256-GCM
 - **Keys never exported** — excluded from settings backup
-- **All data stored locally** — nothing sent to third parties
+- **All data local** — nothing sent to third parties
 
 ---
 
 ## 📦 Installation
 
-### From Source (Developer Mode)
-
-1. **Clone or download** this repository
+1. **Clone** this repository
 2. Open Chrome → `chrome://extensions/`
-3. Enable **Developer mode** (top right toggle)
-4. Click **Load unpacked**
-5. Select the `webpage_to_pdf` folder
+3. Enable **Developer mode**
+4. Click **Load unpacked** → select the folder
 
 ### Requirements
 
-- Google Chrome or Chromium-based browser (Edge, Brave, Arc)
-- API key from at least one provider:
-  - [OpenAI API](https://platform.openai.com/api-keys)
-  - [Google Gemini API](https://aistudio.google.com/apikey)
-  - [Anthropic Claude API](https://console.anthropic.com/)
+- Chrome, Edge, Brave, or Arc browser
+- API key from at least one provider (see below)
 
 ---
 
-## 🚀 Quick Start
+## 🔑 Getting API Keys
 
-1. **Click the extension icon** in Chrome toolbar
-2. **Enter your API key** (OpenAI, Gemini, or Claude)
-3. **Click "Save Keys"**
-4. **Navigate to any article**
-5. **Click extension icon** → **"Save as PDF"**
-6. Done! File downloads automatically.
+### OpenAI (GPT models + Audio)
 
-### Via Context Menu
+1. Go to [platform.openai.com](https://platform.openai.com/)
+2. Sign up or log in
+3. Navigate to **API Keys** (left menu) or go directly to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+4. Click **"Create new secret key"**
+5. Copy the key (starts with `sk-...`)
+6. Add billing at **Settings → Billing** (required for API usage)
 
-Right-click anywhere on a webpage → **"Save article as PDF"**
+> **Note:** OpenAI key is required for Audio export (TTS). Other formats work with any provider.
+
+### Google Gemini
+
+1. Go to [Google AI Studio](https://aistudio.google.com/)
+2. Sign in with Google account
+3. Click **"Get API key"** or go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+4. Click **"Create API key"**
+5. Copy the key (starts with `AIza...`)
+
+> **Tip:** Gemini also enables image text translation feature.
+
+### Anthropic Claude
+
+1. Go to [console.anthropic.com](https://console.anthropic.com/)
+2. Sign up or log in
+3. Navigate to **API Keys**
+4. Click **"Create Key"**
+5. Copy the key (starts with `sk-ant-...`)
+6. Add credits at **Plans & Billing**
+
+### Which to choose?
+
+| Provider | Best For | Audio | Image Translation |
+|----------|----------|-------|-------------------|
+| **OpenAI** | General use, Audio export | ✅ | ❌ |
+| **Gemini** | Fast extraction, Image translation | ❌ | ✅ |
+| **Claude** | Long articles, Complex pages | ❌ | ❌ |
+
+**Recommendation:** Start with OpenAI for full features (extraction + audio).
+
+---
+
+## 🎯 Quick Start
+
+1. Click the **ClipAIble** icon in toolbar
+2. Enter your API key → **Save Keys**
+3. Navigate to any article
+4. Click **Save as PDF** (or choose another format)
+5. Done! File downloads automatically
+
+**Pro tip:** Right-click anywhere → **"Save article as PDF"**
 
 ---
 
 ## ⚙️ Settings
 
-### Extraction Mode
+### Extraction Modes
 
 | Mode | Speed | Best For |
 |------|-------|----------|
-| **AI Selector** | ⚡ Fast | Most websites, blogs, news |
-| **AI Extract** | 🐢 Slower | Complex pages (Notion, SPAs, paywalled content) |
-
-**How AI Selector works:**
-1. AI analyzes page structure once
-2. Returns CSS selectors for article content
-3. Local script extracts using those selectors
-4. Selectors cached for future use (no AI needed next time!)
+| **AI Selector** | ⚡ Fast | Most sites, blogs, news |
+| **AI Extract** | 🐢 Thorough | Complex pages, Notion, SPAs |
 
 ### AI Models
 
 | Provider | Model | Notes |
 |----------|-------|-------|
-| OpenAI | GPT-5.1 | Balanced quality/speed |
-| OpenAI | GPT-5.1 (high) | Best quality, slower |
-| Anthropic | Claude Sonnet 4.5 | Great for long articles (32k output) |
-| Google | Gemini 3 Pro | Fast, good for selectors |
+| OpenAI | GPT-5.1 | Balanced |
+| OpenAI | GPT-5.1 (high) | Best quality |
+| Anthropic | Claude Sonnet 4.5 | Great for long articles |
+| Google | Gemini 3 Pro | Fast |
 
-### Audio Settings
+### Audio Voices
 
-| Voice | Description |
-|-------|-------------|
-| **nova** | Female, warm (default) |
-| **alloy** | Neutral |
-| **echo** | Male |
-| **fable** | Expressive |
-| **onyx** | Male, deep |
-| **shimmer** | Female, clear |
-| **coral** | Female, friendly |
-| **sage** | Neutral, calm |
-| **ash** | Male, authoritative |
-| **ballad** | Expressive, dramatic |
-| **verse** | Rhythmic |
-
-**Speed:** 0.5x (slow) → 1.0x (normal) → 2.0x (fast)
+| Voice | Style |
+|-------|-------|
+| nova | Female, warm |
+| alloy | Neutral |
+| echo | Male |
+| fable | Expressive |
+| onyx | Male, deep |
+| shimmer | Female, clear |
+| coral | Female, friendly |
+| sage | Neutral, calm |
+| ash | Male, authoritative |
+| ballad | Dramatic |
+| verse | Rhythmic |
 
 ### Style Presets (PDF)
 
-| Preset | Background | Text | Headings | Links |
-|--------|------------|------|----------|-------|
-| **Dark** | `#303030` | `#b9b9b9` | `#cfcfcf` | `#6cacff` |
-| **Light** | `#f8f9fa` | `#212529` | `#1a1a2e` | `#0066cc` |
-| **Sepia** | `#faf4e8` | `#5b4636` | `#3d2914` | `#8b4513` |
-| **High Contrast** | `#000000` | `#ffffff` | `#ffd700` | `#00ffff` |
+| Preset | Background | Text |
+|--------|------------|------|
+| Dark | `#303030` | `#b9b9b9` |
+| Light | `#f8f9fa` | `#343a40` |
+| Sepia | `#faf4e8` | `#5d4e37` |
+| High Contrast | `#000000` | `#ffffff` |
 
 ---
 
 ## 📊 Statistics & Cache
 
 Click **📊 Stats** to view:
-- **Total saved** — all-time count
-- **This month** — current month saves
-- **By format** — PDF, EPUB, FB2, Markdown, Audio breakdown
-- **Recent history** — last 10 saves with links to originals
-- **Selector cache** — cached domains for offline mode
+- Total saves, this month's count
+- Breakdown by format
+- Recent history with links
+- Cached domains for offline mode
 
-### Offline Mode (Selector Cache)
+### Offline Mode
 
-When you save from a site, the extension caches AI-generated selectors:
-
-- **Second visit = instant** — no AI call needed
-- **Auto-invalidation** — if extraction fails, cache clears automatically
-- **Trust system** — more successful extractions = more trusted cache
-- **Manual control** — delete individual domains or clear all
+ClipAIble caches AI-generated selectors by domain:
+- **Second visit = instant** — no API call
+- **Auto-invalidation** — clears if extraction fails
+- **Manual control** — delete individual domains
 
 ---
 
-## 💾 Settings Import/Export
+## 💾 Import/Export Settings
 
 **⚙️ Settings** → **Import/Export**
 
-- **Export**: Download all settings as JSON
-  - Optional: include statistics
-  - Optional: include selector cache
-  - ⚠️ API keys are NEVER exported (security)
-  
-- **Import**: Restore from JSON file
-  - Choose what to import
-  - Option to overwrite existing
+- Export all settings (API keys excluded for security)
+- Optional: include statistics and cache
+- Import with merge or overwrite options
 
 ---
 
 ## 🔧 Troubleshooting
 
-### "Extracted content is empty"
-- Try switching to **AI Extract** mode
-- For dynamic sites, scroll page to load all content first
-- Check if site uses heavy JavaScript rendering
-
-### "API key not valid"
-- Verify the API key is correct for selected model
-- OpenAI keys start with `sk-`
-- Gemini keys start with `AIza`
-- Claude keys start with `sk-ant-`
-
-### Images not appearing
-- Some websites block cross-origin requests
-- Small images (<100px) and avatars are filtered out intentionally
-
-### Audio generation takes too long
-- Long articles are split into chunks (4-6k chars each)
-- Each chunk is converted separately and stitched
-- Progress bar shows conversion status
-
-### Translation issues
-- Large articles are split into chunks automatically
-- If already in target language, translation is skipped
-- Failed chunks preserve original text (graceful degradation)
+| Problem | Solution |
+|---------|----------|
+| Empty content | Try **AI Extract** mode |
+| Invalid API key | Check key format (sk-..., AIza..., sk-ant-...) |
+| Images missing | Some sites block cross-origin; small images filtered |
+| Audio slow | Long articles split into chunks; watch progress bar |
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-webpage_to_pdf/
-├── manifest.json          # Extension manifest (v3)
-├── popup/
-│   ├── popup.html         # Main UI
-│   ├── popup.css          # Styling
-│   └── popup.js           # UI logic
+clipaible/
+├── manifest.json       # Extension config
+├── popup/              # UI (HTML, CSS, JS)
 ├── scripts/
-│   ├── background.js      # Service worker (main orchestrator)
-│   ├── api/
-│   │   ├── index.js       # API routing
-│   │   ├── openai.js      # OpenAI integration
-│   │   ├── claude.js      # Anthropic integration
-│   │   ├── gemini.js      # Google integration
-│   │   └── tts.js         # Text-to-Speech (OpenAI)
-│   ├── extraction/
-│   │   ├── prompts.js     # AI prompts for extraction
-│   │   └── html-utils.js  # HTML processing utilities
-│   ├── translation/
-│   │   └── index.js       # Translation & language detection
-│   ├── generation/
-│   │   ├── pdf.js         # PDF generation
-│   │   ├── epub.js        # EPUB generation
-│   │   ├── fb2.js         # FB2 generation
-│   │   ├── markdown.js    # Markdown generation
-│   │   ├── audio.js       # Audio orchestration
-│   │   └── audio-prep.js  # Text preparation for TTS
-│   ├── cache/
-│   │   └── selectors.js   # Selector caching (offline mode)
-│   ├── stats/
-│   │   └── index.js       # Statistics tracking
-│   ├── settings/
-│   │   └── import-export.js
-│   └── utils/
-│       ├── config.js      # Configuration constants
-│       ├── encryption.js  # API key encryption
-│       ├── logging.js     # Debug logging
-│       └── ...
-├── print/
-│   ├── print.html         # PDF rendering page
-│   └── print.js           # PDF generation logic
-├── config/
-│   └── pdf-styles.css     # PDF styling
-├── lib/
-│   └── jszip.min.js       # ZIP library for EPUB/FB2
-└── icons/
-    └── icon*.png          # Extension icons
+│   ├── background.js   # Service worker
+│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── extraction/     # Content extraction
+│   ├── translation/    # Translation & language detection
+│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
+│   ├── cache/          # Selector caching
+│   ├── stats/          # Usage statistics
+│   └── utils/          # Config, encryption, helpers
+├── print/              # PDF rendering
+├── config/             # Styles
+└── lib/                # JSZip
 ```
 
 ---
 
 ## 🔐 Security & Privacy
 
-### Data Flow
-1. **Your API key** → encrypted with AES-256-GCM → stored in `chrome.storage.local`
-2. **Page content** → sent to your chosen AI provider → response processed locally
-3. **Generated file** → saved directly to your computer
-
-### What's NOT Collected
-- ❌ No analytics or tracking
-- ❌ No remote logging
-- ❌ No data sent to our servers (we don't have any!)
-- ❌ API keys never leave your browser (except to the AI provider you chose)
-
-### Encryption Details
-- **Algorithm**: AES-256-GCM
-- **Key derivation**: PBKDF2 with 100,000 iterations
-- **Salt**: Extension-specific (based on runtime ID)
-- **IV**: Random 12 bytes per encryption
+- **Encryption**: AES-256-GCM via Web Crypto API
+- **Key derivation**: PBKDF2, 100,000 iterations
+- **No tracking**: Zero analytics, zero remote logging
+- **Local only**: All data stays in your browser
 
 ---
 
-## 📋 Permissions Explained
+## 📋 Permissions
 
-| Permission | Why Needed |
-|------------|------------|
-| `activeTab` | Read article content from current tab |
-| `storage` | Save settings and statistics locally |
-| `scripting` | Inject content extraction script |
-| `downloads` | Save generated files to computer |
-| `debugger` | Generate PDF using Chrome's print API |
-| `alarms` | Keep service worker alive during long operations |
-| `contextMenus` | Add "Save as PDF" to right-click menu |
-| `<all_urls>` | Extract from any website, download images |
+| Permission | Why |
+|------------|-----|
+| `activeTab` | Read article from current tab |
+| `storage` | Save settings locally |
+| `scripting` | Inject extraction script |
+| `downloads` | Save generated files |
+| `debugger` | Generate PDFs via Chrome print API |
+| `alarms` | Keep worker alive during long tasks |
+| `contextMenus` | Right-click menu |
 
-See [PERMISSIONS.md](PERMISSIONS.md) for detailed explanations.
+See [PERMISSIONS.md](PERMISSIONS.md) for details.
 
 ---
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create your feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
+1. Fork the repo
+2. Create feature branch: `git checkout -b feature/cool-thing`
+3. Commit: `git commit -m 'Add cool thing'`
+4. Push: `git push origin feature/cool-thing`
+5. Open Pull Request
 
 ---
 
 ## 📜 License
 
-MIT License — see [LICENSE](LICENSE) file.
-
----
-
-## 🙏 Acknowledgments
-
-- [JSZip](https://stuk.github.io/jszip/) — ZIP generation for EPUB/FB2
-- [OpenAI](https://openai.com/) — GPT models and TTS
-- [Google](https://ai.google.dev/) — Gemini models
-- [Anthropic](https://anthropic.com/) — Claude models
+MIT License — see [LICENSE](LICENSE)
 
 ---
 
 <p align="center">
-  Made with ❤️ for readers who prefer their articles offline
+  <b>ClipAIble</b> — Clip it. Read it. Listen to it. Anywhere.
 </p>

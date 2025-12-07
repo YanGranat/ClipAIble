@@ -1,4 +1,4 @@
-// Gemini API module for Webpage to PDF extension
+// Gemini API module for ClipAIble extension
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';

@@ -1,4 +1,4 @@
-// Processing state management for Webpage to PDF extension
+// Processing state management for ClipAIble extension
 
 import { log, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
@@ -61,7 +61,10 @@ export function updateState(updates) {
   processingState = { ...processingState, ...updates };
   log('State updated', { status: updates.status, progress: updates.progress, stage: updates.stage });
   
-  // Save to storage on every update for crash recovery
+  // Save to storage for crash recovery - NO AWAIT is intentional!
+  // In-memory processingState is authoritative, storage is backup only.
+  // Popup reads from memory via getProcessingState(), not from storage.
+  // See systemPatterns.md "Design Decisions" section.
   if (processingState.isProcessing) {
     chrome.storage.local.set({ 
       processingState: { ...processingState, lastUpdate: Date.now() }

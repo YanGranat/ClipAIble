@@ -1,4 +1,4 @@
-// OpenAI API module for Webpage to PDF extension
+// OpenAI API module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';

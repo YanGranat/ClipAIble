@@ -1,4 +1,4 @@
-// Image utility functions for Webpage to PDF extension
+// Image utility functions for ClipAIble extension
 
 import { log, logWarn, logError } from './logging.js';
 

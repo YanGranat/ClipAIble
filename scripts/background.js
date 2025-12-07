@@ -1,4 +1,4 @@
-// Background service worker for Webpage to PDF extension
+// Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
 
 import { log, logError, logWarn } from './utils/logging.js';
@@ -146,7 +146,7 @@ async function handleQuickSave() {
           chrome.notifications?.create({
             type: 'basic',
             iconUrl: 'icons/icon128.png',
-            title: 'Webpage to PDF',
+            title: 'ClipAIble',
             message: 'Failed to decrypt API key. Please check your settings.'
           });
           return;
@@ -163,7 +163,7 @@ async function handleQuickSave() {
           chrome.notifications?.create({
             type: 'basic',
             iconUrl: 'icons/icon128.png',
-            title: 'Webpage to PDF',
+            title: 'ClipAIble',
             message: 'Failed to decrypt API key. Please check your settings.'
           });
           return;
@@ -180,7 +180,7 @@ async function handleQuickSave() {
           chrome.notifications?.create({
             type: 'basic',
             iconUrl: 'icons/icon128.png',
-            title: 'Webpage to PDF',
+            title: 'ClipAIble',
             message: 'Failed to decrypt API key. Please check your settings.'
           });
           return;
@@ -194,7 +194,7 @@ async function handleQuickSave() {
       chrome.notifications?.create({
         type: 'basic',
         iconUrl: 'icons/icon128.png',
-        title: 'Webpage to PDF',
+        title: 'ClipAIble',
         message: 'Please configure an API key in the extension settings first.'
       });
       return;
@@ -218,6 +218,10 @@ async function handleQuickSave() {
     
     log('Starting quick save processing', { url: pageData.url, model });
     
+    // NOTE: No await here - this is intentional "fire and forget" pattern.
+    // startArticleProcessing returns true/false synchronously, processing
+    // runs async via .then()/.catch() chain with proper error handling.
+    // See systemPatterns.md "Design Decisions" section.
     startArticleProcessing({
       html: pageData.html,
       url: pageData.url,
@@ -621,11 +625,14 @@ async function startArticleProcessing(data) {
       completeProcessing(stopKeepAlive);
     })
     .catch(error => {
+      // All processing errors are caught here - no unhandled rejections
       logError('Processing failed', error);
       processingStartTime = null;
       setError(error.message, stopKeepAlive);
     });
   
+  // Returns immediately - processing continues in background via .then()/.catch()
+  // This is intentional "fire and forget" pattern for Service Worker
   return true;
 }
 
@@ -811,8 +818,14 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
 
 // Inlined extraction function for chrome.scripting.executeScript
 // This runs in the page's main world context
+// 
+// NOTE: This function is ~460 lines - DO NOT SPLIT IT!
+// It's injected as a single block via executeScript. All helper functions
+// must be defined inside. See systemPatterns.md "Design Decisions".
 function extractFromPageInlined(selectors, baseUrl) {
-  console.log('[WebpageToPDF:Page] Starting extraction', { selectors, baseUrl });
+  // Note: This function runs in page context, not service worker
+  // Using console.log here is intentional - it appears in page console, not extension console
+  console.log('[ClipAIble:Page] Starting extraction', { selectors, baseUrl });
   
   const content = [];
   const debugInfo = {
@@ -1168,7 +1181,7 @@ function extractFromPageInlined(selectors, baseUrl) {
       const isFootnotes = cn.includes('footnotes') || elId.includes('footnotes');
       if (isFootnotes && !footnotesHeaderAdded) {
         content.push({ type: 'separator', id: '' });
-        content.push({ type: 'heading', level: 2, text: 'Примечания', id: 'footnotes-section' });
+        content.push({ type: 'heading', level: 2, text: 'Notes', id: 'footnotes-section' });
         footnotesHeaderAdded = true;
       }
       for (const child of element.children) processElement(child);
@@ -1268,7 +1281,9 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
   }
   
-  console.log('[WebpageToPDF:Page] Extraction complete', { contentItems: content.length, headingCount: debugInfo.headingCount });
+  // Note: This function runs in page context, not service worker
+  // Using console.log here is intentional - it appears in page console, not extension console
+  console.log('[ClipAIble:Page] Extraction complete', { contentItems: content.length, headingCount: debugInfo.headingCount });
   
   return { title: articleTitle, author: articleAuthor, content: content, publishDate: publishDate, debug: debugInfo };
 }

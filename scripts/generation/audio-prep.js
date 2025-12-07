@@ -1,4 +1,4 @@
-// Audio preparation module for Webpage to PDF extension
+// Audio preparation module for ClipAIble extension
 // Handles text chunking and cleanup for TTS conversion
 
 import { log, logError, logWarn } from '../utils/logging.js';

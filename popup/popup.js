@@ -1,4 +1,4 @@
-// Popup script for Webpage to PDF extension
+// Popup script for ClipAIble extension
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted } from '../scripts/utils/encryption.js';
 
@@ -130,6 +130,7 @@ const elements = {
   resetStylesBtn: null,
   clearStatsBtn: null,
   clearCacheBtn: null,
+  enableCache: null,
   exportSettingsBtn: null,
   importSettingsBtn: null,
   importFileInput: null,
@@ -226,6 +227,7 @@ async function init() {
   elements.statsPanel = document.getElementById('statsPanel');
   elements.clearStatsBtn = document.getElementById('clearStatsBtn');
   elements.clearCacheBtn = document.getElementById('clearCacheBtn');
+  elements.enableCache = document.getElementById('enableCache');
   elements.exportSettingsBtn = document.getElementById('exportSettingsBtn');
   elements.importSettingsBtn = document.getElementById('importSettingsBtn');
   elements.importFileInput = document.getElementById('importFileInput');
@@ -375,6 +377,11 @@ async function loadSettings() {
     elements.useCache.checked = result[STORAGE_KEYS.USE_CACHE];
   } else {
     elements.useCache.checked = true; // Default: enabled
+  }
+  
+  // Sync enableCache checkbox with useCache
+  if (elements.enableCache) {
+    elements.enableCache.checked = elements.useCache.checked;
   }
   
   if (result[STORAGE_KEYS.OUTPUT_FORMAT]) {
@@ -637,6 +644,10 @@ function setupEventListeners() {
     // Close settings panel when opening stats
     if (elements.statsPanel.classList.contains('open')) {
       elements.settingsPanel.classList.remove('open');
+      // Sync enableCache checkbox when opening stats panel
+      if (elements.enableCache && elements.useCache) {
+        elements.enableCache.checked = elements.useCache.checked;
+      }
       await loadAndDisplayStats();
     }
   });
@@ -681,7 +692,7 @@ function setupEventListeners() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `webpage-to-pdf-settings-${new Date().toISOString().split('T')[0]}.json`;
+      a.download = `clipaible-settings-${new Date().toISOString().split('T')[0]}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -785,7 +796,20 @@ function setupEventListeners() {
 
   elements.useCache.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.USE_CACHE, elements.useCache.checked);
+    // Sync enableCache checkbox
+    if (elements.enableCache) {
+      elements.enableCache.checked = elements.useCache.checked;
+    }
   });
+  
+  // Handle enableCache checkbox in stats section
+  if (elements.enableCache) {
+    elements.enableCache.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.USE_CACHE, elements.enableCache.checked);
+      // Sync useCache checkbox
+      elements.useCache.checked = elements.enableCache.checked;
+    });
+  }
 
   elements.outputFormat.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.outputFormat.value, () => {
@@ -1583,7 +1607,7 @@ function extractPageContent() {
   // This ensures we don't accidentally miss content
   const html = document.documentElement.outerHTML;
   
-  console.log('[WebpageToPDF] Extracted full HTML, length:', html.length);
+  console.log('[ClipAIble] Extracted full HTML, length:', html.length);
   
   // Get title from various sources
   let pageTitle = document.title;

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Webpage to PDF",
+  "name": "ClipAIble",
   "version": "2.6.0",
-  "description": "Extract articles using AI and save as PDF, EPUB, FB2, Markdown, or Audio (MP3)",
+  "description": "AI-powered article extractor. Save any webpage as PDF, EPUB, FB2, Markdown, or Audio with translation.",
   "permissions": [
     "activeTab",
     "storage",

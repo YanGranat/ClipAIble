@@ -1,4 +1,4 @@
-// HTML utility functions for Webpage to PDF extension
+// HTML utility functions for ClipAIble extension
 
 /**
  * Escape HTML special characters

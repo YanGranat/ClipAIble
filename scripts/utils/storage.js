@@ -23,7 +23,7 @@ function getStringSize(str) {
  */
 function getIndexedDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('webpageToPdf', 1);
+    const request = indexedDB.open('clipaible', 1);
     
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);

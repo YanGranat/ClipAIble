@@ -1,4 +1,4 @@
-// Audio generation module for Webpage to PDF extension
+// Audio generation module for ClipAIble extension
 // Orchestrates text preparation and TTS conversion
 
 import { log, logError } from '../utils/logging.js';

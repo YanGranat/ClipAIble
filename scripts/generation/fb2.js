@@ -1,4 +1,4 @@
-// FB2 (FictionBook 2) generation module for Webpage to PDF extension
+// FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
 
 import { log, logError } from '../utils/logging.js';
@@ -118,7 +118,7 @@ function parseAuthorName(author) {
  * Generate unique document ID
  */
 function generateDocId() {
-  return 'webpage-to-pdf-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+  return 'clipaible-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
 }
 
 /**
@@ -240,9 +240,9 @@ ${authorXml}
     </title-info>
     <document-info>
       <author>
-        <nickname>Webpage to PDF Extension</nickname>
+        <nickname>ClipAIble Extension</nickname>
       </author>
-      <program-used>Webpage to PDF v2.0.1</program-used>
+      <program-used>ClipAIble v2.6.0</program-used>
       <date value="${new Date().toISOString().split('T')[0]}">${new Date().toISOString().split('T')[0]}</date>
       <id>${docId}</id>
       <version>1.0</version>
@@ -312,9 +312,10 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   
   // Generate Table of Contents section if enabled
   if (generateToc && headings.length > 0) {
+    const contentsLabel = l10n.contents || 'Contents';
     bodyContent += `
     <section>
-      <title><p>Contents</p></title>
+      <title><p>${escapeXml(contentsLabel)}</p></title>
 ${headings.map(h => `      <p>${'  '.repeat(h.level - 2)}• ${escapeXml(h.text)}</p>`).join('\n')}
     </section>`;
   }

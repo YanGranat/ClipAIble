@@ -1,4 +1,4 @@
-// Markdown generation module for Webpage to PDF extension
+// Markdown generation module for ClipAIble extension
 
 import { log, logWarn } from '../utils/logging.js';
 import { stripHtml, htmlToMarkdown } from '../utils/html.js';
