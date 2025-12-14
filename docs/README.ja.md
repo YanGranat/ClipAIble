@@ -2,7 +2,7 @@
 
 > **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
-![バージョン](https://img.shields.io/badge/バージョン-2.7.0-blue)
+![バージョン](https://img.shields.io/badge/バージョン-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
 ![ライセンス](https://img.shields.io/badge/ライセンス-MIT-brightgreen)
 
@@ -16,7 +16,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - 📚 **EPUB** — Kindle、Kobo、Apple Booksに対応
 - 📖 **FB2** — PocketBook、FBReaderに対応
 - 📝 **Markdown** — ノート用のプレーンテキスト
-- 🎧 **音声（MP3）** — AIナレーションで聞く
+- 🎧 **音声（MP3/WAV）** — AIナレーションで聞く
 
 すべての形式が**11言語への翻訳**をサポート — 画像上のテキストの翻訳も可能！
 
@@ -26,19 +26,21 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 
 ### 🤖 AI駆動の抽出
 - **2つのモード**：AI Selector（高速、再利用可能）とAI Extract（徹底的）
-- **複数のプロバイダー**：OpenAI GPT、Google Gemini、Anthropic Claude
+- **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-pro、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
+- **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v2.9.0）
 - **インテリジェント検出**：記事の主要内容を見つけ、自動的に不要な要素を削除
 - **構造を保持**：見出し、画像、コードブロック、表、脚注
 
 ### 🎧 音声エクスポート
-- **2つのTTSプロバイダー**：OpenAI TTSとElevenLabs
-- **20以上の音声**：11のOpenAI音声 + 9のElevenLabs音声
-- **速度調整**：0.5xから2.0x
+- **5つのTTSプロバイダー**：OpenAI TTS、ElevenLabs、Google Gemini 2.5 TTS、Qwen3-TTS-Flash、Respeecher
+- **100以上の音声**：11のOpenAI + 9のElevenLabs + 30のGoogle Gemini + 49のQwen + 14のRespeecher（英語とウクライナ語）
+- **速度調整**：0.5xから2.0x（OpenAI/ElevenLabsのみ）
+- **ウクライナ語サポート**：Respeecher経由で専用のウクライナ語音声
 - **多言語発音**：各言語の正しい発音
 - **インテリジェントなテキストクリーンアップ**：AIがURL、コード、非音声コンテンツを削除
 
 ### 🌍 翻訳
-- **11言語**：EN、RU、UK、DE、FR、ES、IT、PT、ZH、JA、KO
+- **11言語**：EN、RU、UA、DE、FR、ES、IT、PT、ZH、JA、KO
 - **インテリジェント検出**：記事が既にターゲット言語の場合は翻訳をスキップ
 - **画像翻訳**：画像上のテキストを翻訳（Gemini経由）
 - **ローカライズされたメタデータ**：日付とラベルが選択された言語に適応
@@ -50,6 +52,8 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - **ページモード**：単一連続ページまたは複数ページA4形式
 
 ### ⚡ インテリジェント機能
+- **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v2.9.0）
+- **音声転写**：字幕が利用できない場合の自動転写（gpt-4o-transcribe）
 - **オフラインモード**：セレクターのキャッシュ — 繰り返しサイトにAI不要
 - **統計**：保存数を追跡、履歴を表示
 - **目次**：見出しから自動生成
@@ -58,9 +62,31 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - **いつでもキャンセル**：ワンクリックで処理を停止
 
 ### 🔒 セキュリティ
-- **APIキー暗号化** AES-256-GCM（OpenAI、Claude、Gemini、ElevenLabs）
+- **APIキー暗号化** AES-256-GCM（OpenAI、Claude、Gemini、ElevenLabs、Qwen、Respeecher）
 - **キーはエクスポートされない** — 設定バックアップから除外
 - **すべてのデータはローカルに保存** — 第三者に送信されない
+
+---
+
+## ⚠️ 既知の制限事項
+
+### ファイル形式
+- **WAV形式**（Qwen/Respeecher）：ファイルが非常に大きくなる可能性があります（長い記事で10-50MB+）。より小さなファイルサイズにはMP3形式の使用を検討してください。
+- **文字数制限**： 
+  - Qwen TTS：セグメントあたり600文字
+  - Respeecher TTS：セグメントあたり450文字
+  - テキストは文/単語の境界で自動的にインテリジェントに分割されます
+
+### 技術的制約
+- **Keep-alive要件**：Chrome MV3では、keep-alive間隔が少なくとも1分である必要があります。長時間の処理タスクには数分かかる場合があります。
+- **画像のCORS**：ウェブサイトがクロスオリジンリクエストをブロックしている場合、一部の画像が読み込まれない可能性があります。拡張機能はこれらの画像をスキップします。
+- **キャンセルは即座ではない**：キャンセルには、すべてのバックグラウンドプロセスを完全に停止するのに数秒かかる場合があります。
+- **大きなHTML**：非常に大きなHTML（>500KB）のページは、処理に時間がかかる場合があります。
+
+### ブラウザの互換性
+- **Chrome/Edge/Brave/Arc**：完全にサポート
+- **Firefox**：サポートされていません（異なる拡張機能APIを使用）
+- **Safari**：サポートされていません（異なる拡張機能APIを使用）
 
 ---
 
@@ -110,15 +136,39 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 5. キーをコピー（`sk-ant-...`で始まる）
 6. **Plans & Billing**でクレジットを追加
 
+### Qwen3-TTS-Flash（音声）
+
+1. [Alibaba Cloud Model Studio](https://dashscope-intl.console.aliyun.com/)にアクセス
+2. 登録またはログイン
+3. **API Keys**または**Model Studio**に移動
+4. APIキーを作成
+5. キーをコピー（`sk-...`で始まる）
+
+> **注意：** Qwen3-TTS-Flashは49の音声を提供し、専用のロシア語音声（Alek）を含みます。24kHzの固定WAV形式。
+
+### Respeecher（音声 - 英語とウクライナ語）
+
+1. [Respeecher Space](https://space.respeecher.com/)にアクセス
+2. 登録またはログイン
+3. **API Keys**に移動
+4. APIキーを作成
+5. キーをコピー
+
+> **注意：** Respeecherは英語とウクライナ語をサポートし、専用のウクライナ語音声を提供します。22.05kHzの固定WAV形式。
+
 ### どれを選ぶ？
 
 | プロバイダー | 最適な用途 | 音声 | 画像翻訳 |
 |-------------|-----------|------|--------|
-| **OpenAI** | 一般的な使用、音声エクスポート | ✅ | ❌ |
-| **Gemini** | 高速抽出、画像翻訳 | ❌ | ✅ |
+| **OpenAI** | 一般的な使用、音声エクスポート、動画転写 | ✅ | ❌ |
+| **Gemini** | 高速抽出、画像翻訳、音声エクスポート（30音声） | ✅ | ✅ |
 | **Claude** | 長い記事、複雑なページ | ❌ | ❌ |
+| **Grok** | 高速推論タスク | ❌ | ❌ |
+| **OpenRouter** | 複数のモデルへのアクセス | ❌ | ❌ |
+| **Qwen** | 音声エクスポート（49音声、ロシア語サポート） | ✅ | ❌ |
+| **Respeecher** | 音声エクスポート（ウクライナ語） | ✅ | ❌ |
 
-**推奨：** 全機能（抽出 + 音声）を取得するにはOpenAIから始めましょう。
+**推奨：** 全機能（抽出 + 音声）を取得するにはOpenAIから始めましょう。ウクライナ語テキストにはRespeecherを使用してください。
 
 ---
 
@@ -147,26 +197,25 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 
 | プロバイダー | モデル | 備考 |
 |-------------|--------|------|
+| OpenAI | GPT-5.2 | 最新、中程度の推論 |
+| OpenAI | GPT-5.2-pro | 強化、中程度の推論 |
 | OpenAI | GPT-5.1 | バランス型 |
 | OpenAI | GPT-5.1 (high) | 最高品質 |
 | Anthropic | Claude Sonnet 4.5 | 長い記事に最適 |
 | Google | Gemini 3 Pro | 高速 |
+| Grok | Grok 4.1 Fast Reasoning | 高速推論 |
 
 ### 音声音声
 
-| 音声 | スタイル |
-|------|---------|
-| nova | 女性、温かい |
-| alloy | 中性 |
-| echo | 男性 |
-| fable | 表現力豊か |
-| onyx | 男性、深い |
-| shimmer | 女性、明瞭 |
-| coral | 女性、親しみやすい |
-| sage | 中性、落ち着いた |
-| ash | 男性、権威的 |
-| ballad | 劇的 |
-| verse | リズミカル |
+**OpenAI（11音声）：** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
+
+**ElevenLabs（9音声）：** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
+
+**Google Gemini 2.5 TTS（30音声）：** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
+
+**Qwen3-TTS-Flash（49音声）：** Elias（デフォルト）、Alek（ロシア語）を含む、10言語の音声
+
+**Respeecher（14音声）：** 4英語（Samantha, Neve, Gregory, Vincent）+ 10ウクライナ語音声
 
 ### スタイルプリセット（PDF）
 

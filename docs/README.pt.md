@@ -2,7 +2,7 @@
 
 > **Extrator de artigos com IA** — Salve qualquer artigo da web como PDF, EPUB, FB2, Markdown ou Áudio. Tradução para 11 idiomas. Funciona em qualquer site.
 
-![Versão](https://img.shields.io/badge/versão-2.7.0-blue)
+![Versão](https://img.shields.io/badge/versão-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensão-green)
 ![Licença](https://img.shields.io/badge/licença-MIT-brightgreen)
 
@@ -16,7 +16,7 @@ ClipAIble usa inteligência artificial para extrair inteligentemente o conteúdo
 - 📚 **EPUB** — Compatível com Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatível com PocketBook, FBReader
 - 📝 **Markdown** — Texto simples para notas
-- 🎧 **Áudio (MP3)** — Ouça com narração de IA
+- 🎧 **Áudio (MP3/WAV)** — Ouça com narração de IA
 
 Todos os formatos suportam **tradução para 11 idiomas** — até mesmo tradução de texto em imagens!
 
@@ -26,19 +26,21 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 
 ### 🤖 Extração com IA
 - **Dois modos**: AI Selector (rápido, reutilizável) e AI Extract (abrangente)
-- **Vários provedores**: OpenAI GPT, Google Gemini, Anthropic Claude
+- **Vários provedores**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v2.9.0)
 - **Detecção inteligente**: Encontra o conteúdo principal do artigo, remove elementos desnecessários automaticamente
 - **Preserva estrutura**: Cabeçalhos, imagens, blocos de código, tabelas, notas de rodapé
 
 ### 🎧 Exportação de áudio
-- **2 provedores TTS**: OpenAI TTS e ElevenLabs
-- **20+ vozes**: 11 vozes OpenAI + 9 vozes ElevenLabs
-- **Regulação de velocidade**: 0.5x a 2.0x
+- **5 provedores TTS**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
+- **100+ vozes**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher (inglês e ucraniano)
+- **Regulação de velocidade**: 0.5x a 2.0x (apenas OpenAI/ElevenLabs)
+- **Suporte ao idioma ucraniano**: Vozes ucranianas dedicadas via Respeecher
 - **Pronúncia multilíngue**: Pronúncia correta para cada idioma
 - **Limpeza inteligente de texto**: IA remove URLs, código e conteúdo não vocal
 
 ### 🌍 Tradução
-- **11 idiomas**: EN, RU, UK, DE, FR, ES, IT, PT, ZH, JA, KO
+- **11 idiomas**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
 - **Detecção inteligente**: Ignora a tradução se o artigo já está no idioma de destino
 - **Tradução de imagens**: Traduz texto em imagens (via Gemini)
 - **Metadados localizados**: Datas e rótulos se adaptam ao idioma
@@ -50,6 +52,8 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 - **Modos de página**: Página única contínua ou formato multi-página A4
 
 ### ⚡ Recursos inteligentes
+- **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v2.9.0)
+- **Transcrição de áudio**: Transcrição automática quando legendas não estão disponíveis (gpt-4o-transcribe)
 - **Modo offline**: Cache de seletores — nenhuma IA necessária para sites repetidos
 - **Estatísticas**: Rastreie quantidade de salvamentos, visualize histórico
 - **Índice**: Gerado automaticamente a partir de cabeçalhos
@@ -58,9 +62,31 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 - **Cancelar a qualquer momento**: Pare o processamento com um clique
 
 ### 🔒 Segurança
-- **Chaves API criptografadas** com AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs)
+- **Chaves API criptografadas** com AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
 - **Chaves nunca exportadas** — excluídas do backup de configurações
 - **Todos os dados são armazenados localmente** — nada é enviado a terceiros
+
+---
+
+## ⚠️ Limitações Conhecidas
+
+### Formatos de Arquivo
+- **Formato WAV** (Qwen/Respeecher): Os arquivos podem ser muito grandes (10-50MB+ para artigos longos). Considere usar o formato MP3 para tamanhos de arquivo menores.
+- **Limites de caracteres**: 
+  - Qwen TTS: 600 caracteres por segmento
+  - Respeecher TTS: 450 caracteres por segmento
+  - O texto é automaticamente dividido de forma inteligente nos limites de frases/palavras
+
+### Restrições Técnicas
+- **Requisito keep-alive**: Chrome MV3 requer um intervalo keep-alive de pelo menos 1 minuto. Tarefas de processamento longas podem levar vários minutos.
+- **CORS para imagens**: Algumas imagens podem não carregar se o site bloquear solicitações cross-origin. A extensão ignorará essas imagens.
+- **Cancelamento não instantâneo**: O cancelamento pode levar alguns segundos para parar completamente todos os processos em segundo plano.
+- **HTML grande**: Páginas com HTML muito grande (>500KB) podem levar mais tempo para processar.
+
+### Compatibilidade do Navegador
+- **Chrome/Edge/Brave/Arc**: Totalmente suportado
+- **Firefox**: Não suportado (usa uma API de extensão diferente)
+- **Safari**: Não suportado (usa uma API de extensão diferente)
 
 ---
 
@@ -110,15 +136,39 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 5. Copie a chave (começa com `sk-ant-...`)
 6. Adicione créditos em **Plans & Billing**
 
+### Qwen3-TTS-Flash (Áudio)
+
+1. Vá para [Alibaba Cloud Model Studio](https://dashscope-intl.console.aliyun.com/)
+2. Registre-se ou faça login
+3. Navegue para **API Keys** ou **Model Studio**
+4. Crie uma chave API
+5. Copie a chave (começa com `sk-...`)
+
+> **Nota:** Qwen3-TTS-Flash fornece 49 vozes, incluindo uma voz russa dedicada (Alek). Formato WAV fixo a 24kHz.
+
+### Respeecher (Áudio - Inglês e Ucraniano)
+
+1. Vá para [Respeecher Space](https://space.respeecher.com/)
+2. Registre-se ou faça login
+3. Navegue para **API Keys**
+4. Crie uma chave API
+5. Copie a chave
+
+> **Nota:** Respeecher suporta inglês e ucraniano com vozes ucranianas dedicadas. Formato WAV fixo a 22.05kHz.
+
 ### Qual escolher?
 
 | Provedor | Melhor para | Áudio | Tradução de imagens |
 |----------|-------------|-------|---------------------|
-| **OpenAI** | Uso geral, exportação de áudio | ✅ | ❌ |
-| **Gemini** | Extração rápida, tradução de imagens | ❌ | ✅ |
+| **OpenAI** | Uso geral, exportação de áudio, transcrição de vídeo | ✅ | ❌ |
+| **Gemini** | Extração rápida, tradução de imagens, exportação de áudio (30 vozes) | ✅ | ✅ |
 | **Claude** | Artigos longos, páginas complexas | ❌ | ❌ |
+| **Grok** | Tarefas de raciocínio rápido | ❌ | ❌ |
+| **OpenRouter** | Acesso a múltiplos modelos | ❌ | ❌ |
+| **Qwen** | Exportação de áudio (49 vozes, suporte russo) | ✅ | ❌ |
+| **Respeecher** | Exportação de áudio (idioma ucraniano) | ✅ | ❌ |
 
-**Recomendação:** Comece com OpenAI para obter todos os recursos (extração + áudio).
+**Recomendação:** Comece com OpenAI para obter todos os recursos (extração + áudio). Use Respeecher para texto ucraniano.
 
 ---
 
@@ -147,26 +197,25 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 
 | Provedor | Modelo | Notas |
 |----------|--------|-------|
+| OpenAI | GPT-5.2 | Mais recente, raciocínio médio |
+| OpenAI | GPT-5.2-pro | Melhorada, raciocínio médio |
 | OpenAI | GPT-5.1 | Equilibrado |
 | OpenAI | GPT-5.1 (high) | Melhor qualidade |
 | Anthropic | Claude Sonnet 4.5 | Excelente para artigos longos |
 | Google | Gemini 3 Pro | Rápido |
+| Grok | Grok 4.1 Fast Reasoning | Raciocínio rápido |
 
 ### Vozes de áudio
 
-| Voz | Estilo |
-|-----|-------|
-| nova | Feminina, calorosa |
-| alloy | Neutra |
-| echo | Masculina |
-| fable | Expressiva |
-| onyx | Masculina, profunda |
-| shimmer | Feminina, clara |
-| coral | Feminina, amigável |
-| sage | Neutra, calma |
-| ash | Masculina, autoritária |
-| ballad | Dramática |
-| verse | Rítmica |
+**OpenAI (11 vozes) :** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
+
+**ElevenLabs (9 vozes) :** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
+
+**Google Gemini 2.5 TTS (30 vozes) :** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
+
+**Qwen3-TTS-Flash (49 vozes) :** Incluindo Elias (padrão), Alek (russo) e vozes para 10 idiomas
+
+**Respeecher (14 vozes) :** 4 inglesas (Samantha, Neve, Gregory, Vincent) + 10 vozes ucranianas
 
 ### Predefinições de estilo (PDF)
 

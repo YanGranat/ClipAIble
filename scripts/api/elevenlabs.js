@@ -3,6 +3,7 @@
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
 
 /**
  * ElevenLabs TTS API configuration
@@ -58,7 +59,7 @@ export const ELEVENLABS_CONFIG = {
     'ulaw_8000': 'ulaw'
   },
   
-  DEFAULT_FORMAT: 'mp3_44100_128'
+  DEFAULT_FORMAT: 'mp3_44100_192' // Highest quality MP3 format (192kbps)
 };
 
 /**
@@ -77,7 +78,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
     voiceId = ELEVENLABS_CONFIG.DEFAULT_VOICE_ID,
     speed = ELEVENLABS_CONFIG.DEFAULT_SPEED,
     modelId = ELEVENLABS_CONFIG.DEFAULT_MODEL,
-    format = ELEVENLABS_CONFIG.DEFAULT_FORMAT
+    format = ELEVENLABS_CONFIG.DEFAULT_FORMAT,
+    stability = 0.5,
+    similarityBoost = 0.75,
+    style = 0.0,
+    useSpeakerBoost = true
   } = options;
   
   log('ElevenLabs textToSpeech called', { 
@@ -128,11 +133,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
     text: text,
     model_id: modelId,
     voice_settings: {
-      stability: 0.5,
-      similarity_boost: 0.75,
-      style: 0.0,
-      use_speaker_boost: true,
-      speed: validSpeed // Add speed parameter (0.25-4.0, default: 1.0)
+      stability: Math.max(0, Math.min(1, stability)),
+      similarity_boost: Math.max(0, Math.min(1, similarityBoost)),
+      style: Math.max(0, Math.min(1, style)),
+      use_speaker_boost: useSpeakerBoost,
+      speed: validSpeed
     }
   };
   
@@ -160,34 +165,23 @@ export async function textToSpeech(text, apiKey, options = {}) {
           });
           
           if (!fetchResponse.ok) {
-            const retryableCodes = [429, 500, 502, 503, 504];
-            if (retryableCodes.includes(fetchResponse.status)) {
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              clearTimeout(timeout);
-              throw error;
-            }
-            
-            // Non-retryable error
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { detail: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            
-            // Handle quota exceeded
-            if (fetchResponse.status === 429 || errorData.detail?.message?.includes('quota')) {
-              const error = new Error('ElevenLabs quota exceeded. Please check your subscription or try again later.');
-              error.status = 429;
-              clearTimeout(timeout);
-              throw error;
-            }
-            
-            const error = new Error(errorData.detail?.message || `ElevenLabs API error: ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
             clearTimeout(timeout);
+            const error = await handleApiError(fetchResponse, 'ElevenLabs', {
+              parseErrorData: (errorData) => {
+                // ElevenLabs uses 'detail' instead of 'error'
+                if (errorData.detail) {
+                  return { error: { message: errorData.detail.message || errorData.detail } };
+                }
+                return errorData;
+              },
+              customErrorHandler: (errorData, errorText, response) => {
+                // Handle quota exceeded
+                if (response.status === 429 || errorData.detail?.message?.includes('quota')) {
+                  return 'ElevenLabs quota exceeded. Please check your subscription or try again later.';
+                }
+                return null; // Use default extraction
+              }
+            });
             throw error;
           }
           
@@ -206,14 +200,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
     );
   } catch (fetchError) {
     if (fetchError.name === 'AbortError') {
-      logError('ElevenLabs TTS API request timed out');
-      throw new Error('ElevenLabs TTS request timed out. Please try again.');
+      throw handleTimeoutError('ElevenLabs');
     }
     if (fetchError.status) {
-      throw new Error(fetchError.message || `ElevenLabs TTS API error: ${fetchError.status}`);
+      throw fetchError; // Already handled by handleApiError
     }
-    logError('ElevenLabs TTS network error', fetchError);
-    throw new Error(`ElevenLabs TTS network error: ${fetchError.message}`);
+    throw handleNetworkError(fetchError, 'ElevenLabs');
   }
   
   // Get audio data as ArrayBuffer

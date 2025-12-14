@@ -3,6 +3,8 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { callAI } from '../api/index.js';
+import { getUILanguage, tSync } from '../locales.js';
+import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
 
 // Configuration for audio preparation
 export const AUDIO_CONFIG = {
@@ -30,9 +32,15 @@ export const AUDIO_CONFIG = {
  * @returns {string} Plain text representation
  */
 export function contentToPlainText(content) {
+  log('=== contentToPlainText START ===', { 
+    itemCount: content?.length,
+    itemTypes: content?.map(i => i.type) || []
+  });
+  
   if (!content || !Array.isArray(content)) return '';
   
   const textParts = [];
+  let skippedItems = [];
   
   for (const item of content) {
     switch (item.type) {
@@ -72,6 +80,7 @@ export function contentToPlainText(content) {
         
       case 'code':
         // Skip code blocks - not suitable for audio
+        skippedItems.push({ type: 'code', length: item.text?.length || 0 });
         break;
         
       case 'image':
@@ -86,6 +95,7 @@ export function contentToPlainText(content) {
         
       case 'table':
         // Skip tables - too complex for audio
+        skippedItems.push({ type: 'table', rows: item.rows?.length || 0 });
         break;
         
       case 'separator':
@@ -104,7 +114,17 @@ export function contentToPlainText(content) {
     }
   }
   
-  return textParts.join('\n\n').trim();
+  const result = textParts.join('\n\n').trim();
+  
+  log('=== contentToPlainText COMPLETE ===', {
+    inputItems: content.length,
+    outputParts: textParts.length,
+    outputLength: result.length,
+    skippedItems: skippedItems.length > 0 ? skippedItems : 'none',
+    preview: result.substring(0, 200) + '...'
+  });
+  
+  return result;
 }
 
 /**
@@ -297,7 +317,7 @@ function forceSplitText(text, targetSize) {
 const LANGUAGE_NAMES_FOR_PROMPT = {
   'en': 'English',
   'ru': 'Russian',
-  'uk': 'Ukrainian',
+  'ua': 'Ukrainian',
   'de': 'German',
   'fr': 'French',
   'es': 'Spanish',
@@ -321,7 +341,14 @@ const LANGUAGE_NAMES_FOR_PROMPT = {
  * @returns {Promise<string>} Cleaned text ready for TTS
  */
 export async function prepareChunkForAudio(chunkText, chunkIndex, totalChunks, apiKey, model, language = 'auto') {
-  log('Preparing chunk for audio', { chunkIndex, totalChunks, textLength: chunkText.length, language });
+  log('=== prepareChunkForAudio START ===', { 
+    chunkIndex, 
+    totalChunks, 
+    textLength: chunkText.length, 
+    language,
+    textPreview: chunkText.substring(0, 150) + '...',
+    textEnd: '...' + chunkText.substring(chunkText.length - 100)
+  });
   
   const langName = LANGUAGE_NAMES_FOR_PROMPT[language] || null;
   const languageInstruction = langName 
@@ -387,11 +414,27 @@ ${chunkText}`;
       .replace(/\n\s*\n/g, '\n\n')
       .trim();
     
-    log('Chunk prepared for audio', { 
+    const lengthChange = result.length - chunkText.length;
+    const changePercent = Math.round((lengthChange / chunkText.length) * 100);
+    
+    log('=== prepareChunkForAudio COMPLETE ===', { 
       chunkIndex, 
       originalLength: chunkText.length, 
-      cleanedLength: result.length 
+      cleanedLength: result.length,
+      lengthChange: `${lengthChange > 0 ? '+' : ''}${lengthChange} (${changePercent}%)`,
+      cleanedPreview: result.substring(0, 150) + '...',
+      cleanedEnd: '...' + result.substring(result.length - 100)
     });
+    
+    // Warn if text was significantly shortened
+    if (changePercent < -20) {
+      logWarn('AI significantly shortened text', {
+        chunkIndex,
+        originalLength: chunkText.length,
+        cleanedLength: result.length,
+        reduction: `${Math.abs(changePercent)}%`
+      });
+    }
     
     return result;
   } catch (error) {
@@ -436,8 +479,22 @@ function basicCleanup(text) {
 export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState) {
   log('Starting audio preparation', { contentItems: content?.length, title, language });
   
+  // Get UI language for localization
+  const uiLang = await getUILanguage();
+  
+  // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
+  const currentState = getProcessingState();
+  const currentProgress = currentState?.progress || 0;
+  
+  // If current progress is already >= 60% (translation was done), use 60% as base
+  // Otherwise, use normal progression 10-60%
+  const progressBase = currentProgress >= 60 ? 60 : 20;
+  const progressRange = currentProgress >= 60 ? 0 : 40; // No range if already at 60%
+  const startProgress = currentProgress >= 60 ? 60 : 10;
+  
   // Convert content to plain text
-  updateState?.({ status: 'Converting article to text...', progress: 10 });
+  const convertingStatus = tSync('stageConvertingToText', uiLang);
+  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus, progress: startProgress });
   const plainText = contentToPlainText(content);
   
   if (!plainText) {
@@ -446,11 +503,24 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   
   log('Converted to plain text', { length: plainText.length });
   
-  // Add title at the beginning
-  const fullText = title ? `${title}\n\n${plainText}` : plainText;
+  // Add title at the beginning, but avoid duplication if plainText already starts with title
+  let fullText = plainText;
+  if (title) {
+    // Check if plainText already starts with title (case-insensitive, ignoring whitespace)
+    const titleNormalized = title.trim().toLowerCase();
+    const plainTextStart = plainText.trim().substring(0, titleNormalized.length).toLowerCase();
+    if (plainTextStart !== titleNormalized) {
+      fullText = `${title}\n\n${plainText}`;
+      log('Title added to beginning', { title, plainTextStart: plainText.substring(0, 100) });
+    } else {
+      log('Title already present in plainText, skipping duplicate', { title, plainTextStart: plainText.substring(0, 100) });
+    }
+  }
   
   // Split into chunks
-  updateState?.({ status: 'Splitting into audio segments...', progress: 15 });
+  const splittingStatus = tSync('stageSplittingIntoChunks', uiLang);
+  const splitProgress = currentProgress >= 60 ? 60 : 15;
+  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus, progress: splitProgress });
   const chunks = splitTextIntoChunks(fullText);
   
   if (chunks.length === 0) {
@@ -459,14 +529,18 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   
   // Prepare each chunk for audio
   const preparedChunks = [];
-  const progressBase = 20;
-  const progressRange = 40; // Use 20-60% for preparation
   
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    const progress = progressBase + Math.floor((i / chunks.length) * progressRange);
+    // If already at 60%, keep it there (progress protection will prevent rollback)
+    // Otherwise, progress from base to 60%
+    const progress = currentProgress >= 60 ? 60 : (progressBase + Math.floor((i / chunks.length) * progressRange));
+    const preparingStatus = tSync('stagePreparingSegment', uiLang)
+      .replace('{current}', i + 1)
+      .replace('{total}', chunks.length);
     updateState?.({ 
-      status: `Preparing segment ${i + 1}/${chunks.length} for audio...`, 
+      stage: PROCESSING_STAGES.GENERATING.id,
+      status: preparingStatus, 
       progress 
     });
     
@@ -488,10 +562,28 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
     }
   }
   
-  log('Audio preparation complete', { 
-    totalChunks: preparedChunks.length,
-    totalCharacters: preparedChunks.reduce((sum, c) => sum + c.text.length, 0)
+  const totalOriginalChars = chunks.reduce((sum, c) => sum + c.text.length, 0);
+  const totalPreparedChars = preparedChunks.reduce((sum, c) => sum + c.text.length, 0);
+  const overallChange = totalPreparedChars - totalOriginalChars;
+  const overallPercent = Math.round((overallChange / totalOriginalChars) * 100);
+  
+  log('=== AUDIO PREPARATION COMPLETE ===', { 
+    originalPlainTextLength: plainText.length,
+    totalOriginalChars,
+    totalPreparedChars,
+    overallChange: `${overallChange > 0 ? '+' : ''}${overallChange} (${overallPercent}%)`,
+    chunksCreated: preparedChunks.length,
+    chunkSizes: preparedChunks.map(c => c.text.length)
   });
+  
+  // Warn if overall text was significantly reduced
+  if (overallPercent < -15) {
+    logWarn('=== WARNING: Text significantly reduced during preparation ===', {
+      originalLength: totalOriginalChars,
+      preparedLength: totalPreparedChars,
+      reduction: `${Math.abs(overallPercent)}%`
+    });
+  }
   
   return preparedChunks;
 }

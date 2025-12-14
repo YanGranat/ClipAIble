@@ -18,7 +18,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
   
   const requestBody = {
     model: model || 'claude-sonnet-4-5',
-    max_tokens: 32000,
+    max_tokens: 50000,
     messages: [
       { role: 'user', content: userPrompt }
     ]
@@ -56,7 +56,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
         
           // If not ok and retryable, throw error for retry logic
           if (!fetchResponse.ok) {
-            const retryableCodes = [429, 500, 502, 503, 504];
+            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
@@ -71,7 +71,18 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
             } catch (e) {
               errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
             }
-            const error = new Error(errorData.error?.message || `Claude API error: ${fetchResponse.status}`);
+            
+            // Provide more helpful error messages for common errors
+            let errorMessage = errorData.error?.message || `Claude API error: ${fetchResponse.status}`;
+            if (fetchResponse.status === 401) {
+              errorMessage = 'Claude API key is invalid or missing. Please check your API key in settings.';
+            } else if (fetchResponse.status === 403) {
+              errorMessage = 'Claude API access forbidden. Please check your API key permissions.';
+            } else if (fetchResponse.status === 429) {
+              errorMessage = 'Claude API rate limit exceeded. Please try again later.';
+            }
+            
+            const error = new Error(errorMessage);
             error.status = fetchResponse.status;
             clearTimeout(timeout);
             throw error;
@@ -103,7 +114,18 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
       } catch (e) {
         errorData = { error: { message: `HTTP ${fetchError.status}` } };
       }
-      throw new Error(errorData?.error?.message || `Claude API error: ${fetchError.status}`);
+      
+      // Provide more helpful error messages for common errors
+      let errorMessage = errorData?.error?.message || `Claude API error: ${fetchError.status}`;
+      if (fetchError.status === 401) {
+        errorMessage = 'Claude API key is invalid or missing. Please check your API key in settings.';
+      } else if (fetchError.status === 403) {
+        errorMessage = 'Claude API access forbidden. Please check your API key permissions.';
+      } else if (fetchError.status === 429) {
+        errorMessage = 'Claude API rate limit exceeded. Please try again later.';
+      }
+      
+      throw new Error(errorMessage);
     }
     logError('Network error calling Claude', fetchError);
     throw new Error(`Network error: ${fetchError.message}`);

@@ -1,6 +1,7 @@
 // Statistics module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';
+import { getUILanguage, tSync } from '../locales.js';
 
 const STORAGE_KEY = 'extension_stats';
 
@@ -15,6 +16,9 @@ function getDefaultStats() {
       epub: 0,
       fb2: 0,
       markdown: 0,
+      docx: 0,
+      html: 0,
+      txt: 0,
       audio: 0
     },
     byMonth: {},  // { "2025-12": 5, "2025-11": 3 }
@@ -113,7 +117,7 @@ export async function recordSave(data) {
   
   // Add to history (keep last 50)
   stats.history.unshift({
-    title: title?.substring(0, 100) || 'Untitled',
+    title: title?.substring(0, 100) || 'Untitled', // Note: This is for stats, not user-facing, so English is acceptable
     url,
     domain,
     format,
@@ -154,17 +158,21 @@ export async function getFormattedStats() {
     : 0;
   
   // Format last saved date
-  let lastSavedText = 'Never';
+  const uiLang = await getUILanguage();
+  let lastSavedText = tSync('lastSavedNever', uiLang);
   if (stats.lastSaved) {
     const diff = Date.now() - stats.lastSaved;
     if (diff < 60000) {
-      lastSavedText = 'Just now';
+      lastSavedText = tSync('lastSavedJustNow', uiLang);
     } else if (diff < 3600000) {
-      lastSavedText = `${Math.floor(diff / 60000)} min ago`;
+      const minutes = Math.floor(diff / 60000);
+      lastSavedText = tSync('lastSavedMinutesAgo', uiLang).replace('{count}', minutes);
     } else if (diff < 86400000) {
-      lastSavedText = `${Math.floor(diff / 3600000)} hours ago`;
+      const hours = Math.floor(diff / 3600000);
+      lastSavedText = tSync('lastSavedHoursAgo', uiLang).replace('{count}', hours);
     } else {
-      lastSavedText = `${Math.floor(diff / 86400000)} days ago`;
+      const days = Math.floor(diff / 86400000);
+      lastSavedText = tSync('lastSavedDaysAgo', uiLang).replace('{count}', days);
     }
   }
   
@@ -195,32 +203,7 @@ export async function deleteHistoryItem(index) {
   const stats = await loadStats();
   
   if (index >= 0 && index < stats.history.length) {
-    const item = stats.history[index];
-    
-    // Update counters
-    stats.totalSaved = Math.max(0, stats.totalSaved - 1);
-    if (item.format && stats.byFormat[item.format]) {
-      stats.byFormat[item.format] = Math.max(0, stats.byFormat[item.format] - 1);
-    }
-    
-    // Update site count
-    if (item.domain && stats.topSites[item.domain]) {
-      stats.topSites[item.domain]--;
-      if (stats.topSites[item.domain] <= 0) {
-        delete stats.topSites[item.domain];
-      }
-    }
-    
-    // Update monthly count
-    if (item.date) {
-      const d = new Date(item.date);
-      const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (stats.byMonth[monthKey]) {
-        stats.byMonth[monthKey] = Math.max(0, stats.byMonth[monthKey] - 1);
-      }
-    }
-    
-    // Remove from history
+    // Keep cumulative counters; only remove from history list.
     stats.history.splice(index, 1);
     
     await saveStats(stats);

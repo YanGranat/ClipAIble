@@ -1,13 +1,49 @@
 // Popup script for ClipAIble extension
+//
+// UI VISIBILITY MANAGEMENT STRUCTURE:
+// ====================================
+// 1. updateOutputFormatUI() - MASTER FUNCTION
+//    - Called when output format changes (PDF/EPUB/FB2/Markdown/Audio)
+//    - Handles format-specific visibility (PDF style, audio fields, TOC/abstract)
+//    - Calls updateAudioProviderUI() if format is 'audio'
+//    - Calls updateTranslationVisibility() for translation settings
+//
+// 2. updateAudioProviderUI() - AUDIO PROVIDER FUNCTION
+//    - Called when audio provider changes OR when format changes to 'audio'
+//    - Shows/hides provider-specific fields (API keys, models, voices, etc.)
+//    - Safety check: hides all audio fields if format is not 'audio'
+//
+// 3. hideAllAudioFields() - CENTRALIZED HIDING FUNCTION
+//    - Hides ALL audio-related fields (provider selector, API keys, settings)
+//    - Used when format is not 'audio' (PDF/EPUB/FB2/Markdown)
+//    - Ensures consistency - no audio fields visible for non-audio formats
+//
+// 4. updateTranslationVisibility() - TRANSLATION FUNCTION
+//    - Shows/hides translation-related UI (image translation, Google API key)
+//    - Hides image translation for audio format
+//
+// IMPORTANT RULES:
+// - updateOutputFormatUI() must be called LAST in loadSettings() (it's the master function)
+// - updateAudioProviderUI() should NOT be called directly in loadSettings() (called by updateOutputFormatUI)
+// - hideAllAudioFields() is called as final safety check after updateOutputFormatUI()
+// - All audio fields must be hidden when format is not 'audio' (no exceptions)
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
+import { logError, logWarn } from '../scripts/utils/logging.js';
+import { CONFIG } from '../scripts/utils/config.js';
+import { RESPEECHER_CONFIG } from '../scripts/api/respeecher.js';
+import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
+import { getProviderFromModel } from '../scripts/api/index.js';
 
 const STORAGE_KEYS = {
   API_KEY: 'openai_api_key',
   CLAUDE_API_KEY: 'claude_api_key',
   GEMINI_API_KEY: 'gemini_api_key',
+  GROK_API_KEY: 'grok_api_key',
+  OPENROUTER_API_KEY: 'openrouter_api_key',
   GOOGLE_API_KEY: 'google_api_key',
+  API_PROVIDER: 'api_provider',
   MODEL: 'openai_model',
   MODE: 'extraction_mode',
   USE_CACHE: 'use_selector_cache',
@@ -29,8 +65,24 @@ const STORAGE_KEYS = {
   AUDIO_PROVIDER: 'audio_provider',
   ELEVENLABS_API_KEY: 'elevenlabs_api_key',
   ELEVENLABS_MODEL: 'elevenlabs_model',
+  ELEVENLABS_STABILITY: 'elevenlabs_stability',
+  ELEVENLABS_SIMILARITY: 'elevenlabs_similarity',
+  ELEVENLABS_STYLE: 'elevenlabs_style',
+  ELEVENLABS_SPEAKER_BOOST: 'elevenlabs_speaker_boost',
+  ELEVENLABS_FORMAT: 'elevenlabs_format',
+  QWEN_API_KEY: 'qwen_api_key',
+  RESPEECHER_API_KEY: 'respeecher_api_key',
+  RESPEECHER_TEMPERATURE: 'respeecher_temperature',
+  RESPEECHER_REPETITION_PENALTY: 'respeecher_repetition_penalty',
+  RESPEECHER_TOP_P: 'respeecher_top_p',
+  GOOGLE_TTS_API_KEY: 'google_tts_api_key',
+  GOOGLE_TTS_MODEL: 'google_tts_model',
   AUDIO_VOICE: 'audio_voice',
-  AUDIO_SPEED: 'audio_speed'
+  AUDIO_VOICE_MAP: 'audio_voice_map',
+  AUDIO_SPEED: 'audio_speed',
+  OPENAI_INSTRUCTIONS: 'openai_instructions',
+  GOOGLE_TTS_VOICE: 'google_tts_voice',
+  GOOGLE_TTS_PROMPT: 'google_tts_prompt'
 };
 
 // Default style values
@@ -86,7 +138,10 @@ const MODE_HINTS = {
 
 // DOM Elements
 const elements = {
+  apiProviderSelect: null,
   apiKey: null,
+  apiKeyLabel: null,
+  apiKeyInputGroup: null,
   toggleApiKey: null,
   claudeApiKey: null,
   toggleClaudeApiKey: null,
@@ -154,6 +209,27 @@ const elements = {
   elevenlabsApiKeyGroup: null,
   elevenlabsModel: null,
   elevenlabsModelGroup: null,
+  elevenlabsFormat: null,
+  elevenlabsFormatGroup: null,
+  qwenApiKey: null,
+  toggleQwenApiKey: null,
+  saveQwenApiKey: null,
+  qwenApiKeyGroup: null,
+  respeecherApiKey: null,
+  toggleRespeecherApiKey: null,
+  saveRespeecherApiKey: null,
+  respeecherApiKeyGroup: null,
+  respeecherAdvancedGroup: null,
+  respeecherTemperature: null,
+  respeecherTemperatureValue: null,
+  respeecherRepetitionPenalty: null,
+  respeecherRepetitionPenaltyValue: null,
+  respeecherTopP: null,
+  respeecherTopPValue: null,
+  googleTtsApiKey: null,
+  toggleGoogleTtsApiKey: null,
+  saveGoogleTtsApiKey: null,
+  googleTtsApiKeyGroup: null,
   audioVoice: null,
   audioVoiceGroup: null,
   audioSpeed: null,
@@ -169,6 +245,59 @@ let timerInterval = null;
 
 // Current start time from background (persists across popup reopens)
 let currentStartTime = null;
+let audioVoiceMap = {};
+
+// Helper functions for safe element access and manipulation
+/**
+ * Safely get element from elements object
+ * @param {string} key - Key in elements object
+ * @returns {HTMLElement|null} Element or null if not found
+ */
+function getElement(key) {
+  const el = elements[key];
+  if (!el) {
+    logWarn(`Element not found: ${key}`);
+    return null;
+  }
+  return el;
+}
+
+/**
+ * Safely set display style for element
+ * @param {string} key - Key in elements object
+ * @param {string} displayValue - CSS display value ('flex', 'none', 'block', etc.)
+ */
+function setElementDisplay(key, displayValue) {
+  const el = getElement(key);
+  if (el) {
+    el.style.display = displayValue;
+  }
+}
+
+/**
+ * Safely set display style for element group (finds .setting-item parent)
+ * @param {string} key - Key in elements object
+ * @param {string} displayValue - CSS display value
+ */
+function setElementGroupDisplay(key, displayValue) {
+  const el = getElement(key);
+  if (el) {
+    const group = el.closest('.setting-item') || el;
+    group.style.display = displayValue;
+  }
+}
+
+function setDisplayForIds(ids, displayValue) {
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) {
+      logWarn(`Element not found by ID: ${id}`);
+      return;
+    }
+    const group = el.closest('.setting-item') || el;
+    group.style.display = displayValue;
+  });
+}
 
 // Debounce timer for settings save
 let settingsSaveTimer = null;
@@ -181,23 +310,66 @@ function formatTime(seconds) {
 }
 
 // Debounced settings save - saves settings after 500ms of inactivity
+let isSavingSettings = false; // Flag to prevent concurrent saves
 function debouncedSaveSettings(key, value, callback = null) {
   if (settingsSaveTimer) {
     clearTimeout(settingsSaveTimer);
   }
   
   settingsSaveTimer = setTimeout(async () => {
-    await chrome.storage.local.set({ [key]: value });
-    if (callback) callback();
-    settingsSaveTimer = null;
+    // Prevent concurrent saves
+    if (isSavingSettings) {
+      // If already saving, schedule another save after current one completes
+      if (callback) {
+        const originalCallback = callback;
+        callback = async () => {
+          await originalCallback();
+          // Retry save after current one completes
+          setTimeout(() => debouncedSaveSettings(key, value, null), 100);
+        };
+      } else {
+        // Retry save after current one completes
+        setTimeout(() => debouncedSaveSettings(key, value, callback), 100);
+      }
+      return;
+    }
+    
+    isSavingSettings = true;
+    try {
+      await chrome.storage.local.set({ [key]: value });
+      if (callback) await callback();
+    } catch (error) {
+      logError('Failed to save settings', error);
+    } finally {
+      isSavingSettings = false;
+      settingsSaveTimer = null;
+    }
   }, 500);
+}
+
+// Save audio voice per provider with backward-compatible flat key
+function saveAudioVoice(provider, voice) {
+  if (!provider) return;
+  if (!audioVoiceMap || typeof audioVoiceMap !== 'object' || Array.isArray(audioVoiceMap)) {
+    audioVoiceMap = {};
+  }
+  audioVoiceMap[provider] = voice;
+  debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, voice);
+  debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE_MAP, audioVoiceMap);
 }
 
 // Start the timer display updates
 function startTimerDisplay(startTime) {
+  if (!startTime) {
+    logWarn('startTimerDisplay called without startTime');
+    return;
+  }
   currentStartTime = startTime;
   if (timerInterval) clearInterval(timerInterval);
+  // Update immediately, then set interval
+  updateTimerDisplay();
   timerInterval = setInterval(updateTimerDisplay, 1000);
+  log('Timer started', { startTime, currentStartTime });
 }
 
 // Stop the timer display
@@ -211,11 +383,29 @@ function stopTimerDisplay() {
 
 // Update timer display in status text
 function updateTimerDisplay() {
-  if (!currentStartTime) return;
+  if (!currentStartTime) {
+    // Try to get startTime from state if currentStartTime is not set
+    chrome.runtime.sendMessage({ action: 'getState' }).then(state => {
+      if (state && state.isProcessing && state.startTime) {
+        currentStartTime = state.startTime;
+        updateTimerDisplay(); // Retry after setting startTime
+      }
+    }).catch(() => {});
+    return;
+  }
   const elapsed = Math.floor((Date.now() - currentStartTime) / 1000);
   const timerSpan = document.getElementById('timerDisplay');
   if (timerSpan) {
     timerSpan.textContent = formatTime(elapsed);
+  } else {
+    // Timer element not found - try to recreate it if status is processing
+    if (elements.statusText) {
+      // Extract text without timer if it exists
+      const textContent = elements.statusText.textContent || elements.statusText.innerText || '';
+      const statusText = textContent.replace(/\s*\(\d{2}:\d{2}\)\s*$/, '').trim();
+      const elapsed = Math.floor((Date.now() - currentStartTime) / 1000);
+      elements.statusText.innerHTML = `${statusText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+    }
   }
 }
 
@@ -259,31 +449,14 @@ async function applyLocalization() {
     option.textContent = translation;
   });
   
-  // Update select options for language selector
+  // Update select options for language selector (header version - short codes)
   if (elements.uiLanguageSelect) {
-    const langNames = {
-      'en': 'english',
-      'ru': 'russian',
-      'uk': 'ukrainian',
-      'de': 'german',
-      'fr': 'french',
-      'es': 'spanish',
-      'it': 'italian',
-      'pt': 'portuguese',
-      'zh': 'chinese',
-      'ja': 'japanese',
-      'ko': 'korean'
-    };
-    
-    elements.uiLanguageSelect.innerHTML = '';
-    Object.keys(UI_LOCALES).forEach(lang => {
-      const option = document.createElement('option');
-      option.value = lang;
-      const langKey = langNames[lang] || 'english';
-      option.textContent = locale[langKey] || UI_LOCALES.en[langKey] || lang;
-      if (lang === langCode) option.selected = true;
-      elements.uiLanguageSelect.appendChild(option);
-    });
+    // Keep short codes (EN, RU, etc.) for header selector
+    // Only update selected value if needed
+    const currentValue = elements.uiLanguageSelect.value;
+    if (currentValue !== langCode) {
+      elements.uiLanguageSelect.value = langCode;
+    }
   }
   
   // Update title attributes
@@ -308,6 +481,9 @@ async function applyLocalization() {
       epub: 'saveAsEpub',
       fb2: 'saveAsFb2',
       markdown: 'saveAsMarkdown',
+      docx: 'saveAsDocx',
+      html: 'saveAsHtml',
+      txt: 'saveAsTxt',
       audio: 'saveAsAudio'
     };
     const formatKey = formatKeys[format] || 'saveAsPdf';
@@ -321,7 +497,10 @@ async function applyLocalization() {
 // Initialize popup
 async function init() {
   // Get DOM elements
+  elements.apiProviderSelect = document.getElementById('apiProviderSelect');
   elements.apiKey = document.getElementById('apiKey');
+  elements.apiKeyLabel = document.getElementById('apiKeyLabel');
+  elements.apiKeyInputGroup = document.getElementById('apiKeyInputGroup');
   elements.toggleApiKey = document.getElementById('toggleApiKey');
   elements.claudeApiKey = document.getElementById('claudeApiKey');
   elements.toggleClaudeApiKey = document.getElementById('toggleClaudeApiKey');
@@ -358,6 +537,11 @@ async function init() {
   elements.languageSelect = document.getElementById('languageSelect');
   elements.translateImages = document.getElementById('translateImages');
   elements.translateImagesGroup = document.getElementById('translateImagesGroup');
+  // Find hint element - it's the <p> with class "setting-hint" inside translateImagesGroup
+  const translateImagesHintEl = elements.translateImagesGroup?.querySelector('.setting-hint');
+  if (translateImagesHintEl) {
+    elements.translateImagesHint = translateImagesHintEl;
+  }
   elements.stylePreset = document.getElementById('stylePreset');
   elements.fontFamily = document.getElementById('fontFamily');
   elements.fontFamilyContainer = document.getElementById('fontFamilyContainer');
@@ -389,15 +573,52 @@ async function init() {
   elements.elevenlabsApiKeyGroup = document.getElementById('elevenlabsApiKeyGroup');
   elements.elevenlabsModel = document.getElementById('elevenlabsModel');
   elements.elevenlabsModelGroup = document.getElementById('elevenlabsModelGroup');
+  elements.elevenlabsFormat = document.getElementById('elevenlabsFormat');
+  elements.elevenlabsFormatGroup = document.getElementById('elevenlabsFormatGroup');
+  elements.elevenlabsAdvancedGroup = document.getElementById('elevenlabsAdvancedGroup');
+  elements.elevenlabsStability = document.getElementById('elevenlabsStability');
+  elements.elevenlabsStabilityValue = document.getElementById('elevenlabsStabilityValue');
+  elements.elevenlabsSimilarity = document.getElementById('elevenlabsSimilarity');
+  elements.elevenlabsSimilarityValue = document.getElementById('elevenlabsSimilarityValue');
+  elements.elevenlabsStyle = document.getElementById('elevenlabsStyle');
+  elements.elevenlabsStyleValue = document.getElementById('elevenlabsStyleValue');
+  elements.elevenlabsSpeakerBoost = document.getElementById('elevenlabsSpeakerBoost');
+  elements.openaiInstructions = document.getElementById('openaiInstructions');
+  elements.openaiInstructionsGroup = document.getElementById('openaiInstructionsGroup');
+  elements.qwenApiKey = document.getElementById('qwenApiKey');
+  elements.toggleQwenApiKey = document.getElementById('toggleQwenApiKey');
+  elements.saveQwenApiKey = document.getElementById('saveQwenApiKey');
+  elements.qwenApiKeyGroup = document.getElementById('qwenApiKeyGroup');
+  elements.respeecherApiKey = document.getElementById('respeecherApiKey');
+  elements.toggleRespeecherApiKey = document.getElementById('toggleRespeecherApiKey');
+  elements.saveRespeecherApiKey = document.getElementById('saveRespeecherApiKey');
+  elements.respeecherApiKeyGroup = document.getElementById('respeecherApiKeyGroup');
+  elements.respeecherAdvancedGroup = document.getElementById('respeecherAdvancedGroup');
+  elements.respeecherTemperature = document.getElementById('respeecherTemperature');
+  elements.respeecherTemperatureValue = document.getElementById('respeecherTemperatureValue');
+  elements.respeecherRepetitionPenalty = document.getElementById('respeecherRepetitionPenalty');
+  elements.respeecherRepetitionPenaltyValue = document.getElementById('respeecherRepetitionPenaltyValue');
+  elements.respeecherTopP = document.getElementById('respeecherTopP');
+  elements.respeecherTopPValue = document.getElementById('respeecherTopPValue');
+  elements.googleTtsApiKey = document.getElementById('googleTtsApiKey');
+  elements.toggleGoogleTtsApiKey = document.getElementById('toggleGoogleTtsApiKey');
+  elements.saveGoogleTtsApiKey = document.getElementById('saveGoogleTtsApiKey');
+  elements.googleTtsApiKeyGroup = document.getElementById('googleTtsApiKeyGroup');
   elements.audioVoice = document.getElementById('audioVoice');
   elements.audioVoiceGroup = document.getElementById('audioVoiceGroup');
   elements.audioSpeed = document.getElementById('audioSpeed');
   elements.audioSpeedGroup = document.getElementById('audioSpeedGroup');
   elements.audioSpeedValue = document.getElementById('audioSpeedValue');
+  elements.googleTtsModel = document.getElementById('googleTtsModel');
+  elements.googleTtsModelGroup = document.getElementById('googleTtsModelGroup');
+  elements.googleTtsVoice = document.getElementById('googleTtsVoice');
+  elements.googleTtsVoiceGroup = document.getElementById('googleTtsVoiceGroup');
+  elements.googleTtsPrompt = document.getElementById('googleTtsPrompt');
+  elements.googleTtsPromptGroup = document.getElementById('googleTtsPromptGroup');
   
   // Add themeSelect to elements object for consistency
   if (!elements.themeSelect) {
-    console.warn('Theme select element not found');
+    logWarn('Theme select element not found');
   }
   
   await loadSettings();
@@ -412,12 +633,130 @@ async function init() {
   startStatePolling();
 }
 
+// Update model list based on selected provider
+async function updateModelList() {
+  if (!elements.apiProviderSelect || !elements.modelSelect) return;
+  
+  const provider = elements.apiProviderSelect.value;
+  const uiLang = await getUILanguage();
+  const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
+  
+  // Define models for each provider
+  const modelsByProvider = {
+    openai: [
+      { value: 'gpt-5.2', label: 'GPT-5.2' },
+      { value: 'gpt-5.2-high', label: 'GPT-5.2 (high)' },
+      { value: 'gpt-5.1', label: 'GPT-5.1' },
+      { value: 'gpt-5.1-high', label: 'GPT-5.1 (high)' }
+    ],
+    claude: [
+      { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' }
+    ],
+    gemini: [
+      { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' }
+    ],
+    grok: [
+      { value: 'grok-4-1-fast-reasoning', label: 'Grok 4.1 Fast Reasoning' }
+    ],
+    openrouter: [
+      // Existing models through OpenRouter
+      { value: 'openai/gpt-5.1', label: 'GPT-5.1 (OpenRouter)' },
+      { value: 'openai/gpt-5.1-high', label: 'GPT-5.1 High (OpenRouter)' },
+      { value: 'google/gemini-3-pro-preview', label: 'Gemini 3 Pro (OpenRouter)' },
+      // New models
+      { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5' },
+      { value: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
+      { value: 'mistralai/mistral-nemo', label: 'Mistral Nemo' },
+      { value: 'qwen/qwen3-235b-a22b-2507', label: 'Qwen3 235B' },
+      { value: 'mistralai/devstral-2512:free', label: 'Devstral 2512 (Free)' },
+      { value: 'nex-agi/deepseek-v3.1-nex-n1:free', label: 'DeepSeek V3.1 NEX (Free)' },
+      { value: 'openai/gpt-oss-120b:free', label: 'GPT-OSS 120B (Free)' },
+      { value: 'z-ai/glm-4.5-air:free', label: 'GLM-4.5 Air (Free)' }
+    ]
+  };
+  
+  const models = modelsByProvider[provider] || modelsByProvider.openai;
+  const currentValue = elements.modelSelect.value;
+  
+  // Clear existing options
+  elements.modelSelect.innerHTML = '';
+  
+  // Add models for selected provider
+  models.forEach(model => {
+    const option = document.createElement('option');
+    option.value = model.value;
+    option.textContent = model.label;
+    elements.modelSelect.appendChild(option);
+  });
+  
+  // Select first model if current model doesn't belong to selected provider
+  const currentModelProvider = getProviderFromModel(currentValue);
+  if (currentModelProvider !== provider) {
+    elements.modelSelect.value = models[0].value;
+    // Save new model selection
+    await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: models[0].value });
+  } else {
+    // Keep current model if it belongs to selected provider
+    elements.modelSelect.value = currentValue;
+  }
+}
+
 // Load saved settings from storage
+// Update API provider UI (label, placeholder, model list)
+async function updateApiProviderUI() {
+  if (!elements.apiProviderSelect || !elements.apiKeyLabel || !elements.apiKey) return;
+  
+  const provider = elements.apiProviderSelect.value;
+  const uiLang = await getUILanguage();
+  const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
+  
+  let labelKey, placeholderKey, placeholderText;
+  
+  if (provider === 'openai') {
+    labelKey = 'openaiApiKey';
+    placeholderKey = 'enterOpenAiApiKey';
+    placeholderText = 'sk-...';
+  } else if (provider === 'claude') {
+    labelKey = 'claudeApiKey';
+    placeholderKey = 'enterClaudeApiKey';
+    placeholderText = 'sk-ant-...';
+  } else if (provider === 'gemini') {
+    labelKey = 'geminiApiKey';
+    placeholderKey = 'enterGeminiApiKey';
+    placeholderText = 'AIza...';
+  } else if (provider === 'grok') {
+    labelKey = 'grokApiKey';
+    placeholderKey = 'enterGrokApiKey';
+    placeholderText = 'xai-...';
+  } else if (provider === 'openrouter') {
+    labelKey = 'openrouterApiKey';
+    placeholderKey = 'enterOpenRouterApiKey';
+    placeholderText = 'sk-or-...';
+  }
+  
+  if (labelKey && elements.apiKeyLabel) {
+    elements.apiKeyLabel.textContent = locale[labelKey] || labelKey;
+    elements.apiKeyLabel.setAttribute('data-i18n', labelKey);
+  }
+  
+  if (placeholderKey && elements.apiKey) {
+    const placeholder = locale[placeholderKey] || placeholderText;
+    elements.apiKey.setAttribute('data-i18n-placeholder', placeholderKey);
+    elements.apiKey.placeholder = placeholder;
+  }
+  
+  // Update model list based on provider
+  await updateModelList();
+}
+
 async function loadSettings() {
   const result = await chrome.storage.local.get([
+    STORAGE_KEYS.API_PROVIDER,
     STORAGE_KEYS.API_KEY,
     STORAGE_KEYS.CLAUDE_API_KEY,
     STORAGE_KEYS.GEMINI_API_KEY,
+    STORAGE_KEYS.GROK_API_KEY,
+    STORAGE_KEYS.OPENROUTER_API_KEY,
     STORAGE_KEYS.GOOGLE_API_KEY,
     STORAGE_KEYS.MODEL, 
     STORAGE_KEYS.MODE,
@@ -440,46 +779,100 @@ async function loadSettings() {
     STORAGE_KEYS.AUDIO_PROVIDER,
     STORAGE_KEYS.ELEVENLABS_API_KEY,
     STORAGE_KEYS.ELEVENLABS_MODEL,
+    STORAGE_KEYS.ELEVENLABS_STABILITY,
+    STORAGE_KEYS.ELEVENLABS_SIMILARITY,
+    STORAGE_KEYS.ELEVENLABS_STYLE,
+    STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST,
+    STORAGE_KEYS.ELEVENLABS_FORMAT,
+    STORAGE_KEYS.QWEN_API_KEY,
+    STORAGE_KEYS.RESPEECHER_API_KEY,
+    STORAGE_KEYS.RESPEECHER_TEMPERATURE,
+    STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY,
+    STORAGE_KEYS.RESPEECHER_TOP_P,
+    STORAGE_KEYS.GOOGLE_TTS_API_KEY,
+    STORAGE_KEYS.GOOGLE_TTS_MODEL,
+    STORAGE_KEYS.GOOGLE_TTS_VOICE,
+    STORAGE_KEYS.GOOGLE_TTS_PROMPT,
+    STORAGE_KEYS.OPENAI_INSTRUCTIONS,
     STORAGE_KEYS.AUDIO_VOICE,
+    STORAGE_KEYS.AUDIO_VOICE_MAP,
     STORAGE_KEYS.AUDIO_SPEED
   ]);
   
-  // Load and mask API keys
-  if (result[STORAGE_KEYS.API_KEY]) {
+  // Load API provider (default: openai)
+  const apiProvider = result[STORAGE_KEYS.API_PROVIDER] || 'openai';
+  if (elements.apiProviderSelect) {
+    elements.apiProviderSelect.value = apiProvider;
+  }
+  
+  // Load and mask API key for selected provider
+  let apiKeyValue = '';
+  let apiKeyEncrypted = null;
+  
+  if (apiProvider === 'openai' && result[STORAGE_KEYS.API_KEY]) {
     try {
       const decrypted = await decryptApiKey(result[STORAGE_KEYS.API_KEY]);
-      elements.apiKey.value = maskApiKey(decrypted);
-      elements.apiKey.dataset.encrypted = result[STORAGE_KEYS.API_KEY]; // Store encrypted version
+      apiKeyValue = maskApiKey(decrypted);
+      apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
     } catch (error) {
-      console.error('Failed to decrypt OpenAI API key:', error);
-      elements.apiKey.value = maskApiKey(result[STORAGE_KEYS.API_KEY]);
-      elements.apiKey.dataset.encrypted = result[STORAGE_KEYS.API_KEY];
+      logError('Failed to decrypt OpenAI API key', error);
+      apiKeyValue = maskApiKey(result[STORAGE_KEYS.API_KEY]);
+      apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
     }
-  }
-  
-  if (result[STORAGE_KEYS.CLAUDE_API_KEY]) {
+  } else if (apiProvider === 'claude' && result[STORAGE_KEYS.CLAUDE_API_KEY]) {
     try {
       const decrypted = await decryptApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
-      elements.claudeApiKey.value = maskApiKey(decrypted);
-      elements.claudeApiKey.dataset.encrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+      apiKeyValue = maskApiKey(decrypted);
+      apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
     } catch (error) {
-      console.error('Failed to decrypt Claude API key:', error);
-      elements.claudeApiKey.value = maskApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
-      elements.claudeApiKey.dataset.encrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+      logError('Failed to decrypt Claude API key', error);
+      apiKeyValue = maskApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
+      apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+    }
+  } else if (apiProvider === 'gemini' && result[STORAGE_KEYS.GEMINI_API_KEY]) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+      apiKeyValue = maskApiKey(decrypted);
+      apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+    } catch (error) {
+      logError('Failed to decrypt Gemini API key', error);
+      apiKeyValue = maskApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+      apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+    }
+  } else if (apiProvider === 'grok' && result[STORAGE_KEYS.GROK_API_KEY]) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+      apiKeyValue = maskApiKey(decrypted);
+      apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+    } catch (error) {
+      logError('Failed to decrypt Grok API key', error);
+      apiKeyValue = maskApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+      apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+    }
+  } else if (apiProvider === 'openrouter' && result[STORAGE_KEYS.OPENROUTER_API_KEY]) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+      apiKeyValue = maskApiKey(decrypted);
+      apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+    } catch (error) {
+      logError('Failed to decrypt OpenRouter API key', error);
+      apiKeyValue = maskApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+      apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
     }
   }
   
-  if (result[STORAGE_KEYS.GEMINI_API_KEY]) {
-    try {
-      const decrypted = await decryptApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
-      elements.geminiApiKey.value = maskApiKey(decrypted);
-      elements.geminiApiKey.dataset.encrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
-    } catch (error) {
-      console.error('Failed to decrypt Gemini API key:', error);
-      elements.geminiApiKey.value = maskApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
-      elements.geminiApiKey.dataset.encrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+  if (elements.apiKey) {
+    elements.apiKey.value = apiKeyValue;
+    if (apiKeyEncrypted) {
+      elements.apiKey.dataset.encrypted = apiKeyEncrypted;
     }
   }
+  
+  // Update UI for selected provider
+  await updateApiProviderUI();
+  
+  // Keep old API keys in storage for backward compatibility, but don't display them
+  // They will be loaded when user switches provider
   
   if (result[STORAGE_KEYS.GOOGLE_API_KEY]) {
     try {
@@ -487,27 +880,58 @@ async function loadSettings() {
       elements.googleApiKey.value = maskApiKey(decrypted);
       elements.googleApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_API_KEY];
     } catch (error) {
-      console.error('Failed to decrypt Google API key:', error);
+      logError('Failed to decrypt Google API key', error);
       elements.googleApiKey.value = maskApiKey(result[STORAGE_KEYS.GOOGLE_API_KEY]);
       elements.googleApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_API_KEY];
     }
   }
   
-  if (result[STORAGE_KEYS.MODEL]) {
-    elements.modelSelect.value = result[STORAGE_KEYS.MODEL];
+  // Model is already set by updateApiProviderUI() -> updateModelList()
+  // But we need to ensure saved model is selected if it belongs to current provider
+  if (result[STORAGE_KEYS.MODEL] && elements.modelSelect) {
+    const savedModel = result[STORAGE_KEYS.MODEL];
+    const savedModelProvider = getProviderFromModel(savedModel);
+    const currentProvider = elements.apiProviderSelect?.value || 'openai';
+    
+    // Only set saved model if it belongs to current provider
+    // Otherwise updateModelList() has already set the first model of the provider
+    if (savedModelProvider === currentProvider) {
+      // Check if the model option exists in the select
+      const optionExists = Array.from(elements.modelSelect.options).some(
+        opt => opt.value === savedModel
+      );
+      if (optionExists) {
+        elements.modelSelect.value = savedModel;
+      }
+    }
   }
   
   if (result[STORAGE_KEYS.MODE]) {
     elements.modeSelect.value = result[STORAGE_KEYS.MODE];
   }
   
-  if (result[STORAGE_KEYS.USE_CACHE] !== undefined) {
-    elements.useCache.checked = result[STORAGE_KEYS.USE_CACHE];
+  // Default: enabled (true) - cache selectors by default
+  // Explicitly check for boolean false to distinguish from undefined/null
+  const useCacheValue = result[STORAGE_KEYS.USE_CACHE];
+  if (useCacheValue === false) {
+    // User explicitly disabled - respect their choice
+    elements.useCache.checked = false;
+  } else if (useCacheValue === true) {
+    // Explicitly enabled
+    elements.useCache.checked = true;
   } else {
-    elements.useCache.checked = true; // Default: enabled
+    // First time or undefined/null - set to true (enabled) and save default value
+    // This ensures the setting is always persisted, not just set in UI
+    elements.useCache.checked = true;
+    try {
+      // Save explicitly as boolean true to ensure it's preserved
+      await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: true });
+    } catch (error) {
+      logError('Failed to save default use_selector_cache setting', error);
+    }
   }
   
-  // Sync enableCache checkbox with useCache
+  // Sync enableCache checkbox with useCache (always sync after setting useCache)
   if (elements.enableCache) {
     elements.enableCache.checked = elements.useCache.checked;
   }
@@ -592,9 +1016,13 @@ async function loadSettings() {
   } else {
     elements.audioProvider.value = 'openai'; // Default
   }
-  
-  // Update voice list based on provider
-  updateVoiceList(elements.audioProvider.value);
+
+  // Load per-provider voice map (backward compatible)
+  if (result[STORAGE_KEYS.AUDIO_VOICE_MAP] && typeof result[STORAGE_KEYS.AUDIO_VOICE_MAP] === 'object' && !Array.isArray(result[STORAGE_KEYS.AUDIO_VOICE_MAP])) {
+    audioVoiceMap = result[STORAGE_KEYS.AUDIO_VOICE_MAP];
+  } else {
+    audioVoiceMap = {};
+  }
   
   // Load and mask ElevenLabs API key
   if (result[STORAGE_KEYS.ELEVENLABS_API_KEY]) {
@@ -603,7 +1031,7 @@ async function loadSettings() {
       
       // Check if decrypted value is a mask (corrupted data in storage)
       if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
-        console.warn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
+        logWarn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
         elements.elevenlabsApiKey.value = '';
         elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
         await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
@@ -612,7 +1040,7 @@ async function loadSettings() {
         elements.elevenlabsApiKey.dataset.encrypted = result[STORAGE_KEYS.ELEVENLABS_API_KEY];
       }
     } catch (error) {
-      console.error('Failed to decrypt ElevenLabs API key:', error);
+      logError('Failed to decrypt ElevenLabs API key', error);
       // Clear corrupted key - user needs to re-enter
       elements.elevenlabsApiKey.value = '';
       elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
@@ -620,12 +1048,150 @@ async function loadSettings() {
     }
   }
   
+  // Load and mask Qwen API key
+  if (result[STORAGE_KEYS.QWEN_API_KEY] && elements.qwenApiKey) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.QWEN_API_KEY]);
+      
+      // Check if decrypted value is a mask (corrupted data in storage)
+      if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
+        logWarn('Qwen API key in storage is corrupted (contains mask), clearing...');
+        elements.qwenApiKey.value = '';
+        elements.qwenApiKey.placeholder = await t('keyCorrupted');
+        await chrome.storage.local.remove(STORAGE_KEYS.QWEN_API_KEY);
+      } else {
+        elements.qwenApiKey.value = maskApiKey(decrypted);
+        elements.qwenApiKey.dataset.encrypted = result[STORAGE_KEYS.QWEN_API_KEY];
+      }
+    } catch (error) {
+      logError('Failed to decrypt Qwen API key', error);
+      // Clear corrupted key - user needs to re-enter
+      elements.qwenApiKey.value = '';
+      elements.qwenApiKey.placeholder = await t('keyCorrupted');
+      await chrome.storage.local.remove(STORAGE_KEYS.QWEN_API_KEY);
+    }
+  }
+  
+  // Load and mask Respeecher API key
+  if (result[STORAGE_KEYS.RESPEECHER_API_KEY] && elements.respeecherApiKey) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.RESPEECHER_API_KEY]);
+      
+      // Check if decrypted value is a mask (corrupted data in storage)
+      if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
+        logWarn('Respeecher API key in storage is corrupted (contains mask), clearing...');
+        elements.respeecherApiKey.value = '';
+        elements.respeecherApiKey.placeholder = await t('keyCorrupted');
+        await chrome.storage.local.remove(STORAGE_KEYS.RESPEECHER_API_KEY);
+      } else {
+        elements.respeecherApiKey.value = maskApiKey(decrypted);
+        elements.respeecherApiKey.dataset.encrypted = result[STORAGE_KEYS.RESPEECHER_API_KEY];
+      }
+    } catch (error) {
+      logError('Failed to decrypt Respeecher API key', error);
+      // Clear corrupted key - user needs to re-enter
+      elements.respeecherApiKey.value = '';
+      elements.respeecherApiKey.placeholder = await t('keyCorrupted');
+      await chrome.storage.local.remove(STORAGE_KEYS.RESPEECHER_API_KEY);
+    }
+  }
+  
+  // Load and mask Google TTS API key
+  if (result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] && elements.googleTtsApiKey) {
+    try {
+      const decrypted = await decryptApiKey(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY]);
+      elements.googleTtsApiKey.value = maskApiKey(decrypted);
+      elements.googleTtsApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_TTS_API_KEY];
+    } catch (error) {
+      logError('Failed to decrypt Google TTS API key', error);
+      // Keep the encrypted key in dataset even if decryption fails (same as Gemini key)
+      elements.googleTtsApiKey.value = maskApiKey(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY]);
+      elements.googleTtsApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_TTS_API_KEY];
+    }
+  }
+  
   if (result[STORAGE_KEYS.ELEVENLABS_MODEL]) {
     elements.elevenlabsModel.value = result[STORAGE_KEYS.ELEVENLABS_MODEL];
   }
   
-  if (result[STORAGE_KEYS.AUDIO_VOICE]) {
-    elements.audioVoice.value = result[STORAGE_KEYS.AUDIO_VOICE];
+  if (result[STORAGE_KEYS.ELEVENLABS_STABILITY] !== undefined) {
+    elements.elevenlabsStability.value = result[STORAGE_KEYS.ELEVENLABS_STABILITY];
+    if (elements.elevenlabsStabilityValue) {
+      elements.elevenlabsStabilityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY]).toFixed(2);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_SIMILARITY] !== undefined) {
+    elements.elevenlabsSimilarity.value = result[STORAGE_KEYS.ELEVENLABS_SIMILARITY];
+    if (elements.elevenlabsSimilarityValue) {
+      elements.elevenlabsSimilarityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]).toFixed(2);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_STYLE] !== undefined) {
+    elements.elevenlabsStyle.value = result[STORAGE_KEYS.ELEVENLABS_STYLE];
+    if (elements.elevenlabsStyleValue) {
+      elements.elevenlabsStyleValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE]).toFixed(2);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST] !== undefined) {
+    elements.elevenlabsSpeakerBoost.checked = result[STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST];
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_FORMAT] && elements.elevenlabsFormat) {
+    elements.elevenlabsFormat.value = result[STORAGE_KEYS.ELEVENLABS_FORMAT];
+  }
+  
+  if (result[STORAGE_KEYS.RESPEECHER_TEMPERATURE] !== undefined && elements.respeecherTemperature) {
+    elements.respeecherTemperature.value = result[STORAGE_KEYS.RESPEECHER_TEMPERATURE];
+    if (elements.respeecherTemperatureValue) {
+      elements.respeecherTemperatureValue.textContent = parseFloat(result[STORAGE_KEYS.RESPEECHER_TEMPERATURE]).toFixed(1);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY] !== undefined && elements.respeecherRepetitionPenalty) {
+    elements.respeecherRepetitionPenalty.value = result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY];
+    if (elements.respeecherRepetitionPenaltyValue) {
+      elements.respeecherRepetitionPenaltyValue.textContent = parseFloat(result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY]).toFixed(1);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.RESPEECHER_TOP_P] !== undefined && elements.respeecherTopP) {
+    elements.respeecherTopP.value = result[STORAGE_KEYS.RESPEECHER_TOP_P];
+    if (elements.respeecherTopPValue) {
+      elements.respeecherTopPValue.textContent = parseFloat(result[STORAGE_KEYS.RESPEECHER_TOP_P]).toFixed(2);
+    }
+  }
+  
+  if (result[STORAGE_KEYS.GOOGLE_TTS_MODEL] && elements.googleTtsModel) {
+    elements.googleTtsModel.value = result[STORAGE_KEYS.GOOGLE_TTS_MODEL];
+  }
+  
+  if (result[STORAGE_KEYS.OPENAI_INSTRUCTIONS] !== undefined) {
+    elements.openaiInstructions.value = result[STORAGE_KEYS.OPENAI_INSTRUCTIONS];
+  }
+  
+  if (result[STORAGE_KEYS.GOOGLE_TTS_VOICE] && elements.googleTtsVoice) {
+    elements.googleTtsVoice.value = result[STORAGE_KEYS.GOOGLE_TTS_VOICE];
+  }
+  
+  
+  if (result[STORAGE_KEYS.GOOGLE_TTS_PROMPT] !== undefined && elements.googleTtsPrompt) {
+    elements.googleTtsPrompt.value = result[STORAGE_KEYS.GOOGLE_TTS_PROMPT] || '';
+  }
+  
+  // Determine initial voice: prefer per-provider map, fallback to legacy single value
+  const initialProvider = elements.audioProvider.value || 'openai';
+  const legacyVoice = result[STORAGE_KEYS.AUDIO_VOICE];
+  const mappedVoice = audioVoiceMap[initialProvider];
+  const initialVoice = mappedVoice || legacyVoice;
+  if (initialVoice) {
+    elements.audioVoice.value = initialVoice;
+    // Migrate legacy value into map for current provider
+    if (!mappedVoice && legacyVoice) {
+      saveAudioVoice(initialProvider, legacyVoice);
+    }
   }
   
   if (result[STORAGE_KEYS.AUDIO_SPEED]) {
@@ -635,10 +1201,62 @@ async function loadSettings() {
     }
   }
   
-  // Update UI visibility based on provider
-  updateAudioProviderUI();
+  // Load ElevenLabs advanced settings
+  if (result[STORAGE_KEYS.ELEVENLABS_STABILITY] !== undefined) {
+    if (elements.elevenlabsStability) {
+      elements.elevenlabsStability.value = result[STORAGE_KEYS.ELEVENLABS_STABILITY];
+      if (elements.elevenlabsStabilityValue) {
+        elements.elevenlabsStabilityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY]).toFixed(2);
+      }
+    }
+  }
   
-  // Apply preset colors to ensure consistency (fixes color mismatch after preset change)
+  if (result[STORAGE_KEYS.ELEVENLABS_SIMILARITY] !== undefined) {
+    if (elements.elevenlabsSimilarity) {
+      elements.elevenlabsSimilarity.value = result[STORAGE_KEYS.ELEVENLABS_SIMILARITY];
+      if (elements.elevenlabsSimilarityValue) {
+        elements.elevenlabsSimilarityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]).toFixed(2);
+      }
+    }
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_STYLE] !== undefined) {
+    if (elements.elevenlabsStyle) {
+      elements.elevenlabsStyle.value = result[STORAGE_KEYS.ELEVENLABS_STYLE];
+      if (elements.elevenlabsStyleValue) {
+        elements.elevenlabsStyleValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE]).toFixed(2);
+      }
+    }
+  }
+  
+  if (result[STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST] !== undefined) {
+    if (elements.elevenlabsSpeakerBoost) {
+      elements.elevenlabsSpeakerBoost.checked = result[STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST];
+    }
+  }
+  
+  // Load OpenAI instructions
+  if (result[STORAGE_KEYS.OPENAI_INSTRUCTIONS] !== undefined) {
+    if (elements.openaiInstructions) {
+      elements.openaiInstructions.value = result[STORAGE_KEYS.OPENAI_INSTRUCTIONS];
+    }
+  }
+  
+  // Update voice list based on provider (AFTER loading audio_voice from storage)
+  // This ensures that invalid voices (e.g., 'volodymyr' for Ukrainian text, or 'nova' for Respeecher)
+  // are replaced with valid defaults and restores per-provider voice selection
+  // ============================================
+  // UI VISIBILITY INITIALIZATION
+  // ============================================
+  // IMPORTANT: Order matters! updateOutputFormatUI() must be called LAST because:
+  // 1. It calls updateAudioProviderUI() internally (which depends on format)
+  // 2. It calls updateTranslationVisibility() internally (which depends on format)
+  // 3. It handles all format-specific visibility (PDF style, audio fields, TOC/abstract)
+  
+  // Step 1: Update voice list for current provider (populates dropdown)
+  updateVoiceList(elements.audioProvider.value);
+  
+  // Step 2: Apply preset colors (if preset is selected)
   const currentPreset = elements.stylePreset.value;
   if (currentPreset !== 'custom' && STYLE_PRESETS[currentPreset]) {
     const colors = STYLE_PRESETS[currentPreset];
@@ -652,11 +1270,26 @@ async function loadSettings() {
     elements.linkColorText.value = colors.linkColor;
   }
   
-  // Update hint and visibility
+  // Step 3: Update mode hint (selector vs extract mode)
   updateModeHint();
-  updateTranslationVisibility();
-  updateOutputFormatUI();
+  
+  // Step 4: Update cache visibility (only for selector mode)
   updateCacheVisibility();
+  
+  // Step 5: Update output format UI (MASTER FUNCTION - calls other update functions)
+  // This is async because it calls updateTranslationVisibility() which is async
+  await updateOutputFormatUI();
+  
+  // Step 6: Final safety check - ensure all audio fields are hidden if format is not audio
+  // This is a defensive check in case format changed during async operations
+  // or if updateOutputFormatUI() didn't properly hide fields
+  const currentFormat = getElement('outputFormat')?.value;
+  if (currentFormat !== 'audio') {
+    hideAllAudioFields();
+  }
+  
+  // Step 7: Update theme icon after loading theme setting
+  applyTheme();
 }
 
 // Setup event listeners
@@ -673,7 +1306,7 @@ function setupEventListeners() {
           input.value = decrypted;
           input.dataset.decrypted = decrypted; // Store decrypted for quick hide
         } catch (error) {
-          console.error('Failed to decrypt API key:', error);
+          logError('Failed to decrypt API key', error);
           // If decryption fails, try to use current value if it's not masked
           if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
@@ -698,8 +1331,9 @@ function setupEventListeners() {
     }
   });
 
-  elements.toggleClaudeApiKey.addEventListener('click', async () => {
-    const input = elements.claudeApiKey;
+  if (elements.toggleClaudeApiKey && elements.claudeApiKey) {
+    elements.toggleClaudeApiKey.addEventListener('click', async () => {
+      const input = elements.claudeApiKey;
     const isPassword = input.type === 'password';
     
     if (isPassword) {
@@ -710,7 +1344,7 @@ function setupEventListeners() {
           input.value = decrypted;
           input.dataset.decrypted = decrypted;
         } catch (error) {
-          console.error('Failed to decrypt API key:', error);
+          logError('Failed to decrypt API key', error);
           if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
@@ -730,11 +1364,13 @@ function setupEventListeners() {
       }
       input.type = 'password';
       elements.toggleClaudeApiKey.querySelector('.eye-icon').textContent = '👁';
-    }
-  });
+      }
+    });
+  }
 
-  elements.toggleGeminiApiKey.addEventListener('click', async () => {
-    const input = elements.geminiApiKey;
+  if (elements.toggleGeminiApiKey && elements.geminiApiKey) {
+    elements.toggleGeminiApiKey.addEventListener('click', async () => {
+      const input = elements.geminiApiKey;
     const isPassword = input.type === 'password';
     
     if (isPassword) {
@@ -745,7 +1381,7 @@ function setupEventListeners() {
           input.value = decrypted;
           input.dataset.decrypted = decrypted;
         } catch (error) {
-          console.error('Failed to decrypt API key:', error);
+          logError('Failed to decrypt API key', error);
           if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
@@ -765,8 +1401,9 @@ function setupEventListeners() {
       }
       input.type = 'password';
       elements.toggleGeminiApiKey.querySelector('.eye-icon').textContent = '👁';
-    }
-  });
+      }
+    });
+  }
 
   elements.toggleGoogleApiKey.addEventListener('click', async () => {
     const input = elements.googleApiKey;
@@ -780,7 +1417,7 @@ function setupEventListeners() {
           input.value = decrypted;
           input.dataset.decrypted = decrypted;
         } catch (error) {
-          console.error('Failed to decrypt API key:', error);
+          logError('Failed to decrypt API key', error);
           if (!input.value.startsWith('****')) {
             input.dataset.decrypted = input.value;
           }
@@ -803,26 +1440,134 @@ function setupEventListeners() {
     }
   });
 
+  // API provider selector change handler
+  if (elements.apiProviderSelect) {
+    elements.apiProviderSelect.addEventListener('change', async () => {
+      const provider = elements.apiProviderSelect.value;
+      
+      // Save selected provider
+      await chrome.storage.local.set({ [STORAGE_KEYS.API_PROVIDER]: provider });
+      
+      // Load API key for selected provider
+      const result = await chrome.storage.local.get([
+        STORAGE_KEYS.API_KEY,
+        STORAGE_KEYS.CLAUDE_API_KEY,
+        STORAGE_KEYS.GEMINI_API_KEY,
+        STORAGE_KEYS.GROK_API_KEY,
+        STORAGE_KEYS.OPENROUTER_API_KEY
+      ]);
+      
+      let apiKeyValue = '';
+      let apiKeyEncrypted = null;
+      
+      if (provider === 'openai' && result[STORAGE_KEYS.API_KEY]) {
+        try {
+          const decrypted = await decryptApiKey(result[STORAGE_KEYS.API_KEY]);
+          apiKeyValue = maskApiKey(decrypted);
+          apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+        } catch (error) {
+          logError('Failed to decrypt OpenAI API key', error);
+          apiKeyValue = maskApiKey(result[STORAGE_KEYS.API_KEY]);
+          apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+        }
+      } else if (provider === 'claude' && result[STORAGE_KEYS.CLAUDE_API_KEY]) {
+        try {
+          const decrypted = await decryptApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
+          apiKeyValue = maskApiKey(decrypted);
+          apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+        } catch (error) {
+          logError('Failed to decrypt Claude API key', error);
+          apiKeyValue = maskApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
+          apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+        }
+      } else if (provider === 'gemini' && result[STORAGE_KEYS.GEMINI_API_KEY]) {
+        try {
+          const decrypted = await decryptApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+          apiKeyValue = maskApiKey(decrypted);
+          apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+        } catch (error) {
+          logError('Failed to decrypt Gemini API key', error);
+          apiKeyValue = maskApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+          apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+        }
+      } else if (provider === 'grok' && result[STORAGE_KEYS.GROK_API_KEY]) {
+        try {
+          const decrypted = await decryptApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+          apiKeyValue = maskApiKey(decrypted);
+          apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+        } catch (error) {
+          logError('Failed to decrypt Grok API key', error);
+          apiKeyValue = maskApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+          apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+        }
+      } else if (provider === 'openrouter' && result[STORAGE_KEYS.OPENROUTER_API_KEY]) {
+        try {
+          const decrypted = await decryptApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+          apiKeyValue = maskApiKey(decrypted);
+          apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+        } catch (error) {
+          logError('Failed to decrypt OpenRouter API key', error);
+          apiKeyValue = maskApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+          apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+        }
+      }
+      
+      if (elements.apiKey) {
+        elements.apiKey.value = apiKeyValue;
+        if (apiKeyEncrypted) {
+          elements.apiKey.dataset.encrypted = apiKeyEncrypted;
+        } else {
+          delete elements.apiKey.dataset.encrypted;
+        }
+        // Reset to password type when switching
+        elements.apiKey.type = 'password';
+        if (elements.toggleApiKey) {
+          elements.toggleApiKey.querySelector('.eye-icon').textContent = '👁';
+        }
+      }
+      
+      // Update UI (label, placeholder)
+      await updateApiProviderUI();
+    });
+  }
+
   elements.saveApiKey.addEventListener('click', saveApiKey);
 
   elements.toggleSettings.addEventListener('click', () => {
-    elements.settingsPanel.classList.toggle('open');
-    // Close stats panel when opening settings
-    if (elements.settingsPanel.classList.contains('open')) {
-      elements.statsPanel.classList.remove('open');
+    const isOpen = elements.settingsPanel.classList.contains('open');
+    
+    if (isOpen) {
+      elements.settingsPanel.classList.remove('open');
+    } else {
+      // Opening - close stats if open
+      if (elements.statsPanel.classList.contains('open')) {
+        elements.statsPanel.classList.remove('open');
+      }
+      elements.settingsPanel.classList.add('open');
     }
   });
 
   elements.toggleStats.addEventListener('click', async () => {
-    elements.statsPanel.classList.toggle('open');
-    // Close settings panel when opening stats
-    if (elements.statsPanel.classList.contains('open')) {
-      elements.settingsPanel.classList.remove('open');
+    const isOpen = elements.statsPanel.classList.contains('open');
+    
+    if (isOpen) {
+      elements.statsPanel.classList.remove('open');
+    } else {
+      // Opening - close settings if open
+      if (elements.settingsPanel.classList.contains('open')) {
+        elements.settingsPanel.classList.remove('open');
+      }
+      
       // Sync enableCache checkbox when opening stats panel
       if (elements.enableCache && elements.useCache) {
         elements.enableCache.checked = elements.useCache.checked;
       }
+      
+      // Load data BEFORE opening
       await loadAndDisplayStats();
+      
+      // Then open
+      elements.statsPanel.classList.add('open');
     }
   });
 
@@ -852,14 +1597,16 @@ function setupEventListeners() {
 
   elements.exportSettingsBtn.addEventListener('click', async () => {
     try {
-      const langCode = await getUILanguage();
-      const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-      const includeStats = confirm(locale.includeStatisticsInExport || UI_LOCALES.en.includeStatisticsInExport);
-      const includeCache = confirm(locale.includeSelectorCacheInExport || UI_LOCALES.en.includeSelectorCacheInExport);
-      // Note: API keys are NEVER exported for security reasons
+      // Simple confirm dialogs
+      const includeStatsText = await t('includeStatisticsInExport');
+      const includeCacheText = await t('includeSelectorCacheInExport');
+      
+      const includeStats = window.confirm(includeStatsText || 'Include statistics in export?');
+      const includeCache = window.confirm(includeCacheText || 'Include selector cache in export?');
       
       elements.exportSettingsBtn.disabled = true;
-      elements.exportSettingsBtn.textContent = 'Exporting...';
+      const exportingText = await t('exporting');
+      elements.exportSettingsBtn.textContent = exportingText;
       
       const response = await chrome.runtime.sendMessage({
         action: 'exportSettings',
@@ -885,7 +1632,7 @@ function setupEventListeners() {
       const settingsExportedText = await t('settingsExportedSuccessfully');
       showToast(settingsExportedText, 'success');
     } catch (error) {
-      console.error('Export failed:', error);
+      logError('Export failed', error);
       const exportFailedText = await t('exportFailed');
       showToast(`${exportFailedText}: ${error.message}`, 'error');
     } finally {
@@ -917,10 +1664,14 @@ function setupEventListeners() {
         throw new Error('Invalid export file');
       }
       
-      // Ask what to import
-      const importStats = data.statistics && confirm(await t('importStatistics'));
-      const importCache = data.selectorCache && confirm(await t('importSelectorCache'));
-      const overwriteExisting = confirm(await t('overwriteExistingSettings'));
+      // Simple confirm dialogs
+      const importStatsText = await t('includeStatisticsInImport');
+      const importCacheText = await t('includeSelectorCacheInImport');
+      const overwriteText = await t('overwriteExistingSettings');
+      
+      const importStats = data.statistics && window.confirm(importStatsText || 'Import statistics (if present)?');
+      const importCache = data.selectorCache && window.confirm(importCacheText || 'Import selector cache (if present)?');
+      const overwriteExisting = window.confirm(overwriteText || 'Overwrite existing settings?');
       
       elements.importSettingsBtn.disabled = true;
       const importingText = await t('importing');
@@ -962,7 +1713,7 @@ function setupEventListeners() {
       }
       
     } catch (error) {
-      console.error('Import failed:', error);
+      logError('Import failed', error);
       const importFailedText = await t('importFailed');
       showToast(`${importFailedText}: ${error.message}`, 'error');
     } finally {
@@ -984,25 +1735,43 @@ function setupEventListeners() {
     });
   });
 
-  elements.useCache.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.USE_CACHE, elements.useCache.checked);
+  elements.useCache.addEventListener('change', async () => {
+    const value = elements.useCache.checked;
+    // Save immediately (not debounced) to ensure it's preserved
+    try {
+      await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: value });
+    } catch (error) {
+      logError('Failed to save use_selector_cache setting', error);
+    }
     // Sync enableCache checkbox
     if (elements.enableCache) {
-      elements.enableCache.checked = elements.useCache.checked;
+      elements.enableCache.checked = value;
     }
   });
   
   // Handle enableCache checkbox in stats section
   if (elements.enableCache) {
-    elements.enableCache.addEventListener('change', () => {
-      debouncedSaveSettings(STORAGE_KEYS.USE_CACHE, elements.enableCache.checked);
+    elements.enableCache.addEventListener('change', async () => {
+      const value = elements.enableCache.checked;
+      // Save immediately (not debounced) to ensure it's preserved
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: value });
+      } catch (error) {
+        logError('Failed to save use_selector_cache setting', error);
+      }
       // Sync useCache checkbox
-      elements.useCache.checked = elements.enableCache.checked;
+      elements.useCache.checked = value;
     });
   }
 
+  /**
+   * Event listener for output format change
+   * When format changes, update UI visibility and save setting
+   */
   elements.outputFormat.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.outputFormat.value, async () => {
+      // updateOutputFormatUI() handles all UI visibility updates based on format
+      // It calls updateAudioProviderUI() and updateTranslationVisibility() internally
       await updateOutputFormatUI();
     });
   });
@@ -1030,7 +1799,7 @@ function setupEventListeners() {
       updateTranslationVisibility();
     });
   });
-
+  
   // Style preset handler
   elements.stylePreset.addEventListener('change', () => {
     const preset = elements.stylePreset.value;
@@ -1200,8 +1969,15 @@ function setupEventListeners() {
     });
   }
   
+  if (elements.elevenlabsFormat) {
+    elements.elevenlabsFormat.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_FORMAT, elements.elevenlabsFormat.value);
+    });
+  }
+  
   elements.audioVoice.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, elements.audioVoice.value);
+    const provider = elements.audioProvider?.value || 'openai';
+    saveAudioVoice(provider, elements.audioVoice.value);
   });
   
   elements.audioSpeed.addEventListener('input', () => {
@@ -1214,13 +1990,131 @@ function setupEventListeners() {
     debouncedSaveSettings(STORAGE_KEYS.AUDIO_SPEED, speed);
   });
   
+  // ElevenLabs advanced settings
+  if (elements.elevenlabsStability) {
+    elements.elevenlabsStability.addEventListener('input', () => {
+      const value = parseFloat(elements.elevenlabsStability.value).toFixed(2);
+      elements.elevenlabsStabilityValue.textContent = value;
+    });
+    
+    elements.elevenlabsStability.addEventListener('change', () => {
+      const value = parseFloat(elements.elevenlabsStability.value);
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STABILITY, value);
+    });
+  }
+  
+  if (elements.elevenlabsSimilarity) {
+    elements.elevenlabsSimilarity.addEventListener('input', () => {
+      const value = parseFloat(elements.elevenlabsSimilarity.value).toFixed(2);
+      elements.elevenlabsSimilarityValue.textContent = value;
+    });
+    
+    elements.elevenlabsSimilarity.addEventListener('change', () => {
+      const value = parseFloat(elements.elevenlabsSimilarity.value);
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_SIMILARITY, value);
+    });
+  }
+  
+  if (elements.elevenlabsStyle) {
+    elements.elevenlabsStyle.addEventListener('input', () => {
+      const value = parseFloat(elements.elevenlabsStyle.value).toFixed(2);
+      elements.elevenlabsStyleValue.textContent = value;
+    });
+    
+    elements.elevenlabsStyle.addEventListener('change', () => {
+      const value = parseFloat(elements.elevenlabsStyle.value);
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STYLE, value);
+    });
+  }
+  
+  if (elements.elevenlabsSpeakerBoost) {
+    elements.elevenlabsSpeakerBoost.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST, elements.elevenlabsSpeakerBoost.checked);
+    });
+  }
+  
+  // OpenAI instructions
+  if (elements.openaiInstructions) {
+    elements.openaiInstructions.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.OPENAI_INSTRUCTIONS, elements.openaiInstructions.value.trim());
+    });
+  }
+  
   // Audio provider handler
   if (elements.audioProvider) {
+    /**
+     * Event listener for audio provider change
+     * When provider changes, update voice list and provider-specific UI visibility
+     */
     elements.audioProvider.addEventListener('change', () => {
       debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value, () => {
+        // Update voice list first (populates dropdown with provider-specific voices)
         updateVoiceList(elements.audioProvider.value);
+        // Then update UI visibility (shows/hides provider-specific fields)
         updateAudioProviderUI();
       });
+    });
+  }
+  
+  if (elements.googleTtsModel) {
+    elements.googleTtsModel.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.GOOGLE_TTS_MODEL, elements.googleTtsModel.value);
+    });
+  }
+  
+  if (elements.googleTtsVoice) {
+    elements.googleTtsVoice.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.GOOGLE_TTS_VOICE, elements.googleTtsVoice.value);
+    });
+  }
+  
+  
+  if (elements.googleTtsPrompt) {
+    elements.googleTtsPrompt.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.GOOGLE_TTS_PROMPT, elements.googleTtsPrompt.value.trim());
+    });
+  }
+  
+  // Respeecher advanced settings
+  if (elements.respeecherTemperature) {
+    elements.respeecherTemperature.addEventListener('input', () => {
+      const value = parseFloat(elements.respeecherTemperature.value).toFixed(1);
+      if (elements.respeecherTemperatureValue) {
+        elements.respeecherTemperatureValue.textContent = value;
+      }
+    });
+    
+    elements.respeecherTemperature.addEventListener('change', () => {
+      const value = parseFloat(elements.respeecherTemperature.value);
+      debouncedSaveSettings(STORAGE_KEYS.RESPEECHER_TEMPERATURE, value);
+    });
+  }
+  
+  if (elements.respeecherRepetitionPenalty) {
+    elements.respeecherRepetitionPenalty.addEventListener('input', () => {
+      const value = parseFloat(elements.respeecherRepetitionPenalty.value).toFixed(1);
+      if (elements.respeecherRepetitionPenaltyValue) {
+        elements.respeecherRepetitionPenaltyValue.textContent = value;
+      }
+    });
+    
+    elements.respeecherRepetitionPenalty.addEventListener('change', () => {
+      const value = parseFloat(elements.respeecherRepetitionPenalty.value);
+      debouncedSaveSettings(STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY, value);
+    });
+  }
+  
+  if (elements.respeecherTopP) {
+    elements.respeecherTopP.addEventListener('input', () => {
+      const value = parseFloat(elements.respeecherTopP.value).toFixed(2);
+      if (elements.respeecherTopPValue) {
+        elements.respeecherTopPValue.textContent = value;
+      }
+    });
+    
+    elements.respeecherTopP.addEventListener('change', () => {
+      const value = parseFloat(elements.respeecherTopP.value);
+      debouncedSaveSettings(STORAGE_KEYS.RESPEECHER_TOP_P, value);
     });
   }
   
@@ -1238,7 +2132,9 @@ function setupEventListeners() {
             input.value = decrypted;
             input.dataset.decrypted = decrypted;
           } catch (error) {
-            console.error('Failed to decrypt ElevenLabs API key:', error);
+            logError('Failed to decrypt ElevenLabs API key', error);
+            const errorMsg = await t('errorDecryptFailed');
+            showToast(errorMsg, 'error');
             if (!input.value.startsWith('****')) {
               input.dataset.decrypted = input.value;
             }
@@ -1264,25 +2160,27 @@ function setupEventListeners() {
     elements.saveElevenlabsApiKey.addEventListener('click', async () => {
       const key = elements.elevenlabsApiKey.value.trim();
       if (!key) {
-        alert('Please enter an ElevenLabs API key');
+        const pleaseEnterKeyText = await t('pleaseEnterElevenlabsApiKey');
+        showToast(pleaseEnterKeyText, 'error');
         return;
       }
       
-      // Skip if key is masked (already saved)
+      // Skip if key is masked (already saved) - silently return
       if (key.startsWith('****') || key.startsWith('••••')) {
-        alert('API key already saved. To change it, clear the field and enter a new key.');
         return;
       }
       
       // Validate API key is ASCII only (required for HTTP headers)
       if (!/^[\x20-\x7E]+$/.test(key)) {
-        alert('Invalid API key format. Key should contain only standard characters (letters, numbers, underscores).');
+        const invalidKeyText = await t('invalidKeyFormat');
+        showToast(invalidKeyText, 'error');
         return;
       }
       
       // Validate key looks like ElevenLabs format (typically starts with sk_ or is alphanumeric)
       if (key.length < 10) {
-        alert('API key seems too short. Please check and enter the complete key.');
+        const keyTooShortText = await t('keyTooShort');
+        showToast(keyTooShortText, 'error');
         return;
       }
       
@@ -1295,11 +2193,274 @@ function setupEventListeners() {
         if (elements.toggleElevenlabsApiKey) {
           elements.toggleElevenlabsApiKey.textContent = '👁';
         }
-        console.log('ElevenLabs API key saved successfully');
-        alert('ElevenLabs API key saved!');
+        const elevenlabsKeySavedText = await t('elevenlabsKeySaved');
+        showToast(elevenlabsKeySavedText, 'success');
       } catch (error) {
-        console.error('Failed to save ElevenLabs API key:', error);
-        alert('Failed to save API key. Please try again.');
+        logError('Failed to save ElevenLabs API key', error);
+        const failedToSaveText = await t('failedToSave');
+        showToast(failedToSaveText, 'error');
+      }
+    });
+  }
+  
+  // Qwen API key handlers
+  if (elements.toggleQwenApiKey) {
+    elements.toggleQwenApiKey.addEventListener('click', async () => {
+      const input = elements.qwenApiKey;
+      const isPassword = input.type === 'password';
+      const eyeIcon = elements.toggleQwenApiKey.querySelector('.eye-icon');
+      
+      if (isPassword) {
+        if (input.dataset.encrypted) {
+          try {
+            const decrypted = await decryptApiKey(input.dataset.encrypted);
+            input.value = decrypted;
+            input.dataset.decrypted = decrypted;
+          } catch (error) {
+            logError('Failed to decrypt Qwen API key', error);
+            const errorMsg = await t('errorDecryptFailed');
+            showToast(errorMsg, 'error');
+            if (!input.value.startsWith('****')) {
+              input.dataset.decrypted = input.value;
+            }
+          }
+        } else if (input.value && !input.value.startsWith('****')) {
+          input.dataset.decrypted = input.value;
+        }
+        input.type = 'text';
+        if (eyeIcon) eyeIcon.textContent = '🔒';
+      } else {
+        if (input.dataset.decrypted) {
+          input.value = maskApiKey(input.dataset.decrypted);
+        } else {
+          input.value = maskApiKey(input.value);
+        }
+        input.type = 'password';
+        if (eyeIcon) eyeIcon.textContent = '👁';
+      }
+    });
+  }
+  
+  if (elements.saveQwenApiKey) {
+    elements.saveQwenApiKey.addEventListener('click', async () => {
+      const key = elements.qwenApiKey.value.trim();
+      if (!key) {
+        const pleaseEnterKeyText = await t('pleaseEnterQwenApiKey');
+        showToast(pleaseEnterKeyText, 'error');
+        return;
+      }
+      
+      // Skip if key is masked (already saved) - silently return
+      if (key.startsWith('****') || key.startsWith('••••')) {
+        return;
+      }
+      
+      // Validate API key is ASCII only (required for HTTP headers)
+      if (!/^[\x20-\x7E]+$/.test(key)) {
+        const invalidKeyText = await t('invalidKeyFormat');
+        showToast(invalidKeyText, 'error');
+        return;
+      }
+      
+      // Validate key looks like Qwen format (typically alphanumeric, at least 10 chars)
+      if (key.length < 10) {
+        const keyTooShortText = await t('keyTooShort');
+        showToast(keyTooShortText, 'error');
+        return;
+      }
+      
+      try {
+        const encrypted = await encryptApiKey(key);
+        await chrome.storage.local.set({ [STORAGE_KEYS.QWEN_API_KEY]: encrypted });
+        elements.qwenApiKey.value = maskApiKey(key);
+        elements.qwenApiKey.type = 'password';
+        elements.qwenApiKey.dataset.encrypted = encrypted;
+        if (elements.toggleQwenApiKey) {
+          elements.toggleQwenApiKey.querySelector('.eye-icon').textContent = '👁';
+        }
+        const qwenKeySavedText = await t('qwenKeySaved');
+        showToast(qwenKeySavedText, 'success');
+      } catch (error) {
+        logError('Failed to save Qwen API key', error);
+        const failedToSaveText = await t('failedToSave');
+        showToast(failedToSaveText, 'error');
+      }
+    });
+  }
+  
+  // Respeecher API key handlers
+  if (elements.toggleRespeecherApiKey) {
+    elements.toggleRespeecherApiKey.addEventListener('click', async () => {
+      const input = elements.respeecherApiKey;
+      const isPassword = input.type === 'password';
+      const eyeIcon = elements.toggleRespeecherApiKey.querySelector('.eye-icon');
+      
+      if (isPassword) {
+        if (input.dataset.encrypted) {
+          try {
+            const decrypted = await decryptApiKey(input.dataset.encrypted);
+            input.value = decrypted;
+            input.dataset.decrypted = decrypted;
+          } catch (error) {
+            logError('Failed to decrypt Respeecher API key', error);
+            const errorMsg = await t('errorDecryptFailed');
+            showToast(errorMsg, 'error');
+            if (!input.value.startsWith('****')) {
+              input.dataset.decrypted = input.value;
+            }
+          }
+        } else if (input.value && !input.value.startsWith('****')) {
+          input.dataset.decrypted = input.value;
+        }
+        input.type = 'text';
+        if (eyeIcon) eyeIcon.textContent = '🔒';
+      } else {
+        if (input.dataset.decrypted) {
+          input.value = maskApiKey(input.dataset.decrypted);
+        } else {
+          input.value = maskApiKey(input.value);
+        }
+        input.type = 'password';
+        if (eyeIcon) eyeIcon.textContent = '👁';
+      }
+    });
+  }
+  
+  if (elements.saveRespeecherApiKey) {
+    elements.saveRespeecherApiKey.addEventListener('click', async () => {
+      const key = elements.respeecherApiKey.value.trim();
+      if (!key) {
+        const pleaseEnterKeyText = await t('pleaseEnterRespecherApiKey');
+        showToast(pleaseEnterKeyText, 'error');
+        return;
+      }
+      
+      // Skip if key is masked (already saved) - silently return
+      if (key.startsWith('****') || key.startsWith('••••')) {
+        return;
+      }
+      
+      // Validate API key is ASCII only (required for HTTP headers)
+      if (!/^[\x20-\x7E]+$/.test(key)) {
+        const invalidKeyText = await t('invalidKeyFormat');
+        showToast(invalidKeyText, 'error');
+        return;
+      }
+      
+      // Validate key length
+      if (key.length < 10) {
+        const keyTooShortText = await t('keyTooShort');
+        showToast(keyTooShortText, 'error');
+        return;
+      }
+      
+      try {
+        const encrypted = await encryptApiKey(key);
+        await chrome.storage.local.set({ [STORAGE_KEYS.RESPEECHER_API_KEY]: encrypted });
+        elements.respeecherApiKey.value = maskApiKey(key);
+        elements.respeecherApiKey.type = 'password';
+        elements.respeecherApiKey.dataset.encrypted = encrypted;
+        if (elements.toggleRespeecherApiKey) {
+          elements.toggleRespeecherApiKey.querySelector('.eye-icon').textContent = '👁';
+        }
+        const respeecherKeySavedText = await t('respeecherKeySaved');
+        showToast(respeecherKeySavedText, 'success');
+      } catch (error) {
+        logError('Failed to save Respeecher API key', error);
+        const failedToSaveText = await t('failedToSave');
+        showToast(failedToSaveText, 'error');
+      }
+    });
+  }
+  
+  // Google TTS API key handlers
+  if (elements.toggleGoogleTtsApiKey) {
+    elements.toggleGoogleTtsApiKey.addEventListener('click', async () => {
+      const input = elements.googleTtsApiKey;
+      const isPassword = input.type === 'password';
+      const eyeIcon = elements.toggleGoogleTtsApiKey.querySelector('.eye-icon');
+      
+      if (isPassword) {
+        if (input.dataset.encrypted) {
+          try {
+            const decrypted = await decryptApiKey(input.dataset.encrypted);
+            input.value = decrypted;
+            input.dataset.decrypted = decrypted;
+          } catch (error) {
+            logError('Failed to decrypt Google TTS API key', error);
+            const errorMsg = await t('errorDecryptFailed');
+            showToast(errorMsg, 'error');
+            if (!input.value.startsWith('****')) {
+              input.dataset.decrypted = input.value;
+            }
+          }
+        } else if (input.value && !input.value.startsWith('****')) {
+          input.dataset.decrypted = input.value;
+        }
+        input.type = 'text';
+        if (eyeIcon) eyeIcon.textContent = '🔒';
+      } else {
+        if (input.dataset.decrypted) {
+          input.value = maskApiKey(input.dataset.decrypted);
+        } else {
+          input.value = maskApiKey(input.value);
+        }
+        input.type = 'password';
+        if (eyeIcon) eyeIcon.textContent = '👁';
+      }
+    });
+  }
+  
+  if (elements.saveGoogleTtsApiKey) {
+    elements.saveGoogleTtsApiKey.addEventListener('click', async () => {
+      const key = elements.googleTtsApiKey.value.trim();
+      if (!key) {
+        const pleaseEnterKeyText = await t('pleaseEnterGoogleTtsApiKey');
+        showToast(pleaseEnterKeyText, 'error');
+        return;
+      }
+      
+      // Skip if key is masked (already saved) - silently return
+      if (key.startsWith('****') || key.startsWith('••••')) {
+        return;
+      }
+      
+      // Validate API key format (Google API keys start with AIza)
+      if (!key.startsWith('AIza')) {
+        const invalidKeyText = await t('invalidGoogleTtsKeyFormat');
+        showToast(invalidKeyText, 'error');
+        return;
+      }
+      
+      // Validate API key is ASCII only
+      if (!/^[\x20-\x7E]+$/.test(key)) {
+        const invalidKeyText = await t('invalidKeyFormat');
+        showToast(invalidKeyText, 'error');
+        return;
+      }
+      
+      // Validate key length
+      if (key.length < 20) {
+        const keyTooShortText = await t('keyTooShort');
+        showToast(keyTooShortText, 'error');
+        return;
+      }
+      
+      try {
+        const encrypted = await encryptApiKey(key);
+        await chrome.storage.local.set({ [STORAGE_KEYS.GOOGLE_TTS_API_KEY]: encrypted });
+        elements.googleTtsApiKey.value = maskApiKey(key);
+        elements.googleTtsApiKey.type = 'password';
+        elements.googleTtsApiKey.dataset.encrypted = encrypted;
+        if (elements.toggleGoogleTtsApiKey) {
+          elements.toggleGoogleTtsApiKey.querySelector('.eye-icon').textContent = '👁';
+        }
+        const googleTtsKeySavedText = await t('googleTtsKeySaved');
+        showToast(googleTtsKeySavedText, 'success');
+      } catch (error) {
+        logError('Failed to save Google TTS API key', error);
+        const failedToSaveText = await t('failedToSave');
+        showToast(failedToSaveText, 'error');
       }
     });
   }
@@ -1317,12 +2478,15 @@ function applyTheme() {
   }
   
   document.body.setAttribute('data-theme', actualTheme);
+  document.documentElement.setAttribute('data-theme', actualTheme);
   
   // Listen for system theme changes if auto is selected
   if (theme === 'auto') {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleThemeChange = (e) => {
-      document.body.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+      const newTheme = e.matches ? 'dark' : 'light';
+      document.body.setAttribute('data-theme', newTheme);
+      document.documentElement.setAttribute('data-theme', newTheme);
     };
     
     // Remove old listener if exists
@@ -1401,17 +2565,31 @@ async function resetAllStyles() {
 
 // Handle Cancel button click
 async function handleCancel() {
+  if (!elements.cancelBtn) {
+    logWarn('Cancel button not found');
+    return;
+  }
   try {
+    // Disable button to prevent double-clicks
+    elements.cancelBtn.disabled = true;
     await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
     const cancelledText = await t('processingCancelled');
     showToast(cancelledText, 'success');
     const readyText = await t('ready');
     setStatus('ready', readyText);
     setProgress(0, false);
+    stopTimerDisplay();
     elements.savePdfBtn.disabled = false;
-    elements.cancelBtn.style.display = 'none';
+    elements.savePdfBtn.style.display = 'block';
+    if (elements.cancelBtn) {
+      elements.cancelBtn.style.display = 'none';
+      elements.cancelBtn.disabled = false; // Re-enable for next time
+    }
   } catch (error) {
-    console.error('Error cancelling:', error);
+    logError('Error cancelling', error);
+    if (elements.cancelBtn) {
+      elements.cancelBtn.disabled = false; // Re-enable on error
+    }
   }
 }
 
@@ -1445,7 +2623,47 @@ function updateCacheVisibility() {
   elements.useCacheGroup.style.display = mode === 'selector' ? 'flex' : 'none';
 }
 
-// Update UI based on output format selection
+/**
+ * Hide all audio-related UI fields
+ * This is a centralized function to ensure all audio fields are hidden consistently
+ * Used when output format is not 'audio' (PDF, EPUB, FB2, Markdown)
+ */
+function hideAllAudioFields() {
+  // Audio provider selector
+  setElementGroupDisplay('audioProviderGroup', 'none');
+  
+  // Provider-specific API keys
+  setElementGroupDisplay('elevenlabsApiKeyGroup', 'none');
+  setElementGroupDisplay('qwenApiKeyGroup', 'none');
+  setElementGroupDisplay('respeecherApiKeyGroup', 'none');
+  setElementGroupDisplay('googleTtsApiKeyGroup', 'none');
+  
+  // Provider-specific settings
+  setElementGroupDisplay('elevenlabsModelGroup', 'none');
+  setElementGroupDisplay('elevenlabsFormatGroup', 'none');
+  setElementGroupDisplay('elevenlabsAdvancedGroup', 'none');
+  setElementGroupDisplay('googleTtsModelGroup', 'none');
+  setElementGroupDisplay('googleTtsVoiceGroup', 'none');
+  setElementGroupDisplay('googleTtsPromptGroup', 'none');
+  setElementGroupDisplay('respeecherAdvancedGroup', 'none');
+  
+  // Generic audio settings (voice, speed, instructions)
+  setElementGroupDisplay('audioVoiceGroup', 'none');
+  setElementGroupDisplay('audioSpeedGroup', 'none');
+  setElementGroupDisplay('openaiInstructionsGroup', 'none');
+}
+
+/**
+ * Update UI based on output format selection
+ * 
+ * This function is the main coordinator for UI visibility based on format:
+ * - PDF: Shows PDF-specific settings (style, page mode), hides audio settings
+ * - EPUB/FB2/Markdown: Shows translation settings, hides PDF style and audio settings
+ * - Audio: Shows audio provider settings, hides PDF style and TOC/abstract
+ * 
+ * IMPORTANT: This function calls updateAudioProviderUI() and updateTranslationVisibility()
+ * to ensure all dependent UI elements are updated correctly.
+ */
 async function updateOutputFormatUI() {
   const format = elements.outputFormat.value;
   const isPdf = format === 'pdf';
@@ -1461,47 +2679,74 @@ async function updateOutputFormatUI() {
     epub: { icon: '📚', text: locale.saveAsEpub || UI_LOCALES.en.saveAsEpub },
     fb2: { icon: '📖', text: locale.saveAsFb2 || UI_LOCALES.en.saveAsFb2 },
     markdown: { icon: '📝', text: locale.saveAsMarkdown || UI_LOCALES.en.saveAsMarkdown },
+    docx: { icon: '📘', text: locale.saveAsDocx || UI_LOCALES.en.saveAsDocx },
+    html: { icon: '🌐', text: locale.saveAsHtml || UI_LOCALES.en.saveAsHtml },
+    txt: { icon: '📄', text: locale.saveAsTxt || UI_LOCALES.en.saveAsTxt },
     audio: { icon: '🔊', text: locale.saveAsAudio || UI_LOCALES.en.saveAsAudio }
   };
   const config = formatConfig[format] || formatConfig.pdf;
   elements.saveIcon.textContent = config.icon;
   elements.saveText.textContent = config.text;
   
-  // Show/hide audio settings
-  if (elements.audioProviderGroup) {
-    elements.audioProviderGroup.style.display = isAudio ? 'flex' : 'none';
+  // ============================================
+  // AUDIO SETTINGS VISIBILITY
+  // ============================================
+  if (!isAudio) {
+    // Not audio format: Hide ALL audio-related fields
+    // This ensures no audio settings are visible for PDF/EPUB/FB2/Markdown
+    hideAllAudioFields();
+  } else {
+    // Audio format selected: Show provider selector and update provider-specific UI
+    setElementGroupDisplay('audioProviderGroup', 'flex');
+    // updateAudioProviderUI() will show/hide provider-specific fields based on selected provider
+    updateAudioProviderUI();
   }
-  if (elements.elevenlabsApiKeyGroup) {
-    // Hide ElevenLabs API key group if not audio format
-    if (!isAudio) {
-      elements.elevenlabsApiKeyGroup.style.display = 'none';
-    } else {
-      // Only update provider UI if audio format is selected
-      updateAudioProviderUI();
-    }
-  }
-  if (elements.elevenlabsModelGroup) {
-    // Hide ElevenLabs model group if not audio format
-    if (!isAudio) {
-      elements.elevenlabsModelGroup.style.display = 'none';
-    } else {
-      // Update provider UI will handle showing/hiding based on provider
-      updateAudioProviderUI();
-    }
-  }
-  if (elements.audioVoiceGroup) {
-    elements.audioVoiceGroup.style.display = isAudio ? 'flex' : 'none';
-  }
-  if (elements.audioSpeedGroup) {
-    elements.audioSpeedGroup.style.display = isAudio ? 'flex' : 'none';
-  }
+
+  // ============================================
+  // PDF-SPECIFIC SETTINGS VISIBILITY
+  // ============================================
+  // Page mode (single/multi-page) is only for PDF
+  setElementGroupDisplay('pageModeGroup', isPdf ? 'flex' : 'none');
+
+  // PDF styling controls (colors, fonts, presets) are only for PDF
+  const pdfStyleIds = [
+    'stylePreset',
+    'fontFamily',
+    'fontFamilyContainer',
+    'fontSize',
+    'bgColor',
+    'bgColorText',
+    'textColor',
+    'textColorText',
+    'headingColor',
+    'headingColorText',
+    'linkColor',
+    'linkColorText',
+    'pdfSettingsDivider'
+  ];
+  setDisplayForIds(pdfStyleIds, showStyleSettings ? '' : 'none');
+
+  // ============================================
+  // TOC AND ABSTRACT VISIBILITY
+  // ============================================
+  // TOC and abstract are not applicable for audio format
+  const tocIds = ['generateToc', 'generateAbstract'];
+  setDisplayForIds(tocIds, isAudio ? 'none' : '');
+  
+  // ============================================
+  // TRANSLATION SETTINGS VISIBILITY
+  // ============================================
+  // Update translation visibility (hides image translation for audio)
+  updateTranslationVisibility();
 }
 
 // Update voice list based on TTS provider
 function updateVoiceList(provider) {
   if (!elements.audioVoice) return;
   
-  const currentValue = elements.audioVoice.value;
+  // IMPORTANT: restore per-provider saved voice if available
+  const savedProviderVoice = audioVoiceMap?.[provider] || '';
+  const currentValue = savedProviderVoice || elements.audioVoice.value || '';
   elements.audioVoice.innerHTML = '';
   
   if (provider === 'elevenlabs') {
@@ -1525,12 +2770,122 @@ function updateVoiceList(provider) {
       elements.audioVoice.appendChild(option);
     });
     
-    // Set default if current value is not valid
-    if (!elevenlabsVoices.find(v => v.id === currentValue)) {
-      elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM'; // Rachel
-    } else {
+    // Set value: use saved value if valid, otherwise use default
+    if (currentValue && elevenlabsVoices.find(v => v.id === currentValue)) {
       elements.audioVoice.value = currentValue;
+    } else if (currentValue) {
+      elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM'; // Rachel
+      saveAudioVoice(provider, '21m00Tcm4TlvDq8ikWAM');
+    } else {
+      elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM';
     }
+    saveAudioVoice(provider, elements.audioVoice.value);
+  } else if (provider === 'qwen') {
+    // Qwen3-TTS-Flash-2025-11-27 voices (49 voices)
+    const qwenVoices = [
+      // Best for articles/education
+      { id: 'Elias', name: '📚 Elias (academic, storytelling)' },
+      { id: 'Neil', name: '📰 Neil (news anchor, professional)' },
+      { id: 'Katerina', name: '🎭 Katerina (mature, rhythmic)' },
+      { id: 'Ryan', name: '🎬 Ryan (dramatic, realistic)' },
+      
+      // Language-specific
+      { id: 'Alek', name: '🇷🇺 Alek (Russian voice)' },
+      { id: 'Jennifer', name: '🇺🇸 Jennifer (American English)' },
+      { id: 'Emilien', name: '🇫🇷 Emilien (French)' },
+      { id: 'Lenn', name: '🇩🇪 Lenn (German)' },
+      { id: 'Dolce', name: '🇮🇹 Dolce (Italian)' },
+      { id: 'Bodega', name: '🇪🇸 Bodega (Spanish)' },
+      { id: 'Sonrisa', name: '🌎 Sonrisa (Latin American Spanish)' },
+      { id: 'Andre', name: '🇵🇹 Andre (Portuguese European)' },
+      { id: 'Radio Gol', name: '🇧🇷 Radio Gol (Portuguese Brazilian)' },
+      { id: 'Sohee', name: '🇰🇷 Sohee (Korean)' },
+      { id: 'Ono Anna', name: '🇯🇵 Ono Anna (Japanese)' },
+      
+      // General purpose
+      { id: 'Cherry', name: 'Cherry (sunny, friendly)' },
+      { id: 'Ethan', name: 'Ethan (warm, energetic)' },
+      { id: 'Serena', name: 'Serena (gentle)' },
+      { id: 'Chelsie', name: 'Chelsie (anime style)' },
+      { id: 'Aiden', name: 'Aiden (American young man)' },
+      { id: 'Maia', name: 'Maia (intelligent, gentle)' },
+      { id: 'Kai', name: 'Kai (relaxing)' },
+      { id: 'Nofish', name: 'Nofish (designer)' },
+      
+      // Character voices
+      { id: 'Eldric Sage', name: '🧙 Eldric Sage (old wise man)' },
+      { id: 'Arthur', name: '📖 Arthur (old storyteller)' },
+      { id: 'Bellona', name: '⚔️ Bellona (powerful, epic)' },
+      { id: 'Vincent', name: '🦸 Vincent (raspy, heroic)' },
+      { id: 'Mia', name: 'Mia (gentle as snow)' },
+      { id: 'Seren', name: '😴 Seren (soothing, ASMR)' }
+    ];
+    
+    qwenVoices.forEach(voice => {
+      const option = document.createElement('option');
+      option.value = voice.id;
+      option.textContent = voice.name;
+      elements.audioVoice.appendChild(option);
+    });
+    
+    // Set value: use saved value if valid, otherwise use default
+    if (currentValue && qwenVoices.find(v => v.id === currentValue)) {
+      elements.audioVoice.value = currentValue;
+    } else if (currentValue) {
+      elements.audioVoice.value = 'Elias'; // Default - best for articles
+      saveAudioVoice(provider, 'Elias');
+    } else {
+      elements.audioVoice.value = 'Elias';
+    }
+    saveAudioVoice(provider, elements.audioVoice.value);
+  } else if (provider === 'respeecher') {
+    // Respeecher voices
+    // Note: volodymyr is available on en-rt endpoint only, not on ua-rt
+    // Ukrainian voices are available on ua-rt endpoint only
+    const respeecherVoices = [
+      // English voices (en-rt endpoint)
+      { id: 'samantha', name: '🇺🇸 Samantha (female, American)' },
+      { id: 'neve', name: '🇺🇸 Neve (female, emotional)' },
+      { id: 'gregory', name: '🇺🇸 Gregory (male, emotional)' },
+      { id: 'vincent', name: '🇺🇸 Vincent (male, deep)' },
+      { id: 'volodymyr', name: '🇺🇦 Volodymyr (male, Ukrainian) - EN endpoint only' },
+      // Ukrainian voices (ua-rt endpoint)
+      { id: 'olesia-rozmova', name: '🇺🇦 Олеся: розмова (female, conversation)' },
+      { id: 'olesia-media', name: '🇺🇦 Олеся: медіа (female, media)' },
+      { id: 'olesia-ogoloshennia', name: '🇺🇦 Олеся: оголошення (female, announcement)' },
+      { id: 'mariia-audioknyha', name: '🇺🇦 Марія: аудіокнига (female, audiobook)' },
+      { id: 'oleksandr-radio', name: '🇺🇦 Олександр: радіо (male, radio)' },
+      { id: 'oleksandr-reklama', name: '🇺🇦 Олександр: реклама (male, advertisement)' },
+      { id: 'yevhen-reklama', name: '🇺🇦 Євген: реклама (male, advertisement)' },
+      { id: 'yevhen-audioknyha', name: '🇺🇦 Євген: аудіокнига (male, audiobook)' },
+      { id: 'dmitro-rozmova', name: '🇺🇦 Дмитро: розмова (male, conversation)' },
+      { id: 'ihoreo-rozmova', name: '🇺🇦 Ігорео: розмова (male, conversation)' }
+    ];
+    
+    respeecherVoices.forEach(voice => {
+      const option = document.createElement('option');
+      option.value = voice.id;
+      option.textContent = voice.name;
+      elements.audioVoice.appendChild(option);
+    });
+    
+    // Set value: use saved value if valid, otherwise use default
+    // IMPORTANT: Only change value if currentValue is invalid for this provider
+    // This preserves user's selection across page reloads
+    if (currentValue && respeecherVoices.find(v => v.id === currentValue)) {
+      // Valid saved value - restore it
+      elements.audioVoice.value = currentValue;
+    } else if (currentValue) {
+      // Invalid value (e.g., 'nova' from OpenAI or 'volodymyr' for Ukrainian text)
+      // Use default for this provider
+      elements.audioVoice.value = CONFIG.DEFAULT_RESPEECHER_VOICE; // Default English voice
+      // Save the new default value
+      saveAudioVoice(provider, CONFIG.DEFAULT_RESPEECHER_VOICE);
+    } else {
+      // No saved value - use default
+      elements.audioVoice.value = CONFIG.DEFAULT_RESPEECHER_VOICE;
+    }
+    saveAudioVoice(provider, elements.audioVoice.value);
   } else {
     // OpenAI voices
     const openaiVoices = [
@@ -1554,65 +2909,170 @@ function updateVoiceList(provider) {
       elements.audioVoice.appendChild(option);
     });
     
-    // Set default if current value is not valid
-    if (!openaiVoices.find(v => v.value === currentValue)) {
-      elements.audioVoice.value = 'nova';
-    } else {
+    // Set value: use saved value if valid, otherwise use default
+    if (currentValue && openaiVoices.find(v => v.value === currentValue)) {
       elements.audioVoice.value = currentValue;
+    } else if (currentValue) {
+      elements.audioVoice.value = CONFIG.DEFAULT_AUDIO_VOICE;
+      saveAudioVoice(provider, CONFIG.DEFAULT_AUDIO_VOICE);
+    } else {
+      elements.audioVoice.value = CONFIG.DEFAULT_AUDIO_VOICE;
     }
+    saveAudioVoice(provider, elements.audioVoice.value);
   }
 }
 
-// Update UI visibility based on audio provider
+/**
+ * Update UI visibility based on audio provider selection
+ * 
+ * This function shows/hides provider-specific fields based on selected TTS provider:
+ * - OpenAI: Shows voice selector, speed control, instructions
+ * - ElevenLabs: Shows API key, model, format, advanced settings, voice selector, speed control
+ * - Google TTS: Shows API key, model, voice selector, prompt (NO speed control)
+ * - Qwen: Shows API key, voice selector (NO speed control)
+ * - Respeecher: Shows API key, advanced settings, voice selector (NO speed control)
+ * 
+ * IMPORTANT: This function assumes audio format is already selected.
+ * If format is not 'audio', it calls hideAllAudioFields() and returns early.
+ * 
+ * Speed control is only shown for providers that support it (OpenAI, ElevenLabs).
+ */
 function updateAudioProviderUI() {
-  if (!elements.audioProvider || !elements.elevenlabsApiKeyGroup) return;
+  const audioProvider = getElement('audioProvider');
+  if (!audioProvider) return;
   
-  // Only show ElevenLabs fields if audio format is selected
-  const format = elements.outputFormat?.value;
+  // Safety check: If format is not audio, hide all audio fields and return
+  const outputFormat = getElement('outputFormat');
+  const format = outputFormat?.value;
   if (format !== 'audio') {
-    // If not audio format, hide all ElevenLabs fields
-    elements.elevenlabsApiKeyGroup.style.display = 'none';
-    if (elements.elevenlabsModelGroup) {
-      elements.elevenlabsModelGroup.style.display = 'none';
-    }
+    hideAllAudioFields();
     return;
   }
   
-  const provider = elements.audioProvider.value;
+  const provider = audioProvider.value;
   const isElevenLabs = provider === 'elevenlabs';
+  const isGoogle = provider === 'google';
+  const isQwen = provider === 'qwen';
+  const isRespeecher = provider === 'respeecher';
+  // Speed is not supported by Qwen, Respeecher, and Google TTS (Google uses prompt for speed control)
+  const supportsSpeed = !(isQwen || isRespeecher || isGoogle);
   
-  // Show/hide ElevenLabs-specific fields only when audio format is selected
-  elements.elevenlabsApiKeyGroup.style.display = isElevenLabs ? 'flex' : 'none';
-  if (elements.elevenlabsModelGroup) {
-    elements.elevenlabsModelGroup.style.display = isElevenLabs ? 'flex' : 'none';
+  // Show/hide ElevenLabs-specific fields
+  setElementGroupDisplay('elevenlabsApiKeyGroup', isElevenLabs ? 'flex' : 'none');
+  setElementGroupDisplay('elevenlabsModelGroup', isElevenLabs ? 'flex' : 'none');
+  setElementGroupDisplay('elevenlabsFormatGroup', isElevenLabs ? 'flex' : 'none');
+  setElementGroupDisplay('elevenlabsAdvancedGroup', isElevenLabs ? 'block' : 'none');
+  
+  // Show/hide Google TTS-specific fields
+  // Note: format is already 'audio' at this point (checked at function start)
+  setElementGroupDisplay('googleTtsApiKeyGroup', isGoogle ? 'flex' : 'none');
+  setElementGroupDisplay('googleTtsModelGroup', isGoogle ? 'flex' : 'none');
+  setElementGroupDisplay('googleTtsVoiceGroup', isGoogle ? 'flex' : 'none');
+  setElementGroupDisplay('googleTtsPromptGroup', isGoogle ? 'block' : 'none');
+  
+  // Show/hide Qwen-specific fields
+  setElementGroupDisplay('qwenApiKeyGroup', isQwen ? 'flex' : 'none');
+  
+  // Show/hide Respeecher-specific fields
+  setElementGroupDisplay('respeecherApiKeyGroup', isRespeecher ? 'flex' : 'none');
+  setElementGroupDisplay('respeecherAdvancedGroup', isRespeecher ? 'block' : 'none');
+  
+  // Show/hide OpenAI instructions (only for OpenAI provider)
+  const isOpenAI = provider === 'openai';
+  setElementGroupDisplay('openaiInstructionsGroup', isOpenAI ? 'block' : 'none');
+  
+  // Show/hide generic voice selector (for OpenAI, ElevenLabs, Qwen, Respeecher)
+  // Hide for Google TTS (it has its own voice selector)
+  setElementGroupDisplay('audioVoiceGroup', !isGoogle ? 'flex' : 'none');
+  
+  // Speed control only for providers that support it
+  // Hide completely for Qwen/Respeecher/Google (they don't support speed)
+  setElementGroupDisplay('audioSpeedGroup', supportsSpeed ? 'flex' : 'none');
+  
+  const audioSpeed = getElement('audioSpeed');
+  if (audioSpeed) {
+    audioSpeed.disabled = !supportsSpeed;
+    if (!supportsSpeed) {
+      audioSpeed.value = '1.0';
+      const audioSpeedValue = getElement('audioSpeedValue');
+      if (audioSpeedValue) {
+        audioSpeedValue.textContent = '1.0x';
+      }
+    }
   }
+  
+  const audioSpeedNote = getElement('audioSpeedNote');
+  if (audioSpeedNote) {
+    audioSpeedNote.style.display = 'none'; // Not needed since we hide the group completely
+  }
+  
+  // Update voice list when provider changes
+  // This ensures that the correct voices are shown and invalid voices are replaced
+  updateVoiceList(provider);
 }
 
 // Show/hide translation-related UI based on language selection
-function updateTranslationVisibility() {
-  const isTranslating = elements.languageSelect.value !== 'auto';
-  const translateImagesEnabled = elements.translateImages.checked;
+async function updateTranslationVisibility() {
+  const languageSelect = getElement('languageSelect');
+  const translateImages = getElement('translateImages');
+  const outputFormat = getElement('outputFormat');
   
-  // Show image translation option only when translating
-  elements.translateImagesGroup.style.display = isTranslating ? 'block' : 'none';
+  if (!languageSelect || !translateImages || !outputFormat) return;
+  
+  const isTranslating = languageSelect.value !== 'auto';
+  const translateImagesEnabled = translateImages.checked;
+  const isAudio = outputFormat.value === 'audio';
+  
+  // Show image translation option only when translating AND not audio format
+  // Audio format doesn't use images, so translation option is not needed
+  setElementGroupDisplay('translateImagesGroup', (isTranslating && !isAudio) ? 'block' : 'none');
   
   // Show Google API key input when image translation is enabled
-  elements.googleApiGroup.style.display = (isTranslating && translateImagesEnabled) ? 'block' : 'none';
+  setElementDisplay('googleApiGroup', (isTranslating && translateImagesEnabled) ? 'block' : 'none');
+  
+  // Show hint if translateImages is enabled but Google key is missing
+  const translateImagesHint = getElement('translateImagesHint');
+  if (isTranslating && translateImagesEnabled && translateImagesHint) {
+    const googleApiKey = getElement('googleApiKey');
+    const googleApiKeyValue = googleApiKey?.value?.trim() || '';
+    const hasGoogleKey = googleApiKeyValue && !googleApiKeyValue.startsWith('****');
+    
+    // Check if key exists in storage (might be encrypted/masked)
+    if (!hasGoogleKey) {
+      try {
+        const stored = await chrome.storage.local.get(['google_api_key']);
+        const storedKey = stored.google_api_key;
+        if (!storedKey || (typeof storedKey === 'string' && storedKey.startsWith('****'))) {
+          // No key or masked key - show hint
+          const uiLang = await getUILanguage();
+          const hintText = tSync('translateImagesRequiresGoogleKey', uiLang) || '⚠️ Requires Google API key for image translation';
+          translateImagesHint.textContent = hintText;
+          translateImagesHint.style.color = 'var(--text-warning, #ffa500)';
+          return;
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+    }
+    
+    // Key exists - show normal hint
+    const uiLang = await getUILanguage();
+    const normalHint = tSync('translateImagesHint', uiLang) || 'Uses Google Gemini AI to translate text on images';
+    translateImagesHint.textContent = normalHint;
+    translateImagesHint.style.color = '';
+  }
 }
 
 // Save API keys to storage
 async function saveApiKey() {
+  const provider = elements.apiProviderSelect?.value || 'openai';
   const apiKey = elements.apiKey.value.trim();
-  const claudeApiKey = elements.claudeApiKey.value.trim();
-  const geminiApiKey = elements.geminiApiKey.value.trim();
   const googleApiKey = elements.googleApiKey.value.trim();
   
-  // Check if at least one main API key is provided (not masked)
-  const hasOpenAI = apiKey && !apiKey.startsWith('****');
-  const hasClaude = claudeApiKey && !claudeApiKey.startsWith('****');
-  const hasGemini = geminiApiKey && !geminiApiKey.startsWith('****');
+  // Check if main API key is provided (not masked)
+  const hasKey = apiKey && !apiKey.startsWith('****');
   
-  if (!hasOpenAI && !hasClaude && !hasGemini) {
+  if (!hasKey) {
     const pleaseEnterKeyText = await t('pleaseEnterAtLeastOneApiKey');
     showToast(pleaseEnterKeyText, 'error');
     return;
@@ -1620,67 +3080,97 @@ async function saveApiKey() {
 
   const keysToSave = {};
   
-  // Validate and save OpenAI key
+  // Save selected provider
+  keysToSave[STORAGE_KEYS.API_PROVIDER] = provider;
+  
+  // Save API key for selected provider
   if (apiKey) {
     // If masked (user didn't change it), keep existing encrypted value
     if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
-      keysToSave[STORAGE_KEYS.API_KEY] = elements.apiKey.dataset.encrypted;
+      if (provider === 'openai') {
+        keysToSave[STORAGE_KEYS.API_KEY] = elements.apiKey.dataset.encrypted;
+      } else if (provider === 'claude') {
+        keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = elements.apiKey.dataset.encrypted;
+      } else if (provider === 'gemini') {
+        keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = elements.apiKey.dataset.encrypted;
+      } else if (provider === 'grok') {
+        keysToSave[STORAGE_KEYS.GROK_API_KEY] = elements.apiKey.dataset.encrypted;
+      } else if (provider === 'openrouter') {
+        keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = elements.apiKey.dataset.encrypted;
+      }
     } else if (!apiKey.startsWith('****')) {
       // New key provided, validate and encrypt
-      if (!apiKey.startsWith('sk-')) {
-        const invalidOpenAiKeyText = await t('invalidOpenAiKeyFormat');
-        showToast(invalidOpenAiKeyText, 'error');
-        return;
-      }
-      try {
-        keysToSave[STORAGE_KEYS.API_KEY] = await encryptApiKey(apiKey);
-      } catch (error) {
-        const failedToEncryptText = await t('failedToEncryptApiKey');
-        showToast(failedToEncryptText, 'error');
-        console.error('Encryption error:', error);
-        return;
-      }
-    }
-  }
-  
-  // Validate and save Claude key
-  if (claudeApiKey) {
-    if (claudeApiKey.startsWith('****') && elements.claudeApiKey.dataset.encrypted) {
-      keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = elements.claudeApiKey.dataset.encrypted;
-    } else if (!claudeApiKey.startsWith('****')) {
-      if (!claudeApiKey.startsWith('sk-ant-')) {
-        const invalidClaudeKeyText = await t('invalidClaudeKeyFormat');
-        showToast(invalidClaudeKeyText, 'error');
-        return;
-      }
-      try {
-        keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = await encryptApiKey(claudeApiKey);
-      } catch (error) {
-        const failedToEncryptText = await t('failedToEncryptApiKey');
-        showToast(failedToEncryptText, 'error');
-        console.error('Encryption error:', error);
-        return;
-      }
-    }
-  }
-  
-  // Validate and save Gemini key
-  if (geminiApiKey) {
-    if (geminiApiKey.startsWith('****') && elements.geminiApiKey.dataset.encrypted) {
-      keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = elements.geminiApiKey.dataset.encrypted;
-    } else if (!geminiApiKey.startsWith('****')) {
-      if (!geminiApiKey.startsWith('AIza')) {
-        const invalidGeminiKeyText = await t('invalidGeminiKeyFormat');
-        showToast(invalidGeminiKeyText, 'error');
-        return;
-      }
-      try {
-        keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = await encryptApiKey(geminiApiKey);
-      } catch (error) {
-        const failedToEncryptText = await t('failedToEncryptApiKey');
-        showToast(failedToEncryptText, 'error');
-        console.error('Encryption error:', error);
-        return;
+      if (provider === 'openai') {
+        if (!apiKey.startsWith('sk-')) {
+          const invalidOpenAiKeyText = await t('invalidOpenAiKeyFormat');
+          showToast(invalidOpenAiKeyText, 'error');
+          return;
+        }
+        try {
+          keysToSave[STORAGE_KEYS.API_KEY] = await encryptApiKey(apiKey);
+        } catch (error) {
+          const failedToEncryptText = await t('failedToEncryptApiKey');
+          showToast(failedToEncryptText, 'error');
+          logError('Encryption error', error);
+          return;
+        }
+      } else if (provider === 'claude') {
+        if (!apiKey.startsWith('sk-ant-')) {
+          const invalidClaudeKeyText = await t('invalidClaudeKeyFormat');
+          showToast(invalidClaudeKeyText, 'error');
+          return;
+        }
+        try {
+          keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = await encryptApiKey(apiKey);
+        } catch (error) {
+          const failedToEncryptText = await t('failedToEncryptApiKey');
+          showToast(failedToEncryptText, 'error');
+          logError('Encryption error', error);
+          return;
+        }
+      } else if (provider === 'gemini') {
+        if (!apiKey.startsWith('AIza')) {
+          const invalidGeminiKeyText = await t('invalidGeminiKeyFormat');
+          showToast(invalidGeminiKeyText, 'error');
+          return;
+        }
+        try {
+          keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = await encryptApiKey(apiKey);
+        } catch (error) {
+          const failedToEncryptText = await t('failedToEncryptApiKey');
+          showToast(failedToEncryptText, 'error');
+          logError('Encryption error', error);
+          return;
+        }
+      } else if (provider === 'grok') {
+        if (!apiKey.startsWith('xai-')) {
+          const invalidGrokKeyText = await t('invalidGrokKeyFormat');
+          showToast(invalidGrokKeyText, 'error');
+          return;
+        }
+        try {
+          keysToSave[STORAGE_KEYS.GROK_API_KEY] = await encryptApiKey(apiKey);
+        } catch (error) {
+          const failedToEncryptText = await t('failedToEncryptApiKey');
+          showToast(failedToEncryptText, 'error');
+          logError('Encryption error', error);
+          return;
+        }
+      } else if (provider === 'openrouter') {
+        // OpenRouter API keys typically start with 'sk-or-' but we'll be lenient
+        if (!apiKey.startsWith('sk-or-') && !apiKey.startsWith('sk-')) {
+          const invalidOpenRouterKeyText = await t('invalidOpenRouterKeyFormat');
+          showToast(invalidOpenRouterKeyText, 'error');
+          return;
+        }
+        try {
+          keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = await encryptApiKey(apiKey);
+        } catch (error) {
+          const failedToEncryptText = await t('failedToEncryptApiKey');
+          showToast(failedToEncryptText, 'error');
+          logError('Encryption error', error);
+          return;
+        }
       }
     }
   }
@@ -1688,8 +3178,10 @@ async function saveApiKey() {
   // Save Google API key for image translation if provided
   if (googleApiKey) {
     if (googleApiKey.startsWith('****') && elements.googleApiKey.dataset.encrypted) {
+      // Keep existing encrypted key if masked
       keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = elements.googleApiKey.dataset.encrypted;
     } else if (!googleApiKey.startsWith('****')) {
+      // New key provided, validate and encrypt
       if (!googleApiKey.startsWith('AIza')) {
         const invalidGoogleKeyText = await t('invalidGoogleKeyFormat');
         showToast(invalidGoogleKeyText, 'error');
@@ -1700,13 +3192,35 @@ async function saveApiKey() {
       } catch (error) {
         const failedToEncryptText = await t('failedToEncryptApiKey');
         showToast(failedToEncryptText, 'error');
-        console.error('Encryption error:', error);
+        logError('Encryption error', error);
         return;
       }
     }
+  } else {
+    // If field is empty, explicitly remove the key from storage
+    // This ensures the key is cleared if user intentionally removed it
+    keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = null;
   }
 
-  await chrome.storage.local.set(keysToSave);
+  // Remove null values before saving (explicitly remove keys)
+  const keysToRemove = [];
+  for (const [key, value] of Object.entries(keysToSave)) {
+    if (value === null) {
+      keysToRemove.push(key);
+      delete keysToSave[key];
+    }
+  }
+  
+  // Save keys
+  if (Object.keys(keysToSave).length > 0) {
+    await chrome.storage.local.set(keysToSave);
+  }
+  
+  // Remove keys that should be deleted
+  if (keysToRemove.length > 0) {
+    await chrome.storage.local.remove(keysToRemove);
+  }
+  
   const apiKeysSavedText = await t('apiKeysSaved');
   showToast(apiKeysSavedText, 'success');
 }
@@ -1717,7 +3231,7 @@ async function checkProcessingState() {
     const state = await chrome.runtime.sendMessage({ action: 'getState' });
     await updateUIFromState(state);
   } catch (error) {
-    console.error('Error getting state from background:', error);
+    logError('Error getting state from background', error);
     // Fallback: try to load from storage
     try {
       const stored = await chrome.storage.local.get(['processingState']);
@@ -1727,12 +3241,11 @@ async function checkProcessingState() {
         
         // If state is recent (< 2 minutes), show it
         if (timeSinceUpdate < 2 * 60 * 1000 && savedState.isProcessing) {
-          console.log('Loaded state from storage', savedState);
           updateUIFromState(savedState);
         }
       }
     } catch (storageError) {
-      console.error('Error loading from storage:', storageError);
+      logError('Error loading from storage', storageError);
     }
   }
 }
@@ -1744,12 +3257,19 @@ function startStatePolling() {
     clearInterval(statePollingInterval);
   }
   
-  let pollInterval = 1000; // Default 1s for idle
+  let pollInterval = 2000; // Default 2s for idle (increased from 1s to reduce load)
   let failedAttempts = 0;
   let lastState = null; // Track last state for adaptive polling
   let noChangeCount = 0; // Count consecutive polls with no changes
+  let isPolling = false; // Flag to prevent concurrent poll() calls
   
   async function poll() {
+    // Prevent concurrent calls
+    if (isPolling) {
+      return;
+    }
+    
+    isPolling = true;
     try {
       const state = await chrome.runtime.sendMessage({ action: 'getState' });
       
@@ -1762,24 +3282,25 @@ function startStatePolling() {
         await updateUIFromState(state);
         lastState = state;
         
-        // Use faster polling when processing
-        pollInterval = state.isProcessing ? 300 : 1000;
+        // Use faster polling when processing (increased from 300ms to 500ms)
+        pollInterval = state.isProcessing ? 500 : 2000;
       } else {
         // State didn't change - increase interval (adaptive polling)
         noChangeCount++;
         
-        // Exponential backoff: 300ms → 450ms → 675ms → 1000ms → 1500ms → 2000ms
+        // Exponential backoff: 500ms → 750ms → 1125ms → 1687ms → 2000ms (for processing)
+        // For idle: 2000ms (no backoff needed)
         if (state.isProcessing) {
-          pollInterval = Math.min(300 * Math.pow(1.5, noChangeCount), 2000);
+          pollInterval = Math.min(500 * Math.pow(1.5, noChangeCount), 2000);
         } else {
-          pollInterval = 1000; // Keep 1s for idle state
+          pollInterval = 2000; // Keep 2s for idle state
         }
       }
       
       failedAttempts = 0;
     } catch (error) {
       failedAttempts++;
-      console.warn('Failed to get state from background, attempt:', failedAttempts);
+      logWarn('Failed to get state from background', { attempt: failedAttempts });
       
       // After 3 failed attempts, try storage
       if (failedAttempts >= 3) {
@@ -1788,7 +3309,6 @@ function startStatePolling() {
           if (stored.processingState && stored.processingState.isProcessing) {
             const timeSinceUpdate = Date.now() - (stored.processingState.lastUpdate || 0);
             if (timeSinceUpdate < 2 * 60 * 1000) {
-              console.log('Using state from storage');
               await updateUIFromState(stored.processingState);
             }
           }
@@ -1799,6 +3319,9 @@ function startStatePolling() {
       
       // Increase interval on errors
       pollInterval = Math.min(pollInterval * 2, 5000);
+    } finally {
+      // Always reset polling flag to allow next poll
+      isPolling = false;
     }
     
     // Schedule next poll
@@ -1811,31 +3334,76 @@ function startStatePolling() {
 // Update UI based on processing state
 async function updateUIFromState(state) {
   if (!state) return;
+  const stageLabel = await mapStageLabel(state.currentStage);
+  const statusText = stageLabel || state.status;
   
   if (state.isProcessing) {
     // Use startTime from background (persists across popup reopens)
-    if (state.startTime && currentStartTime !== state.startTime) {
-      startTimerDisplay(state.startTime);
+    if (state.startTime) {
+      if (currentStartTime !== state.startTime) {
+        startTimerDisplay(state.startTime);
+      }
+      // Ensure timer is running even if startTime was already set
+      if (!timerInterval && state.startTime) {
+        startTimerDisplay(state.startTime);
+      }
     }
     elements.savePdfBtn.disabled = true;
     elements.savePdfBtn.style.display = 'none';
-    elements.cancelBtn.style.display = 'block';
-    setStatus('processing', state.status, state.startTime);
+    if (elements.cancelBtn) {
+      elements.cancelBtn.style.display = 'block';
+      elements.cancelBtn.disabled = false;
+    }
+    setStatus('processing', statusText, state.startTime || currentStartTime);
     setProgress(state.progress);
   } else if (state.error) {
     stopTimerDisplay();
     elements.savePdfBtn.disabled = false;
     elements.savePdfBtn.style.display = 'block';
     elements.cancelBtn.style.display = 'none';
-    setStatus('error', state.error);
+    // Use localized error message if errorCode is available
+    let errorMessage = state.error;
+    if (state.errorCode) {
+      const errorKeyMap = {
+        'auth_error': 'errorAuth',
+        'rate_limit': 'errorRateLimit',
+        'timeout': 'errorTimeout',
+        'network_error': 'errorNetwork',
+        'parse_error': 'errorParse',
+        'provider_error': 'errorProvider',
+        'validation_error': 'errorValidation',
+        'unknown_error': 'errorUnknown'
+      };
+      const errorKey = errorKeyMap[state.errorCode];
+      if (errorKey) {
+        errorMessage = await t(errorKey).catch(() => state.error);
+      }
+    }
+    setStatus('error', errorMessage);
     setProgress(0, false);
   } else if (state.status === 'Done!') {
     stopTimerDisplay();
     elements.savePdfBtn.disabled = false;
     elements.savePdfBtn.style.display = 'block';
     elements.cancelBtn.style.display = 'none';
-    const pdfSavedText = await t('pdfSavedSuccessfully');
-    setStatus('ready', pdfSavedText);
+    // Get saved format from state or current selection
+    const savedFormat = state.outputFormat || elements.outputFormat?.value || 'pdf';
+    const formatNames = {
+      pdf: await t('saveAsPdf'),
+      epub: await t('saveAsEpub'),
+      fb2: await t('saveAsFb2'),
+      markdown: await t('saveAsMarkdown'),
+      docx: await t('saveAsDocx'),
+      html: await t('saveAsHtml'),
+      txt: await t('saveAsTxt'),
+      audio: await t('saveAsAudio')
+    };
+    const formatName = formatNames[savedFormat] || formatNames.pdf;
+    // Extract format name without "Save as" prefix
+    const formatNameOnly = formatName.replace(/^(Save as|Сохранить как|Зберегти як|Speichern als|Enregistrer|Guardar|Salva|Salvar|另存为|として保存|로 저장)\s+/i, '');
+    const savedText = await t('savedSuccessfully');
+    const successMessage = `${formatNameOnly} ${savedText}`;
+    setStatus('ready', successMessage);
     setProgress(0, false); // Hide progress bar immediately
   } else {
     stopTimerDisplay();
@@ -1848,69 +3416,42 @@ async function updateUIFromState(state) {
   }
 }
 
-// Get provider from model name
-function getProviderFromModel(model) {
-  if (model.startsWith('gpt-')) return 'openai';
-  if (model.startsWith('claude-')) return 'claude';
-  if (model.startsWith('gemini-')) return 'gemini';
-  return 'openai';
+async function mapStageLabel(stageId) {
+  switch (stageId) {
+    case 'starting': return await t('stageStarting');
+    case 'analyzing': return await t('stageAnalyzing');
+    case 'extracting': return await t('stageExtracting');
+    case 'translating': return await t('stageTranslating');
+    case 'loading_images': return await t('stageLoadingImages');
+    case 'generating': return await t('stageGenerating');
+    case 'complete': return await t('stageComplete');
+    default: return null;
+  }
 }
 
 // Handle Save PDF button click
 async function handleSavePdf() {
   const model = elements.modelSelect.value;
-  const provider = getProviderFromModel(model);
+  // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
+  const provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
   
-  // Get the appropriate API key based on selected model
+  // Get the appropriate API key based on selected provider
   let apiKey = '';
-  if (provider === 'openai') {
-    apiKey = elements.apiKey.value.trim();
-    // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
-      try {
-        apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
-      } catch (error) {
-        console.error('Failed to decrypt OpenAI API key:', error);
-        showToast(await t('failedToDecryptApiKey'), 'error');
-        return;
-      }
-    }
-    if (!apiKey) {
-      showToast(await t('pleaseEnterOpenAiApiKey'), 'error');
+  apiKey = elements.apiKey.value.trim();
+  // If masked, decrypt the encrypted version from dataset
+  if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
+    try {
+      apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
+    } catch (error) {
+      logError(`Failed to decrypt ${provider} API key`, error);
+      showToast(await t('failedToDecryptApiKey'), 'error');
       return;
     }
-  } else if (provider === 'claude') {
-    apiKey = elements.claudeApiKey.value.trim();
-    // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('****') && elements.claudeApiKey.dataset.encrypted) {
-      try {
-        apiKey = await decryptApiKey(elements.claudeApiKey.dataset.encrypted);
-      } catch (error) {
-        console.error('Failed to decrypt Claude API key:', error);
-        showToast(await t('failedToDecryptApiKey'), 'error');
-        return;
-      }
-    }
-    if (!apiKey) {
-      showToast(await t('pleaseEnterClaudeApiKey'), 'error');
-      return;
-    }
-  } else if (provider === 'gemini') {
-    apiKey = elements.geminiApiKey.value.trim();
-    // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('****') && elements.geminiApiKey.dataset.encrypted) {
-      try {
-        apiKey = await decryptApiKey(elements.geminiApiKey.dataset.encrypted);
-      } catch (error) {
-        console.error('Failed to decrypt Gemini API key:', error);
-        showToast(await t('failedToDecryptApiKey'), 'error');
-        return;
-      }
-    }
-    if (!apiKey) {
-      showToast(await t('pleaseEnterGeminiApiKey'), 'error');
-      return;
-    }
+  }
+  if (!apiKey) {
+    const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : 'Gemini';
+    showToast(await t(`pleaseEnter${providerName}ApiKey`), 'error');
+    return;
   }
 
   try {
@@ -1947,7 +3488,7 @@ async function handleSavePdf() {
       try {
         googleApiKey = await decryptApiKey(elements.googleApiKey.dataset.encrypted);
       } catch (error) {
-        console.error('Failed to decrypt Google API key:', error);
+        logError('Failed to decrypt Google API key', error);
         // Continue without Google API key if decryption fails
         googleApiKey = '';
       }
@@ -1986,7 +3527,23 @@ async function handleSavePdf() {
         audioSpeed: parseFloat(elements.audioSpeed?.value || 1.0),
         audioFormat: 'mp3',
         elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
-        elevenlabsModel: elements.elevenlabsModel?.value || 'eleven_v3'
+        elevenlabsModel: elements.elevenlabsModel?.value || 'eleven_v3',
+        elevenlabsFormat: elements.elevenlabsFormat?.value || 'mp3_44100_192',
+        elevenlabsStability: elements.elevenlabsStability ? parseFloat(elements.elevenlabsStability.value) : 0.5,
+        elevenlabsSimilarity: elements.elevenlabsSimilarity ? parseFloat(elements.elevenlabsSimilarity.value) : 0.75,
+        elevenlabsStyle: elements.elevenlabsStyle ? parseFloat(elements.elevenlabsStyle.value) : 0.0,
+        elevenlabsSpeakerBoost: elements.elevenlabsSpeakerBoost ? elements.elevenlabsSpeakerBoost.checked : true,
+        openaiInstructions: elements.openaiInstructions ? elements.openaiInstructions.value.trim() : null,
+        googleTtsModel: elements.googleTtsModel?.value || 'gemini-2.5-pro-preview-tts',
+        googleTtsVoice: elements.googleTtsVoice?.value || 'Callirrhoe',
+        googleTtsPrompt: elements.googleTtsPrompt?.value.trim() || null,
+        respeecherTemperature: elements.respeecherTemperature ? parseFloat(elements.respeecherTemperature.value) : 1.0,
+        respeecherRepetitionPenalty: elements.respeecherRepetitionPenalty ? parseFloat(elements.respeecherRepetitionPenalty.value) : 1.0,
+        respeecherTopP: elements.respeecherTopP ? parseFloat(elements.respeecherTopP.value) : 1.0,
+        googleTtsApiKey: elements.googleTtsApiKey?.dataset.encrypted || null,
+        geminiApiKey: elements.geminiApiKey?.dataset.encrypted || null,
+        qwenApiKey: elements.qwenApiKey?.dataset.encrypted || null,
+        respeecherApiKey: elements.respeecherApiKey?.dataset.encrypted || null
       }
     });
 
@@ -1995,10 +3552,15 @@ async function handleSavePdf() {
     }
 
     // Processing started in background
-    // UI will be updated via state polling
+    // Ensure state polling is active to update UI
+    if (!statePollingInterval) {
+      startStatePolling();
+    }
+    // Immediately check state to update UI
+    await checkProcessingState();
 
   } catch (error) {
-    console.error('Error:', error);
+    logError('Error', error);
     setStatus('error', error.message);
     showToast(error.message, 'error');
     elements.savePdfBtn.disabled = false;
@@ -2010,8 +3572,6 @@ function extractPageContent() {
   // Always use full HTML - let AI figure out what's important
   // This ensures we don't accidentally miss content
   const html = document.documentElement.outerHTML;
-  
-  console.log('[ClipAIble] Extracted full HTML, length:', html.length);
   
   // Get title from various sources
   let pageTitle = document.title;
@@ -2040,9 +3600,14 @@ function setStatus(type, text, startTime = null) {
   elements.statusDot.className = 'status-dot';
   if (type === 'processing') {
     elements.statusDot.classList.add('processing');
-    // Add timer display for processing status (use startTime from background)
-    const elapsed = startTime ? Math.floor((Date.now() - startTime) / 1000) : 0;
+    // Add timer display for processing status (use startTime from background or currentStartTime)
+    const effectiveStartTime = startTime || currentStartTime;
+    const elapsed = effectiveStartTime ? Math.floor((Date.now() - effectiveStartTime) / 1000) : 0;
     elements.statusText.innerHTML = `${text} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+    // Ensure timer is running if we have a startTime
+    if (effectiveStartTime && !timerInterval) {
+      startTimerDisplay(effectiveStartTime);
+    }
   } else if (type === 'error') {
     elements.statusDot.classList.add('error');
     elements.statusText.textContent = text;
@@ -2075,10 +3640,20 @@ function showToast(message, type = 'success') {
   }, 3000);
 }
 
+
 // Cleanup on popup close
 window.addEventListener('unload', () => {
   if (statePollingInterval) {
     clearTimeout(statePollingInterval);
+    statePollingInterval = null;
+  }
+  if (timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
   }
 });
 
@@ -2101,7 +3676,7 @@ async function loadAndDisplayStats() {
       displayCacheStats(cacheResponse.stats);
     }
   } catch (error) {
-    console.error('Failed to load stats:', error);
+    logError('Failed to load stats', error);
   }
 }
 
@@ -2115,6 +3690,9 @@ async function displayStats(stats) {
   document.getElementById('formatEpub').textContent = stats.byFormat?.epub || 0;
   document.getElementById('formatFb2').textContent = stats.byFormat?.fb2 || 0;
   document.getElementById('formatMarkdown').textContent = stats.byFormat?.markdown || 0;
+  document.getElementById('formatDocx').textContent = stats.byFormat?.docx || 0;
+  document.getElementById('formatHtml').textContent = stats.byFormat?.html || 0;
+  document.getElementById('formatTxt').textContent = stats.byFormat?.txt || 0;
   document.getElementById('formatAudio').textContent = stats.byFormat?.audio || 0;
   
   // Update history
@@ -2159,7 +3737,7 @@ async function displayStats(stats) {
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
   const lastSavedText = locale.lastSaved || UI_LOCALES.en.lastSaved;
-  const neverText = locale.never || UI_LOCALES.en.never;
+  const neverText = locale.lastSavedNever || UI_LOCALES.en.lastSavedNever;
   const avgText = locale.avg || UI_LOCALES.en.avg;
   document.getElementById('statsLastSaved').textContent = `${lastSavedText}: ${stats.lastSavedText || neverText}`;
   document.getElementById('statsAvgTime').textContent = `${avgText}: ${stats.avgProcessingTime || 0}s`;
@@ -2173,14 +3751,18 @@ function escapeHtml(text) {
 
 function formatRelativeDate(date) {
   const now = new Date();
-  const diff = now - date;
-  
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-  
-  return date.toLocaleDateString();
+  const diffMs = now - date;
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+  const minutes = Math.floor(diffMs / 60000);
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(diffMs / 86400000);
+  const weeks = Math.floor(diffMs / 604800000);
+
+  if (minutes < 1) return rtf.format(-0, 'minute');
+  if (minutes < 60) return rtf.format(-minutes, 'minute');
+  if (hours < 24) return rtf.format(-hours, 'hour');
+  if (days < 7) return rtf.format(-days, 'day');
+  return rtf.format(-weeks, 'week');
 }
 
 async function displayCacheStats(stats) {

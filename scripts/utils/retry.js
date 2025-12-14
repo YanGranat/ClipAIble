@@ -1,19 +1,22 @@
 // Retry utility for API calls with exponential backoff
 
 import { log, logWarn, logError } from './logging.js';
+import { CONFIG } from './config.js';
 
 /**
  * Retryable HTTP status codes (temporary errors)
+ * @deprecated Use CONFIG.RETRYABLE_STATUS_CODES instead
  */
-const RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504];
+const RETRYABLE_STATUS_CODES = CONFIG.RETRYABLE_STATUS_CODES;
 
 /**
  * Default retry configuration
+ * Uses values from CONFIG for centralized management
  */
 const DEFAULT_RETRY_CONFIG = {
-  maxRetries: 3,
-  delays: [1000, 2000, 4000], // Exponential backoff: 1s, 2s, 4s
-  retryableStatusCodes: RETRYABLE_STATUS_CODES
+  maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+  delays: CONFIG.RETRY_DELAYS, // Exponential backoff: 1s, 2s, 4s
+  retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
 };
 
 /**
@@ -92,20 +95,46 @@ export async function callWithRetry(fn, options = {}) {
       }
       
       // Calculate delay for this retry
-      const delay = config.delays[attempt] || config.delays[config.delays.length - 1];
+      let delay = config.delays[attempt] || config.delays[config.delays.length - 1];
+      
+      // Check for Retry-After header in response (if available)
+      // Some APIs (e.g., OpenAI, GitHub) return Retry-After header indicating
+      // when to retry. We respect this to avoid unnecessary retries.
+      // Retry-After can be: seconds (number) or HTTP date string
+      if (error.response && error.response.headers) {
+        const retryAfter = error.response.headers.get('Retry-After');
+        if (retryAfter) {
+          // Retry-After can be seconds (number) or HTTP date
+          // We only parse numeric seconds for simplicity
+          const retryAfterSeconds = parseInt(retryAfter, 10);
+          if (!isNaN(retryAfterSeconds)) {
+            delay = retryAfterSeconds * 1000; // Convert to milliseconds
+            log('Using Retry-After header', { retryAfterSeconds, delay });
+          }
+        }
+      }
+      
+      // Add jitter (±20%) to avoid thundering herd problem
+      // When multiple clients retry simultaneously (e.g., after rate limit),
+      // jitter spreads out retry attempts, reducing server load spikes
+      // Formula: delay ± random(0-20%) ensures staggered retries
+      const jitter = delay * 0.2; // 20% of delay
+      const jitterAmount = (Math.random() * 2 - 1) * jitter; // Random between -jitter and +jitter
+      delay = Math.max(100, delay + jitterAmount); // Minimum 100ms to prevent too-fast retries
+      const finalDelay = Math.floor(delay);
       
       // Call onRetry callback if provided
       if (config.onRetry) {
-        config.onRetry(attempt + 1, delay);
+        config.onRetry(attempt + 1, finalDelay);
       } else {
-        logWarn(`Retrying... (attempt ${attempt + 1}/${config.maxRetries}, waiting ${delay}ms)`, {
+        logWarn(`Retrying... (attempt ${attempt + 1}/${config.maxRetries}, waiting ${finalDelay}ms)`, {
           error: error.message,
           statusCode: error.status || error.statusCode
         });
       }
       
       // Wait before retry
-      await sleep(delay);
+      await sleep(finalDelay);
       attempt++;
     }
   }

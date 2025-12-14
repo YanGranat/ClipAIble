@@ -5,7 +5,7 @@ This directory contains README files translated into different languages.
 ## Available Languages
 
 - 🇷🇺 [Русский (Russian)](README.ru.md)
-- 🇺🇦 [Українська (Ukrainian)](README.uk.md)
+- 🇺🇦 [Українська (Ukrainian)](README.ua.md)
 - 🇩🇪 [Deutsch (German)](README.de.md)
 - 🇫🇷 [Français (French)](README.fr.md)
 - 🇪🇸 [Español (Spanish)](README.es.md)
@@ -22,4 +22,5 @@ The main English README is located in the project root: [../README.md](../README
 ---
 
 **Note:** All translations are maintained to match the latest version of the main README. If you find any discrepancies or would like to contribute improvements, please open an issue or pull request.
+
 

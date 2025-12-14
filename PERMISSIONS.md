@@ -17,19 +17,19 @@ This document explains why each permission is required by ClipAIble.
 **Why needed:** To inject the content extraction script into web pages. This script finds and extracts the article content (text, images, headings) from the page DOM.
 
 ### `downloads`
-**Why needed:** To save the generated files (PDF, EPUB, FB2, Markdown, MP3) to your computer. Without this permission, the extension cannot download files.
+**Why needed:** To save the generated files (PDF, EPUB, FB2, Markdown, Audio) to your computer. Without this permission, the extension cannot download files.
 
 ### `debugger`
-**Why needed:** To generate PDF files using Chrome's built-in print-to-PDF functionality. This produces high-quality PDFs with proper page layout and styling. Only used for PDF format.
+**Why needed:** To generate PDF files using Chrome's built-in print-to-PDF functionality. This produces high-quality PDFs with proper page layout and styling. Only used for PDF format, and the debugger is detached immediately after generation.
 
 ### `alarms`
-**Why needed:** To keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes.
+**Why needed:** To keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Interval is set to ≥1 minute per MV3 rules.
 
 ### `notifications`
-**Why needed:** To show desktop notifications when using the context menu "Save as PDF" feature. Notifies you if there's an error (e.g., missing API key).
+**Why needed:** To show desktop notifications when using the context menu "Save" feature. Notifies you if there's an error (e.g., missing API key).
 
 ### `contextMenus`
-**Why needed:** To add the "Save article as PDF" option to the right-click context menu on web pages.
+**Why needed:** To add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/Audio) to the right-click context menu on web pages.
 
 ## Host Permissions
 
@@ -37,7 +37,7 @@ This document explains why each permission is required by ClipAIble.
 **Why needed:** To extract content from any website you visit. The extension needs to:
 1. Read the page HTML to find article content
 2. Download images embedded in articles
-3. Make API calls to AI providers (OpenAI, Google, Anthropic, ElevenLabs)
+3. Make API calls to AI/TTS providers (OpenAI, Google, Anthropic, ElevenLabs, Qwen, Respeecher)
 
 ## Data Privacy
 

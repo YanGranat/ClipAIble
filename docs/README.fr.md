@@ -2,7 +2,7 @@
 
 > **Extracteur d'articles alimenté par l'IA** — Enregistrez n'importe quel article du web au format PDF, EPUB, FB2, Markdown ou Audio. Traduction en 11 langues. Fonctionne sur n'importe quel site.
 
-![Version](https://img.shields.io/badge/version-2.7.0-blue)
+![Version](https://img.shields.io/badge/version-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![Licence](https://img.shields.io/badge/licence-MIT-brightgreen)
 
@@ -16,7 +16,7 @@ ClipAIble utilise l'intelligence artificielle pour extraire intelligemment le co
 - 📚 **EPUB** — Compatible avec Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatible avec PocketBook, FBReader
 - 📝 **Markdown** — Texte brut pour les notes
-- 🎧 **Audio (MP3)** — Écoutez avec la narration IA
+- 🎧 **Audio (MP3/WAV)** — Écoutez avec la narration IA
 
 Tous les formats prennent en charge la **traduction en 11 langues** — même la traduction du texte sur les images !
 
@@ -26,19 +26,21 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 
 ### 🤖 Extraction alimentée par l'IA
 - **Deux modes** : AI Selector (rapide, réutilisable) et AI Extract (approfondi)
-- **Plusieurs fournisseurs** : OpenAI GPT, Google Gemini, Anthropic Claude
+- **Plusieurs fournisseurs** : OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v2.9.0)
 - **Détection intelligente** : Trouve le contenu principal de l'article, supprime automatiquement les éléments indésirables
 - **Préserve la structure** : Titres, images, blocs de code, tableaux, notes de bas de page
 
 ### 🎧 Export audio
-- **2 fournisseurs TTS** : OpenAI TTS et ElevenLabs
-- **20+ voix** : 11 voix OpenAI + 9 voix ElevenLabs
-- **Réglage de la vitesse** : 0.5x à 2.0x
+- **5 fournisseurs TTS** : OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
+- **100+ voix** : 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher (anglais et ukrainien)
+- **Réglage de la vitesse** : 0.5x à 2.0x (OpenAI/ElevenLabs uniquement)
+- **Support de la langue ukrainienne** : Voix ukrainiennes dédiées via Respeecher
 - **Prononciation multilingue** : Prononciation correcte pour chaque langue
 - **Nettoyage intelligent du texte** : L'IA supprime les URL, le code et le contenu non vocal
 
 ### 🌍 Traduction
-- **11 langues** : EN, RU, UK, DE, FR, ES, IT, PT, ZH, JA, KO
+- **11 langues** : EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
 - **Détection intelligente** : Ignore si l'article est déjà dans la langue cible
 - **Traduction d'images** : Traduit le texte sur les images (via Gemini)
 - **Métadonnées localisées** : Les dates et les étiquettes s'adaptent à la langue
@@ -50,6 +52,8 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 - **Modes de page** : Page unique continue ou format multi-pages A4
 
 ### ⚡ Fonctionnalités intelligentes
+- **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v2.9.0)
+- **Transcription audio** : Transcription automatique lorsque les sous-titres ne sont pas disponibles (gpt-4o-transcribe)
 - **Mode hors ligne** : Mise en cache des sélecteurs — pas besoin d'IA pour les sites répétés
 - **Statistiques** : Suivez le nombre d'enregistrements, consultez l'historique
 - **Table des matières** : Générée automatiquement à partir des titres
@@ -58,9 +62,31 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 - **Annulation à tout moment** : Arrêtez le traitement en un clic
 
 ### 🔒 Sécurité
-- **Clés API chiffrées** avec AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs)
+- **Clés API chiffrées** avec AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
 - **Clés jamais exportées** — exclues de la sauvegarde des paramètres
 - **Toutes les données sont stockées localement** — rien n'est envoyé à des tiers
+
+---
+
+## ⚠️ Limitations Connues
+
+### Formats de Fichier
+- **Format WAV** (Qwen/Respeecher): Les fichiers peuvent être très volumineux (10-50MB+ pour les articles longs). Envisagez d'utiliser le format MP3 pour des tailles de fichier plus petites.
+- **Limites de caractères**: 
+  - Qwen TTS: 600 caractères par segment
+  - Respeecher TTS: 450 caractères par segment
+  - Le texte est automatiquement divisé intelligemment aux limites des phrases/mots
+
+### Contraintes Techniques
+- **Exigence keep-alive**: Chrome MV3 nécessite un intervalle keep-alive d'au moins 1 minute. Les tâches de traitement longues peuvent prendre plusieurs minutes.
+- **CORS pour les images**: Certaines images peuvent ne pas se charger si le site Web bloque les requêtes cross-origin. L'extension ignorera ces images.
+- **Annulation non instantanée**: L'annulation peut prendre quelques secondes pour arrêter complètement tous les processus en arrière-plan.
+- **HTML volumineux**: Les pages avec un HTML très volumineux (>500KB) peuvent prendre plus de temps à traiter.
+
+### Compatibilité des Navigateurs
+- **Chrome/Edge/Brave/Arc**: Entièrement pris en charge
+- **Firefox**: Non pris en charge (utilise une API d'extension différente)
+- **Safari**: Non pris en charge (utilise une API d'extension différente)
 
 ---
 
@@ -110,15 +136,39 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 5. Copiez la clé (commence par `sk-ant-...`)
 6. Ajoutez des crédits dans **Plans & Billing**
 
+### Qwen3-TTS-Flash (Audio)
+
+1. Allez sur [Alibaba Cloud Model Studio](https://dashscope-intl.console.aliyun.com/)
+2. Inscrivez-vous ou connectez-vous
+3. Accédez à **API Keys** ou **Model Studio**
+4. Créez une clé API
+5. Copiez la clé (commence par `sk-...`)
+
+> **Note :** Qwen3-TTS-Flash fournit 49 voix, y compris une voix russe dédiée (Alek). Format WAV fixe à 24kHz.
+
+### Respeecher (Audio - Anglais & Ukrainien)
+
+1. Allez sur [Respeecher Space](https://space.respeecher.com/)
+2. Inscrivez-vous ou connectez-vous
+3. Accédez à **API Keys**
+4. Créez une clé API
+5. Copiez la clé
+
+> **Note :** Respeecher prend en charge l'anglais et l'ukrainien avec des voix ukrainiennes dédiées. Format WAV fixe à 22.05kHz.
+
 ### Lequel choisir ?
 
 | Fournisseur | Idéal pour | Audio | Traduction d'images |
 |-------------|------------|-------|---------------------|
-| **OpenAI** | Usage général, export audio | ✅ | ❌ |
-| **Gemini** | Extraction rapide, traduction d'images | ❌ | ✅ |
+| **OpenAI** | Usage général, export audio, transcription vidéo | ✅ | ❌ |
+| **Gemini** | Extraction rapide, traduction d'images, export audio (30 voix) | ✅ | ✅ |
 | **Claude** | Articles longs, pages complexes | ❌ | ❌ |
+| **Grok** | Tâches de raisonnement rapides | ❌ | ❌ |
+| **OpenRouter** | Accès à plusieurs modèles | ❌ | ❌ |
+| **Qwen** | Export audio (49 voix, support russe) | ✅ | ❌ |
+| **Respeecher** | Export audio (langue ukrainienne) | ✅ | ❌ |
 
-**Recommandation :** Commencez par OpenAI pour obtenir toutes les fonctionnalités (extraction + audio).
+**Recommandation :** Commencez par OpenAI pour obtenir toutes les fonctionnalités (extraction + audio). Utilisez Respeecher pour le texte ukrainien.
 
 ---
 
@@ -147,26 +197,25 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 
 | Fournisseur | Modèle | Notes |
 |-------------|--------|-------|
+| OpenAI | GPT-5.2 | Dernière, raisonnement moyen |
+| OpenAI | GPT-5.2-pro | Améliorée, raisonnement moyen |
 | OpenAI | GPT-5.1 | Équilibré |
 | OpenAI | GPT-5.1 (high) | Meilleure qualité |
 | Anthropic | Claude Sonnet 4.5 | Excellent pour les articles longs |
 | Google | Gemini 3 Pro | Rapide |
+| Grok | Grok 4.1 Fast Reasoning | Raisonnement rapide |
 
 ### Voix audio
 
-| Voix | Style |
-|------|-------|
-| nova | Féminine, chaleureuse |
-| alloy | Neutre |
-| echo | Masculine |
-| fable | Expressive |
-| onyx | Masculine, profonde |
-| shimmer | Féminine, claire |
-| coral | Féminine, amicale |
-| sage | Neutre, calme |
-| ash | Masculine, autoritaire |
-| ballad | Dramatique |
-| verse | Rythmique |
+**OpenAI (11 voix) :** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
+
+**ElevenLabs (9 voix) :** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
+
+**Google Gemini 2.5 TTS (30 voix) :** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
+
+**Qwen3-TTS-Flash (49 voix) :** Y compris Elias (par défaut), Alek (russe) et voix pour 10 langues
+
+**Respeecher (14 voix) :** 4 anglaises (Samantha, Neve, Gregory, Vincent) + 10 voix ukrainiennes
 
 ### Préréglages de style (PDF)
 

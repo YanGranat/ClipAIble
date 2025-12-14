@@ -6,6 +6,8 @@ import { stripHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import JSZip from '../../lib/jszip-wrapper.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
+import { getUILanguage, tSync } from '../locales.js';
+import { PROCESSING_STAGES } from '../state/processing.js';
 
 /**
  * Generate EPUB file from content
@@ -59,7 +61,11 @@ export async function generateEpub(data, updateState) {
   });
   
   // 4. Embed images FIRST (sets _epubSrc on items)
-  if (updateState) updateState({ stage: 'loading_images', status: 'Loading images...', progress: 87 });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    const loadingStatus = tSync('stageLoadingImages', uiLang);
+    updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 87 });
+  }
   const imageManifest = await embedEpubImages(zip, content, updateState);
   
   // 5. Generate content XHTML (uses _epubSrc for images)
@@ -87,16 +93,16 @@ export async function generateEpub(data, updateState) {
   
   if (updateState) updateState({ status: 'Creating EPUB file...', progress: 95 });
   
-  // Generate the ZIP file as base64 (Service Worker doesn't have URL.createObjectURL)
+  // Generate the ZIP file as blob to avoid large base64 in memory
   log('Generating ZIP...');
-  const epubBase64 = await zip.generateAsync({ 
-    type: 'base64',
+  const zipBlob = await zip.generateAsync({ 
+    type: 'blob',
     compression: 'DEFLATE',
     compressionOptions: { level: 9 }
   });
   
-  // Create data URL for download
-  const dataUrl = `data:application/epub+zip;base64,${epubBase64}`;
+  // Create EPUB blob with correct MIME type
+  const epubBlob = new Blob([zipBlob], { type: 'application/epub+zip' });
   
   // Generate safe filename
   const safeFilename = safeTitle
@@ -105,14 +111,40 @@ export async function generateEpub(data, updateState) {
     .substring(0, 100);
   const filename = `${safeFilename}.epub`;
   
-  log('Downloading EPUB...', { filename, base64Length: epubBase64.length });
+  log('Downloading EPUB...', { filename, size: epubBlob.size });
   
-  // Download the file
-  await chrome.downloads.download({
-    url: dataUrl,
-    filename: filename,
-    saveAs: true
-  });
+  // MV3 SW: createObjectURL may be unavailable; add safe fallback
+  const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
+    ? URL
+    : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
+
+  if (urlApi && urlApi.createObjectURL) {
+    const objectUrl = urlApi.createObjectURL(epubBlob);
+    try {
+      await chrome.downloads.download({
+        url: objectUrl,
+        filename: filename,
+        saveAs: true
+      });
+    } finally {
+      urlApi.revokeObjectURL(objectUrl);
+    }
+  } else {
+    // Fallback: data URL via FileReader
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(epubBlob);
+    });
+
+    await chrome.downloads.download({
+      url: dataUrl,
+      filename: filename,
+      saveAs: true
+    });
+    log('Downloading EPUB (data URL fallback)...', { filename, size: epubBlob.size });
+  }
   
   log('=== EPUB GENERATION END ===');
   if (updateState) updateState({ status: 'Done!', progress: 100 });
@@ -194,7 +226,8 @@ function addImagesToOpf(opf, imageManifest) {
  */
 function generateNavXhtml(title, headings, generateToc, language = 'en') {
   const escapedTitle = escapeXml(title);
-  const l10n = PDF_LOCALIZATION[language] || PDF_LOCALIZATION['en'];
+  const langCode = language === 'auto' ? 'en' : language;
+  const l10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
   const contentsLabel = l10n.contents || 'Contents';
   
   let tocHtml = '';
@@ -217,9 +250,10 @@ ${headings.map(h => {
     </nav>`;
   }
   
+  const langAttr = langCode;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${langAttr}">
 <head>
   <meta charset="UTF-8"/>
   <title>Navigation</title>
@@ -292,7 +326,8 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   }
   
   if (sourceUrl) {
-    headerHtml += `\n    <p class="source"><span class="source-label">${escapeXml(sourceLabel)}:</span> <a href="${escapeXml(sourceUrl)}">${escapeXml(sourceUrl)}</a></p>`;
+    // Embed source URL in the label text as a link
+    headerHtml += `\n    <p class="source"><a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a></p>`;
   }
   
   headerHtml += '\n  </header>';
@@ -300,9 +335,9 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   // Add abstract if enabled
   let abstractHtml = '';
   if (generateAbstract && abstract) {
-    const langCode = language === 'auto' ? 'en' : language;
-    const l10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
-    const abstractLabel = l10n.abstract || 'Abstract';
+    // langCode already computed above
+    const abstractL10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
+    const abstractLabel = abstractL10n.abstract || 'Abstract';
     abstractHtml = `\n  <section class="abstract">
     <h2>${escapeXml(abstractLabel)}</h2>
     <p class="abstract-text">${escapeXml(abstract)}</p>
@@ -320,9 +355,10 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
     }
   }
   
+  // langCode already computed above, use it for xml:lang
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${langCode}">
 <head>
   <meta charset="UTF-8"/>
   <title>${escapedTitle}</title>

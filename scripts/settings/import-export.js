@@ -1,6 +1,6 @@
 // Settings import/export module
 
-import { log, logError } from '../utils/logging.js';
+import { log, logError, logWarn } from '../utils/logging.js';
 import { exportStats } from '../stats/index.js';
 import { getCacheStats } from '../cache/selectors.js';
 
@@ -45,8 +45,12 @@ const API_KEY_NAMES = [
   'openai_api_key',
   'claude_api_key', 
   'gemini_api_key',
+  'grok_api_key',
   'google_api_key',
-  'elevenlabs_api_key'
+  'elevenlabs_api_key',
+  'qwen_api_key',
+  'respeecher_api_key',
+  'google_tts_api_key'
 ];
 
 /**
@@ -64,7 +68,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
     const settings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     
     const exportData = {
-      version: '2.7.0',
+      version: '2.9.0',
       exportDate: new Date().toISOString(),
       settings: {}
     };
@@ -145,6 +149,29 @@ export async function importSettings(jsonData, options = {}) {
       errors: []
     };
     
+    // Validate version compatibility
+    const exportVersion = data.version || 'unknown';
+    const currentVersion = '2.9.0'; // Should match manifest.json version
+    
+    if (exportVersion !== 'unknown') {
+      const exportMajor = parseInt(exportVersion.split('.')[0]) || 0;
+      const exportMinor = parseInt(exportVersion.split('.')[1]) || 0;
+      const currentMajor = parseInt(currentVersion.split('.')[0]) || 0;
+      const currentMinor = parseInt(currentVersion.split('.')[1]) || 0;
+      
+      // Warn if major version differs (potential incompatibility)
+      if (exportMajor !== currentMajor) {
+        logWarn('Version mismatch: major version differs', { exportVersion, currentVersion });
+        result.errors.push(`Warning: Export file version (${exportVersion}) differs significantly from current version (${currentVersion}). Some settings may not be compatible.`);
+      } else if (Math.abs(exportMinor - currentMinor) > 2) {
+        // Warn if minor version differs by more than 2
+        logWarn('Version mismatch: minor version differs significantly', { exportVersion, currentVersion });
+        result.errors.push(`Warning: Export file version (${exportVersion}) differs from current version (${currentVersion}). Some settings may not work correctly.`);
+      } else {
+        log('Version check passed', { exportVersion, currentVersion });
+      }
+    }
+    
     // Import settings
     const currentSettings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     const settingsToImport = {};
@@ -167,16 +194,30 @@ export async function importSettings(jsonData, options = {}) {
     }
     
     // Security: Double-check that no API keys are being imported
+    // Check both in settingsToImport AND in data.settings (in case someone tries to bypass)
     for (const apiKey of API_KEY_NAMES) {
       if (settingsToImport[apiKey]) {
         delete settingsToImport[apiKey];
         log('Removed API key from import for security', { key: apiKey });
+      }
+      // Also check in raw data.settings to catch any attempts to bypass
+      if (data.settings && data.settings[apiKey]) {
+        log('API key found in import file, ignoring for security', { key: apiKey });
+        delete data.settings[apiKey];
       }
     }
     
     if (Object.keys(settingsToImport).length > 0) {
       await chrome.storage.local.set(settingsToImport);
       log('Settings imported', { count: result.settingsImported });
+    }
+    
+    // Ensure use_selector_cache has a default value if not imported
+    // This prevents the setting from being lost during import
+    const finalSettings = await chrome.storage.local.get(['use_selector_cache']);
+    if (finalSettings.use_selector_cache === undefined || finalSettings.use_selector_cache === null) {
+      await chrome.storage.local.set({ use_selector_cache: true });
+      log('Set use_selector_cache to default (true) after import');
     }
     
     // Import statistics

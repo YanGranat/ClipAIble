@@ -12,9 +12,11 @@ import {
   startProcessing,
   setResult,
   restoreStateFromStorage,
-  PROCESSING_STAGES
+  PROCESSING_STAGES,
+  ERROR_CODES
 } from './state/processing.js';
 import { callAI, getProviderFromModel } from './api/index.js';
+import { callWithRetry } from './utils/retry.js';
 import { 
   SELECTOR_SYSTEM_PROMPT, 
   buildSelectorUserPrompt, 
@@ -29,6 +31,9 @@ import { generatePdf, generatePdfWithDebugger } from './generation/pdf.js';
 import { generateEpub } from './generation/epub.js';
 import { generateFb2 } from './generation/fb2.js';
 import { generateAudio } from './generation/audio.js';
+import { generateDocx } from './generation/docx.js';
+import { generateHtml } from './generation/html.js';
+import { generateTxt } from './generation/txt.js';
 import { recordSave, getFormattedStats, clearStats, deleteHistoryItem } from './stats/index.js';
 import { 
   getCachedSelectors, 
@@ -42,78 +47,553 @@ import {
 import { exportSettings, importSettings } from './settings/import-export.js';
 import { removeLargeData } from './utils/storage.js';
 import { encryptApiKey, isEncrypted, decryptApiKey } from './utils/encryption.js';
+import { getUILanguage, tSync } from './locales.js';
+import { detectVideoPlatform } from './utils/video.js';
+import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
+import { processSubtitlesWithAI } from './extraction/video-processor.js';
+
+// ============================================
+// NOTIFICATION HELPER
+// ============================================
+
+/**
+ * Create a notification with consistent styling
+ * @param {string} message - Notification message
+ * @param {string} title - Notification title (default: 'ClipAIble')
+ * @returns {Promise<void>}
+ */
+async function createNotification(message, title = 'ClipAIble') {
+  if (!chrome.notifications || !chrome.notifications.create) {
+    logWarn('chrome.notifications API not available');
+    return;
+  }
+  
+  const iconUrl = chrome.runtime.getURL('icons/icon128.png');
+  
+  try {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: iconUrl,
+      title: title,
+      message: message,
+      requireInteraction: false
+    }, (notificationId) => {
+      if (chrome.runtime.lastError) {
+        logError('Failed to create notification', chrome.runtime.lastError);
+      } else {
+        log('Notification created successfully', { notificationId, message });
+      }
+    });
+  } catch (createError) {
+    logError('Exception while creating notification', createError);
+  }
+}
+
+// ============================================
+// API KEY MIGRATION
+// ============================================
+
+/**
+ * Migrate existing plain text API keys to encrypted format
+ * Runs once on extension startup
+ */
+async function migrateApiKeys() {
+  try {
+    const result = await chrome.storage.local.get([
+      'openai_api_key',
+      'claude_api_key',
+      'gemini_api_key',
+      'grok_api_key',
+      'google_api_key',
+      'elevenlabs_api_key',
+      'qwen_api_key',
+      'respeecher_api_key',
+      'google_tts_api_key',
+      'api_keys_migrated' // Flag to prevent repeated migration
+    ]);
+
+    // Skip if already migrated
+    if (result.api_keys_migrated) {
+      log('API keys already migrated, skipping');
+      return;
+    }
+
+    const keysToEncrypt = {};
+    let hasChanges = false;
+
+    // Check and encrypt each key if needed
+    const keyNames = [
+      'openai_api_key',
+      'claude_api_key',
+      'gemini_api_key',
+      'grok_api_key',
+      'google_api_key',
+      'elevenlabs_api_key',
+      'qwen_api_key',
+      'respeecher_api_key',
+      'google_tts_api_key'
+    ];
+    
+    for (const keyName of keyNames) {
+      const value = result[keyName];
+      if (value && typeof value === 'string' && !isEncrypted(value)) {
+        // Key exists and is not encrypted, encrypt it
+        try {
+          keysToEncrypt[keyName] = await encryptApiKey(value);
+          hasChanges = true;
+          log(`Migrating ${keyName} to encrypted format`);
+        } catch (error) {
+          logError(`Failed to encrypt ${keyName}`, error);
+          // Continue with other keys
+        }
+      }
+    }
+
+    if (hasChanges) {
+      keysToEncrypt.api_keys_migrated = true;
+      await chrome.storage.local.set(keysToEncrypt);
+      log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
+    } else {
+      // Mark as migrated even if no keys to encrypt
+      await chrome.storage.local.set({ api_keys_migrated: true });
+      log('API keys migration check completed (no keys to migrate)');
+    }
+  } catch (error) {
+    logError('API keys migration failed', error);
+    // Don't throw - migration failure shouldn't break extension
+  }
+}
+
+/**
+ * Initialize default settings on first run
+ * Ensures use_selector_cache is set to true by default
+ * Also cleans up deprecated transcription settings
+ */
+async function initializeDefaultSettings() {
+  try {
+    const result = await chrome.storage.local.get([
+      'use_selector_cache',
+      'transcribe_if_no_subtitles',
+      'cobalt_api_url',
+      'transcription_settings_cleaned'
+    ]);
+    
+    // If use_selector_cache is undefined or null, set it to true (default: enabled)
+    // Only set if it's truly undefined/null, not if it's explicitly false
+    if (result.use_selector_cache === undefined || result.use_selector_cache === null) {
+      await chrome.storage.local.set({ use_selector_cache: true });
+      log('Initialized use_selector_cache to true (default)');
+    }
+    
+    // Clean up deprecated transcription settings (one-time cleanup)
+    if (!result.transcription_settings_cleaned) {
+      const keysToRemove = [];
+      if (result.transcribe_if_no_subtitles !== undefined) {
+        keysToRemove.push('transcribe_if_no_subtitles');
+      }
+      if (result.cobalt_api_url !== undefined) {
+        keysToRemove.push('cobalt_api_url');
+      }
+      
+      if (keysToRemove.length > 0) {
+        await chrome.storage.local.remove(keysToRemove);
+        log('Cleaned up deprecated transcription settings', { keys: keysToRemove });
+      }
+      
+      // Mark as cleaned to avoid repeated cleanup
+      await chrome.storage.local.set({ transcription_settings_cleaned: true });
+    }
+  } catch (error) {
+    logError('Failed to initialize default settings', error);
+    // Don't throw - initialization failure shouldn't break extension
+  }
+}
 
 // ============================================
 // INITIALIZATION
 // ============================================
 
-log('Extension loaded', { config: CONFIG });
+// Initialize extension - use setTimeout to avoid blocking module loading
+setTimeout(() => {
+  try {
+    log('Extension loaded', { config: CONFIG });
+  } catch (error) {
+    console.error('[ClipAIble] Failed to log:', error);
+  }
 
-// Restore state on service worker restart
-restoreStateFromStorage();
+  // Restore state on service worker restart (non-blocking)
+  try {
+    restoreStateFromStorage();
+  } catch (error) {
+    console.error('[ClipAIble] Failed to restore state:', error);
+  }
 
-// Migrate existing API keys to encrypted format
-migrateApiKeys();
+  // Migrate existing API keys to encrypted format (fire and forget)
+  try {
+    migrateApiKeys().catch(error => {
+      logError('API keys migration failed', error);
+    });
+  } catch (error) {
+    console.error('[ClipAIble] Failed to start migration:', error);
+  }
+
+  // Initialize default settings (fire and forget)
+  try {
+    initializeDefaultSettings().catch(error => {
+      logError('Default settings initialization failed', error);
+    });
+  } catch (error) {
+    console.error('[ClipAIble] Failed to initialize default settings:', error);
+  }
+}, 0);
 
 // ============================================
 // KEEP-ALIVE MECHANISM
 // ============================================
 
 const KEEP_ALIVE_ALARM = 'keepAlive';
+let keepAliveFallbackTimer = null;
 
 function startKeepAlive() {
   chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
-  log('Keep-alive started');
-}
-
-function stopKeepAlive() {
-  chrome.alarms.clear(KEEP_ALIVE_ALARM);
-  log('Keep-alive stopped');
-}
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === KEEP_ALIVE_ALARM) {
+  if (chrome.runtime.lastError) {
+    logWarn('Keep-alive alarm creation failed, enabling fallback timer', { error: chrome.runtime.lastError.message });
+  }
+  // Fallback ping in case alarms are throttled; MV3 requires >=1m, this keeps SW alive during long tasks.
+  if (keepAliveFallbackTimer) {
+    clearInterval(keepAliveFallbackTimer);
+  }
+  keepAliveFallbackTimer = setInterval(() => {
     const state = getProcessingState();
-    log('Keep-alive ping', { isProcessing: state.isProcessing });
+    log('Keep-alive fallback ping', { isProcessing: state.isProcessing });
     if (state.isProcessing) {
-      chrome.storage.local.set({ 
+      chrome.storage.local.set({
         processingState: { ...state, lastUpdate: Date.now() }
       });
     }
+  }, CONFIG.KEEP_ALIVE_INTERVAL * 60 * 1000);
+  log('Keep-alive started', { intervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
+}
+
+function stopKeepAlive() {
+  try {
+    chrome.alarms.clear(KEEP_ALIVE_ALARM);
+  } catch (error) {
+    logWarn('Failed to clear keep-alive alarm', error);
   }
-});
+  
+  // Guaranteed cleanup of fallback timer
+  if (keepAliveFallbackTimer) {
+    try {
+      clearInterval(keepAliveFallbackTimer);
+    } catch (error) {
+      logWarn('Failed to clear keep-alive fallback timer', error);
+    } finally {
+      keepAliveFallbackTimer = null;
+    }
+  }
+  log('Keep-alive stopped');
+}
+
+try {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === KEEP_ALIVE_ALARM) {
+      const state = getProcessingState();
+      log('Keep-alive ping', { isProcessing: state.isProcessing });
+      if (state.isProcessing) {
+        chrome.storage.local.set({ 
+          processingState: { ...state, lastUpdate: Date.now() }
+        });
+      }
+    }
+  });
+} catch (error) {
+  console.error('[ClipAIble] Failed to register alarms.onAlarm listener:', error);
+}
 
 // ============================================
 // CONTEXT MENU
 // ============================================
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: 'save-as-pdf',
-    title: 'Save article as PDF',
-    contexts: ['page']
-  });
-  log('Context menu created');
-});
+// Format mapping for context menu items
+const FORMAT_MENU_IDS = {
+  'save-as-pdf': 'pdf',
+  'save-as-epub': 'epub',
+  'save-as-fb2': 'fb2',
+  'save-as-markdown': 'markdown',
+  'save-as-audio': 'audio',
+  'save-as-docx': 'docx',
+  'save-as-html': 'html',
+  'save-as-txt': 'txt'
+};
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'save-as-pdf') {
-    log('Context menu clicked: Save as PDF', { tabId: tab?.id, url: tab?.url });
-    handleQuickSave();
+// Create or update context menu with localization
+async function updateContextMenu() {
+  try {
+    // Get current UI language
+    const lang = await getUILanguage();
+    
+    // Remove existing menu items
+    await chrome.contextMenus.removeAll();
+    
+    // Get localized strings
+    const parentTitle = tSync('contextMenuSaveAs', lang);
+    const pdfTitle = tSync('saveAsPdf', lang);
+    const epubTitle = tSync('saveAsEpub', lang);
+    const fb2Title = tSync('saveAsFb2', lang);
+    const markdownTitle = tSync('saveAsMarkdown', lang);
+    const audioTitle = tSync('saveAsAudio', lang);
+    const docxTitle = tSync('saveAsDocx', lang);
+    const htmlTitle = tSync('saveAsHtml', lang);
+    const txtTitle = tSync('saveAsTxt', lang);
+    
+    // Create parent menu item
+    chrome.contextMenus.create({
+      id: 'clipaible-save-as',
+      title: parentTitle,
+      contexts: ['page']
+    });
+    
+    // Create child menu items
+    chrome.contextMenus.create({
+      id: 'save-as-pdf',
+      parentId: 'clipaible-save-as',
+      title: pdfTitle,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-epub',
+      parentId: 'clipaible-save-as',
+      title: epubTitle,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-fb2',
+      parentId: 'clipaible-save-as',
+      title: fb2Title,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-markdown',
+      parentId: 'clipaible-save-as',
+      title: markdownTitle,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-audio',
+      parentId: 'clipaible-save-as',
+      title: audioTitle,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-docx',
+      parentId: 'clipaible-save-as',
+      title: docxTitle,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-html',
+      parentId: 'clipaible-save-as',
+      title: htmlTitle,
+      contexts: ['page']
+    });
+    
+    chrome.contextMenus.create({
+      id: 'save-as-txt',
+      parentId: 'clipaible-save-as',
+      title: txtTitle,
+      contexts: ['page']
+    });
+    
+    log('Context menu created with localization', { lang });
+  } catch (error) {
+    logError('Failed to create context menu', error);
+    // Fallback to English if localization fails
+    chrome.contextMenus.removeAll();
+    chrome.contextMenus.create({
+      id: 'clipaible-save-as',
+      title: 'Save as',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-pdf',
+      parentId: 'clipaible-save-as',
+      title: 'Save as PDF',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-epub',
+      parentId: 'clipaible-save-as',
+      title: 'Save as EPUB',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-fb2',
+      parentId: 'clipaible-save-as',
+      title: 'Save as FB2',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-markdown',
+      parentId: 'clipaible-save-as',
+      title: 'Save as Markdown',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-docx',
+      parentId: 'clipaible-save-as',
+      title: 'Save as DOCX',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-html',
+      parentId: 'clipaible-save-as',
+      title: 'Save as HTML',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-txt',
+      parentId: 'clipaible-save-as',
+      title: 'Save as TXT',
+      contexts: ['page']
+    });
+    chrome.contextMenus.create({
+      id: 'save-as-audio',
+      parentId: 'clipaible-save-as',
+      title: 'Save as Audio',
+      contexts: ['page']
+    });
   }
-});
+}
+
+// Initialize context menu on install
+try {
+  chrome.runtime.onInstalled.addListener(() => {
+    updateContextMenu().catch(error => {
+      logError('Failed to update context menu on install', error);
+    });
+  });
+} catch (error) {
+  console.error('[ClipAIble] Failed to register runtime.onInstalled listener:', error);
+}
+
+// Update context menu when extension starts (in case language changed)
+// Use setTimeout to avoid blocking service worker initialization
+setTimeout(() => {
+  updateContextMenu().catch(error => {
+    logError('Failed to update context menu on startup', error);
+  });
+}, 0);
+
+// Update context menu when UI language changes
+try {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local') {
+      // Handle UI language change
+      if (changes.ui_language) {
+        log('UI language changed, updating context menu', { newLang: changes.ui_language.newValue });
+        updateContextMenu().catch(error => {
+          logError('Failed to update context menu after language change', error);
+        });
+      }
+      
+      // Handle pending subtitles (fallback when Extension context invalidated)
+      if (changes.pendingSubtitles && changes.pendingSubtitles.newValue) {
+        const pendingData = changes.pendingSubtitles.newValue;
+        log('🟢 Received pendingSubtitles from storage (Extension context invalidated fallback)', {
+          subtitleCount: pendingData.subtitles?.length || 0,
+          timestamp: pendingData.timestamp
+        });
+        
+        // Send message to extractYouTubeSubtitles listener if it's waiting
+        // This simulates the message that would have come via chrome.runtime.sendMessage
+        try {
+          chrome.runtime.sendMessage({
+            type: 'ClipAIbleYouTubeSubtitles',
+            action: 'youtubeSubtitlesResult',
+            result: {
+              subtitles: pendingData.subtitles,
+              metadata: pendingData.metadata
+            }
+          }).catch(() => {
+            // Ignore if no listener (extractYouTubeSubtitles may have timed out)
+          });
+          
+          // Also save to lastSubtitles for popup
+          chrome.storage.local.set({
+            lastSubtitles: {
+              subtitles: pendingData.subtitles,
+              metadata: pendingData.metadata,
+              timestamp: pendingData.timestamp
+            }
+          }).catch(storageError => {
+            logError('Failed to save lastSubtitles', storageError);
+          });
+          
+          // Clear pendingSubtitles after processing
+          chrome.storage.local.remove('pendingSubtitles').catch(() => {});
+        } catch (error) {
+          logError('Failed to process pendingSubtitles', error);
+        }
+      }
+    }
+  });
+} catch (error) {
+  console.error('[ClipAIble] Failed to register storage.onChanged listener:', error);
+}
+
+// Listen for context menu clicks
+try {
+  chrome.contextMenus.onClicked.addListener((info, tab) => {
+    const format = FORMAT_MENU_IDS[info.menuItemId];
+    if (format) {
+      log('Context menu clicked', { format, tabId: tab?.id, url: tab?.url });
+      handleQuickSave(format);
+    }
+  });
+} catch (error) {
+  console.error('[ClipAIble] Failed to register contextMenus.onClicked listener:', error);
+}
 
 // ============================================
 // QUICK SAVE (Context Menu)
 // ============================================
 
-async function handleQuickSave() {
-  log('Quick save triggered');
+async function handleQuickSave(outputFormat = 'pdf') {
+  log('Quick save triggered', { outputFormat });
   
   const state = getProcessingState();
   if (state.isProcessing) {
     log('Already processing, ignoring quick save');
     return;
+  }
+  
+  // Show notification about starting save
+  try {
+    const uiLang = await getUILanguage();
+    const formatNames = {
+      'pdf': tSync('saveAsPdf', uiLang),
+      'epub': tSync('saveAsEpub', uiLang),
+      'fb2': tSync('saveAsFb2', uiLang),
+      'markdown': tSync('saveAsMarkdown', uiLang),
+      'audio': tSync('saveAsAudio', uiLang),
+      'docx': tSync('saveAsDocx', uiLang),
+      'html': tSync('saveAsHtml', uiLang),
+      'txt': tSync('saveAsTxt', uiLang)
+    };
+    const formatName = formatNames[outputFormat] || outputFormat.toUpperCase();
+    const notificationMsg = tSync('quickSaveStarted', uiLang).replace('{format}', formatName);
+    
+    log('Showing quick save notification', { format: outputFormat, message: notificationMsg });
+    await createNotification(notificationMsg);
+  } catch (error) {
+    logError('Failed to show quick save notification', error);
   }
   
   try {
@@ -124,10 +604,16 @@ async function handleQuickSave() {
     }
     
     const settings = await chrome.storage.local.get([
-      'openai_api_key', 'claude_api_key', 'gemini_api_key', 'openai_model',
-      'extraction_mode', 'use_selector_cache', 'output_format', 'generate_toc', 'page_mode', 'pdf_language',
+      'openai_api_key', 'claude_api_key', 'gemini_api_key', 'grok_api_key', 'openai_model',
+      'extraction_mode', 'use_selector_cache', 'output_format', 'generate_toc', 'generate_abstract', 'page_mode', 'pdf_language',
       'pdf_font_family', 'pdf_font_size', 'pdf_bg_color', 'pdf_text_color',
-      'pdf_heading_color', 'pdf_link_color'
+      'pdf_heading_color', 'pdf_link_color',
+      'audio_provider', 'elevenlabs_api_key', 'qwen_api_key', 'respeecher_api_key',
+      'audio_voice', 'audio_voice_map', 'audio_speed', 'elevenlabs_model', 'elevenlabs_format',
+      'elevenlabs_stability', 'elevenlabs_similarity', 'elevenlabs_style', 'elevenlabs_speaker_boost',
+      'openai_instructions', 'google_tts_api_key', 'google_tts_model', 'google_tts_voice', 'google_tts_prompt',
+      'respeecher_temperature', 'respeecher_repetition_penalty', 'respeecher_top_p',
+      'translate_images', 'google_api_key'
     ]);
     
     const model = settings.openai_model || 'gpt-5.1';
@@ -136,67 +622,38 @@ async function handleQuickSave() {
     
     // Use statically imported decryptApiKey
     
-    if (model.startsWith('gpt-')) {
-      const encryptedKey = settings.openai_api_key;
-      if (encryptedKey) {
-        try {
-          apiKey = await decryptApiKey(encryptedKey);
-        } catch (error) {
-          logError('Failed to decrypt OpenAI API key for quick save', error);
-          chrome.notifications?.create({
-            type: 'basic',
-            iconUrl: 'icons/icon128.png',
-            title: 'ClipAIble',
-            message: 'Failed to decrypt API key. Please check your settings.'
-          });
-          return;
-        }
+    // Use getProviderFromModel to determine provider
+    provider = getProviderFromModel(model);
+    
+    // Get API key based on provider
+    let encryptedKey = null;
+    if (provider === 'openai') {
+      encryptedKey = settings.openai_api_key;
+    } else if (provider === 'claude') {
+      encryptedKey = settings.claude_api_key;
+    } else if (provider === 'gemini') {
+      encryptedKey = settings.gemini_api_key;
+    } else if (provider === 'grok') {
+      encryptedKey = settings.grok_api_key;
+    }
+    
+    if (encryptedKey) {
+      try {
+        apiKey = await decryptApiKey(encryptedKey);
+      } catch (error) {
+        logError(`Failed to decrypt ${provider} API key for quick save`, error);
+        const uiLang = await getUILanguage();
+        const errorMsg = tSync('errorQuickSaveDecryptFailed', uiLang);
+        await createNotification(errorMsg);
+        return;
       }
-      provider = 'openai';
-    } else if (model.startsWith('claude-')) {
-      const encryptedKey = settings.claude_api_key;
-      if (encryptedKey) {
-        try {
-          apiKey = await decryptApiKey(encryptedKey);
-        } catch (error) {
-          logError('Failed to decrypt Claude API key for quick save', error);
-          chrome.notifications?.create({
-            type: 'basic',
-            iconUrl: 'icons/icon128.png',
-            title: 'ClipAIble',
-            message: 'Failed to decrypt API key. Please check your settings.'
-          });
-          return;
-        }
-      }
-      provider = 'claude';
-    } else if (model.startsWith('gemini-')) {
-      const encryptedKey = settings.gemini_api_key;
-      if (encryptedKey) {
-        try {
-          apiKey = await decryptApiKey(encryptedKey);
-        } catch (error) {
-          logError('Failed to decrypt Gemini API key for quick save', error);
-          chrome.notifications?.create({
-            type: 'basic',
-            iconUrl: 'icons/icon128.png',
-            title: 'ClipAIble',
-            message: 'Failed to decrypt API key. Please check your settings.'
-          });
-          return;
-        }
-      }
-      provider = 'gemini';
     }
     
     if (!apiKey) {
       logError('No API key configured for quick save');
-      chrome.notifications?.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: 'ClipAIble',
-        message: 'Please configure an API key in the extension settings first.'
-      });
+      const uiLang = await getUILanguage();
+      const errorMsg = tSync('errorQuickSaveNoKey', uiLang);
+      await createNotification(errorMsg);
       return;
     }
     
@@ -222,6 +679,9 @@ async function handleQuickSave() {
     // startArticleProcessing returns true/false synchronously, processing
     // runs async via .then()/.catch() chain with proper error handling.
     // See systemPatterns.md "Design Decisions" section.
+    const translateImages = Boolean(settings.translate_images) && (settings.pdf_language || 'auto') !== 'auto';
+    const googleApiKey = settings.google_api_key || null;
+
     startArticleProcessing({
       html: pageData.html,
       url: pageData.url,
@@ -231,23 +691,67 @@ async function handleQuickSave() {
       model: model,
       mode: settings.extraction_mode || 'selector',
       useCache: settings.use_selector_cache !== false, // Default: true
-      outputFormat: settings.output_format || 'pdf',
+      outputFormat: outputFormat, // Use format from context menu
       generateToc: settings.generate_toc || false,
       generateAbstract: settings.generate_abstract || false,
       pageMode: settings.page_mode || 'single',
       language: settings.pdf_language || 'auto',
-      translateImages: false,
+      translateImages,
+      googleApiKey,
       fontFamily: settings.pdf_font_family || '',
       fontSize: settings.pdf_font_size || '31',
       bgColor: settings.pdf_bg_color || '#303030',
       textColor: settings.pdf_text_color || '#b9b9b9',
       headingColor: settings.pdf_heading_color || '#cfcfcf',
       linkColor: settings.pdf_link_color || '#6cacff',
-      tabId: tab.id
+      tabId: tab.id,
+      // Audio settings (if format is audio)
+      audioProvider: settings.audio_provider || 'openai',
+      elevenlabsApiKey: settings.elevenlabs_api_key || null,
+      qwenApiKey: settings.qwen_api_key || null,
+      respeecherApiKey: settings.respeecher_api_key || null,
+      // Determine voice: use per-provider map if available, otherwise use legacy audio_voice
+      // For Google TTS, use google_tts_voice if available, otherwise fallback to map/legacy
+      audioVoice: (() => {
+        const provider = settings.audio_provider || 'openai';
+        if (provider === 'google') {
+          // Google TTS has its own voice setting
+          return settings.google_tts_voice || 'Callirrhoe';
+        }
+        const voiceMap = settings.audio_voice_map || {};
+        return voiceMap[provider] || settings.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE;
+      })(),
+      audioSpeed: (() => {
+        const speed = parseFloat(settings.audio_speed || CONFIG.DEFAULT_AUDIO_SPEED);
+        return isNaN(speed) ? CONFIG.DEFAULT_AUDIO_SPEED : speed;
+      })(),
+      audioFormat: CONFIG.DEFAULT_AUDIO_FORMAT, // Default format for quick save (matches popup behavior)
+      elevenlabsModel: settings.elevenlabs_model || CONFIG.DEFAULT_ELEVENLABS_MODEL,
+      elevenlabsFormat: settings.elevenlabs_format || 'mp3_44100_192',
+      elevenlabsStability: settings.elevenlabs_stability !== undefined ? settings.elevenlabs_stability : 0.5,
+      elevenlabsSimilarity: settings.elevenlabs_similarity !== undefined ? settings.elevenlabs_similarity : 0.75,
+      elevenlabsStyle: settings.elevenlabs_style !== undefined ? settings.elevenlabs_style : 0.0,
+      elevenlabsSpeakerBoost: settings.elevenlabs_speaker_boost !== undefined ? settings.elevenlabs_speaker_boost : true,
+      openaiInstructions: settings.openai_instructions || null,
+      googleTtsApiKey: settings.google_tts_api_key || null,
+      geminiApiKey: settings.gemini_api_key || null,
+      googleTtsModel: settings.google_tts_model || 'gemini-2.5-pro-preview-tts',
+      googleTtsVoice: settings.google_tts_voice || 'Callirrhoe',
+      googleTtsPrompt: settings.google_tts_prompt || null,
+      respeecherTemperature: settings.respeecher_temperature !== undefined ? settings.respeecher_temperature : 1.0,
+      respeecherRepetitionPenalty: settings.respeecher_repetition_penalty !== undefined ? settings.respeecher_repetition_penalty : 1.0,
+      respeecherTopP: settings.respeecher_top_p !== undefined ? settings.respeecher_top_p : 1.0
     });
     
   } catch (error) {
     logError('Quick save failed', error);
+    try {
+      const uiLang = await getUILanguage();
+      const errorMsg = error.message || tSync('errorValidation', uiLang);
+      await createNotification(errorMsg);
+    } catch (notifError) {
+      logError('Failed to show error notification', notifError);
+    }
   }
 }
 
@@ -255,7 +759,8 @@ async function handleQuickSave() {
 // MESSAGE LISTENER
 // ============================================
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+try {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   log('Message received', { action: request.action, sender: sender.tab?.url || 'popup' });
   
   try {
@@ -266,17 +771,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     if (request.action === 'cancelProcessing') {
       log('Cancel requested');
-      sendResponse(cancelProcessing(stopKeepAlive));
+      cancelProcessing(stopKeepAlive).then(result => sendResponse(result));
       return true;
     }
     
     if (request.action === 'processArticle') {
-      const started = startArticleProcessing(request.data);
-      if (started) {
-        sendResponse({ started: true });
-      } else {
-        sendResponse({ error: 'Already processing' });
-      }
+      startArticleProcessing(request.data)
+        .then(() => {
+          sendResponse({ started: true });
+        })
+        .catch(error => {
+          logError('processArticle failed', error);
+          sendResponse({ error: error.message || 'Processing failed' });
+        });
       return true;
     }
     
@@ -293,8 +800,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       
       generatePdfWithDebugger(
         tabId, title, pageMode, contentWidth, contentHeight,
-        () => completeProcessing(stopKeepAlive),
-        (errorMsg) => setError(errorMsg, stopKeepAlive)
+        async () => await completeProcessing(stopKeepAlive),
+        async (errorMsg) => await setError(errorMsg, stopKeepAlive)
       )
         .then(() => log('PDF generated and downloaded'))
         .catch(error => logError('generatePdfDebugger failed', error));
@@ -383,6 +890,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       return true;
     }
     
+    // Handle YouTube subtitles result from content script
+    // This message comes from content script forwarding CustomEvent from MAIN world
+    // The extractYouTubeSubtitles function creates a temporary listener that should catch it
+    // CRITICAL: We should NOT handle it here if temporary listener is active, because
+    // returning true here prevents the temporary listener from receiving the message!
+    // We only save to storage as a fallback for popup, but don't return true
+    // to allow the message to reach the temporary listener in extractYouTubeSubtitles
+    if (request.action === 'youtubeSubtitlesResult' || 
+        (request.type === 'ClipAIbleYouTubeSubtitles' && request.action === 'youtubeSubtitlesResult')) {
+      log('🟢 Received youtubeSubtitlesResult in main listener (fallback)', {
+        action: request.action,
+        type: request.type,
+        hasError: !!request.error,
+        hasResult: !!request.result,
+        subtitleCount: request.result?.subtitles?.length || 0
+      });
+      
+      // The extractYouTubeSubtitles function creates a temporary listener
+      // that should catch this message. We save to storage for popup,
+      // but DON'T return true here - let the message pass through to temporary listener
+      // Save to storage for popup to use (as fallback)
+      // Use Promise-based approach since we're in a callback
+      if (request.result && !request.error) {
+        chrome.storage.local.set({
+          lastSubtitles: {
+            subtitles: request.result.subtitles,
+            metadata: request.result.metadata,
+            timestamp: Date.now()
+          }
+        }).then(() => {
+          log('🟢 Saved subtitles to storage for popup (fallback)', {
+            subtitleCount: request.result.subtitles?.length || 0
+          });
+        }).catch(storageError => {
+          logError('Failed to save subtitles to storage', storageError);
+        });
+      }
+      
+      // CRITICAL: Don't return true here! Let the message pass through to temporary listener
+      // The temporary listener will handle it and return true
+      // However, we need to acknowledge receipt to content script
+      // So we send response but don't return true, allowing message to pass through
+      // Note: In Chrome Extensions, if a listener returns false/undefined, the message
+      // continues to other listeners. But sendResponse can only be called once.
+      // So we send response here, but let the message pass through to temporary listener
+      // The temporary listener will also try to sendResponse, but that's OK - it will be ignored
+      sendResponse({ success: true, acknowledged: true, message: 'Received by main listener (passing through)' });
+      return false; // Let other listeners (temporary one) handle it
+    }
+    
     logWarn('Unknown action received', { action: request.action });
     sendResponse({ error: 'Unknown action' });
     return true;
@@ -392,7 +949,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ error: error.message });
     return true;
   }
-});
+  });
+} catch (error) {
+  console.error('[ClipAIble] Failed to register runtime.onMessage listener:', error);
+}
 
 // ============================================
 // ARTICLE PROCESSING
@@ -402,7 +962,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 let processingStartTime = null;
 
 async function startArticleProcessing(data) {
-  if (!startProcessing(startKeepAlive)) {
+  if (!(await startProcessing(startKeepAlive))) {
+    return false;
+  }
+  
+  // Validate output format
+  const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
+  if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
+    const uiLang = await getUILanguage();
+    await setError({
+      message: tSync('errorValidation', uiLang) + `: Invalid output format '${data.outputFormat}'`,
+      code: ERROR_CODES.VALIDATION_ERROR
+    }, stopKeepAlive);
     return false;
   }
   
@@ -423,10 +994,102 @@ async function startArticleProcessing(data) {
     model: data.model,
     outputFormat: data.outputFormat,
     generateToc: data.generateToc,
+    generateAbstract: data.generateAbstract,
     url: data.url,
     htmlLength: data.html?.length || 0
   });
   
+  // Pre-flight key checks for audio to avoid long work before failing
+  if ((data.outputFormat || 'pdf') === 'audio') {
+    const provider = data.audioProvider || 'openai';
+    if (provider === 'openai' && !data.apiKey) {
+      await setError({
+        message: 'OpenAI API key is required for audio. Please add it in settings.',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive);
+      return false;
+    }
+    if (provider === 'elevenlabs' && !data.elevenlabsApiKey) {
+      await setError({
+        message: 'ElevenLabs API key is required for audio. Please add it in settings.',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive);
+      return false;
+    }
+    if (provider === 'qwen' && !data.qwenApiKey) {
+      await setError({
+        message: 'Qwen API key is required for audio. Please add it in settings.',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive);
+      return false;
+    }
+    if (provider === 'respeecher' && !data.respeecherApiKey) {
+      await setError({
+        message: 'Respeecher API key is required for audio. Please add it in settings.',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive);
+      return false;
+    }
+    if (provider === 'google' && !data.googleTtsApiKey) {
+      await setError({
+        message: 'Google TTS API key is required for Google TTS. Please add it in settings.',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive);
+      return false;
+    }
+  }
+  
+  // Check if this is a video page (YouTube/Vimeo)
+  const videoInfo = detectVideoPlatform(data.url);
+  if (videoInfo) {
+    // Process as video page - skip selector/extract modes
+    log('Detected video page', { platform: videoInfo.platform, videoId: videoInfo.videoId });
+    processVideoPage(data, videoInfo)
+      .then(async result => {
+        log('Video processing complete', { 
+          title: result.title, 
+          contentItems: result.content?.length || 0 
+        });
+        
+        // Continue with standard pipeline: translation, TOC/Abstract, generation
+        await continueProcessingPipeline(data, result, stopKeepAlive);
+      })
+      .then(async () => {
+        // After generation, record stats and complete
+        log('File generation complete');
+        
+        // Record stats
+        const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
+        const state = getProcessingState();
+        const savedTitle = state.result?.title || data.title || 'Untitled';
+        const savedFormat = data.outputFormat || 'pdf';
+        
+        await recordSave({
+          title: savedTitle,
+          url: data.url,
+          format: savedFormat,
+          processingTime
+        });
+        
+        // Store format in state for success message
+        updateState({ outputFormat: savedFormat });
+        
+        processingStartTime = null;
+        await completeProcessing(stopKeepAlive);
+      })
+      .catch(async error => {
+        logError('Video processing failed', error);
+        await setError({
+          message: error.message || 'Video processing failed',
+          code: ERROR_CODES.UNKNOWN_ERROR
+        }, stopKeepAlive);
+      });
+    return true;
+  }
+  
+  // Standard article processing continues below
+  
+  // Standard article processing
   const { mode } = data;
   
   const processFunction = mode === 'selector' 
@@ -440,199 +1103,11 @@ async function startArticleProcessing(data) {
         contentItems: result.content?.length || 0 
       });
       
-      // Translate if language is not auto
-      const language = data.language || 'auto';
-      const hasImageTranslation = data.translateImages && data.googleApiKey;
-      
-      if (language !== 'auto' && result.content && result.content.length > 0) {
-        updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: 'Translating content...', progress: hasImageTranslation ? 10 : 12 });
-        
-        // Translate images first if enabled
-        if (hasImageTranslation) {
-          log('Starting image translation', { targetLanguage: language });
-          updateState({ status: 'Analyzing images for translation...', progress: 10 });
-          
-          const sourceLang = detectSourceLanguage(result.content);
-          result.content = await translateImages(
-            result.content, sourceLang, language, 
-            data.apiKey, data.googleApiKey, data.model, updateState
-          );
-          log('Image translation complete');
-        }
-        
-        log('Starting text translation', { targetLanguage: language });
-        updateState({ status: 'Translating text...', progress: 15 });
-        try {
-          result = await translateContent(result, language, data.apiKey, data.model, updateState);
-          log('Translation complete', { title: result.title });
-        } catch (error) {
-          if (error.message?.includes('authentication')) {
-            logError('Translation failed: authentication error', error);
-            updateState({ 
-              status: 'Translation failed: Invalid API key. Please check your API key in settings.', 
-              progress: 0,
-              error: 'AUTH_ERROR'
-            });
-            throw new Error('Translation failed: Invalid API key. Please check your API key in settings.');
-          }
-          // For other errors, log but continue without translation
-          logError('Translation failed, continuing without translation', error);
-          updateState({ status: 'Translation failed, using original text', progress: 60 });
-        }
-      } else {
-        // No translation needed - skip to generation progress
-        updateState({ progress: 60 });
-      }
-      
-      // Generate abstract if enabled
-      let abstract = '';
-      if (data.generateAbstract && result.content && result.content.length > 0 && data.apiKey) {
-        const abstractLang = data.language || 'auto';
-        try {
-          updateState({ status: 'Generating abstract...', progress: 62 });
-          abstract = await generateAbstract(
-            result.content, 
-            result.title || data.title || 'Untitled',
-            data.apiKey,
-            data.model,
-            abstractLang,
-            updateState
-          );
-          if (abstract) {
-            log('Abstract generated', { length: abstract.length });
-            result.abstract = abstract;
-          }
-        } catch (error) {
-          logWarn('Abstract generation failed, continuing without abstract', error);
-          // Continue without abstract - not critical
-        }
-      }
-      
-      setResult(result);
-      
-      const outputFormat = data.outputFormat || 'pdf';
-      
-      // Detect content language for 'auto' mode to use correct localization
-      let effectiveLanguage = data.language || 'auto';
-      if (effectiveLanguage === 'auto' && result.content && result.content.length > 0 && data.apiKey) {
-        try {
-          const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
-          if (detectedLang && detectedLang !== 'en') {
-            effectiveLanguage = detectedLang;
-            log('Using detected language for localization', { detectedLang });
-          }
-        } catch (error) {
-          logWarn('Language detection failed, using auto', error);
-        }
-      }
-      
-      updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
-      
-      if (outputFormat === 'markdown') {
-        updateState({ status: 'Generating Markdown...', progress: 65 });
-        return generateMarkdown({
-          content: result.content,
-          title: result.title,
-          author: result.author || '',
-          sourceUrl: data.url,
-          publishDate: result.publishDate || '',
-          generateToc: data.generateToc || false,
-          generateAbstract: data.generateAbstract || false,
-          abstract: result.abstract || '',
-          language: effectiveLanguage,
-          apiKey: data.apiKey,
-          model: data.model
-        }, updateState);
-      } else if (outputFormat === 'epub') {
-        updateState({ status: 'Generating EPUB...', progress: 65 });
-        return generateEpub({
-          content: result.content,
-          title: result.title,
-          author: result.author || '',
-          sourceUrl: data.url,
-          publishDate: result.publishDate || '',
-          generateToc: data.generateToc || false,
-          generateAbstract: data.generateAbstract || false,
-          abstract: result.abstract || '',
-          language: effectiveLanguage
-        }, updateState);
-      } else if (outputFormat === 'fb2') {
-        updateState({ status: 'Generating FB2...', progress: 65 });
-        return generateFb2({
-          content: result.content,
-          title: result.title,
-          author: result.author || '',
-          sourceUrl: data.url,
-          publishDate: result.publishDate || '',
-          generateToc: data.generateToc || false,
-          generateAbstract: data.generateAbstract || false,
-          abstract: result.abstract || '',
-          language: effectiveLanguage
-        }, updateState);
-      } else if (outputFormat === 'audio') {
-        updateState({ status: 'Generating audio...', progress: 65 });
-        
-        // Get TTS API key based on provider
-        const ttsProvider = data.audioProvider || 'openai';
-        let ttsApiKey = data.apiKey; // Default to main API key (OpenAI)
-        
-        if (ttsProvider === 'elevenlabs') {
-          // Decrypt ElevenLabs API key if provided
-          if (data.elevenlabsApiKey) {
-            try {
-              ttsApiKey = await decryptApiKey(data.elevenlabsApiKey);
-              log('ElevenLabs API key decrypted', { 
-                keyLength: ttsApiKey?.length,
-                isAscii: /^[\x00-\x7F]*$/.test(ttsApiKey || ''),
-                prefix: ttsApiKey?.substring(0, 3) + '...'
-              });
-            } catch (error) {
-              logError('Failed to decrypt ElevenLabs API key', error);
-              throw new Error('Invalid ElevenLabs API key. Please check your settings.');
-            }
-          } else {
-            throw new Error('ElevenLabs API key is required. Please add it in settings.');
-          }
-        }
-        
-        return generateAudio({
-          content: result.content,
-          title: result.title,
-          apiKey: data.apiKey, // For text preparation
-          ttsApiKey: ttsApiKey, // For TTS conversion
-          model: data.model,
-          provider: ttsProvider,
-          voice: data.audioVoice || 'nova',
-          speed: data.audioSpeed || 1.0,
-          format: data.audioFormat || 'mp3',
-          language: effectiveLanguage,
-          elevenlabsModel: data.elevenlabsModel || 'eleven_v3'
-        }, updateState);
-      } else {
-        updateState({ status: 'Generating PDF...', progress: 65 });
-        return generatePdf({ 
-          content: result.content, 
-          title: result.title,
-          author: result.author || '',
-          pageMode: data.pageMode || 'single',
-          language: effectiveLanguage,
-          sourceUrl: data.url,
-          publishDate: result.publishDate || '',
-          generateToc: data.generateToc || false,
-          generateAbstract: data.generateAbstract || false,
-          abstract: result.abstract || '',
-          apiKey: data.apiKey,
-          model: data.model,
-          fontFamily: data.fontFamily || '',
-          fontSize: data.fontSize || '31',
-          bgColor: data.bgColor || '#303030',
-          textColor: data.textColor || '#b9b9b9',
-          headingColor: data.headingColor || '#cfcfcf',
-          linkColor: data.linkColor || '#6cacff'
-        }, updateState);
-      }
+      // Continue with standard pipeline: translation, TOC/Abstract, generation
+      await continueProcessingPipeline(data, result, stopKeepAlive);
     })
     .then(async () => {
+      // After generation, record stats and complete
       log('File generation complete');
       
       // Record stats
@@ -648,19 +1123,439 @@ async function startArticleProcessing(data) {
         processingTime
       });
       
+      // Store format in state for success message
+      updateState({ outputFormat: savedFormat });
+      
       processingStartTime = null;
-      completeProcessing(stopKeepAlive);
+      await completeProcessing(stopKeepAlive);
     })
-    .catch(error => {
-      // All processing errors are caught here - no unhandled rejections
+    .catch(async error => {
       logError('Processing failed', error);
-      processingStartTime = null;
-      setError(error.message, stopKeepAlive);
+      
+      // Determine error code from error
+      const ERROR_PATTERNS = {
+        AUTH: ['authentication', '401', '403', 'unauthorized', 'forbidden'],
+        RATE_LIMIT: ['429', 'rate limit', 'quota', 'too many requests'],
+        TIMEOUT: ['timeout', 'timed out', 'aborted'],
+        NETWORK: ['network', 'fetch', 'connection', 'failed to fetch'],
+        PARSE: ['parse', 'json', 'invalid json', 'syntax error']
+      };
+      
+      let errorCode = ERROR_CODES.UNKNOWN_ERROR;
+      const errorMsgLower = (error.message || '').toLowerCase();
+      
+      if (ERROR_PATTERNS.AUTH.some(pattern => errorMsgLower.includes(pattern))) {
+        errorCode = ERROR_CODES.AUTH_ERROR;
+      } else if (ERROR_PATTERNS.RATE_LIMIT.some(pattern => errorMsgLower.includes(pattern))) {
+        errorCode = ERROR_CODES.RATE_LIMIT;
+      } else if (ERROR_PATTERNS.TIMEOUT.some(pattern => errorMsgLower.includes(pattern))) {
+        errorCode = ERROR_CODES.TIMEOUT;
+      } else if (ERROR_PATTERNS.NETWORK.some(pattern => errorMsgLower.includes(pattern))) {
+        errorCode = ERROR_CODES.NETWORK_ERROR;
+      } else if (ERROR_PATTERNS.PARSE.some(pattern => errorMsgLower.includes(pattern))) {
+        errorCode = ERROR_CODES.PARSE_ERROR;
+      }
+      
+      await setError({
+        message: error.message || 'Processing failed',
+        code: errorCode
+      }, stopKeepAlive);
     });
   
-  // Returns immediately - processing continues in background via .then()/.catch()
-  // This is intentional "fire and forget" pattern for Service Worker
   return true;
+}
+
+
+// ============================================
+// VIDEO PAGE PROCESSING
+// ============================================
+
+/**
+ * Process video page (YouTube/Vimeo) - extract subtitles, process with AI
+ * @param {Object} data - Processing data
+ * @param {Object} videoInfo - {platform: 'youtube'|'vimeo', videoId: string}
+ * @returns {Promise<Object>} {title, author, content, publishDate}
+ */
+async function processVideoPage(data, videoInfo) {
+  const { platform, videoId } = videoInfo;
+  const { url, tabId, apiKey, model } = data;
+  
+  log('Processing video page', { platform, videoId, url });
+  
+  // Stage 1: Extract subtitles (5-15%)
+  const uiLang = await getUILanguage();
+  const extractingStatus = tSync('statusExtractingSubtitles', uiLang);
+  updateState({
+    stage: PROCESSING_STAGES.EXTRACTING.id,
+    status: extractingStatus,
+    progress: 5
+  });
+  
+  let subtitles, metadata;
+  
+  // Try to extract subtitles
+  try {
+    const subtitlesData = platform === 'youtube' 
+      ? await extractYouTubeSubtitles(tabId)
+      : await extractVimeoSubtitles(tabId);
+    
+    subtitles = subtitlesData.subtitles;
+    metadata = subtitlesData.metadata;
+    
+    log('Subtitles extracted', { count: subtitles.length, title: metadata.title });
+  } catch (error) {
+    logError('Failed to extract subtitles', error);
+    const errorMsg = tSync('errorNoSubtitles', uiLang);
+    throw new Error(errorMsg);
+  }
+  
+  if (!subtitles || subtitles.length === 0) {
+    const errorMsg = tSync('errorNoSubtitles', uiLang);
+    throw new Error(errorMsg);
+  }
+  
+  updateState({
+    progress: 15,
+    status: tSync('statusProcessingSubtitles', uiLang)
+  });
+  
+  // Stage 2: Process subtitles with AI (15-40%)
+  let content;
+  try {
+    // Progress callback for chunking progress
+    const progressCallback = (current, total) => {
+      if (total > 1) {
+        const chunkProgress = (current / total) * 25; // 25% range (15-40%)
+        updateState({ progress: 15 + chunkProgress });
+      }
+    };
+    
+    content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback);
+    log('Subtitles processed', { contentItems: content.length });
+  } catch (error) {
+    logError('Failed to process subtitles', error);
+    throw new Error(`Failed to process subtitles: ${error.message}`);
+  }
+  
+  updateState({ progress: 40 });
+  
+  // Return result in standard format for continueProcessingPipeline
+  return {
+    title: metadata.title || data.title || 'Untitled',
+    author: metadata.author || '',
+    content: content,
+    publishDate: metadata.publishDate || ''
+  };
+}
+
+/**
+ * Continue processing pipeline after content extraction
+ * Handles: translation, TOC/Abstract generation, document generation
+ * Used by both standard article processing and video processing
+ * @param {Object} data - Original processing data
+ * @param {Object} result - Extracted content result
+ * @param {Function} stopKeepAlive - Function to stop keep-alive
+ */
+async function continueProcessingPipeline(data, result, stopKeepAlive) {
+  // Translate if language is not auto
+  const language = data.language || 'auto';
+  const hasImageTranslation = data.translateImages && data.googleApiKey;
+  
+  if (language !== 'auto' && result.content && result.content.length > 0) {
+    const uiLang = await getUILanguage();
+    const translatingStatus = tSync('statusTranslatingContent', uiLang);
+    updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: translatingStatus, progress: hasImageTranslation ? 40 : 42 });
+    
+    // Translate images first if enabled
+    if (hasImageTranslation) {
+      log('Starting image translation', { targetLanguage: language });
+      const analyzingImagesStatus = tSync('statusAnalyzingImages', uiLang);
+      updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: analyzingImagesStatus, progress: 40 });
+      
+      const sourceLang = detectSourceLanguage(result.content);
+      result.content = await translateImages(
+        result.content, sourceLang, language, 
+        data.apiKey, data.googleApiKey, data.model, updateState
+      );
+      log('Image translation complete');
+    }
+    
+    log('Starting text translation', { targetLanguage: language });
+    const translatingTextStatus = tSync('statusTranslatingText', uiLang);
+    updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: translatingTextStatus, progress: 45 });
+    try {
+      result = await translateContent(result, language, data.apiKey, data.model, updateState);
+      log('Translation complete', { title: result.title });
+    } catch (error) {
+      // Use constant pattern matching instead of string includes
+      const isAuthError = ['authentication', '401', '403', 'unauthorized', 'forbidden']
+        .some(pattern => (error.message || '').toLowerCase().includes(pattern));
+      if (isAuthError) {
+        logError('Translation failed: authentication error', error);
+        const uiLang = await getUILanguage();
+        const errorMsg = tSync('errorAuthFailed', uiLang);
+        updateState({ 
+          stage: PROCESSING_STAGES.TRANSLATING.id,
+          status: errorMsg, 
+          progress: 0,
+          error: 'AUTH_ERROR'
+        });
+        throw new Error(errorMsg);
+      }
+      // For other errors, log but continue without translation
+      logError('Translation failed, continuing without translation', error);
+      const uiLang = await getUILanguage();
+      const errorMsg = tSync('errorTranslationFailed', uiLang);
+      updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: errorMsg, progress: 60 });
+    }
+  } else {
+    // No translation needed - skip to generation progress
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 60 });
+  }
+  
+  // Generate abstract if enabled (but skip for audio format)
+  let abstract = '';
+  const shouldGenerateAbstract = data.generateAbstract && 
+                                 data.outputFormat !== 'audio' && 
+                                 result.content && 
+                                 result.content.length > 0 && 
+                                 data.apiKey;
+  if (shouldGenerateAbstract) {
+    const abstractLang = data.language || 'auto';
+    try {
+      const uiLang = await getUILanguage();
+      const abstractStatus = tSync('stageGeneratingAbstract', uiLang);
+      updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: abstractStatus, progress: 62 });
+      abstract = await generateAbstract(
+        result.content, 
+        result.title || data.title || 'Untitled',
+        data.apiKey,
+        data.model,
+        abstractLang,
+        updateState
+      );
+      if (abstract) {
+        log('Abstract generated', { length: abstract.length });
+        result.abstract = abstract;
+      }
+    } catch (error) {
+      logWarn('Abstract generation failed, continuing without abstract', error);
+    }
+  }
+  
+  setResult(result);
+  
+  const outputFormat = data.outputFormat || 'pdf';
+  
+  // Detect content language for 'auto' mode
+  let effectiveLanguage = data.language || 'auto';
+  if (effectiveLanguage === 'auto' && result.content && result.content.length > 0 && data.apiKey) {
+    try {
+      const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
+      if (detectedLang && detectedLang !== 'en') {
+        effectiveLanguage = detectedLang;
+        log('Using detected language for localization', { detectedLang });
+      }
+    } catch (error) {
+      logWarn('Language detection failed, using auto', error);
+    }
+  }
+  
+  updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
+  
+  // Generate document based on format
+  if (outputFormat === 'markdown') {
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingMarkdown', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    return generateMarkdown({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage,
+      apiKey: data.apiKey,
+      model: data.model
+    }, updateState);
+  } else if (outputFormat === 'epub') {
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingEpub', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    return generateEpub({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage
+    }, updateState);
+  } else if (outputFormat === 'fb2') {
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingFb2', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    return generateFb2({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage
+    }, updateState);
+  } else if (outputFormat === 'audio') {
+    // Don't set progress here - let generateAudio manage its own progress
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingAudio', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status });
+    
+    // Get TTS API key based on provider
+    const ttsProvider = data.audioProvider || 'openai';
+    let ttsApiKey = data.apiKey; // Default to main API key (OpenAI)
+    
+    // Helper function to decrypt TTS API key with localized error messages
+    async function decryptTtsApiKey(encryptedKey, provider, providerName) {
+      if (!encryptedKey) {
+        const uiLang = await getUILanguage();
+        throw new Error(tSync(`error${providerName}KeyRequired`, uiLang));
+      }
+      try {
+        const decrypted = await decryptApiKey(encryptedKey);
+        log(`${providerName} API key decrypted`, { 
+          keyLength: decrypted?.length,
+          isAscii: /^[\x00-\x7F]*$/.test(decrypted || ''),
+          prefix: decrypted?.substring(0, 3) + '...'
+        });
+        return decrypted;
+      } catch (error) {
+        logError(`Failed to decrypt ${providerName} API key`, error);
+        const uiLang = await getUILanguage();
+        throw new Error(tSync(`error${providerName}KeyInvalid`, uiLang));
+      }
+    }
+    
+    if (ttsProvider === 'elevenlabs') {
+      ttsApiKey = await decryptTtsApiKey(data.elevenlabsApiKey, 'elevenlabs', 'ElevenLabs');
+    } else if (ttsProvider === 'qwen') {
+      ttsApiKey = await decryptTtsApiKey(data.qwenApiKey, 'qwen', 'Qwen');
+    } else if (ttsProvider === 'respeecher') {
+      ttsApiKey = await decryptTtsApiKey(data.respeecherApiKey, 'respeecher', 'Respeecher');
+    } else if (ttsProvider === 'google') {
+      ttsApiKey = await decryptTtsApiKey(data.googleTtsApiKey, 'google', 'GoogleTTS');
+    } else {
+      // OpenAI - use main API key
+      ttsApiKey = data.apiKey;
+    }
+    
+    return generateAudio({
+      content: result.content,
+      title: result.title,
+      apiKey: data.apiKey, // For text preparation
+      ttsApiKey: ttsApiKey, // For TTS conversion
+      model: data.model,
+      provider: ttsProvider,
+      // For Google TTS, use googleTtsVoice; for others, use audioVoice
+      voice: ttsProvider === 'google' ? (data.googleTtsVoice || 'Callirrhoe') : (data.audioVoice || CONFIG.DEFAULT_AUDIO_VOICE),
+      speed: data.audioSpeed || CONFIG.DEFAULT_AUDIO_SPEED,
+      format: data.audioFormat || CONFIG.DEFAULT_AUDIO_FORMAT,
+      language: effectiveLanguage,
+      elevenlabsModel: data.elevenlabsModel || CONFIG.DEFAULT_ELEVENLABS_MODEL,
+      elevenlabsFormat: data.elevenlabsFormat || 'mp3_44100_192',
+      elevenlabsStability: data.elevenlabsStability !== undefined ? data.elevenlabsStability : 0.5,
+      elevenlabsSimilarity: data.elevenlabsSimilarity !== undefined ? data.elevenlabsSimilarity : 0.75,
+      elevenlabsStyle: data.elevenlabsStyle !== undefined ? data.elevenlabsStyle : 0.0,
+      elevenlabsSpeakerBoost: data.elevenlabsSpeakerBoost !== undefined ? data.elevenlabsSpeakerBoost : true,
+      openaiInstructions: data.openaiInstructions || null,
+      googleTtsModel: data.googleTtsModel || 'gemini-2.5-pro-preview-tts',
+      googleTtsVoice: data.googleTtsVoice || 'Callirrhoe',
+      googleTtsPrompt: data.googleTtsPrompt || null,
+      respeecherTemperature: data.respeecherTemperature !== undefined ? data.respeecherTemperature : 1.0,
+      respeecherRepetitionPenalty: data.respeecherRepetitionPenalty !== undefined ? data.respeecherRepetitionPenalty : 1.0,
+      respeecherTopP: data.respeecherTopP !== undefined ? data.respeecherTopP : 1.0
+    }, updateState);
+  } else if (outputFormat === 'docx') {
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingDocx', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    return generateDocx({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage
+    }, updateState);
+  } else if (outputFormat === 'html') {
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingHtml', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    return generateHtml({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage
+    }, updateState);
+  } else if (outputFormat === 'txt') {
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingTxt', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    return generateTxt({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage
+    }, updateState);
+  } else {
+    // PDF (default)
+    const uiLang = await getUILanguage();
+    const status = tSync('statusGeneratingPdf', uiLang);
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+    
+    // Use generatePdf (not generatePdfWithDebugger) - it accepts object parameters
+    return generatePdf({
+      content: result.content,
+      title: result.title,
+      author: result.author || '',
+      sourceUrl: data.url,
+      publishDate: result.publishDate || '',
+      generateToc: data.generateToc || false,
+      generateAbstract: data.generateAbstract || false,
+      abstract: result.abstract || '',
+      language: effectiveLanguage,
+      stylePreset: data.stylePreset || 'dark',
+      fontFamily: data.fontFamily || '',
+      fontSize: data.fontSize || '31',
+      bgColor: data.bgColor || '#303030',
+      textColor: data.textColor || '#b9b9b9',
+      headingColor: data.headingColor || '#cfcfcf',
+      linkColor: data.linkColor || '#6cacff',
+      pageMode: data.pageMode || 'single'
+    }, updateState);
+  }
+  
+  // Note: recordSave and completeProcessing are handled by the promise chain
+  // that calls this function, not here (since we return a promise from generate*)
 }
 
 // ============================================
@@ -687,13 +1582,17 @@ async function processWithSelectorMode(data) {
     if (cached) {
       selectors = cached.selectors;
       fromCache = true;
-      updateState({ status: '⚡ Using cached selectors...', progress: 3 });
+      const uiLang = await getUILanguage();
+      const cachedStatus = tSync('statusUsingCachedSelectors', uiLang);
+      updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: cachedStatus, progress: 3 });
       log('Using cached selectors', { url, successCount: cached.successCount });
     }
   }
   
   if (!fromCache) {
-    updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: 'AI analyzing page structure...', progress: 3 });
+    const uiLangAnalyzing = await getUILanguage();
+    const analyzingStatus = tSync('stageAnalyzing', uiLangAnalyzing);
+    updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: analyzingStatus, progress: 3 });
     
     // Trim HTML for analysis
     log('Trimming HTML for analysis...');
@@ -715,7 +1614,9 @@ async function processWithSelectorMode(data) {
     }
   }
   
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: 'Extracting content from page...', progress: 5 });
+  const uiLang = await getUILanguage();
+  const extractingStatus = tSync('statusExtractingFromPage', uiLang);
+  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
   
   // Extract content using selectors
   log('Extracting content using selectors...', { tabId, selectors });
@@ -743,37 +1644,33 @@ async function processWithSelectorMode(data) {
   
   if (extractedContent.content.length === 0) {
     if (fromCache) await invalidateCache(url);
-    throw new Error(`Extracted content is empty. AI returned selectors: ${JSON.stringify(selectors)}. Try switching to "AI Extract" mode.`);
+    const selectorsStr = JSON.stringify(selectors);
+    const truncated = selectorsStr.length > 200 ? selectorsStr.substring(0, 200) + '...' : selectorsStr;
+    logError('Extracted content is empty', { selectors: truncated });
+    throw new Error('Extracted content is empty. Try switching to "AI Extract" mode.');
   }
   
-  // Cache selectors after successful extraction
+  // Cache selectors after successful extraction ONLY
+  // If extraction failed, cache is already invalidated above
   if (!fromCache) {
     await cacheSelectors(url, selectors);
   } else {
     await markCacheSuccess(url);
   }
   
-  updateState({ status: 'Processing complete', progress: 8 });
+  const uiLangComplete = await getUILanguage();
+  const completeStatus = tSync('statusProcessingComplete', uiLangComplete);
+  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: completeStatus, progress: 8 });
   
   const publishDate = selectors.publishDate || extractedContent.publishDate || '';
-  let finalTitle = extractedContent.title || title;
+  const finalTitle = extractedContent.title || title;
   const finalAuthor = extractedContent.author || selectors.author || '';
   
-  // Clean title: remove "от [Author]" / "by [Author]" patterns
-  if (finalAuthor && finalTitle) {
-    const authorPattern = new RegExp(`\\s*(от|by)\\s+${finalAuthor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i');
-    const cleanedTitle = finalTitle.replace(authorPattern, '').trim();
-    if (cleanedTitle && cleanedTitle !== finalTitle) {
-      finalTitle = cleanedTitle;
-    }
-    const genitivePattern = /\s*(от|by)\s+[\wА-Яа-яёЁ\s]+$/i;
-    if (genitivePattern.test(finalTitle)) {
-      const genitiveClean = finalTitle.replace(genitivePattern, '').trim();
-      if (genitiveClean && genitiveClean.length > 2) {
-        finalTitle = genitiveClean;
-      }
-    }
-  }
+  // NOTE: Title and author separation is now handled by AI in prompts
+  // AI is instructed to return clean title (without author) in "title" field
+  // and author name (without prefixes) in "author" field
+  // If AI returns title with author included, it's a prompt issue - improve prompts, don't add code-side fixes
+  // This approach is site-agnostic and works for all languages (not just "от/by" patterns)
   
   log('=== SELECTOR MODE END ===', { title: finalTitle, author: finalAuthor, items: extractedContent.content.length });
   
@@ -793,7 +1690,15 @@ async function getSelectorsFromAI(html, url, title, apiKey, model) {
   
   log('Sending request to AI...', { model, promptLength: userPrompt.length });
   
-  const parsed = await callAI(systemPrompt, userPrompt, apiKey, model, true);
+  // Wrap callAI with retry mechanism for reliability (429/5xx errors)
+  const parsed = await callWithRetry(
+    () => callAI(systemPrompt, userPrompt, apiKey, model, true),
+    {
+      maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+      delays: CONFIG.RETRY_DELAYS,
+      retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
+    }
+  );
   log('Parsed selectors', parsed);
   
   return parsed;
@@ -850,9 +1755,10 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
 // It's injected as a single block via executeScript. All helper functions
 // must be defined inside. See systemPatterns.md "Design Decisions".
 function extractFromPageInlined(selectors, baseUrl) {
-  // Note: This function runs in page context, not service worker
-  // Using console.log here is intentional - it appears in page console, not extension console
-  console.log('[ClipAIble:Page] Starting extraction', { selectors, baseUrl });
+  // Debug logging inside the page context is gated to avoid noisy consoles.
+  const DEBUG_LOG = false;
+  const debugLog = (...args) => { if (DEBUG_LOG) console.log(...args); };
+  if (DEBUG_LOG) console.log('[ClipAIble:Page] Starting extraction', { selectors, baseUrl });
   
   const content = [];
   const debugInfo = {
@@ -892,6 +1798,7 @@ function extractFromPageInlined(selectors, baseUrl) {
   function shouldExclude(element) {
     if (isInfoboxDiv(element) || element.tagName.toLowerCase() === 'aside' || element.tagName.toLowerCase() === 'details') return false;
     if (!selectors.exclude) return false;
+    // NO FALLBACKS - only check exclude selectors determined by AI
     for (const selector of selectors.exclude) {
       try { if (element.matches(selector) || element.closest(selector)) return true; } catch (e) {}
     }
@@ -1066,7 +1973,9 @@ function extractFromPageInlined(selectors, baseUrl) {
   if (!articleTitle) { const h1 = document.querySelector('h1'); if (h1) articleTitle = h1.textContent.trim(); }
   
   let articleAuthor = selectors.author || '';
-  if (articleAuthor) articleAuthor = articleAuthor.replace(/^by\s+/i, '').trim();
+  // NOTE: Author cleaning is now handled by AI in prompts
+  // AI is instructed to return author name without prefixes (от, by, автор:, etc.)
+  // If author still contains prefix, it's a prompt issue - improve prompts, don't add code-side fixes
   
   let publishDate = '';
   for (const sel of ['time[datetime]', 'time', '[itemprop="datePublished"]', '.date', '.post-date']) {
@@ -1208,7 +2117,9 @@ function extractFromPageInlined(selectors, baseUrl) {
       const isFootnotes = cn.includes('footnotes') || elId.includes('footnotes');
       if (isFootnotes && !footnotesHeaderAdded) {
         content.push({ type: 'separator', id: '' });
-        content.push({ type: 'heading', level: 2, text: 'Notes', id: 'footnotes-section' });
+        // Use 'Footnotes' as fallback - localization happens later in html-builder.js
+        // PDF_LOCALIZATION is not available in page context
+        content.push({ type: 'heading', level: 2, text: 'Footnotes', id: 'footnotes-section' });
         footnotesHeaderAdded = true;
       }
       for (const child of element.children) processElement(child);
@@ -1222,60 +2133,79 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
     
     try {
-      // Normalize selector: if it starts with container selector, remove it to make it relative
-      let normalizedSelector = contentSelector;
-      if (containerSelector && contentSelector.startsWith(containerSelector)) {
-        // Remove container selector prefix (e.g., "body > p" -> "> p" when container is body)
-        normalizedSelector = contentSelector.substring(containerSelector.length).trim();
-        // If it starts with ">", remove it and add space, or just use as-is
-        if (normalizedSelector.startsWith('>')) {
-          normalizedSelector = normalizedSelector.substring(1).trim();
+      // Strategy 1: Try selector as-is (absolute from document)
+      let elements = document.querySelectorAll(contentSelector);
+      if (elements.length > 0) {
+        // Filter to only elements that are inside our container
+        const filtered = Array.from(elements).filter(el => container.contains(el));
+        if (filtered.length > 0) {
+          debugLog('[ClipAIble:Page] Found elements with absolute selector', { selector: contentSelector, count: filtered.length });
+          return filtered;
         }
       }
       
-      // Strategy 1: Try normalized selector relative to container
-      let elements = [];
-      if (normalizedSelector) {
-        elements = container.querySelectorAll(normalizedSelector);
-        if (elements.length > 0) {
-          return Array.from(elements);
-        }
-      }
-      
-      // Strategy 2: Try original selector as-is (in case normalization didn't help)
+      // Strategy 2: Try selector relative to container
       elements = container.querySelectorAll(contentSelector);
       if (elements.length > 0) {
+        debugLog('[ClipAIble:Page] Found elements with relative selector', { selector: contentSelector, count: elements.length });
         return Array.from(elements);
       }
       
-      // Strategy 3: If selector uses direct child (>), try without it to find nested elements
-      if (normalizedSelector && normalizedSelector.includes(' > ')) {
-        const flexibleSelector = normalizedSelector.replace(/\s*>\s*/g, ' ');
-        elements = container.querySelectorAll(flexibleSelector);
-        if (elements.length > 0) {
-          return Array.from(elements);
+      // Strategy 3: If selector contains container selector, try removing it
+      let normalizedSelector = contentSelector;
+      if (containerSelector && contentSelector.includes(containerSelector)) {
+        normalizedSelector = contentSelector.replace(containerSelector, '').trim();
+        if (normalizedSelector.startsWith(' ')) {
+          normalizedSelector = normalizedSelector.substring(1);
+        }
+        if (normalizedSelector.startsWith('>')) {
+          normalizedSelector = normalizedSelector.substring(1).trim();
+        }
+        
+        if (normalizedSelector && normalizedSelector !== contentSelector) {
+          elements = container.querySelectorAll(normalizedSelector);
+          if (elements.length > 0) {
+            debugLog('[ClipAIble:Page] Found elements with normalized selector', { original: contentSelector, normalized: normalizedSelector, count: elements.length });
+            return Array.from(elements);
+          }
         }
       }
+      
+      // Strategy 4: If selector uses direct child (>), try without it to find nested elements
       if (contentSelector.includes(' > ')) {
         const flexibleSelector = contentSelector.replace(/\s*>\s*/g, ' ');
         elements = container.querySelectorAll(flexibleSelector);
         if (elements.length > 0) {
+          debugLog('[ClipAIble:Page] Found elements with flexible selector (removed >)', { original: contentSelector, flexible: flexibleSelector, count: elements.length });
           return Array.from(elements);
         }
       }
       
-      // Strategy 4: Extract tag names and try to find them anywhere in container
-      const tagMatch = (normalizedSelector || contentSelector).match(/([a-z]+)(?:\s|$)/i);
+      // Strategy 5: If selector is an ID selector (#id), try finding it anywhere and check if it's in container
+      if (contentSelector.startsWith('#')) {
+        const id = contentSelector.substring(1);
+        const element = document.getElementById(id);
+        if (element && container.contains(element)) {
+          debugLog('[ClipAIble:Page] Found element by ID', { id, selector: contentSelector });
+          return [element];
+        }
+      }
+      
+      // Strategy 6: Extract tag names and try to find them anywhere in container
+      const tagMatch = contentSelector.match(/([a-z]+)(?:\s|$|#|\.)/i);
       if (tagMatch) {
         const tagName = tagMatch[1].toLowerCase();
         elements = container.querySelectorAll(tagName);
         if (elements.length > 0) {
+          debugLog('[ClipAIble:Page] Found elements by tag name fallback', { tag: tagName, selector: contentSelector, count: elements.length });
           return Array.from(elements);
         }
       }
       
+      debugLog('[ClipAIble:Page] No elements found with any strategy', { selector: contentSelector, containerSelector });
       return null; // No elements found with any strategy
     } catch (e) {
+      debugLog('[ClipAIble:Page] Selector error', { selector: contentSelector, error: e.message });
       return null; // Selector is invalid
     }
   }
@@ -1308,9 +2238,36 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
   }
   
-  // Note: This function runs in page context, not service worker
-  // Using console.log here is intentional - it appears in page console, not extension console
-  console.log('[ClipAIble:Page] Extraction complete', { contentItems: content.length, headingCount: debugInfo.headingCount });
+  // Extract hero image if selector provided
+  // Hero image should be added after the first heading (title), not at the very beginning
+  if (selectors.heroImage) {
+    try {
+      const heroImgEl = document.querySelector(selectors.heroImage);
+      if (heroImgEl && heroImgEl.tagName?.toLowerCase() === 'img') {
+        let heroSrc = extractBestImageUrl(heroImgEl);
+        heroSrc = toAbsoluteUrl(heroSrc);
+        const ns = normalizeImageUrl(heroSrc);
+        if (heroSrc && !isTrackingPixelOrSpacer(heroImgEl, heroSrc) && !isPlaceholderUrl(heroSrc) && !isSmallOrAvatarImage(heroImgEl, heroSrc) && !addedImageUrls.has(ns)) {
+          // Find first heading position and insert hero image after it
+          // If no heading found, insert at position 0 (beginning)
+          let insertIndex = 0;
+          for (let i = 0; i < content.length; i++) {
+            if (content[i].type === 'heading') {
+              insertIndex = i + 1;
+              break;
+            }
+          }
+          content.splice(insertIndex, 0, { type: 'image', src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) });
+          addedImageUrls.add(ns);
+          debugLog('[ClipAIble:Page] Hero image extracted', { src: heroSrc.substring(0, 80), insertIndex });
+        }
+      }
+    } catch (e) {
+      debugLog('[ClipAIble:Page] Hero image extraction failed', { error: e.message });
+    }
+  }
+  
+  if (DEBUG_LOG) console.log('[ClipAIble:Page] Extraction complete', { contentItems: content.length, headingCount: debugInfo.headingCount });
   
   return { title: articleTitle, author: articleAuthor, content: content, publishDate: publishDate, debug: debugInfo };
 }
@@ -1328,7 +2285,9 @@ async function processWithExtractMode(data) {
   if (!html) throw new Error('No HTML content provided');
   if (!apiKey) throw new Error('No API key provided');
 
-  updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: 'Analyzing page...', progress: 5 });
+  const uiLangAnalyzing = await getUILanguage();
+  const analyzingStatus = tSync('statusAnalyzingPage', uiLangAnalyzing);
+  updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: analyzingStatus, progress: 5 });
 
   const chunks = splitHtmlIntoChunks(html, CONFIG.CHUNK_SIZE, CONFIG.CHUNK_OVERLAP);
   
@@ -1338,7 +2297,9 @@ async function processWithExtractMode(data) {
     chunkSizes: chunks.map(c => c.length)
   });
 
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: 'Extracting content...', progress: 10 });
+  const uiLangExtracting = await getUILanguage();
+  const extractingContentStatus = tSync('statusExtractingContent', uiLangExtracting);
+  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingContentStatus, progress: 10 });
   
   let result;
   if (chunks.length === 1) {
@@ -1367,13 +2328,23 @@ Page title: ${title}
 HTML:
 ${html}`;
 
-  updateState({ status: 'AI is processing...', progress: 10 });
+  const uiLangProcessing = await getUILanguage();
+  const processingStatus = tSync('stageAnalyzing', uiLangProcessing);
+  updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: processingStatus, progress: 10 });
   
-  const result = await callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true);
+  // Wrap callAI with retry mechanism for reliability (429/5xx errors)
+  const result = await callWithRetry(
+    () => callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true),
+    {
+      maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+      delays: CONFIG.RETRY_DELAYS,
+      retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
+    }
+  );
   
   log('Single chunk result', { title: result.title, items: result.content?.length });
   
-  updateState({ progress: 15 });
+  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, progress: 15 });
   return result;
 }
 
@@ -1390,13 +2361,25 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
     log(`Processing chunk ${i + 1}/${chunks.length}`, { chunkLength: chunks[i].length, isFirst });
     
     const progressBase = 5 + Math.floor((i / chunks.length) * 10);
-    updateState({ status: `Processing chunk ${i + 1}/${chunks.length}...`, progress: progressBase });
+    const uiLangChunk = await getUILanguage();
+    const chunkStatus = tSync('statusProcessingChunk', uiLangChunk)
+      .replace('{current}', i + 1)
+      .replace('{total}', chunks.length);
+    updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: chunkStatus, progress: progressBase });
 
     const systemPrompt = buildChunkSystemPrompt(i, chunks.length);
     const userPrompt = buildChunkUserPrompt(chunks[i], url, title, i, chunks.length);
 
     try {
-      const result = await callAI(systemPrompt, userPrompt, apiKey, model, true);
+      // Wrap callAI with retry mechanism for reliability (429/5xx errors)
+      const result = await callWithRetry(
+        () => callAI(systemPrompt, userPrompt, apiKey, model, true),
+        {
+          maxRetries: 3,
+          delays: [1000, 2000, 4000],
+          retryableStatusCodes: [429, 500, 502, 503, 504]
+        }
+      );
       
       log(`Chunk ${i + 1} result`, { title: result.title, contentItems: result.content?.length });
       
@@ -1426,65 +2409,3 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
   };
 }
 
-// ============================================
-// API KEY MIGRATION
-// ============================================
-
-/**
- * Migrate existing plain text API keys to encrypted format
- * Runs once on extension startup
- */
-async function migrateApiKeys() {
-  try {
-    
-    const result = await chrome.storage.local.get([
-      'openai_api_key',
-      'claude_api_key',
-      'gemini_api_key',
-      'google_api_key',
-      'api_keys_migrated' // Flag to prevent repeated migration
-    ]);
-
-    // Skip if already migrated
-    if (result.api_keys_migrated) {
-      log('API keys already migrated, skipping');
-      return;
-    }
-
-    const keysToEncrypt = {};
-    let hasChanges = false;
-
-    // Check and encrypt each key if needed
-    const keyNames = ['openai_api_key', 'claude_api_key', 'gemini_api_key', 'google_api_key'];
-    
-    for (const keyName of keyNames) {
-      const value = result[keyName];
-      if (value && typeof value === 'string' && !isEncrypted(value)) {
-        // Key exists and is not encrypted, encrypt it
-        try {
-          keysToEncrypt[keyName] = await encryptApiKey(value);
-          hasChanges = true;
-          log(`Migrating ${keyName} to encrypted format`);
-        } catch (error) {
-          logError(`Failed to encrypt ${keyName}`, error);
-          // Continue with other keys
-        }
-      }
-    }
-
-    if (hasChanges) {
-      keysToEncrypt.api_keys_migrated = true;
-      await chrome.storage.local.set(keysToEncrypt);
-      log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
-    } else {
-      // Mark as migrated even if no keys to encrypt
-      await chrome.storage.local.set({ api_keys_migrated: true });
-      log('API keys migration check completed (no keys to migrate)');
-    }
-  } catch (error) {
-    logError('API keys migration failed', error);
-    // Don't throw - migration failure shouldn't break extension
-  }
-}
-
-log('Background script initialized');

@@ -130,7 +130,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     metaItems.push(`<span class="article-date">${escapeHtml(publishDate)}</span>`);
   }
   if (wordCount > 0) {
-    const locale = language === 'uk' ? 'uk-UA' : language === 'ru' ? 'ru-RU' : 'en-US';
+    const locale = language === 'ua' ? 'uk-UA' : language === 'ru' ? 'ru-RU' : 'en-US';
     metaItems.push(`<span class="word-count">${wordCount.toLocaleString(locale)} ${l10n.words}</span>`);
   }
   const metaHtml = metaItems.length > 0 
@@ -165,8 +165,10 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     </nav>`;
   }
 
+  const docLang = language || 'en';
+
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${docLang}">
 <head>
   <meta charset="UTF-8">
   <title>${escapeHtml(cleanTitle)}</title>

@@ -6,6 +6,10 @@ import { log, logError, logWarn } from './logging.js';
 // Cache for encryption key to avoid regenerating
 let cachedEncryptionKey = null;
 
+// Cache for decrypted API keys (in-memory, per-provider, cleared after processing)
+// Security: Keys are only cached during processing, cleared on resetState()
+const decryptedKeyCache = new Map(); // provider:encryptedPrefix -> decryptedKey
+
 /**
  * Get or generate encryption key based on extension ID
  * Uses PBKDF2 to derive a key from extension runtime ID
@@ -147,15 +151,72 @@ export async function decryptApiKey(encryptedBase64) {
 }
 
 /**
+ * Hash string using simple hash function (for cache key)
+ * Uses djb2 hash algorithm for better distribution than substring
+ * @param {string} str - String to hash
+ * @returns {string} Hash value
+ */
+function hashString(str) {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+/**
+ * Get decrypted API key with caching (per-provider)
+ * Cache is cleared after processing to ensure security
+ * @param {string} encryptedKey - Encrypted API key
+ * @param {string} provider - Provider name ('openai', 'claude', 'gemini', 'google', etc.)
+ * @returns {Promise<string>} Decrypted API key
+ */
+export async function getDecryptedKeyCached(encryptedKey, provider) {
+  if (!encryptedKey || !provider) {
+    throw new Error('Invalid parameters for getDecryptedKeyCached');
+  }
+  
+  // Use full hash instead of prefix to avoid collisions
+  const cacheKey = `${provider}:${hashString(encryptedKey)}`;
+  if (decryptedKeyCache.has(cacheKey)) {
+    log('Using cached decrypted key', { provider });
+    return decryptedKeyCache.get(cacheKey);
+  }
+  
+  // Decrypt and cache
+  const decrypted = await decryptApiKey(encryptedKey);
+  decryptedKeyCache.set(cacheKey, decrypted);
+  log('Decrypted key cached', { provider });
+  
+  return decrypted;
+}
+
+/**
+ * Clear decrypted key cache (called after processing completes)
+ * Security: Ensures keys don't remain in memory
+ */
+export function clearDecryptedKeyCache() {
+  const cacheSize = decryptedKeyCache.size;
+  decryptedKeyCache.clear();
+  log('Decrypted key cache cleared', { clearedKeys: cacheSize });
+}
+
+/**
  * Mask API key for display (shows only last 4 characters)
  * Uses asterisks (*) for ASCII compatibility
+ * Shows more asterisks for longer keys to better represent typical API key length
  * @param {string} key - API key (encrypted or plain)
- * @returns {string} Masked key (e.g., "****abcd")
+ * @returns {string} Masked key (e.g., "************abcd" for long keys)
  */
 export function maskApiKey(key) {
-  if (!key || typeof key !== 'string') return '****';
-  if (key.length <= 4) return '****';
-  return '****' + key.slice(-4);
+  if (!key || typeof key !== 'string') return '************';
+  if (key.length <= 4) return '************';
+  
+  // For typical API keys (20-60 chars), show 12-16 asterisks
+  // This gives better visual representation of key length
+  const asteriskCount = Math.min(Math.max(12, Math.floor(key.length * 0.3)), 20);
+  return '*'.repeat(asteriskCount) + key.slice(-4);
 }
 
 /**
@@ -166,5 +227,6 @@ export function maskApiKey(key) {
 export function isMaskedKey(value) {
   if (!value || typeof value !== 'string') return false;
   // Check for both old (••••) and new (****) mask patterns
-  return value.startsWith('****') || value.startsWith('••••');
+  // Also check for longer mask patterns (12+ asterisks)
+  return value.startsWith('****') || value.startsWith('••••') || /^\*{12,}/.test(value);
 }

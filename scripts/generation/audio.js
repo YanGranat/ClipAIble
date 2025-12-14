@@ -4,12 +4,13 @@
 import { log, logError } from '../utils/logging.js';
 import { prepareContentForAudio, AUDIO_CONFIG } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
+import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
 
 // Language to TTS instruction mapping
 const LANGUAGE_TTS_INSTRUCTIONS = {
   'en': 'Read in clear English with natural pronunciation.',
   'ru': 'Читай на русском языке с естественным произношением.',
-  'uk': 'Читай українською мовою з природною вимовою.',
+  'ua': 'Читай українською мовою з природною вимовою.',
   'de': 'Lies auf Deutsch mit natürlicher Aussprache vor.',
   'fr': 'Lis en français avec une prononciation naturelle.',
   'es': 'Lee en español con pronunciación natural.',
@@ -48,7 +49,19 @@ export async function generateAudio(params, updateState) {
     speed = AUDIO_CONFIG.DEFAULT_SPEED,
     format = 'mp3',
     language = 'auto',
-    elevenlabsModel = 'eleven_v3'
+    elevenlabsModel = 'eleven_v3',
+    elevenlabsFormat = 'mp3_44100_192',
+    elevenlabsStability = 0.5,
+    elevenlabsSimilarity = 0.75,
+    elevenlabsStyle = 0.0,
+    elevenlabsSpeakerBoost = true,
+    openaiInstructions = null,
+    googleTtsModel = 'gemini-2.5-pro-preview-tts',
+    googleTtsVoice = 'Callirrhoe',
+    googleTtsPrompt = null,
+    respeecherTemperature = 1.0,
+    respeecherRepetitionPenalty = 1.0,
+    respeecherTopP = 1.0
   } = params;
   
   // Generate TTS instructions based on language
@@ -80,9 +93,17 @@ export async function generateAudio(params, updateState) {
   }
   
   // Step 1: Prepare content for audio (using main model like GPT-5.1)
+  // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
+  const currentState = getProcessingState();
+  const currentProgress = currentState?.progress || 0;
+  // Start from current progress if >= 60% (translation was done), otherwise start from 5%
+  // This prevents progress rollback when starting audio generation after translation
+  const startProgress = currentProgress >= 60 ? currentProgress : 5;
+  
   updateState?.({ 
+    stage: PROCESSING_STAGES.GENERATING.id,
     status: 'Preparing article for audio narration...', 
-    progress: 5 
+    progress: startProgress 
   });
   
   const preparedChunks = await prepareContentForAudio(
@@ -104,15 +125,46 @@ export async function generateAudio(params, updateState) {
   });
   
   // Step 2: Convert chunks to speech (using selected TTS provider)
+  const providerName = provider === 'elevenlabs' ? 'ElevenLabs' : 
+                       (provider === 'qwen' ? 'Qwen' : 
+                       (provider === 'google' ? 'Google Gemini TTS' : 
+                       (provider === 'respeecher' ? 'Respeecher' : 'OpenAI')));
   updateState?.({ 
-    status: `Converting to speech using ${provider === 'elevenlabs' ? 'ElevenLabs' : 'OpenAI'}...`, 
+    stage: PROCESSING_STAGES.GENERATING.id,
+    status: `Converting to speech using ${providerName}...`, 
     progress: 60 
   });
+  
+  // Determine voice and format based on provider
+  const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
+  // Google TTS always returns WAV format, format parameter is ignored
+  const ttsFormat = provider === 'google' ? 'wav' : format;
+  const ttsPrompt = provider === 'google' ? googleTtsPrompt : null;
   
   const audioBuffer = await chunksToSpeech(
     preparedChunks,
     ttsApiKey,
-    { provider, voice, speed, format, instructions, elevenlabsModel },
+    { 
+      provider, 
+      voice: ttsVoice, 
+      speed, 
+      format: ttsFormat, 
+      instructions: openaiInstructions || instructions, 
+      openaiInstructions: openaiInstructions,
+      prompt: ttsPrompt,
+      googleTtsPrompt: ttsPrompt,
+      elevenlabsModel,
+      elevenlabsFormat,
+      elevenlabsStability,
+      elevenlabsSimilarity,
+      elevenlabsStyle,
+      elevenlabsSpeakerBoost,
+      googleTtsModel,
+      respeecherTemperature,
+      respeecherRepetitionPenalty,
+      respeecherTopP,
+      language 
+    },
     updateState
   );
   
@@ -120,23 +172,30 @@ export async function generateAudio(params, updateState) {
     throw new Error('Audio generation returned empty result');
   }
   
+  // Detect actual format from buffer (API may return different format than requested)
+  const actualFormat = detectAudioFormat(audioBuffer);
+  
   log('Audio generated', { 
     totalSize: audioBuffer.byteLength,
-    format
+    requestedFormat: format,
+    actualFormat
   });
   
   // Step 3: Download the audio file
   updateState?.({ 
+    stage: PROCESSING_STAGES.GENERATING.id,
     status: 'Downloading audio file...', 
     progress: 98 
   });
   
-  const extension = getAudioExtension(format);
+  const extension = getAudioExtension(actualFormat);
   const filename = sanitizeFilename(title || 'article') + '.' + extension;
   
-  await downloadAudio(audioBuffer, filename, format);
+  // Use actual format for MIME/extension to avoid corrupt files (e.g., WAV from Qwen/Respeecher)
+  await downloadAudio(audioBuffer, filename, actualFormat);
   
   updateState?.({ 
+    stage: PROCESSING_STAGES.COMPLETE.id,
     status: 'Done!', 
     progress: 100 
   });
@@ -155,23 +214,76 @@ async function downloadAudio(buffer, filename, format) {
   
   // Create blob from buffer
   const blob = new Blob([buffer], { type: mimeType });
+
+  // In MV3 service worker URL.createObjectURL may be unavailable.
+  const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
+    ? URL
+    : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
+
+  if (urlApi && urlApi.createObjectURL) {
+    const objectUrl = urlApi.createObjectURL(blob);
+    try {
+      await chrome.downloads.download({
+        url: objectUrl,
+        filename: filename,
+        saveAs: true
+      });
+      log('Audio download initiated', { filename, size: buffer.byteLength });
+    } finally {
+      urlApi.revokeObjectURL(objectUrl);
+    }
+  } else {
+    // Fallback for environments without createObjectURL (MV3 SW)
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    await chrome.downloads.download({
+      url: dataUrl,
+      filename: filename,
+      saveAs: true
+    });
+    log('Audio download initiated (data URL fallback)', { filename, size: buffer.byteLength });
+  }
+}
+
+/**
+ * Detect audio format from buffer header
+ * @param {ArrayBuffer} buffer - Audio buffer
+ * @returns {string} Detected format ('wav', 'mp3', 'ogg', etc.)
+ */
+function detectAudioFormat(buffer) {
+  if (!buffer || buffer.byteLength < 12) return 'mp3';
   
-  // Create data URL
-  const reader = new FileReader();
-  const dataUrl = await new Promise((resolve, reject) => {
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('Failed to create data URL'));
-    reader.readAsDataURL(blob);
-  });
+  const view = new Uint8Array(buffer);
   
-  // Download using Chrome downloads API
-  await chrome.downloads.download({
-    url: dataUrl,
-    filename: filename,
-    saveAs: true
-  });
+  // WAV: starts with "RIFF" and has "WAVE" at offset 8
+  if (view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46 &&
+      view[8] === 0x57 && view[9] === 0x41 && view[10] === 0x56 && view[11] === 0x45) {
+    return 'wav';
+  }
   
-  log('Audio download initiated', { filename, size: buffer.byteLength });
+  // MP3: starts with ID3 tag or frame sync
+  if ((view[0] === 0x49 && view[1] === 0x44 && view[2] === 0x33) || // ID3
+      (view[0] === 0xFF && (view[1] & 0xE0) === 0xE0)) { // Frame sync
+    return 'mp3';
+  }
+  
+  // OGG: starts with "OggS"
+  if (view[0] === 0x4F && view[1] === 0x67 && view[2] === 0x67 && view[3] === 0x53) {
+    return 'ogg';
+  }
+  
+  // FLAC: starts with "fLaC"
+  if (view[0] === 0x66 && view[1] === 0x4C && view[2] === 0x61 && view[3] === 0x43) {
+    return 'flac';
+  }
+  
+  // Default to mp3
+  return 'mp3';
 }
 
 /**
@@ -186,6 +298,7 @@ function getMimeType(format) {
     'aac': 'audio/aac',
     'flac': 'audio/flac',
     'wav': 'audio/wav',
+    'ogg': 'audio/ogg',
     'pcm': 'audio/pcm'
   };
   return types[format] || 'audio/mpeg';

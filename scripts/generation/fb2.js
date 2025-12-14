@@ -5,6 +5,8 @@ import { log, logError } from '../utils/logging.js';
 import { stripHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
+import { getUILanguage, tSync } from '../locales.js';
+import { PROCESSING_STAGES } from '../state/processing.js';
 
 /**
  * Generate FB2 file from content
@@ -16,6 +18,17 @@ export async function generateFb2(data, updateState) {
     content, title, author = '', sourceUrl = '', publishDate = '', 
     generateToc = false, generateAbstract = false, abstract = '', language = 'en'
   } = data;
+  
+  // Collect headings for TOC and sections
+  const headings = [];
+  (content || []).forEach((item, index) => {
+    if (item.type === 'heading' && item.level >= 2) {
+      const text = stripHtml(item.text || '');
+      if (text) {
+        headings.push({ text, level: item.level, index });
+      }
+    }
+  });
   
   log('=== FB2 GENERATION START ===');
   log('Input', { title, author, contentItems: content?.length, generateToc });
@@ -37,19 +50,12 @@ export async function generateFb2(data, updateState) {
   // Generate unique document ID
   const docId = generateDocId();
   
-  // Collect headings for TOC and sections
-  const headings = [];
-  content.forEach((item, index) => {
-    if (item.type === 'heading' && item.level >= 2) {
-      const text = stripHtml(item.text || '');
-      if (text) {
-        headings.push({ text, level: item.level, index });
-      }
-    }
-  });
-  
   // Collect and embed images for binary section
-  if (updateState) updateState({ stage: 'loading_images', status: 'Loading images...', progress: 86 });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    const loadingStatus = tSync('stageLoadingImages', uiLang);
+    updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 86 });
+  }
   const images = await collectFb2Images(content, updateState);
   
   log('Collected', { headings: headings.length, images: images.length });
@@ -73,17 +79,41 @@ ${generateBinaries(images)}
     .substring(0, 100);
   const filename = `${safeFilename}.fb2`;
   
-  // Create data URL for download (Service Worker doesn't have URL.createObjectURL)
-  const base64Content = btoa(unescape(encodeURIComponent(fb2)));
-  const dataUrl = `data:application/x-fictionbook+xml;base64,${base64Content}`;
-  
+  // Create blob/object URL for download to avoid large base64 strings
+  const blob = new Blob([fb2], { type: 'application/x-fictionbook+xml' });
+  const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
+    ? URL
+    : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
+
   log('Downloading FB2...', { filename, length: fb2.length });
   
-  await chrome.downloads.download({
-    url: dataUrl,
-    filename: filename,
-    saveAs: true
-  });
+  if (urlApi && urlApi.createObjectURL) {
+    const objectUrl = urlApi.createObjectURL(blob);
+    try {
+      await chrome.downloads.download({
+        url: objectUrl,
+        filename: filename,
+        saveAs: true
+      });
+    } finally {
+      urlApi.revokeObjectURL(objectUrl);
+    }
+  } else {
+    // Fallback: data URL via FileReader
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+    await chrome.downloads.download({
+      url: dataUrl,
+      filename: filename,
+      saveAs: true
+    });
+    log('Downloading FB2 (data URL fallback)...', { filename, length: fb2.length });
+  }
   
   log('=== FB2 GENERATION END ===');
   if (updateState) updateState({ status: 'Done!', progress: 100 });
@@ -242,7 +272,7 @@ ${authorXml}
       <author>
         <nickname>ClipAIble Extension</nickname>
       </author>
-      <program-used>ClipAIble v2.6.0</program-used>
+      <program-used>ClipAIble v2.9.0</program-used>
       <date value="${new Date().toISOString().split('T')[0]}">${new Date().toISOString().split('T')[0]}</date>
       <id>${docId}</id>
       <version>1.0</version>
@@ -278,10 +308,10 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
       <empty-line/>`;
   }
   
-  // Add source URL
+  // Add source URL - embed URL in the label text as a link
   if (sourceUrl) {
     bodyContent += `
-      <p>${escapeXml(sourceLabel)}: <a l:href="${escapeXml(sourceUrl)}">${escapeXml(sourceUrl)}</a></p>`;
+      <p><a l:href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a></p>`;
   }
   
   // Add date

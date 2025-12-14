@@ -1,5 +1,7 @@
 // Print page script - prepares content and signals background for PDF generation
 
+import { getLargeData, removeLargeData } from '../scripts/utils/storage.js';
+
 const LOG_PREFIX = '[ClipAIble:Print]';
 
 function log(message) {
@@ -7,7 +9,7 @@ function log(message) {
 }
 
 function cleanTitle(title) {
-  return (title || 'Article')
+  return (title || '')
     .replace(/\u00AD/g, '')
     .replace(/\u200B/g, '')
     .replace(/\u200C/g, '')
@@ -23,9 +25,6 @@ async function init() {
   // NOTE: setTimeout delays below (200ms, 300ms) are render/reflow waits.
   // They are NOT magic numbers to extract - contextually clear, used once.
   log('=== INIT START ===');
-  
-  // Import storage utilities
-  const { getLargeData, removeLargeData } = await import('../scripts/utils/storage.js');
   
   try {
     // Get HTML from storage (checks both chrome.storage and IndexedDB)
@@ -132,6 +131,7 @@ async function init() {
     
   } catch (error) {
     console.error(`${LOG_PREFIX} ERROR:`, error);
+    // Error message - no localization needed as this is a fallback error page
     document.body.innerHTML = `<div style="padding:40px;color:red;font-family:sans-serif;">
       <h2>Error</h2>
       <p>${error.message}</p>

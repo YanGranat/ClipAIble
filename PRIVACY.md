@@ -36,9 +36,11 @@ When you use ClipAIble, article content is sent **only** to the AI provider YOU 
 | Provider | When Used | Their Privacy Policy |
 |----------|-----------|---------------------|
 | OpenAI | If you use GPT models or OpenAI TTS | [openai.com/privacy](https://openai.com/privacy) |
-| Google | If you use Gemini models | [policies.google.com](https://policies.google.com/privacy) |
+| Google | If you use Gemini models or image translation (Gemini Vision) | [policies.google.com](https://policies.google.com/privacy) |
 | Anthropic | If you use Claude models | [anthropic.com/privacy](https://www.anthropic.com/privacy) |
 | ElevenLabs | If you use ElevenLabs TTS | [elevenlabs.io/privacy](https://elevenlabs.io/privacy) |
+| Qwen (DashScope) | If you use Qwen TTS | [dashscope.aliyun.com/](https://dashscope.aliyun.com/) |
+| Respeecher | If you use Respeecher TTS | [respeecher.com/privacy-policy](https://www.respeecher.com/privacy-policy) |
 
 **You control which provider receives your data** by choosing which API key to use.
 

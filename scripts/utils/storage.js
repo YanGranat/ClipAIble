@@ -23,16 +23,48 @@ function getStringSize(str) {
  */
 function getIndexedDB() {
   return new Promise((resolve, reject) => {
+    // Check if IndexedDB is available
+    if (typeof indexedDB === 'undefined') {
+      reject(new Error('IndexedDB is not available in this environment'));
+      return;
+    }
+    
     const request = indexedDB.open('clipaible', 1);
     
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => {
+      const error = request.error || new Error('Failed to open IndexedDB');
+      logError('IndexedDB open error', error);
+      reject(error);
+    };
+    
+    request.onsuccess = () => {
+      const db = request.result;
+      if (!db) {
+        reject(new Error('IndexedDB database is null'));
+        return;
+      }
+      resolve(db);
+    };
     
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
-      if (!db.objectStoreNames.contains('largeData')) {
-        db.createObjectStore('largeData', { keyPath: 'key' });
+      if (!db) {
+        reject(new Error('IndexedDB database is null during upgrade'));
+        return;
       }
+      try {
+        if (!db.objectStoreNames.contains('largeData')) {
+          db.createObjectStore('largeData', { keyPath: 'key' });
+        }
+      } catch (error) {
+        logError('IndexedDB upgrade error', error);
+        reject(error);
+      }
+    };
+    
+    request.onblocked = () => {
+      logWarn('IndexedDB open blocked - another tab may have the database open');
+      // Don't reject, let it continue - the upgrade will complete when the other tab closes
     };
   });
 }
@@ -46,15 +78,38 @@ function getIndexedDB() {
 async function saveToIndexedDB(key, value) {
   const db = await getIndexedDB();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(['largeData'], 'readwrite');
-    const store = transaction.objectStore('largeData');
-    const request = store.put({ key, value, timestamp: Date.now() });
-    
-    request.onsuccess = () => {
-      log(`Saved ${key} to IndexedDB`, { size: getStringSize(JSON.stringify(value)) });
-      resolve();
-    };
-    request.onerror = () => reject(request.error);
+    try {
+      const transaction = db.transaction(['largeData'], 'readwrite');
+      
+      transaction.onerror = () => {
+        const error = transaction.error || new Error('Transaction failed');
+        logError('IndexedDB transaction error (save)', error);
+        reject(error);
+      };
+      
+      transaction.onabort = () => {
+        const error = new Error('Transaction aborted');
+        logError('IndexedDB transaction aborted (save)', error);
+        reject(error);
+      };
+      
+      const store = transaction.objectStore('largeData');
+      const request = store.put({ key, value, timestamp: Date.now() });
+      
+      request.onsuccess = () => {
+        log(`Saved ${key} to IndexedDB`, { size: getStringSize(JSON.stringify(value)) });
+        resolve();
+      };
+      
+      request.onerror = () => {
+        const error = request.error || new Error('Put operation failed');
+        logError('IndexedDB put error', error);
+        reject(error);
+      };
+    } catch (error) {
+      logError('IndexedDB save error (catch)', error);
+      reject(error);
+    }
   });
 }
 
@@ -66,15 +121,38 @@ async function saveToIndexedDB(key, value) {
 async function getFromIndexedDB(key) {
   const db = await getIndexedDB();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(['largeData'], 'readonly');
-    const store = transaction.objectStore('largeData');
-    const request = store.get(key);
-    
-    request.onsuccess = () => {
-      const result = request.result;
-      resolve(result ? result.value : null);
-    };
-    request.onerror = () => reject(request.error);
+    try {
+      const transaction = db.transaction(['largeData'], 'readonly');
+      
+      transaction.onerror = () => {
+        const error = transaction.error || new Error('Transaction failed');
+        logError('IndexedDB transaction error (get)', error);
+        reject(error);
+      };
+      
+      transaction.onabort = () => {
+        const error = new Error('Transaction aborted');
+        logError('IndexedDB transaction aborted (get)', error);
+        reject(error);
+      };
+      
+      const store = transaction.objectStore('largeData');
+      const request = store.get(key);
+      
+      request.onsuccess = () => {
+        const result = request.result;
+        resolve(result ? result.value : null);
+      };
+      
+      request.onerror = () => {
+        const error = request.error || new Error('Get operation failed');
+        logError('IndexedDB get error', error);
+        reject(error);
+      };
+    } catch (error) {
+      logError('IndexedDB get error (catch)', error);
+      reject(error);
+    }
   });
 }
 
@@ -86,15 +164,38 @@ async function getFromIndexedDB(key) {
 async function removeFromIndexedDB(key) {
   const db = await getIndexedDB();
   return new Promise((resolve, reject) => {
-    const transaction = db.transaction(['largeData'], 'readwrite');
-    const store = transaction.objectStore('largeData');
-    const request = store.delete(key);
-    
-    request.onsuccess = () => {
-      log(`Removed ${key} from IndexedDB`);
-      resolve();
-    };
-    request.onerror = () => reject(request.error);
+    try {
+      const transaction = db.transaction(['largeData'], 'readwrite');
+      
+      transaction.onerror = () => {
+        const error = transaction.error || new Error('Transaction failed');
+        logError('IndexedDB transaction error (remove)', error);
+        reject(error);
+      };
+      
+      transaction.onabort = () => {
+        const error = new Error('Transaction aborted');
+        logError('IndexedDB transaction aborted (remove)', error);
+        reject(error);
+      };
+      
+      const store = transaction.objectStore('largeData');
+      const request = store.delete(key);
+      
+      request.onsuccess = () => {
+        log(`Removed ${key} from IndexedDB`);
+        resolve();
+      };
+      
+      request.onerror = () => {
+        const error = request.error || new Error('Delete operation failed');
+        logError('IndexedDB delete error', error);
+        reject(error);
+      };
+    } catch (error) {
+      logError('IndexedDB remove error (catch)', error);
+      reject(error);
+    }
   });
 }
 

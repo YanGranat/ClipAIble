@@ -7,6 +7,10 @@ import { translateImageWithGemini } from '../api/gemini.js';
 import { imageToBase64 } from '../utils/images.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
+import { PROCESSING_STAGES } from '../state/processing.js';
+import { tSync, getUILanguage } from '../locales.js';
+
+// Translation policy: quality-first. Do not downgrade accuracy to save cost or latency.
 
 /**
  * Translate single text to target language
@@ -55,15 +59,18 @@ Rules:
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
+          // Translation quality is priority #1 - never reduce quality for cost savings
+          // reasoning_effort: 'high' ensures best translation quality
           reasoning_effort: 'high'
         })
       });
       
       if (!response.ok) {
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -88,10 +95,11 @@ Rules:
       });
       
       if (!response.ok) {
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -110,10 +118,11 @@ Rules:
       });
       
       if (!response.ok) {
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -198,6 +207,8 @@ Rules:
             { role: 'user', content: userPrompt }
           ],
           response_format: { type: 'json_object' },
+          // Translation quality is priority #1 - never reduce quality for cost savings
+          // reasoning_effort: 'high' ensures best translation quality
           reasoning_effort: 'high'
         })
       });
@@ -206,9 +217,10 @@ Rules:
         const errorData = await response.json().catch(() => ({}));
         
         // Don't retry on authentication errors (401, 403)
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
           logError('Translation API authentication error', { status: response.status, error: errorData });
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
         
         logError('Translation API error', { status: response.status, error: errorData });
@@ -220,7 +232,7 @@ Rules:
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
         
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -250,7 +262,8 @@ Rules:
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
-        throw new Error(`API error: ${response.status}`);
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -275,7 +288,8 @@ Rules:
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
-        throw new Error(`API error: ${response.status}`);
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -394,18 +408,54 @@ export async function translateContent(result, targetLang, apiKey, model, update
 
   const langName = LANGUAGE_NAMES[targetLang] || targetLang;
   
-  // Translate title
+  // Translate title and author in parallel (they are independent)
+  const translationPromises = [];
+  
   if (result.title && result.title.trim()) {
-    if (updateState) updateState({ status: 'Translating title...', progress: 18 });
+    translationPromises.push(
+      translateText(result.title, langName, decryptedApiKey, model)
+        .then(translated => {
+          result.title = translated;
+          return 'title';
+        })
+        .catch(error => {
+          if (error.message?.includes('authentication')) {
+            logError('Translation stopped: authentication error in title translation', error);
+            throw error; // Re-throw auth errors to stop translation
+          }
+          logError('Title translation failed, using original', error);
+          return null; // Continue with original title
+        })
+    );
+  }
+  
+  if (result.author && result.author.trim()) {
+    translationPromises.push(
+      translateText(result.author, langName, decryptedApiKey, model)
+        .then(translated => {
+          result.author = translated;
+          log('Author translated', { translated: result.author });
+          return 'author';
+        })
+        .catch(error => {
+          logWarn('Author translation failed, using original', error);
+          return null; // Continue with original author
+        })
+    );
+  }
+  
+  // Wait for title and author translations to complete
+  if (translationPromises.length > 0) {
+    if (updateState) updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: 'Translating metadata...', progress: 18 });
     try {
-      result.title = await translateText(result.title, langName, decryptedApiKey, model);
+      await Promise.all(translationPromises);
     } catch (error) {
+      // If authentication error occurred, stop translation
       if (error.message?.includes('authentication')) {
-        logError('Translation stopped: authentication error in title translation', error);
+        logError('Translation stopped: authentication error', error);
         throw error;
       }
-      logError('Title translation failed, using original', error);
-      // Continue with original title
+      // Other errors are already handled in individual promises
     }
   }
   
@@ -479,13 +529,18 @@ export async function translateContent(result, targetLang, apiKey, model, update
   
   log('Translation chunks created', { count: chunks.length });
   
+  // Pre-calc weights for smoother progress: weight = sum of text lengths in chunk
+  const chunkWeights = chunks.map(chunk => chunk.reduce((sum, item) => sum + item.text.length, 0));
+  const totalWeight = chunkWeights.reduce((sum, w) => sum + w, 0) || 1;
+
   // Translate each chunk
   for (let i = 0; i < chunks.length; i++) {
     // Show progress BEFORE starting chunk translation (not after)
-    // This prevents progress from jumping ahead while waiting for API response
     // Range: 20% to 60% (text translation is the longest phase)
-    const progress = 20 + Math.floor((i / chunks.length) * 40);
-    if (updateState) updateState({ status: `Translating ${i + 1}/${chunks.length}...`, progress });
+    const completedWeight = chunkWeights.slice(0, i).reduce((s, w) => s + w, 0);
+    const progressPortion = (completedWeight / totalWeight) * 40;
+    const progress = 20 + Math.floor(progressPortion);
+    if (updateState) updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: `Translating ${i + 1}/${chunks.length}...`, progress });
     
     const chunk = chunks[i];
     const textsToTranslate = chunk.map(item => item.text);
@@ -535,13 +590,15 @@ export async function translateContent(result, targetLang, apiKey, model, update
   }
   
   log('=== TRANSLATION END ===');
+  // Ensure progress reaches the end of translation phase
+  if (updateState) updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: 'Translation complete', progress: 60 });
   return result;
 }
 
 /**
  * Detect source language from content
  * @param {Array} content - Content array
- * @returns {string} Language code: 'en', 'ru', 'uk', or 'unknown'
+ * @returns {string} Language code: 'en', 'ru', 'ua', or 'unknown'
  */
 export function detectSourceLanguage(content) {
   let allText = '';
@@ -560,7 +617,7 @@ export function detectSourceLanguage(content) {
   
   if (cyrillicCount / total > 0.3) {
     if (ukrainianChars > russianChars * 2 || allText.includes('що') || allText.includes('які') || allText.includes('від')) {
-      return 'uk';
+      return 'ua';
     }
     return 'ru';
   }
@@ -737,6 +794,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
     
     if (updateState) {
       updateState({ 
+        stage: PROCESSING_STAGES.TRANSLATING.id,
         status: `Analyzing image ${i + 1}/${imageIndices.length}...`, 
         progress: 10 + Math.floor((i / imageIndices.length) * 5) 
       });
@@ -764,6 +822,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
       log(`Image ${i + 1} needs translation`);
       if (updateState) {
         updateState({ 
+          stage: PROCESSING_STAGES.TRANSLATING.id,
           status: `Translating image ${i + 1}/${imageIndices.length}...`, 
           progress: 10 + Math.floor((i / imageIndices.length) * 5) 
         });
@@ -817,7 +876,7 @@ export async function translateMetadata(text, targetLang, apiKey, model, type = 
     const dateExamples = {
       'en': 'December 3, 2025',
       'ru': '3 декабря 2025',
-      'uk': '3 грудня 2025',
+      'ua': '3 грудня 2025',
       'de': '3. Dezember 2025',
       'fr': '3 décembre 2025',
       'es': '3 de diciembre de 2025',
@@ -944,7 +1003,7 @@ function detectLanguageByCharacters(text) {
   
   if (cyrillicRatio > 0.5) {
     // Cyrillic text - check for Ukrainian specific letters
-    if (ukrainianMatch.length > 3) return 'uk';
+    if (ukrainianMatch.length > 3) return 'ua';
     return 'ru';
   }
   
@@ -956,7 +1015,7 @@ function detectLanguageByCharacters(text) {
  * @param {Array} content - Content array
  * @param {string} apiKey - API key
  * @param {string} model - Model name
- * @returns {Promise<string>} Detected language code (e.g., 'ru', 'en', 'uk')
+ * @returns {Promise<string>} Detected language code (e.g., 'ru', 'en', 'ua')
  */
 export async function detectContentLanguage(content, apiKey, model) {
   if (!content || content.length === 0) {
@@ -1002,7 +1061,7 @@ INSTRUCTIONS:
 
 SUPPORTED CODES:
 - ru = Russian (русский)
-- uk = Ukrainian (українська)  
+- ua = Ukrainian (українська)  
 - en = English
 - de = German (Deutsch)
 - fr = French (français)
@@ -1019,7 +1078,7 @@ SUPPORTED CODES:
 
 OUTPUT FORMAT: Return ONLY the 2-letter code, nothing else. No quotes, no explanation.
 
-Example outputs: ru, en, uk, de`;
+Example outputs: ru, en, ua, de`;
   
   // Use more text for AI analysis (30k chars for accurate detection)
   const textForAI = sampleText.substring(0, 30000);
@@ -1215,15 +1274,18 @@ Generate the abstract:`;
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
+          // Translation quality is priority #1 - never reduce quality for cost savings
+          // reasoning_effort: 'high' ensures best translation quality
           reasoning_effort: 'high'
         })
       });
       
       if (!response.ok) {
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -1248,10 +1310,11 @@ Generate the abstract:`;
       });
       
       if (!response.ok) {
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();
@@ -1270,10 +1333,11 @@ Generate the abstract:`;
       });
       
       if (!response.ok) {
+        const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(`API authentication error: ${response.status}. Please check your API key.`);
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
         }
-        throw new Error(`API error: ${response.status}`);
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
       }
       
       const result = await response.json();

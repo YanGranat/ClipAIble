@@ -1,6 +1,24 @@
 // Image utility functions for ClipAIble extension
 
 import { log, logWarn, logError } from './logging.js';
+import { getUILanguage, tSync } from '../locales.js';
+
+/**
+ * Get localized loading images status
+ * @param {number} processed - Number of processed images
+ * @param {number} total - Total number of images
+ * @returns {Promise<string>} Localized status string
+ */
+async function getLocalizedLoadingStatus(processed, total) {
+  try {
+    const uiLang = await getUILanguage();
+    const baseStatus = tSync('stageLoadingImages', uiLang);
+    return `${baseStatus} ${processed}/${total}...`;
+  } catch (error) {
+    // Fallback to English if localization fails
+    return `Loading images ${processed}/${total}...`;
+  }
+}
 
 /**
  * Convert image URL to base64 data URL
@@ -128,7 +146,7 @@ export async function processImagesInBatches(images, concurrency, updateState, p
         
         if (updateState) {
           updateState({ 
-            status: `Loading images ${processed}/${total}...`, 
+            status: await getLocalizedLoadingStatus(processed, total), 
             progress: 82 + Math.floor((processed / total) * 13) 
           });
         }
@@ -139,7 +157,7 @@ export async function processImagesInBatches(images, concurrency, updateState, p
         logWarn(`Image ${globalIndex + 1} processing failed`, { error: e.message });
         if (updateState) {
           updateState({ 
-            status: `Loading images ${processed}/${total}...`, 
+            status: await getLocalizedLoadingStatus(processed, total), 
             progress: 82 + Math.floor((processed / total) * 13) 
           });
         }

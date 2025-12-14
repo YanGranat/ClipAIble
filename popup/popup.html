@@ -9,15 +9,62 @@
 <body>
   <div class="container">
     <header class="header">
-      <h1>ClipAIble</h1>
-      <p class="subtitle" data-i18n="subtitle">AI-powered article extractor</p>
+      <div class="header-controls">
+        <div class="header-control header-control-left">
+          <select id="uiLanguageSelect" class="header-select" data-i18n-title="extensionLanguage" title="Extension Language">
+            <option value="en">EN</option>
+            <option value="ru">RU</option>
+            <option value="ua">UA</option>
+            <option value="de">DE</option>
+            <option value="fr">FR</option>
+            <option value="es">ES</option>
+            <option value="it">IT</option>
+            <option value="pt">PT</option>
+            <option value="zh">ZH</option>
+            <option value="ja">JA</option>
+            <option value="ko">KO</option>
+          </select>
+        </div>
+        <div class="header-title">
+          <h1>ClipAIble</h1>
+        </div>
+        <div class="header-control header-control-right">
+          <select id="themeSelect" class="header-select" data-i18n-title="theme" title="Theme">
+            <option value="auto" data-i18n="auto">Auto</option>
+            <option value="dark" data-i18n="darkTheme">Dark</option>
+            <option value="light" data-i18n="lightTheme">Light</option>
+          </select>
+        </div>
+      </div>
     </header>
 
     <main class="main">
       <!-- API Keys Section -->
       <section class="section api-section" id="apiSection">
         <div class="api-key-group">
-          <label for="apiKey" data-i18n="openaiApiKey">OpenAI API Key</label>
+          <label for="apiProviderSelect" data-i18n="aiProvider">AI Provider</label>
+          <select id="apiProviderSelect">
+            <option value="openai" data-i18n="openai">OpenAI</option>
+            <option value="claude" data-i18n="claude">Claude</option>
+            <option value="gemini" data-i18n="gemini">Gemini</option>
+            <option value="grok" data-i18n="grok">Grok</option>
+            <option value="openrouter" data-i18n="openrouter">OpenRouter</option>
+          </select>
+        </div>
+        <div class="api-key-group">
+          <label for="modelSelect" data-i18n="model">AI Model</label>
+          <select id="modelSelect">
+            <option value="gpt-5.2">GPT-5.2</option>
+            <option value="gpt-5.2-high">GPT-5.2 (high)</option>
+            <option value="gpt-5.1">GPT-5.1</option>
+            <option value="gpt-5.1-high">GPT-5.1 (high)</option>
+            <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+            <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
+            <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast Reasoning</option>
+          </select>
+        </div>
+        <div class="api-key-group" id="apiKeyInputGroup">
+          <label for="apiKey" id="apiKeyLabel" data-i18n="openaiApiKey">OpenAI API Key</label>
           <div class="input-group">
             <input 
               type="password" 
@@ -27,38 +74,6 @@
               autocomplete="off"
             >
             <button id="toggleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
-              <span class="eye-icon">👁</span>
-            </button>
-          </div>
-        </div>
-        <div class="api-divider" data-i18n="or">or</div>
-        <div class="api-key-group">
-          <label for="claudeApiKey" data-i18n="claudeApiKey">Claude API Key</label>
-          <div class="input-group">
-            <input 
-              type="password" 
-              id="claudeApiKey" 
-              data-i18n-placeholder="enterClaudeApiKey"
-              placeholder="sk-ant-..."
-              autocomplete="off"
-            >
-            <button id="toggleClaudeApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
-              <span class="eye-icon">👁</span>
-            </button>
-          </div>
-        </div>
-        <div class="api-divider" data-i18n="or">or</div>
-        <div class="api-key-group">
-          <label for="geminiApiKey" data-i18n="geminiApiKey">Gemini API Key</label>
-          <div class="input-group">
-            <input 
-              type="password" 
-              id="geminiApiKey" 
-              data-i18n-placeholder="enterGeminiApiKey"
-              placeholder="AIza..."
-              autocomplete="off"
-            >
-            <button id="toggleGeminiApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
           </div>
@@ -117,7 +132,8 @@
 
       <!-- Stats Panel (Hidden by default) -->
       <section class="section stats-panel" id="statsPanel">
-        <div class="stats-header">
+        <div class="stats-content">
+          <div class="stats-header">
           <h3 data-i18n="statistics">Statistics</h3>
         </div>
         <div class="stats-grid">
@@ -155,6 +171,21 @@
               <span class="format-count" id="formatMarkdown">0</span>
             </div>
             <div class="format-stat">
+              <span class="format-icon">📘</span>
+              <span class="format-name">DOCX</span>
+              <span class="format-count" id="formatDocx">0</span>
+            </div>
+            <div class="format-stat">
+              <span class="format-icon">🌐</span>
+              <span class="format-name">HTML</span>
+              <span class="format-count" id="formatHtml">0</span>
+            </div>
+            <div class="format-stat">
+              <span class="format-icon">📄</span>
+              <span class="format-name">TXT</span>
+              <span class="format-count" id="formatTxt">0</span>
+            </div>
+            <div class="format-stat">
               <span class="format-icon">🔊</span>
               <span class="format-name">Audio</span>
               <span class="format-count" id="formatAudio">0</span>
@@ -170,8 +201,8 @@
         </div>
         
         <div class="stats-footer">
-          <span class="stats-last-saved" id="statsLastSaved">Last saved: Never</span>
-          <span class="stats-avg-time" id="statsAvgTime">Avg: 0s</span>
+          <span class="stats-last-saved" id="statsLastSaved"></span>
+          <span class="stats-avg-time" id="statsAvgTime"></span>
         </div>
         
         <button id="clearStatsBtn" class="btn btn-reset-small btn-full" data-i18n="clearStatistics">Clear Statistics</button>
@@ -196,27 +227,13 @@
         </div>
         
         <button id="clearCacheBtn" class="btn btn-reset-small btn-full" data-i18n="clearCache">Clear Cache</button>
+        </div>
       </section>
 
-      <!-- Settings Panel (Hidden by default, uses CSS max-height animation) -->
+      <!-- Settings Panel (Hidden by default, uses CSS Grid animation) -->
       <section class="section settings-panel" id="settingsPanel">
-        <div class="setting-item">
-          <label for="uiLanguageSelect" data-i18n="extensionLanguage">Extension Language</label>
-          <select id="uiLanguageSelect">
-            <option value="en">English</option>
-            <option value="ru">Russian</option>
-            <option value="uk">Ukrainian</option>
-            <option value="de">German</option>
-            <option value="fr">French</option>
-            <option value="es">Spanish</option>
-            <option value="it">Italian</option>
-            <option value="pt">Portuguese</option>
-            <option value="zh">Chinese</option>
-            <option value="ja">Japanese</option>
-            <option value="ko">Korean</option>
-          </select>
-        </div>
-        <div class="setting-item">
+        <div class="settings-content">
+          <div class="setting-item">
           <label for="modeSelect" data-i18n="extractionMode">Extraction Mode</label>
           <select id="modeSelect">
             <option value="selector" data-i18n="aiSelectorFaster">AI Selector (faster, exact text)</option>
@@ -226,19 +243,10 @@
         </div>
         <div class="setting-item" id="useCacheGroup">
           <label class="checkbox-label">
-            <input type="checkbox" id="useCache" checked>
+            <input type="checkbox" id="useCache">
             <span class="checkbox-text" data-i18n="useCachedSelectors">Use cached selectors</span>
           </label>
           <p class="setting-hint" data-i18n="useCachedSelectorsHint">Skip AI for sites you've saved before</p>
-        </div>
-        <div class="setting-item">
-          <label for="modelSelect" data-i18n="model">AI Model</label>
-          <select id="modelSelect">
-            <option value="gpt-5.1">GPT-5.1</option>
-            <option value="gpt-5.1-high">GPT-5.1 (high)</option>
-            <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-            <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
-          </select>
         </div>
         <div class="setting-item">
           <label for="outputFormat" data-i18n="outputFormat">Output Format</label>
@@ -247,15 +255,21 @@
             <option value="epub" data-i18n="epubEreaders">EPUB (e-readers)</option>
             <option value="fb2" data-i18n="fb2Ereaders">FB2 (e-readers)</option>
             <option value="markdown" data-i18n="saveAsMarkdown">Markdown</option>
-            <option value="audio" data-i18n="audioMp3">Audio (MP3)</option>
+            <option value="docx" data-i18n="saveAsDocx">DOCX (Word)</option>
+            <option value="html" data-i18n="saveAsHtml">HTML</option>
+            <option value="txt" data-i18n="saveAsTxt">TXT (Plain Text)</option>
+            <option value="audio" data-i18n="audioMp3">Audio</option>
           </select>
         </div>
         <!-- Audio Settings (Hidden by default) -->
         <div class="setting-item" id="audioProviderGroup" style="display: none;">
           <label for="audioProvider" data-i18n="ttsProvider">TTS Provider</label>
           <select id="audioProvider">
-            <option value="openai" data-i18n="openaiTts">OpenAI TTS</option>
-            <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs</option>
+            <option value="openai" data-i18n="openaiTts">OpenAI TTS (MP3)</option>
+            <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs (MP3)</option>
+            <option value="google" data-i18n="googleTts">Google Gemini 2.5 Pro TTS (WAV)</option>
+            <option value="qwen" data-i18n="qwenTts">Qwen3-TTS-Flash (WAV)</option>
+            <option value="respeecher" data-i18n="respeecher">Respeecher (EN/UA, WAV)</option>
           </select>
           <p class="setting-hint" data-i18n="ttsProviderHint">Choose text-to-speech provider</p>
         </div>
@@ -274,7 +288,89 @@
             </button>
             <button type="button" id="saveElevenlabsApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint"><span data-i18n="getElevenlabsKeyFrom">Get your API key from</span> <a href="https://elevenlabs.io" target="_blank">elevenlabs.io</a></p>
+          <p class="setting-hint"><span data-i18n="getElevenlabsKeyFrom">Get your API key from</span> <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank">elevenlabs.io/app/developers/api-keys</a></p>
+        </div>
+        <div class="setting-item" id="qwenApiKeyGroup" style="display: none;">
+          <label for="qwenApiKey" data-i18n="qwenApiKey">Qwen API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="qwenApiKey" 
+              data-i18n-placeholder="enterQwenApiKey"
+              placeholder="Enter Qwen API key"
+              autocomplete="off"
+            >
+            <button type="button" id="toggleQwenApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+            <button type="button" id="saveQwenApiKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
+          <p class="setting-hint"><span data-i18n="getQwenKeyFrom">Get your API key from</span> <a href="https://modelstudio.console.alibabacloud.com/?tab=dashboard#/api-key" target="_blank">modelstudio.console.alibabacloud.com</a></p>
+        </div>
+        <div class="setting-item" id="respeecherApiKeyGroup" style="display: none;">
+          <label for="respeecherApiKey" data-i18n="respeecherApiKey">Respeecher API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="respeecherApiKey" 
+              data-i18n-placeholder="enterRespeecherApiKey"
+              placeholder="Enter Respeecher API key"
+              autocomplete="off"
+            >
+            <button type="button" id="toggleRespeecherApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+            <button type="button" id="saveRespeecherApiKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
+          <p class="setting-hint"><span data-i18n="getRespecherKeyFrom">Get your API key from</span> <a href="https://space.respeecher.com/api-keys" target="_blank">space.respeecher.com/api-keys</a></p>
+        </div>
+        <div class="setting-item" id="respeecherAdvancedGroup" style="display: none;">
+          <details>
+            <summary style="cursor: pointer; user-select: none;" data-i18n="advancedSamplingParams">Advanced Sampling Parameters</summary>
+            <div style="margin-top: 10px;">
+              <div class="setting-item">
+                <label for="respeecherTemperature" data-i18n="temperature">Temperature</label>
+                <div class="slider-container">
+                  <input type="range" id="respeecherTemperature" min="0" max="2" step="0.1" value="1.0">
+                  <span class="slider-value" id="respeecherTemperatureValue">1.0</span>
+                </div>
+                <p class="setting-hint" data-i18n="temperatureHint">Controls randomness/creativity (Low = deterministic, High = variable)</p>
+              </div>
+              <div class="setting-item">
+                <label for="respeecherRepetitionPenalty" data-i18n="repetitionPenalty">Repetition Penalty</label>
+                <div class="slider-container">
+                  <input type="range" id="respeecherRepetitionPenalty" min="0" max="2" step="0.1" value="1.0">
+                  <span class="slider-value" id="respeecherRepetitionPenaltyValue">1.0</span>
+                </div>
+                <p class="setting-hint" data-i18n="repetitionPenaltyHint">Reduces repetition in speech (Low = allowed, High = avoided)</p>
+              </div>
+              <div class="setting-item">
+                <label for="respeecherTopP" data-i18n="topP">Top P (Nucleus Sampling)</label>
+                <div class="slider-container">
+                  <input type="range" id="respeecherTopP" min="0" max="1" step="0.01" value="1.0">
+                  <span class="slider-value" id="respeecherTopPValue">1.0</span>
+                </div>
+                <p class="setting-hint" data-i18n="topPHint">Controls diversity of sampling</p>
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="setting-item" id="googleTtsApiKeyGroup" style="display: none;">
+          <label for="googleTtsApiKey" data-i18n="googleTtsApiKey">Google Gemini TTS API Key</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="googleTtsApiKey" 
+              data-i18n-placeholder="enterGoogleTtsApiKey"
+              placeholder="Enter Google TTS API key"
+              autocomplete="off"
+            >
+            <button type="button" id="toggleGoogleTtsApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+            <button type="button" id="saveGoogleTtsApiKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
+          <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a></p>
         </div>
         <div class="setting-item" id="elevenlabsModelGroup" style="display: none;">
           <label for="elevenlabsModel" data-i18n="elevenlabsModel">ElevenLabs Model</label>
@@ -283,6 +379,111 @@
             <option value="eleven_v3" selected data-i18n="v3">v3 (most expressive)</option>
             <option value="eleven_turbo_v2_5" data-i18n="turboV25">Turbo v2.5 (fast)</option>
           </select>
+        </div>
+        <div class="setting-item" id="elevenlabsFormatGroup" style="display: none;">
+          <label for="elevenlabsFormat" data-i18n="audioFormat">Audio Format</label>
+          <select id="elevenlabsFormat">
+            <option value="mp3_44100_192" selected>MP3 44.1kHz 192kbps (highest quality)</option>
+            <option value="mp3_44100_128">MP3 44.1kHz 128kbps</option>
+            <option value="mp3_22050_32">MP3 22.05kHz 32kbps</option>
+            <option value="pcm_44100">PCM 44.1kHz</option>
+            <option value="pcm_24000">PCM 24kHz</option>
+            <option value="pcm_22050">PCM 22.05kHz</option>
+            <option value="pcm_16000">PCM 16kHz</option>
+            <option value="ulaw_8000">μ-law 8kHz</option>
+          </select>
+        </div>
+        <div class="setting-item" id="elevenlabsAdvancedGroup" style="display: none;">
+          <details>
+            <summary style="cursor: pointer; user-select: none;" data-i18n="advancedVoiceSettings">Advanced Voice Settings</summary>
+            <div style="margin-top: 10px;">
+              <div class="setting-item">
+                <label for="elevenlabsStability" data-i18n="stability">Stability</label>
+                <div class="slider-container">
+                  <input type="range" id="elevenlabsStability" min="0" max="1" step="0.01" value="0.5">
+                  <span class="slider-value" id="elevenlabsStabilityValue">0.5</span>
+                </div>
+                <p class="setting-hint" data-i18n="stabilityHint">Low = more variation, High = more stable</p>
+              </div>
+              <div class="setting-item">
+                <label for="elevenlabsSimilarity" data-i18n="similarityBoost">Similarity Boost</label>
+                <div class="slider-container">
+                  <input type="range" id="elevenlabsSimilarity" min="0" max="1" step="0.01" value="0.75">
+                  <span class="slider-value" id="elevenlabsSimilarityValue">0.75</span>
+                </div>
+                <p class="setting-hint" data-i18n="similarityHint">How closely the voice matches the original</p>
+              </div>
+              <div class="setting-item">
+                <label for="elevenlabsStyle" data-i18n="style">Style</label>
+                <div class="slider-container">
+                  <input type="range" id="elevenlabsStyle" min="0" max="1" step="0.01" value="0.0">
+                  <span class="slider-value" id="elevenlabsStyleValue">0.0</span>
+                </div>
+                <p class="setting-hint" data-i18n="styleHint">Low = neutral, High = expressive</p>
+              </div>
+              <div class="setting-item">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="elevenlabsSpeakerBoost" checked>
+                  <span class="checkbox-text" data-i18n="speakerBoost">Speaker Boost</span>
+                </label>
+                <p class="setting-hint" data-i18n="speakerBoostHint">Improves voice quality and clarity</p>
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="setting-item" id="openaiInstructionsGroup" style="display: none;">
+          <label for="openaiInstructions" data-i18n="voiceInstructions">Voice Instructions (Optional)</label>
+          <textarea id="openaiInstructions" rows="2" placeholder="e.g., Read slowly and clearly, Read with enthusiasm" data-i18n-placeholder="voiceInstructionsPlaceholder"></textarea>
+          <p class="setting-hint" data-i18n="voiceInstructionsHint">Additional instructions for voice style (OpenAI only)</p>
+        </div>
+        <div class="setting-item" id="googleTtsModelGroup" style="display: none;">
+          <label for="googleTtsModel" data-i18n="model">Model</label>
+          <select id="googleTtsModel">
+            <option value="gemini-2.5-pro-preview-tts" selected data-i18n="geminiProTts">Gemini 2.5 Pro Preview TTS (higher quality)</option>
+            <option value="gemini-2.5-flash-preview-tts" data-i18n="geminiFlashTts">Gemini 2.5 Flash Preview TTS (faster)</option>
+            <option value="gemini-2.5-flash-lite-preview-tts" data-i18n="geminiFlashLiteTts">Gemini 2.5 Flash Lite TTS (Preview, single-speaker only)</option>
+          </select>
+        </div>
+        <div class="setting-item" id="googleTtsVoiceGroup" style="display: none;">
+          <label for="googleTtsVoice" data-i18n="voice">Voice</label>
+          <select id="googleTtsVoice">
+            <option value="Callirrhoe">Callirrhoe (Easy-going)</option>
+            <option value="Zephyr">Zephyr (Bright)</option>
+            <option value="Puck">Puck (Optimistic)</option>
+            <option value="Charon">Charon (Informative)</option>
+            <option value="Kore">Kore (Firm)</option>
+            <option value="Fenrir">Fenrir (Excitable)</option>
+            <option value="Leda">Leda (Youthful)</option>
+            <option value="Orus">Orus (Firm)</option>
+            <option value="Aoede">Aoede (Breezy)</option>
+            <option value="Autonoe">Autonoe (Bright)</option>
+            <option value="Enceladus">Enceladus (Breathy)</option>
+            <option value="Iapetus">Iapetus (Clear)</option>
+            <option value="Umbriel">Umbriel (Easy-going)</option>
+            <option value="Algieba">Algieba (Smooth)</option>
+            <option value="Despina">Despina (Smooth)</option>
+            <option value="Erinome">Erinome (Clear)</option>
+            <option value="Algenib">Algenib (Gravelly)</option>
+            <option value="Rasalgethi">Rasalgethi (Informative)</option>
+            <option value="Laomedeia">Laomedeia (Optimistic)</option>
+            <option value="Achernar">Achernar (Soft)</option>
+            <option value="Alnilam">Alnilam (Firm)</option>
+            <option value="Schedar">Schedar (Even)</option>
+            <option value="Gacrux">Gacrux (Mature)</option>
+            <option value="Pulcherrima">Pulcherrima (Forward)</option>
+            <option value="Achird">Achird (Friendly)</option>
+            <option value="Zubenelgenubi">Zubenelgenubi (Casual)</option>
+            <option value="Vindemiatrix">Vindemiatrix (Gentle)</option>
+            <option value="Sadachbia">Sadachbia (Lively)</option>
+            <option value="Sadaltager">Sadaltager (Knowledgeable)</option>
+            <option value="Sulafat">Sulafat (Warm)</option>
+          </select>
+          <p class="setting-hint" data-i18n="googleTtsVoiceHint">Uses same API key as Gemini</p>
+        </div>
+        <div class="setting-item" id="googleTtsPromptGroup" style="display: none;">
+          <label for="googleTtsPrompt" data-i18n="voiceStylePrompt">Voice Style Prompt (Optional)</label>
+          <textarea id="googleTtsPrompt" rows="2" placeholder="e.g., Speak slowly and clearly, Read with enthusiasm" data-i18n-placeholder="voiceStylePromptPlaceholder"></textarea>
+          <p class="setting-hint" data-i18n="googleTtsPromptHint">Control voice style and emotion. Leave empty for default natural speech.</p>
         </div>
         <div class="setting-item" id="audioVoiceGroup" style="display: none;">
           <label for="audioVoice" data-i18n="voice">Voice</label>
@@ -306,6 +507,7 @@
           <div class="slider-container">
             <input type="range" id="audioSpeed" min="0.5" max="2" step="0.1" value="1">
             <span class="slider-value" id="audioSpeedValue">1.0x</span>
+            <small id="audioSpeedNote" style="display:none; color: var(--text-muted);">Not applicable for this provider</small>
           </div>
         </div>
         <div class="setting-item">
@@ -335,7 +537,7 @@
             <option value="auto">Auto (original)</option>
             <option value="en">English</option>
             <option value="ru">Русский</option>
-            <option value="uk">Українська</option>
+            <option value="ua">Українська</option>
             <option value="de">Deutsch</option>
             <option value="fr">Français</option>
             <option value="es">Español</option>
@@ -354,7 +556,7 @@
           </label>
           <p class="setting-hint" data-i18n="translateImagesHint">Uses Google Gemini AI to translate text on images</p>
         </div>
-        <div class="settings-divider"></div>
+        <div class="settings-divider" id="pdfSettingsDivider"></div>
         <div class="setting-item">
           <label for="stylePreset" data-i18n="stylePreset">Style Preset</label>
           <select id="stylePreset">
@@ -433,16 +635,6 @@
           </div>
         </div>
         <div class="settings-divider"></div>
-        <div class="setting-item">
-          <label for="themeSelect" data-i18n="theme">Theme</label>
-          <select id="themeSelect">
-            <option value="auto" data-i18n="auto">Auto (system)</option>
-            <option value="dark" data-i18n="darkTheme">Dark</option>
-            <option value="light" data-i18n="lightTheme">Light</option>
-          </select>
-          <p class="setting-hint" data-i18n="choosePopupTheme">Choose popup theme</p>
-        </div>
-        <div class="settings-divider"></div>
         <button id="resetStylesBtn" class="btn btn-reset" data-i18n="resetAllToDefault">Reset All to Default</button>
         <div class="settings-divider"></div>
         <div class="setting-item">
@@ -454,9 +646,29 @@
           <p class="setting-hint" data-i18n="exportHint">Export includes: settings (without API keys), optional stats & cache</p>
           <input type="file" id="importFileInput" accept=".json" style="display: none;">
         </div>
+        </div>
       </section>
     </main>
 
+  </div>
+
+  <!-- Import/Export Dialog Modal -->
+  <div id="importExportModal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="importExportModalTitle" data-i18n="exportSettings">Export Settings</h3>
+        <button id="importExportModalClose" class="modal-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="importExportModalContent">
+          <!-- Content will be populated by JS -->
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="importExportModalCancel" class="btn btn-secondary" data-i18n="cancel">Cancel</button>
+        <button id="importExportModalConfirm" class="btn btn-primary" data-i18n="confirm">Confirm</button>
+      </div>
+    </div>
   </div>
 
   <script src="popup.js" type="module"></script>

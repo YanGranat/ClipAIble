@@ -111,6 +111,41 @@ export function splitHtmlIntoChunks(html, chunkSize = CONFIG.CHUNK_SIZE, overlap
  * @param {Array} content - Content array
  * @returns {Array} Deduplicated content
  */
+/**
+ * Simple hash function for string (djb2 algorithm)
+ * Used for content deduplication to create unique keys for content items.
+ * djb2 is a fast, non-cryptographic hash suitable for this use case.
+ * 
+ * @param {string} str - String to hash
+ * @returns {string} Hash as hex string (first 8 characters)
+ * 
+ * Algorithm: djb2 hash with initial value 5381
+ * - Fast computation suitable for real-time content processing
+ * - Low collision rate for typical content lengths
+ * - Returns 8 hex characters (32 bits) for uniqueness
+ */
+function simpleHash(str) {
+  let hash = 5381; // djb2 initial value
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i); // hash * 33 + char
+    hash = hash & hash; // Convert to 32-bit integer (prevent overflow)
+  }
+  // Convert to positive hex string and take first 8 chars
+  return Math.abs(hash).toString(16).substring(0, 8);
+}
+
+/**
+ * Remove duplicate content items from array
+ * Uses hash-based deduplication to avoid collisions from similar content.
+ * 
+ * Strategy:
+ * - Creates unique key from: type + length + hash(full content)
+ * - Hash prevents collisions from similar beginnings/endings (unlike prefix-based approach)
+ * - Type and length provide additional uniqueness guarantees
+ * 
+ * @param {Array} content - Content array with items {type, text, src, items, ...}
+ * @returns {Array} Deduplicated content array
+ */
 export function deduplicateContent(content) {
   log('deduplicateContent', { inputCount: content.length });
   
@@ -118,10 +153,18 @@ export function deduplicateContent(content) {
   const seen = new Set();
 
   for (const item of content) {
-    let key = item.type + ':';
-    if (item.text) key += item.text.substring(0, 100).trim();
-    else if (item.src) key += item.src;
-    else if (item.items) key += item.items.join('|').substring(0, 100);
+    const type = item.type || 'unknown';
+    const textSample = (item.text || '').trim();
+    const srcSample = item.src || '';
+    const listSample = Array.isArray(item.items) ? item.items.join('|') : '';
+    const sample = textSample || srcSample || listSample;
+    const lengthPart = sample.length;
+    
+    // Use hash instead of head/tail to avoid collisions with similar beginnings/endings
+    // Hash is based on full sample, but we also include type and length for better uniqueness
+    // Format: "type:length:hash" ensures uniqueness even for similar content
+    const sampleHash = simpleHash(sample);
+    const key = `${type}:${lengthPart}:${sampleHash}`;
 
     if (!seen.has(key)) {
       seen.add(key);

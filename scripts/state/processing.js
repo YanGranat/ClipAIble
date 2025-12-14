@@ -2,12 +2,28 @@
 
 import { log, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { clearDecryptedKeyCache } from '../utils/encryption.js';
+import { getUILanguage, tSync } from '../locales.js';
+
+// Standard error codes for consistent error handling
+export const ERROR_CODES = {
+  AUTH_ERROR: 'auth_error',           // 401/403 - Invalid API key
+  RATE_LIMIT: 'rate_limit',           // 429 - Too many requests
+  TIMEOUT: 'timeout',                 // Request timeout
+  NETWORK_ERROR: 'network_error',     // Network failure
+  PARSE_ERROR: 'parse_error',         // JSON parsing error
+  PROVIDER_ERROR: 'provider_error',   // Provider-specific error
+  VALIDATION_ERROR: 'validation_error', // Input validation error
+  UNKNOWN_ERROR: 'unknown_error'      // Unknown error
+};
 
 // Processing stages definition
 export const PROCESSING_STAGES = {
   STARTING: { id: 'starting', label: 'Starting...', order: 0 },
   ANALYZING: { id: 'analyzing', label: 'AI analyzing page structure', order: 1 },
   EXTRACTING: { id: 'extracting', label: 'Extracting content', order: 2 },
+  EXTRACTING_SUBTITLES: { id: 'extracting_subtitles', label: 'Extracting subtitles', order: 2.5 },
+  PROCESSING_SUBTITLES: { id: 'processing_subtitles', label: 'Processing subtitles', order: 2.6 },
   TRANSLATING: { id: 'translating', label: 'Translating content', order: 3 },
   LOADING_IMAGES: { id: 'loading_images', label: 'Loading images', order: 4 },
   GENERATING: { id: 'generating', label: 'Generating document', order: 5 },
@@ -58,6 +74,43 @@ export function updateState(updates) {
     }
   }
   
+  // Protect progress from rolling back - progress should only increase
+  // Exception: allow 0% (reset) and 100% (completion) explicitly
+  if (updates.progress !== undefined && updates.progress !== null) {
+    const currentProgress = processingState.progress || 0;
+    const newProgress = updates.progress;
+    
+    // Allow explicit 0% (reset) or 100% (completion)
+    if (newProgress === 0 || newProgress === 100) {
+      // Allow these special values
+    } else if (newProgress < currentProgress) {
+      // Prevent progress rollback - use current progress instead
+      logWarn('Progress rollback prevented', { 
+        current: currentProgress, 
+        attempted: newProgress, 
+        difference: currentProgress - newProgress 
+      });
+      // Keep current progress, but still update other fields
+      updates = { ...updates };
+      delete updates.progress;
+      // Update other fields but keep current progress
+      processingState = { ...processingState, ...updates };
+      log('State updated (progress protected)', { 
+        status: updates.status, 
+        progress: currentProgress, 
+        stage: updates.stage 
+      });
+      
+      // Save to storage
+      if (processingState.isProcessing) {
+        chrome.storage.local.set({ 
+          processingState: { ...processingState, lastUpdate: Date.now() }
+        });
+      }
+      return;
+    }
+  }
+  
   processingState = { ...processingState, ...updates };
   log('State updated', { status: updates.status, progress: updates.progress, stage: updates.stage });
   
@@ -88,6 +141,9 @@ export function resetState() {
     completedStages: []
   };
   chrome.storage.local.remove(['processingState']);
+  
+  // Clear decrypted key cache for security
+  clearDecryptedKeyCache();
 }
 
 /**
@@ -111,12 +167,13 @@ export function isCancelled() {
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  * @returns {Object} Success response
  */
-export function cancelProcessing(stopKeepAlive) {
+export async function cancelProcessing(stopKeepAlive) {
   if (processingState.isProcessing) {
     processingState.isProcessing = false;
     processingState.isCancelled = true;
-    processingState.status = 'Cancelled';
-    processingState.error = 'Processing cancelled by user';
+    const uiLang = await getUILanguage();
+    processingState.status = tSync('statusCancelled', uiLang);
+    processingState.error = tSync('statusCancelled', uiLang);
     if (stopKeepAlive) stopKeepAlive();
   }
   return { success: true };
@@ -126,23 +183,34 @@ export function cancelProcessing(stopKeepAlive) {
  * Complete processing successfully
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  */
-export function completeProcessing(stopKeepAlive) {
+export async function completeProcessing(stopKeepAlive) {
   processingState.isProcessing = false;
   processingState.progress = 100;
-  processingState.status = 'Done!';
+  const uiLang = await getUILanguage();
+  processingState.status = tSync('statusDone', uiLang);
   if (stopKeepAlive) stopKeepAlive();
   chrome.storage.local.remove(['processingState']);
 }
 
 /**
  * Set processing error
- * @param {string} errorMessage - Error message
+ * @param {string|Object} error - Error message string or object with {message, code}
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  */
-export function setError(errorMessage, stopKeepAlive) {
+export async function setError(error, stopKeepAlive) {
   processingState.isProcessing = false;
-  processingState.error = errorMessage;
-  processingState.status = 'Error';
+  
+  // Support both string (backward compatibility) and object format
+  if (typeof error === 'string') {
+    processingState.error = error;
+    processingState.errorCode = ERROR_CODES.UNKNOWN_ERROR;
+  } else {
+    processingState.error = error.message || 'Unknown error';
+    processingState.errorCode = error.code || ERROR_CODES.UNKNOWN_ERROR;
+  }
+  
+  const uiLang = await getUILanguage();
+  processingState.status = tSync('statusError', uiLang);
   if (stopKeepAlive) stopKeepAlive();
   chrome.storage.local.remove(['processingState']);
 }
@@ -152,17 +220,20 @@ export function setError(errorMessage, stopKeepAlive) {
  * @param {Function} startKeepAlive - Function to start keep-alive
  * @returns {boolean} True if started, false if already processing
  */
-export function startProcessing(startKeepAlive) {
+export async function startProcessing(startKeepAlive) {
   if (processingState.isProcessing) {
     logWarn('Already processing, rejecting new request');
     return false;
   }
   
+  const uiLang = await getUILanguage();
+  const startingStatus = tSync('stageStarting', uiLang);
+  
   processingState = {
     isProcessing: true,
     isCancelled: false,
     progress: 0,
-    status: 'Starting...',
+    status: startingStatus,
     error: null,
     result: null,
     startTime: Date.now(),
@@ -176,30 +247,49 @@ export function startProcessing(startKeepAlive) {
 
 /**
  * Restore state from storage on service worker restart
+ * Non-blocking - uses setTimeout to avoid blocking service worker initialization
  */
 export function restoreStateFromStorage() {
-  chrome.storage.local.get(['processingState'], (result) => {
-    if (result.processingState && result.processingState.isProcessing) {
-      const savedState = result.processingState;
-      const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-      
-      // If state is stale (> 5 minutes), reset it
-      if (timeSinceUpdate > CONFIG.STATE_EXPIRY_MS) {
-        log('Stale processing state found, resetting', { timeSinceUpdate });
-        chrome.storage.local.remove(['processingState']);
-      } else {
-        log('Restored processing state from storage', savedState);
-        // Mark as error since we can't truly resume
-        processingState = {
-          isProcessing: false,
-          progress: savedState.progress,
-          status: 'Error',
-          error: 'Processing was interrupted. Please try again.',
-          result: null
-        };
+  // Use setTimeout to make this completely non-blocking
+  setTimeout(async () => {
+    try {
+      const result = await chrome.storage.local.get(['processingState']);
+      if (result.processingState && result.processingState.isProcessing) {
+        const savedState = result.processingState;
+        const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
+        
+        // If state is stale (> 5 minutes), reset it
+        if (timeSinceUpdate > CONFIG.STATE_EXPIRY_MS) {
+          log('Stale processing state found, resetting', { timeSinceUpdate });
+          await chrome.storage.local.remove(['processingState']);
+        } else {
+          log('Restored processing state from storage', savedState);
+          // Mark as error since we can't truly resume
+          // Use sync fallback to avoid async issues during initialization
+          processingState = {
+            isProcessing: false,
+            progress: savedState.progress,
+            status: 'Error',
+            error: 'Processing was interrupted. Please try again.',
+            result: null
+          };
+          // Try to get localized message asynchronously (non-blocking)
+          try {
+            const uiLang = await getUILanguage();
+            const errorStatus = tSync('statusError', uiLang);
+            const errorMsg = tSync('statusProcessingInterrupted', uiLang);
+            processingState.status = errorStatus;
+            processingState.error = errorMsg;
+          } catch (localeError) {
+            // Keep fallback values if locale fails
+            logWarn('Failed to localize error message', localeError);
+          }
+        }
       }
+    } catch (error) {
+      logWarn('Error in restoreStateFromStorage', error);
     }
-  });
+  }, 0);
 }
 
 

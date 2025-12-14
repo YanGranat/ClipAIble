@@ -64,7 +64,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
         
           // If not ok and retryable, throw error for retry logic
           if (!fetchResponse.ok) {
-            const retryableCodes = [429, 500, 502, 503, 504];
+            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
@@ -177,37 +177,64 @@ Translate text from ANY language to ${targetLang}.
 If there are diagrams, charts, infographics, or labels - translate those too.`;
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${decryptedKey}`,
+    // Wrap fetch with retry mechanism for reliability (429/5xx errors)
+    const response = await callWithRetry(
+      async () => {
+        const fetchResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${decryptedKey}`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  {
+                    inline_data: {
+                      mime_type: mimeType,
+                      data: base64Data
+                    }
+                  },
+                  {
+                    text: prompt
+                  }
+                ]
+              }]
+            })
+          }
+        );
+
+        // If response is not ok and status is retryable, throw error
+        if (!fetchResponse.ok) {
+          const retryableCodes = [429, 500, 502, 503, 504];
+          if (retryableCodes.includes(fetchResponse.status)) {
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          // Non-retryable error (e.g., 401, 403) - throw immediately
+          const errorText = await fetchResponse.text().catch(() => 'Unknown error');
+          logWarn('Gemini API error', { status: fetchResponse.status, error: errorText });
+          const error = new Error(`HTTP ${fetchResponse.status}`);
+          error.status = fetchResponse.status;
+          throw error;
+        }
+        
+        return fetchResponse;
+      },
       {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: base64Data
-                }
-              },
-              {
-                text: prompt
-              }
-            ]
-          }]
-        })
+        maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+        delays: CONFIG.RETRY_DELAYS,
+        retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
       }
     );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      logWarn('Gemini API error', { status: response.status, error: errorText });
-      return null;
-    }
-
+    // If we get here, retry succeeded or non-retryable error was thrown
+    // For non-retryable errors (401, 403, etc.), retry throws immediately, so we won't reach here
+    // For retryable errors that failed after all retries, retry throws, so we won't reach here
+    // So if we get here, response should be ok
     const data = await response.json();
     
     // Extract the generated image from response

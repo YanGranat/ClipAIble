@@ -4,7 +4,7 @@ export const CONFIG = {
   // Content processing
   CHUNK_SIZE: 50000,              // Characters per chunk for AI extraction
   CHUNK_OVERLAP: 3000,            // Overlap between chunks to avoid cut-off content
-  MAX_HTML_FOR_ANALYSIS: 500000,  // Max chars to send to AI for selector analysis
+  MAX_HTML_FOR_ANALYSIS: 480000,  // Max chars to send to AI for selector analysis (reduced to account for system prompt ~15k + user prompt prefix ~5k)
   TRANSLATION_CHUNK_SIZE: 20000,  // Characters per translation batch
   
   // Timeouts
@@ -12,18 +12,30 @@ export const CONFIG = {
   STATE_EXPIRY_MS: 5 * 60 * 1000, // 5 minutes - stale state threshold
   
   // Keep-alive
-  KEEP_ALIVE_INTERVAL: 0.33,      // Minutes (20 seconds) - must be < 0.5 for MV3
+  KEEP_ALIVE_INTERVAL: 1,         // Minutes (>=1 min per MV3 requirement)
   
   // Polling
   POLL_INTERVAL_IDLE: 1000,       // ms - polling interval when idle
-  POLL_INTERVAL_PROCESSING: 300   // ms - polling interval when processing
+  POLL_INTERVAL_PROCESSING: 300,  // ms - polling interval when processing
+  
+  // Retry configuration
+  RETRY_MAX_ATTEMPTS: 3,          // Maximum number of retry attempts
+  RETRY_DELAYS: [1000, 2000, 4000], // Exponential backoff delays in ms
+  RETRYABLE_STATUS_CODES: [429, 500, 502, 503, 504], // HTTP status codes that trigger retry
+  
+  // Default values
+  DEFAULT_AUDIO_VOICE: 'nova',    // Default OpenAI TTS voice
+  DEFAULT_AUDIO_SPEED: 1.0,       // Default audio playback speed
+  DEFAULT_AUDIO_FORMAT: 'mp3',    // Default audio format
+  DEFAULT_ELEVENLABS_MODEL: 'eleven_v3', // Default ElevenLabs model
+  DEFAULT_RESPEECHER_VOICE: 'samantha',  // Default Respeecher English voice
 };
 
 // Language names for translation
 export const LANGUAGE_NAMES = {
   'en': 'English',
   'ru': 'Russian',
-  'uk': 'Ukrainian',
+  'ua': 'Ukrainian',
   'de': 'German',
   'fr': 'French',
   'es': 'Spanish',
@@ -38,7 +50,7 @@ export const LANGUAGE_NAMES = {
 export const HELLO_WORLD_EXAMPLES = {
   'en': 'Hello world',
   'ru': 'Привет мир',
-  'uk': 'Привіт світ',
+  'ua': 'Привіт світ',
   'de': 'Hallo Welt',
   'fr': 'Bonjour le monde',
   'es': 'Hola mundo',
@@ -58,7 +70,8 @@ export const PDF_LOCALIZATION = {
     date: 'Date',
     source: 'Source',
     author: 'Author',
-    abstract: 'Abstract'
+    abstract: 'Abstract',
+    footnotes: 'Footnotes'
   },
   'ru': {
     originalArticle: 'Оригинал статьи',
@@ -67,16 +80,18 @@ export const PDF_LOCALIZATION = {
     date: 'Дата',
     source: 'Источник',
     author: 'Автор',
-    abstract: 'Резюме'
+    abstract: 'Резюме',
+    footnotes: 'Сноски'
   },
-  'uk': {
+  'ua': {
     originalArticle: 'Оригінал статті',
     words: 'слів',
     contents: 'Зміст',
     date: 'Дата',
     source: 'Джерело',
     author: 'Автор',
-    abstract: 'Резюме'
+    abstract: 'Резюме',
+    footnotes: 'Виноски'
   },
   'de': {
     originalArticle: 'Originalartikel',
@@ -85,7 +100,8 @@ export const PDF_LOCALIZATION = {
     date: 'Datum',
     source: 'Quelle',
     author: 'Autor',
-    abstract: 'Zusammenfassung'
+    abstract: 'Zusammenfassung',
+    footnotes: 'Fußnoten'
   },
   'fr': {
     originalArticle: 'Article original',
@@ -94,7 +110,8 @@ export const PDF_LOCALIZATION = {
     date: 'Date',
     source: 'Source',
     author: 'Auteur',
-    abstract: 'Résumé'
+    abstract: 'Résumé',
+    footnotes: 'Notes'
   },
   'es': {
     originalArticle: 'Artículo original',
@@ -103,7 +120,8 @@ export const PDF_LOCALIZATION = {
     date: 'Fecha',
     source: 'Fuente',
     author: 'Autor',
-    abstract: 'Resumen'
+    abstract: 'Resumen',
+    footnotes: 'Notas'
   },
   'it': {
     originalArticle: 'Articolo originale',
@@ -112,7 +130,8 @@ export const PDF_LOCALIZATION = {
     date: 'Data',
     source: 'Fonte',
     author: 'Autore',
-    abstract: 'Riassunto'
+    abstract: 'Riassunto',
+    footnotes: 'Note'
   },
   'pt': {
     originalArticle: 'Artigo original',
@@ -121,7 +140,8 @@ export const PDF_LOCALIZATION = {
     date: 'Data',
     source: 'Fonte',
     author: 'Autor',
-    abstract: 'Resumo'
+    abstract: 'Resumo',
+    footnotes: 'Notas de rodapé'
   },
   'zh': {
     originalArticle: '原文',
@@ -130,7 +150,8 @@ export const PDF_LOCALIZATION = {
     date: '日期',
     source: '来源',
     author: '作者',
-    abstract: '摘要'
+    abstract: '摘要',
+    footnotes: '脚注'
   },
   'ja': {
     originalArticle: '元の記事',
@@ -139,7 +160,8 @@ export const PDF_LOCALIZATION = {
     date: '日付',
     source: '出典',
     author: '著者',
-    abstract: '要約'
+    abstract: '要約',
+    footnotes: '脚注'
   },
   'ko': {
     originalArticle: '원본 기사',
@@ -148,7 +170,8 @@ export const PDF_LOCALIZATION = {
     date: '날짜',
     source: '출처',
     author: '저자',
-    abstract: '요약'
+    abstract: '요약',
+    footnotes: '각주'
   },
   'auto': {
     originalArticle: 'Original article',
@@ -157,7 +180,8 @@ export const PDF_LOCALIZATION = {
     date: 'Date',
     source: 'Source',
     author: 'Author',
-    abstract: 'Abstract'
+    abstract: 'Abstract',
+    footnotes: 'Footnotes'
   }
 };
 
@@ -169,13 +193,13 @@ export const NO_TRANSLATION_MARKER = '[NO_TRANSLATION_NEEDED]';
 
 /**
  * Get locale string from language code
- * @param {string} langCode - Language code (e.g., 'ru', 'en', 'uk')
+ * @param {string} langCode - Language code (e.g., 'ru', 'en', 'ua')
  * @returns {string} Locale string (e.g., 'ru-RU', 'en-US')
  */
 export function getLocaleFromLanguage(langCode) {
   const localeMap = {
     'ru': 'ru-RU',
-    'uk': 'uk-UA',
+    'ua': 'uk-UA',
     'en': 'en-US',
     'de': 'de-DE',
     'fr': 'fr-FR',
@@ -201,30 +225,122 @@ export function getLocaleFromLanguage(langCode) {
  * @param {string} localeOrLang - Locale (e.g., 'ru-RU') or language code (e.g., 'ru')
  * @returns {string} Formatted date string
  */
+/**
+ * Format date for display in target locale
+ * @param {string} dateStr - Date string (preferably ISO format YYYY-MM-DD, YYYY-MM, or YYYY, but supports legacy formats)
+ * @param {string} localeOrLang - Locale code (e.g., 'ru-RU') or language code (e.g., 'ru')
+ * @returns {string} Formatted date string
+ */
 export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
   if (!dateStr) return '';
   
   // Convert language code to locale if needed
   const locale = localeOrLang.includes('-') ? localeOrLang : getLocaleFromLanguage(localeOrLang);
   
-  // Check if it's an ISO format date
-  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})(T|$)/);
-  if (!isoMatch) {
-    // Not ISO format, return as-is
-    return dateStr;
+  // Primary path: ISO format (YYYY-MM-DD, YYYY-MM, or YYYY) - this is what AI should return now
+  // Full date: YYYY-MM-DD
+  const fullDateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})(T|$)/);
+  if (fullDateMatch) {
+    try {
+      const year = parseInt(fullDateMatch[1], 10);
+      const month = parseInt(fullDateMatch[2], 10) - 1; // JS months are 0-indexed
+      const day = parseInt(fullDateMatch[3], 10);
+      const date = new Date(Date.UTC(year, month, day));
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+      }
+    } catch (e) {
+      // Fallback below
+    }
   }
   
+  // Year and month: YYYY-MM
+  const yearMonthMatch = dateStr.match(/^(\d{4})-(\d{2})$/);
+  if (yearMonthMatch) {
+    try {
+      const year = parseInt(yearMonthMatch[1], 10);
+      const month = parseInt(yearMonthMatch[2], 10) - 1;
+      const date = new Date(Date.UTC(year, month, 1));
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleDateString(locale, { year: 'numeric', month: 'long' });
+      }
+    } catch (e) {
+      // Fallback below
+    }
+  }
+  
+  // Year only: YYYY
+  const yearOnlyMatch = dateStr.match(/^(\d{4})$/);
+  if (yearOnlyMatch) {
+    return yearOnlyMatch[1];
+  }
+  
+  // Legacy support: Try to parse various date formats (for backward compatibility)
+  // Try common English formats with ordinals (e.g., "31st Jul 2007")
+  const ordinalMatch = dateStr.match(/^(\d{1,2})(st|nd|rd|th)?\s+([A-Za-z]{3,})\.?,?\s+(\d{4})/);
+  if (ordinalMatch) {
+    const day = parseInt(ordinalMatch[1], 10);
+    const monthName = ordinalMatch[3].toLowerCase();
+    const year = parseInt(ordinalMatch[4], 10);
+    const monthMap = {
+      jan: 0, january: 0,
+      feb: 1, february: 1,
+      mar: 2, march: 2,
+      apr: 3, april: 3,
+      may: 4,
+      jun: 5, june: 5,
+      jul: 6, july: 6,
+      aug: 7, august: 7,
+      sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9,
+      nov: 10, november: 10,
+      dec: 11, december: 11
+    };
+    const month = monthMap[monthName];
+    if (month !== undefined) {
+      const date = new Date(Date.UTC(year, month, day));
+      return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+  }
+  
+  // Legacy support: Try format without ordinals (e.g., "Dec 8, 2025")
+  const shortMatch = dateStr.match(/^([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s+(\d{4})/);
+  if (shortMatch) {
+    const monthName = shortMatch[1].toLowerCase();
+    const day = parseInt(shortMatch[2], 10);
+    const year = parseInt(shortMatch[3], 10);
+    const monthMap = {
+      jan: 0, january: 0,
+      feb: 1, february: 1,
+      mar: 2, march: 2,
+      apr: 3, april: 3,
+      may: 4,
+      jun: 5, june: 5,
+      jul: 6, july: 6,
+      aug: 7, august: 7,
+      sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9,
+      nov: 10, november: 10,
+      dec: 11, december: 11
+    };
+    const month = monthMap[monthName];
+    if (month !== undefined) {
+      const date = new Date(Date.UTC(year, month, day));
+      return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+  }
+  
+  // Fallback: Try native Date parsing
   try {
     const date = new Date(dateStr);
     if (!isNaN(date.getTime())) {
-      const options = { year: 'numeric', month: 'long', day: 'numeric' };
-      return date.toLocaleDateString(locale, options);
+      return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
     }
   } catch (e) {
-    // Fallback to simple format
+    // Fallback to returning as-is
   }
   
-  // Fallback: extract date parts
-  return `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]}`;
+  // Last resort: return as-is (shouldn't happen with proper ISO format from AI)
+  return dateStr;
 }
 

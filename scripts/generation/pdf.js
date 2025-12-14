@@ -7,6 +7,8 @@ import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { translateMetadata } from '../translation/index.js';
 import { saveLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
+import { getUILanguage, tSync } from '../locales.js';
+import { PROCESSING_STAGES } from '../state/processing.js';
 
 /**
  * Generate PDF from content
@@ -128,7 +130,10 @@ export async function generatePdf(data, updateState) {
     log('HTML built', { length: htmlContent.length, tocEnabled: generateToc, headingsCount: headings.length });
     
     if (updateState) {
-      updateState({ stage: 'loading_images', status: 'Loading images...', progress: 82 });
+      // Get localized status
+      const uiLang = await getUILanguage();
+      const loadingStatus = tSync('stageLoadingImages', uiLang);
+      updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 82 });
     }
     
     log('Embedding images...');
@@ -253,13 +258,45 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     
     log('Downloading PDF...', { filename });
     
-    const downloadId = await chrome.downloads.download({
-      url: 'data:application/pdf;base64,' + pdfData,
-      filename: filename,
-      saveAs: true
-    });
-    
-    log('Download started', { downloadId });
+    // Convert base64 to blob and use object URL when available; fallback to data URL in SW
+    const binary = Uint8Array.from(atob(pdfData), c => c.charCodeAt(0));
+    const blob = new Blob([binary], { type: 'application/pdf' });
+    const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
+      ? URL
+      : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
+
+    if (urlApi && urlApi.createObjectURL) {
+      const objectUrl = urlApi.createObjectURL(blob);
+      
+      const downloadId = await chrome.downloads.download({
+        url: objectUrl,
+        filename: filename,
+        saveAs: true
+      });
+      
+      log('Download started', { downloadId, size: blob.size });
+      
+      // Revoke URL after a short delay to ensure download starts
+      setTimeout(() => {
+        urlApi.revokeObjectURL(objectUrl);
+      }, 5000);
+    } else {
+      // Fallback for MV3 service worker without createObjectURL
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const downloadId = await chrome.downloads.download({
+        url: dataUrl,
+        filename: filename,
+        saveAs: true
+      });
+
+      log('Download started (data URL fallback)', { downloadId, size: blob.size });
+    }
     
     // Close the print tab
     setTimeout(async () => {

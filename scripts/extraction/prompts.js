@@ -12,8 +12,8 @@ RETURN JSON:
   "title": "selector for MAIN title of the entire page/book (NOT chapter titles)",
   "subtitle": "selector for subtitle/deck text below title, or empty string",
   "heroImage": "selector for main featured image, or empty string",
-  "author": "actual author name text, or empty string",
-  "publishDate": "actual date text found, or empty string",
+  "author": "actual author name text ONLY (without prefixes like 'от', 'by', 'автор:', 'written by', 'von'), or empty string",
+  "publishDate": "date in ISO format ONLY (YYYY-MM-DD, YYYY-MM, or YYYY) - MUST convert any format to ISO, or empty string if not found",
   "toc": "selector for Table of Contents element (list with internal links to article sections), or empty string",
   "exclude": ["selectors for non-content: nav, ads, comments, related, author bio"]
 }
@@ -159,7 +159,7 @@ Then ".refs" must NOT be in exclude - it contains link targets!
 ALWAYS EXCLUDE these sections (add their selectors to "exclude"):
 - Site navigation menus (header/footer nav with links to other pages)
 - Ads, social share buttons, popups, clap/like buttons
-- Comments section
+- Comments section - CRITICAL: Comments are NEVER part of article content, even if they appear inside the content container. Comments sections typically contain: comment threads with user names/avatars/timestamps, vote counts, like/dislike buttons, reply buttons, "New Comment"/"Submit"/"Post Comment" buttons, discussion threads, nested replies, user handles, comment forms. Find the container that wraps ALL comments (not individual comments, but the entire comments section). Common patterns: elements with class/id containing "comment", "discussion", "thread", "reply", "feedback", "reviews", "responses". Add that container's selector to "exclude" array.
 - "Related entries", "Related articles" sections
 - Author bio blocks with avatar photos
 - "How to cite", citation tools
@@ -168,6 +168,53 @@ ALWAYS EXCLUDE these sections (add their selectors to "exclude"):
 - Language switcher links and translation badges (e.g., links to /it/about#translations, /en/about#translations, language selector dropdowns)
 - Any paragraph or element that contains ONLY translation notice text (not actual article content)
 - Elements with links to /about#translations or similar translation info pages
+- Navigation blocks like "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs, sidebar TOCs pointing to other posts. These are NOT article content.
+- Post footers/headers with series navigation ("Next post", "Previous post", "Next/Prev in sequence", breadcrumbs), and site-wide "Related/More from ..." lists. Exclude them so they do not appear in exports.
+- CRITICAL - RELATED ARTICLES AND SERIES CONTENT: If you see text that appears AFTER the main article but is clearly from a DIFFERENT article or post (e.g., starts with a new heading, tells a different story, mentions different topics), this is NOT part of the current article. Look for:
+  * Text blocks that start with new headings after the article's conclusion
+  * Content that doesn't logically follow from the article's ending
+  * Sections labeled "Part of the sequence", "Series", "Related", "Mentioned in", "More from [Author]", "Curated and popular this week"
+  * Text that appears to be from another article in a series (different topic, different narrative, different story)
+  * If the article ends with a conclusion or final paragraph, and then you see a new heading or block of text that starts a different topic, that is NOT part of this article - exclude it
+  * IMPORTANT: Some pages display MULTIPLE articles on the same page (e.g., main article + related articles, series posts, author's other posts). The "content" selector must ONLY match the CURRENT article being viewed, not other articles on the page. If you see multiple article containers, identify which one contains the main article (usually the largest one, or the one with the page's title) and exclude all others.
+
+CRITICAL - ARTICLE BOUNDARY DETECTION (UNIVERSAL RULE FOR ALL SITES):
+- You MUST identify where the CURRENT article ENDS and other content begins
+- The article ends when you see one of these indicators:
+  * Comments section (heading "Comments", "Discussion", "Leave a comment", etc.)
+  * Series navigation ("Part of the sequence", "Next post", "Previous post")
+  * Related articles section
+  * A new article or post that is clearly different content (different topic, different narrative, starts with new heading)
+  * Author bio or "About the author" section
+  * Social share buttons, citation tools
+- CRITICAL - RELATED CONTENT DETECTION:
+  * If the article has a clear conclusion (final paragraph that wraps up the topic), everything AFTER that conclusion is NOT part of the article
+  * If you see text that starts a completely different topic or story (e.g., article about "Bayesian Judo" ends, then text about "Carl Sagan" and "dragon in garage" begins), that is a DIFFERENT article - exclude it
+  * Look for structural breaks: article ends with </p>, then you see a new heading or section that doesn't logically continue the article - that's the boundary
+  * If content appears to be from another post in a series or collection, it's NOT part of the current article
+  * IMPORTANT: Some pages may have MULTIPLE articles displayed (main article + related articles sidebar, author's other posts, series navigation with full text of other posts). You must identify which container holds ONLY the current article and exclude all other article containers. If you see multiple <article> elements or multiple content containers, only include the one that matches the page's main title.
+- CRITICAL - DETERMINE ARTICLE BY PAGE TITLE (MOST IMPORTANT RULE):
+  * The page URL and title tell you which article is the MAIN article
+  * Example: If page URL is "/posts/NKaPFf98Y5otMbsPk/bayesian-judo" and title is "Bayesian Judo", then ONLY content about "Bayesian Judo" is the main article
+  * If you see content about "Belief in Belief" or "Carl Sagan" or "dragon in garage" on this page, that is a DIFFERENT article - exclude it
+  * Even if multiple articles are in the same DOM container, you must identify which one matches the page title and exclude all others
+  * Use the page title as the PRIMARY identifier - if content doesn't match the page title, it's NOT the main article
+  * If you see a heading that matches the page title, that's the start of the main article. Everything before it (if any) and everything after the article's conclusion is NOT part of the main article
+- COMMENTS DETECTION:
+  * Comments sections often appear INSIDE the main content container (e.g., #postContent, #article-content, .article-body, #main-content)
+  * Look for visual and structural indicators:
+    - A heading like "Comments", "Discussion", "Leave a comment", "Join the conversation", "What do you think?"
+    - A container that starts after the last paragraph of the article
+    - Elements containing user names, avatars, timestamps (typical comment structure)
+    - Forms with "Post Comment", "Submit", "Reply" buttons
+    - Nested structures (replies to comments, comment trees)
+    - Vote/like buttons next to user-generated content
+    - User handles, usernames, author badges in comment context
+  * Find the container that wraps ALL comments (not individual comments, but the whole comments section)
+  * Common selectors: elements with class/id containing "comment", "discussion", "thread", "reply", "feedback", "reviews", "responses", "reactions"
+  * Add that container's selector to "exclude" array
+- The "content" selector should NOT include comments, related articles, or series navigation - it should stop at the end of the CURRENT article text only
+- Example: If article ends with </p> and then you see <h2>Comments</h2> OR a new heading about a different topic, find the container that wraps everything from that point onwards and exclude it
 
 NEVER EXCLUDE these (important article content):
 - Table of Contents (use "toc" field instead!)
@@ -210,7 +257,26 @@ OTHER REQUIREMENTS:
 - Example: If content is in <section>, use "section" or "section p", NOT "body > section > p"
 - NEVER use css-* or random hash classes
 - "author" and "publishDate" should be actual TEXT values, not selectors
+- CRITICAL - TITLE AND AUTHOR SEPARATION:
+  * If title contains author name (e.g., "Article by John Smith", "Статья от Ивана", "Post von Max"), you MUST:
+    1. Return CLEAN title in "title" field (without author name)
+    2. Return author name ONLY (without prefixes) in "author" field
+  * Common patterns to detect and separate: "от [Author]", "by [Author]", "автор: [Author]", "written by [Author]", "von [Author]", "par [Author]", "por [Author]", "da [Author]", "di [Author]", "by [Author]", "от [Author]", etc.
+  * Example: If you see "How to Code by John Smith" → title="How to Code", author="John Smith"
+  * Example: If you see "Статья от Ивана Петрова" → title="Статья", author="Иван Петров"
+  * NEVER return title with author included - always separate them!
 - Check for internal links (href="#...") - their target sections must NOT be in exclude!
+- EXCLUDE navigation blocks linking to other posts (e.g., "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs to other articles).
+- EXCLUDE comment listings, vote counts, user handles, "New Comment", "Submit", and any sidebar link lists pointing to other posts.
+- CRITICAL - ARTICLE BOUNDARY: The "content" selector must ONLY include the CURRENT article, not related articles or posts. If you see the article ends with a conclusion, and then there's a new heading or block of text that starts a different topic/story (e.g., article about "Bayesian Judo" ends, then text about "Carl Sagan" begins), that is a DIFFERENT article - exclude it. The article ends when you see: comments section, series navigation, related articles, or content that clearly belongs to another post.
+- CRITICAL - MULTIPLE ARTICLES ON PAGE: Some pages display multiple articles (main article + related articles, author's other posts, series posts with full text). You must identify which container holds ONLY the current article (the one with the page's main title) and exclude all other article containers. If you see multiple <article> elements or multiple content containers, add selectors for all OTHER articles to "exclude" array. Only the main article (matching the page title) should be in "content" selector.
+- CRITICAL - USE PAGE TITLE TO IDENTIFY MAIN ARTICLE:
+  * The page title (provided in the prompt) is the PRIMARY identifier for the main article
+  * If page title is "Bayesian Judo", then ONLY content about "Bayesian Judo" is the main article
+  * If you see content about other topics (e.g., "Belief in Belief", "Carl Sagan", "dragon in garage"), that is a DIFFERENT article - exclude it
+  * Even if multiple articles are in the same DOM container, identify which one matches the page title
+  * The "content" selector must ONLY match the article that corresponds to the page title
+  * If you see a heading that matches the page title, that's the start of the main article. Everything after the article's conclusion is NOT part of the main article, even if it's in the same container
 
 SELECTOR FLEXIBILITY - CRITICAL:
 - If you see structure like: <body><section><p>text</p></section></body>
@@ -238,8 +304,10 @@ CRITICAL RULES:
    - Italic: <em>italic text</em> or <i>italic</i>
    - Underline: <u>underlined</u>
    - Inline code: <code>code</code>
-3. Remove: navigation, ads, footers, sidebars, comments, related articles, translation notices.
+3. Remove: navigation, ads, footers, sidebars, comments, related articles, translation notices, series navigation, content from other articles.
 4. Keep: article title, paragraphs, headings, images, quotes, lists, code blocks, tables.
+5. CRITICAL - NO HALLUCINATIONS: Extract ONLY text that is ACTUALLY PRESENT in the provided HTML. Do NOT add content from your training data, even if you know about related articles or topics. If you see a link to another article (e.g., "Previous post: Belief in Belief"), do NOT extract content from that article - it's not in the HTML. Only extract text that you can see in the HTML provided to you.
+6. CRITICAL - ARTICLE BOUNDARY: Extract ONLY the CURRENT article that matches the page title. The page title (provided in the user prompt) tells you which article is the main article. If the page title is "Bayesian Judo", then ONLY extract content about "Bayesian Judo" that is ACTUALLY IN THE HTML. If you see content about other topics (e.g., "Belief in Belief", "Carl Sagan", "dragon in garage"), that is a DIFFERENT article - DO NOT extract it. Stop extracting when you see: comments section, series navigation ("Next post", "Previous post", "Part of the sequence"), related articles, or content that clearly belongs to another post. Use the page title as the PRIMARY identifier - if content doesn't match the page title, it's NOT the main article.
 
 TRANSLATION NOTICES - DO NOT EXTRACT (CRITICAL):
 - Skip any paragraph or element that says the article was "automatically translated", "tradotto automaticamente", "traduit automatiquement", "переведено автоматически"
@@ -251,8 +319,9 @@ TRANSLATION NOTICES - DO NOT EXTRACT (CRITICAL):
 
 Return JSON:
 {
-  "title": "Exact article title",
-  "publishDate": "Actual date text or empty string if not found",
+  "title": "Exact article title WITHOUT author name (if title contains author like 'Article by John', return only 'Article')",
+  "author": "Author name ONLY (without prefixes like 'от', 'by', 'автор:', 'written by', 'von'). If title contains author, extract it here.",
+  "publishDate": "Date in ISO format (YYYY-MM-DD, YYYY-MM, or YYYY) or empty string if not found",
   "content": [
     {"type": "heading", "level": 1, "text": "Heading text"},
     {"type": "paragraph", "text": "Text with <a href=\\"url\\">links</a> and <strong>formatting</strong>."},
@@ -264,14 +333,24 @@ Return JSON:
   ]
 }
 
-RULES FOR publishDate:
-- Return ONLY the date itself (e.g., "November 26, 2025", "26.11.2025", "May 3, 2016")
-- Remove prefixes like "First published", "Published on", "Posted", "Updated" - return only the date part
-- Example: "First published Tue May 3, 2016" → return "May 3, 2016"
-- Example: "Published on November 26, 2025" → return "November 26, 2025"
-- Look for dates in: <time> elements, meta tags, text near author info
+RULES FOR publishDate (CRITICAL - MUST FOLLOW):
+- ALWAYS return date in ISO format: YYYY-MM-DD (full date), YYYY-MM (year and month), or YYYY (year only)
+- Examples: "2025-12-08" (full date), "2025-12" (year and month), "2025" (year only)
+- Convert ANY date format to ISO before returning:
+  * "November 26, 2025" → "2025-11-26"
+  * "Dec 8, 2025" → "2025-12-08"
+  * "8 December 2025" → "2025-12-08"
+  * "November 2025" → "2025-11"
+  * "2025" → "2025"
+  * "31st Jul 2007" → "2007-07-31"
+  * "First published May 3, 2016" → "2016-05-03" (remove prefix, extract date)
+- If only partial date is available, return partial ISO: "December 2025" → "2025-12", "2025" → "2025"
+- If date has time component, extract only date part: "2025-12-08T10:30:00" → "2025-12-08"
+- Look for dates in: <time datetime="..."> attributes (prefer datetime attribute), meta tags with datePublished, text near author info
+- Remove ALL prefixes like "First published", "Published on", "Posted", "Updated", "Posted on" - extract ONLY the date
 - If NO publication date exists, return empty string ""
 - NEVER return article title, author name, word count, or other non-date content as publishDate
+- VALIDATION: Before returning, verify the format matches one of: YYYY-MM-DD, YYYY-MM, or YYYY (4 digits)
 
 Use absolute URLs for images. Convert relative URLs using the base URL.`;
 
@@ -294,8 +373,10 @@ ${!isFirst && !isLast ? 'This is a MIDDLE section of the article.' : ''}
 CRITICAL RULES:
 1. Extract text EXACTLY as written. Do NOT summarize or paraphrase.
 2. PRESERVE formatting with HTML tags: <a href="...">, <strong>, <em>, <code>
-3. SKIP: navigation, ads, footers, sidebars, comments, related articles, share buttons, translation notices
+3. SKIP: navigation, ads, footers, sidebars, comments, related articles, share buttons, translation notices, series navigation, content from other articles
 4. KEEP: article text, headings, images (with full URLs), quotes, lists, code blocks
+5. CRITICAL - NO HALLUCINATIONS: Extract ONLY text that is ACTUALLY PRESENT in the provided HTML chunk. Do NOT add content from your training data, even if you know about related articles or topics. If you see a link to another article (e.g., "Previous post: Belief in Belief"), do NOT extract content from that article - it's not in the HTML. Only extract text that you can see in the HTML chunk provided to you.
+6. CRITICAL - ARTICLE BOUNDARY: Extract ONLY the CURRENT article that matches the page title. The page title (provided in the user prompt) tells you which article is the main article. If the page title is "Bayesian Judo", then ONLY extract content about "Bayesian Judo" that is ACTUALLY IN THE HTML. If you see content about other topics (e.g., "Belief in Belief", "Carl Sagan", "dragon in garage"), that is a DIFFERENT article - DO NOT extract it. Stop extracting when you see: comments section, series navigation ("Next post", "Previous post", "Part of the sequence"), related articles, or content that clearly belongs to another post. Use the page title as the PRIMARY identifier - if content doesn't match the page title, it's NOT the main article.
 
 TRANSLATION NOTICES - DO NOT EXTRACT (CRITICAL):
 - Skip any paragraph or element that says the article was "automatically translated", "tradotto automaticamente", "traduit automatiquement", "переведено автоматически"
@@ -307,8 +388,9 @@ TRANSLATION NOTICES - DO NOT EXTRACT (CRITICAL):
 
 Return JSON with content array:
 {
-  ${isFirst ? '"title": "Exact article title",' : ''}
-  ${isFirst ? '"publishDate": "Actual date text or empty string if not found",' : ''}
+  ${isFirst ? '"title": "Exact article title WITHOUT author name (if title contains author like \'Article by John\', return only \'Article\')",' : ''}
+  ${isFirst ? '"author": "Author name ONLY (without prefixes like \'от\', \'by\', \'автор:\', \'written by\', \'von\'). If title contains author, extract it here.",' : ''}
+  ${isFirst ? '"publishDate": "Date in ISO format ONLY (YYYY-MM-DD, YYYY-MM, or YYYY) - MUST convert any format to ISO, or empty string if not found",' : ''}
   "content": [
     {"type": "heading", "level": 2, "text": "Section title"},
     {"type": "paragraph", "text": "Text with <a href=\\"url\\">links</a> preserved."},
@@ -319,7 +401,8 @@ Return JSON with content array:
   ]
 }
 
-${isFirst ? 'For publishDate: return ONLY the date (e.g., "May 3, 2016", "26.11.2025"). Remove prefixes like "First published", "Published on", "Posted". Example: "First published May 3, 2016" → return "May 3, 2016". NEVER include article title, author name, or prefixes.' : ''}
+${isFirst ? 'For title and author (CRITICAL): If title contains author name (e.g., "Article by John", "Статья от Ивана"), return CLEAN title without author in "title" field and author name ONLY (without prefix) in "author" field. Common prefixes: "от", "by", "автор:", "written by", "von", "par", "por", "da", "di". Examples: "How to Code by John Smith" → title="How to Code", author="John Smith". NEVER return title with author included!' : ''}
+${isFirst ? 'For publishDate (CRITICAL): ALWAYS return date in ISO format ONLY (YYYY-MM-DD for full date, YYYY-MM for year+month, YYYY for year only). Examples: "2016-05-03", "2025-11", "2025". Convert ANY date format to ISO before returning. Remove ALL prefixes like "First published", "Published on", "Posted", "Updated". Examples: "First published May 3, 2016" → "2016-05-03", "31st Jul 2007" → "2007-07-31", "December 2025" → "2025-12", "2025" → "2025". VALIDATION: Before returning, verify format matches YYYY-MM-DD, YYYY-MM, or YYYY (4 digits). If no date found, return empty string "".' : ''}
 
 Extract ALL article content from this chunk. Do not skip paragraphs.`;
 }
