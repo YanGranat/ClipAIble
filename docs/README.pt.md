@@ -1,10 +1,12 @@
 # ✂️ ClipAIble
 
-> **Extrator de artigos com IA** — Salve qualquer artigo da web como PDF, EPUB, FB2, Markdown ou Áudio. Tradução para 11 idiomas. Funciona em qualquer site.
+> **Extrator de artigos com IA** — Salve qualquer artigo da web como PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT ou Áudio. Tradução para 11 idiomas. Funciona em qualquer site.
 
 ![Versão](https://img.shields.io/badge/versão-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensão-green)
 ![Licença](https://img.shields.io/badge/licença-MIT-brightgreen)
+
+**[⬇️ Instalar do Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
 
 ---
 
@@ -16,6 +18,9 @@ ClipAIble usa inteligência artificial para extrair inteligentemente o conteúdo
 - 📚 **EPUB** — Compatível com Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatível com PocketBook, FBReader
 - 📝 **Markdown** — Texto simples para notas
+- 📘 **DOCX** — Formato Microsoft Word com imagens e formatação
+- 🌐 **HTML** — Arquivo HTML limpo com estilos preservados
+- 📄 **TXT** — Texto simples sem formatação
 - 🎧 **Áudio (MP3/WAV)** — Ouça com narração de IA
 
 Todos os formatos suportam **tradução para 11 idiomas** — até mesmo tradução de texto em imagens!
@@ -50,6 +55,11 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 - **Cores personalizáveis**: Fundo, texto, cabeçalhos, links
 - **11 fontes** para escolher
 - **Modos de página**: Página única contínua ou formato multi-página A4
+
+### 📄 Formatos de documentos
+- **DOCX**: Formato Microsoft Word com imagens incorporadas e formatação preservada
+- **HTML**: Arquivo HTML limpo e autônomo com estilos e imagens incorporados
+- **TXT**: Texto simples sem formatação, perfeito para extração de texto simples
 
 ### ⚡ Recursos inteligentes
 - **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v2.9.0)
@@ -91,6 +101,12 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 ---
 
 ## 📦 Instalação
+
+### Opção 1: Instalação do Chrome Web Store (Recomendado)
+
+**[⬇️ Instalar ClipAIble do Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+
+### Opção 2: Instalação manual (Modo desenvolvedor)
 
 1. **Clone** este repositório
 2. Abra Chrome → `chrome://extensions/`
@@ -277,7 +293,7 @@ clipaible/
 │   ├── api/            # OpenAI, Claude, Gemini, TTS
 │   ├── extraction/     # Extração de conteúdo
 │   ├── translation/    # Tradução e detecção de idioma
-│   ├── generation/     # PDF, EPUB, FB2, MD, Áudio
+│   ├── generation/     # PDF, EPUB, FB2, MD, DOCX, HTML, TXT, Áudio
 │   ├── cache/          # Cache de seletores
 │   ├── stats/          # Estatísticas de uso
 │   └── utils/          # Configuração, criptografia, utilitários
@@ -304,10 +320,10 @@ clipaible/
 | `activeTab` | Ler artigo da aba atual |
 | `storage` | Salvar configurações localmente |
 | `scripting` | Injetar script de extração |
-| `downloads` | Salvar arquivos gerados |
+| `downloads` | Salvar arquivos gerados (PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, Áudio) |
 | `debugger` | Gerar PDFs via API de impressão do Chrome |
 | `alarms` | Manter worker em estado ativo durante tarefas longas |
-| `contextMenus` | Menu contextual |
+| `contextMenus` | Adicionar opções "Salvar com ClipAIble" (PDF/EPUB/FB2/MD/DOCX/HTML/TXT/Áudio) ao menu contextual em páginas web |
 
 Veja [PERMISSIONS.md](PERMISSIONS.md) para detalhes.
 
