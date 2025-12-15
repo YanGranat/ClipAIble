@@ -28,7 +28,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 
 ### 🤖 AI駆動の抽出
 - **2つのモード**：AI Selector（高速、再利用可能）とAI Extract（徹底的）
-- **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-pro、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
+- **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
 - **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v2.9.0）
 - **インテリジェント検出**：記事の主要内容を見つけ、自動的に不要な要素を削除
 - **構造を保持**：見出し、画像、コードブロック、表、脚注
@@ -206,7 +206,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 | プロバイダー | モデル | 備考 |
 |-------------|--------|------|
 | OpenAI | GPT-5.2 | 最新、中程度の推論 |
-| OpenAI | GPT-5.2-pro | 強化、中程度の推論 |
+| OpenAI | GPT-5.2-high | 強化、高推論 |
 | OpenAI | GPT-5.1 | バランス型 |
 | OpenAI | GPT-5.1 (high) | 最高品質 |
 | Anthropic | Claude Sonnet 4.5 | 長い記事に最適 |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # UI（HTML、CSS、JS）
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI、Claude、Gemini、TTS
+│   ├── content.js      # YouTube用コンテンツスクリプト
+│   ├── locales.js      # UIローカライゼーション（11言語）
+│   ├── api/            # AI & TTSプロバイダー
 │   ├── extraction/     # コンテンツ抽出
 │   ├── translation/    # 翻訳と言語検出
 │   ├── generation/     # PDF、EPUB、FB2、MD、音声
 │   ├── cache/          # セレクターキャッシュ
 │   ├── stats/          # 使用統計
+│   ├── settings/       # 設定のインポート/エクスポート
+│   ├── state/          # 処理状態管理
 │   └── utils/          # 設定、暗号化、ヘルパー
 ├── print/              # PDFレンダリング
 ├── config/             # スタイル
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # ローカライズされたREADMEファイル
+└── memory-bank/        # プロジェクトドキュメント
 ```
 
 ---

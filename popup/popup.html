@@ -123,6 +123,10 @@
             <span class="btn-icon-left" id="saveIcon">📄</span>
             <span id="saveText" data-i18n="save">Save</span>
           </button>
+          <button id="cancelBtn" class="btn btn-danger" style="display: none;">
+            <span class="btn-icon-left">✕</span>
+            <span data-i18n="cancel">Cancel</span>
+          </button>
           <select id="mainFormatSelect" class="format-select">
             <option value="pdf">PDF</option>
             <option value="epub">EPUB</option>
@@ -131,10 +135,6 @@
             <option value="audio">Audio</option>
           </select>
         </div>
-        <button id="cancelBtn" class="btn btn-danger" style="display: none;">
-          <span class="btn-icon-left">✕</span>
-          <span data-i18n="cancel">Cancel</span>
-        </button>
       </section>
 
       <!-- Settings & Stats Toggle -->
@@ -268,7 +268,7 @@
           <select id="audioProvider">
             <option value="openai" data-i18n="openaiTts">OpenAI TTS (MP3)</option>
             <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs (MP3)</option>
-            <option value="google" data-i18n="googleTts">Google Gemini 2.5 Pro TTS (WAV)</option>
+            <option value="google" data-i18n="googleTts">Google Gemini 2.5 TTS (WAV)</option>
             <option value="qwen" data-i18n="qwenTts">Qwen3-TTS-Flash (WAV)</option>
             <option value="respeecher" data-i18n="respeecher">Respeecher (EN/UA, WAV)</option>
           </select>
@@ -512,20 +512,6 @@
           </div>
         </div>
         <div class="setting-item">
-          <label class="checkbox-label">
-            <input type="checkbox" id="generateToc">
-            <span class="checkbox-text" data-i18n="generateToc">Generate Table of Contents</span>
-          </label>
-          <p class="setting-hint" data-i18n="generateTocHint">Auto-create TOC from article headings</p>
-        </div>
-        <div class="setting-item">
-          <label class="checkbox-label">
-            <input type="checkbox" id="generateAbstract">
-            <span class="checkbox-text" data-i18n="generateAbstract">Generate Abstract</span>
-          </label>
-            <p class="setting-hint" data-i18n="generateAbstractHint">AI-generated brief summary (2-3 paragraphs)</p>
-        </div>
-        <div class="setting-item">
           <label for="languageSelect" data-i18n="targetLanguage">Target Language</label>
           <select id="languageSelect">
             <option value="auto">Auto (original)</option>
@@ -543,19 +529,33 @@
           </select>
           <p class="setting-hint" id="languageHint" data-i18n="keepOriginalOrTranslate">Keep original or translate to selected language</p>
         </div>
-        <div class="setting-item" id="pageModeGroup">
-          <label for="pageMode" data-i18n="pageLayout">Page Layout</label>
-          <select id="pageMode">
-            <option value="single" data-i18n="singleLongPage">Single long page</option>
-            <option value="multi" data-i18n="multiplePagesA4">Multiple pages (A4)</option>
-          </select>
-        </div>
         <div class="setting-item" id="translateImagesGroup" style="display: none;">
           <label class="checkbox-label">
             <input type="checkbox" id="translateImages">
             <span class="checkbox-text" data-i18n="translateImages">Translate images with text</span>
           </label>
           <p class="setting-hint" data-i18n="translateImagesHint">Uses Google Gemini AI to translate text on images</p>
+        </div>
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="generateAbstract">
+            <span class="checkbox-text" data-i18n="generateAbstract">Generate Abstract</span>
+          </label>
+            <p class="setting-hint" data-i18n="generateAbstractHint">AI-generated brief summary (2-3 paragraphs)</p>
+        </div>
+        <div class="setting-item">
+          <label class="checkbox-label">
+            <input type="checkbox" id="generateToc">
+            <span class="checkbox-text" data-i18n="generateToc">Generate Table of Contents</span>
+          </label>
+          <p class="setting-hint" data-i18n="generateTocHint">Auto-create TOC from article headings</p>
+        </div>
+        <div class="setting-item" id="pageModeGroup">
+          <label for="pageMode" data-i18n="pageLayout">Page Layout</label>
+          <select id="pageMode">
+            <option value="single" data-i18n="singleLongPage">Single long page</option>
+            <option value="multi" data-i18n="multiplePagesA4">Multiple pages (A4)</option>
+          </select>
         </div>
         <div class="settings-divider" id="pdfSettingsDivider"></div>
         <div class="setting-item">

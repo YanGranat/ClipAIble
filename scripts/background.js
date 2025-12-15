@@ -13,7 +13,8 @@ import {
   setResult,
   restoreStateFromStorage,
   PROCESSING_STAGES,
-  ERROR_CODES
+  ERROR_CODES,
+  isCancelled
 } from './state/processing.js';
 import { callAI, getProviderFromModel } from './api/index.js';
 import { callWithRetry } from './utils/retry.js';
@@ -167,13 +168,14 @@ async function migrateApiKeys() {
 
 /**
  * Initialize default settings on first run
- * Ensures use_selector_cache is set to true by default
+ * Ensures use_selector_cache and enable_selector_caching are set to true by default
  * Also cleans up deprecated transcription settings
  */
 async function initializeDefaultSettings() {
   try {
     const result = await chrome.storage.local.get([
       'use_selector_cache',
+      'enable_selector_caching',
       'transcribe_if_no_subtitles',
       'cobalt_api_url',
       'transcription_settings_cleaned'
@@ -184,6 +186,12 @@ async function initializeDefaultSettings() {
     if (result.use_selector_cache === undefined || result.use_selector_cache === null) {
       await chrome.storage.local.set({ use_selector_cache: true });
       log('Initialized use_selector_cache to true (default)');
+    }
+    
+    // If enable_selector_caching is undefined or null, set it to true (default: enabled)
+    if (result.enable_selector_caching === undefined || result.enable_selector_caching === null) {
+      await chrome.storage.local.set({ enable_selector_caching: true });
+      log('Initialized enable_selector_caching to true (default)');
     }
     
     // Clean up deprecated transcription settings (one-time cleanup)
@@ -1097,6 +1105,12 @@ async function startArticleProcessing(data) {
         await completeProcessing(stopKeepAlive);
       })
       .catch(async error => {
+        // Check if processing was cancelled - don't set error if cancelled
+        if (isCancelled()) {
+          log('Video processing was cancelled, not setting error');
+          return;
+        }
+        
         logError('Video processing failed', error);
         await setError({
           message: error.message || 'Video processing failed',
@@ -1149,6 +1163,12 @@ async function startArticleProcessing(data) {
       await completeProcessing(stopKeepAlive);
     })
     .catch(async error => {
+      // Check if processing was cancelled - don't set error if cancelled
+      if (isCancelled()) {
+        log('Processing was cancelled, not setting error');
+        return;
+      }
+      
       logError('Processing failed', error);
       
       // Determine error code from error
@@ -1201,6 +1221,13 @@ async function processVideoPage(data, videoInfo) {
   
   log('Processing video page', { platform, videoId, url });
   
+  // Check if processing was cancelled before video processing
+  if (isCancelled()) {
+    log('Processing cancelled before video processing');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
+  
   // Stage 1: Extract subtitles (5-15%)
   const uiLang = await getUILanguage();
   const extractingStatus = tSync('statusExtractingSubtitles', uiLang);
@@ -1237,6 +1264,13 @@ async function processVideoPage(data, videoInfo) {
     progress: 15,
     status: tSync('statusProcessingSubtitles', uiLang)
   });
+  
+  // Check if processing was cancelled before subtitle processing
+  if (isCancelled()) {
+    log('Processing cancelled before subtitle processing');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
   
   // Stage 2: Process subtitles with AI (15-40%)
   let content;
@@ -1276,6 +1310,13 @@ async function processVideoPage(data, videoInfo) {
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  */
 async function continueProcessingPipeline(data, result, stopKeepAlive) {
+  // Check if processing was cancelled
+  if (isCancelled()) {
+    log('Processing cancelled at start of pipeline');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
+  
   // Translate if language is not auto
   const language = data.language || 'auto';
   const hasImageTranslation = data.translateImages && data.googleApiKey;
@@ -1287,6 +1328,13 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
     
     // Translate images first if enabled
     if (hasImageTranslation) {
+      // Check if processing was cancelled
+      if (isCancelled()) {
+        log('Processing cancelled before image translation');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('statusCancelled', uiLang));
+      }
+      
       log('Starting image translation', { targetLanguage: language });
       const analyzingImagesStatus = tSync('statusAnalyzingImages', uiLang);
       updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: analyzingImagesStatus, progress: 40 });
@@ -1297,6 +1345,13 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
         data.apiKey, data.googleApiKey, data.model, updateState
       );
       log('Image translation complete');
+    }
+    
+    // Check if processing was cancelled before text translation
+    if (isCancelled()) {
+      log('Processing cancelled before text translation');
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('statusCancelled', uiLang));
     }
     
     log('Starting text translation', { targetLanguage: language });
@@ -1330,6 +1385,13 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   } else {
     // No translation needed - skip to generation progress
     updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 60 });
+  }
+  
+  // Check if processing was cancelled before abstract generation
+  if (isCancelled()) {
+    log('Processing cancelled before abstract generation');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
   }
   
   // Generate abstract if enabled (but skip for audio format)
@@ -1381,6 +1443,13 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   }
   
   updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
+  
+  // Check if processing was cancelled before document generation
+  if (isCancelled()) {
+    log('Processing cancelled before document generation');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
   
   // Generate document based on format
   if (outputFormat === 'markdown') {
@@ -1448,10 +1517,10 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       }
       try {
         const decrypted = await decryptApiKey(encryptedKey);
+        // Security: Log only metadata, never the actual key or prefix
         log(`${providerName} API key decrypted`, { 
-          keyLength: decrypted?.length,
-          isAscii: /^[\x00-\x7F]*$/.test(decrypted || ''),
-          prefix: decrypted?.substring(0, 3) + '...'
+          keyLength: decrypted?.length || 0,
+          isAscii: /^[\x00-\x7F]*$/.test(decrypted || '')
         });
         return decrypted;
       } catch (error) {
@@ -1610,6 +1679,13 @@ async function processWithSelectorMode(data) {
   }
   
   if (!fromCache) {
+    // Check if processing was cancelled before AI analysis
+    if (isCancelled()) {
+      log('Processing cancelled before AI selector analysis');
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('statusCancelled', uiLang));
+    }
+    
     const uiLangAnalyzing = await getUILanguage();
     const analyzingStatus = tSync('stageAnalyzing', uiLangAnalyzing);
     updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: analyzingStatus, progress: 3 });
@@ -1632,6 +1708,13 @@ async function processWithSelectorMode(data) {
     if (!selectors) {
       throw new Error('AI returned empty selectors');
     }
+  }
+  
+  // Check if processing was cancelled before content extraction
+  if (isCancelled()) {
+    log('Processing cancelled before content extraction');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
   }
   
   const uiLang = await getUILanguage();
@@ -2305,6 +2388,13 @@ async function processWithExtractMode(data) {
   if (!html) throw new Error('No HTML content provided');
   if (!apiKey) throw new Error('No API key provided');
 
+  // Check if processing was cancelled before extract mode processing
+  if (isCancelled()) {
+    log('Processing cancelled before extract mode processing');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
+
   const uiLangAnalyzing = await getUILanguage();
   const analyzingStatus = tSync('statusAnalyzingPage', uiLangAnalyzing);
   updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: analyzingStatus, progress: 5 });
@@ -2320,6 +2410,13 @@ async function processWithExtractMode(data) {
   const uiLangExtracting = await getUILanguage();
   const extractingContentStatus = tSync('statusExtractingContent', uiLangExtracting);
   updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingContentStatus, progress: 10 });
+  
+  // Check if processing was cancelled before chunk processing
+  if (isCancelled()) {
+    log('Processing cancelled before chunk processing');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
   
   let result;
   if (chunks.length === 1) {
@@ -2339,6 +2436,13 @@ async function processWithExtractMode(data) {
 
 async function processSingleChunk(html, url, title, apiKey, model) {
   log('processSingleChunk', { url, htmlLength: html.length });
+  
+  // Check if processing was cancelled before single chunk processing
+  if (isCancelled()) {
+    log('Processing cancelled before single chunk processing');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
   
   const userPrompt = `Extract article content with ALL formatting preserved. Copy text EXACTLY.
 
@@ -2376,6 +2480,13 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
   let publishDate = '';
 
   for (let i = 0; i < chunks.length; i++) {
+    // Check if processing was cancelled
+    if (isCancelled()) {
+      log('Processing cancelled during chunk processing');
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('statusCancelled', uiLang));
+    }
+    
     const isFirst = i === 0;
     
     log(`Processing chunk ${i + 1}/${chunks.length}`, { chunkLength: chunks[i].length, isFirst });

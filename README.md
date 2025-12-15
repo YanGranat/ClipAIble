@@ -30,7 +30,7 @@ All formats support **translation to 11 languages** — even translating text on
 
 ### 🤖 AI-Powered Extraction
 - **Two modes**: AI Selector (fast, reusable) and AI Extract (thorough)
-- **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles (v2.9.0)
 - **Smart detection**: Finds main article content, removes unnecessary elements automatically
 - **Preserves structure**: Headings, images, code blocks, tables, footnotes
@@ -208,7 +208,7 @@ All formats support **translation to 11 languages** — even translating text on
 | Provider | Model | Notes |
 |----------|-------|-------|
 | OpenAI | GPT-5.2 | Latest, medium reasoning |
-| OpenAI | GPT-5.2-pro | Enhanced, medium reasoning |
+| OpenAI | GPT-5.2-high | Enhanced, high reasoning |
 | OpenAI | GPT-5.1 | Balanced |
 | OpenAI | GPT-5.1 (high) | Best quality |
 | Anthropic | Claude Sonnet 4.5 | Great for long articles |
@@ -284,16 +284,37 @@ clipaible/
 ├── popup/              # UI (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # Content script for YouTube
+│   ├── locales.js      # UI localization (11 languages)
+│   ├── api/            # AI & TTS providers
+│   │   ├── openai.js   # OpenAI (GPT models)
+│   │   ├── claude.js   # Anthropic Claude
+│   │   ├── gemini.js   # Google Gemini
+│   │   ├── grok.js     # Grok
+│   │   ├── openrouter.js # OpenRouter
+│   │   ├── elevenlabs.js # ElevenLabs TTS
+│   │   ├── google-tts.js # Google Gemini TTS
+│   │   ├── qwen.js     # Qwen3-TTS-Flash
+│   │   ├── respeecher.js # Respeecher TTS
+│   │   ├── tts.js      # TTS router
+│   │   └── index.js    # API router
 │   ├── extraction/     # Content extraction
+│   │   ├── prompts.js  # AI prompts
+│   │   ├── html-utils.js # HTML utilities
+│   │   ├── video-subtitles.js # YouTube/Vimeo subtitles
+│   │   └── video-processor.js # AI subtitle processing
 │   ├── translation/    # Translation & language detection
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Selector caching
 │   ├── stats/          # Usage statistics
+│   ├── settings/       # Settings import/export
+│   ├── state/          # Processing state management
 │   └── utils/          # Config, encryption, helpers
 ├── print/              # PDF rendering
 ├── config/             # Styles
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # Localized README files
+└── memory-bank/        # Project documentation
 ```
 
 ---

@@ -28,7 +28,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 
 ### 🤖 Extraction alimentée par l'IA
 - **Deux modes** : AI Selector (rapide, réutilisable) et AI Extract (approfondi)
-- **Plusieurs fournisseurs** : OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Plusieurs fournisseurs** : OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v2.9.0)
 - **Détection intelligente** : Trouve le contenu principal de l'article, supprime automatiquement les éléments indésirables
 - **Préserve la structure** : Titres, images, blocs de code, tableaux, notes de bas de page
@@ -206,7 +206,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 | Fournisseur | Modèle | Notes |
 |-------------|--------|-------|
 | OpenAI | GPT-5.2 | Dernière, raisonnement moyen |
-| OpenAI | GPT-5.2-pro | Améliorée, raisonnement moyen |
+| OpenAI | GPT-5.2-high | Améliorée, raisonnement élevé |
 | OpenAI | GPT-5.1 | Équilibré |
 | OpenAI | GPT-5.1 (high) | Meilleure qualité |
 | Anthropic | Claude Sonnet 4.5 | Excellent pour les articles longs |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # Interface (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # Content script pour YouTube
+│   ├── locales.js      # Localisation UI (11 langues)
+│   ├── api/            # Fournisseurs AI & TTS
 │   ├── extraction/     # Extraction de contenu
 │   ├── translation/    # Traduction et détection de langue
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Mise en cache des sélecteurs
 │   ├── stats/          # Statistiques d'utilisation
+│   ├── settings/       # Import/Export des paramètres
+│   ├── state/          # Gestion de l'état de traitement
 │   └── utils/          # Configuration, chiffrement, utilitaires
 ├── print/              # Rendu PDF
 ├── config/             # Styles
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # Fichiers README localisés
+└── memory-bank/        # Documentation du projet
 ```
 
 ---

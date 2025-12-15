@@ -28,7 +28,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 
 ### 🤖 AI 기반 추출
 - **두 가지 모드**: AI Selector (빠름, 재사용 가능) 및 AI Extract (철저함)
-- **여러 제공업체 지원**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **여러 제공업체 지원**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **비디오 지원**: YouTube/Vimeo 비디오에서 자막 추출 및 기사로 변환 (v2.9.0)
 - **지능형 감지**: 기사의 주요 내용을 찾고 자동으로 불필요한 요소 제거
 - **구조 보존**: 제목, 이미지, 코드 블록, 테이블, 각주
@@ -206,7 +206,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 | 제공업체 | 모델 | 참고 |
 |----------|------|------|
 | OpenAI | GPT-5.2 | 최신, 중간 추론 |
-| OpenAI | GPT-5.2-pro | 향상됨, 중간 추론 |
+| OpenAI | GPT-5.2-high | 향상됨, 높은 추론 |
 | OpenAI | GPT-5.1 | 균형 |
 | OpenAI | GPT-5.1 (high) | 최고 품질 |
 | Anthropic | Claude Sonnet 4.5 | 긴 기사에 적합 |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # UI (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # YouTube용 콘텐츠 스크립트
+│   ├── locales.js      # UI 현지화 (11개 언어)
+│   ├── api/            # AI & TTS 제공업체
 │   ├── extraction/     # 콘텐츠 추출
 │   ├── translation/    # 번역 및 언어 감지
 │   ├── generation/     # PDF, EPUB, FB2, MD, 오디오
 │   ├── cache/          # 선택자 캐싱
 │   ├── stats/          # 사용 통계
+│   ├── settings/       # 설정 가져오기/내보내기
+│   ├── state/          # 처리 상태 관리
 │   └── utils/          # 구성, 암호화, 유틸리티
 ├── print/              # PDF 렌더링
 ├── config/             # 스타일
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # 현지화된 README 파일
+└── memory-bank/        # 프로젝트 문서
 ```
 
 ---

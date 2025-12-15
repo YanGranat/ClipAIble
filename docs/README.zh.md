@@ -28,7 +28,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 
 ### 🤖 AI驱动的提取
 - **两种模式**：AI Selector（快速、可重用）和 AI Extract（彻底）
-- **支持多个提供商**：OpenAI GPT（GPT-5.2、GPT-5.2-pro、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
+- **支持多个提供商**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
 - **视频支持**：从YouTube/Vimeo视频提取字幕并转换为文章（v2.9.0）
 - **智能检测**：找到文章主要内容，自动删除无关内容
 - **保留结构**：标题、图片、代码块、表格、脚注
@@ -206,7 +206,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 | 提供商 | 模型 | 备注 |
 |--------|------|------|
 | OpenAI | GPT-5.2 | 最新，中等推理 |
-| OpenAI | GPT-5.2-pro | 增强，中等推理 |
+| OpenAI | GPT-5.2-high | 增强，高推理 |
 | OpenAI | GPT-5.1 | 平衡 |
 | OpenAI | GPT-5.1 (high) | 最佳质量 |
 | Anthropic | Claude Sonnet 4.5 | 适合长文章 |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # 界面（HTML、CSS、JS）
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI、Claude、Gemini、TTS
+│   ├── content.js      # YouTube内容脚本
+│   ├── locales.js      # UI本地化（11种语言）
+│   ├── api/            # AI和TTS提供商
 │   ├── extraction/     # 内容提取
 │   ├── translation/    # 翻译和语言检测
 │   ├── generation/     # PDF、EPUB、FB2、MD、音频
 │   ├── cache/          # 选择器缓存
 │   ├── stats/          # 使用统计
+│   ├── settings/       # 设置导入/导出
+│   ├── state/          # 处理状态管理
 │   └── utils/          # 配置、加密、工具
 ├── print/              # PDF渲染
 ├── config/             # 样式
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # 本地化README文件
+└── memory-bank/        # 项目文档
 ```
 
 ---

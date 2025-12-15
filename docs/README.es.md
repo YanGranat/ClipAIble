@@ -28,7 +28,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 
 ### 🤖 Extracción con IA
 - **Dos modos**: AI Selector (rápido, reutilizable) y AI Extract (exhaustivo)
-- **Varios proveedores**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Varios proveedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Soporte de video**: Extraer subtítulos de videos YouTube/Vimeo y convertirlos en artículos (v2.9.0)
 - **Detección inteligente**: Encuentra el contenido principal del artículo, elimina elementos innecesarios automáticamente
 - **Preserva estructura**: Encabezados, imágenes, bloques de código, tablas, notas al pie
@@ -206,7 +206,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 | Proveedor | Modelo | Notas |
 |-----------|--------|-------|
 | OpenAI | GPT-5.2 | Última, razonamiento medio |
-| OpenAI | GPT-5.2-pro | Mejorada, razonamiento medio |
+| OpenAI | GPT-5.2-high | Mejorada, razonamiento alto |
 | OpenAI | GPT-5.1 | Equilibrado |
 | OpenAI | GPT-5.1 (high) | Mejor calidad |
 | Anthropic | Claude Sonnet 4.5 | Excelente para artículos largos |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # Interfaz (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # Content script para YouTube
+│   ├── locales.js      # Localización UI (11 idiomas)
+│   ├── api/            # Proveedores AI & TTS
 │   ├── extraction/     # Extracción de contenido
 │   ├── translation/    # Traducción y detección de idioma
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Caché de selectores
 │   ├── stats/          # Estadísticas de uso
+│   ├── settings/       # Importar/Exportar configuración
+│   ├── state/          # Gestión del estado de procesamiento
 │   └── utils/          # Configuración, encriptación, utilidades
 ├── print/              # Renderizado PDF
 ├── config/             # Estilos
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # Archivos README localizados
+└── memory-bank/        # Documentación del proyecto
 ```
 
 ---

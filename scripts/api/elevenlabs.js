@@ -118,7 +118,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
   if (!/^[\x00-\x7F]*$/.test(apiKey)) {
     logError('ElevenLabs API key contains invalid characters', { 
       keyLength: apiKey.length,
-      firstChars: apiKey.substring(0, 5) + '...'
+      // Security: Don't log key prefix
+      keyLength: apiKey?.length || 0
     });
     throw new Error('Invalid ElevenLabs API key format. Please re-enter your API key in settings.');
   }

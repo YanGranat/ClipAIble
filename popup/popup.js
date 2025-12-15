@@ -49,6 +49,7 @@ const STORAGE_KEYS = {
   HIDDEN_MODELS: 'hidden_models',
   MODE: 'extraction_mode',
   USE_CACHE: 'use_selector_cache',
+  ENABLE_CACHE: 'enable_selector_caching',
   OUTPUT_FORMAT: 'output_format',
   GENERATE_TOC: 'generate_toc',
   GENERATE_ABSTRACT: 'generate_abstract',
@@ -1087,6 +1088,7 @@ async function loadSettings() {
     STORAGE_KEYS.MODEL, 
     STORAGE_KEYS.MODE,
     STORAGE_KEYS.USE_CACHE,
+    STORAGE_KEYS.ENABLE_CACHE,
     STORAGE_KEYS.OUTPUT_FORMAT,
     STORAGE_KEYS.GENERATE_TOC,
     STORAGE_KEYS.GENERATE_ABSTRACT,
@@ -1269,9 +1271,27 @@ async function loadSettings() {
     }
   }
   
-  // Sync enableCache checkbox with useCache (always sync after setting useCache)
+  // Load enableCache checkbox independently
   if (elements.enableCache) {
-    elements.enableCache.checked = elements.useCache.checked;
+    const enableCacheValue = result[STORAGE_KEYS.ENABLE_CACHE];
+    
+    if (enableCacheValue === false) {
+      elements.enableCache.checked = false;
+    } else if (enableCacheValue === true) {
+      elements.enableCache.checked = true;
+    } else {
+      // Default: enabled (true)
+      if (elements.enableCache.checked === false) {
+        // Preserve user's choice if unchecked
+      } else {
+        elements.enableCache.checked = true;
+        try {
+          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: true });
+        } catch (error) {
+          logError('Failed to save default enable_selector_caching setting', error);
+        }
+      }
+    }
   }
   
   if (result[STORAGE_KEYS.OUTPUT_FORMAT]) {
@@ -1903,11 +1923,6 @@ function setupEventListeners() {
         elements.settingsPanel.classList.remove('open');
       }
       
-      // Sync enableCache checkbox when opening stats panel
-      if (elements.enableCache && elements.useCache) {
-        elements.enableCache.checked = elements.useCache.checked;
-      }
-      
       // Load data BEFORE opening
       await loadAndDisplayStats();
       
@@ -2156,10 +2171,6 @@ function setupEventListeners() {
     } catch (error) {
       logError('Failed to save use_selector_cache setting', error);
     }
-    // Sync enableCache checkbox
-    if (elements.enableCache) {
-      elements.enableCache.checked = value;
-    }
   });
   
   // Handle enableCache checkbox in stats section
@@ -2168,12 +2179,10 @@ function setupEventListeners() {
       const value = elements.enableCache.checked;
       // Save immediately (not debounced) to ensure it's preserved
       try {
-        await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: value });
+        await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: value });
       } catch (error) {
-        logError('Failed to save use_selector_cache setting', error);
+        logError('Failed to save enable_selector_caching setting', error);
       }
-      // Sync useCache checkbox
-      elements.useCache.checked = value;
     });
   }
 
@@ -3995,35 +4004,68 @@ async function updateUIFromState(state) {
     setStatus('processing', statusText, state.startTime || currentStartTime);
     setProgress(state.progress);
   } else if (state.error) {
-    stopTimerDisplay();
-    elements.savePdfBtn.disabled = false;
-    elements.savePdfBtn.style.display = 'block';
-    elements.cancelBtn.style.display = 'none';
-    // Use localized error message if errorCode is available
-    let errorMessage = state.error;
-    if (state.errorCode) {
-      const errorKeyMap = {
-        'auth_error': 'errorAuth',
-        'rate_limit': 'errorRateLimit',
-        'timeout': 'errorTimeout',
-        'network_error': 'errorNetwork',
-        'parse_error': 'errorParse',
-        'provider_error': 'errorProvider',
-        'validation_error': 'errorValidation',
-        'unknown_error': 'errorUnknown'
-      };
-      const errorKey = errorKeyMap[state.errorCode];
-      if (errorKey) {
-        errorMessage = await t(errorKey).catch(() => state.error);
+    // Check if error is actually a cancellation - don't show as error
+    const isCancelled = state.isCancelled || 
+                       (state.error && (
+                         state.error.includes('Cancelled') || 
+                         state.error.includes('Отменено') || 
+                         state.error.includes('Скасовано') ||
+                         state.error.includes('Abgebrochen') ||
+                         state.error.includes('Annulé') ||
+                         state.error.includes('Cancelado') ||
+                         state.error.includes('Annullato') ||
+                         state.error.includes('已取消') ||
+                         state.error.includes('キャンセル') ||
+                         state.error.includes('취소됨')
+                       ));
+    
+    if (isCancelled) {
+      // Treat cancellation as ready state, not error
+      stopTimerDisplay();
+      elements.savePdfBtn.disabled = false;
+      elements.savePdfBtn.style.display = 'block';
+      if (elements.cancelBtn) {
+        elements.cancelBtn.style.display = 'none';
       }
+      const readyText = await t('ready');
+      setStatus('ready', readyText);
+      setProgress(0, false);
+    } else {
+      // Real error - show as error
+      stopTimerDisplay();
+      elements.savePdfBtn.disabled = false;
+      elements.savePdfBtn.style.display = 'block';
+      if (elements.cancelBtn) {
+        elements.cancelBtn.style.display = 'none';
+      }
+      // Use localized error message if errorCode is available
+      let errorMessage = state.error;
+      if (state.errorCode) {
+        const errorKeyMap = {
+          'auth_error': 'errorAuth',
+          'rate_limit': 'errorRateLimit',
+          'timeout': 'errorTimeout',
+          'network_error': 'errorNetwork',
+          'parse_error': 'errorParse',
+          'provider_error': 'errorProvider',
+          'validation_error': 'errorValidation',
+          'unknown_error': 'errorUnknown'
+        };
+        const errorKey = errorKeyMap[state.errorCode];
+        if (errorKey) {
+          errorMessage = await t(errorKey).catch(() => state.error);
+        }
+      }
+      setStatus('error', errorMessage);
+      setProgress(0, false);
     }
-    setStatus('error', errorMessage);
-    setProgress(0, false);
   } else if (state.status === 'Done!') {
     stopTimerDisplay();
     elements.savePdfBtn.disabled = false;
     elements.savePdfBtn.style.display = 'block';
-    elements.cancelBtn.style.display = 'none';
+    if (elements.cancelBtn) {
+      elements.cancelBtn.style.display = 'none';
+    }
     // Get saved format from state or current selection
     const savedFormat = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
     const formatNames = {
@@ -4048,7 +4090,9 @@ async function updateUIFromState(state) {
     stopTimerDisplay();
     elements.savePdfBtn.disabled = false;
     elements.savePdfBtn.style.display = 'block';
-    elements.cancelBtn.style.display = 'none';
+    if (elements.cancelBtn) {
+      elements.cancelBtn.style.display = 'none';
+    }
     const readyText = await t('ready');
     setStatus('ready', readyText);
     setProgress(0, false);

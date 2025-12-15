@@ -28,7 +28,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 
 ### 🤖 Extração com IA
 - **Dois modos**: AI Selector (rápido, reutilizável) e AI Extract (abrangente)
-- **Vários provedores**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Vários provedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v2.9.0)
 - **Detecção inteligente**: Encontra o conteúdo principal do artigo, remove elementos desnecessários automaticamente
 - **Preserva estrutura**: Cabeçalhos, imagens, blocos de código, tabelas, notas de rodapé
@@ -206,7 +206,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 | Provedor | Modelo | Notas |
 |----------|--------|-------|
 | OpenAI | GPT-5.2 | Mais recente, raciocínio médio |
-| OpenAI | GPT-5.2-pro | Melhorada, raciocínio médio |
+| OpenAI | GPT-5.2-high | Melhorada, raciocínio alto |
 | OpenAI | GPT-5.1 | Equilibrado |
 | OpenAI | GPT-5.1 (high) | Melhor qualidade |
 | Anthropic | Claude Sonnet 4.5 | Excelente para artigos longos |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # Interface (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # Content script para YouTube
+│   ├── locales.js      # Localização UI (11 idiomas)
+│   ├── api/            # Provedores AI & TTS
 │   ├── extraction/     # Extração de conteúdo
 │   ├── translation/    # Tradução e detecção de idioma
 │   ├── generation/     # PDF, EPUB, FB2, MD, Áudio
 │   ├── cache/          # Cache de seletores
 │   ├── stats/          # Estatísticas de uso
+│   ├── settings/       # Importar/Exportar configurações
+│   ├── state/          # Gerenciamento de estado de processamento
 │   └── utils/          # Configuração, criptografia, utilitários
 ├── print/              # Renderização PDF
 ├── config/             # Estilos
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # Arquivos README localizados
+└── memory-bank/        # Documentação do projeto
 ```
 
 ---

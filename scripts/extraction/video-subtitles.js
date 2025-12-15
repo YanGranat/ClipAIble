@@ -292,7 +292,9 @@ function extractYouTubeSubtitlesInlined() {
         const clientVersion = window.yt?.config_?.INNERTUBE_CLIENT_VERSION || '2.0';
         
         console.log('[ClipAIble] METHOD 1: Calling internal YouTube API', {
-          apiKey: apiKey.substring(0, 20) + '...',
+          // Security: Don't log key prefix
+          hasApiKey: !!apiKey,
+          keyLength: apiKey?.length || 0
           clientName,
           clientVersion,
           videoId

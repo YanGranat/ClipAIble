@@ -384,8 +384,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
                   method: 'POST',
                   hasApiKey: !!apiKeyParam,
                   keyLength: apiKeyParam.length,
-                  keyPrefix: apiKeyParam.substring(0, 4) + '...',
-                  keySuffix: '...' + apiKeyParam.substring(apiKeyParam.length - 4)
+                  // Security: Don't log key prefix/suffix
+                  keyLength: apiKeyParam?.length || 0
                 });
                 
                 const baseErrorMsg = errorData.error?.message || errorData.message || errorData.detail || errorText || `Respeecher API error: ${response.status}`;

@@ -11,6 +11,7 @@ const STORAGE_KEYS_TO_EXPORT = [
   'openai_model',
   'extraction_mode',
   'use_selector_cache',
+  'enable_selector_caching',
   
   // Output settings
   'output_format',
@@ -182,6 +183,11 @@ export async function importSettings(jsonData, options = {}) {
                                      data.settings['use_selector_cache'] === undefined && 
                                      currentSettings['use_selector_cache'] !== undefined;
     
+    // Preserve enable_selector_caching if it's not in import file and overwriteExisting is true
+    const preserveEnableSelectorCaching = overwriteExisting && 
+                                          data.settings['enable_selector_caching'] === undefined && 
+                                          currentSettings['enable_selector_caching'] !== undefined;
+    
     for (const key of STORAGE_KEYS_TO_EXPORT) {
       // Security: Skip any API keys that might be in the import file
       if (API_KEY_NAMES.includes(key)) {
@@ -194,6 +200,14 @@ export async function importSettings(jsonData, options = {}) {
         settingsToImport[key] = currentSettings[key];
         result.settingsSkipped++; // Count as skipped to indicate it was preserved
         log('Preserved use_selector_cache during import', { value: currentSettings[key] });
+        continue;
+      }
+      
+      // Preserve enable_selector_caching if it's not in import file
+      if (key === 'enable_selector_caching' && preserveEnableSelectorCaching) {
+        settingsToImport[key] = currentSettings[key];
+        result.settingsSkipped++; // Count as skipped to indicate it was preserved
+        log('Preserved enable_selector_caching during import', { value: currentSettings[key] });
         continue;
       }
       
@@ -228,10 +242,14 @@ export async function importSettings(jsonData, options = {}) {
     
     // Ensure use_selector_cache has a default value if not imported
     // This prevents the setting from being lost during import
-    const finalSettings = await chrome.storage.local.get(['use_selector_cache']);
+    const finalSettings = await chrome.storage.local.get(['use_selector_cache', 'enable_selector_caching']);
     if (finalSettings.use_selector_cache === undefined || finalSettings.use_selector_cache === null) {
       await chrome.storage.local.set({ use_selector_cache: true });
       log('Set use_selector_cache to default (true) after import');
+    }
+    if (finalSettings.enable_selector_caching === undefined || finalSettings.enable_selector_caching === null) {
+      await chrome.storage.local.set({ enable_selector_caching: true });
+      log('Set enable_selector_caching to default (true) after import');
     }
     
     // Import statistics

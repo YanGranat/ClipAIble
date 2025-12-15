@@ -53,10 +53,23 @@ async function saveCache(cache) {
 }
 
 /**
- * Check if caching is enabled
+ * Check if caching is enabled (for saving new selectors)
  * @returns {Promise<boolean>}
  */
 async function isCachingEnabled() {
+  try {
+    const result = await chrome.storage.local.get(['enable_selector_caching']);
+    return result.enable_selector_caching !== false; // Default: true
+  } catch {
+    return true; // Default: enabled if error
+  }
+}
+
+/**
+ * Check if using cached selectors is enabled
+ * @returns {Promise<boolean>}
+ */
+async function isUsingCacheEnabled() {
   try {
     const result = await chrome.storage.local.get(['use_selector_cache']);
     return result.use_selector_cache !== false; // Default: true
@@ -71,8 +84,8 @@ async function isCachingEnabled() {
  * @returns {Promise<Object|null>} Cached selectors or null
  */
 export async function getCachedSelectors(url) {
-  // Check if caching is enabled
-  if (!(await isCachingEnabled())) {
+  // Check if using cache is enabled
+  if (!(await isUsingCacheEnabled())) {
     return null;
   }
   
@@ -174,7 +187,7 @@ export async function cacheSelectors(url, selectors) {
  * @param {string} url - Page URL
  */
 export async function markCacheSuccess(url) {
-  // Check if caching is enabled
+  // Check if caching is enabled (for saving)
   if (!(await isCachingEnabled())) {
     return;
   }

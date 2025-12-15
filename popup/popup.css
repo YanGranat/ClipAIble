@@ -781,6 +781,12 @@ body[data-theme="light"] .btn-secondary:hover {
   border-color: var(--border-input);
 }
 
+.save-action-group .btn-danger {
+  flex: 1;
+  min-width: 0;
+  margin-top: 0;
+}
+
 .btn-danger {
   width: 100%;
   background: linear-gradient(135deg, #ff4f4f 0%, #d43b3b 100%);
@@ -1190,13 +1196,11 @@ body[data-theme="light"] .custom-model-dropdown::-webkit-scrollbar-thumb:hover {
 
 .custom-model-option {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   width: 100%;
   padding: 6px 12px;
-  height: 34px;
   min-height: 34px;
-  max-height: 34px;
   line-height: 20px;
   box-sizing: border-box;
   border-radius: 0;
@@ -1204,6 +1208,8 @@ body[data-theme="light"] .custom-model-dropdown::-webkit-scrollbar-thumb:hover {
   transition: background 0.15s, color 0.15s;
   color: #b0b0b0;
   font-size: 14px;
+  white-space: normal;
+  word-wrap: break-word;
 }
 
 .custom-model-option:hover {
@@ -1234,6 +1240,10 @@ body[data-theme="light"] .custom-model-option.selected {
   color: inherit;
   font-size: 14px;
   user-select: none;
+  white-space: normal;
+  word-wrap: break-word;
+  line-height: 20px;
+  min-width: 0;
 }
 
 .custom-model-delete {
@@ -1251,9 +1261,9 @@ body[data-theme="light"] .custom-model-option.selected {
   justify-content: center;
   cursor: pointer;
   border-radius: 3px;
-  transform: translateY(0px);
   padding: 0;
   margin-left: 8px;
+  margin-top: 1px;
   opacity: 0.6;
   transition: opacity 0.15s, background 0.15s, color 0.15s;
   flex-shrink: 0;
@@ -1791,13 +1801,13 @@ body[data-theme="light"] .custom-select-arrow {
   transition: background 0.15s;
   font-size: 14px;
   line-height: 20px;
-  height: 27px;
   min-height: 27px;
-  max-height: 27px;
   color: #b0b0b0;
   display: flex;
   align-items: center;
   box-sizing: border-box;
+  white-space: normal;
+  word-wrap: break-word;
 }
 
 .custom-select-option:hover {

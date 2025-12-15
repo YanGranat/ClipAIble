@@ -28,7 +28,7 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 
 ### 🤖 Estrazione alimentata da IA
 - **Due modalità**: AI Selector (veloce, riutilizzabile) e AI Extract (approfondita)
-- **Più fornitori**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Più fornitori**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Supporto video**: Estrarre sottotitoli da video YouTube/Vimeo e convertirli in articoli (v2.9.0)
 - **Rilevamento intelligente**: Trova il contenuto principale dell'articolo, rimuove automaticamente elementi indesiderati
 - **Preserva struttura**: Intestazioni, immagini, blocchi di codice, tabelle, note a piè di pagina
@@ -206,7 +206,7 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 | Fornitore | Modello | Note |
 |-----------|---------|------|
 | OpenAI | GPT-5.2 | Ultimo, ragionamento medio |
-| OpenAI | GPT-5.2-pro | Migliorato, ragionamento medio |
+| OpenAI | GPT-5.2-high | Migliorato, ragionamento alto |
 | OpenAI | GPT-5.1 | Equilibrato |
 | OpenAI | GPT-5.1 (high) | Migliore qualità |
 | Anthropic | Claude Sonnet 4.5 | Ottimo per articoli lunghi |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # Interfaccia (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # Content script per YouTube
+│   ├── locales.js      # Localizzazione UI (11 lingue)
+│   ├── api/            # Fornitori AI & TTS
 │   ├── extraction/     # Estrazione contenuto
 │   ├── translation/    # Traduzione e rilevamento lingua
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Cache selettori
 │   ├── stats/          # Statistiche utilizzo
+│   ├── settings/       # Importa/Esporta impostazioni
+│   ├── state/          # Gestione stato elaborazione
 │   └── utils/          # Configurazione, crittografia, utilità
 ├── print/              # Rendering PDF
 ├── config/             # Stili
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # File README localizzati
+└── memory-bank/        # Documentazione progetto
 ```
 
 ---

@@ -28,7 +28,7 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 
 ### 🤖 KI-gestützte Extraktion
 - **Zwei Modi**: AI Selector (schnell, wiederverwendbar) und AI Extract (gründlich)
-- **Mehrere Anbieter**: OpenAI GPT (GPT-5.2, GPT-5.2-pro, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Mehrere Anbieter**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Video-Unterstützung**: Untertitel von YouTube/Vimeo-Videos extrahieren und in Artikel umwandeln (v2.9.0)
 - **Intelligente Erkennung**: Findet den Hauptinhalt des Artikels, entfernt automatisch Unnötiges
 - **Erhält Struktur**: Überschriften, Bilder, Code-Blöcke, Tabellen, Fußnoten
@@ -206,7 +206,7 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 | Anbieter | Modell | Hinweise |
 |----------|--------|----------|
 | OpenAI | GPT-5.2 | Neueste, mittleres Reasoning |
-| OpenAI | GPT-5.2-pro | Verbessert, mittleres Reasoning |
+| OpenAI | GPT-5.2-high | Verbessert, hohes Reasoning |
 | OpenAI | GPT-5.1 | Ausgewogen |
 | OpenAI | GPT-5.1 (high) | Beste Qualität |
 | Anthropic | Claude Sonnet 4.5 | Großartig für lange Artikel |
@@ -282,16 +282,22 @@ clipaible/
 ├── popup/              # UI (HTML, CSS, JS)
 ├── scripts/
 │   ├── background.js   # Service Worker
-│   ├── api/            # OpenAI, Claude, Gemini, TTS
+│   ├── content.js      # Content Script für YouTube
+│   ├── locales.js      # UI-Lokalisierung (11 Sprachen)
+│   ├── api/            # AI & TTS Anbieter
 │   ├── extraction/     # Inhaltsextraktion
 │   ├── translation/    # Übersetzung & Spracherkennung
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Selektor-Caching
 │   ├── stats/          # Nutzungsstatistiken
+│   ├── settings/       # Einstellungen Import/Export
+│   ├── state/          # Verarbeitungsstatus-Verwaltung
 │   └── utils/          # Konfiguration, Verschlüsselung, Helfer
 ├── print/              # PDF-Rendering
 ├── config/             # Stile
-└── lib/                # JSZip
+├── lib/                # JSZip
+├── docs/               # Lokalisierte README-Dateien
+└── memory-bank/        # Projektdokumentation
 ```
 
 ---

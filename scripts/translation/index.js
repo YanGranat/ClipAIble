@@ -1236,25 +1236,27 @@ export async function generateAbstract(content, title, apiKey, model, language =
     langInstruction = `Write in ${targetLang}`;
   }
 
-  const systemPrompt = `You are an expert at creating article abstracts. Generate exactly 2-3 paragraphs that summarize the main points and key takeaways of the article.
+  const systemPrompt = `You are an expert at creating concise text summaries. Generate a single paragraph (TL;DR) that captures the essence of the text.
 
 STRICT REQUIREMENTS:
 - ${langInstruction}
-- Output EXACTLY 2-3 paragraphs, no more, no less
-- Each paragraph: 2-4 sentences
+- Output EXACTLY ONE paragraph with 2-4 sentences
+- NO line breaks, NO paragraph breaks - output as ONE continuous paragraph
 - Start immediately with the summary content - no introductory phrases
 - Never use phrases like "This article", "The article", "In summary", "To summarize", "The author", etc.
 - Never use quotes or markdown formatting
 - Never add explanations, greetings, or meta-commentary
-- Output ONLY the abstract paragraphs separated by blank lines
-- Focus on main ideas and key takeaways, no personal opinions`;
+- Output ONLY the summary as a single continuous block of text without any line breaks
+- Focus on the core essence and key takeaways, no personal opinions
+- Make it concise and to the point
+- CRITICAL: The output must be a single paragraph with no line breaks or paragraph separators`;
 
   const userPrompt = `Article Title: ${title}
 
 Article Content:
 ${articleText}
 
-Generate the abstract:`;
+Generate the TL;DR:`;
   
   try {
     const provider = getProviderFromModel(model);
@@ -1345,8 +1347,16 @@ Generate the abstract:`;
     }
     
     if (abstract) {
+      // Post-process to ensure single paragraph: remove extra newlines and merge into one paragraph
+      abstract = abstract
+        .trim()
+        .replace(/\n\s*\n\s*/g, ' ') // Replace multiple newlines with space
+        .replace(/\n/g, ' ') // Replace single newlines with space
+        .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+        .trim();
+      
       log('=== ABSTRACT GENERATION END ===', { abstractLength: abstract.length });
-      return abstract.trim();
+      return abstract;
     }
     
     log('=== ABSTRACT GENERATION END ===', { abstractLength: 0 });

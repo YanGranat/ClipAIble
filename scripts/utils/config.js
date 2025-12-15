@@ -70,7 +70,7 @@ export const PDF_LOCALIZATION = {
     date: 'Date',
     source: 'Source',
     author: 'Author',
-    abstract: 'Abstract',
+    abstract: 'TL;DR',
     footnotes: 'Footnotes'
   },
   'ru': {
@@ -80,7 +80,7 @@ export const PDF_LOCALIZATION = {
     date: 'Дата',
     source: 'Источник',
     author: 'Автор',
-    abstract: 'Резюме',
+    abstract: 'TL;DR',
     footnotes: 'Сноски'
   },
   'ua': {
@@ -90,7 +90,7 @@ export const PDF_LOCALIZATION = {
     date: 'Дата',
     source: 'Джерело',
     author: 'Автор',
-    abstract: 'Резюме',
+    abstract: 'TL;DR',
     footnotes: 'Виноски'
   },
   'de': {
@@ -180,7 +180,7 @@ export const PDF_LOCALIZATION = {
     date: 'Date',
     source: 'Source',
     author: 'Author',
-    abstract: 'Abstract',
+    abstract: 'TL;DR',
     footnotes: 'Footnotes'
   }
 };
