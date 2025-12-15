@@ -248,9 +248,22 @@ export async function importSettings(jsonData, options = {}) {
       await chrome.storage.local.set({ use_selector_cache: true });
       log('Set use_selector_cache to default (true) after import');
     }
+    
+    // Ensure enable_selector_caching has a default value if not imported
+    log('🔍🔍🔍 importSettings: Checking enable_selector_caching after import', {
+      value: finalSettings.enable_selector_caching,
+      type: typeof finalSettings.enable_selector_caching,
+      isUndefined: finalSettings.enable_selector_caching === undefined,
+      isNull: finalSettings.enable_selector_caching === null
+    });
     if (finalSettings.enable_selector_caching === undefined || finalSettings.enable_selector_caching === null) {
+      log('🔍🔍🔍 importSettings: Setting enable_selector_caching to default (true) after import');
       await chrome.storage.local.set({ enable_selector_caching: true });
-      log('Set enable_selector_caching to default (true) after import');
+      log('🔍🔍🔍 importSettings: Set enable_selector_caching to default (true) after import');
+    } else {
+      log('🔍🔍🔍 importSettings: enable_selector_caching already set, NOT changing', {
+        value: finalSettings.enable_selector_caching
+      });
     }
     
     // Import statistics

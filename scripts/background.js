@@ -196,13 +196,11 @@ async function initializeDefaultSettings() {
     // Only set if it's truly undefined/null, not if it's explicitly false
     if (result.use_selector_cache === undefined || result.use_selector_cache === null) {
       await chrome.storage.local.set({ use_selector_cache: true });
-      log('Initialized use_selector_cache to true (default)');
     }
     
     // If enable_selector_caching is undefined or null, set it to true (default: enabled)
     if (result.enable_selector_caching === undefined || result.enable_selector_caching === null) {
       await chrome.storage.local.set({ enable_selector_caching: true });
-      log('Initialized enable_selector_caching to true (default)');
     }
     
     // Clean up deprecated transcription settings (one-time cleanup)
@@ -275,14 +273,20 @@ const KEEP_ALIVE_ALARM = 'keepAlive';
 let keepAliveFallbackTimer = null;
 
 function startKeepAlive() {
+  // Prevent race condition: clear existing timer BEFORE creating new one
+  // This ensures we don't have multiple timers running simultaneously
+  if (keepAliveFallbackTimer) {
+    clearInterval(keepAliveFallbackTimer);
+    keepAliveFallbackTimer = null;
+  }
+  
   chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
   if (chrome.runtime.lastError) {
     logWarn('Keep-alive alarm creation failed, enabling fallback timer', { error: chrome.runtime.lastError.message });
   }
+  
   // Fallback ping in case alarms are throttled; MV3 requires >=1m, this keeps SW alive during long tasks.
-  if (keepAliveFallbackTimer) {
-    clearInterval(keepAliveFallbackTimer);
-  }
+  // Create new timer only after clearing old one to prevent race condition
   keepAliveFallbackTimer = setInterval(() => {
     const state = getProcessingState();
     log('Keep-alive fallback ping', { isProcessing: state.isProcessing });
@@ -519,6 +523,7 @@ setTimeout(() => {
 try {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local') {
+      
       // Handle UI language change
       if (changes.ui_language) {
         log('UI language changed, updating context menu', { newLang: changes.ui_language.newValue });
@@ -786,6 +791,12 @@ async function handleQuickSave(outputFormat = 'pdf') {
 try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   log('Message received', { action: request.action, sender: sender.tab?.url || 'popup' });
+  
+  // Handle log messages from popup (removed debug logging)
+  if (request.action === 'log') {
+    sendResponse({ success: true });
+    return true;
+  }
   
   try {
     if (request.action === 'getState') {
@@ -1675,7 +1686,9 @@ async function processWithSelectorMode(data) {
   // Check cache first (if enabled)
   let selectors;
   let fromCache = false;
-  const useCache = data.useCache !== false; // Default: true
+  // Explicit check: use cache if explicitly true, or if undefined/null (default: true)
+  // Only skip cache if explicitly false
+  const useCache = data.useCache !== false; // true if undefined/null/true, false only if explicitly false
   
   if (useCache) {
     const cached = await getCachedSelectors(url);

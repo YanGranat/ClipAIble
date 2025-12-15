@@ -49,6 +49,7 @@ const STORAGE_KEYS = {
   HIDDEN_MODELS: 'hidden_models',
   MODE: 'extraction_mode',
   USE_CACHE: 'use_selector_cache',
+  ENABLE_CACHE: 'enable_selector_caching',
   ENABLE_STATS: 'enable_statistics',
   OUTPUT_FORMAT: 'output_format',
   GENERATE_TOC: 'generate_toc',
@@ -652,19 +653,58 @@ async function init() {
     logWarn('Theme select element not found');
   }
   
-  await loadSettings();
-  await applyLocalization();
-  applyTheme();
-  setupEventListeners();
+  try {
+    await loadSettings();
+  } catch (error) {
+    logError('CRITICAL: loadSettings() failed in init()', error);
+    // Continue initialization even if loadSettings fails
+  }
+  
+  try {
+    await applyLocalization();
+  } catch (error) {
+    logError('CRITICAL: applyLocalization() failed in init()', error);
+    // Continue initialization even if applyLocalization fails
+  }
+  
+  try {
+    applyTheme();
+  } catch (error) {
+    logError('CRITICAL: applyTheme() failed in init()', error);
+    // Continue initialization even if applyTheme fails
+  }
+  
+  try {
+    setupEventListeners();
+  } catch (error) {
+    logError('CRITICAL: setupEventListeners() failed in init()', error);
+    // This is critical - without event listeners, buttons won't work
+    throw error; // Re-throw to prevent silent failure
+  }
   
   // Initialize custom selects (convert native selects to custom dropdowns)
-  initAllCustomSelects();
+  try {
+    initAllCustomSelects();
+  } catch (error) {
+    logError('CRITICAL: initAllCustomSelects() failed in init()', error);
+    // Continue initialization even if initAllCustomSelects fails
+  }
   
   // Check current processing state
-  await checkProcessingState();
+  try {
+    await checkProcessingState();
+  } catch (error) {
+    logError('CRITICAL: checkProcessingState() failed in init()', error);
+    // Continue initialization even if checkProcessingState fails
+  }
   
   // Start polling for state updates
-  startStatePolling();
+  try {
+    startStatePolling();
+  } catch (error) {
+    logError('CRITICAL: startStatePolling() failed in init()', error);
+    // Continue initialization even if startStatePolling fails
+  }
 
   // Load and display version
   try {
@@ -1079,7 +1119,8 @@ async function updateApiProviderUI() {
 }
 
 async function loadSettings() {
-  const result = await chrome.storage.local.get([
+  try {
+    const result = await chrome.storage.local.get([
     STORAGE_KEYS.API_PROVIDER,
     STORAGE_KEYS.API_KEY,
     STORAGE_KEYS.CLAUDE_API_KEY,
@@ -1090,6 +1131,7 @@ async function loadSettings() {
     STORAGE_KEYS.MODEL, 
     STORAGE_KEYS.MODE,
     STORAGE_KEYS.USE_CACHE,
+    STORAGE_KEYS.ENABLE_CACHE,
     STORAGE_KEYS.ENABLE_STATS,
     STORAGE_KEYS.OUTPUT_FORMAT,
     STORAGE_KEYS.GENERATE_TOC,
@@ -1273,9 +1315,23 @@ async function loadSettings() {
     }
   }
   
-  // Sync enableCache checkbox with useCache (always sync after setting useCache)
+  // Load enableCache setting (enable_selector_caching) - INDEPENDENT setting, NO SYNC with useCache
   if (elements.enableCache) {
-    elements.enableCache.checked = elements.useCache.checked;
+    const enableCacheValue = result[STORAGE_KEYS.ENABLE_CACHE];
+    
+    if (enableCacheValue === false) {
+      elements.enableCache.checked = false;
+    } else if (enableCacheValue === true) {
+      elements.enableCache.checked = true;
+    } else {
+      // First time or undefined/null - default to true
+      elements.enableCache.checked = true;
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: true });
+      } catch (error) {
+        logError('Failed to save default enable_selector_caching setting', error);
+      }
+    }
   }
   
   // Load enableStats setting with migration
@@ -1676,6 +1732,11 @@ async function loadSettings() {
   
   // Step 7: Update theme icon after loading theme setting
   applyTheme();
+  } catch (error) {
+    logError('CRITICAL: loadSettings() failed', error);
+    // Re-throw to prevent silent failures
+    throw error;
+  }
 }
 
 // Setup event listeners
@@ -2198,7 +2259,7 @@ function setupEventListeners() {
     }
   });
   
-  // Handle enableCache checkbox in stats section
+  // Handle enableCache checkbox in stats section - INDEPENDENT setting, does NOT affect useCache
   if (elements.enableCache) {
     elements.enableCache.addEventListener('change', async () => {
       const value = elements.enableCache.checked;
@@ -4530,4 +4591,3 @@ async function displayCacheStats(stats) {
 
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', init);
-

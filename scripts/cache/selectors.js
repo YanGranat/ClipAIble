@@ -59,8 +59,21 @@ async function saveCache(cache) {
 async function isCachingEnabled() {
   try {
     const result = await chrome.storage.local.get(['enable_selector_caching']);
-    return result.enable_selector_caching !== false; // Default: true
-  } catch {
+    const value = result.enable_selector_caching;
+    const enabled = value !== false; // Default: true
+    log('🔍🔍🔍 isCachingEnabled check', { 
+      value, 
+      type: typeof value,
+      isUndefined: value === undefined,
+      isNull: value === null,
+      isFalse: value === false,
+      isTrue: value === true,
+      enabled,
+      timestamp: Date.now()
+    });
+    return enabled;
+  } catch (error) {
+    logWarn('🔍🔍🔍 Error checking isCachingEnabled, defaulting to true', error);
     return true; // Default: enabled if error
   }
 }
@@ -72,8 +85,22 @@ async function isCachingEnabled() {
 async function isUsingCacheEnabled() {
   try {
     const result = await chrome.storage.local.get(['use_selector_cache']);
-    return result.use_selector_cache !== false; // Default: true
-  } catch {
+    const value = result.use_selector_cache;
+    // Explicit check: enabled if true or undefined/null (default: true), disabled only if explicitly false
+    const enabled = value !== false; // true if undefined/null/true, false only if explicitly false
+    log('🔍🔍🔍 isUsingCacheEnabled check', { 
+      value, 
+      type: typeof value,
+      isUndefined: value === undefined,
+      isNull: value === null,
+      isFalse: value === false,
+      isTrue: value === true,
+      enabled,
+      timestamp: Date.now()
+    });
+    return enabled;
+  } catch (error) {
+    logWarn('🔍🔍🔍 Error checking isUsingCacheEnabled, defaulting to true', error);
     return true; // Default: enabled if error
   }
 }
