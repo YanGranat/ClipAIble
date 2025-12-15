@@ -94,6 +94,24 @@ function getCurrentMonthKey() {
 export async function recordSave(data) {
   const { title, url, format, processingTime } = data;
   
+  // Check if statistics collection is enabled
+  try {
+    const settingsResult = await chrome.storage.local.get(['enable_statistics']);
+    const enableStats = settingsResult.enable_statistics;
+    
+    // If explicitly disabled, don't record stats
+    if (enableStats === false) {
+      log('Statistics collection disabled, skipping recordSave');
+      return null;
+    }
+    
+    // If undefined/null, default to enabled (backward compatibility)
+    // This allows existing users to continue collecting stats until they explicitly disable
+  } catch (error) {
+    logError('Failed to check enable_statistics setting', error);
+    // On error, continue with recording (fail-safe)
+  }
+  
   log('Recording save', { title, format, processingTime });
   
   const stats = await loadStats();

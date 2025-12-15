@@ -1,6 +1,17 @@
 // Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
 
+// Global error handler for uncaught errors during module loading
+self.addEventListener('error', (event) => {
+  console.error('[ClipAIble] Uncaught error during module loading:', event.error);
+  console.error('[ClipAIble] Error stack:', event.error?.stack);
+});
+
+self.addEventListener('unhandledrejection', (event) => {
+  console.error('[ClipAIble] Unhandled promise rejection:', event.reason);
+  console.error('[ClipAIble] Rejection stack:', event.reason?.stack);
+});
+
 import { log, logError, logWarn } from './utils/logging.js';
 import { CONFIG } from './utils/config.js';
 import { 

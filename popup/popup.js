@@ -49,7 +49,7 @@ const STORAGE_KEYS = {
   HIDDEN_MODELS: 'hidden_models',
   MODE: 'extraction_mode',
   USE_CACHE: 'use_selector_cache',
-  ENABLE_CACHE: 'enable_selector_caching',
+  ENABLE_STATS: 'enable_statistics',
   OUTPUT_FORMAT: 'output_format',
   GENERATE_TOC: 'generate_toc',
   GENERATE_ABSTRACT: 'generate_abstract',
@@ -202,6 +202,7 @@ const elements = {
   clearStatsBtn: null,
   clearCacheBtn: null,
   enableCache: null,
+  enableStats: null,
   exportSettingsBtn: null,
   importSettingsBtn: null,
   importFileInput: null,
@@ -547,6 +548,7 @@ async function init() {
   elements.clearStatsBtn = document.getElementById('clearStatsBtn');
   elements.clearCacheBtn = document.getElementById('clearCacheBtn');
   elements.enableCache = document.getElementById('enableCache');
+  elements.enableStats = document.getElementById('enableStats');
   elements.exportSettingsBtn = document.getElementById('exportSettingsBtn');
   elements.importSettingsBtn = document.getElementById('importSettingsBtn');
   elements.importFileInput = document.getElementById('importFileInput');
@@ -1088,7 +1090,7 @@ async function loadSettings() {
     STORAGE_KEYS.MODEL, 
     STORAGE_KEYS.MODE,
     STORAGE_KEYS.USE_CACHE,
-    STORAGE_KEYS.ENABLE_CACHE,
+    STORAGE_KEYS.ENABLE_STATS,
     STORAGE_KEYS.OUTPUT_FORMAT,
     STORAGE_KEYS.GENERATE_TOC,
     STORAGE_KEYS.GENERATE_ABSTRACT,
@@ -1271,24 +1273,47 @@ async function loadSettings() {
     }
   }
   
-  // Load enableCache checkbox independently
+  // Sync enableCache checkbox with useCache (always sync after setting useCache)
   if (elements.enableCache) {
-    const enableCacheValue = result[STORAGE_KEYS.ENABLE_CACHE];
+    elements.enableCache.checked = elements.useCache.checked;
+  }
+  
+  // Load enableStats setting with migration
+  if (elements.enableStats) {
+    const enableStatsValue = result[STORAGE_KEYS.ENABLE_STATS];
     
-    if (enableCacheValue === false) {
-      elements.enableCache.checked = false;
-    } else if (enableCacheValue === true) {
-      elements.enableCache.checked = true;
+    if (enableStatsValue === false) {
+      // User explicitly disabled - respect their choice
+      elements.enableStats.checked = false;
+    } else if (enableStatsValue === true) {
+      // Explicitly enabled
+      elements.enableStats.checked = true;
     } else {
-      // Default: enabled (true)
-      if (elements.enableCache.checked === false) {
-        // Preserve user's choice if unchecked
-      } else {
-        elements.enableCache.checked = true;
+      // First time or undefined/null - check if stats exist for migration
+      try {
+        const statsResult = await chrome.storage.local.get(['extension_stats']);
+        const stats = statsResult.extension_stats;
+        
+        // If user has existing stats (totalSaved > 0), enable by default
+        // Otherwise, default to enabled (first time)
+        const shouldEnable = !stats || stats.totalSaved === 0 ? true : stats.totalSaved > 0;
+        
+        elements.enableStats.checked = shouldEnable;
+        
+        // Save default value
         try {
-          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: true });
+          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: shouldEnable });
         } catch (error) {
-          logError('Failed to save default enable_selector_caching setting', error);
+          logError('Failed to save default enable_statistics setting', error);
+        }
+      } catch (error) {
+        logError('Failed to check stats for migration', error);
+        // On error, default to enabled
+        elements.enableStats.checked = true;
+        try {
+          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: true });
+        } catch (saveError) {
+          logError('Failed to save default enable_statistics setting', saveError);
         }
       }
     }
@@ -2185,7 +2210,20 @@ function setupEventListeners() {
       }
     });
   }
-
+  
+  // Handle enableStats checkbox in stats section
+  if (elements.enableStats) {
+    elements.enableStats.addEventListener('change', async () => {
+      const value = elements.enableStats.checked;
+      // Save immediately (not debounced) to ensure it's preserved
+      try {
+        await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: value });
+      } catch (error) {
+        logError('Failed to save enable_statistics setting', error);
+      }
+    });
+  }
+  
   /**
    * Event listener for output format change
    * When format changes, update UI visibility and save setting
@@ -4417,14 +4455,7 @@ async function displayStats(stats) {
     historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
   }
   
-  // Update footer
-  const langCode = await getUILanguage();
-  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-  const lastSavedText = locale.lastSaved || UI_LOCALES.en.lastSaved;
-  const neverText = locale.lastSavedNever || UI_LOCALES.en.lastSavedNever;
-  const avgText = locale.avg || UI_LOCALES.en.avg;
-  document.getElementById('statsLastSaved').textContent = `${lastSavedText}: ${stats.lastSavedText || neverText}`;
-  document.getElementById('statsAvgTime').textContent = `${avgText}: ${stats.avgProcessingTime || 0}s`;
+  // Footer removed - replaced with statistics collection checkbox
 }
 
 function escapeHtml(text) {

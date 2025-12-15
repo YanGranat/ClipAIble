@@ -202,9 +202,15 @@
           </div>
         </div>
         
-        <div class="stats-footer">
-          <span class="stats-last-saved" id="statsLastSaved"></span>
-          <span class="stats-avg-time" id="statsAvgTime"></span>
+        <div class="stats-section">
+          <div class="stats-section-title" data-i18n="statisticsSettings">Statistics Settings</div>
+          <div class="setting-item" style="margin-bottom: 12px;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="enableStats">
+              <span class="checkbox-text" data-i18n="enableStatistics">Enable statistics collection</span>
+            </label>
+            <p class="setting-hint" data-i18n="enableStatisticsHint">Collect statistics about saved articles</p>
+          </div>
         </div>
         
         <button id="clearStatsBtn" class="btn btn-reset-small btn-full" data-i18n="clearStatistics">Clear Statistics</button>

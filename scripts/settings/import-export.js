@@ -12,6 +12,7 @@ const STORAGE_KEYS_TO_EXPORT = [
   'extraction_mode',
   'use_selector_cache',
   'enable_selector_caching',
+  'enable_statistics',
   
   // Output settings
   'output_format',

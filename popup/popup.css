@@ -2267,30 +2267,7 @@ body[data-theme="light"] .history-delete:hover {
 }
 
 /* Stats Footer */
-.stats-footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
-  margin-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 10px;
-  color: #666;
-}
-
-.stats-avg-time {
-  color: #888;
-}
-
 body[data-theme="light"] .stats-empty {
-  color: var(--text-muted);
-}
-
-body[data-theme="light"] .stats-footer {
-  border-top: 1px solid var(--border-color);
-  color: var(--text-muted);
-}
-
-body[data-theme="light"] .stats-avg-time {
   color: var(--text-muted);
 }
 
