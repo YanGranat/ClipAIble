@@ -45,6 +45,8 @@ const STORAGE_KEYS = {
   GOOGLE_API_KEY: 'google_api_key',
   API_PROVIDER: 'api_provider',
   MODEL: 'openai_model',
+  CUSTOM_MODELS: 'custom_models',
+  HIDDEN_MODELS: 'hidden_models',
   MODE: 'extraction_mode',
   USE_CACHE: 'use_selector_cache',
   OUTPUT_FORMAT: 'output_format',
@@ -154,6 +156,7 @@ const elements = {
   savePdfBtn: null,
   saveIcon: null,
   saveText: null,
+  mainFormatSelect: null,
   cancelBtn: null,
   toggleSettings: null,
   settingsPanel: null,
@@ -164,6 +167,13 @@ const elements = {
   useCache: null,
   useCacheGroup: null,
   modelSelect: null,
+  addModelBtn: null,
+  customModelDropdown: null,
+  customModelOptions: null,
+  addModelDialog: null,
+  addModelInput: null,
+  addModelConfirm: null,
+  addModelCancel: null,
   outputFormat: null,
   generateToc: null,
   generateAbstract: null,
@@ -449,6 +459,31 @@ async function applyLocalization() {
     option.textContent = translation;
   });
   
+  // Update custom select options after localization
+  document.querySelectorAll('.custom-select').forEach(container => {
+    const select = container.querySelector('select');
+    if (!select) return;
+    
+    const optionsDiv = container.querySelector('.custom-select-options');
+    const valueSpan = container.querySelector('.custom-select-value');
+    if (!optionsDiv || !valueSpan) return;
+    
+    // Update custom options from native select
+    const customOptions = optionsDiv.querySelectorAll('.custom-select-option');
+    Array.from(select.options).forEach((nativeOption, index) => {
+      const customOption = customOptions[index];
+      if (customOption) {
+        customOption.textContent = nativeOption.textContent;
+        if (nativeOption.selected || select.value === nativeOption.value) {
+          customOption.classList.add('selected');
+          valueSpan.textContent = nativeOption.textContent;
+        } else {
+          customOption.classList.remove('selected');
+        }
+      }
+    });
+  });
+  
   // Update select options for language selector (header version - short codes)
   if (elements.uiLanguageSelect) {
     // Keep short codes (EN, RU, etc.) for header selector
@@ -475,19 +510,8 @@ async function applyLocalization() {
   
   // Update output format button text
   if (elements.saveText) {
-    const format = elements.outputFormat?.value || 'pdf';
-    const formatKeys = {
-      pdf: 'saveAsPdf',
-      epub: 'saveAsEpub',
-      fb2: 'saveAsFb2',
-      markdown: 'saveAsMarkdown',
-      docx: 'saveAsDocx',
-      html: 'saveAsHtml',
-      txt: 'saveAsTxt',
-      audio: 'saveAsAudio'
-    };
-    const formatKey = formatKeys[format] || 'saveAsPdf';
-    elements.saveText.textContent = locale[formatKey] || UI_LOCALES.en[formatKey];
+    // Button text is always "Save" now, format is selected in dropdown
+    elements.saveText.textContent = locale.save || UI_LOCALES.en.save || 'Save';
   }
   
   // Update document language
@@ -513,6 +537,7 @@ async function init() {
   elements.savePdfBtn = document.getElementById('savePdfBtn');
   elements.saveIcon = document.getElementById('saveIcon');
   elements.saveText = document.getElementById('saveText');
+  elements.mainFormatSelect = document.getElementById('mainFormatSelect');
   elements.cancelBtn = document.getElementById('cancelBtn');
   elements.toggleSettings = document.getElementById('toggleSettings');
   elements.settingsPanel = document.getElementById('settingsPanel');
@@ -529,6 +554,9 @@ async function init() {
   elements.useCache = document.getElementById('useCache');
   elements.useCacheGroup = document.getElementById('useCacheGroup');
   elements.modelSelect = document.getElementById('modelSelect');
+  elements.addModelBtn = document.getElementById('addModelBtn');
+  elements.customModelDropdown = document.getElementById('customModelDropdown');
+  elements.customModelOptions = document.getElementById('customModelOptions');
   elements.outputFormat = document.getElementById('outputFormat');
   elements.generateToc = document.getElementById('generateToc');
   elements.generateAbstract = document.getElementById('generateAbstract');
@@ -626,11 +654,53 @@ async function init() {
   applyTheme();
   setupEventListeners();
   
+  // Initialize custom selects (convert native selects to custom dropdowns)
+  initAllCustomSelects();
+  
   // Check current processing state
   await checkProcessingState();
   
   // Start polling for state updates
   startStatePolling();
+
+  // Load and display version
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const version = manifest.version || '2.9.0';
+    const versionElement = document.getElementById('versionText');
+    if (versionElement) {
+      versionElement.textContent = `v${version}`;
+    }
+  } catch (error) {
+    logError('Failed to load version', error);
+  }
+}
+
+// Format model label with code name and reasoning effort
+function formatModelLabel(modelValue) {
+  if (!modelValue) return '';
+  
+  let modelName = modelValue;
+  let reasoningEffort = null;
+  
+  // Check for high reasoning suffix (e.g., gpt-5.1-high)
+  if (modelValue.endsWith('-high')) {
+    modelName = modelValue.replace(/-high$/, '');
+    reasoningEffort = 'high';
+  } else if (modelValue === 'gpt-5.2' || modelValue.startsWith('gpt-5.2-pro')) {
+    // GPT-5.2 models use medium reasoning by default
+    reasoningEffort = 'medium';
+  }
+  
+  // Use code name as base label
+  let label = modelName;
+  
+  // Add reasoning effort suffix if present
+  if (reasoningEffort) {
+    label += ` (reasoning effort - ${reasoningEffort})`;
+  }
+  
+  return label;
 }
 
 // Update model list based on selected provider
@@ -641,63 +711,319 @@ async function updateModelList() {
   const uiLang = await getUILanguage();
   const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
   
-  // Define models for each provider
+  // Load custom models from storage
+  const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
+  const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
+  const providerCustomModels = customModels[provider] || [];
+  const hiddenModels = storageResult[STORAGE_KEYS.HIDDEN_MODELS] || {};
+  const providerHiddenModels = hiddenModels[provider] || [];
+  
+  // Define default models for each provider (using code names)
   const modelsByProvider = {
     openai: [
-      { value: 'gpt-5.2', label: 'GPT-5.2' },
-      { value: 'gpt-5.2-high', label: 'GPT-5.2 (high)' },
-      { value: 'gpt-5.1', label: 'GPT-5.1' },
-      { value: 'gpt-5.1-high', label: 'GPT-5.1 (high)' }
+      { value: 'gpt-5.2', isCustom: false },
+      { value: 'gpt-5.2-high', isCustom: false },
+      { value: 'gpt-5.1', isCustom: false },
+      { value: 'gpt-5.1-high', isCustom: false }
     ],
     claude: [
-      { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5' }
+      { value: 'claude-sonnet-4-5', isCustom: false }
     ],
     gemini: [
-      { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' }
+      { value: 'gemini-3-pro-preview', isCustom: false }
     ],
     grok: [
-      { value: 'grok-4-1-fast-reasoning', label: 'Grok 4.1 Fast Reasoning' }
+      { value: 'grok-4-1-fast-reasoning', isCustom: false }
     ],
     openrouter: [
-      // Existing models through OpenRouter
-      { value: 'openai/gpt-5.1', label: 'GPT-5.1 (OpenRouter)' },
-      { value: 'openai/gpt-5.1-high', label: 'GPT-5.1 High (OpenRouter)' },
-      { value: 'google/gemini-3-pro-preview', label: 'Gemini 3 Pro (OpenRouter)' },
-      // New models
-      { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5' },
-      { value: 'deepseek/deepseek-v3.2', label: 'DeepSeek V3.2' },
-      { value: 'mistralai/mistral-nemo', label: 'Mistral Nemo' },
-      { value: 'qwen/qwen3-235b-a22b-2507', label: 'Qwen3 235B' },
-      { value: 'mistralai/devstral-2512:free', label: 'Devstral 2512 (Free)' },
-      { value: 'nex-agi/deepseek-v3.1-nex-n1:free', label: 'DeepSeek V3.1 NEX (Free)' },
-      { value: 'openai/gpt-oss-120b:free', label: 'GPT-OSS 120B (Free)' },
-      { value: 'z-ai/glm-4.5-air:free', label: 'GLM-4.5 Air (Free)' }
+      { value: 'openai/gpt-5.1', isCustom: false },
+      { value: 'openai/gpt-5.1-high', isCustom: false },
+      { value: 'google/gemini-3-pro-preview', isCustom: false },
+      { value: 'anthropic/claude-opus-4.5', isCustom: false },
+      { value: 'deepseek/deepseek-v3.2', isCustom: false },
+      { value: 'mistralai/mistral-nemo', isCustom: false },
+      { value: 'qwen/qwen3-235b-a22b-2507', isCustom: false },
+      { value: 'mistralai/devstral-2512:free', isCustom: false },
+      { value: 'nex-agi/deepseek-v3.1-nex-n1:free', isCustom: false },
+      { value: 'openai/gpt-oss-120b:free', isCustom: false },
+      { value: 'z-ai/glm-4.5-air:free', isCustom: false }
     ]
   };
   
-  const models = modelsByProvider[provider] || modelsByProvider.openai;
+  // Get default models for provider and filter out hidden ones
+  const defaultModels = (modelsByProvider[provider] || modelsByProvider.openai)
+    .filter(model => !providerHiddenModels.includes(model.value));
+  
+  // Add custom models (also filter out hidden custom models)
+  const customModelsList = providerCustomModels
+    .filter(modelValue => !providerHiddenModels.includes(modelValue))
+    .map(modelValue => ({
+      value: modelValue,
+      isCustom: true
+    }));
+  
+  // Combine default and custom models
+  const allModels = [...defaultModels, ...customModelsList];
+  
   const currentValue = elements.modelSelect.value;
   
   // Clear existing options
   elements.modelSelect.innerHTML = '';
   
   // Add models for selected provider
-  models.forEach(model => {
+  allModels.forEach(model => {
     const option = document.createElement('option');
     option.value = model.value;
-    option.textContent = model.label;
+    option.textContent = formatModelLabel(model.value);
+    option.dataset.isCustom = model.isCustom ? 'true' : 'false';
     elements.modelSelect.appendChild(option);
   });
   
   // Select first model if current model doesn't belong to selected provider
   const currentModelProvider = getProviderFromModel(currentValue);
   if (currentModelProvider !== provider) {
-    elements.modelSelect.value = models[0].value;
-    // Save new model selection
-    await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: models[0].value });
+    if (allModels.length > 0) {
+      elements.modelSelect.value = allModels[0].value;
+      // Save new model selection
+      await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: allModels[0].value });
+    }
   } else {
     // Keep current model if it belongs to selected provider
-    elements.modelSelect.value = currentValue;
+    const modelExists = allModels.some(m => m.value === currentValue);
+    if (modelExists) {
+      elements.modelSelect.value = currentValue;
+    } else if (allModels.length > 0) {
+      elements.modelSelect.value = allModels[0].value;
+      await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: allModels[0].value });
+    }
+  }
+}
+
+// Show custom model dropdown with delete buttons
+async function showCustomModelDropdown() {
+  if (!elements.customModelDropdown || !elements.customModelOptions) {
+    return;
+  }
+  
+  // Close all other custom selects
+  document.querySelectorAll('.custom-select.open').forEach(select => {
+    select.classList.remove('open');
+  });
+  if (elements.fontFamilyContainer) {
+    elements.fontFamilyContainer.classList.remove('open');
+  }
+  
+  // Show dropdown immediately to prevent race condition with click handler
+  elements.customModelDropdown.style.display = 'block';
+  
+  const provider = elements.apiProviderSelect.value;
+  const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
+  const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
+  const providerCustomModels = customModels[provider] || [];
+  
+  // Get all models (default + custom)
+  const modelsByProvider = {
+    openai: ['gpt-5.2', 'gpt-5.2-high', 'gpt-5.1', 'gpt-5.1-high'],
+    claude: ['claude-sonnet-4-5'],
+    gemini: ['gemini-3-pro-preview'],
+    grok: ['grok-4-1-fast-reasoning'],
+    openrouter: [
+      'openai/gpt-5.1', 'openai/gpt-5.1-high', 'google/gemini-3-pro-preview',
+      'anthropic/claude-opus-4.5', 'deepseek/deepseek-v3.2', 'mistralai/mistral-nemo',
+      'qwen/qwen3-235b-a22b-2507', 'mistralai/devstral-2512:free',
+      'nex-agi/deepseek-v3.1-nex-n1:free', 'openai/gpt-oss-120b:free', 'z-ai/glm-4.5-air:free'
+    ]
+  };
+  
+  const defaultModels = modelsByProvider[provider] || modelsByProvider.openai;
+  const allModels = [...defaultModels, ...providerCustomModels];
+  
+  // Get hidden models
+  const hiddenResult = await chrome.storage.local.get([STORAGE_KEYS.HIDDEN_MODELS]);
+  const hiddenModels = hiddenResult[STORAGE_KEYS.HIDDEN_MODELS] || {};
+  const providerHiddenModels = hiddenModels[provider] || [];
+  
+  // Filter out hidden models
+  const visibleModels = allModels.filter(modelValue => !providerHiddenModels.includes(modelValue));
+  
+  // Clear dropdown
+  elements.customModelOptions.innerHTML = '';
+  
+  // Get currently selected model
+  const currentModel = elements.modelSelect ? elements.modelSelect.value : null;
+  
+  // Add models to dropdown
+  visibleModels.forEach(modelValue => {
+    const isCustom = providerCustomModels.includes(modelValue);
+    const isSelected = modelValue === currentModel;
+    const optionDiv = document.createElement('div');
+    optionDiv.className = 'custom-model-option' + (isSelected ? ' selected' : '');
+    optionDiv.dataset.modelValue = modelValue;
+    
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'custom-model-label';
+    labelSpan.textContent = formatModelLabel(modelValue);
+    
+    optionDiv.appendChild(labelSpan);
+    
+    // Add delete button for all models
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'custom-model-delete';
+    deleteBtn.innerHTML = '×';
+    deleteBtn.title = isCustom ? 'Delete model' : 'Hide model';
+    deleteBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (isCustom) {
+        await removeCustomModel(modelValue);
+      } else {
+        await hideDefaultModel(modelValue);
+      }
+    });
+    optionDiv.appendChild(deleteBtn);
+    
+    // Add click handler to entire option div for full-width clickable area
+    optionDiv.addEventListener('click', (e) => {
+      // Don't trigger selection if clicking on delete button
+      if (e.target.classList.contains('custom-model-delete') || e.target.closest('.custom-model-delete')) {
+        return;
+      }
+      
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      // Update select value and close dropdown
+      elements.modelSelect.value = modelValue;
+      elements.customModelDropdown.style.display = 'none';
+      // Trigger change event to save settings
+      elements.modelSelect.dispatchEvent(new Event('change'));
+    });
+    
+    elements.customModelOptions.appendChild(optionDiv);
+  });
+}
+
+// Show dialog for adding new model
+async function showAddModelDialog() {
+  const provider = elements.apiProviderSelect.value;
+  const uiLang = await getUILanguage();
+  const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
+  
+  const modelName = prompt(locale.addModelPrompt || 'Enter model name (e.g., gpt-5.2, claude-sonnet-4-5):');
+  
+  if (!modelName || !modelName.trim()) {
+    return;
+  }
+  
+  const trimmedName = modelName.trim();
+  
+  // Validate model name format - allow alphanumeric, hyphens, underscores, slashes, colons, dots
+  if (!trimmedName.match(/^[a-z0-9][a-z0-9\-_\/:\.]*$/i)) {
+    const errorMsg = locale.addModelInvalidFormat || 'Invalid model name format. Use code name like gpt-5.2 or claude-sonnet-4-5';
+    alert(errorMsg);
+    return;
+  }
+  
+  // Check if model already exists
+  const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
+  const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
+  const providerCustomModels = customModels[provider] || [];
+  
+  if (providerCustomModels.includes(trimmedName)) {
+    const errorMsg = locale.addModelAlreadyExists || 'This model already exists';
+    alert(errorMsg);
+    return;
+  }
+  
+  // Add model
+  await addCustomModel(trimmedName);
+}
+
+// Add custom model to storage
+async function addCustomModel(modelValue) {
+  const provider = elements.apiProviderSelect.value;
+  
+  const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
+  const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
+  
+  if (!customModels[provider]) {
+    customModels[provider] = [];
+  }
+  
+  if (!customModels[provider].includes(modelValue)) {
+    customModels[provider].push(modelValue);
+    await chrome.storage.local.set({ [STORAGE_KEYS.CUSTOM_MODELS]: customModels });
+    
+    // Update model list
+    await updateModelList();
+    
+    // Select the newly added model
+    if (elements.modelSelect) {
+      elements.modelSelect.value = modelValue;
+      await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: modelValue });
+    }
+  }
+}
+
+// Hide default model from list
+async function hideDefaultModel(modelValue) {
+  const provider = elements.apiProviderSelect.value;
+  
+  const storageResult = await chrome.storage.local.get([STORAGE_KEYS.HIDDEN_MODELS]);
+  const hiddenModels = storageResult[STORAGE_KEYS.HIDDEN_MODELS] || {};
+  
+  if (!hiddenModels[provider]) {
+    hiddenModels[provider] = [];
+  }
+  
+  if (!hiddenModels[provider].includes(modelValue)) {
+    hiddenModels[provider].push(modelValue);
+    await chrome.storage.local.set({ [STORAGE_KEYS.HIDDEN_MODELS]: hiddenModels });
+    
+    // If hidden model was selected, select first available model
+    if (elements.modelSelect && elements.modelSelect.value === modelValue) {
+      const firstOption = elements.modelSelect.options[0];
+      if (firstOption) {
+        elements.modelSelect.value = firstOption.value;
+        await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: firstOption.value });
+      }
+    }
+    
+    // Update model list
+    await updateModelList();
+    
+    // Update custom dropdown if visible
+    if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      await showCustomModelDropdown();
+    }
+  }
+}
+
+// Remove custom model from storage
+async function removeCustomModel(modelValue) {
+  const provider = elements.apiProviderSelect.value;
+  
+  const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
+  const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
+  
+  if (customModels[provider]) {
+    customModels[provider] = customModels[provider].filter(m => m !== modelValue);
+    await chrome.storage.local.set({ [STORAGE_KEYS.CUSTOM_MODELS]: customModels });
+    
+    // If removed model was selected, select first available model
+    if (elements.modelSelect && elements.modelSelect.value === modelValue) {
+      const firstOption = elements.modelSelect.options[0];
+      if (firstOption) {
+        elements.modelSelect.value = firstOption.value;
+        await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: firstOption.value });
+      }
+    }
+    
+    // Update model list
+    await updateModelList();
+    
+    // Update custom dropdown if visible
+    if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      await showCustomModelDropdown();
+    }
   }
 }
 
@@ -912,7 +1238,10 @@ async function loadSettings() {
   
   // Default: enabled (true) - cache selectors by default
   // Explicitly check for boolean false to distinguish from undefined/null
+  // CRITICAL FIX: Preserve current checkbox state if storage value is undefined/null
+  // This prevents race conditions where loadSettings() might overwrite a value being saved
   const useCacheValue = result[STORAGE_KEYS.USE_CACHE];
+  
   if (useCacheValue === false) {
     // User explicitly disabled - respect their choice
     elements.useCache.checked = false;
@@ -920,14 +1249,23 @@ async function loadSettings() {
     // Explicitly enabled
     elements.useCache.checked = true;
   } else {
-    // First time or undefined/null - set to true (enabled) and save default value
-    // This ensures the setting is always persisted, not just set in UI
-    elements.useCache.checked = true;
-    try {
-      // Save explicitly as boolean true to ensure it's preserved
-      await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: true });
-    } catch (error) {
-      logError('Failed to save default use_selector_cache setting', error);
+    // First time or undefined/null
+    // CRITICAL: If checkbox is already unchecked, user likely just unchecked it
+    // Don't override their choice - preserve the unchecked state
+    // Only set to true (default) if checkbox is in its default/checked state
+    if (elements.useCache.checked === false) {
+      // Checkbox is unchecked - preserve user's choice, don't save default
+      // The change event handler will save the value when user changes it
+      // This prevents race conditions where loadSettings() overwrites a value being saved
+    } else {
+      // Checkbox is checked or in default state - safe to set default
+      elements.useCache.checked = true;
+      try {
+        // Save explicitly as boolean true to ensure it's preserved
+        await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: true });
+      } catch (error) {
+        logError('Failed to save default use_selector_cache setting', error);
+      }
     }
   }
   
@@ -938,6 +1276,9 @@ async function loadSettings() {
   
   if (result[STORAGE_KEYS.OUTPUT_FORMAT]) {
     elements.outputFormat.value = result[STORAGE_KEYS.OUTPUT_FORMAT];
+    if (elements.mainFormatSelect) {
+      elements.mainFormatSelect.value = result[STORAGE_KEYS.OUTPUT_FORMAT];
+    }
   }
   
   if (result[STORAGE_KEYS.GENERATE_TOC]) {
@@ -1443,6 +1784,10 @@ function setupEventListeners() {
   // API provider selector change handler
   if (elements.apiProviderSelect) {
     elements.apiProviderSelect.addEventListener('change', async () => {
+      // Close custom dropdown when provider changes
+      if (elements.customModelDropdown) {
+        elements.customModelDropdown.style.display = 'none';
+      }
       const provider = elements.apiProviderSelect.value;
       
       // Save selected provider
@@ -1728,6 +2073,74 @@ function setupEventListeners() {
     debouncedSaveSettings(STORAGE_KEYS.MODEL, elements.modelSelect.value);
   });
 
+  // Add model button handler
+  if (elements.addModelBtn) {
+    elements.addModelBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await showAddModelDialog();
+    });
+  }
+
+  // Show custom dropdown on model select click
+  // Track when dropdown was opened to prevent race condition
+  let dropdownOpenTime = 0;
+  
+  if (elements.modelSelect) {
+    // Use mousedown to intercept before native dropdown opens
+    elements.modelSelect.addEventListener('mousedown', (e) => {
+      const isVisible = elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none';
+      
+      if (isVisible) {
+        // If dropdown is visible, close it without opening native dropdown
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        elements.customModelDropdown.style.display = 'none';
+      } else {
+        // If dropdown is not visible, prevent native dropdown and show custom one
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        dropdownOpenTime = Date.now();
+        showCustomModelDropdown();
+      }
+    }, true); // Use capture phase
+
+    // Model select change handler - update custom dropdown if visible
+    elements.modelSelect.addEventListener('change', () => {
+      // Update custom dropdown if it's visible (for when user uses keyboard navigation)
+      if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+        showCustomModelDropdown();
+      }
+    });
+  }
+
+  // Close custom dropdown when clicking outside
+  document.addEventListener('click', (e) => {
+    const dropdownDisplay = elements.customModelDropdown?.style.display;
+    const now = Date.now();
+    const timeSinceOpen = now - dropdownOpenTime;
+    
+    if (!elements.customModelDropdown || dropdownDisplay === 'none') {
+      return;
+    }
+    
+    // Don't close if dropdown was just opened (within 150ms) - prevents race condition
+    if (timeSinceOpen < 150) {
+      return;
+    }
+    
+    // Don't close if click is inside dropdown, on select, or on add button
+    if (elements.customModelDropdown.contains(e.target) ||
+        (elements.modelSelect && elements.modelSelect.contains(e.target)) ||
+        (elements.addModelBtn && elements.addModelBtn.contains(e.target))) {
+      return;
+    }
+    
+    // Close dropdown
+    elements.customModelDropdown.style.display = 'none';
+  });
+
   elements.modeSelect.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.MODE, elements.modeSelect.value, async () => {
       await updateModeHint();
@@ -1770,11 +2183,25 @@ function setupEventListeners() {
    */
   elements.outputFormat.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.outputFormat.value, async () => {
+      // Sync main format select
+      if (elements.mainFormatSelect) {
+        elements.mainFormatSelect.value = elements.outputFormat.value;
+      }
       // updateOutputFormatUI() handles all UI visibility updates based on format
       // It calls updateAudioProviderUI() and updateTranslationVisibility() internally
       await updateOutputFormatUI();
     });
   });
+  
+  // Sync main format select with settings format
+  if (elements.mainFormatSelect) {
+    elements.mainFormatSelect.addEventListener('change', () => {
+      elements.outputFormat.value = elements.mainFormatSelect.value;
+      debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.mainFormatSelect.value, async () => {
+        await updateOutputFormatUI();
+      });
+    });
+  }
 
   elements.generateToc.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.GENERATE_TOC, elements.generateToc.checked);
@@ -1829,7 +2256,21 @@ function setupEventListeners() {
   // Custom font family dropdown
   elements.fontFamilyTrigger.addEventListener('click', (e) => {
     e.stopPropagation();
-    elements.fontFamilyContainer.classList.toggle('open');
+    const isOpen = elements.fontFamilyContainer.classList.contains('open');
+    
+    // Close all other custom selects
+    document.querySelectorAll('.custom-select.open').forEach(otherSelect => {
+      if (otherSelect !== elements.fontFamilyContainer) {
+        otherSelect.classList.remove('open');
+      }
+    });
+    
+    // Toggle current select
+    if (isOpen) {
+      elements.fontFamilyContainer.classList.remove('open');
+    } else {
+      elements.fontFamilyContainer.classList.add('open');
+    }
   });
 
   elements.fontFamilyOptions.addEventListener('click', async (e) => {
@@ -1861,11 +2302,24 @@ function setupEventListeners() {
   });
 
   // Close dropdown when clicking outside
-  document.addEventListener('click', (e) => {
-    if (!elements.fontFamilyContainer.contains(e.target)) {
-      elements.fontFamilyContainer.classList.remove('open');
-    }
-  });
+  // Global click handler to close all custom selects when clicking outside
+  // (This is added once, not per select)
+  if (!window.customSelectClickHandlerAdded) {
+    document.addEventListener('click', (e) => {
+      // Close all custom selects if click is outside
+      document.querySelectorAll('.custom-select.open').forEach(select => {
+        if (!select.contains(e.target)) {
+          select.classList.remove('open');
+        }
+      });
+      
+      // Also close font family dropdown if open
+      if (elements.fontFamilyContainer && !elements.fontFamilyContainer.contains(e.target)) {
+        elements.fontFamilyContainer.classList.remove('open');
+      }
+    });
+    window.customSelectClickHandlerAdded = true;
+  }
 
   elements.fontSize.addEventListener('change', () => {
     const size = parseInt(elements.fontSize.value) || 31;
@@ -1959,6 +2413,8 @@ function setupEventListeners() {
       await applyLocalization();
       // Reload settings to update all UI text
       await loadSettings();
+      // Update custom selects after localization
+      initAllCustomSelects();
     });
   }
   
@@ -2606,6 +3062,184 @@ function setCustomSelectValue(value) {
   });
 }
 
+// Universal function to convert native select to custom-select
+function initCustomSelect(selectId, options = {}) {
+  const select = document.getElementById(selectId);
+  if (!select) return null;
+  
+  // Skip if already converted
+  if (select.closest('.custom-select')) return select.closest('.custom-select');
+  
+  // Create wrapper structure
+  const container = document.createElement('div');
+  container.className = 'custom-select';
+  container.id = `${selectId}Container`;
+  
+  const trigger = document.createElement('div');
+  trigger.className = 'custom-select-trigger';
+  trigger.id = `${selectId}Trigger`;
+  
+  const valueSpan = document.createElement('span');
+  valueSpan.className = 'custom-select-value';
+  valueSpan.id = `${selectId}Value`;
+  
+  const arrow = document.createElement('span');
+  arrow.className = 'custom-select-arrow';
+  arrow.textContent = '▾';
+  
+  trigger.appendChild(valueSpan);
+  trigger.appendChild(arrow);
+  
+  const optionsDiv = document.createElement('div');
+  optionsDiv.className = 'custom-select-options';
+  optionsDiv.id = `${selectId}Options`;
+  
+  // Function to populate options
+  const populateOptions = () => {
+    optionsDiv.innerHTML = '';
+    Array.from(select.options).forEach((option) => {
+      const customOption = document.createElement('div');
+      customOption.className = 'custom-select-option';
+      customOption.dataset.value = option.value;
+      
+      // Preserve data-i18n attribute if present
+      if (option.hasAttribute('data-i18n')) {
+        customOption.setAttribute('data-i18n', option.getAttribute('data-i18n'));
+      }
+      
+      customOption.textContent = option.textContent;
+      if (option.selected || select.value === option.value) {
+        customOption.classList.add('selected');
+        valueSpan.textContent = option.textContent;
+      }
+      optionsDiv.appendChild(customOption);
+    });
+  };
+  
+  populateOptions();
+  
+  container.appendChild(trigger);
+  container.appendChild(optionsDiv);
+  
+  // Replace select with container structure
+  select.style.display = 'none';
+  select.style.position = 'absolute';
+  select.style.opacity = '0';
+  select.style.pointerEvents = 'none';
+  select.parentNode.insertBefore(container, select);
+  container.appendChild(select);
+  
+  // Event handlers
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = container.classList.contains('open');
+    
+    // Close all other custom selects
+    document.querySelectorAll('.custom-select.open').forEach(otherSelect => {
+      if (otherSelect !== container) {
+        otherSelect.classList.remove('open');
+      }
+    });
+    
+    // Toggle current select
+    if (isOpen) {
+      container.classList.remove('open');
+    } else {
+      container.classList.add('open');
+    }
+  });
+  
+  optionsDiv.addEventListener('click', (e) => {
+    const option = e.target.closest('.custom-select-option');
+    if (!option) return;
+    
+    const value = option.dataset.value;
+    
+    // Update native select
+    select.value = value;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    
+    // Update display
+    valueSpan.textContent = option.textContent;
+    
+    // Update selected state
+    optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
+      opt.classList.remove('selected');
+    });
+    option.classList.add('selected');
+    
+    // Close dropdown
+    container.classList.remove('open');
+    
+    // Call custom callback if provided
+    if (options.onChange) {
+      options.onChange(value);
+    }
+  });
+  
+  // Close dropdown when clicking outside (handled globally for all selects)
+  
+  // Sync with native select value changes
+  select.addEventListener('change', () => {
+    const selectedOption = optionsDiv.querySelector(`[data-value="${select.value}"]`);
+    if (selectedOption) {
+      valueSpan.textContent = selectedOption.textContent;
+      optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
+        opt.classList.remove('selected');
+      });
+      selectedOption.classList.add('selected');
+    } else {
+      // If option not found, repopulate (for dynamic selects)
+      populateOptions();
+    }
+  });
+  
+  // Watch for option changes (for dynamic selects)
+  const observer = new MutationObserver(() => {
+    const currentValue = select.value;
+    populateOptions();
+    // Restore value after repopulation
+    if (currentValue) {
+      select.value = currentValue;
+      const selectedOption = optionsDiv.querySelector(`[data-value="${currentValue}"]`);
+      if (selectedOption) {
+        selectedOption.classList.add('selected');
+        valueSpan.textContent = selectedOption.textContent;
+      }
+    }
+  });
+  observer.observe(select, { childList: true, subtree: true });
+  
+  return container;
+}
+
+// Initialize all custom selects
+function initAllCustomSelects() {
+  // List of select IDs to convert (excluding modelSelect which has its own custom dropdown and header selects)
+  // outputFormat is hidden (moved to main screen as mainFormatSelect)
+  const selectIds = [
+    'apiProviderSelect',
+    'modeSelect',
+    'mainFormatSelect',
+    'audioProvider',
+    'elevenlabsModel',
+    'elevenlabsFormat',
+    'googleTtsModel',
+    'googleTtsVoice',
+    'audioVoice',
+    'pageMode',
+    'languageSelect',
+    'stylePreset'
+  ];
+  
+  selectIds.forEach(selectId => {
+    const select = document.getElementById(selectId);
+    if (select && !select.closest('.custom-select')) {
+      initCustomSelect(selectId);
+    }
+  });
+}
+
 // Update mode hint text
 async function updateModeHint() {
   const mode = elements.modeSelect.value;
@@ -2666,27 +3300,31 @@ function hideAllAudioFields() {
  */
 async function updateOutputFormatUI() {
   const format = elements.outputFormat.value;
+  // Sync main format select
+  if (elements.mainFormatSelect && elements.mainFormatSelect.value !== format) {
+    elements.mainFormatSelect.value = format;
+  }
   const isPdf = format === 'pdf';
   const isEpub = format === 'epub';
   const isAudio = format === 'audio';
   const showStyleSettings = isPdf; // Only PDF has style settings
   
-  // Update button text and icon based on format
-  const langCode = await getUILanguage();
-  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+  // Update button icon based on format (text stays "Save")
   const formatConfig = {
-    pdf: { icon: '📄', text: locale.saveAsPdf || UI_LOCALES.en.saveAsPdf },
-    epub: { icon: '📚', text: locale.saveAsEpub || UI_LOCALES.en.saveAsEpub },
-    fb2: { icon: '📖', text: locale.saveAsFb2 || UI_LOCALES.en.saveAsFb2 },
-    markdown: { icon: '📝', text: locale.saveAsMarkdown || UI_LOCALES.en.saveAsMarkdown },
-    docx: { icon: '📘', text: locale.saveAsDocx || UI_LOCALES.en.saveAsDocx },
-    html: { icon: '🌐', text: locale.saveAsHtml || UI_LOCALES.en.saveAsHtml },
-    txt: { icon: '📄', text: locale.saveAsTxt || UI_LOCALES.en.saveAsTxt },
-    audio: { icon: '🔊', text: locale.saveAsAudio || UI_LOCALES.en.saveAsAudio }
+    pdf: { icon: '📄' },
+    epub: { icon: '📚' },
+    fb2: { icon: '📖' },
+    markdown: { icon: '📝' },
+    // Commented out: docx, html, txt formats removed from UI
+    // docx: { icon: '📘' },
+    // html: { icon: '🌐' },
+    // txt: { icon: '📄' },
+    audio: { icon: '🔊' }
   };
   const config = formatConfig[format] || formatConfig.pdf;
-  elements.saveIcon.textContent = config.icon;
-  elements.saveText.textContent = config.text;
+  if (elements.saveIcon) {
+    elements.saveIcon.textContent = config.icon;
+  }
   
   // ============================================
   // AUDIO SETTINGS VISIBILITY
@@ -3387,15 +4025,16 @@ async function updateUIFromState(state) {
     elements.savePdfBtn.style.display = 'block';
     elements.cancelBtn.style.display = 'none';
     // Get saved format from state or current selection
-    const savedFormat = state.outputFormat || elements.outputFormat?.value || 'pdf';
+    const savedFormat = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
     const formatNames = {
       pdf: await t('saveAsPdf'),
       epub: await t('saveAsEpub'),
       fb2: await t('saveAsFb2'),
       markdown: await t('saveAsMarkdown'),
-      docx: await t('saveAsDocx'),
-      html: await t('saveAsHtml'),
-      txt: await t('saveAsTxt'),
+      // Commented out: docx, html, txt formats removed from UI
+      // docx: await t('saveAsDocx'),
+      // html: await t('saveAsHtml'),
+      // txt: await t('saveAsTxt'),
       audio: await t('saveAsAudio')
     };
     const formatName = formatNames[savedFormat] || formatNames.pdf;
@@ -3508,7 +4147,7 @@ async function handleSavePdf() {
         model: model,
         mode: elements.modeSelect.value,
         useCache: elements.useCache.checked,
-        outputFormat: elements.outputFormat.value,
+        outputFormat: elements.mainFormatSelect?.value || elements.outputFormat.value,
         generateToc: elements.generateToc.checked,
         generateAbstract: elements.generateAbstract.checked,
         pageMode: elements.pageMode.value,
@@ -3690,9 +4329,10 @@ async function displayStats(stats) {
   document.getElementById('formatEpub').textContent = stats.byFormat?.epub || 0;
   document.getElementById('formatFb2').textContent = stats.byFormat?.fb2 || 0;
   document.getElementById('formatMarkdown').textContent = stats.byFormat?.markdown || 0;
-  document.getElementById('formatDocx').textContent = stats.byFormat?.docx || 0;
-  document.getElementById('formatHtml').textContent = stats.byFormat?.html || 0;
-  document.getElementById('formatTxt').textContent = stats.byFormat?.txt || 0;
+  // Commented out: docx, html, txt formats removed from UI
+  // document.getElementById('formatDocx').textContent = stats.byFormat?.docx || 0;
+  // document.getElementById('formatHtml').textContent = stats.byFormat?.html || 0;
+  // document.getElementById('formatTxt').textContent = stats.byFormat?.txt || 0;
   document.getElementById('formatAudio').textContent = stats.byFormat?.audio || 0;
   
   // Update history

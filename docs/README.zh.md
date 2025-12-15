@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **AI驱动的文章提取器** — 将网页上的任何文章保存为PDF、EPUB、FB2、Markdown、DOCX、HTML、TXT或音频。支持11种语言翻译。适用于任何网站。
+> **AI驱动的文章提取器** — 将网页上的任何文章保存为PDF、EPUB、FB2、Markdown或音频。支持11种语言翻译。适用于任何网站。
 
 ![版本](https://img.shields.io/badge/版本-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-扩展-green)
@@ -18,9 +18,6 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - 📚 **EPUB** — 适用于 Kindle、Kobo、Apple Books
 - 📖 **FB2** — 适用于 PocketBook、FBReader
 - 📝 **Markdown** — 纯文本格式，适合笔记
-- 📘 **DOCX** — Microsoft Word格式，包含图像和格式
-- 🌐 **HTML** — 干净的HTML文件，保留样式
-- 📄 **TXT** — 纯文本格式，无格式
 - 🎧 **音频 (MP3/WAV)** — 使用AI语音朗读
 
 所有格式都支持**翻译为11种语言** — 甚至翻译图像上的文字！
@@ -56,10 +53,6 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - **11种字体**可供选择
 - **页面模式**：单页连续或多页A4格式
 
-### 📄 文档格式
-- **DOCX**：Microsoft Word格式，包含嵌入图像和保留的格式
-- **HTML**：干净、独立的HTML文件，包含嵌入的样式和图像
-- **TXT**：纯文本格式，无格式，非常适合简单文本提取
 
 ### ⚡ 智能功能
 - **视频支持**：从YouTube/Vimeo视频提取字幕并转换为文章（v2.9.0）
@@ -91,7 +84,6 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - **Keep-alive要求**：Chrome MV3要求keep-alive间隔至少1分钟。长时间处理任务可能需要几分钟。
 - **图像的CORS**：如果网站阻止跨域请求，某些图像可能无法加载。扩展将跳过这些图像。
 - **取消不是即时的**：取消可能需要几秒钟才能完全停止所有后台进程。
-- **大型HTML**：具有非常大的HTML（>500KB）的页面可能需要更长时间处理。
 
 ### 浏览器兼容性
 - **Chrome/Edge/Brave/Arc**：完全支持
@@ -293,7 +285,7 @@ clipaible/
 │   ├── api/            # OpenAI、Claude、Gemini、TTS
 │   ├── extraction/     # 内容提取
 │   ├── translation/    # 翻译和语言检测
-│   ├── generation/     # PDF、EPUB、FB2、MD、DOCX、HTML、TXT、音频
+│   ├── generation/     # PDF、EPUB、FB2、MD、音频
 │   ├── cache/          # 选择器缓存
 │   ├── stats/          # 使用统计
 │   └── utils/          # 配置、加密、工具
@@ -320,10 +312,10 @@ clipaible/
 | `activeTab` | 从当前标签页读取文章 |
 | `storage` | 本地保存设置 |
 | `scripting` | 注入提取脚本 |
-| `downloads` | 保存生成的文件（PDF、EPUB、FB2、Markdown、DOCX、HTML、TXT、音频） |
+| `downloads` | 保存生成的文件（PDF、EPUB、FB2、Markdown、音频） |
 | `debugger` | 通过Chrome打印API生成PDF |
 | `alarms` | 在长时间任务期间保持worker处于活动状态 |
-| `contextMenus` | 在网页的右键菜单中添加"使用ClipAIble保存"选项（PDF/EPUB/FB2/MD/DOCX/HTML/TXT/音频） |
+| `contextMenus` | 在网页的右键菜单中添加"使用ClipAIble保存"选项（PDF/EPUB/FB2/MD/音频） |
 
 详见 [PERMISSIONS.md](PERMISSIONS.md)。
 

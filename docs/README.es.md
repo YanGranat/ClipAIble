@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **Extractor de artículos con IA** — Guarda cualquier artículo de la web como PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT o Audio. Traducción a 11 idiomas. Funciona en cualquier sitio web.
+> **Extractor de artículos con IA** — Guarda cualquier artículo de la web como PDF, EPUB, FB2, Markdown o Audio. Traducción a 11 idiomas. Funciona en cualquier sitio web.
 
 ![Versión](https://img.shields.io/badge/versión-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensión-green)
@@ -18,9 +18,6 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 - 📚 **EPUB** — Compatible con Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatible con PocketBook, FBReader
 - 📝 **Markdown** — Texto plano para notas
-- 📘 **DOCX** — Formato Microsoft Word con imágenes y formato
-- 🌐 **HTML** — Archivo HTML limpio con estilos preservados
-- 📄 **TXT** — Texto plano sin formato
 - 🎧 **Audio (MP3/WAV)** — Escucha con narración de IA
 
 ¡Todos los formatos admiten **traducción a 11 idiomas** — incluso traducción de texto en imágenes!
@@ -56,10 +53,6 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 - **11 fuentes** para elegir
 - **Modos de página**: Página única continua o formato multi-página A4
 
-### 📄 Formatos de documentos
-- **DOCX**: Formato Microsoft Word con imágenes incrustadas y formato preservado
-- **HTML**: Archivo HTML limpio e independiente con estilos e imágenes incrustados
-- **TXT**: Texto plano sin formato, perfecto para extracción de texto simple
 
 ### ⚡ Características inteligentes
 - **Soporte de video**: Extraer subtítulos de videos YouTube/Vimeo y convertirlos en artículos (v2.9.0)
@@ -91,7 +84,6 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 - **Requisito de keep-alive**: Chrome MV3 requiere un intervalo de keep-alive de al menos 1 minuto. Las tareas de procesamiento largas pueden tardar varios minutos.
 - **CORS para imágenes**: Algunas imágenes pueden no cargarse si el sitio web bloquea las solicitudes cross-origin. La extensión omitirá estas imágenes.
 - **Cancelación no instantánea**: La cancelación puede tardar unos segundos en detener completamente todos los procesos en segundo plano.
-- **HTML grande**: Las páginas con HTML muy grande (>500KB) pueden tardar más en procesarse.
 
 ### Compatibilidad del Navegador
 - **Chrome/Edge/Brave/Arc**: Totalmente compatible
@@ -293,7 +285,7 @@ clipaible/
 │   ├── api/            # OpenAI, Claude, Gemini, TTS
 │   ├── extraction/     # Extracción de contenido
 │   ├── translation/    # Traducción y detección de idioma
-│   ├── generation/     # PDF, EPUB, FB2, MD, DOCX, HTML, TXT, Audio
+│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Caché de selectores
 │   ├── stats/          # Estadísticas de uso
 │   └── utils/          # Configuración, encriptación, utilidades
@@ -320,10 +312,10 @@ clipaible/
 | `activeTab` | Leer artículo de la pestaña actual |
 | `storage` | Guardar configuración localmente |
 | `scripting` | Inyectar script de extracción |
-| `downloads` | Guardar archivos generados (PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, Audio) |
+| `downloads` | Guardar archivos generados (PDF, EPUB, FB2, Markdown, Audio) |
 | `debugger` | Generar PDFs vía API de impresión de Chrome |
 | `alarms` | Mantener worker en estado activo durante tareas largas |
-| `contextMenus` | Agregar opciones "Guardar con ClipAIble" (PDF/EPUB/FB2/MD/DOCX/HTML/TXT/Audio) al menú contextual en páginas web |
+| `contextMenus` | Agregar opciones "Guardar con ClipAIble" (PDF/EPUB/FB2/MD/Audio) al menú contextual en páginas web |
 
 Ver [PERMISSIONS.md](PERMISSIONS.md) para detalles.
 

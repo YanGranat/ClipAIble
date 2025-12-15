@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **Estrattore di articoli alimentato da IA** — Salva qualsiasi articolo dal web come PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT o Audio. Traduzione in 11 lingue. Funziona su qualsiasi sito web.
+> **Estrattore di articoli alimentato da IA** — Salva qualsiasi articolo dal web come PDF, EPUB, FB2, Markdown o Audio. Traduzione in 11 lingue. Funziona su qualsiasi sito web.
 
 ![Versione](https://img.shields.io/badge/versione-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Estensione-green)
@@ -18,9 +18,6 @@ ClipAIble utilizza l'intelligenza artificiale per estrarre intelligentemente il 
 - 📚 **EPUB** — Compatibile con Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatibile con PocketBook, FBReader
 - 📝 **Markdown** — Testo semplice per appunti
-- 📘 **DOCX** — Formato Microsoft Word con immagini e formattazione
-- 🌐 **HTML** — File HTML pulito con stili preservati
-- 📄 **TXT** — Testo semplice senza formattazione
 - 🎧 **Audio (MP3/WAV)** — Ascolta con narrazione IA
 
 Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzione del testo sulle immagini!
@@ -56,10 +53,6 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 - **11 font** tra cui scegliere
 - **Modalità pagina**: Pagina singola continua o formato multi-pagina A4
 
-### 📄 Formati di documenti
-- **DOCX**: Formato Microsoft Word con immagini incorporate e formattazione preservata
-- **HTML**: File HTML pulito e autonomo con stili e immagini incorporate
-- **TXT**: Testo semplice senza formattazione, perfetto per estrazione testo semplice
 
 ### ⚡ Funzionalità intelligenti
 - **Supporto video**: Estrarre sottotitoli da video YouTube/Vimeo e convertirli in articoli (v2.9.0)
@@ -91,7 +84,6 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 - **Requisito keep-alive**: Chrome MV3 richiede un intervallo keep-alive di almeno 1 minuto. Le attività di elaborazione lunghe possono richiedere diversi minuti.
 - **CORS per le immagini**: Alcune immagini potrebbero non caricarsi se il sito web blocca le richieste cross-origin. L'estensione salterà queste immagini.
 - **Annullamento non istantaneo**: L'annullamento può richiedere alcuni secondi per fermare completamente tutti i processi in background.
-- **HTML grande**: Le pagine con HTML molto grande (>500KB) possono richiedere più tempo per l'elaborazione.
 
 ### Compatibilità del Browser
 - **Chrome/Edge/Brave/Arc**: Completamente supportato
@@ -293,7 +285,7 @@ clipaible/
 │   ├── api/            # OpenAI, Claude, Gemini, TTS
 │   ├── extraction/     # Estrazione contenuto
 │   ├── translation/    # Traduzione e rilevamento lingua
-│   ├── generation/     # PDF, EPUB, FB2, MD, DOCX, HTML, TXT, Audio
+│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Cache selettori
 │   ├── stats/          # Statistiche utilizzo
 │   └── utils/          # Configurazione, crittografia, utilità
@@ -320,10 +312,10 @@ clipaible/
 | `activeTab` | Leggi articolo dalla scheda corrente |
 | `storage` | Salva impostazioni localmente |
 | `scripting` | Inietta script di estrazione |
-| `downloads` | Salva file generati (PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, Audio) |
+| `downloads` | Salva file generati (PDF, EPUB, FB2, Markdown, Audio) |
 | `debugger` | Genera PDF tramite API di stampa Chrome |
 | `alarms` | Mantieni worker in stato attivo durante attività lunghe |
-| `contextMenus` | Aggiungi opzioni "Salva con ClipAIble" (PDF/EPUB/FB2/MD/DOCX/HTML/TXT/Audio) al menu contestuale sulle pagine web |
+| `contextMenus` | Aggiungi opzioni "Salva con ClipAIble" (PDF/EPUB/FB2/MD/Audio) al menu contestuale sulle pagine web |
 
 Vedi [PERMISSIONS.md](PERMISSIONS.md) per i dettagli.
 

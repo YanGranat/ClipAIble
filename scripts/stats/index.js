@@ -16,6 +16,8 @@ function getDefaultStats() {
       epub: 0,
       fb2: 0,
       markdown: 0,
+      // Commented out: docx, html, txt formats removed from UI
+      // These are kept for backward compatibility with existing stats data
       docx: 0,
       html: 0,
       txt: 0,
@@ -86,7 +88,7 @@ function getCurrentMonthKey() {
  * @param {Object} data - Save data
  * @param {string} data.title - Article title
  * @param {string} data.url - Article URL
- * @param {string} data.format - Output format (pdf, epub, fb2, markdown)
+ * @param {string} data.format - Output format (pdf, epub, fb2, markdown, audio)
  * @param {number} data.processingTime - Processing time in ms
  */
 export async function recordSave(data) {

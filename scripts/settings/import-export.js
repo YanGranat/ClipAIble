@@ -176,10 +176,24 @@ export async function importSettings(jsonData, options = {}) {
     const currentSettings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     const settingsToImport = {};
     
+    // CRITICAL FIX: Preserve use_selector_cache if it's not in import file and overwriteExisting is true
+    // This prevents the setting from being lost during import
+    const preserveUseSelectorCache = overwriteExisting && 
+                                     data.settings['use_selector_cache'] === undefined && 
+                                     currentSettings['use_selector_cache'] !== undefined;
+    
     for (const key of STORAGE_KEYS_TO_EXPORT) {
       // Security: Skip any API keys that might be in the import file
       if (API_KEY_NAMES.includes(key)) {
         log('Skipping API key import for security', { key });
+        continue;
+      }
+      
+      // CRITICAL FIX: Preserve use_selector_cache if it's not in import file
+      if (key === 'use_selector_cache' && preserveUseSelectorCache) {
+        settingsToImport[key] = currentSettings[key];
+        result.settingsSkipped++; // Count as skipped to indicate it was preserved
+        log('Preserved use_selector_cache during import', { value: currentSettings[key] });
         continue;
       }
       

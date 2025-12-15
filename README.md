@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **AI-Powered Article Extractor** — Clip any article from the web and save it as PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, or Audio. Translate to 11 languages. Works on any website.
+> **AI-Powered Article Extractor** — Clip any article from the web and save it as PDF, EPUB, FB2, Markdown, or Audio. Translate to 11 languages. Works on any website.
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
@@ -20,9 +20,6 @@ ClipAIble uses AI to intelligently extract article content from any webpage — 
 - 📚 **EPUB** — Compatible with Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatible with PocketBook, FBReader
 - 📝 **Markdown** — Plain text format for notes
-- 📘 **DOCX** — Microsoft Word format with images and formatting
-- 🌐 **HTML** — Clean HTML file with preserved styles
-- 📄 **TXT** — Plain text format without formatting
 - 🎧 **Audio (MP3/WAV)** — Listen with AI-powered narration
 
 All formats support **translation to 11 languages** — even translating text on images!
@@ -58,10 +55,6 @@ All formats support **translation to 11 languages** — even translating text on
 - **11 fonts** to choose from
 - **Page modes**: Single continuous page or multi-page A4 format
 
-### 📄 Document Formats
-- **DOCX**: Microsoft Word format with embedded images and preserved formatting
-- **HTML**: Clean, standalone HTML file with embedded styles and images
-- **TXT**: Plain text format without formatting, perfect for simple text extraction
 
 ### ⚡ Smart Features
 - **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles (v2.9.0)
@@ -93,7 +86,6 @@ All formats support **translation to 11 languages** — even translating text on
 - **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes.
 - **CORS for images**: Some images may fail to load if the website blocks cross-origin requests. The extension will skip these images.
 - **Cancel not instant**: Cancellation may take a few seconds to fully stop all background processes.
-- **Large HTML**: Pages with very large HTML (>500KB) may take longer to process.
 
 ### Browser Compatibility
 - **Chrome/Edge/Brave/Arc**: Fully supported
@@ -295,7 +287,7 @@ clipaible/
 │   ├── api/            # OpenAI, Claude, Gemini, TTS
 │   ├── extraction/     # Content extraction
 │   ├── translation/    # Translation & language detection
-│   ├── generation/     # PDF, EPUB, FB2, MD, DOCX, HTML, TXT, Audio
+│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Selector caching
 │   ├── stats/          # Usage statistics
 │   └── utils/          # Config, encryption, helpers
@@ -324,10 +316,10 @@ ClipAIble requires the following permissions to function. All permissions are us
 | `activeTab` | Read the current page to extract content when you click the extension icon or use the context menu. The extension only accesses the tab you're currently viewing. |
 | `storage` | Save your settings (API keys, style preferences, language selection) and statistics locally in your browser. Your data never leaves your device. |
 | `scripting` | Inject the content extraction script into web pages. This script finds and extracts the article content (text, images, headings) from the page DOM. |
-| `downloads` | Save the generated files (PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, Audio) to your computer. Without this permission, the extension cannot download files. |
+| `downloads` | Save the generated files (PDF, EPUB, FB2, Markdown, Audio) to your computer. Without this permission, the extension cannot download files. |
 | `debugger` | **PDF generation only** - Uses Chrome's built-in print-to-PDF functionality to generate high-quality PDFs with proper page layout and styling. The debugger is attached only during PDF generation and immediately detached after completion. This is the only way to generate PDFs with custom styling in Chrome extensions. |
 | `alarms` | Keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Interval is set to ≥1 minute per MV3 rules. |
-| `contextMenus` | Add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/DOCX/HTML/TXT/Audio) to the right-click context menu on web pages. |
+| `contextMenus` | Add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/Audio) to the right-click context menu on web pages. |
 | `notifications` | Show desktop notifications when using the context menu "Save" feature. Notifies you if there's an error (e.g., missing API key). |
 | `unlimitedStorage` | Store selector cache and temporary print data locally. This enables faster repeat extractions without calling AI again (offline mode). |
 

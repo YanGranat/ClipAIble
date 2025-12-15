@@ -31,9 +31,10 @@ import { generatePdf, generatePdfWithDebugger } from './generation/pdf.js';
 import { generateEpub } from './generation/epub.js';
 import { generateFb2 } from './generation/fb2.js';
 import { generateAudio } from './generation/audio.js';
-import { generateDocx } from './generation/docx.js';
-import { generateHtml } from './generation/html.js';
-import { generateTxt } from './generation/txt.js';
+// Commented out: docx, html, txt formats removed from UI
+// import { generateDocx } from './generation/docx.js';
+// import { generateHtml } from './generation/html.js';
+// import { generateTxt } from './generation/txt.js';
 import { recordSave, getFormattedStats, clearStats, deleteHistoryItem } from './stats/index.js';
 import { 
   getCachedSelectors, 
@@ -322,9 +323,10 @@ const FORMAT_MENU_IDS = {
   'save-as-fb2': 'fb2',
   'save-as-markdown': 'markdown',
   'save-as-audio': 'audio',
-  'save-as-docx': 'docx',
-  'save-as-html': 'html',
-  'save-as-txt': 'txt'
+  // Commented out: docx, html, txt formats removed from UI
+  // 'save-as-docx': 'docx',
+  // 'save-as-html': 'html',
+  // 'save-as-txt': 'txt'
 };
 
 // Create or update context menu with localization
@@ -343,9 +345,10 @@ async function updateContextMenu() {
     const fb2Title = tSync('saveAsFb2', lang);
     const markdownTitle = tSync('saveAsMarkdown', lang);
     const audioTitle = tSync('saveAsAudio', lang);
-    const docxTitle = tSync('saveAsDocx', lang);
-    const htmlTitle = tSync('saveAsHtml', lang);
-    const txtTitle = tSync('saveAsTxt', lang);
+    // Commented out: docx, html, txt formats removed from UI
+    // const docxTitle = tSync('saveAsDocx', lang);
+    // const htmlTitle = tSync('saveAsHtml', lang);
+    // const txtTitle = tSync('saveAsTxt', lang);
     
     // Create parent menu item
     chrome.contextMenus.create({
@@ -390,26 +393,27 @@ async function updateContextMenu() {
       contexts: ['page']
     });
     
-    chrome.contextMenus.create({
-      id: 'save-as-docx',
-      parentId: 'clipaible-save-as',
-      title: docxTitle,
-      contexts: ['page']
-    });
-    
-    chrome.contextMenus.create({
-      id: 'save-as-html',
-      parentId: 'clipaible-save-as',
-      title: htmlTitle,
-      contexts: ['page']
-    });
-    
-    chrome.contextMenus.create({
-      id: 'save-as-txt',
-      parentId: 'clipaible-save-as',
-      title: txtTitle,
-      contexts: ['page']
-    });
+    // Commented out: docx, html, txt formats removed from UI
+    // chrome.contextMenus.create({
+    //   id: 'save-as-docx',
+    //   parentId: 'clipaible-save-as',
+    //   title: docxTitle,
+    //   contexts: ['page']
+    // });
+    // 
+    // chrome.contextMenus.create({
+    //   id: 'save-as-html',
+    //   parentId: 'clipaible-save-as',
+    //   title: htmlTitle,
+    //   contexts: ['page']
+    // });
+    // 
+    // chrome.contextMenus.create({
+    //   id: 'save-as-txt',
+    //   parentId: 'clipaible-save-as',
+    //   title: txtTitle,
+    //   contexts: ['page']
+    // });
     
     log('Context menu created with localization', { lang });
   } catch (error) {
@@ -445,24 +449,25 @@ async function updateContextMenu() {
       title: 'Save as Markdown',
       contexts: ['page']
     });
-    chrome.contextMenus.create({
-      id: 'save-as-docx',
-      parentId: 'clipaible-save-as',
-      title: 'Save as DOCX',
-      contexts: ['page']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-html',
-      parentId: 'clipaible-save-as',
-      title: 'Save as HTML',
-      contexts: ['page']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-txt',
-      parentId: 'clipaible-save-as',
-      title: 'Save as TXT',
-      contexts: ['page']
-    });
+    // Commented out: docx, html, txt formats removed from UI
+    // chrome.contextMenus.create({
+    //   id: 'save-as-docx',
+    //   parentId: 'clipaible-save-as',
+    //   title: 'Save as DOCX',
+    //   contexts: ['page']
+    // });
+    // chrome.contextMenus.create({
+    //   id: 'save-as-html',
+    //   parentId: 'clipaible-save-as',
+    //   title: 'Save as HTML',
+    //   contexts: ['page']
+    // });
+    // chrome.contextMenus.create({
+    //   id: 'save-as-txt',
+    //   parentId: 'clipaible-save-as',
+    //   title: 'Save as TXT',
+    //   contexts: ['page']
+    // });
     chrome.contextMenus.create({
       id: 'save-as-audio',
       parentId: 'clipaible-save-as',
@@ -940,6 +945,19 @@ try {
       return false; // Let other listeners (temporary one) handle it
     }
     
+    if (request.action === 'logModelDropdown') {
+      // Log model dropdown events to service worker console
+      const { level, message, data } = request;
+      const logMessage = `[ModelDropdown] ${message}`;
+      if (data) {
+        log(logMessage, data);
+      } else {
+        log(logMessage);
+      }
+      sendResponse({ logged: true });
+      return true;
+    }
+    
     logWarn('Unknown action received', { action: request.action });
     sendResponse({ error: 'Unknown action' });
     return true;
@@ -967,6 +985,7 @@ async function startArticleProcessing(data) {
   }
   
   // Validate output format
+  // Commented out: docx, html, txt formats removed from UI (but kept in validation for backward compatibility)
   const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
   if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
     const uiLang = await getUILanguage();
@@ -1481,51 +1500,52 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       respeecherRepetitionPenalty: data.respeecherRepetitionPenalty !== undefined ? data.respeecherRepetitionPenalty : 1.0,
       respeecherTopP: data.respeecherTopP !== undefined ? data.respeecherTopP : 1.0
     }, updateState);
-  } else if (outputFormat === 'docx') {
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingDocx', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    return generateDocx({
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage
-    }, updateState);
-  } else if (outputFormat === 'html') {
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingHtml', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    return generateHtml({
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage
-    }, updateState);
-  } else if (outputFormat === 'txt') {
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingTxt', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    return generateTxt({
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage
-    }, updateState);
+  // Commented out: docx, html, txt formats removed from UI
+  // } else if (outputFormat === 'docx') {
+  //   const uiLang = await getUILanguage();
+  //   const status = tSync('statusGeneratingDocx', uiLang);
+  //   updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+  //   return generateDocx({
+  //     content: result.content,
+  //     title: result.title,
+  //     author: result.author || '',
+  //     sourceUrl: data.url,
+  //     publishDate: result.publishDate || '',
+  //     generateToc: data.generateToc || false,
+  //     generateAbstract: data.generateAbstract || false,
+  //     abstract: result.abstract || '',
+  //     language: effectiveLanguage
+  //   }, updateState);
+  // } else if (outputFormat === 'html') {
+  //   const uiLang = await getUILanguage();
+  //   const status = tSync('statusGeneratingHtml', uiLang);
+  //   updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+  //   return generateHtml({
+  //     content: result.content,
+  //     title: result.title,
+  //     author: result.author || '',
+  //     sourceUrl: data.url,
+  //     publishDate: result.publishDate || '',
+  //     generateToc: data.generateToc || false,
+  //     generateAbstract: data.generateAbstract || false,
+  //     abstract: result.abstract || '',
+  //     language: effectiveLanguage
+  //   }, updateState);
+  // } else if (outputFormat === 'txt') {
+  //   const uiLang = await getUILanguage();
+  //   const status = tSync('statusGeneratingTxt', uiLang);
+  //   updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
+  //   return generateTxt({
+  //     content: result.content,
+  //     title: result.title,
+  //     author: result.author || '',
+  //     sourceUrl: data.url,
+  //     publishDate: result.publishDate || '',
+  //     generateToc: data.generateToc || false,
+  //     generateAbstract: data.generateAbstract || false,
+  //     abstract: result.abstract || '',
+  //     language: effectiveLanguage
+  //   }, updateState);
   } else {
     // PDF (default)
     const uiLang = await getUILanguage();

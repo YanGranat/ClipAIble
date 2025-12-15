@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
+> **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
 
 ![버전](https://img.shields.io/badge/버전-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-확장-프로그램-green)
@@ -18,9 +18,6 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - 📚 **EPUB** — Kindle, Kobo, Apple Books에 적합
 - 📖 **FB2** — PocketBook, FBReader에 적합
 - 📝 **Markdown** — 노트용 일반 텍스트
-- 📘 **DOCX** — 이미지 및 형식이 포함된 Microsoft Word 형식
-- 🌐 **HTML** — 스타일이 보존된 깨끗한 HTML 파일
-- 📄 **TXT** — 형식 없는 일반 텍스트
 - 🎧 **오디오 (MP3/WAV)** — AI 내레이션으로 듣기
 
 모든 형식이 **11개 언어로 번역**을 지원합니다 — 이미지의 텍스트 번역도 가능합니다!
@@ -56,10 +53,6 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - **11가지 글꼴** 선택 가능
 - **페이지 모드**: 단일 연속 페이지 또는 다중 페이지 A4 형식
 
-### 📄 문서 형식
-- **DOCX**: 포함된 이미지와 보존된 형식이 있는 Microsoft Word 형식
-- **HTML**: 포함된 스타일과 이미지가 있는 깨끗하고 독립적인 HTML 파일
-- **TXT**: 형식 없는 일반 텍스트, 간단한 텍스트 추출에 완벽
 
 ### ⚡ 지능형 기능
 - **비디오 지원**: YouTube/Vimeo 비디오에서 자막 추출 및 기사로 변환 (v2.9.0)
@@ -91,7 +84,6 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - **Keep-alive 요구사항**: Chrome MV3는 최소 1분의 keep-alive 간격이 필요합니다. 긴 처리 작업은 몇 분이 걸릴 수 있습니다.
 - **이미지의 CORS**: 웹사이트가 cross-origin 요청을 차단하는 경우 일부 이미지가 로드되지 않을 수 있습니다. 확장 프로그램은 이러한 이미지를 건너뜁니다.
 - **취소가 즉시 적용되지 않음**: 취소는 모든 백그라운드 프로세스를 완전히 중지하는 데 몇 초가 걸릴 수 있습니다.
-- **큰 HTML**: 매우 큰 HTML (>500KB)이 있는 페이지는 처리하는 데 더 오래 걸릴 수 있습니다.
 
 ### 브라우저 호환성
 - **Chrome/Edge/Brave/Arc**: 완전히 지원됨
@@ -293,7 +285,7 @@ clipaible/
 │   ├── api/            # OpenAI, Claude, Gemini, TTS
 │   ├── extraction/     # 콘텐츠 추출
 │   ├── translation/    # 번역 및 언어 감지
-│   ├── generation/     # PDF, EPUB, FB2, MD, DOCX, HTML, TXT, 오디오
+│   ├── generation/     # PDF, EPUB, FB2, MD, 오디오
 │   ├── cache/          # 선택자 캐싱
 │   ├── stats/          # 사용 통계
 │   └── utils/          # 구성, 암호화, 유틸리티
@@ -320,10 +312,10 @@ clipaible/
 | `activeTab` | 현재 탭에서 기사 읽기 |
 | `storage` | 설정을 로컬에 저장 |
 | `scripting` | 추출 스크립트 주입 |
-| `downloads` | 생성된 파일 저장 (PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, 오디오) |
+| `downloads` | 생성된 파일 저장 (PDF, EPUB, FB2, Markdown, 오디오) |
 | `debugger` | Chrome 인쇄 API를 통한 PDF 생성 |
 | `alarms` | 긴 작업 중 worker 활성 유지 |
-| `contextMenus` | 웹 페이지의 우클릭 메뉴에 "ClipAIble로 저장" 옵션 (PDF/EPUB/FB2/MD/DOCX/HTML/TXT/오디오) 추가 |
+| `contextMenus` | 웹 페이지의 우클릭 메뉴에 "ClipAIble로 저장" 옵션 (PDF/EPUB/FB2/MD/오디오) 추가 |
 
 자세한 내용은 [PERMISSIONS.md](PERMISSIONS.md)를 참조하세요.
 

@@ -53,15 +53,23 @@
         </div>
         <div class="api-key-group">
           <label for="modelSelect" data-i18n="model">AI Model</label>
-          <select id="modelSelect">
-            <option value="gpt-5.2">GPT-5.2</option>
-            <option value="gpt-5.2-high">GPT-5.2 (high)</option>
-            <option value="gpt-5.1">GPT-5.1</option>
-            <option value="gpt-5.1-high">GPT-5.1 (high)</option>
-            <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-            <option value="gemini-3-pro-preview">Gemini 3 Pro</option>
-            <option value="grok-4-1-fast-reasoning">Grok 4.1 Fast Reasoning</option>
-          </select>
+          <div class="model-select-wrapper">
+            <select id="modelSelect">
+              <option value="gpt-5.2">gpt-5.2</option>
+              <option value="gpt-5.2-high">gpt-5.2-high</option>
+              <option value="gpt-5.1">gpt-5.1</option>
+              <option value="gpt-5.1-high">gpt-5.1-high</option>
+              <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+              <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
+              <option value="grok-4-1-fast-reasoning">grok-4-1-fast-reasoning</option>
+            </select>
+            <button id="addModelBtn" class="btn-icon" data-i18n-title="addModel" title="Add Model">
+              <span class="plus-icon">+</span>
+            </button>
+          </div>
+          <div id="customModelDropdown" class="custom-model-dropdown" style="display: none;">
+            <div class="custom-model-options" id="customModelOptions"></div>
+          </div>
         </div>
         <div class="api-key-group" id="apiKeyInputGroup">
           <label for="apiKey" id="apiKeyLabel" data-i18n="openaiApiKey">OpenAI API Key</label>
@@ -110,10 +118,19 @@
 
       <!-- Action Button -->
       <section class="section action-section">
-        <button id="savePdfBtn" class="btn btn-primary">
-          <span class="btn-icon-left" id="saveIcon">📄</span>
-          <span id="saveText" data-i18n="saveAsPdf">Save as PDF</span>
-        </button>
+        <div class="save-action-group">
+          <button id="savePdfBtn" class="btn btn-primary">
+            <span class="btn-icon-left" id="saveIcon">📄</span>
+            <span id="saveText" data-i18n="save">Save</span>
+          </button>
+          <select id="mainFormatSelect" class="format-select">
+            <option value="pdf">PDF</option>
+            <option value="epub">EPUB</option>
+            <option value="fb2">FB2</option>
+            <option value="markdown">MD</option>
+            <option value="audio">Audio</option>
+          </select>
+        </div>
         <button id="cancelBtn" class="btn btn-danger" style="display: none;">
           <span class="btn-icon-left">✕</span>
           <span data-i18n="cancel">Cancel</span>
@@ -169,21 +186,6 @@
               <span class="format-icon">📝</span>
               <span class="format-name">MD</span>
               <span class="format-count" id="formatMarkdown">0</span>
-            </div>
-            <div class="format-stat">
-              <span class="format-icon">📘</span>
-              <span class="format-name">DOCX</span>
-              <span class="format-count" id="formatDocx">0</span>
-            </div>
-            <div class="format-stat">
-              <span class="format-icon">🌐</span>
-              <span class="format-name">HTML</span>
-              <span class="format-count" id="formatHtml">0</span>
-            </div>
-            <div class="format-stat">
-              <span class="format-icon">📄</span>
-              <span class="format-name">TXT</span>
-              <span class="format-count" id="formatTxt">0</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">🔊</span>
@@ -248,19 +250,18 @@
           </label>
           <p class="setting-hint" data-i18n="useCachedSelectorsHint">Skip AI for sites you've saved before</p>
         </div>
-        <div class="setting-item">
-          <label for="outputFormat" data-i18n="outputFormat">Output Format</label>
-          <select id="outputFormat">
-            <option value="pdf" data-i18n="saveAsPdf">PDF</option>
-            <option value="epub" data-i18n="epubEreaders">EPUB (e-readers)</option>
-            <option value="fb2" data-i18n="fb2Ereaders">FB2 (e-readers)</option>
-            <option value="markdown" data-i18n="saveAsMarkdown">Markdown</option>
-            <option value="docx" data-i18n="saveAsDocx">DOCX (Word)</option>
-            <option value="html" data-i18n="saveAsHtml">HTML</option>
-            <option value="txt" data-i18n="saveAsTxt">TXT (Plain Text)</option>
-            <option value="audio" data-i18n="audioMp3">Audio</option>
-          </select>
-        </div>
+        <!-- Output format select is now on main screen, but kept hidden for synchronization -->
+        <select id="outputFormat" style="display: none;">
+          <option value="pdf" data-i18n="saveAsPdf">PDF</option>
+          <option value="epub" data-i18n="epubEreaders">EPUB (e-readers)</option>
+          <option value="fb2" data-i18n="fb2Ereaders">FB2 (e-readers)</option>
+          <option value="markdown" data-i18n="md">MD</option>
+          <!-- Commented out: docx, html, txt formats removed from UI -->
+          <!-- <option value="docx" data-i18n="saveAsDocx">DOCX (Word)</option> -->
+          <!-- <option value="html" data-i18n="saveAsHtml">HTML</option> -->
+          <!-- <option value="txt" data-i18n="saveAsTxt">TXT (Plain Text)</option> -->
+          <option value="audio" data-i18n="audioMp3">Audio</option>
+        </select>
         <!-- Audio Settings (Hidden by default) -->
         <div class="setting-item" id="audioProviderGroup" style="display: none;">
           <label for="audioProvider" data-i18n="ttsProvider">TTS Provider</label>
@@ -524,13 +525,6 @@
           </label>
             <p class="setting-hint" data-i18n="generateAbstractHint">AI-generated brief summary (2-3 paragraphs)</p>
         </div>
-        <div class="setting-item" id="pageModeGroup">
-          <label for="pageMode" data-i18n="pageLayout">Page Layout</label>
-          <select id="pageMode">
-            <option value="single" data-i18n="singleLongPage">Single long page</option>
-            <option value="multi" data-i18n="multiplePagesA4">Multiple pages (A4)</option>
-          </select>
-        </div>
         <div class="setting-item">
           <label for="languageSelect" data-i18n="targetLanguage">Target Language</label>
           <select id="languageSelect">
@@ -548,6 +542,13 @@
             <option value="ko">한국어</option>
           </select>
           <p class="setting-hint" id="languageHint" data-i18n="keepOriginalOrTranslate">Keep original or translate to selected language</p>
+        </div>
+        <div class="setting-item" id="pageModeGroup">
+          <label for="pageMode" data-i18n="pageLayout">Page Layout</label>
+          <select id="pageMode">
+            <option value="single" data-i18n="singleLongPage">Single long page</option>
+            <option value="multi" data-i18n="multiplePagesA4">Multiple pages (A4)</option>
+          </select>
         </div>
         <div class="setting-item" id="translateImagesGroup" style="display: none;">
           <label class="checkbox-label">
@@ -649,6 +650,16 @@
         </div>
       </section>
     </main>
+
+    <!-- Footer with version -->
+    <footer class="popup-footer">
+      <div class="popup-footer-divider"></div>
+      <div class="popup-footer-links">
+        <a href="https://github.com/YanGranat/ClipAIble" target="_blank" class="popup-footer-link" id="githubLink">GitHub</a>
+        <span class="popup-footer-separator">•</span>
+        <span class="popup-footer-version" id="versionText">v2.9.0</span>
+      </div>
+    </footer>
 
   </div>
 

@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
+> **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
 
 ![Version](https://img.shields.io/badge/version-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Erweiterung-green)
@@ -18,9 +18,6 @@ ClipAIble nutzt künstliche Intelligenz, um Artikelinhalte intelligent von jeder
 - 📚 **EPUB** — Geeignet für Kindle, Kobo, Apple Books
 - 📖 **FB2** — Geeignet für PocketBook, FBReader
 - 📝 **Markdown** — Klartext für Notizen
-- 📘 **DOCX** — Microsoft Word-Format mit Bildern und Formatierung
-- 🌐 **HTML** — Saubere HTML-Datei mit erhaltenen Styles
-- 📄 **TXT** — Klartext ohne Formatierung
 - 🎧 **Audio (MP3/WAV)** — Anhören mit KI-Vorlesung
 
 Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzung von Text auf Bildern!
@@ -56,10 +53,6 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 - **11 Schriftarten** zur Auswahl
 - **Seitenmodi**: Einzelne durchgehende Seite oder mehrseitiges A4-Format
 
-### 📄 Dokumentformate
-- **DOCX**: Microsoft Word-Format mit eingebetteten Bildern und erhaltener Formatierung
-- **HTML**: Saubere, eigenständige HTML-Datei mit eingebetteten Styles und Bildern
-- **TXT**: Klartext ohne Formatierung, perfekt für einfache Textextraktion
 
 ### ⚡ Intelligente Funktionen
 - **Video-Unterstützung**: Untertitel von YouTube/Vimeo-Videos extrahieren und in Artikel umwandeln (v2.9.0)
@@ -91,7 +84,6 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 - **Keep-alive-Anforderung**: Chrome MV3 erfordert ein Keep-alive-Intervall von mindestens 1 Minute. Lange Verarbeitungsaufgaben können mehrere Minuten dauern.
 - **CORS für Bilder**: Einige Bilder können nicht geladen werden, wenn die Website Cross-Origin-Anfragen blockiert. Die Erweiterung überspringt diese Bilder.
 - **Abbruch nicht sofortig**: Der Abbruch kann einige Sekunden dauern, um alle Hintergrundprozesse vollständig zu stoppen.
-- **Großes HTML**: Seiten mit sehr großem HTML (>500KB) können länger verarbeitet werden.
 
 ### Browser-Kompatibilität
 - **Chrome/Edge/Brave/Arc**: Vollständig unterstützt
@@ -293,7 +285,7 @@ clipaible/
 │   ├── api/            # OpenAI, Claude, Gemini, TTS
 │   ├── extraction/     # Inhaltsextraktion
 │   ├── translation/    # Übersetzung & Spracherkennung
-│   ├── generation/     # PDF, EPUB, FB2, MD, DOCX, HTML, TXT, Audio
+│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Selektor-Caching
 │   ├── stats/          # Nutzungsstatistiken
 │   └── utils/          # Konfiguration, Verschlüsselung, Helfer
@@ -320,10 +312,10 @@ clipaible/
 | `activeTab` | Artikel von aktueller Registerkarte lesen |
 | `storage` | Einstellungen lokal speichern |
 | `scripting` | Extraktionsskript einfügen |
-| `downloads` | Generierte Dateien speichern (PDF, EPUB, FB2, Markdown, DOCX, HTML, TXT, Audio) |
+| `downloads` | Generierte Dateien speichern (PDF, EPUB, FB2, Markdown, Audio) |
 | `debugger` | PDFs über Chrome Print API generieren |
 | `alarms` | Worker während langer Aufgaben aktiv halten |
-| `contextMenus` | "Mit ClipAIble speichern"-Optionen (PDF/EPUB/FB2/MD/DOCX/HTML/TXT/Audio) zum Rechtsklick-Menü auf Webseiten hinzufügen |
+| `contextMenus` | "Mit ClipAIble speichern"-Optionen (PDF/EPUB/FB2/MD/Audio) zum Rechtsklick-Menü auf Webseiten hinzufügen |
 
 Siehe [PERMISSIONS.md](PERMISSIONS.md) für Details.
 

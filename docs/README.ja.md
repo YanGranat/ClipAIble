@@ -1,6 +1,6 @@
 # ✂️ ClipAIble
 
-> **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、DOCX、HTML、TXT、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
+> **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
 ![バージョン](https://img.shields.io/badge/バージョン-2.9.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
@@ -18,9 +18,6 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - 📚 **EPUB** — Kindle、Kobo、Apple Booksに対応
 - 📖 **FB2** — PocketBook、FBReaderに対応
 - 📝 **Markdown** — ノート用のプレーンテキスト
-- 📘 **DOCX** — 画像とフォーマットを含むMicrosoft Word形式
-- 🌐 **HTML** — スタイルが保持されたクリーンなHTMLファイル
-- 📄 **TXT** — フォーマットなしのプレーンテキスト
 - 🎧 **音声（MP3/WAV）** — AIナレーションで聞く
 
 すべての形式が**11言語への翻訳**をサポート — 画像上のテキストの翻訳も可能！
@@ -56,10 +53,6 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - **11のフォント**から選択
 - **ページモード**：単一連続ページまたは複数ページA4形式
 
-### 📄 ドキュメント形式
-- **DOCX**：埋め込み画像と保持されたフォーマットを含むMicrosoft Word形式
-- **HTML**：埋め込みスタイルと画像を含むクリーンで独立したHTMLファイル
-- **TXT**：フォーマットなしのプレーンテキスト、シンプルなテキスト抽出に最適
 
 ### ⚡ インテリジェント機能
 - **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v2.9.0）
@@ -91,7 +84,6 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - **Keep-alive要件**：Chrome MV3では、keep-alive間隔が少なくとも1分である必要があります。長時間の処理タスクには数分かかる場合があります。
 - **画像のCORS**：ウェブサイトがクロスオリジンリクエストをブロックしている場合、一部の画像が読み込まれない可能性があります。拡張機能はこれらの画像をスキップします。
 - **キャンセルは即座ではない**：キャンセルには、すべてのバックグラウンドプロセスを完全に停止するのに数秒かかる場合があります。
-- **大きなHTML**：非常に大きなHTML（>500KB）のページは、処理に時間がかかる場合があります。
 
 ### ブラウザの互換性
 - **Chrome/Edge/Brave/Arc**：完全にサポート
@@ -293,7 +285,7 @@ clipaible/
 │   ├── api/            # OpenAI、Claude、Gemini、TTS
 │   ├── extraction/     # コンテンツ抽出
 │   ├── translation/    # 翻訳と言語検出
-│   ├── generation/     # PDF、EPUB、FB2、MD、DOCX、HTML、TXT、音声
+│   ├── generation/     # PDF、EPUB、FB2、MD、音声
 │   ├── cache/          # セレクターキャッシュ
 │   ├── stats/          # 使用統計
 │   └── utils/          # 設定、暗号化、ヘルパー
@@ -320,10 +312,10 @@ clipaible/
 | `activeTab` | 現在のタブから記事を読み取る |
 | `storage` | 設定をローカルに保存 |
 | `scripting` | 抽出スクリプトを注入 |
-| `downloads` | 生成されたファイルを保存（PDF、EPUB、FB2、Markdown、DOCX、HTML、TXT、音声） |
+| `downloads` | 生成されたファイルを保存（PDF、EPUB、FB2、Markdown、音声） |
 | `debugger` | Chrome印刷API経由でPDFを生成 |
 | `alarms` | 長時間タスク中にworkerをアクティブな状態に保つ |
-| `contextMenus` | ウェブページの右クリックメニューに「ClipAIbleで保存」オプション（PDF/EPUB/FB2/MD/DOCX/HTML/TXT/音声）を追加 |
+| `contextMenus` | ウェブページの右クリックメニューに「ClipAIbleで保存」オプション（PDF/EPUB/FB2/MD/音声）を追加 |
 
 詳細は [PERMISSIONS.md](PERMISSIONS.md) を参照。
 
