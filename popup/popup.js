@@ -1404,10 +1404,22 @@ async function loadSettings() {
     elements.translateImages.checked = result[STORAGE_KEYS.TRANSLATE_IMAGES];
   }
   
-  if (result[STORAGE_KEYS.STYLE_PRESET]) {
-    elements.stylePreset.value = result[STORAGE_KEYS.STYLE_PRESET];
-  } else {
-    elements.stylePreset.value = 'dark'; // Default preset
+  // Load style preset
+  const savedPreset = result[STORAGE_KEYS.STYLE_PRESET] || 'dark';
+  elements.stylePreset.value = savedPreset;
+  
+  // Sync custom select display for stylePreset
+  const stylePresetContainer = document.getElementById('stylePresetContainer');
+  if (stylePresetContainer) {
+    const valueSpan = stylePresetContainer.querySelector('.custom-select-value');
+    const selectedOption = stylePresetContainer.querySelector(`[data-value="${savedPreset}"]`);
+    if (valueSpan && selectedOption) {
+      valueSpan.textContent = selectedOption.textContent;
+      stylePresetContainer.querySelectorAll('.custom-select-option').forEach(opt => {
+        opt.classList.remove('selected');
+      });
+      selectedOption.classList.add('selected');
+    }
   }
   
   if (result[STORAGE_KEYS.FONT_FAMILY]) {
@@ -1422,24 +1434,51 @@ async function loadSettings() {
     elements.fontSize.value = oldToNew[savedSize] || savedSize;
   }
   
-  if (result[STORAGE_KEYS.BG_COLOR]) {
-    elements.bgColor.value = result[STORAGE_KEYS.BG_COLOR];
-    elements.bgColorText.value = result[STORAGE_KEYS.BG_COLOR];
-  }
-  
-  if (result[STORAGE_KEYS.TEXT_COLOR]) {
-    elements.textColor.value = result[STORAGE_KEYS.TEXT_COLOR];
-    elements.textColorText.value = result[STORAGE_KEYS.TEXT_COLOR];
-  }
-  
-  if (result[STORAGE_KEYS.HEADING_COLOR]) {
-    elements.headingColor.value = result[STORAGE_KEYS.HEADING_COLOR];
-    elements.headingColorText.value = result[STORAGE_KEYS.HEADING_COLOR];
-  }
-  
-  if (result[STORAGE_KEYS.LINK_COLOR]) {
-    elements.linkColor.value = result[STORAGE_KEYS.LINK_COLOR];
-    elements.linkColorText.value = result[STORAGE_KEYS.LINK_COLOR];
+  // Apply colors: if preset is not 'custom', use preset colors; otherwise use saved colors
+  if (savedPreset !== 'custom' && STYLE_PRESETS[savedPreset]) {
+    // Apply preset colors (always use preset colors, not saved ones)
+    const colors = STYLE_PRESETS[savedPreset];
+    elements.bgColor.value = colors.bgColor;
+    elements.bgColorText.value = colors.bgColor;
+    elements.textColor.value = colors.textColor;
+    elements.textColorText.value = colors.textColor;
+    elements.headingColor.value = colors.headingColor;
+    elements.headingColorText.value = colors.headingColor;
+    elements.linkColor.value = colors.linkColor;
+    elements.linkColorText.value = colors.linkColor;
+  } else {
+    // Load custom colors from storage (only for 'custom' preset)
+    if (result[STORAGE_KEYS.BG_COLOR]) {
+      elements.bgColor.value = result[STORAGE_KEYS.BG_COLOR];
+      elements.bgColorText.value = result[STORAGE_KEYS.BG_COLOR];
+    } else {
+      elements.bgColor.value = DEFAULT_STYLES.bgColor;
+      elements.bgColorText.value = DEFAULT_STYLES.bgColor;
+    }
+    
+    if (result[STORAGE_KEYS.TEXT_COLOR]) {
+      elements.textColor.value = result[STORAGE_KEYS.TEXT_COLOR];
+      elements.textColorText.value = result[STORAGE_KEYS.TEXT_COLOR];
+    } else {
+      elements.textColor.value = DEFAULT_STYLES.textColor;
+      elements.textColorText.value = DEFAULT_STYLES.textColor;
+    }
+    
+    if (result[STORAGE_KEYS.HEADING_COLOR]) {
+      elements.headingColor.value = result[STORAGE_KEYS.HEADING_COLOR];
+      elements.headingColorText.value = result[STORAGE_KEYS.HEADING_COLOR];
+    } else {
+      elements.headingColor.value = DEFAULT_STYLES.headingColor;
+      elements.headingColorText.value = DEFAULT_STYLES.headingColor;
+    }
+    
+    if (result[STORAGE_KEYS.LINK_COLOR]) {
+      elements.linkColor.value = result[STORAGE_KEYS.LINK_COLOR];
+      elements.linkColorText.value = result[STORAGE_KEYS.LINK_COLOR];
+    } else {
+      elements.linkColor.value = DEFAULT_STYLES.linkColor;
+      elements.linkColorText.value = DEFAULT_STYLES.linkColor;
+    }
   }
   
   if (result[STORAGE_KEYS.THEME]) {
@@ -1698,19 +1737,8 @@ async function loadSettings() {
   // Step 1: Update voice list for current provider (populates dropdown)
   updateVoiceList(elements.audioProvider.value);
   
-  // Step 2: Apply preset colors (if preset is selected)
-  const currentPreset = elements.stylePreset.value;
-  if (currentPreset !== 'custom' && STYLE_PRESETS[currentPreset]) {
-    const colors = STYLE_PRESETS[currentPreset];
-    elements.bgColor.value = colors.bgColor;
-    elements.bgColorText.value = colors.bgColor;
-    elements.textColor.value = colors.textColor;
-    elements.textColorText.value = colors.textColor;
-    elements.headingColor.value = colors.headingColor;
-    elements.headingColorText.value = colors.headingColor;
-    elements.linkColor.value = colors.linkColor;
-    elements.linkColorText.value = colors.linkColor;
-  }
+  // Step 2: Apply preset colors (if preset is selected) - already done in loadSettings()
+  // This code is kept for backward compatibility but colors are now applied in loadSettings()
   
   // Step 3: Update mode hint (selector vs extract mode)
   updateModeHint();
@@ -2336,9 +2364,15 @@ function setupEventListeners() {
   });
   
   // Style preset handler
-  elements.stylePreset.addEventListener('change', () => {
+  elements.stylePreset.addEventListener('change', async () => {
     const preset = elements.stylePreset.value;
-    debouncedSaveSettings(STORAGE_KEYS.STYLE_PRESET, preset);
+    
+    // Save preset immediately (no debounce) to ensure it's saved
+    try {
+      await chrome.storage.local.set({ [STORAGE_KEYS.STYLE_PRESET]: preset });
+    } catch (error) {
+      logError('Failed to save style preset', error);
+    }
     
     if (preset !== 'custom' && STYLE_PRESETS[preset]) {
       // Apply preset colors immediately (UI update)
@@ -2353,11 +2387,17 @@ function setupEventListeners() {
       elements.linkColor.value = colors.linkColor;
       elements.linkColorText.value = colors.linkColor;
       
-      // Save all colors with debounce
-      debouncedSaveSettings(STORAGE_KEYS.BG_COLOR, colors.bgColor);
-      debouncedSaveSettings(STORAGE_KEYS.TEXT_COLOR, colors.textColor);
-      debouncedSaveSettings(STORAGE_KEYS.HEADING_COLOR, colors.headingColor);
-      debouncedSaveSettings(STORAGE_KEYS.LINK_COLOR, colors.linkColor);
+      // Save all colors immediately (no debounce) to ensure they're saved
+      try {
+        await chrome.storage.local.set({
+          [STORAGE_KEYS.BG_COLOR]: colors.bgColor,
+          [STORAGE_KEYS.TEXT_COLOR]: colors.textColor,
+          [STORAGE_KEYS.HEADING_COLOR]: colors.headingColor,
+          [STORAGE_KEYS.LINK_COLOR]: colors.linkColor
+        });
+      } catch (error) {
+        logError('Failed to save preset colors', error);
+      }
     }
   });
 
@@ -2372,6 +2412,11 @@ function setupEventListeners() {
         otherSelect.classList.remove('open');
       }
     });
+    
+    // Close model dropdown if open
+    if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      elements.customModelDropdown.style.display = 'none';
+    }
     
     // Toggle current select
     if (isOpen) {
@@ -2424,6 +2469,15 @@ function setupEventListeners() {
       // Also close font family dropdown if open
       if (elements.fontFamilyContainer && !elements.fontFamilyContainer.contains(e.target)) {
         elements.fontFamilyContainer.classList.remove('open');
+      }
+      
+      // Also close model dropdown if open and click is outside
+      if (elements.customModelDropdown && 
+          elements.customModelDropdown.style.display !== 'none' &&
+          !elements.customModelDropdown.contains(e.target) &&
+          !(elements.modelSelect && elements.modelSelect.contains(e.target)) &&
+          !(elements.addModelBtn && elements.addModelBtn.contains(e.target))) {
+        elements.customModelDropdown.style.display = 'none';
       }
     });
     window.customSelectClickHandlerAdded = true;
@@ -3248,6 +3302,11 @@ function initCustomSelect(selectId, options = {}) {
         otherSelect.classList.remove('open');
       }
     });
+    
+    // Close model dropdown if open
+    if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      elements.customModelDropdown.style.display = 'none';
+    }
     
     // Toggle current select
     if (isOpen) {

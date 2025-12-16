@@ -64,6 +64,7 @@ import { getUILanguage, tSync } from './locales.js';
 import { detectVideoPlatform } from './utils/video.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from './extraction/video-processor.js';
+import { createUserFriendlyError } from './utils/error-messages.js';
 
 // ============================================
 // NOTIFICATION HELPER
@@ -1062,10 +1063,8 @@ async function startArticleProcessing(data) {
   const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
   if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
     const uiLang = await getUILanguage();
-    await setError({
-      message: tSync('errorValidation', uiLang) + `: Invalid output format '${data.outputFormat}'`,
-      code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive);
+      const friendlyError = await createUserFriendlyError('invalidFormat', { format: data.outputFormat }, 'validation_error');
+      await setError(friendlyError, stopKeepAlive);
     return false;
   }
   
@@ -1177,10 +1176,8 @@ async function startArticleProcessing(data) {
         }
         
         logError('Video processing failed', error);
-        await setError({
-          message: error.message || 'Video processing failed',
-          code: ERROR_CODES.UNKNOWN_ERROR
-        }, stopKeepAlive);
+        const friendlyError = await createUserFriendlyError('videoProcessingFailed', { error }, 'provider_error');
+        await setError(friendlyError, stopKeepAlive);
       });
     return true;
   }
@@ -1352,7 +1349,8 @@ async function processVideoPage(data, videoInfo) {
     log('Subtitles processed', { contentItems: content.length });
   } catch (error) {
     logError('Failed to process subtitles', error);
-    throw new Error(`Failed to process subtitles: ${error.message}`);
+    const friendlyError = await createUserFriendlyError('subtitleProcessingFailed', { error }, 'provider_error');
+    throw new Error(friendlyError.message);
   }
   
   updateState({ progress: 40 });
@@ -1722,9 +1720,18 @@ async function processWithSelectorMode(data) {
   log('=== SELECTOR MODE START ===');
   log('Input data', { url, title, htmlLength: html?.length, tabId });
   
-  if (!html) throw new Error('No HTML content provided');
-  if (!apiKey) throw new Error('No API key provided');
-  if (!tabId) throw new Error('No tab ID provided');
+  if (!html) {
+    const friendlyError = await createUserFriendlyError('pageNotReady', {}, 'validation_error');
+    throw new Error(friendlyError.message);
+  }
+  if (!apiKey) {
+    const friendlyError = await createUserFriendlyError('noApiKey', {}, 'auth_error');
+    throw new Error(friendlyError.message);
+  }
+  if (!tabId) {
+    const friendlyError = await createUserFriendlyError('tabNotFound', {}, 'validation_error');
+    throw new Error(friendlyError.message);
+  }
   
   // Check cache first (if enabled)
   let selectors;
@@ -1769,11 +1776,14 @@ async function processWithSelectorMode(data) {
       log('Received selectors from AI', selectors);
     } catch (error) {
       logError('Failed to get selectors from AI', error);
-      throw new Error(`AI selector analysis failed: ${error.message}`);
+      const friendlyError = await createUserFriendlyError('selectorAnalysisFailed', { error }, 'provider_error');
+      throw new Error(friendlyError.message);
     }
     
     if (!selectors) {
-      throw new Error('AI returned empty selectors');
+      const uiLang = await getUILanguage();
+      const friendlyError = await createUserFriendlyError('emptySelectors', {}, 'provider_error');
+      throw new Error(friendlyError.message);
     }
   }
   
@@ -1804,12 +1814,14 @@ async function processWithSelectorMode(data) {
       await invalidateCache(url);
     }
     logError('Failed to extract content with selectors', error);
-    throw new Error(`Content extraction failed: ${error.message}`);
+    const friendlyError = await createUserFriendlyError('contentExtractionFailed', { error }, 'provider_error');
+    throw new Error(friendlyError.message);
   }
   
   if (!extractedContent || !extractedContent.content) {
     if (fromCache) await invalidateCache(url);
-    throw new Error('No content extracted from page');
+    const friendlyError = await createUserFriendlyError('noContentExtracted', {}, 'validation_error');
+    throw new Error(friendlyError.message);
   }
   
   if (extractedContent.content.length === 0) {
@@ -1817,7 +1829,8 @@ async function processWithSelectorMode(data) {
     const selectorsStr = JSON.stringify(selectors);
     const truncated = selectorsStr.length > 200 ? selectorsStr.substring(0, 200) + '...' : selectorsStr;
     logError('Extracted content is empty', { selectors: truncated });
-    throw new Error('Extracted content is empty. Try switching to "AI Extract" mode.');
+    const friendlyError = await createUserFriendlyError('noContentExtracted', {}, 'validation_error');
+    throw new Error(friendlyError.message);
   }
   
   // Cache selectors after successful extraction ONLY
@@ -1878,7 +1891,8 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
   log('extractContentWithSelectors', { tabId, selectors, baseUrl });
   
   if (!tabId) {
-    throw new Error('Tab ID is required for content extraction');
+    const friendlyError = await createUserFriendlyError('tabNotFound', {}, 'validation_error');
+    throw new Error(friendlyError.message);
   }
   
   let results;
@@ -1894,7 +1908,8 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
     log('Script executed', { resultsLength: results?.length });
   } catch (scriptError) {
     logError('Script execution failed', scriptError);
-    throw new Error(`Failed to execute script on page: ${scriptError.message}`);
+    const friendlyError = await createUserFriendlyError('scriptExecutionFailed', { error: scriptError }, 'network_error');
+    throw new Error(friendlyError.message);
   }
 
   if (!results || !results[0]) {
@@ -2452,8 +2467,14 @@ async function processWithExtractMode(data) {
   log('=== EXTRACT MODE START ===');
   log('Input data', { url, title, htmlLength: html?.length, model });
 
-  if (!html) throw new Error('No HTML content provided');
-  if (!apiKey) throw new Error('No API key provided');
+  if (!html) {
+    const friendlyError = await createUserFriendlyError('pageNotReady', {}, 'validation_error');
+    throw new Error(friendlyError.message);
+  }
+  if (!apiKey) {
+    const friendlyError = await createUserFriendlyError('noApiKey', {}, 'auth_error');
+    throw new Error(friendlyError.message);
+  }
 
   // Check if processing was cancelled before extract mode processing
   if (isCancelled()) {
@@ -2495,7 +2516,8 @@ async function processWithExtractMode(data) {
   log('=== EXTRACT MODE END ===', { title: result.title, items: result.content?.length });
   
   if (!result.content || result.content.length === 0) {
-    throw new Error('AI Extract mode returned no content. The page may use dynamic loading. Try scrolling to load all content before saving.');
+    const friendlyError = await createUserFriendlyError('extractModeNoContent', {}, 'validation_error');
+    throw new Error(friendlyError.message);
   }
   
   return result;

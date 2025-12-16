@@ -302,8 +302,21 @@ export function applyCustomStyles(styles, pageMode, customColors) {
   };
   
   // Calculate derived colors
-  const quoteBackground = adjustColorBrightness(bgColor, 10);
-  const quoteBorder = adjustColorBrightness(bgColor, 30);
+  // For light backgrounds, make quoteBackground darker; for dark backgrounds, make it lighter
+  // Determine if background is light or dark by checking luminance
+  const hexToRgb = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return [r, g, b];
+  };
+  const rgb = hexToRgb(bgColor);
+  const luminance = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+  const isLight = luminance > 0.5;
+  const quoteBackgroundAdjust = isLight ? -8 : 10;
+  const quoteBorderAdjust = isLight ? -15 : 30;
+  const quoteBackground = adjustColorBrightness(bgColor, quoteBackgroundAdjust);
+  const quoteBorder = adjustColorBrightness(bgColor, quoteBorderAdjust);
   const codeBackground = adjustColorBrightness(bgColor, -10);
   
   const fontFamilyStyle = fontFamily ? `font-family: ${fontFamily}, sans-serif !important;` : '';
@@ -341,12 +354,52 @@ blockquote {
 pre, code { background-color: ${codeBackground} !important; }
 .article { background-color: ${bgColor} !important; }
 .infobox { background-color: ${quoteBackground} !important; border-color: ${quoteBorder} !important; }
+.table-of-contents {
+  background-color: ${quoteBackground} !important;
+  border-left-color: ${linkColor} !important;
+}
+.toc-title {
+  color: ${headingColor} !important;
+}
+.toc-list li a {
+  color: ${linkColor} !important;
+}
+.article-abstract {
+  background-color: ${quoteBackground} !important;
+  border-left-color: ${linkColor} !important;
+}
+.abstract-title {
+  color: ${headingColor} !important;
+}
+.abstract-text {
+  color: ${textColor} !important;
+}
 @media print {
   html { background: ${bgColor} !important; }
   body { background: ${bgColor} !important; color: ${textColor} !important; }
   .article { background: ${bgColor} !important; }
   a, a[href^="#"], blockquote a, strong a, b a, em a, i a, p a, li a, td a, th a, .article-meta a { color: ${linkColor} !important; }
   h1, h2, h3, h4, h5, h6 { color: ${headingColor} !important; }
+  .table-of-contents {
+    background-color: ${quoteBackground} !important;
+    border-left-color: ${linkColor} !important;
+  }
+  .toc-title {
+    color: ${headingColor} !important;
+  }
+  .toc-list li a {
+    color: ${linkColor} !important;
+  }
+  .article-abstract {
+    background-color: ${quoteBackground} !important;
+    border-left-color: ${linkColor} !important;
+  }
+  .abstract-title {
+    color: ${headingColor} !important;
+  }
+  .abstract-text {
+    color: ${textColor} !important;
+  }
 }
 `;
   
