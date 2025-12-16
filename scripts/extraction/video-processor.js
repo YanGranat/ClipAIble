@@ -269,18 +269,43 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
       progressCallback(i, chunks.length);
     }
     
+    // КРИТИЧНО: Add retry logic for each chunk to handle transient errors
     let chunkContent;
-    if (i === 0) {
-      // First chunk: normal processing
-      chunkContent = await processSubtitlesSingleChunk(chunk, apiKey, model);
-    } else {
-      // Subsequent chunks: process with context
-      chunkContent = await processSubtitlesWithContext(
-        chunk, 
-        previousContent, 
-        apiKey, 
-        model
-      );
+    let retries = 0;
+    const MAX_CHUNK_RETRIES = 5; // Increased from 3 to 5 for better reliability
+    
+    while (retries <= MAX_CHUNK_RETRIES) {
+      try {
+        if (i === 0) {
+          // First chunk: normal processing
+          chunkContent = await processSubtitlesSingleChunk(chunk, apiKey, model);
+        } else {
+          // Subsequent chunks: process with context
+          chunkContent = await processSubtitlesWithContext(
+            chunk, 
+            previousContent, 
+            apiKey, 
+            model
+          );
+        }
+        
+        // Success - break retry loop
+        break;
+      } catch (chunkError) {
+        retries++;
+        logError(`Chunk ${i + 1} processing failed (attempt ${retries}/${MAX_CHUNK_RETRIES + 1})`, chunkError);
+        
+        if (retries > MAX_CHUNK_RETRIES) {
+          // All retries exhausted - throw error
+          throw new Error(`Failed to process subtitle chunk ${i + 1}/${chunks.length} after ${MAX_CHUNK_RETRIES + 1} attempts: ${chunkError.message}`);
+        }
+        
+        // Wait before retry (exponential backoff with longer delays)
+        // Increased max delay from 10s to 30s for better network resilience
+        const retryDelay = Math.min(2000 * Math.pow(2, retries - 1), 30000); // Max 30 seconds
+        log(`Retrying chunk ${i + 1} after ${retryDelay}ms delay`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
     }
     
     allContent.push(...chunkContent);

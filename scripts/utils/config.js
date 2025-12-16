@@ -8,21 +8,21 @@ export const CONFIG = {
   TRANSLATION_CHUNK_SIZE: 20000,  // Characters per translation batch
   
   // Timeouts
-  API_TIMEOUT_MS: 15 * 60 * 1000, // 15 minutes timeout for API requests (increased for very long articles)
-  STATE_EXPIRY_MS: 30 * 60 * 1000, // 30 minutes - stale state threshold (increased for long operations)
-  STATE_SAVE_INTERVAL: 5000,      // Save state every 5 seconds during processing
+  API_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes timeout for API requests (increased for very long articles and slow networks)
+  STATE_EXPIRY_MS: 2 * 60 * 60 * 1000, // 2 hours - stale state threshold (increased for very long operations)
+  STATE_SAVE_INTERVAL: 2000,      // Save state every 2 seconds during processing (ULTRA FREQUENT to keep SW alive)
   
   // Keep-alive
   KEEP_ALIVE_INTERVAL: 1,         // Minutes (>=1 min per MV3 requirement)
-  KEEP_ALIVE_PING_INTERVAL: 30,  // Seconds - ping storage more frequently to keep SW alive
+  KEEP_ALIVE_PING_INTERVAL: 10,  // Seconds - ULTRA AGGRESSIVE ping every 10 seconds to prevent SW death
   
   // Polling
   POLL_INTERVAL_IDLE: 1000,       // ms - polling interval when idle
   POLL_INTERVAL_PROCESSING: 300,  // ms - polling interval when processing
   
   // Retry configuration
-  RETRY_MAX_ATTEMPTS: 5,          // Maximum number of retry attempts (increased for reliability)
-  RETRY_DELAYS: [2000, 5000, 10000, 20000, 30000], // Exponential backoff delays in ms (longer delays for network issues)
+  RETRY_MAX_ATTEMPTS: 8,          // Maximum number of retry attempts (increased for maximum reliability)
+  RETRY_DELAYS: [2000, 5000, 10000, 20000, 30000, 60000, 120000, 300000], // Exponential backoff delays in ms (longer delays for network issues, up to 5 minutes)
   RETRYABLE_STATUS_CODES: [429, 500, 502, 503, 504], // HTTP status codes that trigger retry
   RETRY_NETWORK_ERRORS: true,     // Retry on network errors (timeout, connection failed, etc.)
   

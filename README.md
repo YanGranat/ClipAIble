@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-2.9.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -31,17 +31,29 @@ All formats support **translation to 11 languages** — even translating text on
 ### 🤖 AI-Powered Extraction
 - **Two modes**: AI Selector (fast, reusable) and AI Extract (thorough)
 - **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
-- **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles (v2.9.0)
+- **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles (v3.0.0)
+  - Multiple extraction methods with fallbacks
+  - Priority: manual subtitles > auto-generated > translated
+  - AI processing: removes timestamps, merges paragraphs, fixes errors
+  - Audio transcription fallback when subtitles unavailable
 - **Smart detection**: Finds main article content, removes unnecessary elements automatically
+- **Enhanced fallback strategies**: 6 different strategies for reliable content extraction
 - **Preserves structure**: Headings, images, code blocks, tables, footnotes
+- **Selector caching**: Independent settings for using and enabling cache
 
 ### 🎧 Audio Export
 - **5 TTS providers**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
 - **100+ voices**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher (English & Ukrainian)
-- **Speed adjustment**: 0.5x to 2.0x (OpenAI/ElevenLabs only)
+- **Speed adjustment**: 0.5x to 2.0x (OpenAI/ElevenLabs only; Google/Qwen/Respeecher use fixed speed)
+- **Format support**: MP3 (OpenAI/ElevenLabs) or WAV (Google/Qwen/Respeecher)
 - **Multi-language pronunciation**: Correct pronunciation for each language
-- **Ukrainian language support**: Dedicated Ukrainian voices via Respeecher
+- **Ukrainian language support**: Dedicated Ukrainian voices via Respeecher (10 voices)
 - **Smart text cleanup**: AI removes URLs, code, and non-speech content
+- **Provider-specific features**:
+  - **ElevenLabs**: Model selection (v2, v3, Turbo v2.5), format selection, advanced voice settings
+  - **Google Gemini 2.5 TTS**: Model selection (pro/flash), 30 voices, 24k char limit
+  - **Qwen**: 49 voices including Russian voice (Alek), 600 char limit
+  - **Respeecher**: Advanced sampling parameters (temperature, repetition_penalty, top_p)
 
 ### 🌍 Translation
 - **11 languages**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
@@ -52,19 +64,37 @@ All formats support **translation to 11 languages** — even translating text on
 ### 🎨 PDF Customization
 - **4 presets**: Dark, Light, Sepia, High Contrast
 - **Customizable colors**: Background, text, headings, links
-- **11 fonts** to choose from
+- **11 fonts**: Default (Segoe UI), Arial, Georgia, Times New Roman, Verdana, Tahoma, Trebuchet MS, Palatino Linotype, Garamond, Courier New, Comic Sans MS
+- **Font size**: Adjustable (default: 31px)
 - **Page modes**: Single continuous page or multi-page A4 format
 
 
 ### ⚡ Smart Features
-- **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles (v2.9.0)
-- **Audio transcription**: Automatic transcription when subtitles unavailable (gpt-4o-transcribe)
+- **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles (v3.0.0)
+  - Direct subtitle extraction (no API keys required from YouTube/Vimeo)
+  - AI processing: removes timestamps, merges paragraphs, fixes errors
+  - Audio transcription fallback: automatic transcription when subtitles unavailable (gpt-4o-transcribe)
+  - Full pipeline integration: translation, TOC, abstract, all export formats
+- **Summary Generation**: Generate detailed AI summaries of any article or video
+  - Click **"Generate Summary"** button to create comprehensive summary
+  - Works with regular articles and YouTube/Vimeo videos
+  - Continues generating even if popup is closed (runs in background)
+  - Copy to clipboard or download as Markdown file
+  - Expandable/collapsible display with formatted text
+  - Detailed summaries with key ideas, concepts, examples, and conclusions
+- **Abstract (TL;DR)**: AI-written 2-4 sentence summary included in documents
+  - Optional feature: enable in settings to add brief summary to PDF/EPUB/FB2/Markdown
+  - Appears at the beginning of exported documents
+  - Different from detailed Summary (this is a brief overview)
 - **Offline mode**: Selector caching — no AI needed for repeat visits
+  - Independent settings: use cached selectors and enable caching separately
+  - Auto-invalidation on extraction failure
+  - Manual cache management per domain
 - **Statistics**: Track number of saves, view history
 - **Table of Contents**: Auto-generated from headings
-- **Abstract**: AI-written 2-3 paragraph summary
-- **Context menu**: Right-click → "Save article as PDF"
+- **Context menu**: Right-click → "Save article as PDF/EPUB/FB2/Markdown/Audio"
 - **Cancel anytime**: Stop processing with one click
+- **Settings import/export**: Backup and restore all settings (API keys excluded for security)
 
 ### 🔒 Security
 - **API keys encrypted** with AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
@@ -76,16 +106,20 @@ All formats support **translation to 11 languages** — even translating text on
 ## ⚠️ Known Limitations
 
 ### File Formats
-- **WAV format** (Qwen/Respeecher): Files can be very large (10-50MB+ for long articles). Consider using MP3 format for smaller file sizes.
-- **Character limits**: 
-  - Qwen TTS: 600 characters per chunk
-  - Respeecher TTS: 450 characters per chunk
+- **WAV format** (Google/Qwen/Respeecher): Files can be very large (10-50MB+ for long articles). MP3 format (OpenAI/ElevenLabs) provides smaller file sizes.
+- **Character limits per request**: 
+  - OpenAI TTS: 4096 characters
+  - ElevenLabs: 5000 characters
+  - Google Gemini 2.5 TTS: 24000 characters
+  - Qwen TTS: 600 characters
+  - Respeecher TTS: 450 characters
   - Text is automatically split intelligently at sentence/word boundaries
 
 ### Technical Constraints
-- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes.
+- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes. Extension uses ultra-aggressive keep-alive (ping every 10 seconds) to prevent service worker from dying.
 - **CORS for images**: Some images may fail to load if the website blocks cross-origin requests. The extension will skip these images.
 - **Cancel not instant**: Cancellation may take a few seconds to fully stop all background processes.
+- **Service Worker recovery**: Operations automatically resume after service worker restart (within 2 hours).
 
 ### Browser Compatibility
 - **Chrome/Edge/Brave/Arc**: Fully supported
@@ -135,7 +169,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **"Create API key"**
 5. Copy the key (starts with `AIza...`)
 
-> **Tip:** Gemini also enables image text translation feature.
+> **Tip:** Gemini also enables image text translation feature and Google Gemini 2.5 TTS (30 voices). For TTS, you can use the same Gemini API key or set a dedicated Google TTS API key. Requires Generative Language API enabled in Google Cloud Console.
 
 ### Anthropic Claude
 
@@ -145,6 +179,28 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **"Create Key"**
 5. Copy the key (starts with `sk-ant-...`)
 6. Add credits at **Plans & Billing**
+
+### ElevenLabs (Audio)
+
+1. Go to [ElevenLabs](https://elevenlabs.io/)
+2. Sign up or log in
+3. Navigate to **Profile** → **API Keys**
+4. Create an API key
+5. Copy the key
+
+> **Note:** ElevenLabs provides 9 premium voices with high-quality TTS. Supports speed control (0.25-4.0x) and format selection (MP3 high quality default: mp3_44100_192). Models: Multilingual v2, v3 (default), Turbo v2.5. Advanced voice settings available (stability, similarity, style, speaker boost).
+
+### Google Gemini 2.5 TTS (Audio)
+
+1. Go to [Google AI Studio](https://aistudio.google.com/)
+2. Sign in with Google account
+3. Click **"Get API key"** or go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+4. Click **"Create API key"**
+5. Copy the key (starts with `AIza...`)
+6. Enable **Generative Language API** in [Google Cloud Console](https://console.cloud.google.com/)
+7. (Optional) Enable billing if required for your model
+
+> **Note:** Google Gemini 2.5 TTS provides 30 voices. You can use the same Gemini API key or set a dedicated Google TTS API key. Fixed WAV format at 24kHz. Models: `gemini-2.5-pro-preview-tts` (primary) or `gemini-2.5-flash-preview-tts` (faster).
 
 ### Qwen3-TTS-Flash (Audio)
 
@@ -170,15 +226,19 @@ All formats support **translation to 11 languages** — even translating text on
 
 | Provider | Best For | Audio | Image Translation |
 |----------|----------|-------|-------------------|
-| **OpenAI** | General use, Audio export, Video transcription | ✅ | ❌ |
-| **Gemini** | Fast extraction, Image translation, Audio export (30 voices) | ✅ | ✅ |
+| **OpenAI** | General use, Audio export, Video transcription | ✅ (11 voices) | ❌ |
+| **Gemini** | Fast extraction, Image translation, Audio export (30 voices) | ✅ (30 voices) | ✅ |
 | **Claude** | Long articles, Complex pages | ❌ | ❌ |
 | **Grok** | Fast reasoning tasks | ❌ | ❌ |
 | **OpenRouter** | Access to multiple models | ❌ | ❌ |
-| **Qwen** | Audio export (49 voices, Russian support) | ✅ | ❌ |
-| **Respeecher** | Audio export (Ukrainian language) | ✅ | ❌ |
+| **ElevenLabs** | Audio export (9 voices, high quality) | ✅ (9 voices) | ❌ |
+| **Qwen** | Audio export (49 voices, Russian support) | ✅ (49 voices) | ❌ |
+| **Respeecher** | Audio export (Ukrainian language) | ✅ (14 voices) | ❌ |
 
-**Recommendation:** Start with OpenAI to get all features (extraction + audio). Use Respeecher for Ukrainian text.
+**Recommendation:** 
+- **For extraction**: Start with OpenAI or Gemini (fast and reliable)
+- **For audio**: OpenAI for general use, ElevenLabs for high quality, Google Gemini 2.5 TTS for 30 voices, Qwen for Russian, Respeecher for Ukrainian
+- **For image translation**: Requires Gemini API key
 
 ---
 
@@ -190,11 +250,20 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **Save as PDF** (or choose another format)
 5. Done! File downloads automatically
 
-**Tip:** Right-click anywhere → **"Save article as PDF"**
+**Tips:**
+- Right-click anywhere → **"Save article as PDF"**
+- Click **"Generate Summary"** to create a detailed AI summary (works even if popup is closed)
+- Enable **"Generate TL;DR"** in settings to add brief summary to documents
 
 ---
 
 ## ⚙️ Settings
+
+### Interface
+
+- **Theme**: Choose Dark, Light, or Auto (follows system) in header
+- **Language**: Select interface language (11 languages) in header
+- **Custom Models**: Add your own AI models via "+" button next to model selector
 
 ### Extraction Modes
 
@@ -207,13 +276,16 @@ All formats support **translation to 11 languages** — even translating text on
 
 | Provider | Model | Notes |
 |----------|-------|-------|
-| OpenAI | GPT-5.2 | Latest, medium reasoning |
+| OpenAI | GPT-5.2 | Latest, medium reasoning (default) |
 | OpenAI | GPT-5.2-high | Enhanced, high reasoning |
 | OpenAI | GPT-5.1 | Balanced |
-| OpenAI | GPT-5.1 (high) | Best quality |
+| OpenAI | GPT-5.1 (high) | Best quality, high reasoning |
 | Anthropic | Claude Sonnet 4.5 | Great for long articles |
-| Google | Gemini 3 Pro | Fast |
-| Grok | Grok 4.1 Fast Reasoning | Fast reasoning |
+| Google | Gemini 3 Pro Preview | Fast extraction, image translation |
+| Grok | Grok 4.1 Fast Reasoning | Fast reasoning tasks |
+| OpenRouter | Various models | Access to multiple providers |
+
+**Custom Models:** Click the **"+"** button next to model selector to add custom models (e.g., `gpt-4o`, `claude-opus-4.5`). Custom models appear in dropdown and can be hidden/shown as needed.
 
 ### Audio Voices
 
@@ -236,15 +308,46 @@ All formats support **translation to 11 languages** — even translating text on
 | Sepia | `#faf4e8` | `#5d4e37` |
 | High Contrast | `#000000` | `#ffffff` |
 
+**Custom Colors:** Customize background, text, headings, and links with color pickers. Individual reset buttons (↺) for each color, or **"Reset All to Default"** to restore all styles.
+
 ---
 
 ## 📊 Statistics & Cache
 
 Click **📊 Stats** to view:
 - Total saves, this month's count
-- Breakdown by format
-- Recent history with links
+- Breakdown by format (PDF, EPUB, FB2, Markdown, Audio)
+- Recent history with links to original articles (last 50 saves)
+  - Click link to open original article
+  - Click ✕ button to delete individual history entry
+  - Shows format, domain, processing time, and date
 - Cached domains for offline mode
+- **Enable/Disable Statistics**: Toggle statistics collection on/off
+- **Clear Statistics** button to reset all stats
+- **Clear Cache** button to remove all cached selectors
+- Individual domain deletion from cache
+
+## 📝 Summary Generation
+
+Generate detailed AI summaries of any article or video:
+
+1. Navigate to any article or YouTube/Vimeo video
+2. Click **"Generate Summary"** button in popup
+3. Summary generates in background (you can close popup)
+4. When ready, summary appears with options to:
+   - **Copy** to clipboard
+   - **Download** as Markdown file
+   - **Expand/Collapse** to view full text
+   - **Close** to hide summary
+
+**Features:**
+- Works with articles and YouTube/Vimeo videos
+- Continues generating even if popup is closed
+- Detailed summaries with key ideas, concepts, examples, and conclusions
+- Formatted text with headings, lists, and links
+- Automatically saved — persists until you close it
+
+**Note:** Summary generation is separate from document export. Use it to quickly understand content without saving a full document.
 
 ### Offline Mode
 
@@ -252,6 +355,10 @@ ClipAIble caches AI-generated selectors by domain:
 - **Second visit = instant** — no API call
 - **Auto-invalidation** — clears if extraction fails
 - **Manual control** — delete individual domains
+- **Independent settings**:
+  - **Use cached selectors**: Skip page analysis if cache exists (faster)
+  - **Enable caching**: Save new selectors to cache after extraction
+  - Both settings work independently for flexible control
 
 ---
 
@@ -273,6 +380,8 @@ ClipAIble caches AI-generated selectors by domain:
 | Invalid API key | Check key format (sk-..., AIza..., sk-ant-...) |
 | Images missing | Some sites block cross-origin; small images filtered |
 | Audio slow | Long articles split into chunks; watch progress bar |
+| Summary not generating | Check API key, ensure page content is loaded, try again |
+| Summary generation timeout | Very long articles may take up to 45 minutes; wait or try with shorter content |
 
 ---
 
@@ -293,7 +402,7 @@ clipaible/
 │   │   ├── grok.js     # Grok
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
-│   │   ├── google-tts.js # Google Gemini TTS
+│   │   ├── google-tts.js # Google Gemini 2.5 TTS
 │   │   ├── qwen.js     # Qwen3-TTS-Flash
 │   │   ├── respeecher.js # Respeecher TTS
 │   │   ├── tts.js      # TTS router
@@ -301,7 +410,7 @@ clipaible/
 │   ├── extraction/     # Content extraction
 │   │   ├── prompts.js  # AI prompts
 │   │   ├── html-utils.js # HTML utilities
-│   │   ├── video-subtitles.js # YouTube/Vimeo subtitles
+│   │   ├── video-subtitles.js # YouTube/Vimeo subtitle extraction
 │   │   └── video-processor.js # AI subtitle processing
 │   ├── translation/    # Translation & language detection
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
@@ -310,6 +419,8 @@ clipaible/
 │   ├── settings/       # Settings import/export
 │   ├── state/          # Processing state management
 │   └── utils/          # Config, encryption, helpers
+│       ├── video.js    # Video platform detection
+│       └── api-error-handler.js # Common API error handling
 ├── print/              # PDF rendering
 ├── config/             # Styles
 ├── lib/                # JSZip

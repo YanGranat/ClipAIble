@@ -209,7 +209,10 @@ export async function textToSpeech(text, apiKey, options = {}) {
   
   const {
     voice = RESPEECHER_CONFIG.DEFAULT_VOICE,
-    language = null // Explicit language can override auto-detection
+    language = null, // Explicit language can override auto-detection
+    temperature = 1.0,
+    repetition_penalty = 1.0,
+    top_p = 1.0
   } = options;
   
   log('Respeecher textToSpeech called', { textLength: text?.length, voice, language });

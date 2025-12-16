@@ -128,14 +128,33 @@
             <span data-i18n="cancel">Cancel</span>
           </button>
           <select id="mainFormatSelect" class="format-select">
-            <option value="pdf">PDF</option>
-            <option value="epub">EPUB</option>
-            <option value="fb2">FB2</option>
-            <option value="markdown">MD</option>
-            <option value="audio">Audio</option>
+            <option value="pdf" data-i18n="formatPdf">PDF</option>
+            <option value="epub" data-i18n="formatEpub">EPUB</option>
+            <option value="fb2" data-i18n="formatFb2">FB2</option>
+            <option value="markdown" data-i18n="formatMarkdown">MD</option>
+            <option value="audio" data-i18n="formatAudio">Audio</option>
           </select>
         </div>
       </section>
+
+      <!-- Summary Section -->
+      <button id="generateSummaryBtn" class="btn btn-summary" data-i18n="generateSummary">Generate Summary</button>
+      <div id="summaryContainer" class="summary-container" style="display: none;">
+        <div class="summary-header">
+          <button id="summaryToggle" class="summary-toggle">
+            <span class="summary-toggle-icon">▶</span>
+            <span data-i18n="summary">Summary</span>
+          </button>
+          <div class="summary-actions">
+            <button id="summaryCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" title="Copy">📋</button>
+            <button id="summaryDownloadBtn" class="btn-icon btn-icon-small" data-i18n-title="download" title="Download">💾</button>
+            <button id="summaryCloseBtn" class="btn-icon btn-icon-small" data-i18n-title="close" title="Close">✕</button>
+          </div>
+        </div>
+        <div id="summaryContent" class="summary-content">
+          <div id="summaryText" class="summary-text"></div>
+        </div>
+      </div>
 
       <!-- Settings & Stats Toggle -->
       <section class="section settings-toggle">
@@ -169,27 +188,27 @@
           <div class="stats-formats" id="statsFormats">
             <div class="format-stat">
               <span class="format-icon">📄</span>
-              <span class="format-name">PDF</span>
+              <span class="format-name" data-i18n="formatPdf">PDF</span>
               <span class="format-count" id="formatPdf">0</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">📚</span>
-              <span class="format-name">EPUB</span>
+              <span class="format-name" data-i18n="formatEpub">EPUB</span>
               <span class="format-count" id="formatEpub">0</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">📖</span>
-              <span class="format-name">FB2</span>
+              <span class="format-name" data-i18n="formatFb2">FB2</span>
               <span class="format-count" id="formatFb2">0</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">📝</span>
-              <span class="format-name">MD</span>
+              <span class="format-name" data-i18n="formatMarkdown">MD</span>
               <span class="format-count" id="formatMarkdown">0</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">🔊</span>
-              <span class="format-name">Audio</span>
+              <span class="format-name" data-i18n="formatAudio">Audio</span>
               <span class="format-count" id="formatAudio">0</span>
             </div>
           </div>
@@ -406,15 +425,15 @@
               <div class="setting-item">
                 <label for="elevenlabsStability" data-i18n="stability">Stability</label>
                 <div class="slider-container">
-                  <input type="range" id="elevenlabsStability" min="0" max="1" step="0.01" value="0.5">
+                  <input type="range" id="elevenlabsStability" min="0" max="1" step="0.5" value="0.5">
                   <span class="slider-value" id="elevenlabsStabilityValue">0.5</span>
                 </div>
-                <p class="setting-hint" data-i18n="stabilityHint">Low = more variation, High = more stable</p>
+                <p class="setting-hint" data-i18n="stabilityHint">Low = more variation, High = more stable (0.0 = Creative, 0.5 = Natural, 1.0 = Robust)</p>
               </div>
               <div class="setting-item">
                 <label for="elevenlabsSimilarity" data-i18n="similarityBoost">Similarity Boost</label>
                 <div class="slider-container">
-                  <input type="range" id="elevenlabsSimilarity" min="0" max="1" step="0.01" value="0.75">
+                  <input type="range" id="elevenlabsSimilarity" min="0" max="1" step="0.1" value="0.75">
                   <span class="slider-value" id="elevenlabsSimilarityValue">0.75</span>
                 </div>
                 <p class="setting-hint" data-i18n="similarityHint">How closely the voice matches the original</p>
@@ -422,7 +441,7 @@
               <div class="setting-item">
                 <label for="elevenlabsStyle" data-i18n="style">Style</label>
                 <div class="slider-container">
-                  <input type="range" id="elevenlabsStyle" min="0" max="1" step="0.01" value="0.0">
+                  <input type="range" id="elevenlabsStyle" min="0" max="1" step="0.1" value="0.0">
                   <span class="slider-value" id="elevenlabsStyleValue">0.0</span>
                 </div>
                 <p class="setting-hint" data-i18n="styleHint">Low = neutral, High = expressive</p>
@@ -519,7 +538,7 @@
         <div class="setting-item">
           <label for="languageSelect" data-i18n="targetLanguage">Target Language</label>
           <select id="languageSelect">
-            <option value="auto">Auto (original)</option>
+            <option value="auto" data-i18n="autoOriginal">Auto (original)</option>
             <option value="en">English</option>
             <option value="ru">Русский</option>
             <option value="ua">Українська</option>
@@ -662,7 +681,7 @@
       <div class="popup-footer-links">
         <a href="https://github.com/YanGranat/ClipAIble" target="_blank" class="popup-footer-link" id="githubLink">GitHub</a>
         <span class="popup-footer-separator">•</span>
-        <span class="popup-footer-version" id="versionText">v2.9.0</span>
+        <span class="popup-footer-version" id="versionText">v3.0.0</span>
       </div>
     </footer>
 
@@ -673,7 +692,7 @@
     <div class="modal-dialog">
       <div class="modal-header">
         <h3 id="importExportModalTitle" data-i18n="exportSettings">Export Settings</h3>
-        <button id="importExportModalClose" class="modal-close" aria-label="Close">×</button>
+        <button id="importExportModalClose" class="modal-close" data-i18n-aria-label="closeButton" aria-label="Close">×</button>
       </div>
       <div class="modal-body">
         <div id="importExportModalContent">

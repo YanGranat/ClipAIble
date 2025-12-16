@@ -2,9 +2,9 @@
 // 
 // Uses Generative Language API (generativelanguage.googleapis.com)
 // - API key via x-goog-api-key header
-// - IMPORTANT: Prompt style is combined with text in contents field
-//   This means the prompt WILL BE SPOKEN at the beginning of audio
-//   This is a limitation of Generative Language API
+// - IMPORTANT: Prompt style is combined with text in contents field as "Say {prompt}: {text}"
+//   According to Google API documentation, the API handles this correctly and the prompt is NOT spoken
+//   However, the format requires combining prompt and text in the contents field
 //
 // NO FALLBACKS - if API fails, error is thrown immediately
 
@@ -160,7 +160,7 @@ function pcmToWav(pcmData, sampleRate = 24000, bitsPerSample = 16, numChannels =
  * @param {string} apiKey - Google API key (same as Gemini API key)
  * @param {Object} options - TTS options
  * @param {string} options.voice - Voice name to use (default: 'Callirrhoe')
- * @param {string} options.prompt - Optional style prompt for voice control (converted to SSML tags, not spoken)
+ * @param {string} options.prompt - Optional style prompt for voice control (combined with text as "Say {prompt}: {text}", API handles correctly and prompt is NOT spoken)
  * @param {string} options.model - Model to use: 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-preview-tts', or 'gemini-2.5-flash-lite-preview-tts' (default: 'gemini-2.5-pro-preview-tts')
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format, 24kHz, 16-bit, mono)
  */
@@ -212,8 +212,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   
   let response;
     // Generative Language API - prompt and text are combined in contents field
-    // IMPORTANT: Prompt style WILL BE SPOKEN at the beginning of audio
-    // This is a limitation of Generative Language API
+    // Format: "Say {prompt}: {text}" - API handles this correctly and prompt is NOT spoken
     // NO FALLBACKS - if this fails, error is thrown immediately
     
     // Combine prompt and text if prompt is provided
@@ -222,8 +221,9 @@ export async function textToSpeech(text, apiKey, options = {}) {
     if (prompt) {
       // Format prompt as instruction for the entire text
       // Example from documentation: "Say cheerfully: Have a wonderful day!"
+      // API correctly processes this format and does NOT speak the prompt part
       contentsText = `Say ${prompt.trim()}: ${text}`;
-      logWarn('Style prompt will be included in audio (Generative Language API limitation). Prompt will be spoken at the beginning.', {
+      log('Style prompt combined with text (API handles correctly, prompt not spoken)', {
         prompt,
         promptLength: prompt.length,
         combinedTextLength: contentsText.length

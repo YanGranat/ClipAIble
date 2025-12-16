@@ -130,11 +130,16 @@ export async function textToSpeech(text, apiKey, options = {}) {
     Math.min(ELEVENLABS_CONFIG.MAX_SPEED, speed)
   );
   
+  // Validate stability - must be exactly 0.0, 0.5, or 1.0 (enforced by UI slider)
+  const validStability = stability === 0.0 || stability === 0.5 || stability === 1.0 
+    ? stability 
+    : 0.5; // Default fallback if invalid value somehow passed
+  
   const requestBody = {
     text: text,
     model_id: modelId,
     voice_settings: {
-      stability: Math.max(0, Math.min(1, stability)),
+      stability: validStability,
       similarity_boost: Math.max(0, Math.min(1, similarityBoost)),
       style: Math.max(0, Math.min(1, style)),
       use_speaker_boost: useSpeakerBoost,

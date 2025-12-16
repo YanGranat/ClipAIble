@@ -189,6 +189,8 @@ export async function completeProcessing(stopKeepAlive) {
   const uiLang = await getUILanguage();
   processingState.status = tSync('statusDone', uiLang);
   if (stopKeepAlive) stopKeepAlive();
+  // Keep result in memory for summary generation, but remove from storage
+  // Result will be cleared on next processing start
   chrome.storage.local.remove(['processingState']);
 }
 
@@ -226,6 +228,15 @@ export async function startProcessing(startKeepAlive) {
     return false;
   }
   
+  // Save previous result to storage before clearing (for summary generation)
+  if (processingState.result) {
+    try {
+      await chrome.storage.local.set({ lastProcessedResult: processingState.result });
+    } catch (error) {
+      logWarn('Failed to save last processed result', error);
+    }
+  }
+  
   const uiLang = await getUILanguage();
   const startingStatus = tSync('stageStarting', uiLang);
   
@@ -248,55 +259,61 @@ export async function startProcessing(startKeepAlive) {
 /**
  * Restore state from storage on service worker restart
  * Non-blocking - uses setTimeout to avoid blocking service worker initialization
+ * @returns {Promise<void>} Promise that resolves when restoration is complete
  */
 export function restoreStateFromStorage() {
-  // Use setTimeout to make this completely non-blocking
-  setTimeout(async () => {
-    try {
-      const result = await chrome.storage.local.get(['processingState']);
-      if (result.processingState && result.processingState.isProcessing) {
-        const savedState = result.processingState;
-        const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-        
-        // If state is stale (> 30 minutes), reset it
-        if (timeSinceUpdate > CONFIG.STATE_EXPIRY_MS) {
-          log('Stale processing state found, resetting', { timeSinceUpdate, expiryMs: CONFIG.STATE_EXPIRY_MS });
-          await chrome.storage.local.remove(['processingState']);
-        } else {
-          log('Restored processing state from storage', { 
-            savedState, 
-            timeSinceUpdate, 
-            progress: savedState.progress,
-            stage: savedState.currentStage 
-          });
-          // Mark as error since we can't truly resume
-          // Use sync fallback to avoid async issues during initialization
-          processingState = {
-            isProcessing: false,
-            progress: savedState.progress || 0,
-            status: 'Error',
-            error: 'Processing was interrupted. Please try again.',
-            result: null,
-            currentStage: savedState.currentStage || null,
-            completedStages: savedState.completedStages || []
-          };
-          // Try to get localized message asynchronously (non-blocking)
-          try {
-            const uiLang = await getUILanguage();
-            const errorStatus = tSync('statusError', uiLang);
-            const errorMsg = tSync('statusProcessingInterrupted', uiLang);
-            processingState.status = errorStatus;
-            processingState.error = errorMsg;
-          } catch (localeError) {
-            // Keep fallback values if locale fails
-            logWarn('Failed to localize error message', localeError);
+  // Return Promise to allow proper error handling
+  return new Promise((resolve) => {
+    // Use setTimeout to make this completely non-blocking
+    setTimeout(async () => {
+      try {
+        const result = await chrome.storage.local.get(['processingState']);
+        if (result.processingState && result.processingState.isProcessing) {
+          const savedState = result.processingState;
+          const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
+          
+          // If state is stale (> 2 hours), reset it
+          if (timeSinceUpdate > CONFIG.STATE_EXPIRY_MS) {
+            log('Stale processing state found, resetting', { timeSinceUpdate, expiryMs: CONFIG.STATE_EXPIRY_MS });
+            await chrome.storage.local.remove(['processingState']);
+          } else {
+            log('Restored processing state from storage', { 
+              savedState, 
+              timeSinceUpdate, 
+              progress: savedState.progress,
+              stage: savedState.currentStage 
+            });
+            // Mark as error since we can't truly resume
+            // Use sync fallback to avoid async issues during initialization
+            processingState = {
+              isProcessing: false,
+              progress: savedState.progress || 0,
+              status: 'Error',
+              error: 'Processing was interrupted. Please try again.',
+              result: null,
+              currentStage: savedState.currentStage || null,
+              completedStages: savedState.completedStages || []
+            };
+            // Try to get localized message asynchronously (non-blocking)
+            try {
+              const uiLang = await getUILanguage();
+              const errorStatus = tSync('statusError', uiLang);
+              const errorMsg = tSync('statusProcessingInterrupted', uiLang);
+              processingState.status = errorStatus;
+              processingState.error = errorMsg;
+            } catch (localeError) {
+              // Keep fallback values if locale fails
+              logWarn('Failed to localize error message', localeError);
+            }
           }
         }
+      } catch (error) {
+        logWarn('Error in restoreStateFromStorage', error);
+      } finally {
+        resolve(); // Always resolve, even on error
       }
-    } catch (error) {
-      logWarn('Error in restoreStateFromStorage', error);
-    }
-  }, 0);
+    }, 0);
+  });
 }
 
 

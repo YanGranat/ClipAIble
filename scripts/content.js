@@ -8,8 +8,99 @@
   // Это гарантирует, что listener'ы будут готовы к получению сообщений
   console.log('[ClipAIble:Content] 🔵 Content script loaded and executing...', {
     url: window.location.href,
-    readyState: document.readyState
+    readyState: document.readyState,
+    timestamp: new Date().toISOString(),
+    userAgent: navigator.userAgent.substring(0, 50)
   });
+  
+  // КРИТИЧНО: Проверить, что мы на YouTube странице
+  if (!window.location.hostname.includes('youtube.com')) {
+    console.warn('[ClipAIble:Content] ⚠️ Content script loaded on non-YouTube page:', window.location.hostname);
+  }
+  
+  // Проверка валидности контекста расширения
+  function isExtensionContextValid() {
+    try {
+      return typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id !== undefined;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  // Helper function to save subtitles to DOM as fallback when chrome.storage is unavailable
+  function saveToDOMFallback(subtitleData) {
+    console.log('[ClipAIble:Content] 🔵 Attempting to save to DOM fallback...', {
+      hasSubtitles: !!subtitleData?.subtitles,
+      count: subtitleData?.subtitles?.length || 0,
+      hasMetadata: !!subtitleData?.metadata,
+      bodyExists: !!document.body,
+      readyState: document.readyState
+    });
+    
+    try {
+      // Проверка что body существует
+      if (!document.body) {
+        console.error('[ClipAIble:Content] ❌ document.body is null, cannot save to DOM');
+        // Попробовать подождать и повторить
+        if (document.readyState === 'loading') {
+          console.log('[ClipAIble:Content] 🔵 Document still loading, waiting for body...');
+          document.addEventListener('DOMContentLoaded', () => {
+            if (document.body && subtitleData) {
+              saveToDOMFallback(subtitleData);
+            }
+          }, { once: true });
+        }
+        return;
+      }
+      
+      // Удалить старый элемент, если есть
+      const oldElement = document.getElementById('ClipAIblePendingSubtitles');
+      if (oldElement) {
+        oldElement.remove();
+        console.log('[ClipAIble:Content] 🔵 Removed old DOM element');
+      }
+      
+      // Сохранить данные в специальный элемент на странице
+      // Background script может прочитать их через executeScript
+      const dataElement = document.createElement('div');
+      dataElement.id = 'ClipAIblePendingSubtitles';
+      dataElement.style.display = 'none';
+      
+      const dataToSave = {
+        subtitles: subtitleData.subtitles,
+        metadata: subtitleData.metadata,
+        timestamp: Date.now(),
+        source: 'dom_fallback'
+      };
+      
+      dataElement.setAttribute('data-subtitles', JSON.stringify(dataToSave));
+      
+      // КРИТИЧНО: Добавить В НАЧАЛО body, не в конец (быстрее доступ)
+      document.body.insertBefore(dataElement, document.body.firstChild);
+      
+      console.log('[ClipAIble:Content] ✅ Saved subtitles to DOM fallback (inserted at body start)', {
+        elementId: dataElement.id,
+        hasAttribute: !!dataElement.getAttribute('data-subtitles'),
+        attributeLength: dataElement.getAttribute('data-subtitles')?.length || 0,
+        count: subtitleData.subtitles?.length || 0,
+        timestamp: dataToSave.timestamp
+      });
+      
+      // Проверка что элемент действительно в DOM
+      const verification = document.getElementById('ClipAIblePendingSubtitles');
+      if (verification) {
+        console.log('[ClipAIble:Content] ✅ DOM element verified - successfully added to document', {
+          parentNode: verification.parentNode?.tagName || 'none',
+          isInBody: document.body.contains(verification)
+        });
+      } else {
+        console.error('[ClipAIble:Content] ❌ DOM element NOT found after adding!');
+      }
+    } catch (domError) {
+      console.error('[ClipAIble:Content] ❌ Failed to save to DOM fallback:', domError);
+      console.error('[ClipAIble:Content] ❌ DOM error stack:', domError.stack);
+    }
+  }
   
   // НЕМЕДЛЕННАЯ регистрация postMessage и CustomEvent listeners
   console.log('[ClipAIble:Content] 🔵 IMMEDIATE: Registering window.postMessage listener...');
@@ -119,6 +210,19 @@
       });
       
       try {
+        // КРИТИЧНО: Проверка контекста ПЕРЕД отправкой сообщения
+        if (!isExtensionContextValid()) {
+          console.warn('[ClipAIble:Content] ⚠️ Extension context is invalid (postMessage) - using DOM fallback immediately');
+          if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
+            const subtitleData = {
+              subtitles: event.data.result.subtitles,
+              metadata: event.data.result.metadata || {}
+            };
+            saveToDOMFallback(subtitleData);
+          }
+          return;
+        }
+        
         console.log('[ClipAIble:Content] 🔵 Step 2 (postMessage): Sending message to background script...');
         
         let backgroundResponded = false;
@@ -135,17 +239,33 @@
           if (!backgroundResponded && !storageSaved && subtitleData) {
             console.warn('[ClipAIble:Content] ⚠️ Background did not respond in 3 seconds, saving to storage');
             storageSaved = true;
-            chrome.storage.local.set({
-              pendingSubtitles: {
-                subtitles: subtitleData.subtitles,
-                metadata: subtitleData.metadata,
-                timestamp: Date.now()
+            
+            // Попробовать использовать chrome.storage
+            try {
+              if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.set({
+                  pendingSubtitles: {
+                    subtitles: subtitleData.subtitles,
+                    metadata: subtitleData.metadata,
+                    timestamp: Date.now(),
+                    source: 'content_script_timeout_fallback'
+                  }
+                }).then(() => {
+                  console.log('[ClipAIble:Content] ✅ Saved to storage - background will check storage');
+                }).catch(storageError => {
+                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                  // Если storage не работает, попробовать сохранить в DOM
+                  saveToDOMFallback(subtitleData);
+                });
+              } else {
+                // chrome.storage недоступен, используем DOM fallback
+                saveToDOMFallback(subtitleData);
               }
-            }).then(() => {
-              console.log('[ClipAIble:Content] ✅ Saved to storage - background will check storage');
-            }).catch(storageError => {
-              console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-            });
+            } catch (storageException) {
+              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+              // Используем DOM fallback
+              saveToDOMFallback(subtitleData);
+            }
           }
         }, 3000);
         
@@ -162,21 +282,30 @@
             console.error('[ClipAIble:Content] ❌ Failed to forward postMessage to background:', chrome.runtime.lastError);
             console.error('[ClipAIble:Content] ❌ Error message:', errorMsg);
             
-            if (subtitleData && !storageSaved && chrome.storage && chrome.storage.local) {
+            if (subtitleData && !storageSaved) {
               storageSaved = true;
-              chrome.storage.local.set({
-                pendingSubtitles: {
-                  subtitles: subtitleData.subtitles,
-                  metadata: subtitleData.metadata,
-                  timestamp: Date.now()
+              try {
+                if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                  chrome.storage.local.set({
+                    pendingSubtitles: {
+                      subtitles: subtitleData.subtitles,
+                      metadata: subtitleData.metadata,
+                      timestamp: Date.now()
+                    }
+                  }).then(() => {
+                    console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
+                  }).catch(storageError => {
+                    console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                    saveToDOMFallback(subtitleData);
+                  });
+                } else {
+                  console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+                  saveToDOMFallback(subtitleData);
                 }
-              }).then(() => {
-                console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
-              }).catch(storageError => {
-                console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-              });
-            } else if (subtitleData && !storageSaved) {
-              console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, cannot save subtitles');
+              } catch (storageException) {
+                console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+                saveToDOMFallback(subtitleData);
+              }
             }
             return;
           }
@@ -196,20 +325,45 @@
         console.error('[ClipAIble:Content] ❌ Exception stack:', e.stack);
         
         // Try to save to storage if we have subtitle data
-        if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0 && chrome.storage && chrome.storage.local) {
-          chrome.storage.local.set({
-            pendingSubtitles: {
-              subtitles: event.data.result.subtitles,
-              metadata: event.data.result.metadata || {},
-              timestamp: Date.now()
+        if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
+          const subtitleData = {
+            subtitles: event.data.result.subtitles,
+            metadata: event.data.result.metadata || {}
+          };
+          
+          // Проверяем тип ошибки
+          const errorMsg = e.message || '';
+          const isContextInvalidated = errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated');
+          
+          // Если Extension context invalidated, используем DOM fallback сразу
+          if (isContextInvalidated) {
+            console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated in postMessage catch - using DOM fallback immediately');
+            saveToDOMFallback(subtitleData);
+          } else {
+            // Другие ошибки - пробуем storage, потом DOM fallback
+            try {
+              if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.set({
+                  pendingSubtitles: {
+                    subtitles: subtitleData.subtitles,
+                    metadata: subtitleData.metadata,
+                    timestamp: Date.now()
+                  }
+                }).then(() => {
+                  console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
+                }).catch(storageError => {
+                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                  saveToDOMFallback(subtitleData);
+                });
+              } else {
+                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+                saveToDOMFallback(subtitleData);
+              }
+            } catch (storageException) {
+              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+              saveToDOMFallback(subtitleData);
             }
-          }).then(() => {
-            console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
-          }).catch(storageError => {
-            console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-          });
-        } else if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
-          console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, cannot save subtitles');
+          }
         }
       }
     }
@@ -281,8 +435,17 @@
     if (request.action === 'extractContent') {
       const content = extractPageContent();
       sendResponse(content);
+      return true;
     }
-    return true;
+    
+    // Handle ping request to verify content script is loaded
+    if (request.action === 'ping') {
+      console.log('[ClipAIble:Content] ✅ Ping received - content script is loaded and responding');
+      sendResponse({ success: true, loaded: true, timestamp: new Date().toISOString() });
+      return true;
+    }
+    
+    return false;
   });
 
   // КРИТИЧНО: CustomEvent на document - ЕДИНСТВЕННЫЙ надежный способ
@@ -291,6 +454,21 @@
   console.log('[ClipAIble:Content] 🔵 Registering ClipAIbleSubtitleMessage CustomEvent listener...');
   console.log('[ClipAIble:Content] 🔵 Document readyState:', document.readyState);
   console.log('[ClipAIble:Content] 🔵 Current URL:', window.location.href);
+  console.log('[ClipAIble:Content] 🔵 Content script loaded at:', new Date().toISOString());
+  console.log('[ClipAIble:Content] 🔵 Testing CustomEvent dispatch...');
+  
+  // Test if CustomEvent works by dispatching a test event
+  try {
+    const testEvent = new CustomEvent('ClipAIbleTestEvent', {
+      detail: { test: true },
+      bubbles: true,
+      cancelable: true
+    });
+    document.dispatchEvent(testEvent);
+    console.log('[ClipAIble:Content] ✅ Test CustomEvent dispatched successfully');
+  } catch (testError) {
+    console.error('[ClipAIble:Content] ❌ Failed to dispatch test CustomEvent:', testError);
+  }
   
   // Global flags to prevent duplicate processing
   let lastSubtitleTimestamp = 0;
@@ -343,12 +521,13 @@
       currentHash = `${subtitleData.subtitles.length}_${firstText}_${lastText}`;
     }
     
-    // Only check for duplicates if we have a hash AND it's very recent (1 second, not 3)
+    // Only check for duplicates if we have a hash AND it's very recent (2 seconds)
     // This allows retries from injected script but prevents true duplicates
+    // КРИТИЧНО: Увеличено окно до 2 секунд, чтобы поймать все ретраи из injected script
     const isDuplicate = subtitleData && 
                         currentHash && 
                         currentHash === lastSubtitleHash &&
-                        currentTimestamp - lastSubtitleTimestamp < 1000; // 1 second window (shorter for retries)
+                        currentTimestamp - lastSubtitleTimestamp < 2000; // 2 second window to catch all retries
     
     if (isDuplicate) {
       console.log('[ClipAIble:Content] 🔵 Ignoring duplicate event (same subtitles within 1 second)', {
@@ -363,27 +542,50 @@
     
     // Forward message to background script
     try {
+      // КРИТИЧНО: Проверка контекста ПЕРЕД отправкой сообщения
+      if (!isExtensionContextValid()) {
+        console.warn('[ClipAIble:Content] ⚠️ Extension context is invalid - using DOM fallback immediately');
+        if (subtitleData) {
+          saveToDOMFallback(subtitleData);
+        }
+        return;
+      }
+      
       console.log('[ClipAIble:Content] 🔵 Step 2: Sending message to background script...');
       
       let backgroundResponded = false;
         let storageSaved = false;
         const fallbackTimeout = setTimeout(() => {
-          if (!backgroundResponded && !storageSaved && subtitleData && chrome.storage && chrome.storage.local) {
+          if (!backgroundResponded && !storageSaved && subtitleData) {
             console.warn('[ClipAIble:Content] ⚠️ Background did not respond in 3 seconds, saving to storage');
             storageSaved = true;
-            chrome.storage.local.set({
-              pendingSubtitles: {
-                subtitles: subtitleData.subtitles,
-                metadata: subtitleData.metadata,
-                timestamp: Date.now()
+            
+            // Попробовать использовать chrome.storage
+            try {
+              if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.set({
+                  pendingSubtitles: {
+                    subtitles: subtitleData.subtitles,
+                    metadata: subtitleData.metadata,
+                    timestamp: Date.now()
+                  }
+                }).then(() => {
+                  console.log('[ClipAIble:Content] ✅ Saved to storage - background will check storage');
+                }).catch(storageError => {
+                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                  // Fallback to DOM if storage fails
+                  saveToDOMFallback(subtitleData);
+                });
+              } else {
+                // chrome.storage недоступен, используем DOM fallback
+                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+                saveToDOMFallback(subtitleData);
               }
-            }).then(() => {
-              console.log('[ClipAIble:Content] ✅ Saved to storage - background will check storage');
-            }).catch(storageError => {
-              console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-            });
-          } else if (!backgroundResponded && !storageSaved && subtitleData) {
-            console.warn('[ClipAIble:Content] ⚠️ Background did not respond and chrome.storage unavailable');
+            } catch (storageException) {
+              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+              // Fallback to DOM if exception occurs
+              saveToDOMFallback(subtitleData);
+            }
           }
         }, 3000);
       
@@ -404,43 +606,41 @@
             console.error('[ClipAIble:Content] ❌ Error message:', errorMsg);
             console.error('[ClipAIble:Content] ❌ This usually means background script is not listening or service worker died');
             
-            // If "Extension context invalidated", try storage fallback
+            // If "Extension context invalidated", use DOM fallback immediately
             if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-              console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated, trying storage fallback');
-              if (subtitleData && !storageSaved && chrome.storage && chrome.storage.local) {
-                storageSaved = true;
-                // Save to storage and trigger processing via storage change
-                chrome.storage.local.set({
-                  pendingSubtitles: {
-                    subtitles: subtitleData.subtitles,
-                    metadata: subtitleData.metadata,
-                    timestamp: Date.now()
-                  }
-                }).then(() => {
-                  console.log('[ClipAIble:Content] ✅ Saved subtitles to storage for background to process');
-                }).catch(storageError => {
-                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-                });
-              } else if (subtitleData && !storageSaved) {
-                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable (Extension context invalidated), cannot save subtitles');
+              console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated - service worker died, using DOM fallback immediately');
+              if (subtitleData) {
+                // КРИТИЧНО: После Extension context invalidated chrome.storage НЕДОСТУПЕН!
+                // НЕ пытаемся использовать chrome.storage - сразу используем DOM fallback
+                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable (Extension context invalidated), cannot save subtitles - using DOM fallback');
+                saveToDOMFallback(subtitleData);
               }
             } else {
               // Other error - try storage first
-              if (subtitleData && !storageSaved && chrome.storage && chrome.storage.local) {
+              if (subtitleData && !storageSaved) {
                 storageSaved = true;
-                chrome.storage.local.set({
-                  pendingSubtitles: {
-                    subtitles: subtitleData.subtitles,
-                    metadata: subtitleData.metadata,
-                    timestamp: Date.now()
+                try {
+                  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                    chrome.storage.local.set({
+                      pendingSubtitles: {
+                        subtitles: subtitleData.subtitles,
+                        metadata: subtitleData.metadata,
+                        timestamp: Date.now()
+                      }
+                    }).then(() => {
+                      console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
+                    }).catch(storageError => {
+                      console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                      saveToDOMFallback(subtitleData);
+                    });
+                  } else {
+                    console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+                    saveToDOMFallback(subtitleData);
                   }
-                }).then(() => {
-                  console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
-                }).catch(storageError => {
-                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-                });
-              } else if (subtitleData && !storageSaved) {
-                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, cannot save subtitles');
+                } catch (storageException) {
+                  console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+                  saveToDOMFallback(subtitleData);
+                }
               }
             }
             return;
@@ -471,27 +671,62 @@
         const errorMsg = sendError.message || '';
         
         if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-          console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated, trying storage fallback');
-          if (subtitleData && !storageSaved && chrome.storage && chrome.storage.local) {
-            storageSaved = true;
-            chrome.storage.local.set({
-              pendingSubtitles: {
-                subtitles: subtitleData.subtitles,
-                metadata: subtitleData.metadata,
-                timestamp: Date.now()
-              }
-            }).then(() => {
-              console.log('[ClipAIble:Content] ✅ Saved subtitles to storage - background will check storage');
-            }).catch(storageError => {
-              console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-            });
-          } else if (subtitleData && !storageSaved) {
-            console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable (Extension context invalidated), cannot save subtitles');
+          console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated - service worker died, using DOM fallback immediately');
+          
+          // КРИТИЧНО: После Extension context invalidated chrome.storage НЕДОСТУПЕН!
+          // НЕ пытаемся использовать chrome.storage - сразу используем DOM fallback
+          if (subtitleData) {
+            console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable (Extension context invalidated), cannot save subtitles - using DOM fallback');
+            saveToDOMFallback(subtitleData);
           }
         } else {
           // Other error - try storage first
-          if (subtitleData && !storageSaved && chrome.storage && chrome.storage.local) {
+          if (subtitleData && !storageSaved) {
             storageSaved = true;
+            try {
+              if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.set({
+                  pendingSubtitles: {
+                    subtitles: subtitleData.subtitles,
+                    metadata: subtitleData.metadata,
+                    timestamp: Date.now()
+                  }
+                }).then(() => {
+                  console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
+                }).catch(storageError => {
+                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                  saveToDOMFallback(subtitleData);
+                });
+              } else {
+                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+                saveToDOMFallback(subtitleData);
+              }
+            } catch (storageException) {
+              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+              saveToDOMFallback(subtitleData);
+            }
+          }
+        }
+      }
+      
+      console.log('[ClipAIble:Content] 🔵 Step 4: sendMessage call finished (callback will be called asynchronously)');
+    } catch (e) {
+      console.error('[ClipAIble:Content] ❌ Exception while forwarding message:', e);
+      console.error('[ClipAIble:Content] ❌ Exception stack:', e.stack);
+      
+      // Проверяем тип ошибки
+      const errorMsg = e.message || '';
+      const isContextInvalidated = errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated');
+      
+      // Если Extension context invalidated, используем DOM fallback сразу
+      if (isContextInvalidated && subtitleData) {
+        console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated in catch block - using DOM fallback immediately');
+        saveToDOMFallback(subtitleData);
+      } else if (subtitleData && !storageSaved) {
+        // Другие ошибки - пробуем storage, потом DOM fallback
+        storageSaved = true;
+        try {
+          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
             chrome.storage.local.set({
               pendingSubtitles: {
                 subtitles: subtitleData.subtitles,
@@ -502,34 +737,16 @@
               console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
             }).catch(storageError => {
               console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+              saveToDOMFallback(subtitleData);
             });
-          } else if (subtitleData && !storageSaved) {
-            console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, cannot save subtitles');
+          } else {
+            console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+            saveToDOMFallback(subtitleData);
           }
+        } catch (storageException) {
+          console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+          saveToDOMFallback(subtitleData);
         }
-      }
-      
-      console.log('[ClipAIble:Content] 🔵 Step 4: sendMessage call finished (callback will be called asynchronously)');
-    } catch (e) {
-      console.error('[ClipAIble:Content] ❌ Exception while forwarding message:', e);
-      console.error('[ClipAIble:Content] ❌ Exception stack:', e.stack);
-      
-      // Если произошла ошибка, пробуем storage (только один раз)
-      if (subtitleData && !storageSaved && chrome.storage && chrome.storage.local) {
-        storageSaved = true;
-        chrome.storage.local.set({
-          pendingSubtitles: {
-            subtitles: subtitleData.subtitles,
-            metadata: subtitleData.metadata,
-            timestamp: Date.now()
-          }
-        }).then(() => {
-          console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
-        }).catch(storageError => {
-          console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-        });
-      } else if (subtitleData && !storageSaved) {
-        console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, cannot save subtitles');
       }
     }
   };

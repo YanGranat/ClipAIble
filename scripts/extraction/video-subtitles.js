@@ -1,6 +1,6 @@
 // Video subtitle extraction for YouTube and Vimeo
 
-import { log, logError } from '../utils/logging.js';
+import { log, logError, logWarn } from '../utils/logging.js';
 
 /**
  * Extract subtitles from YouTube page
@@ -15,20 +15,73 @@ export async function extractYouTubeSubtitles(tabId) {
   return new Promise((resolve, reject) => {
     let timeoutId = null;
     let resolved = false;
+    let storageCheckInterval = null; // КРИТИЧНО: Объявить раньше, чтобы использовать в ранних проверках DOM
     
     // Set up one-time message listener
     const messageListener = (message, sender, sendResponse) => {
       log('🟢 Step A: Message received in background', { 
         action: message.action,
+        type: message.type,
         hasError: !!message.error,
         hasResult: !!message.result,
         senderTabId: sender.tab?.id,
-        expectedTabId: tabId
+        expectedTabId: tabId,
+        messageKeys: Object.keys(message || {})
       });
       
       // Check both action and type to catch messages in different formats
-      if (message.action === 'youtubeSubtitlesResult' || 
-          (message.type === 'ClipAIbleYouTubeSubtitles' && message.action === 'youtubeSubtitlesResult')) {
+      // КРИТИЧНО: Проверяем все возможные форматы сообщений
+      const isYouTubeSubtitlesResult = 
+        message.action === 'youtubeSubtitlesResult' || 
+        (message.type === 'ClipAIbleYouTubeSubtitles' && message.action === 'youtubeSubtitlesResult') ||
+        (message.type === 'ClipAIbleYouTubeSubtitles' && !message.action) || // Fallback for messages without action
+        (message.type === 'ClipAIbleYouTubeSubtitles' && message.result) || // Если есть result, это наше сообщение
+        (message.type === 'ClipAIbleYouTubeSubtitles' && message.error); // Если есть error, это тоже наше сообщение
+      
+      // КРИТИЧНО: Детальная проверка каждого условия
+      const check1 = message.action === 'youtubeSubtitlesResult';
+      const check2 = (message.type === 'ClipAIbleYouTubeSubtitles' && message.action === 'youtubeSubtitlesResult');
+      const check3 = (message.type === 'ClipAIbleYouTubeSubtitles' && !message.action);
+      const check4 = (message.type === 'ClipAIbleYouTubeSubtitles' && message.result);
+      const check5 = (message.type === 'ClipAIbleYouTubeSubtitles' && message.error);
+      
+      log('🟢 Step A1: Checking message format', {
+        action: message.action,
+        type: message.type,
+        isYouTubeSubtitlesResult: isYouTubeSubtitlesResult,
+        hasResult: !!message.result,
+        hasError: !!message.error,
+        hasSubtitles: !!message.result?.subtitles,
+        subtitleCount: message.result?.subtitles?.length || 0,
+        messageKeys: Object.keys(message || {}),
+        // Детальная проверка каждого условия
+        check1_action: check1,
+        check2_typeAndAction: check2,
+        check3_typeNoAction: check3,
+        check4_typeWithResult: check4,
+        check5_typeWithError: check5,
+        messageString: JSON.stringify(message).substring(0, 500) // First 500 chars for debugging
+      });
+      
+      // КРИТИЧНО: Если сообщение не прошло проверку, но содержит subtitle данные, логируем это
+      if (!isYouTubeSubtitlesResult && (message.result?.subtitles || message.error)) {
+        log('🟢 Step A1.5: Message has subtitle data but failed format check!', {
+          action: message.action,
+          type: message.type,
+          hasResult: !!message.result,
+          hasError: !!message.error,
+          subtitleCount: message.result?.subtitles?.length || 0,
+          fullMessage: message
+        });
+      }
+      
+      // КРИТИЧНО: Игнорировать другие сообщения (getState, etc.)
+      if (!isYouTubeSubtitlesResult) {
+        // Not our message, don't handle
+        return false;
+      }
+      
+      if (isYouTubeSubtitlesResult) {
         // Message can come from content script (forwarding from MAIN world)
         // or directly from injected script (if chrome.runtime was available)
         // Don't check tabId strictly - content script may have different sender.tab
@@ -98,69 +151,440 @@ export async function extractYouTubeSubtitles(tabId) {
     // КРИТИЧНО: Регистрировать listener ДО выполнения скрипта!
     // Это гарантирует, что listener будет готов к получению сообщения
     // Listener регистрируется синхронно, так что он будет готов сразу
-    log('🟢 Registering message listener for youtubeSubtitlesResult (BEFORE script execution)');
+    log('🟢 Registering message listener for youtubeSubtitlesResult (BEFORE script execution)', {
+      tabId: tabId,
+      timestamp: new Date().toISOString(),
+      listenerRegistered: true
+    });
     chrome.runtime.onMessage.addListener(messageListener);
     
-    // Inject and execute script in page context
-    log('Executing subtitle extraction script in page context', { tabId });
-    chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: extractYouTubeSubtitlesInlined
-    }).then(results => {
+    // КРИТИЧНО: Проверить, что listener действительно зарегистрирован
+    // В Chrome Extensions, мы не можем проверить это напрямую, но можем логировать
+    log('🟢 Message listener registered successfully', {
+      tabId: tabId,
+      listenerFunction: typeof messageListener === 'function' ? 'function' : typeof messageListener
+    });
+    
+    // КРИТИЧНО: Сначала проверить, загружен ли content script
+    // Если нет, попробовать принудительно инжектить content script
+    // Используем async IIFE, так как мы внутри Promise executor
+    (async () => {
+      let contentScriptAvailable = false;
+      try {
+        const pingResult = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+        if (pingResult && pingResult.success) {
+          contentScriptAvailable = true;
+          log('Content script is available and responding', { timestamp: pingResult.timestamp });
+        }
+      } catch (pingError) {
+        logWarn('Content script not available, attempting to inject it programmatically', pingError);
+        
+        // Попробовать принудительно инжектить content script
+        // В Manifest V3 нельзя инжектить в ISOLATED world через executeScript,
+        // но можно попробовать использовать files из manifest
+        try {
+          // Попробовать инжектить content script через scripting.executeScript с files
+          // Но это не сработает для ISOLATED world - только для MAIN world
+          // Поэтому просто продолжим - injected script попробует использовать CustomEvent
+          // и если content script загрузится позже, он подхватит событие
+          log('Content script will be loaded by manifest.json, continuing with injected script');
+        } catch (injectError) {
+          logWarn('Failed to inject content script programmatically', injectError);
+        }
+      }
+      
+      // Inject and execute script in page context
+      log('Executing subtitle extraction script in page context', { 
+        tabId, 
+        contentScriptAvailable,
+        funcType: typeof extractYouTubeSubtitlesInlined,
+        funcName: extractYouTubeSubtitlesInlined?.name || 'unknown'
+      });
+      
+      // КРИТИЧНО: Проверить, что функция может быть сериализована
+      try {
+        // Попытка сериализации функции для проверки
+        const funcString = extractYouTubeSubtitlesInlined.toString();
+        log('Function can be serialized', { 
+          funcLength: funcString.length,
+          funcStartsWith: funcString.substring(0, 50)
+        });
+      } catch (serializeError) {
+        logError('Function serialization check failed', serializeError);
+      }
+      
+      chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: extractYouTubeSubtitlesInlined,
+        args: [contentScriptAvailable] // Pass availability flag to injected script
+      }).then(results => {
       log('Script execution completed', { 
         hasResults: !!results,
-        hasError: results?.[0]?.error ? true : false
+        resultsLength: results?.length || 0,
+        hasError: results?.[0]?.error ? true : false,
+        errorDetails: results?.[0]?.error ? {
+          message: results[0].error?.message || String(results[0].error),
+          name: results[0].error?.name,
+          stack: results[0].error?.stack?.substring(0, 200)
+        } : null,
+        hasResult: !!results?.[0]?.result,
+        frameId: results?.[0]?.frameId
       });
       
       if (!results || !results[0]) {
         if (!resolved) {
-          resolved = true;
-          if (timeoutId) clearTimeout(timeoutId);
-          chrome.runtime.onMessage.removeListener(messageListener);
-          reject(new Error('Failed to execute subtitle extraction script'));
+          // КРИТИЧНО: Проверить DOM перед reject (может быть уже сохранено)
+          (async () => {
+            try {
+              const domResult = await chrome.scripting.executeScript({
+                target: { tabId },
+                world: 'MAIN',
+                func: () => {
+                  const element = document.getElementById('ClipAIblePendingSubtitles');
+                  if (element && element.getAttribute('data-subtitles')) {
+                    try {
+                      const data = JSON.parse(element.getAttribute('data-subtitles'));
+                      element.remove();
+                      return data;
+                    } catch (e) {
+                      return null;
+                    }
+                  }
+                  return null;
+                }
+              });
+              
+              if (domResult?.[0]?.result && !resolved) {
+                const domData = domResult[0].result;
+                const age = Date.now() - (domData.timestamp || 0);
+                if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) { // Increased from 30s to 60s
+                  resolved = true;
+                  if (timeoutId) clearTimeout(timeoutId);
+                  if (storageCheckInterval) clearInterval(storageCheckInterval);
+                  chrome.runtime.onMessage.removeListener(messageListener);
+                  
+                  log('✅ Found subtitles in DOM (no results case)', {
+                    count: domData.subtitles.length,
+                    age: age
+                  });
+                  
+                  resolve({
+                    subtitles: domData.subtitles,
+                    metadata: domData.metadata || {}
+                  });
+                  return;
+                }
+              }
+            } catch (domError) {
+              // Ignore DOM check errors
+            }
+            
+            // Если DOM пустой - reject
+            if (!resolved) {
+              resolved = true;
+              if (timeoutId) clearTimeout(timeoutId);
+              if (storageCheckInterval) clearInterval(storageCheckInterval);
+              chrome.runtime.onMessage.removeListener(messageListener);
+              logError('Script execution returned no results', {
+                results: results,
+                resultsType: typeof results,
+                resultsIsArray: Array.isArray(results)
+              });
+              reject(new Error('Failed to execute subtitle extraction script - no results returned'));
+            }
+          })();
         }
         return;
       }
       
       if (results[0].error) {
         if (!resolved) {
-          resolved = true;
-          if (timeoutId) clearTimeout(timeoutId);
-          chrome.runtime.onMessage.removeListener(messageListener);
-          logError('Subtitle extraction script error', results[0].error);
-          reject(new Error(`Subtitle extraction failed: ${results[0].error.message || results[0].error}`));
+          // КРИТИЧНО: Проверить DOM перед reject (может быть уже сохранено)
+          (async () => {
+            try {
+              const domResult = await chrome.scripting.executeScript({
+                target: { tabId },
+                world: 'MAIN',
+                func: () => {
+                  const element = document.getElementById('ClipAIblePendingSubtitles');
+                  if (element && element.getAttribute('data-subtitles')) {
+                    try {
+                      const data = JSON.parse(element.getAttribute('data-subtitles'));
+                      element.remove();
+                      return data;
+                    } catch (e) {
+                      return null;
+                    }
+                  }
+                  return null;
+                }
+              });
+              
+              if (domResult?.[0]?.result && !resolved) {
+                const domData = domResult[0].result;
+                const age = Date.now() - (domData.timestamp || 0);
+                if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) { // Increased from 30s to 60s
+                  resolved = true;
+                  if (timeoutId) clearTimeout(timeoutId);
+                  if (storageCheckInterval) clearInterval(storageCheckInterval);
+                  chrome.runtime.onMessage.removeListener(messageListener);
+                  
+                  log('✅ Found subtitles in DOM (script error case)', {
+                    count: domData.subtitles.length,
+                    age: age
+                  });
+                  
+                  resolve({
+                    subtitles: domData.subtitles,
+                    metadata: domData.metadata || {}
+                  });
+                  return;
+                }
+              }
+            } catch (domError) {
+              // Ignore DOM check errors
+            }
+            
+            // Если DOM пустой - reject
+            if (!resolved) {
+              resolved = true;
+              if (timeoutId) clearTimeout(timeoutId);
+              if (storageCheckInterval) clearInterval(storageCheckInterval);
+              chrome.runtime.onMessage.removeListener(messageListener);
+              logError('Subtitle extraction script error', {
+                error: results[0].error,
+                errorMessage: results[0].error?.message || String(results[0].error),
+                errorName: results[0].error?.name,
+                errorStack: results[0].error?.stack,
+                frameId: results[0].frameId
+              });
+              reject(new Error(`Subtitle extraction failed: ${results[0].error?.message || results[0].error}`));
+            }
+          })();
         }
         return;
       }
       
       // Script executed successfully, wait for message with results
       // (fetch happens asynchronously in page context)
-      log('Script executed successfully, waiting for subtitle data...');
-    }).catch(error => {
+      log('Script executed successfully, waiting for subtitle data...', {
+        hasResult: !!results[0]?.result,
+        hasError: !!results[0]?.error,
+        errorMessage: results[0]?.error?.message || results[0]?.error,
+        frameId: results[0]?.frameId
+      });
+      
+      // КРИТИЧНО: Если есть ошибка выполнения, но она не была обработана выше
+      if (results[0]?.error && !resolved) {
+        // КРИТИЧНО: Проверить DOM перед reject
+        (async () => {
+          try {
+            const domResult = await chrome.scripting.executeScript({
+              target: { tabId },
+              world: 'MAIN',
+              func: () => {
+                const element = document.getElementById('ClipAIblePendingSubtitles');
+                if (element && element.getAttribute('data-subtitles')) {
+                  try {
+                    const data = JSON.parse(element.getAttribute('data-subtitles'));
+                    element.remove();
+                    return data;
+                  } catch (e) {
+                    return null;
+                  }
+                }
+                return null;
+              }
+            });
+            
+            if (domResult?.[0]?.result && !resolved) {
+              const domData = domResult[0].result;
+              const age = Date.now() - (domData.timestamp || 0);
+              if (age < 30000 && domData.subtitles && domData.subtitles.length > 0) {
+                resolved = true;
+                if (timeoutId) clearTimeout(timeoutId);
+                if (storageCheckInterval) clearInterval(storageCheckInterval);
+                chrome.runtime.onMessage.removeListener(messageListener);
+                
+                log('✅ Found subtitles in DOM (duplicate error check case)', {
+                  count: domData.subtitles.length,
+                  age: age
+                });
+                
+                resolve({
+                  subtitles: domData.subtitles,
+                  metadata: domData.metadata || {}
+                });
+                return;
+              }
+            }
+          } catch (domError) {
+            // Ignore DOM check errors
+          }
+          
+          // Если DOM пустой - reject
+          if (!resolved) {
+            resolved = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            if (storageCheckInterval) clearInterval(storageCheckInterval);
+            chrome.runtime.onMessage.removeListener(messageListener);
+            logError('Subtitle extraction script execution error (from results)', {
+              error: results[0].error,
+              errorMessage: results[0].error?.message || String(results[0].error),
+              errorStack: results[0].error?.stack
+            });
+            reject(new Error(`Subtitle extraction failed: ${results[0].error?.message || results[0].error}`));
+          }
+        })();
+        return;
+      }
+      
+      // КРИТИЧНО: Немедленная проверка DOM fallback (если Extension context invalidated, данные уже могут быть в DOM)
+      // Это ускоряет получение данных при Extension context invalidated
+      (async () => {
+        try {
+          const domResult = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: () => {
+              const element = document.getElementById('ClipAIblePendingSubtitles');
+              if (element && element.getAttribute('data-subtitles')) {
+                try {
+                  const data = JSON.parse(element.getAttribute('data-subtitles'));
+                  // Удалить элемент после чтения
+                  element.remove();
+                  return data;
+                } catch (e) {
+                  return null;
+                }
+              }
+              return null;
+            }
+          });
+          
+          if (domResult && domResult[0] && domResult[0].result && !resolved) {
+            const domData = domResult[0].result;
+            const age = Date.now() - (domData.timestamp || 0);
+            if (age < 60000) { // Increased from 30s to 60s
+              log('🟢 Found pendingSubtitles in DOM fallback (immediate check after script execution)', {
+                subtitleCount: domData.subtitles?.length || 0,
+                age: age,
+                ageSeconds: Math.round(age / 1000),
+                source: domData.source || 'dom_fallback'
+              });
+              
+              resolved = true;
+              if (timeoutId) clearTimeout(timeoutId);
+              if (storageCheckInterval) clearInterval(storageCheckInterval);
+              chrome.runtime.onMessage.removeListener(messageListener);
+              
+              if (domData.subtitles && domData.subtitles.length > 0) {
+                resolve({
+                  subtitles: domData.subtitles,
+                  metadata: domData.metadata || {}
+                });
+              } else {
+                reject(new Error('No subtitles found in DOM fallback'));
+              }
+            }
+          }
+        } catch (domError) {
+          // Игнорируем ошибки DOM fallback (элемент может не существовать)
+          // Это нормально, если Extension context не invalidated
+        }
+      })();
+    }).catch(async (error) => {
       if (!resolved) {
+        // КРИТИЧНО: Проверить DOM перед reject (может быть уже сохранено content script)
+        log('⏰ Script execution failed, checking DOM fallback before reject...');
+        
+        try {
+          const domResult = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: () => {
+              const element = document.getElementById('ClipAIblePendingSubtitles');
+              if (element && element.getAttribute('data-subtitles')) {
+                try {
+                  const data = JSON.parse(element.getAttribute('data-subtitles'));
+                  element.remove(); // Очистить после чтения
+                  return data;
+                } catch (e) {
+                  return null;
+                }
+              }
+              return null;
+            }
+          });
+          
+          if (domResult?.[0]?.result && !resolved) {
+            const domData = domResult[0].result;
+            if (domData.subtitles && domData.subtitles.length > 0) {
+              const age = Date.now() - (domData.timestamp || 0);
+              if (age < 30000) { // В пределах 30 секунд
+                resolved = true;
+                if (timeoutId) clearTimeout(timeoutId);
+                if (storageCheckInterval) clearInterval(storageCheckInterval);
+                chrome.runtime.onMessage.removeListener(messageListener);
+                
+                log('✅ Found subtitles in DOM (from catch block)', {
+                  count: domData.subtitles.length,
+                  age: age,
+                  ageSeconds: Math.round(age / 1000),
+                  source: domData.source || 'dom_fallback'
+                });
+                
+                resolve({
+                  subtitles: domData.subtitles,
+                  metadata: domData.metadata || {}
+                });
+                return; // КРИТИЧНО: выйти из catch, не продолжать с reject
+              }
+            }
+          }
+        } catch (domError) {
+          logError('DOM check failed in catch block', domError);
+        }
+        
+        // Если DOM пустой или проверка не удалась - продолжить с reject
         resolved = true;
         if (timeoutId) clearTimeout(timeoutId);
+        if (storageCheckInterval) clearInterval(storageCheckInterval);
         chrome.runtime.onMessage.removeListener(messageListener);
-        logError('Script execution failed', error);
+        logError('Script execution failed (catch block)', {
+          error: error,
+          errorMessage: error?.message || String(error),
+          errorStack: error?.stack,
+          errorName: error?.name
+        });
         reject(error);
       }
     });
+    })(); // End of async IIFE
     
-    // Check storage periodically for pendingSubtitles (fallback when Extension context invalidated)
-    let storageCheckInterval = null;
+    // Check storage periodically for pendingSubtitles (fallback when Extension context invalidated or content script not loaded)
+    // КРИТИЧНО: Если content script не загружен, injected script будет использовать storage API напрямую
+    // Поэтому нужно проверять storage чаще и быстрее
+    // storageCheckInterval уже объявлен в начале Promise (строка 18)
     const checkStorage = async () => {
       try {
+        // Check storage first
         const storage = await chrome.storage.local.get(['pendingSubtitles']);
         if (storage.pendingSubtitles && !resolved) {
           const pendingData = storage.pendingSubtitles;
-          // Check if this is recent (within last 30 seconds - same as timeout)
+          // Check if this is recent (within last 60 seconds - same as timeout)
           const age = Date.now() - (pendingData.timestamp || 0);
-          if (age < 30000) {
-            log('🟢 Found pendingSubtitles in storage (Extension context invalidated recovery)', {
+          if (age < 60000) {
+            // Check if this is from injected script direct storage (source: 'injected_script_direct')
+            const isDirectStorage = pendingData.source === 'injected_script_direct';
+            
+            log('🟢 Found pendingSubtitles in storage', {
               subtitleCount: pendingData.subtitles?.length || 0,
               age: age,
-              ageSeconds: Math.round(age / 1000)
+              ageSeconds: Math.round(age / 1000),
+              source: pendingData.source || 'unknown',
+              isDirectStorage: isDirectStorage
             });
             
             resolved = true;
@@ -179,6 +603,7 @@ export async function extractYouTubeSubtitles(tabId) {
             } else {
               reject(new Error('No subtitles found in pendingSubtitles'));
             }
+            return;
           } else {
             log('⚠️ Found pendingSubtitles but too old', {
               age: age,
@@ -187,32 +612,151 @@ export async function extractYouTubeSubtitles(tabId) {
             });
           }
         }
+        
+        // КРИТИЧНО: Также проверяем DOM fallback (если chrome.storage недоступен)
+        // Content script может сохранить данные в DOM элемент ClipAIblePendingSubtitles
+        try {
+          const domResult = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: () => {
+              const element = document.getElementById('ClipAIblePendingSubtitles');
+              if (element && element.getAttribute('data-subtitles')) {
+                try {
+                  const data = JSON.parse(element.getAttribute('data-subtitles'));
+                  // Удалить элемент после чтения
+                  element.remove();
+                  return data;
+                } catch (e) {
+                  return null;
+                }
+              }
+              return null;
+            }
+          });
+          
+          if (domResult && domResult[0] && domResult[0].result && !resolved) {
+            const domData = domResult[0].result;
+            const age = Date.now() - (domData.timestamp || 0);
+            if (age < 60000) { // Increased from 30s to 60s
+              log('🟢 Found pendingSubtitles in DOM fallback', {
+                subtitleCount: domData.subtitles?.length || 0,
+                age: age,
+                ageSeconds: Math.round(age / 1000),
+                source: domData.source || 'dom_fallback'
+              });
+              
+              resolved = true;
+              if (timeoutId) clearTimeout(timeoutId);
+              if (storageCheckInterval) clearInterval(storageCheckInterval);
+              chrome.runtime.onMessage.removeListener(messageListener);
+              
+              if (domData.subtitles && domData.subtitles.length > 0) {
+                resolve({
+                  subtitles: domData.subtitles,
+                  metadata: domData.metadata || {}
+                });
+              } else {
+                reject(new Error('No subtitles found in DOM fallback'));
+              }
+            }
+          }
+        } catch (domError) {
+          // Игнорируем ошибки DOM fallback (элемент может не существовать)
+        }
       } catch (error) {
         logError('Failed to check storage for pendingSubtitles', error);
       }
     };
     
-    // Check storage every 500ms
-    storageCheckInterval = setInterval(checkStorage, 500);
+    // Check storage every 200ms (more frequent check for direct storage fallback)
+    // Более частая проверка, так как injected script может использовать storage напрямую
+    // если content script не загружен
+    storageCheckInterval = setInterval(checkStorage, 200);
     
     // Also check immediately
     checkStorage();
     
-    // Timeout after 30 seconds
-    timeoutId = setTimeout(() => {
+    // Timeout after 60 seconds
+    timeoutId = setTimeout(async () => {
       if (!resolved) {
         // Final check of storage before timeout
-        checkStorage().then(() => {
-      if (!resolved) {
-        resolved = true;
-            if (storageCheckInterval) clearInterval(storageCheckInterval);
-        chrome.runtime.onMessage.removeListener(messageListener);
-        logError('Subtitle extraction timeout - no message received from page script');
-        reject(new Error('Subtitle extraction timeout. The page may be taking too long to load subtitles.'));
+        await checkStorage();
+        
+        // КРИТИЧНО: Проверить DOM ПЕРЕД reject (если storage не сработал)
+        if (!resolved) {
+          log('⏰ Timeout reached, checking DOM fallback as last resort...');
+          
+          try {
+            const domResult = await chrome.scripting.executeScript({
+              target: { tabId },
+              world: 'MAIN',
+              func: () => {
+                const element = document.getElementById('ClipAIblePendingSubtitles');
+                if (element && element.getAttribute('data-subtitles')) {
+                  try {
+                    const data = JSON.parse(element.getAttribute('data-subtitles'));
+                    element.remove(); // Очистить после чтения
+                    return data;
+                  } catch (e) {
+                    console.error('[ClipAIble] ❌ Failed to parse DOM data:', e);
+                    return null;
+                  }
+                }
+                return null;
+              }
+            });
+            
+            if (domResult?.[0]?.result && !resolved) {
+              const domData = domResult[0].result;
+              const age = Date.now() - (domData.timestamp || 0);
+              
+              // Проверка возраста данных (не старше 60 секунд)
+              if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) {
+                log('🟢 Found subtitles in DOM fallback during timeout check!', {
+                  count: domData.subtitles.length,
+                  age: age,
+                  ageSeconds: Math.round(age / 1000),
+                  source: domData.source || 'dom_fallback'
+                });
+                
+                resolved = true;
+                if (timeoutId) clearTimeout(timeoutId);
+                if (storageCheckInterval) clearInterval(storageCheckInterval);
+                chrome.runtime.onMessage.removeListener(messageListener);
+                
+                resolve({
+                  subtitles: domData.subtitles,
+                  metadata: domData.metadata || {}
+                });
+                return; // КРИТИЧНО: выйти из timeout, не продолжать с reject
+              } else {
+                log('⚠️ DOM data found but too old or empty', {
+                  age: age,
+                  ageSeconds: Math.round(age / 1000),
+                  hasSubtitles: !!domData.subtitles,
+                  count: domData.subtitles?.length || 0
+                });
+              }
+            } else {
+              log('⚠️ No data found in DOM fallback during timeout check');
+            }
+          } catch (domCheckError) {
+            logError('Failed to check DOM fallback during timeout', domCheckError);
           }
-        });
+        }
+        
+        // Если DOM тоже пустой - reject
+        if (!resolved) {
+          resolved = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          if (storageCheckInterval) clearInterval(storageCheckInterval);
+          chrome.runtime.onMessage.removeListener(messageListener);
+          logError('Subtitle extraction timeout - no message received from page script');
+          reject(new Error('Subtitle extraction timeout. The page may be taking too long to load subtitles.'));
+        }
       }
-    }, 30000);
+    }, 60000); // Increased from 30 to 60 seconds for subtitle extraction timeout
   });
 }
 
@@ -221,17 +765,44 @@ export async function extractYouTubeSubtitles(tabId) {
  * Runs in page context (MAIN world) - can fetch without CORS issues
  * Sends result back via chrome.runtime.sendMessage
  * Fetch and parsing happens here (in page context)
+ * @param {boolean} contentScriptAvailable - Whether content script is loaded and responding
  */
-function extractYouTubeSubtitlesInlined() {
-  // Wrap in async IIFE to handle async operations
-  (async () => {
+function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
+  // КРИТИЧНО: Логирование в самом начале для диагностики
+  // Используем try-catch даже для логирования, чтобы поймать любые ошибки
+  try {
+    console.log('[ClipAIble] 🟢 INJECTED SCRIPT STARTED', {
+      timestamp: new Date().toISOString(),
+      url: window.location.href,
+      readyState: document.readyState,
+      hasWindow: typeof window !== 'undefined',
+      hasDocument: typeof document !== 'undefined',
+      contentScriptAvailable: contentScriptAvailable
+    });
+  } catch (logError) {
+    // Если даже логирование не работает, значит что-то очень не так
+    // Попробуем использовать window.alert как последний способ
     try {
+      window.alert('[ClipAIble] Injected script started but logging failed: ' + logError.message);
+    } catch (e) {
+      // Игнорируем ошибки alert
+    }
+  }
+  
+  // КРИТИЧНО: executeScript ждет Promise, если функция возвращает Promise
+  // Поэтому возвращаем Promise, чтобы executeScript дождался результата
+  return (async () => {
+    try {
+      console.log('[ClipAIble] 🟢 Async IIFE started');
+      
       // Extract metadata first
       let metadata = {
         title: document.title.replace(' - YouTube', ''),
         author: '',
         publishDate: ''
       };
+      
+      console.log('[ClipAIble] 🟢 Metadata extracted', { title: metadata.title });
       
       // Extract title from page
       const titleElement = document.querySelector('h1.ytd-watch-metadata yt-formatted-string, h1.ytd-video-primary-info-renderer yt-formatted-string, #title h1, ytd-watch-metadata h1');
@@ -267,10 +838,29 @@ function extractYouTubeSubtitlesInlined() {
       }
       
       if (!videoId) {
+        console.error('[ClipAIble] ❌ Could not extract video ID from URL', { url: window.location.href });
         throw new Error('Could not extract video ID from URL');
       }
       
-      console.log('[ClipAIble] Starting subtitle extraction', { videoId });
+      console.log('[ClipAIble] 🟢 Starting subtitle extraction', { 
+        videoId,
+        url: window.location.href,
+        timestamp: new Date().toISOString()
+      });
+      
+      // КРИТИЧНО: Проверить, что мы на правильной странице YouTube
+      if (!window.location.hostname.includes('youtube.com')) {
+        console.error('[ClipAIble] ❌ Not on YouTube page!', { hostname: window.location.hostname });
+        throw new Error('Not on YouTube page');
+      }
+      
+      // Проверить наличие необходимых объектов YouTube
+      console.log('[ClipAIble] 🟢 Checking YouTube objects', {
+        hasYt: typeof window.yt !== 'undefined',
+        hasYtConfig: typeof window.yt?.config_ !== 'undefined',
+        hasApiKey: typeof window.yt?.config_?.INNERTUBE_API_KEY !== 'undefined',
+        hasYtInitialPlayerResponse: typeof window.ytInitialPlayerResponse !== 'undefined'
+      });
       
       // ============================================
       // METHOD 1 (ОСНОВНОЙ): Внутренний YouTube API (/youtubei/v1/player)
@@ -885,11 +1475,20 @@ function extractYouTubeSubtitlesInlined() {
       // между MAIN world и ISOLATED world в Chrome Extensions
       // window.postMessage НЕ работает между мирами!
       
+      // Define sendViaCustomEvent function first
       const sendViaCustomEvent = () => {
         try {
           console.log('[ClipAIble] 🔵 Sending via CustomEvent on document...');
           console.log('[ClipAIble] 🔵 Document readyState:', document.readyState);
           console.log('[ClipAIble] 🔵 Document has listeners?', document.addEventListener ? 'yes' : 'no');
+          console.log('[ClipAIble] 🔵 Current URL:', window.location.href);
+          console.log('[ClipAIble] 🔵 Is YouTube page?', window.location.hostname.includes('youtube.com'));
+          
+          // Check if content script might be loaded by checking for any signs
+          // (we can't directly check, but we can verify document is ready)
+          if (document.readyState === 'loading') {
+            console.warn('[ClipAIble] ⚠️ Document still loading, content script may not be ready');
+          }
           
           // Основной способ: CustomEvent на document
         const customEvent = new CustomEvent('ClipAIbleSubtitleMessage', {
@@ -904,7 +1503,8 @@ function extractYouTubeSubtitlesInlined() {
             hasDetail: !!customEvent.detail,
             subtitleCount: messageData.result?.subtitles?.length || 0,
             bubbles: customEvent.bubbles,
-            cancelable: customEvent.cancelable
+            cancelable: customEvent.cancelable,
+            timestamp: new Date().toISOString()
           });
           
           // Also try window.postMessage as fallback (though it may not work between worlds)
@@ -917,41 +1517,100 @@ function extractYouTubeSubtitlesInlined() {
           
       } catch (e) {
           console.error('[ClipAIble] ❌ Failed to dispatch CustomEvent:', e);
+          console.error('[ClipAIble] ❌ Error stack:', e.stack);
         }
       };
       
       // Wait a bit for content script to be ready
       // Content script should be loaded by manifest.json, but give it a moment
       // Use setTimeout to ensure content script listener is registered
+      // КРИТИЧНО: Уменьшено количество ретраев для производительности
+      // Достаточно 2 ретраев (immediate + 200ms + 1000ms) вместо 5
       const sendWithDelay = () => {
         // Try sending immediately first
         sendViaCustomEvent();
         
-        // Also send after a short delay to ensure content script is ready
+        // One retry after short delay to ensure content script is ready
         setTimeout(() => {
-          console.log('[ClipAIble] 🔵 Retrying CustomEvent after delay (ensuring content script is ready)');
           sendViaCustomEvent();
-        }, 100);
+        }, 200);
         
-        // One more retry after longer delay
+        // Final retry after longer delay (only if content script loads very late)
         setTimeout(() => {
-          console.log('[ClipAIble] 🔵 Final retry CustomEvent after longer delay');
           sendViaCustomEvent();
-        }, 500);
+        }, 1000);
       };
       
-      if (document.readyState === 'loading') {
-        console.log('[ClipAIble] 🔵 Document still loading, waiting for DOMContentLoaded...');
-        document.addEventListener('DOMContentLoaded', () => {
-          console.log('[ClipAIble] 🔵 DOMContentLoaded fired, sending CustomEvent');
+      const sendViaCustomEventWithRetries = () => {
+        // Always send via CustomEvent (even if direct sendMessage was attempted)
+        if (document.readyState === 'loading') {
+          console.log('[ClipAIble] 🔵 Document still loading, waiting for DOMContentLoaded...');
+          document.addEventListener('DOMContentLoaded', () => {
+            console.log('[ClipAIble] 🔵 DOMContentLoaded fired, sending CustomEvent');
+            sendWithDelay();
+          });
+        } else {
+          // Document is ready, send with delay to ensure content script is ready
           sendWithDelay();
-        });
-      } else {
-        // Document is ready, send with delay to ensure content script is ready
-        sendWithDelay();
+        }
+      };
+      
+      // КРИТИЧНО: Попробовать chrome.runtime.sendMessage напрямую (если доступен в MAIN world)
+      // В некоторых случаях chrome.runtime может быть доступен в MAIN world
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+          console.log('[ClipAIble] 🔵 Attempting direct chrome.runtime.sendMessage from MAIN world...');
+          chrome.runtime.sendMessage(messageData, (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn('[ClipAIble] ⚠️ Direct chrome.runtime.sendMessage failed:', chrome.runtime.lastError.message);
+              // Fallback to CustomEvent
+              sendViaCustomEventWithRetries();
+            } else {
+              console.log('[ClipAIble] ✅ Direct chrome.runtime.sendMessage succeeded!', response);
+              // Success - no need to send via CustomEvent
+              return;
+            }
+          });
+          // If sendMessage succeeds, return early (don't send via CustomEvent)
+          // But we'll also send via CustomEvent as backup
+          console.log('[ClipAIble] 🔵 Direct sendMessage called, also sending via CustomEvent as backup');
+        } catch (runtimeError) {
+          console.warn('[ClipAIble] ⚠️ chrome.runtime.sendMessage not available in MAIN world (expected):', runtimeError.message);
+        }
       }
       
+      // КРИТИЧНО: chrome.storage НЕ доступен в MAIN world!
+      // Extension APIs доступны только в ISOLATED world (content scripts) и background scripts
+      // Поэтому мы не можем использовать storage API напрямую из injected script
+      // Единственный способ - через CustomEvent, который должен слушать content script
+      // Если content script не загружен, CustomEvent не будет обработан
+      // 
+      // Решение: убедиться, что content script загружается, или использовать альтернативный метод
+      // 
+      // Попробуем использовать window.postMessage как дополнительный fallback
+      // (хотя он обычно не работает между MAIN и ISOLATED, но попробуем)
+      try {
+        console.log('[ClipAIble] 🔵 Attempting window.postMessage as additional fallback...');
+        window.postMessage({
+          type: 'ClipAIbleYouTubeSubtitles',
+          action: 'youtubeSubtitlesResult',
+          result: messageData.result
+        }, '*');
+        console.log('[ClipAIble] 🔵 window.postMessage sent (may not work between worlds)');
+      } catch (postMessageError) {
+        console.warn('[ClipAIble] ⚠️ window.postMessage failed:', postMessageError.message);
+      }
+      
+      // Always send via CustomEvent (even if direct sendMessage was attempted)
+      // CustomEvent может работать, если content script загрузится позже
+      // КРИТИЧНО: CustomEvent - единственный способ коммуникации из MAIN world в ISOLATED world
+      // Если content script не загружен, CustomEvent не будет обработан
+      // Но мы все равно отправляем его, на случай если content script загрузится позже
+      sendViaCustomEventWithRetries();
+      
       console.log('[ClipAIble] ✅ Result sent via CustomEvent (with retries)');
+      console.log('[ClipAIble] ⚠️ IMPORTANT: If content script is not loaded, CustomEvent will not be processed.');
+      console.log('[ClipAIble] ⚠️ Please check browser console on YouTube page for [ClipAIble:Content] messages.');
     } catch (error) {
       console.error('[ClipAIble] Error in subtitle extraction:', error);
       
@@ -976,7 +1635,7 @@ function extractYouTubeSubtitlesInlined() {
         console.error('[ClipAIble] Failed to send error message', e);
       }
     }
-  })();
+  })(); // Return Promise from async IIFE - executeScript will wait for it
 }
 
 /**

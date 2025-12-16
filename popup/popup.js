@@ -28,13 +28,29 @@
 // - hideAllAudioFields() is called as final safety check after updateOutputFormatUI()
 // - All audio fields must be hidden when format is not 'audio' (no exceptions)
 
+// Immediate logging to verify script is loading
+console.log('[ClipAIble] popup.js: Script started loading, document.readyState:', document.readyState);
+
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
-import { logError, logWarn } from '../scripts/utils/logging.js';
+import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { RESPEECHER_CONFIG } from '../scripts/api/respeecher.js';
 import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
-import { getProviderFromModel } from '../scripts/api/index.js';
+import { getProviderFromModel, callAI } from '../scripts/api/index.js';
+import { detectVideoPlatform } from '../scripts/utils/video.js';
+import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
+
+console.log('[ClipAIble] popup.js: All imports completed successfully');
+
+// Global error handler for unhandled promise rejections
+window.addEventListener('error', (event) => {
+  console.error('[ClipAIble] popup.js: Global error handler caught error', event.error, event.filename, event.lineno);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[ClipAIble] popup.js: Unhandled promise rejection', event.reason);
+});
 
 const STORAGE_KEYS = {
   API_KEY: 'openai_api_key',
@@ -45,6 +61,7 @@ const STORAGE_KEYS = {
   GOOGLE_API_KEY: 'google_api_key',
   API_PROVIDER: 'api_provider',
   MODEL: 'openai_model',
+  MODEL_BY_PROVIDER: 'model_by_provider', // Store selected model for each provider
   CUSTOM_MODELS: 'custom_models',
   HIDDEN_MODELS: 'hidden_models',
   MODE: 'extraction_mode',
@@ -86,7 +103,9 @@ const STORAGE_KEYS = {
   AUDIO_SPEED: 'audio_speed',
   OPENAI_INSTRUCTIONS: 'openai_instructions',
   GOOGLE_TTS_VOICE: 'google_tts_voice',
-  GOOGLE_TTS_PROMPT: 'google_tts_prompt'
+  GOOGLE_TTS_PROMPT: 'google_tts_prompt',
+  SUMMARY_TEXT: 'summary_text',
+  SUMMARY_GENERATING: 'summary_generating'
 };
 
 // Default style values
@@ -160,6 +179,14 @@ const elements = {
   saveText: null,
   mainFormatSelect: null,
   cancelBtn: null,
+  generateSummaryBtn: null,
+  summaryContainer: null,
+  summaryToggle: null,
+  summaryContent: null,
+  summaryText: null,
+  summaryCopyBtn: null,
+  summaryDownloadBtn: null,
+  summaryCloseBtn: null,
   toggleSettings: null,
   settingsPanel: null,
   toggleStats: null,
@@ -503,6 +530,12 @@ async function applyLocalization() {
     element.title = locale[key] || UI_LOCALES.en[key] || key;
   });
   
+  // Update aria-label attributes
+  document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
+    const key = element.getAttribute('data-i18n-aria-label');
+    element.setAttribute('aria-label', locale[key] || UI_LOCALES.en[key] || key);
+  });
+  
   // Update specific dynamic elements
   if (elements.modeHint) {
     const mode = elements.modeSelect?.value || 'selector';
@@ -523,8 +556,13 @@ async function applyLocalization() {
 
 // Initialize popup
 async function init() {
-  // Get DOM elements
-  elements.apiProviderSelect = document.getElementById('apiProviderSelect');
+  console.log('[ClipAIble] popup.js: init() called, document.readyState:', document.readyState);
+  log('popup.js: init() started');
+  
+  try {
+    // Get DOM elements
+    console.log('[ClipAIble] popup.js: Getting DOM elements...');
+    elements.apiProviderSelect = document.getElementById('apiProviderSelect');
   elements.apiKey = document.getElementById('apiKey');
   elements.apiKeyLabel = document.getElementById('apiKeyLabel');
   elements.apiKeyInputGroup = document.getElementById('apiKeyInputGroup');
@@ -542,6 +580,14 @@ async function init() {
   elements.saveText = document.getElementById('saveText');
   elements.mainFormatSelect = document.getElementById('mainFormatSelect');
   elements.cancelBtn = document.getElementById('cancelBtn');
+  elements.generateSummaryBtn = document.getElementById('generateSummaryBtn');
+  elements.summaryContainer = document.getElementById('summaryContainer');
+  elements.summaryToggle = document.getElementById('summaryToggle');
+  elements.summaryContent = document.getElementById('summaryContent');
+  elements.summaryText = document.getElementById('summaryText');
+  elements.summaryCopyBtn = document.getElementById('summaryCopyBtn');
+  elements.summaryDownloadBtn = document.getElementById('summaryDownloadBtn');
+  elements.summaryCloseBtn = document.getElementById('summaryCloseBtn');
   elements.toggleSettings = document.getElementById('toggleSettings');
   elements.settingsPanel = document.getElementById('settingsPanel');
   elements.toggleStats = document.getElementById('toggleStats');
@@ -654,9 +700,15 @@ async function init() {
   }
   
   try {
+    log('init: calling loadSettings()');
     await loadSettings();
+    log('init: loadSettings() completed successfully');
   } catch (error) {
     logError('CRITICAL: loadSettings() failed in init()', error);
+    logError('init: loadSettings error details', { 
+      message: error.message, 
+      stack: error.stack 
+    });
     // Continue initialization even if loadSettings fails
   }
   
@@ -679,7 +731,8 @@ async function init() {
   } catch (error) {
     logError('CRITICAL: setupEventListeners() failed in init()', error);
     // This is critical - without event listeners, buttons won't work
-    throw error; // Re-throw to prevent silent failure
+    // Don't throw - continue initialization to allow settings to load
+    // Error is logged, user can see it in console
   }
   
   // Initialize custom selects (convert native selects to custom dropdowns)
@@ -709,13 +762,26 @@ async function init() {
   // Load and display version
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '2.9.0';
+    const version = manifest.version || '3.0.0';
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;
     }
   } catch (error) {
     logError('Failed to load version', error);
+  }
+  
+  console.log('[ClipAIble] popup.js: init() completed successfully');
+  log('popup.js: init() completed successfully');
+  } catch (error) {
+    console.error('[ClipAIble] popup.js: CRITICAL ERROR in init()', error);
+    logError('CRITICAL: init() failed completely', error);
+    // Show error to user
+    const statusText = document.getElementById('statusText');
+    if (statusText) {
+      const errorText = await t('errorCheckConsole');
+      statusText.textContent = errorText;
+    }
   }
 }
 
@@ -822,23 +888,48 @@ async function updateModelList() {
     elements.modelSelect.appendChild(option);
   });
   
-  // Select first model if current model doesn't belong to selected provider
-  const currentModelProvider = getProviderFromModel(currentValue);
-  if (currentModelProvider !== provider) {
-    if (allModels.length > 0) {
-      elements.modelSelect.value = allModels[0].value;
-      // Save new model selection
-      await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: allModels[0].value });
-    }
-  } else {
-    // Keep current model if it belongs to selected provider
-    const modelExists = allModels.some(m => m.value === currentValue);
+  // Load saved model for this provider
+  const storageResult2 = await chrome.storage.local.get([STORAGE_KEYS.MODEL_BY_PROVIDER]);
+  const savedModelsByProvider = storageResult2[STORAGE_KEYS.MODEL_BY_PROVIDER] || {};
+  const savedModelForProvider = savedModelsByProvider[provider];
+  
+  // Try to restore saved model for this provider
+  let modelToSelect = null;
+  if (savedModelForProvider) {
+    const modelExists = allModels.some(m => m.value === savedModelForProvider);
     if (modelExists) {
-      elements.modelSelect.value = currentValue;
-    } else if (allModels.length > 0) {
-      elements.modelSelect.value = allModels[0].value;
-      await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: allModels[0].value });
+      modelToSelect = savedModelForProvider;
     }
+  }
+  
+  // If no saved model or saved model doesn't exist, check current model
+  if (!modelToSelect) {
+    const currentModelProvider = getProviderFromModel(currentValue);
+    if (currentModelProvider === provider) {
+      // Current model belongs to this provider - check if it exists
+      const modelExists = allModels.some(m => m.value === currentValue);
+      if (modelExists) {
+        modelToSelect = currentValue;
+      }
+    }
+  }
+  
+  // If still no model, use first in list
+  if (!modelToSelect && allModels.length > 0) {
+    modelToSelect = allModels[0].value;
+  }
+  
+  // Set selected model
+  if (modelToSelect) {
+    elements.modelSelect.value = modelToSelect;
+    // Save to both general model key (for backward compatibility) and provider-specific
+    await chrome.storage.local.set({ 
+      [STORAGE_KEYS.MODEL]: modelToSelect,
+      [STORAGE_KEYS.MODEL_BY_PROVIDER]: {
+        ...savedModelsByProvider,
+        [provider]: modelToSelect
+      }
+    });
   }
 }
 
@@ -896,7 +987,7 @@ async function showCustomModelDropdown() {
   const currentModel = elements.modelSelect ? elements.modelSelect.value : null;
   
   // Add models to dropdown
-  visibleModels.forEach(modelValue => {
+  for (const modelValue of visibleModels) {
     const isCustom = providerCustomModels.includes(modelValue);
     const isSelected = modelValue === currentModel;
     const optionDiv = document.createElement('div');
@@ -913,7 +1004,9 @@ async function showCustomModelDropdown() {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'custom-model-delete';
     deleteBtn.innerHTML = '×';
-    deleteBtn.title = isCustom ? 'Delete model' : 'Hide model';
+    const deleteModelText = await t('deleteModel');
+    const hideModelText = await t('hideModel');
+    deleteBtn.title = isCustom ? deleteModelText : hideModelText;
     deleteBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (isCustom) {
@@ -941,7 +1034,7 @@ async function showCustomModelDropdown() {
     });
     
     elements.customModelOptions.appendChild(optionDiv);
-  });
+  }
 }
 
 // Show dialog for adding new model
@@ -1119,7 +1212,11 @@ async function updateApiProviderUI() {
 }
 
 async function loadSettings() {
+  console.log('[ClipAIble] popup.js: loadSettings() called');
+  log('loadSettings: starting');
   try {
+    console.log('[ClipAIble] popup.js: loadSettings: requesting settings from storage');
+    log('loadSettings: requesting settings from storage');
     const result = await chrome.storage.local.get([
     STORAGE_KEYS.API_PROVIDER,
     STORAGE_KEYS.API_KEY,
@@ -1168,13 +1265,24 @@ async function loadSettings() {
     STORAGE_KEYS.OPENAI_INSTRUCTIONS,
     STORAGE_KEYS.AUDIO_VOICE,
     STORAGE_KEYS.AUDIO_VOICE_MAP,
-    STORAGE_KEYS.AUDIO_SPEED
+    STORAGE_KEYS.AUDIO_SPEED,
+    STORAGE_KEYS.SUMMARY_TEXT,
+    STORAGE_KEYS.SUMMARY_GENERATING
   ]);
+  
+  log('loadSettings: settings retrieved from storage', { 
+    hasResult: !!result,
+    keysCount: Object.keys(result).length,
+    apiProvider: result[STORAGE_KEYS.API_PROVIDER]
+  });
   
   // Load API provider (default: openai)
   const apiProvider = result[STORAGE_KEYS.API_PROVIDER] || 'openai';
+  log('loadSettings: setting API provider', { apiProvider, hasElement: !!elements.apiProviderSelect });
   if (elements.apiProviderSelect) {
     elements.apiProviderSelect.value = apiProvider;
+  } else {
+    logWarn('loadSettings: apiProviderSelect element not found');
   }
   
   // Load and mask API key for selected provider
@@ -1481,7 +1589,7 @@ async function loadSettings() {
     }
   }
   
-  if (result[STORAGE_KEYS.THEME]) {
+  if (result[STORAGE_KEYS.THEME] && elements.themeSelect) {
     elements.themeSelect.value = result[STORAGE_KEYS.THEME];
   }
   
@@ -1596,23 +1704,58 @@ async function loadSettings() {
   }
   
   if (result[STORAGE_KEYS.ELEVENLABS_STABILITY] !== undefined) {
-    elements.elevenlabsStability.value = result[STORAGE_KEYS.ELEVENLABS_STABILITY];
+    // Normalize old values to valid ElevenLabs values: 0.0, 0.5, or 1.0
+    const normalizeStability = (value) => {
+      const num = parseFloat(value);
+      if (isNaN(num)) return 0.5;
+      if (num <= 0.25) return 0.0;
+      if (num <= 0.75) return 0.5;
+      return 1.0;
+    };
+    const normalizedValue = normalizeStability(result[STORAGE_KEYS.ELEVENLABS_STABILITY]);
+    elements.elevenlabsStability.value = normalizedValue;
     if (elements.elevenlabsStabilityValue) {
-      elements.elevenlabsStabilityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY]).toFixed(2);
+      elements.elevenlabsStabilityValue.textContent = normalizedValue.toFixed(1);
+    }
+    // Save normalized value if it was different
+    if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY])) {
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STABILITY, normalizedValue);
     }
   }
   
   if (result[STORAGE_KEYS.ELEVENLABS_SIMILARITY] !== undefined) {
-    elements.elevenlabsSimilarity.value = result[STORAGE_KEYS.ELEVENLABS_SIMILARITY];
+    // Normalize to step 0.1 (round to nearest 0.1)
+    const normalizeSimilarity = (value) => {
+      const num = parseFloat(value);
+      if (isNaN(num)) return 0.75;
+      return Math.round(num * 10) / 10;
+    };
+    const normalizedValue = normalizeSimilarity(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]);
+    elements.elevenlabsSimilarity.value = normalizedValue;
     if (elements.elevenlabsSimilarityValue) {
-      elements.elevenlabsSimilarityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]).toFixed(2);
+      elements.elevenlabsSimilarityValue.textContent = normalizedValue.toFixed(1);
+    }
+    // Save normalized value if it was different
+    if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY])) {
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_SIMILARITY, normalizedValue);
     }
   }
   
   if (result[STORAGE_KEYS.ELEVENLABS_STYLE] !== undefined) {
-    elements.elevenlabsStyle.value = result[STORAGE_KEYS.ELEVENLABS_STYLE];
+    // Normalize to step 0.1 (round to nearest 0.1)
+    const normalizeStyle = (value) => {
+      const num = parseFloat(value);
+      if (isNaN(num)) return 0.0;
+      return Math.round(num * 10) / 10;
+    };
+    const normalizedValue = normalizeStyle(result[STORAGE_KEYS.ELEVENLABS_STYLE]);
+    elements.elevenlabsStyle.value = normalizedValue;
     if (elements.elevenlabsStyleValue) {
-      elements.elevenlabsStyleValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE]).toFixed(2);
+      elements.elevenlabsStyleValue.textContent = normalizedValue.toFixed(1);
+    }
+    // Save normalized value if it was different
+    if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE])) {
+      debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STYLE, normalizedValue);
     }
   }
   
@@ -1685,27 +1828,62 @@ async function loadSettings() {
   // Load ElevenLabs advanced settings
   if (result[STORAGE_KEYS.ELEVENLABS_STABILITY] !== undefined) {
     if (elements.elevenlabsStability) {
-      elements.elevenlabsStability.value = result[STORAGE_KEYS.ELEVENLABS_STABILITY];
+      // Normalize old values to valid ElevenLabs values: 0.0, 0.5, or 1.0
+      const normalizeStability = (value) => {
+        const num = parseFloat(value);
+        if (isNaN(num)) return 0.5;
+        if (num <= 0.25) return 0.0;
+        if (num <= 0.75) return 0.5;
+        return 1.0;
+      };
+      const normalizedValue = normalizeStability(result[STORAGE_KEYS.ELEVENLABS_STABILITY]);
+      elements.elevenlabsStability.value = normalizedValue;
       if (elements.elevenlabsStabilityValue) {
-        elements.elevenlabsStabilityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY]).toFixed(2);
+        elements.elevenlabsStabilityValue.textContent = normalizedValue.toFixed(1);
+      }
+      // Save normalized value if it was different
+      if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY])) {
+        debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STABILITY, normalizedValue);
       }
     }
   }
   
   if (result[STORAGE_KEYS.ELEVENLABS_SIMILARITY] !== undefined) {
     if (elements.elevenlabsSimilarity) {
-      elements.elevenlabsSimilarity.value = result[STORAGE_KEYS.ELEVENLABS_SIMILARITY];
+      // Normalize to step 0.1 (round to nearest 0.1)
+      const normalizeSimilarity = (value) => {
+        const num = parseFloat(value);
+        if (isNaN(num)) return 0.75;
+        return Math.round(num * 10) / 10;
+      };
+      const normalizedValue = normalizeSimilarity(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]);
+      elements.elevenlabsSimilarity.value = normalizedValue;
       if (elements.elevenlabsSimilarityValue) {
-        elements.elevenlabsSimilarityValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]).toFixed(2);
+        elements.elevenlabsSimilarityValue.textContent = normalizedValue.toFixed(1);
+      }
+      // Save normalized value if it was different
+      if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY])) {
+        debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_SIMILARITY, normalizedValue);
       }
     }
   }
   
   if (result[STORAGE_KEYS.ELEVENLABS_STYLE] !== undefined) {
     if (elements.elevenlabsStyle) {
-      elements.elevenlabsStyle.value = result[STORAGE_KEYS.ELEVENLABS_STYLE];
+      // Normalize to step 0.1 (round to nearest 0.1)
+      const normalizeStyle = (value) => {
+        const num = parseFloat(value);
+        if (isNaN(num)) return 0.0;
+        return Math.round(num * 10) / 10;
+      };
+      const normalizedValue = normalizeStyle(result[STORAGE_KEYS.ELEVENLABS_STYLE]);
+      elements.elevenlabsStyle.value = normalizedValue;
       if (elements.elevenlabsStyleValue) {
-        elements.elevenlabsStyleValue.textContent = parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE]).toFixed(2);
+        elements.elevenlabsStyleValue.textContent = normalizedValue.toFixed(1);
+      }
+      // Save normalized value if it was different
+      if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE])) {
+        debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STYLE, normalizedValue);
       }
     }
   }
@@ -1759,9 +1937,105 @@ async function loadSettings() {
   }
   
   // Step 7: Update theme icon after loading theme setting
+  log('loadSettings: applying theme');
   applyTheme();
+  
+  // Step 8: Restore summary if it exists or check if generation is in progress
+  // Check if generation flag is stale first
+  if (result[STORAGE_KEYS.SUMMARY_GENERATING]) {
+    const stored = await chrome.storage.local.get(['summary_generating_start_time']);
+    const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    
+    // If no timestamp exists, or timestamp is stale, reset the flag
+    if (!stored.summary_generating_start_time) {
+      // No timestamp - flag is from old version or was set incorrectly, reset it
+      logWarn('Summary generation flag has no timestamp, resetting', {});
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+        summary_generating_start_time: null
+      });
+      result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
+      
+      // Ensure button is enabled after reset
+      if (elements.generateSummaryBtn) {
+        elements.generateSummaryBtn.disabled = false;
+        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        elements.generateSummaryBtn.textContent = generateSummaryText;
+      }
+    } else {
+      const timeSinceStart = Date.now() - stored.summary_generating_start_time;
+      
+      if (timeSinceStart > STALE_THRESHOLD) {
+        // Flag is stale - reset it
+        logWarn('Summary generation flag is stale on load, resetting', { timeSinceStart });
+        await chrome.storage.local.set({ 
+          [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+          summary_generating_start_time: null
+        });
+        result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
+        
+        // Ensure button is enabled after reset
+        if (elements.generateSummaryBtn) {
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+        }
+      }
+    }
+  }
+  
+  if (result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
+    // Summary generation was in progress - show status
+    const generatingText = await t('generatingSummary') || 'Generating summary...';
+    elements.generateSummaryBtn.textContent = generatingText;
+    elements.generateSummaryBtn.disabled = true;
+    
+    // Check if summary was generated while popup was closed
+    setTimeout(async () => {
+      const checkResult = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_TEXT, STORAGE_KEYS.SUMMARY_GENERATING]);
+      if (checkResult[STORAGE_KEYS.SUMMARY_TEXT] && !checkResult[STORAGE_KEYS.SUMMARY_GENERATING]) {
+        // Summary is ready, display it
+        if (elements.summaryText && elements.summaryContainer) {
+          const savedSummary = checkResult[STORAGE_KEYS.SUMMARY_TEXT];
+          elements.summaryText.dataset.originalMarkdown = savedSummary;
+          const htmlSummary = markdownToHtml(savedSummary);
+          elements.summaryText.innerHTML = htmlSummary;
+          elements.summaryContainer.style.display = 'block';
+          elements.summaryContent.classList.remove('expanded');
+          const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
+          if (toggleIcon) toggleIcon.textContent = '▶';
+        }
+        elements.generateSummaryBtn.disabled = false;
+        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        elements.generateSummaryBtn.textContent = generateSummaryText;
+      } else if (!checkResult[STORAGE_KEYS.SUMMARY_GENERATING]) {
+        // Generation finished but no summary - probably error
+        elements.generateSummaryBtn.disabled = false;
+        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        elements.generateSummaryBtn.textContent = generateSummaryText;
+      }
+    }, 1000);
+  } else if (result[STORAGE_KEYS.SUMMARY_TEXT] && elements.summaryText && elements.summaryContainer) {
+    // Summary exists and generation is not in progress
+    const savedSummary = result[STORAGE_KEYS.SUMMARY_TEXT];
+    elements.summaryText.dataset.originalMarkdown = savedSummary;
+    const htmlSummary = markdownToHtml(savedSummary);
+    elements.summaryText.innerHTML = htmlSummary;
+    elements.summaryContainer.style.display = 'block';
+    // Keep collapsed state
+    elements.summaryContent.classList.remove('expanded');
+    const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
+    if (toggleIcon) toggleIcon.textContent = '▶';
+  }
+  
+  log('loadSettings: completed successfully');
   } catch (error) {
     logError('CRITICAL: loadSettings() failed', error);
+    logError('loadSettings: error details', { 
+      message: error.message, 
+      stack: error.stack,
+      errorName: error.name
+    });
     // Re-throw to prevent silent failures
     throw error;
   }
@@ -1769,9 +2043,14 @@ async function loadSettings() {
 
 // Setup event listeners
 function setupEventListeners() {
-  elements.toggleApiKey.addEventListener('click', async () => {
-    const input = elements.apiKey;
-    const isPassword = input.type === 'password';
+  console.log('[ClipAIble] popup.js: setupEventListeners() called');
+  log('setupEventListeners: starting');
+  
+  if (elements.toggleApiKey && elements.apiKey) {
+    elements.toggleApiKey.addEventListener('click', async () => {
+      const input = elements.apiKey;
+      if (!input) return;
+      const isPassword = input.type === 'password';
     
     if (isPassword) {
       // Show full key
@@ -1792,7 +2071,9 @@ function setupEventListeners() {
         input.dataset.decrypted = input.value;
       }
       input.type = 'text';
-      elements.toggleApiKey.querySelector('.eye-icon').textContent = '🔒';
+      if (elements.toggleApiKey) {
+        elements.toggleApiKey.querySelector('.eye-icon').textContent = '🔒';
+      }
     } else {
       // Hide key
       if (input.dataset.decrypted) {
@@ -1802,9 +2083,12 @@ function setupEventListeners() {
         input.value = maskApiKey(input.value);
       }
       input.type = 'password';
-      elements.toggleApiKey.querySelector('.eye-icon').textContent = '👁';
+      if (elements.toggleApiKey) {
+        elements.toggleApiKey.querySelector('.eye-icon').textContent = '👁';
+      }
     }
   });
+  }
 
   if (elements.toggleClaudeApiKey && elements.claudeApiKey) {
     elements.toggleClaudeApiKey.addEventListener('click', async () => {
@@ -2010,23 +2294,30 @@ function setupEventListeners() {
     });
   }
 
-  elements.saveApiKey.addEventListener('click', saveApiKey);
+  if (elements.saveApiKey) {
+    elements.saveApiKey.addEventListener('click', saveApiKey);
+  }
 
-  elements.toggleSettings.addEventListener('click', () => {
-    const isOpen = elements.settingsPanel.classList.contains('open');
-    
-    if (isOpen) {
-      elements.settingsPanel.classList.remove('open');
-    } else {
-      // Opening - close stats if open
-      if (elements.statsPanel.classList.contains('open')) {
-        elements.statsPanel.classList.remove('open');
+  if (elements.toggleSettings) {
+    elements.toggleSettings.addEventListener('click', () => {
+      const isOpen = elements.settingsPanel.classList.contains('open');
+      
+      if (isOpen) {
+        elements.settingsPanel.classList.remove('open');
+      } else {
+        // Opening - close stats if open
+        if (elements.statsPanel && elements.statsPanel.classList.contains('open')) {
+          elements.statsPanel.classList.remove('open');
+        }
+        if (elements.settingsPanel) {
+          elements.settingsPanel.classList.add('open');
+        }
       }
-      elements.settingsPanel.classList.add('open');
-    }
-  });
+    });
+  }
 
-  elements.toggleStats.addEventListener('click', async () => {
+  if (elements.toggleStats) {
+    elements.toggleStats.addEventListener('click', async () => {
     const isOpen = elements.statsPanel.classList.contains('open');
     
     if (isOpen) {
@@ -2041,11 +2332,15 @@ function setupEventListeners() {
       await loadAndDisplayStats();
       
       // Then open
-      elements.statsPanel.classList.add('open');
+      if (elements.statsPanel) {
+        elements.statsPanel.classList.add('open');
+      }
     }
   });
+  }
 
-  elements.clearStatsBtn.addEventListener('click', async () => {
+  if (elements.clearStatsBtn) {
+    elements.clearStatsBtn.addEventListener('click', async () => {
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     const clearStatsConfirm = locale.clearAllStatisticsConfirm || UI_LOCALES.en.clearAllStatisticsConfirm;
@@ -2056,8 +2351,10 @@ function setupEventListeners() {
       showToast(locale, 'success');
     }
   });
+  }
 
-  elements.clearCacheBtn.addEventListener('click', async () => {
+  if (elements.clearCacheBtn) {
+    elements.clearCacheBtn.addEventListener('click', async () => {
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     const clearCacheConfirm = locale.clearSelectorCacheConfirm || UI_LOCALES.en.clearSelectorCacheConfirm;
@@ -2068,8 +2365,10 @@ function setupEventListeners() {
       showToast(locale, 'success');
     }
   });
+  }
 
-  elements.exportSettingsBtn.addEventListener('click', async () => {
+  if (elements.exportSettingsBtn) {
+    elements.exportSettingsBtn.addEventListener('click', async () => {
     try {
       // Simple confirm dialogs
       const includeStatsText = await t('includeStatisticsInExport');
@@ -2115,12 +2414,14 @@ function setupEventListeners() {
       elements.exportSettingsBtn.textContent = exportSettingsText;
     }
   });
+  }
 
-  elements.importSettingsBtn.addEventListener('click', () => {
-    elements.importFileInput.click();
-  });
+  if (elements.importSettingsBtn && elements.importFileInput) {
+    elements.importSettingsBtn.addEventListener('click', () => {
+      elements.importFileInput.click();
+    });
 
-  elements.importFileInput.addEventListener('change', async (e) => {
+    elements.importFileInput.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     
@@ -2201,10 +2502,25 @@ function setupEventListeners() {
       elements.importSettingsBtn.textContent = importSettingsText;
       elements.importFileInput.value = ''; // Reset input
     }
-  });
+    });
+  }
 
-  elements.modelSelect.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.MODEL, elements.modelSelect.value);
+  elements.modelSelect.addEventListener('change', async () => {
+    const selectedModel = elements.modelSelect.value;
+    const provider = elements.apiProviderSelect?.value || 'openai';
+    
+    // Save to general model key (for backward compatibility)
+    debouncedSaveSettings(STORAGE_KEYS.MODEL, selectedModel);
+    
+    // Save to provider-specific storage
+    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.MODEL_BY_PROVIDER]);
+    const modelsByProvider = storageResult[STORAGE_KEYS.MODEL_BY_PROVIDER] || {};
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.MODEL_BY_PROVIDER]: {
+        ...modelsByProvider,
+        [provider]: selectedModel
+      }
+    });
   });
 
   // Add model button handler
@@ -2567,11 +2883,30 @@ function setupEventListeners() {
   elements.savePdfBtn.addEventListener('click', handleSavePdf);
   elements.cancelBtn.addEventListener('click', handleCancel);
   
-  elements.themeSelect.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.THEME, elements.themeSelect.value, () => {
-      applyTheme();
+  // Summary handlers
+  if (elements.generateSummaryBtn) {
+    elements.generateSummaryBtn.addEventListener('click', handleGenerateSummary);
+  }
+  if (elements.summaryToggle) {
+    elements.summaryToggle.addEventListener('click', toggleSummary);
+  }
+  if (elements.summaryCopyBtn) {
+    elements.summaryCopyBtn.addEventListener('click', copySummary);
+  }
+  if (elements.summaryDownloadBtn) {
+    elements.summaryDownloadBtn.addEventListener('click', downloadSummary);
+  }
+  if (elements.summaryCloseBtn) {
+    elements.summaryCloseBtn.addEventListener('click', closeSummary);
+  }
+  
+  if (elements.themeSelect) {
+    elements.themeSelect.addEventListener('change', () => {
+      debouncedSaveSettings(STORAGE_KEYS.THEME, elements.themeSelect.value, () => {
+        applyTheme();
+      });
     });
-  });
+  }
   
   if (elements.uiLanguageSelect) {
     elements.uiLanguageSelect.addEventListener('change', async () => {
@@ -2616,8 +2951,8 @@ function setupEventListeners() {
   // ElevenLabs advanced settings
   if (elements.elevenlabsStability) {
     elements.elevenlabsStability.addEventListener('input', () => {
-      const value = parseFloat(elements.elevenlabsStability.value).toFixed(2);
-      elements.elevenlabsStabilityValue.textContent = value;
+      const value = parseFloat(elements.elevenlabsStability.value);
+      elements.elevenlabsStabilityValue.textContent = value.toFixed(1);
     });
     
     elements.elevenlabsStability.addEventListener('change', () => {
@@ -2628,8 +2963,8 @@ function setupEventListeners() {
   
   if (elements.elevenlabsSimilarity) {
     elements.elevenlabsSimilarity.addEventListener('input', () => {
-      const value = parseFloat(elements.elevenlabsSimilarity.value).toFixed(2);
-      elements.elevenlabsSimilarityValue.textContent = value;
+      const value = parseFloat(elements.elevenlabsSimilarity.value);
+      elements.elevenlabsSimilarityValue.textContent = value.toFixed(1);
     });
     
     elements.elevenlabsSimilarity.addEventListener('change', () => {
@@ -2640,8 +2975,8 @@ function setupEventListeners() {
   
   if (elements.elevenlabsStyle) {
     elements.elevenlabsStyle.addEventListener('input', () => {
-      const value = parseFloat(elements.elevenlabsStyle.value).toFixed(2);
-      elements.elevenlabsStyleValue.textContent = value;
+      const value = parseFloat(elements.elevenlabsStyle.value);
+      elements.elevenlabsStyleValue.textContent = value.toFixed(1);
     });
     
     elements.elevenlabsStyle.addEventListener('change', () => {
@@ -3091,6 +3426,9 @@ function setupEventListeners() {
 
 // Apply theme based on user preference or system preference
 function applyTheme() {
+  if (!elements.themeSelect) {
+    return; // Theme select not available, skip
+  }
   const theme = elements.themeSelect.value;
   let actualTheme = theme;
   
@@ -3213,6 +3551,771 @@ async function handleCancel() {
     if (elements.cancelBtn) {
       elements.cancelBtn.disabled = false; // Re-enable on error
     }
+  }
+}
+
+// Handle Generate Summary button click
+async function handleGenerateSummary() {
+  if (!elements.generateSummaryBtn || !elements.summaryContainer) {
+    logWarn('Summary elements not found');
+    return;
+  }
+  
+  // Variables for API key and model (used for both extraction and summary generation)
+  let apiKey = null;
+  let model = null;
+  let provider = null;
+  
+  try {
+    // КРИТИЧНО: Set generating flag IMMEDIATELY to prevent checkSummaryStatus from restoring button
+    await chrome.storage.local.set({ 
+      [STORAGE_KEYS.SUMMARY_GENERATING]: true,
+      summary_generating_start_time: Date.now()
+    });
+    
+    // КРИТИЧНО: Disable button immediately and show status
+    elements.generateSummaryBtn.disabled = true;
+    const generatingText = await t('generatingSummary') || 'Generating summary...';
+    elements.generateSummaryBtn.textContent = generatingText;
+    log('Generate summary button clicked - flag set, button disabled and status updated', { text: generatingText });
+    
+    // Get current tab URL first - needed for validation
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) {
+      const noContentText = await t('noContentAvailable') || 'No content available. Please extract content first.';
+      showToast(noContentText, 'error');
+      elements.generateSummaryBtn.disabled = false;
+      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+      elements.generateSummaryBtn.textContent = generateSummaryText;
+      return;
+    }
+    
+    const currentUrl = tab.url; // КРИТИЧНО: Store URL for use in generateSummary
+    
+    // Normalize URLs for comparison (remove trailing slashes, fragments, etc.)
+    function normalizeUrl(url) {
+      if (!url) return '';
+      try {
+        const urlObj = new URL(url);
+        // Remove fragment, normalize path
+        urlObj.hash = '';
+        let path = urlObj.pathname;
+        if (path.endsWith('/') && path.length > 1) {
+          path = path.slice(0, -1);
+        }
+        urlObj.pathname = path;
+        return urlObj.toString();
+      } catch {
+        return url;
+      }
+    }
+    
+    const normalizedCurrentUrl = normalizeUrl(currentUrl);
+    
+    // Get processing state to access extracted content
+    const state = await chrome.runtime.sendMessage({ action: 'getState' });
+    
+    // Try to get content from current state first - but only if URL matches
+    let contentItems = null;
+    if (state && state.result && state.result.content) {
+      // Check if URL matches (if URL is available in result)
+      const resultUrl = state.result.sourceUrl || state.result.url || '';
+      const normalizedResultUrl = normalizeUrl(resultUrl);
+      
+      if (!normalizedCurrentUrl || !normalizedResultUrl || normalizedCurrentUrl === normalizedResultUrl) {
+        contentItems = state.result.content;
+        log('Got content from processing state', { 
+          count: contentItems.length,
+          currentUrl: normalizedCurrentUrl,
+          resultUrl: normalizedResultUrl
+        });
+      } else {
+        logWarn('Content in state is from different URL, ignoring', {
+          currentUrl: normalizedCurrentUrl,
+          resultUrl: normalizedResultUrl
+        });
+      }
+    }
+    
+    // If not in current state, try to get from storage (last processed result) - but only if URL matches
+    if ((!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) && normalizedCurrentUrl) {
+      try {
+        const stored = await chrome.storage.local.get(['lastProcessedResult']);
+        if (stored.lastProcessedResult && stored.lastProcessedResult.content) {
+          // Check if URL matches
+          const storedUrl = stored.lastProcessedResult.sourceUrl || stored.lastProcessedResult.url || '';
+          const normalizedStoredUrl = normalizeUrl(storedUrl);
+          
+          if (normalizedStoredUrl && normalizedCurrentUrl === normalizedStoredUrl) {
+            contentItems = stored.lastProcessedResult.content;
+            log('Got content from storage', { 
+              count: contentItems.length,
+              currentUrl: normalizedCurrentUrl,
+              storedUrl: normalizedStoredUrl
+            });
+          } else {
+            logWarn('Content in storage is from different URL, ignoring', {
+              currentUrl: normalizedCurrentUrl,
+              storedUrl: normalizedStoredUrl
+            });
+          }
+        }
+      } catch (error) {
+        logWarn('Failed to get last processed result from storage', error);
+      }
+    }
+    
+    // If no content found, extract it first
+    if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
+      // Check if it's YouTube
+      const videoInfo = detectVideoPlatform(tab.url);
+      
+      if (videoInfo && videoInfo.platform === 'youtube') {
+        // Extract and process YouTube subtitles
+        // КРИТИЧНО: Keep button disabled and status unchanged - no intermediate status updates
+        elements.generateSummaryBtn.disabled = true;
+        
+        // КРИТИЧНО: Убедиться, что content script загружен перед извлечением субтитров
+        // Content script должен быть загружен через manifest.json, но дадим ему время
+        // Попробуем отправить тестовое сообщение в content script, чтобы проверить загрузку
+        let contentScriptLoaded = false;
+        try {
+          const pingResponse = await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
+          if (pingResponse && pingResponse.success) {
+            contentScriptLoaded = true;
+            log('Content script is loaded and responding', { timestamp: pingResponse.timestamp });
+          }
+        } catch (pingError) {
+          // Content script может не отвечать на ping - это нормально
+          // Просто дадим ему немного времени на загрузку
+          logWarn('Content script ping failed or not responding (may be normal)', pingError);
+        }
+        
+        // Небольшая задержка, чтобы content script точно загрузился (если еще не загружен)
+        if (!contentScriptLoaded) {
+          log('Waiting for content script to load...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        try {
+          // КРИТИЧНО: Вызываем извлечение субтитров через background script
+          // Это гарантирует правильный контекст и доступ к content script
+          // (такой же подход, как при создании PDF)
+          const extractResponse = await chrome.runtime.sendMessage({
+            action: 'extractYouTubeSubtitlesForSummary',
+            data: { tabId: tab.id }
+          });
+          
+          if (extractResponse.error) {
+            throw new Error(extractResponse.error);
+          }
+          
+          const subtitlesData = extractResponse.result;
+          if (!subtitlesData || !subtitlesData.subtitles || subtitlesData.subtitles.length === 0) {
+            const noSubtitlesText = await t('errorNoSubtitles') || 'No subtitles found.';
+            showToast(noSubtitlesText, 'error');
+            elements.generateSummaryBtn.disabled = false;
+            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            elements.generateSummaryBtn.textContent = generateSummaryText;
+            return;
+          }
+          
+          // КРИТИЧНО: For summary, we don't need to process subtitles - send raw subtitles directly
+          // Convert raw subtitles to contentItems format for generateSummary
+          contentItems = subtitlesData.subtitles.map(subtitle => ({
+            type: 'paragraph',
+            text: subtitle.text || subtitle
+          }));
+          
+          // Get API key and model for summary generation
+          model = elements.modelSelect.value;
+          provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+          apiKey = elements.apiKey.value.trim();
+          
+          if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
+            try {
+              apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
+            } catch (error) {
+              logError('Failed to decrypt API key', error);
+              const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
+              showToast(failedDecryptText, 'error');
+              elements.generateSummaryBtn.disabled = false;
+              const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+              elements.generateSummaryBtn.textContent = generateSummaryText;
+              return;
+            }
+          }
+          
+          if (!apiKey) {
+            const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
+            const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
+            showToast(pleaseEnterKeyText, 'error');
+            elements.generateSummaryBtn.disabled = false;
+            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            elements.generateSummaryBtn.textContent = generateSummaryText;
+            return;
+          }
+        } catch (error) {
+          logError('Failed to extract/process YouTube subtitles', error);
+          const errorText = await t('errorSubtitleProcessingFailed') || 'Failed to process subtitles';
+          showToast(errorText, 'error');
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          return;
+        }
+      } else {
+        // Regular page - extract content first
+        // КРИТИЧНО: Keep button disabled and status unchanged - no intermediate status updates
+        elements.generateSummaryBtn.disabled = true;
+        
+        // Get page data
+        const htmlResult = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => ({
+            html: document.documentElement.outerHTML,
+            url: window.location.href,
+            title: document.title
+          })
+        });
+        
+        if (!htmlResult || !htmlResult[0] || !htmlResult[0].result) {
+          const noContentText = await t('noContentAvailable') || 'No content available.';
+          showToast(noContentText, 'error');
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          return;
+        }
+        
+        const pageData = htmlResult[0].result;
+        
+        // Get API key and model (will be used for both extraction and summary generation)
+        model = elements.modelSelect.value;
+        provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+        apiKey = elements.apiKey.value.trim();
+        
+        if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
+          try {
+            apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
+          } catch (error) {
+            logError('Failed to decrypt API key', error);
+            const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
+            showToast(failedDecryptText, 'error');
+            elements.generateSummaryBtn.disabled = false;
+            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            elements.generateSummaryBtn.textContent = generateSummaryText;
+            return;
+          }
+        }
+        
+        if (!apiKey) {
+          const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
+          const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
+          showToast(pleaseEnterKeyText, 'error');
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          return;
+        }
+        
+        // Start extraction process (content only, no file generation)
+        // КРИТИЧНО: Keep button disabled and status unchanged - no intermediate status updates
+        elements.generateSummaryBtn.disabled = true;
+        
+        // Send extraction request (content only, no file generation)
+        const extractResponse = await chrome.runtime.sendMessage({
+          action: 'extractContentOnly',
+          data: {
+            html: pageData.html,
+            url: pageData.url,
+            title: pageData.title || tab.title,
+            apiKey: apiKey,
+            provider: provider,
+            model: model,
+            mode: elements.modeSelect.value,
+            useCache: elements.useCache.checked,
+            tabId: tab.id
+          }
+        });
+        
+        if (extractResponse.error) {
+          throw new Error(extractResponse.error);
+        }
+        
+        if (!extractResponse.result || !extractResponse.result.content || !Array.isArray(extractResponse.result.content) || extractResponse.result.content.length === 0) {
+          const noContentText = await t('noContentAvailable') || 'Failed to extract content.';
+          showToast(noContentText, 'error');
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          return;
+        }
+        
+        contentItems = extractResponse.result.content;
+      }
+    }
+    
+    // At this point we have contentItems from either:
+    // 1. Existing state/storage
+    // 2. YouTube subtitles (processed)
+    // 3. Regular page extraction
+    
+    // Now generate summary from contentItems
+    
+    // Check if we have content
+    if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
+      const noContentText = await t('noContentAvailable') || 'No content available.';
+      showToast(noContentText, 'error');
+      elements.generateSummaryBtn.disabled = false;
+      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+      elements.generateSummaryBtn.textContent = generateSummaryText;
+      return;
+    }
+    
+    // Get API key and model for summary generation (if not already set)
+    if (!apiKey || !model) {
+      model = elements.modelSelect.value;
+      provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+      apiKey = elements.apiKey.value.trim();
+      
+      if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
+        try {
+          apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
+        } catch (error) {
+          logError('Failed to decrypt API key', error);
+          const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
+          showToast(failedDecryptText, 'error');
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          return;
+        }
+      }
+      
+      if (!apiKey) {
+        const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
+        const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
+        showToast(pleaseEnterKeyText, 'error');
+        elements.generateSummaryBtn.disabled = false;
+        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        elements.generateSummaryBtn.textContent = generateSummaryText;
+        return;
+      }
+    }
+    
+    // КРИТИЧНО: Button should already be disabled with "Generating summary..." text from the start
+    // Flag is already set at the beginning of the function - no need to set it again
+    elements.generateSummaryBtn.disabled = true;
+    log('Starting summary generation - flag already set, button already shows generating status', {
+      contentItemsCount: contentItems?.length || 0,
+      hasApiKey: !!apiKey,
+      model: model
+    });
+    
+    // Get current tab URL for logging (tab already defined above)
+    const url = currentUrl;
+    
+    // КРИТИЧНО: Ensure flag is set before sending message (in case service worker died and restarted)
+    await chrome.storage.local.set({ 
+      [STORAGE_KEYS.SUMMARY_GENERATING]: true,
+      summary_generating_start_time: Date.now()
+    });
+    log('Summary generation flag set before sending message', { timestamp: Date.now() });
+    
+    // КРИТИЧНО: Check if service worker is available before sending
+    let serviceWorkerAvailable = false;
+    try {
+      // Try to ping service worker
+      const pingResponse = await Promise.race([
+        chrome.runtime.sendMessage({ action: 'ping' }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('ping timeout')), 1000))
+      ]);
+      serviceWorkerAvailable = true;
+      log('Service worker is available, proceeding with generateSummary');
+    } catch (pingError) {
+      logWarn('Service worker may not be available, will retry generateSummary', pingError);
+      // Continue anyway - service worker may restart
+    }
+    
+    // Send request to background to generate summary
+    // This will continue even if popup is closed
+    // КРИТИЧНО: Add timeout wrapper to prevent hanging
+    let sendMessagePromise;
+    try {
+      log('Sending generateSummary message to background', {
+        contentItemsCount: contentItems?.length || 0,
+        model: model,
+        url: url,
+        serviceWorkerAvailable: serviceWorkerAvailable
+      });
+      
+      sendMessagePromise = chrome.runtime.sendMessage({
+        action: 'generateSummary',
+        data: {
+          contentItems: contentItems,
+          apiKey: apiKey,
+          model: model,
+          url: url
+        }
+      });
+      
+      log('generateSummary message sent, waiting for response');
+    } catch (sendError) {
+      // КРИТИЧНО: If sendMessage fails synchronously (service worker dead), set flag and let background continue
+      logError('Failed to send generateSummary message (service worker may be dead)', sendError);
+      
+      // Set flag so checkSummaryStatus knows to check
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: true,
+        summary_generating_start_time: Date.now()
+      });
+      
+      // Try to send message again after a delay (service worker may restart)
+      setTimeout(async () => {
+        try {
+          log('Retrying generateSummary message after delay');
+          const retryResponse = await chrome.runtime.sendMessage({
+            action: 'generateSummary',
+            data: {
+              contentItems: contentItems,
+              apiKey: apiKey,
+              model: model,
+              url: url
+            }
+          });
+          
+          if (retryResponse?.error) {
+            logError('generateSummary retry failed', retryResponse.error);
+            await chrome.storage.local.set({ 
+              [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+              summary_generating_start_time: null
+            });
+            elements.generateSummaryBtn.disabled = false;
+            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            elements.generateSummaryBtn.textContent = generateSummaryText;
+          }
+        } catch (retryError) {
+          logError('generateSummary retry also failed', retryError);
+          // Keep flag set - checkSummaryStatus will handle it
+        }
+      }, 2000);
+      
+      // Show message that process is continuing in background
+      const continuingText = await t('summaryGenerationContinuing') || 'Summary generation is continuing in background. Please wait...';
+      showToast(continuingText, 'info');
+      return; // Exit - checkSummaryStatus will handle completion
+    }
+    
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Summary generation timeout. The request took too long. Please try again.'));
+      }, 50 * 60 * 1000); // 50 minutes timeout for summary generation (longer than background timeout of 45 minutes)
+    });
+    
+    let summaryResponse;
+    try {
+      summaryResponse = await Promise.race([sendMessagePromise, timeoutPromise]);
+      log('generateSummary response received', { hasError: !!summaryResponse?.error, hasSummary: !!summaryResponse?.summary });
+    } catch (sendError) {
+      // Handle timeout or connection errors
+      logError('generateSummary request failed', sendError);
+      
+      if (sendError.message && sendError.message.includes('timeout')) {
+        throw new Error('Summary generation timeout. The request took too long. Please try again.');
+      }
+      if (sendError.message && (sendError.message.includes('port closed') || sendError.message.includes('Receiving end does not exist'))) {
+        // Background script may continue processing - don't throw error, just log
+        logWarn('Connection to background script lost, but summary generation may continue in background', sendError);
+        // Don't restore button - let checkSummaryStatus handle it
+        // Set flag so checkSummaryStatus knows to check
+        await chrome.storage.local.set({ 
+          [STORAGE_KEYS.SUMMARY_GENERATING]: true,
+          summary_generating_start_time: Date.now()
+        });
+        // Show message that process is continuing in background
+        const continuingText = await t('summaryGenerationContinuing') || 'Summary generation is continuing in background. Please wait...';
+        showToast(continuingText, 'info');
+        return; // Exit - checkSummaryStatus will handle completion
+      }
+      throw sendError;
+    }
+    
+    if (summaryResponse.error) {
+      throw new Error(summaryResponse.error);
+    }
+    
+    // Check if response is valid
+    if (!summaryResponse) {
+      throw new Error('No response from background script');
+    }
+    
+    // Display summary
+    if (summaryResponse.summary && typeof summaryResponse.summary === 'string' && summaryResponse.summary.trim()) {
+      const cleanSummary = summaryResponse.summary.trim();
+      
+      // Store original markdown text in data attribute for copying/downloading
+      if (elements.summaryText) {
+        elements.summaryText.dataset.originalMarkdown = cleanSummary;
+      }
+      
+      // Convert markdown to HTML for display
+      const htmlSummary = markdownToHtml(cleanSummary);
+      elements.summaryText.innerHTML = htmlSummary;
+      elements.summaryContainer.style.display = 'block';
+      // Collapse by default
+      elements.summaryContent.classList.remove('expanded');
+      const toggleIcon = elements.summaryToggle.querySelector('.summary-toggle-icon');
+      if (toggleIcon) toggleIcon.textContent = '▶';
+      
+      const successText = await t('summaryGenerated') || 'Summary generated successfully';
+      showToast(successText, 'success');
+      
+      // Clear generating flag on success
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+        summary_generating_start_time: null
+      });
+    } else {
+      const errorText = await t('summaryGenerationFailed') || 'Failed to generate summary';
+      showToast(errorText, 'error');
+      // Clear generating flag on failure
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+        summary_generating_start_time: null
+      });
+    }
+    
+  } catch (error) {
+    logError('Error generating summary', error);
+    const errorText = await t('summaryGenerationError') || 'Error generating summary';
+    showToast(errorText, 'error');
+    // Clear generating flag on error
+    await chrome.storage.local.set({ 
+      [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+      summary_generating_start_time: null
+    });
+  } finally {
+    // КРИТИЧНО: Restore button only if generation is not in progress
+    // Check storage to see if generation is still in progress (may continue in background)
+    // Use double-check to avoid race conditions
+    try {
+      const checkResult = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING, 'summary_generating_start_time']);
+      
+      // КРИТИЧНО: Only restore button if flag is definitely false AND we're not in a race condition
+      // If flag is true, keep button disabled - generation is in progress
+      if (!checkResult[STORAGE_KEYS.SUMMARY_GENERATING]) {
+        // Double-check: wait a tiny bit and check again to avoid race condition
+        // where flag was just set but not yet visible
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
+        
+        if (!doubleCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
+          // Generation is complete or not in progress - restore button
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          log('Summary generation complete - button restored (double-checked)');
+        } else {
+          // Flag was set between checks - keep button disabled
+          elements.generateSummaryBtn.disabled = true;
+          const generatingText = await t('generatingSummary') || 'Generating summary...';
+          elements.generateSummaryBtn.textContent = generatingText;
+          log('Summary generation flag found on double-check - button kept disabled');
+        }
+      } else {
+        // Generation is still in progress - keep button disabled and show status
+        elements.generateSummaryBtn.disabled = true;
+        const generatingText = await t('generatingSummary') || 'Generating summary...';
+        elements.generateSummaryBtn.textContent = generatingText;
+        log('Summary generation still in progress - button remains disabled');
+      }
+    } catch (checkError) {
+      // If check fails, check one more time before restoring
+      logWarn('Failed to check summary generation status, checking once more', checkError);
+      try {
+        const finalCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
+        if (!finalCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+        } else {
+          // Keep disabled if flag is set
+          elements.generateSummaryBtn.disabled = true;
+          const generatingText = await t('generatingSummary') || 'Generating summary...';
+          elements.generateSummaryBtn.textContent = generatingText;
+        }
+      } catch (finalError) {
+        // Last resort - restore button only if we can't check
+        logWarn('Final check also failed, restoring button', finalError);
+        elements.generateSummaryBtn.disabled = false;
+        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        elements.generateSummaryBtn.textContent = generateSummaryText;
+      }
+    }
+  }
+}
+
+// Convert markdown to HTML for display - simple version, keep lists as text
+function markdownToHtml(markdown) {
+  if (!markdown) return '';
+  
+  let html = markdown;
+  
+  // Code blocks first (to avoid processing markdown inside code)
+  const codeBlocks = [];
+  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
+    const id = `CODE_BLOCK_${codeBlocks.length}`;
+    codeBlocks.push(`<pre><code>${code.trim()}</code></pre>`);
+    return id;
+  });
+  
+  // Inline code
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  
+  // Headers (process from largest to smallest to avoid conflicts)
+  // Process headers BEFORE converting newlines to preserve structure
+  html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
+  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+  
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  
+  // Horizontal rules (--- or ***)
+  html = html.replace(/^(\s*[-*]{3,}\s*)$/gm, '<hr>');
+  
+  // Bold (must come before italic)
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+  
+  // Italic (single asterisk/underscore, but not inside code)
+  html = html.replace(/(?<!`)(?<!\*)\*(?!\*)([^*`]+?)(?<!\*)\*(?!\*)(?!`)/g, '<em>$1</em>');
+  html = html.replace(/(?<!`)(?<!_)_(?!_)([^_`]+?)(?<!_)_(?!_)(?!`)/g, '<em>$1</em>');
+  
+  // Restore code blocks
+  codeBlocks.forEach((codeBlock, index) => {
+    html = html.replace(`CODE_BLOCK_${index}`, codeBlock);
+  });
+  
+  // Convert newlines to <br> - but preserve headers and horizontal rules (they already have their own structure)
+  // Split by lines and process each line
+  const lines = html.split('\n');
+  const processedLines = lines.map(line => {
+    // If line is already a header tag or horizontal rule, don't add <br> after it
+    if (line.match(/^<(h[1-6])>.*<\/\1>$/)) {
+      return line;
+    }
+    if (line.trim() === '<hr>') {
+      return line;
+    }
+    // Otherwise, convert newline to <br> at the end
+    return line + '<br>';
+  });
+  
+  html = processedLines.join('');
+  
+  // Clean up: remove <br> before closing header tags and before/after horizontal rules
+  html = html.replace(/<br><\/(h[1-6])>/g, '</$1>');
+  html = html.replace(/<br><hr>/g, '<hr>');
+  html = html.replace(/<hr><br>/g, '<hr>');
+  
+  return html;
+}
+
+// Toggle summary expand/collapse
+function toggleSummary() {
+  if (!elements.summaryContent || !elements.summaryToggle) return;
+  
+  const isExpanded = elements.summaryContent.classList.contains('expanded');
+  const toggleIcon = elements.summaryToggle.querySelector('.summary-toggle-icon');
+  
+  if (isExpanded) {
+    elements.summaryContent.classList.remove('expanded');
+    if (toggleIcon) toggleIcon.textContent = '▶';
+  } else {
+    elements.summaryContent.classList.add('expanded');
+    if (toggleIcon) toggleIcon.textContent = '▼';
+  }
+}
+
+// Close summary
+async function closeSummary() {
+  if (!elements.summaryContainer) return;
+  
+  try {
+    // Hide summary container
+    elements.summaryContainer.style.display = 'none';
+    
+    // Clear summary text
+    if (elements.summaryText) {
+      elements.summaryText.innerHTML = '';
+      elements.summaryText.dataset.originalMarkdown = '';
+    }
+    
+    // Clear summary from storage
+    await chrome.storage.local.remove([STORAGE_KEYS.SUMMARY_TEXT]);
+    
+    log('Summary closed and cleared');
+  } catch (error) {
+    logError('Failed to close summary', error);
+  }
+}
+
+// Copy summary to clipboard
+async function copySummary() {
+  if (!elements.summaryText) return;
+  
+  // Get original markdown text from data attribute, fallback to textContent
+  const text = elements.summaryText.dataset.originalMarkdown || 
+               elements.summaryText.textContent || 
+               elements.summaryText.innerText;
+  if (!text) return;
+  
+  try {
+    await navigator.clipboard.writeText(text);
+    const copiedText = await t('copiedToClipboard') || 'Copied to clipboard';
+    showToast(copiedText, 'success');
+  } catch (error) {
+    logError('Failed to copy summary', error);
+    const errorText = await t('copyFailed') || 'Failed to copy';
+    showToast(errorText, 'error');
+  }
+}
+
+// Download summary as markdown
+async function downloadSummary() {
+  if (!elements.summaryText) return;
+  
+  // Get original markdown text from data attribute, fallback to textContent
+  const text = elements.summaryText.dataset.originalMarkdown || 
+               elements.summaryText.textContent || 
+               elements.summaryText.innerText;
+  if (!text) return;
+  
+  try {
+    // Get title from state or use default
+    const state = await chrome.runtime.sendMessage({ action: 'getState' });
+    const title = (state && state.result && state.result.title) ? 
+      state.result.title.replace(/[^\w\s-]/g, '').trim() : 'summary';
+    
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title}-summary.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    const downloadedText = await t('downloaded') || 'Downloaded';
+    showToast(downloadedText, 'success');
+  } catch (error) {
+    logError('Failed to download summary', error);
+    const errorText = await t('downloadFailed') || 'Failed to download';
+    showToast(errorText, 'error');
   }
 }
 
@@ -4110,6 +5213,10 @@ function startStatePolling() {
       }
       
       failedAttempts = 0;
+      
+      // Check summary generation status from storage
+      await checkSummaryStatus();
+      
     } catch (error) {
       failedAttempts++;
       logWarn('Failed to get state from background', { attempt: failedAttempts });
@@ -4129,6 +5236,9 @@ function startStatePolling() {
         }
       }
       
+      // Check summary status even on errors
+      await checkSummaryStatus();
+      
       // Increase interval on errors
       pollInterval = Math.min(pollInterval * 2, 5000);
     } finally {
@@ -4141,6 +5251,134 @@ function startStatePolling() {
   }
   
   poll();
+}
+
+// Check summary generation status from storage
+async function checkSummaryStatus() {
+  try {
+    const result = await chrome.storage.local.get([
+      STORAGE_KEYS.SUMMARY_GENERATING,
+      STORAGE_KEYS.SUMMARY_TEXT,
+      'summary_generating_start_time' // Track when generation started
+    ]);
+    
+    // Check if generation flag is stale (more than 5 minutes old)
+    const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    
+    if (result[STORAGE_KEYS.SUMMARY_GENERATING]) {
+      if (!result.summary_generating_start_time) {
+        // No timestamp - flag is from old version or was set incorrectly, reset it
+        logWarn('Summary generation flag has no timestamp in checkSummaryStatus, resetting', {});
+        await chrome.storage.local.set({ 
+          [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+          summary_generating_start_time: null
+        });
+        result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
+      } else {
+        const timeSinceStart = Date.now() - result.summary_generating_start_time;
+        
+        if (timeSinceStart > STALE_THRESHOLD) {
+          // Flag is stale - reset it
+          logWarn('Summary generation flag is stale, resetting', { timeSinceStart });
+          await chrome.storage.local.set({ 
+            [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+            summary_generating_start_time: null
+          });
+          result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
+          
+          // Ensure button is enabled after reset
+          if (elements.generateSummaryBtn) {
+            elements.generateSummaryBtn.disabled = false;
+            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            elements.generateSummaryBtn.textContent = generateSummaryText;
+          }
+        }
+      }
+    }
+    
+    if (result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
+      // Summary generation is in progress - show status
+      const generatingText = await t('generatingSummary') || 'Generating summary...';
+      elements.generateSummaryBtn.textContent = generatingText;
+      elements.generateSummaryBtn.disabled = true;
+      log('checkSummaryStatus: Generation in progress - button disabled', { text: generatingText });
+    } else if (result[STORAGE_KEYS.SUMMARY_TEXT] && !result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryText && elements.summaryContainer) {
+      // Summary is ready - display it
+      // КРИТИЧНО: Restore button when summary is ready
+      if (elements.generateSummaryBtn) {
+        elements.generateSummaryBtn.disabled = false;
+        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        elements.generateSummaryBtn.textContent = generateSummaryText;
+        log('checkSummaryStatus: Summary ready - button restored', { text: generateSummaryText });
+      }
+      
+      // Check if summary content has changed before updating
+      const savedSummary = result[STORAGE_KEYS.SUMMARY_TEXT];
+      const currentMarkdown = elements.summaryText.dataset.originalMarkdown;
+      
+      // Only update if content changed or container is hidden
+      const wasExpanded = elements.summaryContent.classList.contains('expanded');
+      const containerWasHidden = elements.summaryContainer.style.display === 'none';
+      
+      if (currentMarkdown !== savedSummary || containerWasHidden) {
+        elements.summaryText.dataset.originalMarkdown = savedSummary;
+        const htmlSummary = markdownToHtml(savedSummary);
+        elements.summaryText.innerHTML = htmlSummary;
+        elements.summaryContainer.style.display = 'block';
+        
+        // Only collapse if container was hidden (new summary)
+        // Preserve expanded state if user already expanded it and content is the same
+        if (containerWasHidden || !currentMarkdown) {
+          elements.summaryContent.classList.remove('expanded');
+          const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
+          if (toggleIcon) toggleIcon.textContent = '▶';
+        } else if (wasExpanded && currentMarkdown === savedSummary) {
+          // Restore expanded state if it was expanded before and content is the same
+          elements.summaryContent.classList.add('expanded');
+          const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
+          if (toggleIcon) toggleIcon.textContent = '▼';
+        }
+      } else {
+        // Content hasn't changed - preserve expanded state
+        // Don't touch the DOM if nothing changed
+      }
+    } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
+      // КРИТИЧНО: If generation is not in progress and no summary, ensure button is enabled
+      // BUT: Only restore if button is currently disabled (to avoid race conditions)
+      // Don't restore if button is already enabled or if we're in the middle of generation
+      if (elements.generateSummaryBtn.disabled) {
+        // Double-check: make sure generation really is not in progress
+        // This prevents race condition where flag hasn't been set yet
+        const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
+        if (!doubleCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
+          elements.generateSummaryBtn.disabled = false;
+          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          elements.generateSummaryBtn.textContent = generateSummaryText;
+          log('checkSummaryStatus: No generation in progress - button enabled');
+        } else {
+          // Flag was set between checks - keep button disabled
+          elements.generateSummaryBtn.disabled = true;
+          const generatingText = await t('generatingSummary') || 'Generating summary...';
+          elements.generateSummaryBtn.textContent = generatingText;
+          log('checkSummaryStatus: Generation flag found on double-check - button kept disabled');
+        }
+      }
+    } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
+      // Generation finished but no summary - probably error or cancelled
+      // Re-enable button
+      elements.generateSummaryBtn.disabled = false;
+      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+      elements.generateSummaryBtn.textContent = generateSummaryText;
+    }
+  } catch (error) {
+    logWarn('Error checking summary status', error);
+    // On error, ensure button is enabled
+    if (elements.generateSummaryBtn) {
+      elements.generateSummaryBtn.disabled = false;
+      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+      elements.generateSummaryBtn.textContent = generateSummaryText;
+    }
+  }
 }
 
 // Update UI based on processing state
@@ -4656,4 +5894,21 @@ async function displayCacheStats(stats) {
 }
 
 // Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', init);
+// For ES modules, DOM might already be loaded when script executes
+console.log('[ClipAIble] popup.js: Setting up initialization, document.readyState:', document.readyState);
+
+if (document.readyState === 'loading') {
+  console.log('[ClipAIble] popup.js: DOM still loading, waiting for DOMContentLoaded');
+  document.addEventListener('DOMContentLoaded', () => {
+    console.log('[ClipAIble] popup.js: DOMContentLoaded fired, calling init()');
+    init().catch(error => {
+      console.error('[ClipAIble] popup.js: init() failed after DOMContentLoaded', error);
+    });
+  });
+} else {
+  // DOM is already loaded, call init immediately
+  console.log('[ClipAIble] popup.js: DOM already loaded, calling init() immediately');
+  init().catch(error => {
+    console.error('[ClipAIble] popup.js: init() failed immediately', error);
+  });
+}

@@ -219,6 +219,8 @@ export const UI_LOCALES = {
     selectNarratorVoiceHint: 'Select narrator voice for audio',
     speedHint: '0.5x (slow) to 2x (fast)',
     speedNotApplicable: 'Not applicable for this provider',
+    loadingArticle: 'Loading article...',
+    loadingPage: 'Loading...',
     stageStarting: 'Starting…',
     stageAnalyzing: 'Analyzing page structure…',
     stageExtracting: 'Extracting content…',
@@ -241,6 +243,9 @@ export const UI_LOCALES = {
     statusExtractingFromPage: 'Extracting content from page...',
     statusExtractingSubtitles: 'Extracting subtitles...',
     statusProcessingSubtitles: 'Processing subtitles...',
+    extractingSubtitles: 'Extracting subtitles...',
+    extractingPageContent: 'Extracting content...',
+    errorSubtitleProcessingFailed: 'Failed to process subtitles',
     statusProcessingComplete: 'Processing complete',
     statusAnalyzingPage: 'Analyzing page...',
     statusExtractingContent: 'Extracting content...',
@@ -316,6 +321,26 @@ export const UI_LOCALES = {
     audioMp3: 'Audio',
     defaultSegoeUi: 'Default (Segoe UI)',
     resetToDefaultTitle: 'Reset to default',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Audio',
+    
+    // Model management
+    deleteModel: 'Delete model',
+    hideModel: 'Hide model',
+    
+    // Error messages
+    errorCheckConsole: 'Error: Check console',
+    
+    // Language select
+    autoOriginal: 'Auto (original)',
+    
+    // Modal
+    closeButton: 'Close',
     
     // Confirm dialogs
     clearAllStatisticsConfirm: 'Clear all statistics? This cannot be undone.',
@@ -393,7 +418,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Converting article to text...',
     stagePreparingSegment: 'Preparing segment {current}/{total} for audio...',
-    stageSplittingIntoChunks: 'Splitting into audio segments...'
+    stageSplittingIntoChunks: 'Splitting into audio segments...',
+    
+    // Summary
+    generateSummary: 'Generate Summary',
+    summary: 'Summary',
+    generatingSummary: 'Generating summary...',
+    noContentAvailable: 'No content available. Please extract content first.',
+    noTextContent: 'No text content found.',
+    summaryGenerated: 'Summary generated successfully',
+    summaryGenerationFailed: 'Failed to generate summary',
+    summaryGenerationError: 'Error generating summary',
+    copiedToClipboard: 'Copied to clipboard',
+    copyFailed: 'Failed to copy',
+    downloaded: 'Downloaded',
+    downloadFailed: 'Failed to download',
+    copy: 'Copy',
+    download: 'Download',
+    close: 'Close'
   },
   
   ru: {
@@ -635,6 +677,26 @@ export const UI_LOCALES = {
     defaultSegoeUi: 'По умолчанию (Segoe UI)',
     resetToDefaultTitle: 'Сбросить по умолчанию',
     
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Аудио',
+    
+    // Model management
+    deleteModel: 'Удалить модель',
+    hideModel: 'Скрыть модель',
+    
+    // Error messages
+    errorCheckConsole: 'Ошибка: Проверьте консоль',
+    
+    // Language select
+    autoOriginal: 'Авто (оригинал)',
+    
+    // Modal
+    closeButton: 'Закрыть',
+    
     // Confirm dialogs
     clearAllStatisticsConfirm: 'Очистить всю статистику? Это действие нельзя отменить.',
     clearSelectorCacheConfirm: 'Очистить кэш селекторов? Следующие извлечения будут использовать ИИ.',
@@ -709,6 +771,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Загрузка статьи...',
+    loadingPage: 'Загрузка...',
     stageStarting: 'Запуск…',
     stageAnalyzing: 'Анализ структуры страницы…',
     stageExtracting: 'Извлечение содержимого…',
@@ -743,7 +807,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Преобразование статьи в текст...',
     stagePreparingSegment: 'Подготовка сегмента {current}/{total} для аудио...',
-    stageSplittingIntoChunks: 'Разделение на аудио сегменты...'
+    stageSplittingIntoChunks: 'Разделение на аудио сегменты...',
+    
+    // Summary
+    generateSummary: 'Сделать саммари',
+    summary: 'Саммари',
+    generatingSummary: 'Генерация саммари...',
+    noContentAvailable: 'Контент недоступен. Пожалуйста, сначала извлеките контент.',
+    noTextContent: 'Текстовый контент не найден.',
+    summaryGenerated: 'Саммари успешно создано',
+    summaryGenerationFailed: 'Не удалось создать саммари',
+    summaryGenerationError: 'Ошибка при создании саммари',
+    copiedToClipboard: 'Скопировано в буфер обмена',
+    copyFailed: 'Не удалось скопировать',
+    downloaded: 'Скачано',
+    downloadFailed: 'Не удалось скачать',
+    copy: 'Копировать',
+    download: 'Скачать',
+    close: 'Закрыть'
   },
   
   ua: {
@@ -996,6 +1077,26 @@ export const UI_LOCALES = {
     defaultSegoeUi: 'За замовчуванням (Segoe UI)',
     resetToDefaultTitle: 'Скинути за замовчуванням',
     
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Аудіо',
+    
+    // Model management
+    deleteModel: 'Видалити модель',
+    hideModel: 'Приховати модель',
+    
+    // Error messages
+    errorCheckConsole: 'Помилка: Перевірте консоль',
+    
+    // Language select
+    autoOriginal: 'Авто (оригінал)',
+    
+    // Modal
+    closeButton: 'Закрити',
+    
     // Error messages
     quickSaveStarted: 'Збереження як {format}...',
     errorQuickSaveNoKey: 'Будь ласка, спочатку налаштуйте API ключ у налаштуваннях розширення.',
@@ -1084,6 +1185,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Завантаження статті...',
+    loadingPage: 'Завантаження...',
     stageStarting: 'Запуск…',
     stageAnalyzing: 'Аналіз структури сторінки…',
     stageExtracting: 'Витягування вмісту…',
@@ -1095,7 +1198,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Перетворення статті в текст...',
     stagePreparingSegment: 'Підготовка сегмента {current}/{total} для аудіо...',
-    stageSplittingIntoChunks: 'Розділення на аудіо сегменти...'
+    stageSplittingIntoChunks: 'Розділення на аудіо сегменти...',
+    
+    // Summary
+    generateSummary: 'Зробити саммарі',
+    summary: 'Саммарі',
+    generatingSummary: 'Генерація саммарі...',
+    noContentAvailable: 'Контент недоступний. Будь ласка, спочатку витягніть контент.',
+    noTextContent: 'Текстовий контент не знайдено.',
+    summaryGenerated: 'Саммарі успішно створено',
+    summaryGenerationFailed: 'Не вдалося створити саммарі',
+    summaryGenerationError: 'Помилка при створенні саммарі',
+    copiedToClipboard: 'Скопійовано в буфер обміну',
+    copyFailed: 'Не вдалося скопіювати',
+    downloaded: 'Завантажено',
+    downloadFailed: 'Не вдалося завантажити',
+    copy: 'Копіювати',
+    download: 'Завантажити',
+    close: 'Закрити'
   },
   
   de: {
@@ -1342,6 +1462,26 @@ export const UI_LOCALES = {
     defaultSegoeUi: 'Standard (Segoe UI)',
     resetToDefaultTitle: 'Auf Standard zurücksetzen',
     
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Audio',
+    
+    // Model management
+    deleteModel: 'Modell löschen',
+    hideModel: 'Modell ausblenden',
+    
+    // Error messages
+    errorCheckConsole: 'Fehler: Konsole überprüfen',
+    
+    // Language select
+    autoOriginal: 'Auto (Original)',
+    
+    // Modal
+    closeButton: 'Schließen',
+    
     // Error messages
     quickSaveStarted: 'Speichere als {format}...',
     errorQuickSaveNoKey: 'Bitte konfigurieren Sie zuerst einen API-Schlüssel in den Erweiterungseinstellungen.',
@@ -1406,6 +1546,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Artikel wird geladen...',
+    loadingPage: 'Wird geladen...',
     stageStarting: 'Start…',
     stageAnalyzing: 'Seitenstruktur analysieren…',
     stageExtracting: 'Inhalt extrahieren…',
@@ -1440,7 +1582,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Artikel in Text umwandeln...',
     stagePreparingSegment: 'Segment {current}/{total} für Audio vorbereiten...',
-    stageSplittingIntoChunks: 'In Audio-Segmente aufteilen...'
+    stageSplittingIntoChunks: 'In Audio-Segmente aufteilen...',
+    
+    // Summary
+    generateSummary: 'Zusammenfassung erstellen',
+    summary: 'Zusammenfassung',
+    generatingSummary: 'Zusammenfassung wird erstellt...',
+    noContentAvailable: 'Kein Inhalt verfügbar. Bitte extrahieren Sie zuerst den Inhalt.',
+    noTextContent: 'Kein Textinhalt gefunden.',
+    summaryGenerated: 'Zusammenfassung erfolgreich erstellt',
+    summaryGenerationFailed: 'Zusammenfassung konnte nicht erstellt werden',
+    summaryGenerationError: 'Fehler beim Erstellen der Zusammenfassung',
+    copiedToClipboard: 'In Zwischenablage kopiert',
+    copyFailed: 'Kopieren fehlgeschlagen',
+    downloaded: 'Heruntergeladen',
+    downloadFailed: 'Download fehlgeschlagen',
+    copy: 'Kopieren',
+    download: 'Herunterladen',
+    close: 'Schließen'
   },
   
   fr: {
@@ -1685,6 +1844,27 @@ export const UI_LOCALES = {
     audioMp3: 'Audio',
     defaultSegoeUi: 'Par défaut (Segoe UI)',
     resetToDefaultTitle: 'Réinitialiser par défaut',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Audio',
+    
+    // Model management
+    deleteModel: 'Supprimer le modèle',
+    hideModel: 'Masquer le modèle',
+    
+    // Error messages
+    errorCheckConsole: 'Erreur: Vérifiez la console',
+    
+    // Language select
+    autoOriginal: 'Auto (original)',
+    
+    // Modal
+    closeButton: 'Fermer',
+    
     clearAllStatisticsConfirm: 'Effacer toutes les statistiques? Cette action est irréversible.',
     clearSelectorCacheConfirm: 'Vider le cache des sélecteurs? Les prochaines extractions utiliseront l\'IA.',
     includeStatisticsInExport: 'Inclure les statistiques dans l\'export?',
@@ -1759,6 +1939,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Chargement de l\'article...',
+    loadingPage: 'Chargement...',
     stageStarting: 'Démarrage…',
     stageAnalyzing: 'Analyse de la structure de la page…',
     stageExtracting: 'Extraction du contenu…',
@@ -1793,7 +1975,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Conversion de l\'article en texte...',
     stagePreparingSegment: 'Préparation du segment {current}/{total} pour l\'audio...',
-    stageSplittingIntoChunks: 'Division en segments audio...'
+    stageSplittingIntoChunks: 'Division en segments audio...',
+    
+    // Summary
+    generateSummary: 'Générer un résumé',
+    summary: 'Résumé',
+    generatingSummary: 'Génération du résumé...',
+    noContentAvailable: 'Aucun contenu disponible. Veuillez d\'abord extraire le contenu.',
+    noTextContent: 'Aucun contenu texte trouvé.',
+    summaryGenerated: 'Résumé généré avec succès',
+    summaryGenerationFailed: 'Échec de la génération du résumé',
+    summaryGenerationError: 'Erreur lors de la génération du résumé',
+    copiedToClipboard: 'Copié dans le presse-papiers',
+    copyFailed: 'Échec de la copie',
+    downloaded: 'Téléchargé',
+    downloadFailed: 'Échec du téléchargement',
+    copy: 'Copier',
+    download: 'Télécharger',
+    close: 'Fermer'
   },
   
   es: {
@@ -2039,6 +2238,27 @@ export const UI_LOCALES = {
     audioMp3: 'Audio',
     defaultSegoeUi: 'Por defecto (Segoe UI)',
     resetToDefaultTitle: 'Restablecer por defecto',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Audio',
+    
+    // Model management
+    deleteModel: 'Eliminar modelo',
+    hideModel: 'Ocultar modelo',
+    
+    // Error messages
+    errorCheckConsole: 'Error: Verifique la consola',
+    
+    // Language select
+    autoOriginal: 'Auto (original)',
+    
+    // Modal
+    closeButton: 'Cerrar',
+    
     clearAllStatisticsConfirm: '¿Limpiar todas las estadísticas? Esto no se puede deshacer.',
     clearSelectorCacheConfirm: '¿Limpiar caché de selectores? Las próximas extracciones usarán IA.',
     includeStatisticsInExport: '¿Incluir estadísticas en la exportación?',
@@ -2112,6 +2332,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Cargando artículo...',
+    loadingPage: 'Cargando...',
     stageStarting: 'Iniciando…',
     stageAnalyzing: 'Analizando estructura de la página…',
     stageExtracting: 'Extrayendo contenido…',
@@ -2146,7 +2368,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Convirtiendo artículo a texto...',
     stagePreparingSegment: 'Preparando segmento {current}/{total} para audio...',
-    stageSplittingIntoChunks: 'Dividiendo en segmentos de audio...'
+    stageSplittingIntoChunks: 'Dividiendo en segmentos de audio...',
+    
+    // Summary
+    generateSummary: 'Generar resumen',
+    summary: 'Resumen',
+    generatingSummary: 'Generando resumen...',
+    noContentAvailable: 'No hay contenido disponible. Por favor, extraiga el contenido primero.',
+    noTextContent: 'No se encontró contenido de texto.',
+    summaryGenerated: 'Resumen generado con éxito',
+    summaryGenerationFailed: 'Error al generar el resumen',
+    summaryGenerationError: 'Error al generar el resumen',
+    copiedToClipboard: 'Copiado al portapapeles',
+    copyFailed: 'Error al copiar',
+    downloaded: 'Descargado',
+    downloadFailed: 'Error al descargar',
+    copy: 'Copiar',
+    download: 'Descargar',
+    close: 'Cerrar'
   },
   
   it: {
@@ -2392,6 +2631,27 @@ export const UI_LOCALES = {
     audioMp3: 'Audio',
     defaultSegoeUi: 'Predefinito (Segoe UI)',
     resetToDefaultTitle: 'Ripristina predefinito',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Audio',
+    
+    // Model management
+    deleteModel: 'Elimina modello',
+    hideModel: 'Nascondi modello',
+    
+    // Error messages
+    errorCheckConsole: 'Errore: Controlla la console',
+    
+    // Language select
+    autoOriginal: 'Auto (originale)',
+    
+    // Modal
+    closeButton: 'Chiudi',
+    
     clearAllStatisticsConfirm: 'Cancellare tutte le statistiche? Questa azione non può essere annullata.',
     clearSelectorCacheConfirm: 'Svuotare cache selettori? Le prossime estrazioni useranno l\'IA.',
     includeStatisticsInExport: 'Includere statistiche nell\'esportazione?',
@@ -2466,6 +2726,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Caricamento articolo...',
+    loadingPage: 'Caricamento...',
     stageStarting: 'Avvio…',
     stageAnalyzing: 'Analisi della struttura della pagina…',
     stageExtracting: 'Estrazione del contenuto…',
@@ -2500,7 +2762,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Conversione articolo in testo...',
     stagePreparingSegment: 'Preparazione segmento {current}/{total} per audio...',
-    stageSplittingIntoChunks: 'Divisione in segmenti audio...'
+    stageSplittingIntoChunks: 'Divisione in segmenti audio...',
+    
+    // Summary
+    generateSummary: 'Genera riassunto',
+    summary: 'Riassunto',
+    generatingSummary: 'Generazione riassunto...',
+    noContentAvailable: 'Nessun contenuto disponibile. Si prega di estrarre prima il contenuto.',
+    noTextContent: 'Nessun contenuto di testo trovato.',
+    summaryGenerated: 'Riassunto generato con successo',
+    summaryGenerationFailed: 'Impossibile generare il riassunto',
+    summaryGenerationError: 'Errore durante la generazione del riassunto',
+    copiedToClipboard: 'Copiato negli appunti',
+    copyFailed: 'Copia fallita',
+    downloaded: 'Scaricato',
+    downloadFailed: 'Download fallito',
+    copy: 'Copia',
+    download: 'Scarica',
+    close: 'Chiudi'
   },
   
   pt: {
@@ -2746,6 +3025,27 @@ export const UI_LOCALES = {
     audioMp3: 'Áudio',
     defaultSegoeUi: 'Padrão (Segoe UI)',
     resetToDefaultTitle: 'Redefinir ao padrão',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'Áudio',
+    
+    // Model management
+    deleteModel: 'Excluir modelo',
+    hideModel: 'Ocultar modelo',
+    
+    // Error messages
+    errorCheckConsole: 'Erro: Verifique o console',
+    
+    // Language select
+    autoOriginal: 'Auto (original)',
+    
+    // Modal
+    closeButton: 'Fechar',
+    
     clearAllStatisticsConfirm: 'Limpar todas as estatísticas? Isso não pode ser desfeito.',
     clearSelectorCacheConfirm: 'Limpar cache de seletores? As próximas extrações usarão IA.',
     includeStatisticsInExport: 'Incluir estatísticas na exportação?',
@@ -2820,6 +3120,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: 'Carregando artigo...',
+    loadingPage: 'Carregando...',
     stageStarting: 'Iniciando…',
     stageAnalyzing: 'Analisando estrutura da página…',
     stageExtracting: 'Extraindo conteúdo…',
@@ -2854,7 +3156,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: 'Convertendo artigo para texto...',
     stagePreparingSegment: 'Preparando segmento {current}/{total} para áudio...',
-    stageSplittingIntoChunks: 'Dividindo em segmentos de áudio...'
+    stageSplittingIntoChunks: 'Dividindo em segmentos de áudio...',
+    
+    // Summary
+    generateSummary: 'Gerar resumo',
+    summary: 'Resumo',
+    generatingSummary: 'Gerando resumo...',
+    noContentAvailable: 'Nenhum conteúdo disponível. Por favor, extraia o conteúdo primeiro.',
+    noTextContent: 'Nenhum conteúdo de texto encontrado.',
+    summaryGenerated: 'Resumo gerado com sucesso',
+    summaryGenerationFailed: 'Falha ao gerar resumo',
+    summaryGenerationError: 'Erro ao gerar resumo',
+    copiedToClipboard: 'Copiado para a área de transferência',
+    copyFailed: 'Falha ao copiar',
+    downloaded: 'Baixado',
+    downloadFailed: 'Falha ao baixar',
+    copy: 'Copiar',
+    download: 'Baixar',
+    close: 'Fechar'
   },
   
   zh: {
@@ -3100,6 +3419,27 @@ export const UI_LOCALES = {
     audioMp3: '音频',
     defaultSegoeUi: '默认（Segoe UI）',
     resetToDefaultTitle: '重置为默认',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: '音频',
+    
+    // Model management
+    deleteModel: '删除模型',
+    hideModel: '隐藏模型',
+    
+    // Error messages
+    errorCheckConsole: '错误：检查控制台',
+    
+    // Language select
+    autoOriginal: '自动（原文）',
+    
+    // Modal
+    closeButton: '关闭',
+    
     clearAllStatisticsConfirm: '清除所有统计？此操作无法撤销。',
     clearSelectorCacheConfirm: '清除选择器缓存？下次提取将使用AI。',
     includeStatisticsInExport: '在导出中包含统计？',
@@ -3174,6 +3514,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: '正在加载文章...',
+    loadingPage: '正在加载...',
     stageStarting: '启动中…',
     stageAnalyzing: '分析页面结构…',
     stageExtracting: '提取内容…',
@@ -3208,7 +3550,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: '正在将文章转换为文本...',
     stagePreparingSegment: '正在准备音频段 {current}/{total}...',
-    stageSplittingIntoChunks: '正在分割为音频段...'
+    stageSplittingIntoChunks: '正在分割为音频段...',
+    
+    // Summary
+    generateSummary: '生成摘要',
+    summary: '摘要',
+    generatingSummary: '正在生成摘要...',
+    noContentAvailable: '没有可用内容。请先提取内容。',
+    noTextContent: '未找到文本内容。',
+    summaryGenerated: '摘要生成成功',
+    summaryGenerationFailed: '摘要生成失败',
+    summaryGenerationError: '生成摘要时出错',
+    copiedToClipboard: '已复制到剪贴板',
+    copyFailed: '复制失败',
+    downloaded: '已下载',
+    downloadFailed: '下载失败',
+    copy: '复制',
+    download: '下载',
+    close: '关闭'
   },
   
   ja: {
@@ -3454,6 +3813,27 @@ export const UI_LOCALES = {
     audioMp3: '音声',
     defaultSegoeUi: 'デフォルト（Segoe UI）',
     resetToDefaultTitle: 'デフォルトにリセット',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: 'オーディオ',
+    
+    // Model management
+    deleteModel: 'モデルを削除',
+    hideModel: 'モデルを非表示',
+    
+    // Error messages
+    errorCheckConsole: 'エラー：コンソールを確認',
+    
+    // Language select
+    autoOriginal: '自動（原文）',
+    
+    // Modal
+    closeButton: '閉じる',
+    
     clearAllStatisticsConfirm: 'すべての統計をクリアしますか？この操作は元に戻せません。',
     clearSelectorCacheConfirm: 'セレクターキャッシュをクリアしますか？次の抽出ではAIが使用されます。',
     includeStatisticsInExport: 'エクスポートに統計を含めますか？',
@@ -3528,6 +3908,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: '記事を読み込み中...',
+    loadingPage: '読み込み中...',
     stageStarting: '開始中…',
     stageAnalyzing: 'ページ構造を分析中…',
     stageExtracting: 'コンテンツを抽出中…',
@@ -3562,7 +3944,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: '記事をテキストに変換中...',
     stagePreparingSegment: 'オーディオセグメント {current}/{total} を準備中...',
-    stageSplittingIntoChunks: 'オーディオセグメントに分割中...'
+    stageSplittingIntoChunks: 'オーディオセグメントに分割中...',
+    
+    // Summary
+    generateSummary: '要約を生成',
+    summary: '要約',
+    generatingSummary: '要約を生成中...',
+    noContentAvailable: 'コンテンツが利用できません。まずコンテンツを抽出してください。',
+    noTextContent: 'テキストコンテンツが見つかりませんでした。',
+    summaryGenerated: '要約が正常に生成されました',
+    summaryGenerationFailed: '要約の生成に失敗しました',
+    summaryGenerationError: '要約生成中にエラーが発生しました',
+    copiedToClipboard: 'クリップボードにコピーしました',
+    copyFailed: 'コピーに失敗しました',
+    downloaded: 'ダウンロードしました',
+    downloadFailed: 'ダウンロードに失敗しました',
+    copy: 'コピー',
+    download: 'ダウンロード',
+    close: '閉じる'
   },
   
   ko: {
@@ -3808,6 +4207,27 @@ export const UI_LOCALES = {
     audioMp3: '오디오',
     defaultSegoeUi: '기본값 (Segoe UI)',
     resetToDefaultTitle: '기본값으로 재설정',
+    
+    // Format names (short)
+    formatPdf: 'PDF',
+    formatEpub: 'EPUB',
+    formatFb2: 'FB2',
+    formatMarkdown: 'MD',
+    formatAudio: '오디오',
+    
+    // Model management
+    deleteModel: '모델 삭제',
+    hideModel: '모델 숨기기',
+    
+    // Error messages
+    errorCheckConsole: '오류: 콘솔 확인',
+    
+    // Language select
+    autoOriginal: '자동 (원문)',
+    
+    // Modal
+    closeButton: '닫기',
+    
     clearAllStatisticsConfirm: '모든 통계를 지우시겠습니까? 이 작업은 취소할 수 없습니다.',
     clearSelectorCacheConfirm: '선택자 캐시를 지우시겠습니까? 다음 추출에서는 AI가 사용됩니다.',
     includeStatisticsInExport: '내보내기에 통계를 포함하시겠습니까?',
@@ -3882,6 +4302,8 @@ export const UI_LOCALES = {
     
     // Audio preparation statuses
     // Processing stages
+    loadingArticle: '기사 로드 중...',
+    loadingPage: '로드 중...',
     stageStarting: '시작 중…',
     stageAnalyzing: '페이지 구조 분석 중…',
     stageExtracting: '콘텐츠 추출 중…',
@@ -3916,7 +4338,24 @@ export const UI_LOCALES = {
     // Audio preparation statuses
     stageConvertingToText: '기사를 텍스트로 변환 중...',
     stagePreparingSegment: '오디오 세그먼트 {current}/{total} 준비 중...',
-    stageSplittingIntoChunks: '오디오 세그먼트로 분할 중...'
+    stageSplittingIntoChunks: '오디오 세그먼트로 분할 중...',
+    
+    // Summary
+    generateSummary: '요약 생성',
+    summary: '요약',
+    generatingSummary: '요약 생성 중...',
+    noContentAvailable: '사용 가능한 콘텐츠가 없습니다. 먼저 콘텐츠를 추출하세요.',
+    noTextContent: '텍스트 콘텐츠를 찾을 수 없습니다.',
+    summaryGenerated: '요약이 성공적으로 생성되었습니다',
+    summaryGenerationFailed: '요약 생성 실패',
+    summaryGenerationError: '요약 생성 중 오류 발생',
+    copiedToClipboard: '클립보드에 복사됨',
+    copyFailed: '복사 실패',
+    downloaded: '다운로드됨',
+    downloadFailed: '다운로드 실패',
+    copy: '복사',
+    download: '다운로드',
+    close: '닫기'
   }
 };
 

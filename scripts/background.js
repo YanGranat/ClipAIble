@@ -1,18 +1,57 @@
 // Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
 
+console.log('[ClipAIble] background.js: Service worker started loading');
+
 // Global error handler for uncaught errors during module loading
+// КРИТИЧНО: Enhanced error handling to prevent service worker crashes
 self.addEventListener('error', (event) => {
   console.error('[ClipAIble] Uncaught error during module loading:', event.error);
   console.error('[ClipAIble] Error stack:', event.error?.stack);
+  
+  // Try to save error state to storage for recovery
+  try {
+    chrome.storage.local.set({
+      lastError: {
+        message: event.error?.message || String(event.error),
+        stack: event.error?.stack,
+        timestamp: Date.now()
+      }
+    }).catch(() => {
+      // Ignore storage errors in error handler
+    });
+  } catch (e) {
+    // Ignore errors in error handler
+  }
 });
 
 self.addEventListener('unhandledrejection', (event) => {
   console.error('[ClipAIble] Unhandled promise rejection:', event.reason);
   console.error('[ClipAIble] Rejection stack:', event.reason?.stack);
+  
+  // Try to save error state to storage for recovery
+  try {
+    chrome.storage.local.set({
+      lastError: {
+        message: event.reason?.message || String(event.reason),
+        stack: event.reason?.stack,
+        timestamp: Date.now(),
+        type: 'unhandledRejection'
+      }
+    }).catch(() => {
+      // Ignore storage errors in error handler
+    });
+  } catch (e) {
+    // Ignore errors in error handler
+  }
+  
+  // КРИТИЧНО: Prevent default behavior to keep service worker alive
+  // Don't prevent default - let it fail gracefully
 });
 
 import { log, logError, logWarn } from './utils/logging.js';
+
+console.log('[ClipAIble] background.js: logging.js imported');
 import { CONFIG } from './utils/config.js';
 import { 
   getProcessingState, 
@@ -65,6 +104,8 @@ import { detectVideoPlatform } from './utils/video.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from './extraction/video-processor.js';
 import { createUserFriendlyError } from './utils/error-messages.js';
+
+console.log('[ClipAIble] background.js: All imports completed');
 
 // ============================================
 // NOTIFICATION HELPER
@@ -240,7 +281,8 @@ setTimeout(() => {
     console.error('[ClipAIble] Failed to log:', error);
   }
 
-  // Restore state on service worker restart (non-blocking)
+  // КРИТИЧНО: Restore state on service worker restart (non-blocking)
+  // This is already called in setTimeout below, but keep this as backup
   try {
     restoreStateFromStorage();
   } catch (error) {
@@ -274,6 +316,13 @@ const KEEP_ALIVE_ALARM = 'keepAlive';
 let keepAliveFallbackTimer = null;
 
 function startKeepAlive() {
+  // КРИТИЧНО: Prevent race condition - check if already running
+  // If keep-alive is already active, don't restart it (prevents interruption)
+  if (keepAliveFallbackTimer) {
+    log('Keep-alive already running, not restarting to avoid interruption');
+    return; // Already running - don't restart
+  }
+  
   // Prevent race condition: clear existing timer BEFORE creating new one
   // This ensures we don't have multiple timers running simultaneously
   if (keepAliveFallbackTimer) {
@@ -281,24 +330,57 @@ function startKeepAlive() {
     keepAliveFallbackTimer = null;
   }
   
-  chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
+  // КРИТИЧНО: Create alarm with delayInMinutes: 0 to fire immediately, then periodically
+  chrome.alarms.create(KEEP_ALIVE_ALARM, { 
+    delayInMinutes: 0, // Fire immediately
+    periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL 
+  });
   if (chrome.runtime.lastError) {
     logWarn('Keep-alive alarm creation failed, enabling fallback timer', { error: chrome.runtime.lastError.message });
   }
   
-  // Fallback ping in case alarms are throttled; MV3 requires >=1m, this keeps SW alive during long tasks.
+  // ULTRA AGGRESSIVE fallback ping - MV3 requires >=1m for alarms, but we ping storage every 10 seconds
+  // This is the PRIMARY keep-alive mechanism - alarms are just backup
   // Create new timer only after clearing old one to prevent race condition
-  // Use more frequent pings to prevent service worker from being killed
-  keepAliveFallbackTimer = setInterval(() => {
-    const state = getProcessingState();
-    log('Keep-alive fallback ping', { isProcessing: state.isProcessing });
-    if (state.isProcessing) {
-      // Save state more frequently to keep service worker alive
-      chrome.storage.local.set({
-        processingState: { ...state, lastUpdate: Date.now() }
-      });
+  keepAliveFallbackTimer = setInterval(async () => {
+    try {
+      const state = getProcessingState();
+      const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+      const isSummaryGenerating = summaryState.summary_generating === true;
+      
+      // КРИТИЧНО: ALWAYS ping storage if processing OR generating summary - this keeps SW alive
+      if (state.isProcessing || isSummaryGenerating) {
+        // ULTRA AGGRESSIVE: Save state EVERY TIME to keep service worker alive
+        const keepAliveData = {
+          processingState: state.isProcessing ? { ...state, lastUpdate: Date.now() } : undefined,
+          summary_generating: isSummaryGenerating ? true : undefined,
+          summary_generating_start_time: isSummaryGenerating ? (summaryState.summary_generating_start_time || Date.now()) : undefined,
+          // КРИТИЧНО: Add heartbeat timestamp to ensure SW stays alive
+          keepAliveHeartbeat: Date.now()
+        };
+        
+        // Remove undefined values
+        Object.keys(keepAliveData).forEach(key => {
+          if (keepAliveData[key] === undefined) {
+            delete keepAliveData[key];
+          }
+        });
+        
+        if (Object.keys(keepAliveData).length > 0) {
+          // КРИТИЧНО: Use set() with callback to ensure it completes - this keeps SW alive
+          chrome.storage.local.set(keepAliveData, () => {
+            // Callback ensures operation completes - keeps SW alive
+            if (chrome.runtime.lastError) {
+              logWarn('Keep-alive storage write error', chrome.runtime.lastError);
+            }
+          });
+        }
+      }
+    } catch (error) {
+      logError('Keep-alive fallback ping error', error);
+      // Don't stop - continue trying
     }
-  }, CONFIG.KEEP_ALIVE_PING_INTERVAL * 1000); // Use seconds-based interval for more frequent pings
+  }, CONFIG.KEEP_ALIVE_PING_INTERVAL * 1000); // ULTRA FREQUENT: Every 10 seconds
   
   // Start periodic state save for additional reliability
   startPeriodicStateSave();
@@ -307,44 +389,128 @@ function startKeepAlive() {
 }
 
 function stopKeepAlive() {
-  try {
-    chrome.alarms.clear(KEEP_ALIVE_ALARM);
-  } catch (error) {
-    logWarn('Failed to clear keep-alive alarm', error);
-  }
-  
-  // Guaranteed cleanup of fallback timer
-  if (keepAliveFallbackTimer) {
-    try {
-      clearInterval(keepAliveFallbackTimer);
-    } catch (error) {
-      logWarn('Failed to clear keep-alive fallback timer', error);
-    } finally {
-      keepAliveFallbackTimer = null;
+  // КРИТИЧНО: Check if we should actually stop keep-alive
+  // Only stop if NOT processing AND NOT generating summary
+  const state = getProcessingState();
+  chrome.storage.local.get(['summary_generating']).then(summaryState => {
+    const isSummaryGenerating = summaryState.summary_generating === true;
+    
+    if (state.isProcessing || isSummaryGenerating) {
+      log('Keep-alive stop requested but operation still in progress, keeping alive', {
+        isProcessing: state.isProcessing,
+        isSummaryGenerating: isSummaryGenerating
+      });
+      return; // Don't stop - operation is still running
     }
-  }
-  
-  // Stop periodic state save
-  stopPeriodicStateSave();
-  
-  log('Keep-alive stopped');
+    
+    // Safe to stop - no operations in progress
+    try {
+      chrome.alarms.clear(KEEP_ALIVE_ALARM);
+    } catch (error) {
+      logWarn('Failed to clear keep-alive alarm', error);
+    }
+    
+    // Guaranteed cleanup of fallback timer
+    if (keepAliveFallbackTimer) {
+      try {
+        clearInterval(keepAliveFallbackTimer);
+      } catch (error) {
+        logWarn('Failed to clear keep-alive fallback timer', error);
+      } finally {
+        keepAliveFallbackTimer = null;
+      }
+    }
+    
+    // Stop periodic state save
+    stopPeriodicStateSave();
+    
+    log('Keep-alive stopped');
+  }).catch(error => {
+    logError('Failed to check state before stopping keep-alive', error);
+    // On error, be safe and don't stop keep-alive
+  });
 }
 
 try {
-  chrome.alarms.onAlarm.addListener((alarm) => {
+  chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === KEEP_ALIVE_ALARM) {
-      const state = getProcessingState();
-      log('Keep-alive ping', { isProcessing: state.isProcessing });
-      if (state.isProcessing) {
-        // Save state to keep service worker alive and preserve progress
-        chrome.storage.local.set({ 
-          processingState: { ...state, lastUpdate: Date.now() }
-        });
+      try {
+        const state = getProcessingState();
+        const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+        const isSummaryGenerating = summaryState.summary_generating === true;
+        
+        // КРИТИЧНО: Keep service worker alive if processing OR generating summary
+        if (state.isProcessing || isSummaryGenerating) {
+          const keepAliveData = {
+            processingState: state.isProcessing ? { ...state, lastUpdate: Date.now() } : undefined,
+            summary_generating: isSummaryGenerating ? true : undefined,
+            summary_generating_start_time: isSummaryGenerating ? (summaryState.summary_generating_start_time || Date.now()) : undefined,
+            // КРИТИЧНО: Add heartbeat timestamp
+            keepAliveHeartbeat: Date.now()
+          };
+          
+          // Remove undefined values
+          Object.keys(keepAliveData).forEach(key => {
+            if (keepAliveData[key] === undefined) {
+              delete keepAliveData[key];
+            }
+          });
+          
+          if (Object.keys(keepAliveData).length > 0) {
+            // КРИТИЧНО: Use set() with callback to ensure it completes
+            chrome.storage.local.set(keepAliveData, () => {
+              if (chrome.runtime.lastError) {
+                logWarn('Keep-alive alarm storage write error', chrome.runtime.lastError);
+              }
+            });
+          }
+        }
+      } catch (error) {
+        logError('Keep-alive alarm handler error', error);
+        // Don't stop - continue
       }
     }
   });
 } catch (error) {
   console.error('[ClipAIble] Failed to register alarms.onAlarm listener:', error);
+}
+
+// КРИТИЧНО: Additional keep-alive via storage.onChanged listener
+// This creates activity even when just reading storage, keeping SW alive
+try {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local') {
+      // КРИТИЧНО: Check if we're processing/generating and need to keep alive
+      // This listener creates activity that keeps SW alive
+      if (changes.summary_generating || changes.processingState || changes.keepAliveHeartbeat) {
+        // Just the act of this listener running keeps SW alive
+        // No need to do anything - the listener itself is the keep-alive mechanism
+      }
+    }
+  });
+} catch (error) {
+  logWarn('Failed to register storage.onChanged listener for keep-alive', error);
+}
+
+// КРИТИЧНО: Additional keep-alive via runtime.onConnect
+// This maintains a connection that keeps service worker alive
+try {
+  chrome.runtime.onConnect.addListener((port) => {
+    log('Runtime connection established', { portName: port.name });
+    
+    // Keep connection alive by responding to messages
+    port.onMessage.addListener((msg) => {
+      if (msg.type === 'ping') {
+        port.postMessage({ type: 'pong', timestamp: Date.now() });
+      }
+    });
+    
+    port.onDisconnect.addListener(() => {
+      log('Runtime connection closed', { portName: port.name });
+    });
+  });
+} catch (error) {
+  logWarn('Failed to register runtime.onConnect listener', error);
 }
 
 // Additional keep-alive mechanism: periodic state save during processing
@@ -354,18 +520,47 @@ function startPeriodicStateSave() {
   if (stateSaveInterval) {
     clearInterval(stateSaveInterval);
   }
-  stateSaveInterval = setInterval(() => {
-    const state = getProcessingState();
-    if (state.isProcessing) {
-      chrome.storage.local.set({
-        processingState: { ...state, lastUpdate: Date.now() }
-      });
-    } else {
-      // Stop saving if not processing
-      if (stateSaveInterval) {
-        clearInterval(stateSaveInterval);
-        stateSaveInterval = null;
+  stateSaveInterval = setInterval(async () => {
+    try {
+      const state = getProcessingState();
+      const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+      const isSummaryGenerating = summaryState.summary_generating === true;
+      
+      // КРИТИЧНО: Keep saving if processing OR generating summary
+      if (state.isProcessing || isSummaryGenerating) {
+        const keepAliveData = {
+          processingState: state.isProcessing ? { ...state, lastUpdate: Date.now() } : undefined,
+          summary_generating: isSummaryGenerating ? true : undefined,
+          summary_generating_start_time: isSummaryGenerating ? (summaryState.summary_generating_start_time || Date.now()) : undefined,
+          // КРИТИЧНО: Add heartbeat timestamp
+          keepAliveHeartbeat: Date.now()
+        };
+        
+        // Remove undefined values
+        Object.keys(keepAliveData).forEach(key => {
+          if (keepAliveData[key] === undefined) {
+            delete keepAliveData[key];
+          }
+        });
+        
+        if (Object.keys(keepAliveData).length > 0) {
+          // КРИТИЧНО: Use set() with callback to ensure it completes - this keeps SW alive
+          chrome.storage.local.set(keepAliveData, () => {
+            if (chrome.runtime.lastError) {
+              logWarn('Periodic state save error', chrome.runtime.lastError);
+            }
+          });
+        }
+      } else {
+        // Stop saving if not processing and not generating summary
+        if (stateSaveInterval) {
+          clearInterval(stateSaveInterval);
+          stateSaveInterval = null;
+        }
       }
+    } catch (error) {
+      logError('Periodic state save error', error);
+      // Don't stop - continue trying
     }
   }, CONFIG.STATE_SAVE_INTERVAL);
   log('Periodic state save started', { interval: CONFIG.STATE_SAVE_INTERVAL });
@@ -546,10 +741,20 @@ async function updateContextMenu() {
 
 // Initialize context menu on install
 try {
-  chrome.runtime.onInstalled.addListener(() => {
+  chrome.runtime.onInstalled.addListener((details) => {
     updateContextMenu().catch(error => {
       logError('Failed to update context menu on install', error);
     });
+    
+    // КРИТИЧНО: Clear summary when extension is reloaded/updated
+    // This ensures summary is reset on extension reload, but NOT on popup close or tab switch
+    if (details.reason === 'update' || details.reason === 'install') {
+      chrome.storage.local.remove(['summary_text', 'summary_generating', 'summary_generating_start_time']).then(() => {
+        log('Summary cleared on extension reload/update', { reason: details.reason });
+      }).catch(error => {
+        logError('Failed to clear summary on extension reload', error);
+      });
+    }
   });
 } catch (error) {
   console.error('[ClipAIble] Failed to register runtime.onInstalled listener:', error);
@@ -563,10 +768,79 @@ setTimeout(() => {
   });
 }, 0);
 
+// КРИТИЧНО: Restore state from storage on service worker restart
+// This ensures processing can continue after service worker restart
+setTimeout(async () => {
+  try {
+    await restoreStateFromStorage();
+    
+    // КРИТИЧНО: Check if summary generation was in progress and restore it
+    const summaryState = await chrome.storage.local.get([
+      'summary_generating', 
+      'summary_generating_start_time',
+      'lastProcessedResult',
+      'lastSummaryGenerationData'
+    ]);
+    
+    if (summaryState.summary_generating === true) {
+      const startTime = summaryState.summary_generating_start_time || 0;
+      const age = Date.now() - startTime;
+      
+      // Only restore if generation started recently (within 2 hours)
+      if (age < CONFIG.STATE_EXPIRY_MS && summaryState.lastSummaryGenerationData) {
+        log('Summary generation was in progress, restoring...', {
+          age: age,
+          ageMinutes: Math.round(age / 60000),
+          hasData: !!summaryState.lastSummaryGenerationData
+        });
+        
+        // Restore summary generation
+        const genData = summaryState.lastSummaryGenerationData;
+        if (genData.contentItems && genData.apiKey && genData.model) {
+          // Start keep-alive
+          startKeepAlive();
+          
+          // Continue summary generation
+          generateSummary({
+            contentItems: genData.contentItems,
+            apiKey: genData.apiKey,
+            model: genData.model,
+            url: genData.url || ''
+          }).catch(error => {
+            logError('Restored summary generation failed', error);
+            chrome.storage.local.set({ 
+              summary_generating: false,
+              summary_generating_start_time: null
+            }).catch(() => {});
+            stopKeepAlive();
+          });
+        }
+      } else if (age >= CONFIG.STATE_EXPIRY_MS) {
+        // Generation is stale - clear it
+        log('Stale summary generation found, clearing', { age: age, ageMinutes: Math.round(age / 60000) });
+        await chrome.storage.local.set({ 
+          summary_generating: false,
+          summary_generating_start_time: null,
+          lastSummaryGenerationData: null
+        });
+      }
+    }
+  } catch (error) {
+    logError('Failed to restore state from storage', error);
+  }
+}, 100); // Small delay to ensure storage is ready
+
 // Update context menu when UI language changes
 try {
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local') {
+      
+      // КРИТИЧНО: Keep-alive mechanism - any storage change creates activity
+      // This listener itself keeps service worker alive
+      if (changes.keepAliveHeartbeat || changes.summary_generating || changes.processingState) {
+        // Just the act of this listener running keeps SW alive
+        // No action needed - listener is the keep-alive
+      }
       
       // Handle UI language change
       if (changes.ui_language) {
@@ -834,17 +1108,37 @@ async function handleQuickSave(outputFormat = 'pdf') {
 
 try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  log('Message received', { action: request.action, sender: sender.tab?.url || 'popup' });
+  const senderInfo = sender.tab ? `tab:${sender.tab.id} (${sender.tab.url})` : 'popup';
   
-  // Handle log messages from popup (removed debug logging)
+  // Handle ping for service worker availability check
+  if (request.action === 'ping') {
+    sendResponse({ success: true, timestamp: Date.now() });
+    return false; // Synchronous response
+  }
+  log('Message received in background', { 
+    action: request.action, 
+    sender: senderInfo,
+    hasData: !!request.data,
+    timestamp: new Date().toISOString()
+  });
+  
+  // Handle log messages from popup
   if (request.action === 'log') {
+    log('Log message from popup', { message: request.message, data: request.data });
     sendResponse({ success: true });
     return true;
   }
   
   try {
     if (request.action === 'getState') {
-      sendResponse(getProcessingState());
+      log('getState requested from popup', { sender: senderInfo });
+      const state = getProcessingState();
+      log('getState response', { 
+        hasState: !!state,
+        isProcessing: state?.isProcessing,
+        stage: state?.stage 
+      });
+      sendResponse(state);
       return true;
     }
     
@@ -862,6 +1156,37 @@ try {
         .catch(error => {
           logError('processArticle failed', error);
           sendResponse({ error: error.message || 'Processing failed' });
+        });
+      return true;
+    }
+    
+    if (request.action === 'extractContentOnly') {
+      log('extractContentOnly request received', { 
+        hasData: !!request.data, 
+        mode: request.data?.mode,
+        hasHtml: !!request.data?.html,
+        htmlLength: request.data?.html?.length,
+        url: request.data?.url,
+        tabId: request.data?.tabId
+      });
+      extractContentOnly(request.data)
+        .then(result => {
+          log('extractContentOnly success', { 
+            hasResult: !!result,
+            hasContent: !!result?.content,
+            contentItems: result?.content?.length,
+            title: result?.title
+          });
+          sendResponse({ success: true, result });
+        })
+        .catch(error => {
+          logError('extractContentOnly failed', error);
+          logError('extractContentOnly error details', { 
+            message: error.message, 
+            stack: error.stack,
+            data: request.data 
+          });
+          sendResponse({ error: error.message || 'Extraction failed' });
         });
       return true;
     }
@@ -976,8 +1301,15 @@ try {
     // returning true here prevents the temporary listener from receiving the message!
     // We only save to storage as a fallback for popup, but don't return true
     // to allow the message to reach the temporary listener in extractYouTubeSubtitles
-    if (request.action === 'youtubeSubtitlesResult' || 
-        (request.type === 'ClipAIbleYouTubeSubtitles' && request.action === 'youtubeSubtitlesResult')) {
+    // КРИТИЧНО: Проверяем все возможные форматы сообщений
+    const isYouTubeSubtitlesMessage = 
+      request.action === 'youtubeSubtitlesResult' || 
+      (request.type === 'ClipAIbleYouTubeSubtitles' && request.action === 'youtubeSubtitlesResult') ||
+      (request.type === 'ClipAIbleYouTubeSubtitles' && !request.action) ||
+      (request.type === 'ClipAIbleYouTubeSubtitles' && request.result) ||
+      (request.type === 'ClipAIbleYouTubeSubtitles' && request.error);
+    
+    if (isYouTubeSubtitlesMessage) {
       log('🟢 Received youtubeSubtitlesResult in main listener (fallback)', {
         action: request.action,
         type: request.type,
@@ -1009,14 +1341,13 @@ try {
       
       // CRITICAL: Don't return true here! Let the message pass through to temporary listener
       // The temporary listener will handle it and return true
-      // However, we need to acknowledge receipt to content script
-      // So we send response but don't return true, allowing message to pass through
-      // Note: In Chrome Extensions, if a listener returns false/undefined, the message
-      // continues to other listeners. But sendResponse can only be called once.
-      // So we send response here, but let the message pass through to temporary listener
-      // The temporary listener will also try to sendResponse, but that's OK - it will be ignored
-      sendResponse({ success: true, acknowledged: true, message: 'Received by main listener (passing through)' });
-      return false; // Let other listeners (temporary one) handle it
+      // КРИТИЧНО: НЕ вызываем sendResponse() здесь, потому что временный listener должен вызвать его
+      // Если мы вызовем sendResponse() здесь, временный listener не сможет вызвать его снова
+      // В Chrome Extensions, sendResponse можно вызвать только один раз
+      // Временный listener обработает сообщение и вызовет sendResponse()
+      // Мы просто сохраняем в storage для popup (fallback) и пропускаем сообщение дальше
+      // НЕ вызываем sendResponse() - пусть временный listener это сделает
+      return false; // Let other listeners (temporary one) handle it - они вызовут sendResponse()
     }
     
     if (request.action === 'logModelDropdown') {
@@ -1032,18 +1363,77 @@ try {
       return true;
     }
     
-    logWarn('Unknown action received', { action: request.action });
+    if (request.action === 'extractYouTubeSubtitlesForSummary') {
+      // Extract YouTube subtitles for summary generation (called from popup)
+      // КРИТИЧНО: Вызываем из background script, чтобы иметь правильный контекст
+      (async () => {
+        try {
+          const { tabId } = request.data;
+          
+          if (!tabId) {
+            sendResponse({ error: 'Tab ID is required' });
+            return;
+          }
+          
+          log('Extracting YouTube subtitles for summary (from background script)', { tabId });
+          
+          // Вызываем extractYouTubeSubtitles из контекста background script
+          // Это гарантирует, что listener будет создан в правильном контексте
+          const subtitlesData = await extractYouTubeSubtitles(tabId);
+          
+          log('YouTube subtitles extracted for summary', { 
+            subtitleCount: subtitlesData?.subtitles?.length || 0,
+            title: subtitlesData?.metadata?.title 
+          });
+          
+          sendResponse({ result: subtitlesData });
+        } catch (error) {
+          logError('Failed to extract YouTube subtitles for summary', error);
+          sendResponse({ error: error.message || 'Failed to extract subtitles' });
+        }
+      })();
+      return true; // Keep channel open for async response
+    }
+    
+    if (request.action === 'generateSummary') {
+      log('generateSummary request received', { 
+        hasData: !!request.data,
+        hasContent: !!request.data?.contentItems,
+        url: request.data?.url
+      });
+      generateSummary(request.data)
+        .then(result => {
+          log('generateSummary success', { hasSummary: !!result?.summary });
+          sendResponse({ success: true, summary: result?.summary });
+        })
+        .catch(error => {
+          logError('generateSummary failed', error);
+          sendResponse({ error: error.message || 'Summary generation failed' });
+        });
+      return true;
+    }
+    
+    logWarn('Unknown action received', { action: request.action, sender: senderInfo });
     sendResponse({ error: 'Unknown action' });
     return true;
     
   } catch (error) {
-    logError('Message handler error', error);
-    sendResponse({ error: error.message });
+    logError('Message handler error', { 
+      error, 
+      action: request?.action, 
+      sender: senderInfo,
+      message: error.message,
+      stack: error.stack 
+    });
+    sendResponse({ error: error.message || 'Handler error' });
     return true;
   }
   });
+  
+  log('Message listener registered successfully');
 } catch (error) {
   console.error('[ClipAIble] Failed to register runtime.onMessage listener:', error);
+  logError('CRITICAL: Failed to register message listener', error);
 }
 
 // ============================================
@@ -1193,9 +1583,15 @@ async function startArticleProcessing(data) {
   
   processFunction(data)
     .then(async result => {
+      // Ensure URL is stored in result for validation
+      if (result && !result.sourceUrl && !result.url && data.url) {
+        result.sourceUrl = data.url;
+      }
+      
       log('Processing complete', { 
         title: result.title, 
-        contentItems: result.content?.length || 0 
+        contentItems: result.content?.length || 0,
+        url: result?.sourceUrl || result?.url
       });
       
       // Continue with standard pipeline: translation, TOC/Abstract, generation
@@ -1266,6 +1662,377 @@ async function startArticleProcessing(data) {
   return true;
 }
 
+// ============================================
+// CONTENT EXTRACTION ONLY (for summary generation)
+// ============================================
+
+/**
+ * Extract content only without generating file
+ * Used for summary generation
+ * @param {Object} data - Processing data
+ * @returns {Promise<Object>} Extracted content result
+ */
+async function extractContentOnly(data) {
+  log('extractContentOnly called', { 
+    mode: data?.mode,
+    hasHtml: !!data?.html,
+    htmlLength: data?.html?.length,
+    url: data?.url,
+    title: data?.title,
+    tabId: data?.tabId
+  });
+  
+  try {
+    const { mode } = data;
+    
+    if (!mode) {
+      throw new Error('Mode is required');
+    }
+    
+    log('extractContentOnly: selecting process function', { mode });
+    
+    const processFunction = mode === 'selector' 
+      ? processWithSelectorMode 
+      : processWithExtractMode;
+    
+    log('extractContentOnly: calling process function', { 
+      functionName: processFunction.name,
+      mode 
+    });
+    
+    const result = await processFunction(data);
+    
+    // Ensure URL is stored in result for validation
+    if (result && !result.sourceUrl && !result.url && data.url) {
+      result.sourceUrl = data.url;
+    }
+    
+    log('extractContentOnly: process function completed', { 
+      hasResult: !!result,
+      hasContent: !!result?.content,
+      contentItems: result?.content?.length,
+      title: result?.title,
+      author: result?.author,
+      url: result?.sourceUrl || result?.url
+    });
+    
+    // Save result to state for summary generation
+    setResult(result);
+    
+    log('extractContentOnly: result saved to state');
+    
+    return result;
+  } catch (error) {
+    logError('extractContentOnly: error occurred', error);
+    logError('extractContentOnly: error context', { 
+      mode: data?.mode,
+      url: data?.url,
+      errorMessage: error.message,
+      errorStack: error.stack
+    });
+    throw error;
+  }
+}
+
+// ============================================
+// SUMMARY GENERATION
+// ============================================
+
+/**
+ * Generate summary for extracted content
+ * Works in background, continues even if popup is closed
+ * @param {Object} data - Summary generation data
+ * @param {Array} data.contentItems - Content items to summarize (optional, will get from state if not provided)
+ * @param {string} data.apiKey - API key
+ * @param {string} data.model - Model name
+ * @param {string} data.url - Page URL (optional, for logging)
+ * @returns {Promise<Object>} {summary: string}
+ */
+async function generateSummary(data) {
+  log('generateSummary called', { 
+    hasContentItems: !!data?.contentItems,
+    contentItemsCount: data?.contentItems?.length,
+    hasApiKey: !!data?.apiKey,
+    model: data?.model,
+    url: data?.url
+  });
+  
+  try {
+    // КРИТИЧНО: Start keep-alive IMMEDIATELY at the start of generateSummary
+    startKeepAlive();
+    log('Keep-alive started for summary generation');
+    
+    // КРИТИЧНО: Save generation data for recovery after service worker restart
+    await chrome.storage.local.set({
+      lastSummaryGenerationData: {
+        contentItems: data.contentItems,
+        apiKey: data.apiKey,
+        model: data.model,
+        url: data.url || '',
+        timestamp: Date.now()
+      }
+    });
+    
+    // Check if flag is already set (popup sets it before sending message)
+    const existing = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+    if (!existing.summary_generating) {
+      // Set generating flag in storage with timestamp (if not already set)
+      await chrome.storage.local.set({ 
+        summary_generating: true,
+        summary_generating_start_time: Date.now(), // Track when generation started
+        summary_text: '' // Clear previous summary
+      });
+    } else if (!existing.summary_generating_start_time) {
+      // Flag exists but no timestamp - add it
+      await chrome.storage.local.set({ 
+        summary_generating_start_time: Date.now()
+      });
+    }
+    
+    // Get current URL for validation
+    const currentUrl = data.url || '';
+    
+    // Normalize URLs for comparison (remove trailing slashes, fragments, etc.)
+    function normalizeUrl(url) {
+      if (!url) return '';
+      try {
+        const urlObj = new URL(url);
+        // Remove fragment, normalize path
+        urlObj.hash = '';
+        let path = urlObj.pathname;
+        if (path.endsWith('/') && path.length > 1) {
+          path = path.slice(0, -1);
+        }
+        urlObj.pathname = path;
+        return urlObj.toString();
+      } catch {
+        return url;
+      }
+    }
+    
+    const normalizedCurrentUrl = normalizeUrl(currentUrl);
+    
+    // Get content items - from data or from state
+    // КРИТИЧНО: Also check for raw subtitles (for YouTube summary generation)
+    let contentItems = data.contentItems;
+    let rawSubtitles = data.subtitles; // Raw subtitles from YouTube
+    
+    // If raw subtitles provided, convert them to contentItems
+    if ((!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) && rawSubtitles && Array.isArray(rawSubtitles) && rawSubtitles.length > 0) {
+      log('Converting raw subtitles to contentItems for summary', { subtitleCount: rawSubtitles.length });
+      contentItems = rawSubtitles.map(subtitle => {
+        // Handle both string and object formats
+        if (typeof subtitle === 'string') {
+          return { type: 'paragraph', text: subtitle };
+        } else if (subtitle.text) {
+          return { type: 'paragraph', text: subtitle.text };
+        } else {
+          return { type: 'paragraph', text: String(subtitle) };
+        }
+      });
+    }
+    
+    if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
+      // Try to get from state - but only if URL matches
+      const state = getProcessingState();
+      if (state && state.result && state.result.content) {
+        // Check if URL matches (if URL is available in result)
+        const resultUrl = state.result.sourceUrl || state.result.url || '';
+        const normalizedResultUrl = normalizeUrl(resultUrl);
+        
+        if (!normalizedCurrentUrl || !normalizedResultUrl || normalizedCurrentUrl === normalizedResultUrl) {
+          contentItems = state.result.content;
+          log('Got content from processing state', { 
+            count: contentItems.length,
+            currentUrl: normalizedCurrentUrl,
+            resultUrl: normalizedResultUrl,
+            urlMatch: normalizedCurrentUrl === normalizedResultUrl
+          });
+        } else {
+          logWarn('Content in state is from different URL, ignoring', {
+            currentUrl: normalizedCurrentUrl,
+            resultUrl: normalizedResultUrl
+          });
+        }
+      }
+      
+      // If still no content, try to get from storage (last processed result) - but only if URL matches
+      if ((!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) && normalizedCurrentUrl) {
+        try {
+          const stored = await chrome.storage.local.get(['lastProcessedResult']);
+          if (stored.lastProcessedResult && stored.lastProcessedResult.content) {
+            // Check if URL matches
+            const storedUrl = stored.lastProcessedResult.sourceUrl || stored.lastProcessedResult.url || '';
+            const normalizedStoredUrl = normalizeUrl(storedUrl);
+            
+            if (normalizedStoredUrl && normalizedCurrentUrl === normalizedStoredUrl) {
+              contentItems = stored.lastProcessedResult.content;
+              log('Got content from storage', { 
+                count: contentItems.length,
+                currentUrl: normalizedCurrentUrl,
+                storedUrl: normalizedStoredUrl
+              });
+            } else {
+              logWarn('Content in storage is from different URL, ignoring', {
+                currentUrl: normalizedCurrentUrl,
+                storedUrl: normalizedStoredUrl
+              });
+            }
+          }
+        } catch (error) {
+          logWarn('Failed to get last processed result from storage', error);
+        }
+      }
+    }
+    
+    if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
+      throw new Error('No content available for summary generation. Please extract content first.');
+    }
+    
+    // Extract text content from contentItems
+    let fullText = '';
+    
+    for (const item of contentItems) {
+      if (item.type === 'text' && item.text) {
+        fullText += item.text + '\n\n';
+      } else if (item.type === 'paragraph' && item.text) {
+        fullText += item.text + '\n\n';
+      } else if (item.type === 'heading' && item.text) {
+        fullText += item.text + '\n\n';
+      } else if (item.type === 'list' && item.items) {
+        for (const listItem of item.items) {
+          if (typeof listItem === 'string') {
+            fullText += listItem + '\n';
+          } else if (listItem.text) {
+            fullText += listItem.text + '\n';
+          } else if (listItem.html) {
+            // Extract text from HTML - simple strip
+            const text = listItem.html.replace(/<[^>]*>/g, '').trim();
+            if (text) {
+              fullText += text + '\n';
+            }
+          }
+        }
+        fullText += '\n';
+      }
+    }
+    
+    if (!fullText.trim()) {
+      throw new Error('No text content found in extracted content.');
+    }
+    
+    // Validate API key and model
+    if (!data.apiKey || !data.model) {
+      throw new Error('API key and model are required for summary generation.');
+    }
+    
+    // Get UI language to generate summary in the same language as interface
+    const uiLang = await getUILanguage();
+    
+    // Map language code to language name for prompt
+    const LANGUAGE_NAMES = {
+      'en': 'English',
+      'ru': 'Russian',
+      'ua': 'Ukrainian',
+      'de': 'German',
+      'fr': 'French',
+      'es': 'Spanish',
+      'it': 'Italian',
+      'pt': 'Portuguese',
+      'zh': 'Chinese',
+      'ja': 'Japanese',
+      'ko': 'Korean'
+    };
+    
+    const targetLanguage = LANGUAGE_NAMES[uiLang] || 'English';
+    const languageInstruction = uiLang === 'en' 
+      ? 'Write the summary in English.'
+      : `Write the summary in ${targetLanguage}. Use ${targetLanguage} language for all text, maintaining natural ${targetLanguage} expressions and sentence structures.`;
+    
+    // Create summary prompt
+    const systemPrompt = `Your task is to develop a detailed and logically organized summary, including key ideas, concepts, examples, and main conclusions.
+
+Ensure easy perception of information: use techniques of associations, lists, sequential steps, or metaphors. The summary should be clear, consistent, and fully reflect the content.
+
+IMPORTANT: Start the summary directly with the content, without introductory phrases like "Below is a structured summary", "Here is a summary of the text", etc. Do not add meta-comments about this being a summary. Just present the summary.
+
+LANGUAGE REQUIREMENT: ${languageInstruction}`;
+    
+    const userPrompt = fullText;
+    
+    log('Calling AI to generate summary', { 
+      textLength: fullText.length,
+      model: data.model 
+    });
+    
+    // КРИТИЧНО: Add timeout wrapper for summary generation (can take very long for large content)
+    let summaryTimeoutId = null;
+    const summaryPromise = callAI(systemPrompt, userPrompt, data.apiKey, data.model, false);
+    const summaryTimeoutPromise = new Promise((_, reject) => {
+      summaryTimeoutId = setTimeout(() => {
+        reject(new Error('Summary generation timeout after 45 minutes'));
+      }, 45 * 60 * 1000); // 45 minutes timeout for very large content
+    });
+    
+    let summary;
+    try {
+      // Call AI to generate summary (jsonResponse = false for text output)
+      summary = await Promise.race([summaryPromise, summaryTimeoutPromise]);
+      
+      // КРИТИЧНО: Clear timeout if generation completed successfully
+      if (summaryTimeoutId) {
+        clearTimeout(summaryTimeoutId);
+        summaryTimeoutId = null;
+      }
+    } catch (summaryError) {
+      // КРИТИЧНО: Clear timeout on error
+      if (summaryTimeoutId) {
+        clearTimeout(summaryTimeoutId);
+        summaryTimeoutId = null;
+      }
+      throw summaryError;
+    }
+    
+    if (!summary || typeof summary !== 'string' || !summary.trim()) {
+      throw new Error('Failed to generate summary - empty response from AI');
+    }
+    
+    // Clean summary - remove meta-comments
+    let cleanSummary = summary.trim();
+    cleanSummary = cleanSummary.replace(/^(Ниже\s*—|Вот\s*|Ниже\s*представлено|Это\s*саммари|Саммари\s*текста)[:.]?\s*/i, '');
+    cleanSummary = cleanSummary.replace(/^(структурированное\s*саммари|саммари\s*текста)[:.]?\s*/i, '');
+    
+    // Save summary to storage and clear generating flag
+    await chrome.storage.local.set({ 
+      summary_text: cleanSummary,
+      summary_generating: false,
+      summary_generating_start_time: null // Clear timestamp
+    });
+    
+    // КРИТИЧНО: Clear recovery data and stop keep-alive when summary generation completes
+    await chrome.storage.local.set({
+      lastSummaryGenerationData: null // Clear recovery data
+    });
+    
+    stopKeepAlive();
+    log('Summary generated and saved, keep-alive stopped', { summaryLength: cleanSummary.length });
+    
+    return { summary: cleanSummary };
+    
+  } catch (error) {
+    logError('generateSummary error', error);
+    // Clear generating flag and recovery data on error
+    await chrome.storage.local.set({ 
+      summary_generating: false,
+      summary_generating_start_time: null, // Clear timestamp
+      lastSummaryGenerationData: null // Clear recovery data
+    });
+    
+    // КРИТИЧНО: Stop keep-alive on error too
+    stopKeepAlive();
+    throw error;
+  }
+}
 
 // ============================================
 // VIDEO PAGE PROCESSING
@@ -1360,7 +2127,8 @@ async function processVideoPage(data, videoInfo) {
     title: metadata.title || data.title || 'Untitled',
     author: metadata.author || '',
     content: content,
-    publishDate: metadata.publishDate || ''
+    publishDate: metadata.publishDate || '',
+    sourceUrl: data.url || ''
   };
 }
 
@@ -1373,6 +2141,11 @@ async function processVideoPage(data, videoInfo) {
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  */
 async function continueProcessingPipeline(data, result, stopKeepAlive) {
+  // Ensure URL is stored in result for validation
+  if (result && !result.sourceUrl && !result.url && data.url) {
+    result.sourceUrl = data.url;
+  }
+  
   // Check if processing was cancelled
   if (isCancelled()) {
     log('Processing cancelled at start of pipeline');
