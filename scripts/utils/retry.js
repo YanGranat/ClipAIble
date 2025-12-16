@@ -83,6 +83,17 @@ export async function callWithRetry(fn, options = {}) {
         } else if (error.name === 'AbortError' || error.message?.includes('timeout')) {
           // Network timeouts are retryable
           shouldRetry = true;
+        } else if (CONFIG.RETRY_NETWORK_ERRORS) {
+          // Retry on network errors (connection failed, fetch failed, etc.)
+          const networkErrorPatterns = [
+            'network', 'connection', 'failed to fetch', 'fetch', 
+            'networkerror', 'network error', 'econnreset', 'enotfound',
+            'econnrefused', 'etimedout', 'eai_again'
+          ];
+          const errorMsgLower = (error.message || '').toLowerCase();
+          if (networkErrorPatterns.some(pattern => errorMsgLower.includes(pattern))) {
+            shouldRetry = true;
+          }
         }
       }
       

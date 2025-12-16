@@ -287,16 +287,22 @@ function startKeepAlive() {
   
   // Fallback ping in case alarms are throttled; MV3 requires >=1m, this keeps SW alive during long tasks.
   // Create new timer only after clearing old one to prevent race condition
+  // Use more frequent pings to prevent service worker from being killed
   keepAliveFallbackTimer = setInterval(() => {
     const state = getProcessingState();
     log('Keep-alive fallback ping', { isProcessing: state.isProcessing });
     if (state.isProcessing) {
+      // Save state more frequently to keep service worker alive
       chrome.storage.local.set({
         processingState: { ...state, lastUpdate: Date.now() }
       });
     }
-  }, CONFIG.KEEP_ALIVE_INTERVAL * 60 * 1000);
-  log('Keep-alive started', { intervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
+  }, CONFIG.KEEP_ALIVE_PING_INTERVAL * 1000); // Use seconds-based interval for more frequent pings
+  
+  // Start periodic state save for additional reliability
+  startPeriodicStateSave();
+  
+  log('Keep-alive started', { intervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL, pingIntervalSeconds: CONFIG.KEEP_ALIVE_PING_INTERVAL });
 }
 
 function stopKeepAlive() {
@@ -316,6 +322,10 @@ function stopKeepAlive() {
       keepAliveFallbackTimer = null;
     }
   }
+  
+  // Stop periodic state save
+  stopPeriodicStateSave();
+  
   log('Keep-alive stopped');
 }
 
@@ -325,6 +335,7 @@ try {
       const state = getProcessingState();
       log('Keep-alive ping', { isProcessing: state.isProcessing });
       if (state.isProcessing) {
+        // Save state to keep service worker alive and preserve progress
         chrome.storage.local.set({ 
           processingState: { ...state, lastUpdate: Date.now() }
         });
@@ -333,6 +344,38 @@ try {
   });
 } catch (error) {
   console.error('[ClipAIble] Failed to register alarms.onAlarm listener:', error);
+}
+
+// Additional keep-alive mechanism: periodic state save during processing
+// This ensures service worker stays alive even if alarms are throttled
+let stateSaveInterval = null;
+function startPeriodicStateSave() {
+  if (stateSaveInterval) {
+    clearInterval(stateSaveInterval);
+  }
+  stateSaveInterval = setInterval(() => {
+    const state = getProcessingState();
+    if (state.isProcessing) {
+      chrome.storage.local.set({
+        processingState: { ...state, lastUpdate: Date.now() }
+      });
+    } else {
+      // Stop saving if not processing
+      if (stateSaveInterval) {
+        clearInterval(stateSaveInterval);
+        stateSaveInterval = null;
+      }
+    }
+  }, CONFIG.STATE_SAVE_INTERVAL);
+  log('Periodic state save started', { interval: CONFIG.STATE_SAVE_INTERVAL });
+}
+
+function stopPeriodicStateSave() {
+  if (stateSaveInterval) {
+    clearInterval(stateSaveInterval);
+    stateSaveInterval = null;
+    log('Periodic state save stopped');
+  }
 }
 
 // ============================================

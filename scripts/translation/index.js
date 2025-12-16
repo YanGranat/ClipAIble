@@ -166,8 +166,8 @@ export async function translateBatch(texts, targetLang, apiKey, model, retryCoun
     log('API key decryption failed for translateBatch, using as-is', error);
   }
   
-  const MAX_RETRIES = 3;
-  const RETRY_DELAYS = [5000, 10000, 20000];
+  const MAX_RETRIES = 5; // Increased for better reliability
+  const RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000]; // Longer delays for network issues
   
   // If only one text, use simple translation
   if (texts.length === 1) {
@@ -194,24 +194,37 @@ Rules:
     let content;
     
     if (provider === 'openai') {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${decryptedApiKey}`
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          response_format: { type: 'json_object' },
-          // Translation quality is priority #1 - never reduce quality for cost savings
-          // reasoning_effort: 'high' ensures best translation quality
-          reasoning_effort: 'high'
-        })
-      });
+      let response;
+      try {
+        response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${decryptedApiKey}`
+          },
+          body: JSON.stringify({
+            model: modelName,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            response_format: { type: 'json_object' },
+            // Translation quality is priority #1 - never reduce quality for cost savings
+            // reasoning_effort: 'high' ensures best translation quality
+            reasoning_effort: 'high'
+          })
+        });
+      } catch (fetchError) {
+        // Network error (connection failed, timeout, etc.) - retry
+        if (retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const errorMsg = fetchError.message || 'Network error';
+          logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+        }
+        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to API'}`);
+      }
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -225,9 +238,11 @@ Rules:
         
         logError('Translation API error', { status: response.status, error: errorData });
         
-        if ([503, 429, 500, 502, 504].includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 20000;
-          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s...`);
+        // Retry on retryable status codes
+        const retryableStatuses = [503, 429, 500, 502, 504];
+        if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 30000;
+          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
@@ -238,27 +253,42 @@ Rules:
       const result = await response.json();
       content = result.choices?.[0]?.message?.content;
     } else if (provider === 'claude') {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': decryptedApiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: modelName,
-          max_tokens: 32000,
-          system: systemPrompt,
-          messages: [
-            { role: 'user', content: userPrompt }
-          ]
-        })
-      });
+      let response;
+      try {
+        response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': decryptedApiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify({
+            model: modelName,
+            max_tokens: 32000,
+            system: systemPrompt,
+            messages: [
+              { role: 'user', content: userPrompt }
+            ]
+          })
+        });
+      } catch (fetchError) {
+        // Network error - retry
+        if (retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const errorMsg = fetchError.message || 'Network error';
+          logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+        }
+        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to API'}`);
+      }
       
       if (!response.ok) {
-        if ([503, 429, 500, 502, 504].includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 20000;
+        const retryableStatuses = [503, 429, 500, 502, 504];
+        if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 30000;
+          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
@@ -270,21 +300,36 @@ Rules:
       content = result.content?.find(c => c.type === 'text')?.text;
     } else if (provider === 'gemini') {
       const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': decryptedApiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: combinedPrompt }] }],
-          generationConfig: { responseMimeType: 'application/json' }
-        })
-      });
+      let response;
+      try {
+        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': decryptedApiKey
+          },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: combinedPrompt }] }],
+            generationConfig: { responseMimeType: 'application/json' }
+          })
+        });
+      } catch (fetchError) {
+        // Network error - retry
+        if (retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const errorMsg = fetchError.message || 'Network error';
+          logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+        }
+        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to API'}`);
+      }
       
       if (!response.ok) {
-        if ([503, 429, 500, 502, 504].includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 20000;
+        const retryableStatuses = [503, 429, 500, 502, 504];
+        if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
+          const delay = RETRY_DELAYS[retryCount] || 30000;
+          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
@@ -376,6 +421,18 @@ Rules:
     if (error.message?.includes('authentication')) {
       throw error;
     }
+    // Retry on network errors if we haven't exceeded max retries
+    const isNetworkError = error.message?.includes('Network error') || 
+                           error.message?.includes('Failed to connect') ||
+                           error.message?.includes('fetch') ||
+                           error.name === 'TypeError';
+    if (isNetworkError && retryCount < MAX_RETRIES) {
+      const delay = RETRY_DELAYS[retryCount] || 30000;
+      logWarn(`Translation failed with network error, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+    }
+    // If retries exhausted or non-network error, return original texts
     return texts;
   }
 }

@@ -258,20 +258,27 @@ export function restoreStateFromStorage() {
         const savedState = result.processingState;
         const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
         
-        // If state is stale (> 5 minutes), reset it
+        // If state is stale (> 30 minutes), reset it
         if (timeSinceUpdate > CONFIG.STATE_EXPIRY_MS) {
-          log('Stale processing state found, resetting', { timeSinceUpdate });
+          log('Stale processing state found, resetting', { timeSinceUpdate, expiryMs: CONFIG.STATE_EXPIRY_MS });
           await chrome.storage.local.remove(['processingState']);
         } else {
-          log('Restored processing state from storage', savedState);
+          log('Restored processing state from storage', { 
+            savedState, 
+            timeSinceUpdate, 
+            progress: savedState.progress,
+            stage: savedState.currentStage 
+          });
           // Mark as error since we can't truly resume
           // Use sync fallback to avoid async issues during initialization
           processingState = {
             isProcessing: false,
-            progress: savedState.progress,
+            progress: savedState.progress || 0,
             status: 'Error',
             error: 'Processing was interrupted. Please try again.',
-            result: null
+            result: null,
+            currentStage: savedState.currentStage || null,
+            completedStages: savedState.completedStages || []
           };
           // Try to get localized message asynchronously (non-blocking)
           try {
