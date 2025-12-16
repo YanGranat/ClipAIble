@@ -8,11 +8,15 @@ import { getCacheStats } from '../cache/selectors.js';
 // NOTE: API keys are NEVER included for security reasons
 const STORAGE_KEYS_TO_EXPORT = [
   // AI settings
+  'api_provider',
   'openai_model',
+  'custom_models',
+  'hidden_models',
   'extraction_mode',
   'use_selector_cache',
   'enable_selector_caching',
   'enable_statistics',
+  'openai_instructions',
   
   // Output settings
   'output_format',
@@ -25,7 +29,19 @@ const STORAGE_KEYS_TO_EXPORT = [
   // Audio settings
   'audio_provider',
   'elevenlabs_model',
+  'elevenlabs_format',
+  'elevenlabs_stability',
+  'elevenlabs_similarity',
+  'elevenlabs_style',
+  'elevenlabs_speaker_boost',
+  'google_tts_model',
+  'google_tts_voice',
+  'google_tts_prompt',
+  'respeecher_temperature',
+  'respeecher_repetition_penalty',
+  'respeecher_top_p',
   'audio_voice',
+  'audio_voice_map',
   'audio_speed',
   
   // PDF style settings

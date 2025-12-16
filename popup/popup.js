@@ -2179,6 +2179,11 @@ function setupEventListeners() {
       await loadSettings();
       await loadAndDisplayStats();
       
+      // Update model list if custom_models or hidden_models were imported
+      if (result.settingsImported > 0) {
+        await updateModelList();
+      }
+      
       // Reload page to apply settings
       if (result.settingsImported > 0) {
         setTimeout(() => {
@@ -3382,7 +3387,7 @@ function initCustomSelect(selectId, options = {}) {
 
 // Initialize all custom selects
 function initAllCustomSelects() {
-  // List of select IDs to convert (excluding modelSelect which has its own custom dropdown and header selects)
+  // List of select IDs to convert (excluding modelSelect which has its own custom dropdown)
   // outputFormat is hidden (moved to main screen as mainFormatSelect)
   const selectIds = [
     'apiProviderSelect',
@@ -3396,7 +3401,9 @@ function initAllCustomSelects() {
     'audioVoice',
     'pageMode',
     'languageSelect',
-    'stylePreset'
+    'stylePreset',
+    'uiLanguageSelect',
+    'themeSelect'
   ];
   
   selectIds.forEach(selectId => {
