@@ -267,19 +267,19 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
 
     if (urlApi && urlApi.createObjectURL) {
       const objectUrl = urlApi.createObjectURL(blob);
-      
-      const downloadId = await chrome.downloads.download({
-        url: objectUrl,
-        filename: filename,
-        saveAs: true
-      });
-      
-      log('Download started', { downloadId, size: blob.size });
-      
-      // Revoke URL after a short delay to ensure download starts
-      setTimeout(() => {
+      try {
+        const downloadId = await chrome.downloads.download({
+          url: objectUrl,
+          filename: filename,
+          saveAs: true
+        });
+        
+        log('Download started', { downloadId, size: blob.size });
+      } finally {
+        // Revoke URL immediately - Chrome downloads API handles the download asynchronously
+        // The URL is only needed to initiate the download, not to complete it
         urlApi.revokeObjectURL(objectUrl);
-      }, 5000);
+      }
     } else {
       // Fallback for MV3 service worker without createObjectURL
       const dataUrl = await new Promise((resolve, reject) => {

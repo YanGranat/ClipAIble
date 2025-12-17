@@ -165,9 +165,9 @@ export async function generateDocx(data, updateState) {
       // Fallback to data URL if object URL fails
       throw error;
     } finally {
-      setTimeout(() => {
-        urlApi.revokeObjectURL(objectUrl);
-      }, 5000);
+      // Revoke URL immediately - Chrome downloads API handles the download asynchronously
+      // The URL is only needed to initiate the download, not to complete it
+      urlApi.revokeObjectURL(objectUrl);
     }
   } else {
     // Fallback: Convert ArrayBuffer to base64 data URL

@@ -273,6 +273,7 @@ setTimeout(() => {
   try {
     log('Extension loaded', { config: CONFIG });
   } catch (error) {
+    // Fallback to console.error if log() fails (shouldn't happen, but safety first)
     console.error('[ClipAIble] Failed to log:', error);
   }
 
@@ -281,7 +282,7 @@ setTimeout(() => {
   try {
     restoreStateFromStorage();
   } catch (error) {
-    console.error('[ClipAIble] Failed to restore state:', error);
+    logError('Failed to restore state', error);
   }
 
   // Migrate existing API keys to encrypted format (fire and forget)
@@ -290,7 +291,7 @@ setTimeout(() => {
       logError('API keys migration failed', error);
     });
   } catch (error) {
-    console.error('[ClipAIble] Failed to start migration:', error);
+    logError('Failed to start migration', error);
   }
 
   // Initialize default settings (fire and forget)
@@ -299,7 +300,7 @@ setTimeout(() => {
       logError('Default settings initialization failed', error);
     });
   } catch (error) {
-    console.error('[ClipAIble] Failed to initialize default settings:', error);
+    logError('Failed to initialize default settings', error);
   }
 }, 0);
 
@@ -316,13 +317,6 @@ function startKeepAlive() {
   if (keepAliveFallbackTimer) {
     log('Keep-alive already running, not restarting to avoid interruption');
     return; // Already running - don't restart
-  }
-  
-  // Prevent race condition: clear existing timer BEFORE creating new one
-  // This ensures we don't have multiple timers running simultaneously
-  if (keepAliveFallbackTimer) {
-    clearInterval(keepAliveFallbackTimer);
-    keepAliveFallbackTimer = null;
   }
   
   // КРИТИЧНО: Create alarm with delayInMinutes: 0 to fire immediately, then periodically
@@ -467,7 +461,7 @@ try {
     }
   });
 } catch (error) {
-  console.error('[ClipAIble] Failed to register alarms.onAlarm listener:', error);
+  logError('Failed to register alarms.onAlarm listener', error);
 }
 
 // КРИТИЧНО: Additional keep-alive via storage.onChanged listener
