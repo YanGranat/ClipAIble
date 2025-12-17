@@ -1,8 +1,6 @@
 // Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
 
-console.log('[ClipAIble] background.js: Service worker started loading');
-
 // Global error handler for uncaught errors during module loading
 // КРИТИЧНО: Enhanced error handling to prevent service worker crashes
 self.addEventListener('error', (event) => {
@@ -51,7 +49,6 @@ self.addEventListener('unhandledrejection', (event) => {
 
 import { log, logError, logWarn } from './utils/logging.js';
 
-console.log('[ClipAIble] background.js: logging.js imported');
 import { CONFIG } from './utils/config.js';
 import { 
   getProcessingState, 
@@ -104,8 +101,6 @@ import { detectVideoPlatform } from './utils/video.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from './extraction/video-processor.js';
 import { createUserFriendlyError } from './utils/error-messages.js';
-
-console.log('[ClipAIble] background.js: All imports completed');
 
 // ============================================
 // NOTIFICATION HELPER

@@ -6,16 +6,10 @@
   
   // КРИТИЧНО: Немедленная регистрация listener'ов ДО всего остального
   // Это гарантирует, что listener'ы будут готовы к получению сообщений
-  console.log('[ClipAIble:Content] 🔵 Content script loaded and executing...', {
-    url: window.location.href,
-    readyState: document.readyState,
-    timestamp: new Date().toISOString(),
-    userAgent: navigator.userAgent.substring(0, 50)
-  });
   
   // КРИТИЧНО: Проверить, что мы на YouTube странице
   if (!window.location.hostname.includes('youtube.com')) {
-    console.warn('[ClipAIble:Content] ⚠️ Content script loaded on non-YouTube page:', window.location.hostname);
+    // Silent - non-YouTube pages are expected
   }
   
   // Проверка валидности контекста расширения
@@ -29,21 +23,11 @@
   
   // Helper function to save subtitles to DOM as fallback when chrome.storage is unavailable
   function saveToDOMFallback(subtitleData) {
-    console.log('[ClipAIble:Content] 🔵 Attempting to save to DOM fallback...', {
-      hasSubtitles: !!subtitleData?.subtitles,
-      count: subtitleData?.subtitles?.length || 0,
-      hasMetadata: !!subtitleData?.metadata,
-      bodyExists: !!document.body,
-      readyState: document.readyState
-    });
-    
     try {
       // Проверка что body существует
       if (!document.body) {
-        console.error('[ClipAIble:Content] ❌ document.body is null, cannot save to DOM');
         // Попробовать подождать и повторить
         if (document.readyState === 'loading') {
-          console.log('[ClipAIble:Content] 🔵 Document still loading, waiting for body...');
           document.addEventListener('DOMContentLoaded', () => {
             if (document.body && subtitleData) {
               saveToDOMFallback(subtitleData);
@@ -57,7 +41,6 @@
       const oldElement = document.getElementById('ClipAIblePendingSubtitles');
       if (oldElement) {
         oldElement.remove();
-        console.log('[ClipAIble:Content] 🔵 Removed old DOM element');
       }
       
       // Сохранить данные в специальный элемент на странице
@@ -78,45 +61,18 @@
       // КРИТИЧНО: Добавить В НАЧАЛО body, не в конец (быстрее доступ)
       document.body.insertBefore(dataElement, document.body.firstChild);
       
-      console.log('[ClipAIble:Content] ✅ Saved subtitles to DOM fallback (inserted at body start)', {
-        elementId: dataElement.id,
-        hasAttribute: !!dataElement.getAttribute('data-subtitles'),
-        attributeLength: dataElement.getAttribute('data-subtitles')?.length || 0,
-        count: subtitleData.subtitles?.length || 0,
-        timestamp: dataToSave.timestamp
-      });
-      
       // Проверка что элемент действительно в DOM
       const verification = document.getElementById('ClipAIblePendingSubtitles');
-      if (verification) {
-        console.log('[ClipAIble:Content] ✅ DOM element verified - successfully added to document', {
-          parentNode: verification.parentNode?.tagName || 'none',
-          isInBody: document.body.contains(verification)
-        });
-      } else {
-        console.error('[ClipAIble:Content] ❌ DOM element NOT found after adding!');
+      if (!verification) {
+        console.error('[ClipAIble:Content] DOM element NOT found after adding');
       }
     } catch (domError) {
-      console.error('[ClipAIble:Content] ❌ Failed to save to DOM fallback:', domError);
-      console.error('[ClipAIble:Content] ❌ DOM error stack:', domError.stack);
+      console.error('[ClipAIble:Content] Failed to save to DOM fallback:', domError);
     }
   }
   
   // НЕМЕДЛЕННАЯ регистрация postMessage и CustomEvent listeners
-  console.log('[ClipAIble:Content] 🔵 IMMEDIATE: Registering window.postMessage listener...');
   window.addEventListener('message', function handlePostMessage(event) {
-    // Логировать ВСЕ сообщения для отладки
-    if (event.data && (event.data.type === 'ClipAIbleYouTubeSubtitles' || event.data.action === 'youtubeSubtitlesResult')) {
-      console.log('[ClipAIble:Content] 🔵 postMessage event received (RELEVANT)', {
-        source: event.source,
-        origin: event.origin,
-        dataType: event.data?.type,
-        action: event.data?.action,
-        hasData: !!event.data,
-        hasResult: !!event.data?.result,
-        hasError: !!event.data?.error
-      });
-    }
     
     // КРИТИЧНО: НЕ блокировать сообщения по source!
     // Обрабатываем два типа сообщений: субтитры и fetch requests
@@ -126,11 +82,6 @@
     
     // Обработка fetch requests для субтитров
     if (event.data.type === 'ClipAIbleSubtitleFetchRequest') {
-      console.log('[ClipAIble:Content] Received subtitle fetch request from MAIN world', {
-        requestId: event.data.requestId,
-        urlLength: event.data.url?.length || 0
-      });
-      
       fetch(event.data.url, {
         method: 'GET',
         credentials: 'include',
@@ -150,11 +101,6 @@
         return response.text();
       })
       .then(responseText => {
-        console.log('[ClipAIble:Content] Subtitle fetched successfully', {
-          requestId: event.data.requestId,
-          responseLength: responseText.length
-        });
-        
         const responseEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
           detail: {
             type: 'ClipAIbleSubtitleFetchResponse',
@@ -202,17 +148,9 @@
     }
     
     if (event.data && event.data.type === 'ClipAIbleYouTubeSubtitles') {
-      console.log('[ClipAIble:Content] 🔵 Step 1 (postMessage): Received postMessage from MAIN world', {
-        hasError: !!event.data.error,
-        hasResult: !!event.data.result,
-        action: event.data.action,
-        subtitleCount: event.data.result?.subtitles?.length || 0
-      });
-      
       try {
         // КРИТИЧНО: Проверка контекста ПЕРЕД отправкой сообщения
         if (!isExtensionContextValid()) {
-          console.warn('[ClipAIble:Content] ⚠️ Extension context is invalid (postMessage) - using DOM fallback immediately');
           if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
             const subtitleData = {
               subtitles: event.data.result.subtitles,
@@ -222,8 +160,6 @@
           }
           return;
         }
-        
-        console.log('[ClipAIble:Content] 🔵 Step 2 (postMessage): Sending message to background script...');
         
         let backgroundResponded = false;
         let subtitleData = null;
@@ -237,7 +173,6 @@
         let storageSaved = false;
         const fallbackTimeout = setTimeout(() => {
           if (!backgroundResponded && !storageSaved && subtitleData) {
-            console.warn('[ClipAIble:Content] ⚠️ Background did not respond in 3 seconds, saving to storage');
             storageSaved = true;
             
             // Попробовать использовать chrome.storage
@@ -250,20 +185,15 @@
                     timestamp: Date.now(),
                     source: 'content_script_timeout_fallback'
                   }
-                }).then(() => {
-                  console.log('[ClipAIble:Content] ✅ Saved to storage - background will check storage');
                 }).catch(storageError => {
-                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-                  // Если storage не работает, попробовать сохранить в DOM
+                  console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
                   saveToDOMFallback(subtitleData);
                 });
               } else {
-                // chrome.storage недоступен, используем DOM fallback
                 saveToDOMFallback(subtitleData);
               }
             } catch (storageException) {
-              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
-              // Используем DOM fallback
+              console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
               saveToDOMFallback(subtitleData);
             }
           }
@@ -273,14 +203,9 @@
           backgroundResponded = true;
           clearTimeout(fallbackTimeout);
           
-          console.log('[ClipAIble:Content] 🔵 Step 3 (postMessage): Callback called');
-          console.log('[ClipAIble:Content] 🔵 Step 3.1 (postMessage): lastError?', chrome.runtime.lastError);
-          console.log('[ClipAIble:Content] 🔵 Step 3.2 (postMessage): response?', response);
-          
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
-            console.error('[ClipAIble:Content] ❌ Failed to forward postMessage to background:', chrome.runtime.lastError);
-            console.error('[ClipAIble:Content] ❌ Error message:', errorMsg);
+            console.error('[ClipAIble:Content] Failed to forward postMessage to background:', chrome.runtime.lastError);
             
             if (subtitleData && !storageSaved) {
               storageSaved = true;
@@ -292,37 +217,23 @@
                       metadata: subtitleData.metadata,
                       timestamp: Date.now()
                     }
-                  }).then(() => {
-                    console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
                   }).catch(storageError => {
-                    console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                    console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
                     saveToDOMFallback(subtitleData);
                   });
                 } else {
-                  console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
                   saveToDOMFallback(subtitleData);
                 }
               } catch (storageException) {
-                console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+                console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
                 saveToDOMFallback(subtitleData);
               }
             }
             return;
           }
-          
-          if (response === undefined) {
-            console.warn('[ClipAIble:Content] ⚠️ No response from background (this may be OK)');
-          } else {
-            console.log('[ClipAIble:Content] ✅ postMessage forwarded successfully', {
-              response: response
-            });
-          }
         });
-        
-        console.log('[ClipAIble:Content] 🔵 Step 4 (postMessage): sendMessage call finished');
       } catch (e) {
-        console.error('[ClipAIble:Content] ❌ Exception while forwarding postMessage:', e);
-        console.error('[ClipAIble:Content] ❌ Exception stack:', e.stack);
+        console.error('[ClipAIble:Content] Exception while forwarding postMessage:', e);
         
         // Try to save to storage if we have subtitle data
         if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
@@ -337,7 +248,6 @@
           
           // Если Extension context invalidated, используем DOM fallback сразу
           if (isContextInvalidated) {
-            console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated in postMessage catch - using DOM fallback immediately');
             saveToDOMFallback(subtitleData);
           } else {
             // Другие ошибки - пробуем storage, потом DOM fallback
@@ -349,18 +259,15 @@
                     metadata: subtitleData.metadata,
                     timestamp: Date.now()
                   }
-                }).then(() => {
-                  console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
                 }).catch(storageError => {
-                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                  console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
                   saveToDOMFallback(subtitleData);
                 });
               } else {
-                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
                 saveToDOMFallback(subtitleData);
               }
             } catch (storageException) {
-              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+              console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
               saveToDOMFallback(subtitleData);
             }
           }
@@ -368,7 +275,6 @@
       }
     }
   });
-  console.log('[ClipAIble:Content] ✅ IMMEDIATE: window.postMessage listener registered!');
   
 
   // Extract page content and metadata
@@ -440,7 +346,6 @@
     
     // Handle ping request to verify content script is loaded
     if (request.action === 'ping') {
-      console.log('[ClipAIble:Content] ✅ Ping received - content script is loaded and responding');
       sendResponse({ success: true, loaded: true, timestamp: new Date().toISOString() });
       return true;
     }
@@ -451,24 +356,6 @@
   // КРИТИЧНО: CustomEvent на document - ЕДИНСТВЕННЫЙ надежный способ
   // коммуникации между MAIN world (injected script) и ISOLATED world (content script)
   // window.postMessage НЕ работает между мирами!
-  console.log('[ClipAIble:Content] 🔵 Registering ClipAIbleSubtitleMessage CustomEvent listener...');
-  console.log('[ClipAIble:Content] 🔵 Document readyState:', document.readyState);
-  console.log('[ClipAIble:Content] 🔵 Current URL:', window.location.href);
-  console.log('[ClipAIble:Content] 🔵 Content script loaded at:', new Date().toISOString());
-  console.log('[ClipAIble:Content] 🔵 Testing CustomEvent dispatch...');
-  
-  // Test if CustomEvent works by dispatching a test event
-  try {
-    const testEvent = new CustomEvent('ClipAIbleTestEvent', {
-      detail: { test: true },
-      bubbles: true,
-      cancelable: true
-    });
-    document.dispatchEvent(testEvent);
-    console.log('[ClipAIble:Content] ✅ Test CustomEvent dispatched successfully');
-  } catch (testError) {
-    console.error('[ClipAIble:Content] ❌ Failed to dispatch test CustomEvent:', testError);
-  }
   
   // Global flags to prevent duplicate processing
   let lastSubtitleTimestamp = 0;
@@ -476,26 +363,9 @@
   
   // Register listener IMMEDIATELY (before any async operations)
   const handleCustomEvent = function(event) {
-    console.log('[ClipAIble:Content] 🔵 CustomEvent received!', {
-      hasDetail: !!event.detail,
-      detailType: event.detail?.type,
-      action: event.detail?.action,
-      hasResult: !!event.detail?.result,
-      hasError: !!event.detail?.error
-    });
-    
     if (!event.detail || event.detail.type !== 'ClipAIbleYouTubeSubtitles') {
-      console.log('[ClipAIble:Content] 🔵 Ignoring event (not our type)');
       return;
     }
-    
-    console.log('[ClipAIble:Content] 🔵 Step 1: Processing subtitle event from MAIN world', {
-      hasError: !!event.detail.error,
-      hasResult: !!event.detail.result,
-      action: event.detail.action,
-      subtitleCount: event.detail.result?.subtitles?.length || 0,
-      errorMessage: event.detail.error
-    });
     
     // Save subtitle data for storage fallback if needed
     let subtitleData = null;
@@ -504,10 +374,6 @@
         subtitles: event.detail.result.subtitles,
         metadata: event.detail.result.metadata || {}
       };
-      console.log('[ClipAIble:Content] 🔵 Saved subtitle data for storage fallback', {
-        count: subtitleData.subtitles.length,
-        title: subtitleData.metadata.title
-      });
     }
     
     // Check if this is a duplicate event (same subtitles, recent timestamp)
@@ -530,9 +396,6 @@
                         currentTimestamp - lastSubtitleTimestamp < 2000; // 2 second window to catch all retries
     
     if (isDuplicate) {
-      console.log('[ClipAIble:Content] 🔵 Ignoring duplicate event (same subtitles within 1 second)', {
-        timeSinceLast: currentTimestamp - lastSubtitleTimestamp
-      });
       return;
     }
     
@@ -544,50 +407,40 @@
     try {
       // КРИТИЧНО: Проверка контекста ПЕРЕД отправкой сообщения
       if (!isExtensionContextValid()) {
-        console.warn('[ClipAIble:Content] ⚠️ Extension context is invalid - using DOM fallback immediately');
         if (subtitleData) {
           saveToDOMFallback(subtitleData);
         }
         return;
       }
       
-      console.log('[ClipAIble:Content] 🔵 Step 2: Sending message to background script...');
-      
       let backgroundResponded = false;
-        let storageSaved = false;
-        const fallbackTimeout = setTimeout(() => {
-          if (!backgroundResponded && !storageSaved && subtitleData) {
-            console.warn('[ClipAIble:Content] ⚠️ Background did not respond in 3 seconds, saving to storage');
-            storageSaved = true;
-            
-            // Попробовать использовать chrome.storage
-            try {
-              if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                chrome.storage.local.set({
-                  pendingSubtitles: {
-                    subtitles: subtitleData.subtitles,
-                    metadata: subtitleData.metadata,
-                    timestamp: Date.now()
-                  }
-                }).then(() => {
-                  console.log('[ClipAIble:Content] ✅ Saved to storage - background will check storage');
-                }).catch(storageError => {
-                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
-                  // Fallback to DOM if storage fails
-                  saveToDOMFallback(subtitleData);
-                });
-              } else {
-                // chrome.storage недоступен, используем DOM fallback
-                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
+      let storageSaved = false;
+      const fallbackTimeout = setTimeout(() => {
+        if (!backgroundResponded && !storageSaved && subtitleData) {
+          storageSaved = true;
+          
+          // Попробовать использовать chrome.storage
+          try {
+            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+              chrome.storage.local.set({
+                pendingSubtitles: {
+                  subtitles: subtitleData.subtitles,
+                  metadata: subtitleData.metadata,
+                  timestamp: Date.now()
+                }
+              }).catch(storageError => {
+                console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
                 saveToDOMFallback(subtitleData);
-              }
-            } catch (storageException) {
-              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
-              // Fallback to DOM if exception occurs
+              });
+            } else {
               saveToDOMFallback(subtitleData);
             }
+          } catch (storageException) {
+            console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+            saveToDOMFallback(subtitleData);
           }
-        }, 3000);
+        }
+      }, 3000);
       
       // Try to send message to background
       try {
@@ -595,24 +448,14 @@
           backgroundResponded = true;
           clearTimeout(fallbackTimeout);
           
-          console.log('[ClipAIble:Content] 🔵 Step 3: Callback called');
-          console.log('[ClipAIble:Content] 🔵 Step 3.1: lastError?', chrome.runtime.lastError);
-          console.log('[ClipAIble:Content] 🔵 Step 3.2: response?', response);
-          
           // КРИТИЧЕСКИ ВАЖНО: Проверить chrome.runtime.lastError!
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
-            console.error('[ClipAIble:Content] ❌ Failed to forward message to background:', chrome.runtime.lastError);
-            console.error('[ClipAIble:Content] ❌ Error message:', errorMsg);
-            console.error('[ClipAIble:Content] ❌ This usually means background script is not listening or service worker died');
+            console.error('[ClipAIble:Content] Failed to forward message to background:', chrome.runtime.lastError);
             
             // If "Extension context invalidated", use DOM fallback immediately
             if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-              console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated - service worker died, using DOM fallback immediately');
               if (subtitleData) {
-                // КРИТИЧНО: После Extension context invalidated chrome.storage НЕДОСТУПЕН!
-                // НЕ пытаемся использовать chrome.storage - сразу используем DOM fallback
-                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable (Extension context invalidated), cannot save subtitles - using DOM fallback');
                 saveToDOMFallback(subtitleData);
               }
             } else {
@@ -627,18 +470,15 @@
                         metadata: subtitleData.metadata,
                         timestamp: Date.now()
                       }
-                    }).then(() => {
-                      console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
                     }).catch(storageError => {
-                      console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                      console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
                       saveToDOMFallback(subtitleData);
                     });
                   } else {
-                    console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
                     saveToDOMFallback(subtitleData);
                   }
                 } catch (storageException) {
-                  console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+                  console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
                   saveToDOMFallback(subtitleData);
                 }
               }
@@ -646,20 +486,10 @@
             return;
           }
           
-          // Проверить что response не пустой (если ожидается ответ)
-          if (response === undefined) {
-            console.warn('[ClipAIble:Content] ⚠️ No response from background (this may be OK if background doesn\'t send response)');
-          } else {
-            console.log('[ClipAIble:Content] ✅ Message forwarded successfully to background', {
-              response: response
-            });
-            
-            // Update hash only after successful send
-            if (subtitleData && currentHash) {
-              lastSubtitleTimestamp = currentTimestamp;
-              lastSubtitleHash = currentHash;
-              console.log('[ClipAIble:Content] ✅ Updated subtitle hash after successful send');
-            }
+          // Update hash only after successful send
+          if (subtitleData && currentHash) {
+            lastSubtitleTimestamp = currentTimestamp;
+            lastSubtitleHash = currentHash;
           }
         });
       } catch (sendError) {
@@ -667,16 +497,11 @@
         backgroundResponded = true;
         clearTimeout(fallbackTimeout);
         
-        console.error('[ClipAIble:Content] ❌ Synchronous error from sendMessage:', sendError);
+        console.error('[ClipAIble:Content] Synchronous error from sendMessage:', sendError);
         const errorMsg = sendError.message || '';
         
         if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
-          console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated - service worker died, using DOM fallback immediately');
-          
-          // КРИТИЧНО: После Extension context invalidated chrome.storage НЕДОСТУПЕН!
-          // НЕ пытаемся использовать chrome.storage - сразу используем DOM fallback
           if (subtitleData) {
-            console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable (Extension context invalidated), cannot save subtitles - using DOM fallback');
             saveToDOMFallback(subtitleData);
           }
         } else {
@@ -691,28 +516,22 @@
                     metadata: subtitleData.metadata,
                     timestamp: Date.now()
                   }
-                }).then(() => {
-                  console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
                 }).catch(storageError => {
-                  console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+                  console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
                   saveToDOMFallback(subtitleData);
                 });
               } else {
-                console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
                 saveToDOMFallback(subtitleData);
               }
             } catch (storageException) {
-              console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+              console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
               saveToDOMFallback(subtitleData);
             }
           }
         }
       }
-      
-      console.log('[ClipAIble:Content] 🔵 Step 4: sendMessage call finished (callback will be called asynchronously)');
     } catch (e) {
-      console.error('[ClipAIble:Content] ❌ Exception while forwarding message:', e);
-      console.error('[ClipAIble:Content] ❌ Exception stack:', e.stack);
+      console.error('[ClipAIble:Content] Exception while forwarding message:', e);
       
       // Проверяем тип ошибки
       const errorMsg = e.message || '';
@@ -720,7 +539,6 @@
       
       // Если Extension context invalidated, используем DOM fallback сразу
       if (isContextInvalidated && subtitleData) {
-        console.warn('[ClipAIble:Content] ⚠️ Extension context invalidated in catch block - using DOM fallback immediately');
         saveToDOMFallback(subtitleData);
       } else if (subtitleData && !storageSaved) {
         // Другие ошибки - пробуем storage, потом DOM fallback
@@ -733,18 +551,15 @@
                 metadata: subtitleData.metadata,
                 timestamp: Date.now()
               }
-            }).then(() => {
-              console.log('[ClipAIble:Content] ✅ Saved to storage as fallback');
             }).catch(storageError => {
-              console.error('[ClipAIble:Content] ❌ Failed to save to storage:', storageError);
+              console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
               saveToDOMFallback(subtitleData);
             });
           } else {
-            console.warn('[ClipAIble:Content] ⚠️ chrome.storage unavailable, using DOM fallback');
             saveToDOMFallback(subtitleData);
           }
         } catch (storageException) {
-          console.error('[ClipAIble:Content] ❌ Exception accessing chrome.storage:', storageException);
+          console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
           saveToDOMFallback(subtitleData);
         }
       }
@@ -753,24 +568,14 @@
   
   // Register the listener IMMEDIATELY
   document.addEventListener('ClipAIbleSubtitleMessage', handleCustomEvent, true); // Use capture phase
-  console.log('[ClipAIble:Content] ✅ CustomEvent listener registered!', {
-    listenerType: 'capture',
-    documentReadyState: document.readyState
-  });
   
   // Also register in bubble phase (just in case)
   document.addEventListener('ClipAIbleSubtitleMessage', handleCustomEvent, false);
-  console.log('[ClipAIble:Content] ✅ CustomEvent listener also registered in bubble phase!');
   
 
   // Also listen for CustomEvent from MAIN world (for subtitle fetch requests)
   document.addEventListener('ClipAIbleSubtitleFetchRequest', (event) => {
     if (event.detail && event.detail.type === 'ClipAIbleSubtitleFetchRequest') {
-      console.log('[ClipAIble:Content] Received subtitle fetch request via CustomEvent', {
-        requestId: event.detail.requestId,
-        urlLength: event.detail.url?.length || 0
-      });
-      
       // Fetch subtitle URL from content script
       fetch(event.detail.url, {
         method: 'GET',
@@ -791,11 +596,6 @@
         return response.text();
       })
       .then(responseText => {
-        console.log('[ClipAIble:Content] Subtitle fetched successfully via CustomEvent', {
-          requestId: event.detail.requestId,
-          responseLength: responseText.length
-        });
-        
         // Send response back to MAIN world
         const responseEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
           detail: {

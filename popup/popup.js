@@ -28,9 +28,6 @@
 // - hideAllAudioFields() is called as final safety check after updateOutputFormatUI()
 // - All audio fields must be hidden when format is not 'audio' (no exceptions)
 
-// Immediate logging to verify script is loading
-console.log('[ClipAIble] popup.js: Script started loading, document.readyState:', document.readyState);
-
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
@@ -40,8 +37,6 @@ import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
 import { getProviderFromModel, callAI } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
-
-console.log('[ClipAIble] popup.js: All imports completed successfully');
 
 // Global error handler for unhandled promise rejections
 window.addEventListener('error', (event) => {
@@ -556,12 +551,10 @@ async function applyLocalization() {
 
 // Initialize popup
 async function init() {
-  console.log('[ClipAIble] popup.js: init() called, document.readyState:', document.readyState);
   log('popup.js: init() started');
   
   try {
     // Get DOM elements
-    console.log('[ClipAIble] popup.js: Getting DOM elements...');
     elements.apiProviderSelect = document.getElementById('apiProviderSelect');
   elements.apiKey = document.getElementById('apiKey');
   elements.apiKeyLabel = document.getElementById('apiKeyLabel');
@@ -771,7 +764,6 @@ async function init() {
     logError('Failed to load version', error);
   }
   
-  console.log('[ClipAIble] popup.js: init() completed successfully');
   log('popup.js: init() completed successfully');
   } catch (error) {
     console.error('[ClipAIble] popup.js: CRITICAL ERROR in init()', error);
@@ -1212,10 +1204,8 @@ async function updateApiProviderUI() {
 }
 
 async function loadSettings() {
-  console.log('[ClipAIble] popup.js: loadSettings() called');
   log('loadSettings: starting');
   try {
-    console.log('[ClipAIble] popup.js: loadSettings: requesting settings from storage');
     log('loadSettings: requesting settings from storage');
     const result = await chrome.storage.local.get([
     STORAGE_KEYS.API_PROVIDER,
@@ -2043,7 +2033,6 @@ async function loadSettings() {
 
 // Setup event listeners
 function setupEventListeners() {
-  console.log('[ClipAIble] popup.js: setupEventListeners() called');
   log('setupEventListeners: starting');
   
   if (elements.toggleApiKey && elements.apiKey) {
@@ -5895,19 +5884,14 @@ async function displayCacheStats(stats) {
 
 // Initialize when DOM is ready
 // For ES modules, DOM might already be loaded when script executes
-console.log('[ClipAIble] popup.js: Setting up initialization, document.readyState:', document.readyState);
-
 if (document.readyState === 'loading') {
-  console.log('[ClipAIble] popup.js: DOM still loading, waiting for DOMContentLoaded');
   document.addEventListener('DOMContentLoaded', () => {
-    console.log('[ClipAIble] popup.js: DOMContentLoaded fired, calling init()');
     init().catch(error => {
       console.error('[ClipAIble] popup.js: init() failed after DOMContentLoaded', error);
     });
   });
 } else {
   // DOM is already loaded, call init immediately
-  console.log('[ClipAIble] popup.js: DOM already loaded, calling init() immediately');
   init().catch(error => {
     console.error('[ClipAIble] popup.js: init() failed immediately', error);
   });
