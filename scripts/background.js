@@ -239,12 +239,145 @@ setTimeout(() => {
     console.error('[ClipAIble] Failed to log:', error);
   }
 
-  // Restore state on service worker restart (non-blocking)
-  try {
-    restoreStateFromStorage();
-  } catch (error) {
-    console.error('[ClipAIble] Failed to restore state:', error);
-  }
+  // CRITICAL: On extension reload/restart, ALWAYS reset all generation flags AND clear summary
+  // This ensures clean state after extension reload
+  // Check if this is a fresh start (no active processing) and reset flags
+  chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp']).then(result => {
+    const hasProcessingState = result.processingState && result.processingState.isProcessing;
+    const hasSummaryGenerating = result.summary_generating;
+    const hasSummary = result.summary_text;
+    
+    // CRITICAL: If extension was reloaded, reset all flags AND clear summary completely
+    // We can't distinguish reload from restart, so we ALWAYS reset on service worker start
+    // Only restore if state is very recent (< 1 minute) - this handles quick service worker restarts
+    const RESET_THRESHOLD = 60 * 1000; // 1 minute - if state is older, it's from before reload
+    
+    // CRITICAL: Clear summary on extension reload (one of 3 events that must clear summary)
+    if (hasSummary) {
+      const summaryAge = result.summary_saved_timestamp ? (Date.now() - result.summary_saved_timestamp) : Infinity;
+      if (summaryAge > RESET_THRESHOLD) {
+        log('Extension reloaded - clearing summary (too old)', {
+          summaryAge,
+          threshold: RESET_THRESHOLD
+        });
+        chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp']).catch(err => {
+          logWarn('Failed to remove summary_text on reload', err);
+        });
+      } else {
+        log('Summary is recent - may keep (quick restart)', {
+          summaryAge,
+          threshold: RESET_THRESHOLD
+        });
+      }
+    }
+    
+    if (hasProcessingState) {
+      const timeSinceUpdate = Date.now() - (result.processingState.lastUpdate || 0);
+      if (timeSinceUpdate > RESET_THRESHOLD) {
+        log('Extension reloaded - resetting processingState (too old)', {
+          timeSinceUpdate,
+          threshold: RESET_THRESHOLD
+        });
+        chrome.storage.local.remove(['processingState']).catch(err => {
+          logWarn('Failed to remove processingState on reload', err);
+        });
+      } else {
+        log('ProcessingState is recent - may restore (quick restart)', {
+          timeSinceUpdate,
+          threshold: RESET_THRESHOLD
+        });
+      }
+    }
+    
+    if (hasSummaryGenerating) {
+      const timeSinceStart = result.summary_generating_start_time 
+        ? Date.now() - result.summary_generating_start_time 
+        : Infinity;
+      
+      if (timeSinceStart > RESET_THRESHOLD) {
+        log('Extension reloaded - resetting summary_generating flag (too old)', {
+          timeSinceStart,
+          threshold: RESET_THRESHOLD
+        });
+        chrome.storage.local.set({
+          summary_generating: false,
+          summary_generating_start_time: null
+        }).catch(err => {
+          logWarn('Failed to clear summary_generating on reload', err);
+        });
+      } else {
+        log('summary_generating is recent - may restore (quick restart)', {
+          timeSinceStart,
+          threshold: RESET_THRESHOLD
+        });
+      }
+    }
+    
+    // CRITICAL: After resetting stale flags, restore state only if it's recent (quick restart)
+    // This handles service worker restarts during active generation, but resets on extension reload
+    restoreStateFromStorage().then(() => {
+      setTimeout(() => {
+        try {
+          const state = getProcessingState();
+          
+          // CRITICAL: Only restore keep-alive if state is very recent (< 1 minute)
+          // This ensures we don't restore on extension reload
+          if (state.isProcessing) {
+            const stateAge = Date.now() - (state.startTime || 0);
+            if (stateAge < RESET_THRESHOLD) {
+              log('Processing state is recent - restoring keep-alive (quick restart)', {
+                status: state.status,
+                progress: state.progress,
+                stage: state.currentStage,
+                stateAge
+              });
+              startKeepAlive();
+            } else {
+              log('Processing state is too old - not restoring (extension reload)', {
+                stateAge,
+                threshold: RESET_THRESHOLD
+              });
+            }
+          } else {
+            // CRITICAL: Check summary_generating only if very recent (< 1 minute)
+            chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
+              if (result.summary_generating && result.summary_generating_start_time) {
+                const timeSinceStart = Date.now() - result.summary_generating_start_time;
+                
+                if (timeSinceStart < RESET_THRESHOLD) {
+                  // Very recent - might be quick restart, restore
+                  log('summary_generating is very recent - restoring keep-alive (quick restart)', {
+                    timeSinceStart,
+                    threshold: RESET_THRESHOLD
+                  });
+                  startKeepAlive();
+                  startPeriodicStateSave(); // Also start periodic state save
+                } else {
+                  // Too old - extension was reloaded, clear it
+                  log('summary_generating is too old - clearing (extension reload)', {
+                    timeSinceStart,
+                    threshold: RESET_THRESHOLD
+                  });
+                  chrome.storage.local.set({
+                    summary_generating: false,
+                    summary_generating_start_time: null
+                  });
+                }
+              }
+            }).catch(error => {
+              logWarn('Failed to check summary_generating on service worker start', error);
+            });
+          }
+        } catch (error) {
+          logWarn('Failed to restore keep-alive on service worker start', error);
+        }
+      }, 100);
+    }).catch(error => {
+      logWarn('Failed to restore state on service worker start', error);
+    });
+  }).catch(error => {
+    logWarn('Failed to check state on extension load', error);
+  });
 
   // Migrate existing API keys to encrypted format (fire and forget)
   try {
@@ -290,13 +423,55 @@ function startKeepAlive() {
   // Use more frequent pings to prevent service worker from being killed
   keepAliveFallbackTimer = setInterval(() => {
     const state = getProcessingState();
-    log('Keep-alive fallback ping', { isProcessing: state.isProcessing });
-    if (state.isProcessing) {
-      // Save state more frequently to keep service worker alive
-      chrome.storage.local.set({
-        processingState: { ...state, lastUpdate: Date.now() }
+    
+    // CRITICAL: Check both processingState AND summary_generating
+    // This ensures service worker stays alive for both PDF and summary generation
+    chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
+      const isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
+      const isProcessing = state.isProcessing;
+      
+      log('Keep-alive fallback ping', { 
+        isProcessing: isProcessing,
+        isSummaryGenerating: isSummaryGenerating
       });
-    }
+      
+      const savePromises = [];
+      
+      if (isProcessing) {
+        // Save state more frequently to keep service worker alive
+        savePromises.push(
+          chrome.storage.local.set({
+            processingState: { ...state, lastUpdate: Date.now() }
+          })
+        );
+      }
+      
+      // CRITICAL: Also keep alive if summary is generating
+      if (isSummaryGenerating) {
+        // Update to keep service worker alive
+        savePromises.push(
+          chrome.storage.local.set({
+            summary_generating: true,
+            summary_generating_start_time: result.summary_generating_start_time
+          })
+        );
+      }
+      
+      // CRITICAL: If neither is active, keep-alive should stop (but we don't stop it here - stopKeepAlive does that)
+      Promise.all(savePromises).catch(error => {
+        logWarn('Keep-alive fallback ping save failed', error);
+      });
+    }).catch(error => {
+      logWarn('Failed to check summary_generating in fallback ping', error);
+      // Fallback: still save processingState if active
+      if (state.isProcessing) {
+        chrome.storage.local.set({
+          processingState: { ...state, lastUpdate: Date.now() }
+        }).catch(err => {
+          logWarn('Failed to save processingState in fallback ping', err);
+        });
+      }
+    });
   }, CONFIG.KEEP_ALIVE_PING_INTERVAL * 1000); // Use seconds-based interval for more frequent pings
   
   // Start periodic state save for additional reliability
@@ -334,12 +509,49 @@ try {
     if (alarm.name === KEEP_ALIVE_ALARM) {
       const state = getProcessingState();
       log('Keep-alive ping', { isProcessing: state.isProcessing });
-      if (state.isProcessing) {
-        // Save state to keep service worker alive and preserve progress
-        chrome.storage.local.set({ 
-          processingState: { ...state, lastUpdate: Date.now() }
+      
+      // CRITICAL: Keep service worker alive for both processingState AND summary generation
+      // Check both synchronously to ensure proper keep-alive
+      chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
+        const isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
+        const isProcessing = state.isProcessing;
+        
+        const keepAlivePromises = [];
+        
+        if (isProcessing) {
+          // Save state to keep service worker alive and preserve progress
+          keepAlivePromises.push(
+            chrome.storage.local.set({ 
+              processingState: { ...state, lastUpdate: Date.now() }
+            })
+          );
+        }
+        
+        // CRITICAL: Also keep alive if summary is generating
+        if (isSummaryGenerating) {
+          // Update timestamp to keep service worker alive
+          keepAlivePromises.push(
+            chrome.storage.local.set({
+              summary_generating: true,
+              summary_generating_start_time: result.summary_generating_start_time // Keep original start time
+            })
+          );
+        }
+        
+        Promise.all(keepAlivePromises).catch(error => {
+          logWarn('Keep-alive state save failed', error);
         });
-      }
+      }).catch(error => {
+        logWarn('Failed to check summary_generating in keep-alive', error);
+        // Fallback: still save processingState if active
+        if (state.isProcessing) {
+          chrome.storage.local.set({ 
+            processingState: { ...state, lastUpdate: Date.now() }
+          }).catch(err => {
+            logWarn('Keep-alive state save failed', err);
+          });
+        }
+      });
     }
   });
 } catch (error) {
@@ -355,17 +567,48 @@ function startPeriodicStateSave() {
   }
   stateSaveInterval = setInterval(() => {
     const state = getProcessingState();
+    const savePromises = [];
+    
     if (state.isProcessing) {
-      chrome.storage.local.set({
-        processingState: { ...state, lastUpdate: Date.now() }
-      });
-    } else {
-      // Stop saving if not processing
-      if (stateSaveInterval) {
+      savePromises.push(
+        chrome.storage.local.set({
+          processingState: { ...state, lastUpdate: Date.now() }
+        })
+      );
+    }
+    
+    // CRITICAL: Also save summary_generating state to keep service worker alive
+    // Use non-blocking approach to avoid interfering with other operations
+    chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
+      if (result.summary_generating && result.summary_generating_start_time) {
+        // Update to keep service worker alive
+        chrome.storage.local.set({
+          summary_generating: true,
+          summary_generating_start_time: result.summary_generating_start_time
+        }).catch(error => {
+          logWarn('Failed to save summary_generating in periodic save', error);
+        });
+      }
+    }).catch(error => {
+      logWarn('Failed to check summary_generating in periodic save', error);
+    });
+    
+    // CRITICAL: Stop saving only if neither processing nor summary generating
+    // Check both synchronously to avoid race conditions
+    chrome.storage.local.get(['summary_generating']).then(result => {
+      const isSummaryGenerating = result.summary_generating;
+      const isProcessing = state.isProcessing;
+      
+      // Only stop if BOTH are false
+      if (!isProcessing && !isSummaryGenerating && stateSaveInterval) {
         clearInterval(stateSaveInterval);
         stateSaveInterval = null;
+        log('Periodic state save stopped - no active processing');
       }
-    }
+    }).catch(() => {
+      // On error, keep interval running to be safe
+      // Don't stop if we can't check summary_generating
+    });
   }, CONFIG.STATE_SAVE_INTERVAL);
   log('Periodic state save started', { interval: CONFIG.STATE_SAVE_INTERVAL });
 }
@@ -847,11 +1090,48 @@ async function handleQuickSave(outputFormat = 'pdf') {
 
 try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  log('Message received', { action: request.action, sender: sender.tab?.url || 'popup' });
+  log('=== MESSAGE RECEIVED IN SERVICE WORKER ===', { 
+    action: request.action, 
+    sender: sender.tab?.url || 'popup',
+    hasData: !!request.data,
+    timestamp: Date.now()
+  });
   
   // Handle log messages from popup (removed debug logging)
   if (request.action === 'log') {
     sendResponse({ success: true });
+    return true;
+  }
+  
+  // Handle error logging from popup
+  if (request.action === 'logError') {
+    const { message, error, context, source, timestamp, url } = request.data || {};
+    
+    logError(`[${source || 'popup'}] ${message}`, error || null);
+    
+    // Log additional context if available
+    if (context && Object.keys(context).length > 0) {
+      log('Error context', context);
+    }
+    
+    // Log URL if available
+    if (url) {
+      log('Error occurred at URL', url);
+    }
+    
+    // Log timestamp
+    if (timestamp) {
+      const timeAgo = Date.now() - timestamp;
+      log('Error timestamp', { timestamp, timeAgo: `${timeAgo}ms ago` });
+    }
+    
+    sendResponse({ success: true });
+    return true;
+  }
+  
+  // Handle ping from popup to check if service worker is alive
+  if (request.action === 'ping') {
+    sendResponse({ success: true, pong: true });
     return true;
   }
   
@@ -1051,21 +1331,338 @@ try {
       return true;
     }
     
-    if (request.action === 'generateSummary') {
-      log('generateSummary request received', { 
+    if (request.action === 'extractContentOnly') {
+      log('=== extractContentOnly REQUEST RECEIVED ===', { 
         hasData: !!request.data,
-        hasContent: !!request.data?.contentItems,
-        url: request.data?.url
+        url: request.data?.url,
+        mode: request.data?.mode,
+        hasHtml: !!request.data?.html,
+        htmlLength: request.data?.html?.length || 0,
+        hasApiKey: !!request.data?.apiKey,
+        hasModel: !!request.data?.model,
+        autoGenerateSummary: request.data?.autoGenerateSummary || false,
+        timestamp: Date.now()
       });
-      generateSummary(request.data)
-        .then(result => {
-          log('generateSummary success', { hasSummary: !!result?.summary });
-          sendResponse({ success: true, summary: result?.summary });
+      
+      const { html, url, title, apiKey, model, mode, useCache, tabId, autoGenerateSummary, language } = request.data;
+      
+      if (!html || !url || !apiKey || !model) {
+        logError('extractContentOnly missing required parameters', {
+          hasHtml: !!html,
+          hasUrl: !!url,
+          hasApiKey: !!apiKey,
+          hasModel: !!model
+        });
+        sendResponse({ error: 'Missing required parameters' });
+        return true;
+      }
+      
+      const processFunction = mode === 'selector' 
+        ? processWithSelectorMode 
+        : processWithExtractMode;
+      
+      log('Starting content extraction', { mode, url, autoGenerateSummary, timestamp: Date.now() });
+      
+      // CRITICAL: Respond immediately to allow popup to close
+      // Then continue extraction and optionally generate summary in background
+      sendResponse({ success: true, extracting: true });
+      
+      processFunction({ html, url, title, apiKey, model, mode, useCache, tabId })
+        .then(async result => {
+          log('=== extractContentOnly SUCCESS ===', {
+            title: result.title,
+            contentItemsCount: result.content?.length || 0,
+            hasContent: !!result.content,
+            isArray: Array.isArray(result.content),
+            autoGenerateSummary,
+            timestamp: Date.now()
+          });
+          
+          // CRITICAL: If autoGenerateSummary is true, automatically start summary generation
+          // This allows popup to close and summary will generate in background
+          if (autoGenerateSummary && result.content && result.content.length > 0) {
+            log('=== AUTO-STARTING SUMMARY GENERATION ===', {
+              contentItemsCount: result.content.length,
+              url,
+              model,
+              language,
+              timestamp: Date.now()
+            });
+            
+            // CRITICAL: Summary generation should NOT use processingState
+            // It should only use summary_generating flag to avoid interfering with document generation UI
+            const currentState = getProcessingState();
+            if (currentState.isProcessing) {
+              logWarn('Cannot auto-generate summary while PDF is processing');
+            } else {
+              // Set summary_generating flag and start keep-alive
+              const startTime = Date.now();
+              try {
+                await chrome.storage.local.set({
+                  summary_generating: true,
+                  summary_generating_start_time: startTime
+                });
+                
+                log('summary_generating flag set for auto-summary', { startTime, timestamp: Date.now() });
+                
+                // CRITICAL: Start keep-alive for summary generation
+                startKeepAlive();
+                startPeriodicStateSave();
+                log('Keep-alive and periodic state save started for auto-summary generation', { timestamp: Date.now() });
+                
+                // Generate summary
+                const summaryStartTime = Date.now();
+                
+                // Log periodic updates for long-running summary generation
+                const summaryProgressInterval = setInterval(() => {
+                  const elapsed = Date.now() - summaryStartTime;
+                  const elapsedSeconds = Math.round(elapsed / 1000);
+                  log('Summary generation still in progress...', {
+                    elapsedSeconds,
+                    elapsedMinutes: Math.round(elapsedSeconds / 60 * 10) / 10,
+                    model: model,
+                    contentItemsCount: result.content?.length || 0
+                  });
+                }, 30000); // Log every 30 seconds
+                
+                generateSummary({
+                  contentItems: result.content,
+                  apiKey: apiKey,
+                  model: model,
+                  url: url,
+                  language: language || await getUILanguage()
+                })
+                  .then(async summaryResult => {
+                    clearInterval(summaryProgressInterval);
+                    log('=== AUTO-SUMMARY GENERATION SUCCESS ===', { 
+                      hasSummary: !!summaryResult?.summary,
+                      summaryLength: summaryResult?.summary?.length || 0,
+                      timestamp: Date.now()
+                    });
+                    
+                    // CRITICAL: Save summary to storage immediately after generation
+                    try {
+                      log('Saving auto-generated summary to storage', { summaryLength: summaryResult.summary?.length || 0 });
+                      await chrome.storage.local.set({
+                        summary_text: summaryResult.summary,
+                        summary_generating: false,
+                        summary_generating_start_time: null,
+                        summary_saved_timestamp: Date.now() // Save timestamp to identify fresh summaries
+                      });
+                      log('Auto-generated summary saved to storage successfully', { 
+                        summaryLength: summaryResult.summary?.length || 0,
+                        timestamp: Date.now()
+                      });
+                    } catch (storageError) {
+                      logError('Failed to save auto-generated summary to storage', storageError);
+                      // Still clear flag even if save failed
+                      try {
+                        await chrome.storage.local.set({
+                          summary_generating: false,
+                          summary_generating_start_time: null
+                        });
+                      } catch (clearError) {
+                        logError('Failed to clear summary_generating flag after storage error', clearError);
+                      }
+                    }
+                    
+                    // CRITICAL: Stop keep-alive after summary generation completes
+                    // Only stop if no other processing is active
+                    const finalState = getProcessingState();
+                    if (!finalState.isProcessing) {
+                      stopKeepAlive();
+                      log('Keep-alive stopped after auto-summary generation complete', { timestamp: Date.now() });
+                    } else {
+                      log('Keep-alive kept active - other processing in progress', { timestamp: Date.now() });
+                    }
+                    
+                    log('=== AUTO-SUMMARY GENERATION COMPLETE ===', { timestamp: Date.now() });
+                  })
+                  .catch(async error => {
+                    clearInterval(summaryProgressInterval);
+                    logError('=== AUTO-SUMMARY GENERATION FAILED ===', {
+                      error: error.message,
+                      stack: error.stack,
+                      timestamp: Date.now()
+                    });
+                    
+                    // CRITICAL: Clear generating flag on error
+                    try {
+                      await chrome.storage.local.set({
+                        summary_generating: false,
+                        summary_generating_start_time: null
+                      });
+                      log('summary_generating flag cleared on auto-summary error', { timestamp: Date.now() });
+                    } catch (storageError) {
+                      logError('Failed to clear summary_generating flag on auto-summary error', storageError);
+                    }
+                    
+                    // CRITICAL: Stop keep-alive on error
+                    // Only stop if no other processing is active
+                    const finalState = getProcessingState();
+                    if (!finalState.isProcessing) {
+                      stopKeepAlive();
+                      log('Keep-alive stopped after auto-summary generation error', { timestamp: Date.now() });
+                    } else {
+                      log('Keep-alive kept active - other processing in progress', { timestamp: Date.now() });
+                    }
+                  });
+              } catch (error) {
+                logError('Failed to start auto-summary generation', error);
+              }
+            }
+          }
         })
         .catch(error => {
-          logError('generateSummary failed', error);
-          sendResponse({ error: error.message || 'Summary generation failed' });
+          logError('=== extractContentOnly FAILED ===', {
+            error: error.message,
+            stack: error.stack,
+            timestamp: Date.now()
+          });
         });
+      return true;
+    }
+    
+    if (request.action === 'generateSummary') {
+      log('=== generateSummary REQUEST RECEIVED ===', { 
+        hasData: !!request.data,
+        hasContent: !!request.data?.contentItems,
+        contentItemsCount: request.data?.contentItems?.length || 0,
+        url: request.data?.url,
+        model: request.data?.model,
+        hasApiKey: !!request.data?.apiKey,
+        language: request.data?.language,
+        timestamp: Date.now()
+      });
+      
+      // CRITICAL: Use same state management as PDF generation for reliability
+      // Check if PDF is already processing - if so, reject summary request
+      const currentState = getProcessingState();
+      if (currentState.isProcessing) {
+        logWarn('Cannot generate summary while PDF is processing', {
+          currentStateStatus: currentState.status,
+          currentStateProgress: currentState.progress
+        });
+        sendResponse({ error: 'Another operation is already in progress' });
+        return true;
+      }
+      
+      log('Starting summary generation - no conflicts with PDF processing');
+      
+      // CRITICAL: Summary generation should NOT use processingState or startProcessing
+      // It should only use summary_generating flag to avoid interfering with document generation UI
+      // Summary generation is independent and should not affect "Creating document..." status
+      
+      // Set summary_generating flag and start generation
+      // Use async IIFE to handle await properly
+      (async () => {
+        const startTime = Date.now();
+        try {
+          await chrome.storage.local.set({
+            summary_generating: true,
+            summary_generating_start_time: startTime
+          });
+          
+          log('summary_generating flag set', { startTime, timestamp: Date.now() });
+          
+          // CRITICAL: Start keep-alive for summary generation
+          // This ensures service worker stays alive during generation even if popup is closed
+          startKeepAlive();
+          startPeriodicStateSave(); // Also start periodic state save for summary generation
+          log('Keep-alive and periodic state save started for summary generation', { timestamp: Date.now() });
+          
+          // CRITICAL: Respond immediately (like processArticle does)
+          // This allows popup to close without interrupting generation
+          sendResponse({ started: true });
+          
+          log('Response sent to popup - generation will continue in background', { timestamp: Date.now() });
+          
+          // Continue generation asynchronously
+          log('=== CALLING generateSummary FUNCTION ===', {
+            contentItemsCount: request.data?.contentItems?.length || 0,
+            url: request.data?.url,
+            model: request.data?.model,
+            language: request.data?.language,
+            timestamp: Date.now()
+          });
+          
+          generateSummary(request.data)
+            .then(async result => {
+              log('=== generateSummary FUNCTION SUCCESS ===', { 
+                hasSummary: !!result?.summary,
+                summaryLength: result?.summary?.length || 0,
+                timestamp: Date.now()
+              });
+              
+              // CRITICAL: Save summary to storage immediately after generation
+              // This ensures summary persists even if popup is closed or tab is switched
+              try {
+                log('Saving summary to storage', { summaryLength: result.summary?.length || 0 });
+                await chrome.storage.local.set({
+                  summary_text: result.summary,
+                  summary_generating: false,
+                  summary_generating_start_time: null
+                });
+                log('Summary saved to storage successfully', { 
+                  summaryLength: result.summary?.length || 0,
+                  timestamp: Date.now()
+                });
+              } catch (storageError) {
+                logError('Failed to save summary to storage', storageError);
+                // Still clear flag even if save failed
+                try {
+                  await chrome.storage.local.set({
+                    summary_generating: false,
+                    summary_generating_start_time: null
+                  });
+                } catch (clearError) {
+                  logError('Failed to clear summary_generating flag after storage error', clearError);
+                }
+              }
+              
+              // CRITICAL: Stop keep-alive after summary generation completes
+              // Only stop if no other processing is active
+              const currentState = getProcessingState();
+              if (!currentState.isProcessing) {
+                stopKeepAlive();
+                log('Keep-alive stopped after summary generation complete', { timestamp: Date.now() });
+              } else {
+                log('Keep-alive kept active - other processing in progress', { timestamp: Date.now() });
+              }
+              
+              log('=== SUMMARY GENERATION COMPLETE ===', { timestamp: Date.now() });
+            })
+            .catch(async error => {
+              logError('generateSummary failed', error);
+              
+              // CRITICAL: Clear generating flag on error
+              // Summary generation does NOT use processingState, so just clear the flag
+              try {
+                await chrome.storage.local.set({
+                  summary_generating: false,
+                  summary_generating_start_time: null
+                });
+                log('summary_generating flag cleared on error', { timestamp: Date.now() });
+              } catch (storageError) {
+                logError('Failed to clear summary_generating flag on error', storageError);
+              }
+              
+              // CRITICAL: Stop keep-alive on error
+              // Only stop if no other processing is active
+              const currentState = getProcessingState();
+              if (!currentState.isProcessing) {
+                stopKeepAlive();
+                log('Keep-alive stopped after summary generation error', { timestamp: Date.now() });
+              } else {
+                log('Keep-alive kept active - other processing in progress', { timestamp: Date.now() });
+              }
+            });
+        } catch (error) {
+          logError('Failed to start summary generation', error);
+          sendResponse({ error: error.message || 'Failed to start summary generation' });
+        }
+      })();
+      
       return true;
     }
     

@@ -30,7 +30,7 @@
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
-import { log, logError, logWarn } from '../scripts/utils/logging.js';
+import { log, logError as originalLogError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { RESPEECHER_CONFIG } from '../scripts/api/respeecher.js';
 import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
@@ -38,13 +38,74 @@ import { getProviderFromModel, callAI } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
 
+// Function to send error to service worker for centralized logging
+async function sendErrorToServiceWorker(message, error, context = {}) {
+  try {
+    const errorData = {
+      message: message,
+      error: error ? {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        ...(error.code && { code: error.code })
+      } : null,
+      context: context,
+      source: 'popup',
+      timestamp: Date.now(),
+      url: window.location.href
+    };
+    
+    // Send to service worker (fire and forget - don't wait for response)
+    chrome.runtime.sendMessage({
+      action: 'logError',
+      data: errorData
+    }).catch(() => {
+      // Ignore errors when sending error report (to avoid infinite loop)
+    });
+  } catch (sendError) {
+    // Ignore errors when sending error report (to avoid infinite loop)
+    console.error('[ClipAIble] Failed to send error to service worker', sendError);
+  }
+}
+
+// Enhanced logError that also sends to service worker
+const enhancedLogError = function(message, error = null) {
+  // Call original logError
+  originalLogError(message, error);
+  
+  // Also send to service worker
+  sendErrorToServiceWorker(message, error, {
+    source: 'popup.logError'
+  });
+};
+
+// Replace logError with enhanced version
+const logError = enhancedLogError;
+
 // Global error handler for unhandled promise rejections
 window.addEventListener('error', (event) => {
-  console.error('[ClipAIble] popup.js: Global error handler caught error', event.error, event.filename, event.lineno);
+  const errorMessage = `Global error handler caught error: ${event.message || 'Unknown error'}`;
+  console.error('[ClipAIble] popup.js:', errorMessage, event.error, event.filename, event.lineno);
+  
+  sendErrorToServiceWorker(errorMessage, event.error, {
+    source: 'popup.globalError',
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno
+  });
 });
 
 window.addEventListener('unhandledrejection', (event) => {
-  console.error('[ClipAIble] popup.js: Unhandled promise rejection', event.reason);
+  const errorMessage = `Unhandled promise rejection: ${event.reason?.message || String(event.reason)}`;
+  console.error('[ClipAIble] popup.js:', errorMessage, event.reason);
+  
+  const error = event.reason instanceof Error 
+    ? event.reason 
+    : new Error(String(event.reason));
+  
+  sendErrorToServiceWorker(errorMessage, error, {
+    source: 'popup.unhandledRejection'
+  });
 });
 
 const STORAGE_KEYS = {
@@ -1934,7 +1995,9 @@ async function loadSettings() {
   // Check if generation flag is stale first
   if (result[STORAGE_KEYS.SUMMARY_GENERATING]) {
     const stored = await chrome.storage.local.get(['summary_generating_start_time']);
-    const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    // CRITICAL: Use shorter threshold - summary should not take more than 15 minutes
+    // If it takes longer, it's likely stuck or failed
+    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes (reduced from 30)
     
     // If no timestamp exists, or timestamp is stale, reset the flag
     if (!stored.summary_generating_start_time) {
@@ -1980,42 +2043,27 @@ async function loadSettings() {
     elements.generateSummaryBtn.textContent = generatingText;
     elements.generateSummaryBtn.disabled = true;
     
-    // Check if summary was generated while popup was closed
-    setTimeout(async () => {
-      const checkResult = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_TEXT, STORAGE_KEYS.SUMMARY_GENERATING]);
-      if (checkResult[STORAGE_KEYS.SUMMARY_TEXT] && !checkResult[STORAGE_KEYS.SUMMARY_GENERATING]) {
-        // Summary is ready, display it
-        if (elements.summaryText && elements.summaryContainer) {
-          const savedSummary = checkResult[STORAGE_KEYS.SUMMARY_TEXT];
-          elements.summaryText.dataset.originalMarkdown = savedSummary;
-          const htmlSummary = markdownToHtml(savedSummary);
-          elements.summaryText.innerHTML = htmlSummary;
-          elements.summaryContainer.style.display = 'block';
-          elements.summaryContent.classList.remove('expanded');
-          const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
-          if (toggleIcon) toggleIcon.textContent = '▶';
-        }
-        elements.generateSummaryBtn.disabled = false;
-        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-        elements.generateSummaryBtn.textContent = generateSummaryText;
-      } else if (!checkResult[STORAGE_KEYS.SUMMARY_GENERATING]) {
-        // Generation finished but no summary - probably error
-        elements.generateSummaryBtn.disabled = false;
-        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-        elements.generateSummaryBtn.textContent = generateSummaryText;
-      }
-    }, 1000);
-  } else if (result[STORAGE_KEYS.SUMMARY_TEXT] && elements.summaryText && elements.summaryContainer) {
-    // Summary exists and generation is not in progress
+    // CRITICAL: Don't automatically restore summary here
+    // Summary will be handled by checkSummaryStatus polling
+    // This prevents showing stale summary after extension reload
+    log('loadSettings: Summary generation in progress - will be handled by checkSummaryStatus polling');
+  }
+  
+  // CRITICAL: Summary persists across popup opens/closes
+  // Only cleared by: 1) extension reload (handled in background.js), 2) new generation start, 3) close button
+  // If summary exists and not generating, show it immediately
+  // Background.js clears summary on reload, so if it exists here, it's valid
+  if (result[STORAGE_KEYS.SUMMARY_TEXT] && !result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryText && elements.summaryContainer) {
     const savedSummary = result[STORAGE_KEYS.SUMMARY_TEXT];
     elements.summaryText.dataset.originalMarkdown = savedSummary;
     const htmlSummary = markdownToHtml(savedSummary);
     elements.summaryText.innerHTML = htmlSummary;
     elements.summaryContainer.style.display = 'block';
-    // Keep collapsed state
-    elements.summaryContent.classList.remove('expanded');
-    const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
-    if (toggleIcon) toggleIcon.textContent = '▶';
+    log('loadSettings: Summary restored from storage');
+  } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryContainer) {
+    // No summary and not generating - hide container
+    elements.summaryContainer.style.display = 'none';
+    log('loadSettings: No summary to restore');
   }
   
   log('loadSettings: completed successfully');
@@ -3550,19 +3598,52 @@ async function handleGenerateSummary() {
     return;
   }
   
+  // CRITICAL: Check all required UI elements before proceeding
+  const requiredElements = [
+    'modelSelect',
+    'apiKey',
+    'modeSelect',
+    'useCache'
+  ];
+  
+  const missingElements = requiredElements.filter(key => !elements[key]);
+  if (missingElements.length > 0) {
+    logError('Required UI elements not found', { missingElements });
+    const errorText = await t('uiElementsNotFound') || 'Required UI elements not found. Please refresh the page.';
+    showToast(errorText, 'error');
+    return;
+  }
+  
   // Variables for API key and model (used for both extraction and summary generation)
   let apiKey = null;
   let model = null;
   let provider = null;
   
   try {
-    // КРИТИЧНО: Set generating flag IMMEDIATELY to prevent checkSummaryStatus from restoring button
+    // CRITICAL: Clear old summary from storage FIRST, then set generating flag
+    // This prevents checkSummaryStatus and loadSettings from restoring old summary
     await chrome.storage.local.set({ 
       [STORAGE_KEYS.SUMMARY_GENERATING]: true,
-      summary_generating_start_time: Date.now()
+      summary_generating_start_time: Date.now(),
+      [STORAGE_KEYS.SUMMARY_TEXT]: null // Clear summary text
     });
     
-    // КРИТИЧНО: Disable button immediately and show status
+    // Also explicitly remove from storage to ensure it's gone completely
+    await chrome.storage.local.remove([STORAGE_KEYS.SUMMARY_TEXT, 'summary_saved_timestamp']);
+    
+    // CRITICAL: Clear old summary from UI
+    // Hide summary container and clear content
+    if (elements.summaryContainer) {
+      elements.summaryContainer.style.display = 'none';
+    }
+    if (elements.summaryText) {
+      elements.summaryText.innerHTML = '';
+      elements.summaryText.dataset.originalMarkdown = '';
+    }
+    
+    log('Old summary cleared from UI and storage before starting new generation');
+    
+    // CRITICAL: Disable button immediately and show status
     elements.generateSummaryBtn.disabled = true;
     const generatingText = await t('generatingSummary') || 'Generating summary...';
     elements.generateSummaryBtn.textContent = generatingText;
@@ -3570,16 +3651,48 @@ async function handleGenerateSummary() {
     
     // Get current tab URL first - needed for validation
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.url) {
-      const noContentText = await t('noContentAvailable') || 'No content available. Please extract content first.';
-      showToast(noContentText, 'error');
+    log('Tab query result', { 
+      hasTab: !!tab, 
+      tabId: tab?.id, 
+      tabUrl: tab?.url,
+      tabUrlType: typeof tab?.url,
+      tabUrlLength: tab?.url?.length
+    });
+    
+    if (!tab) {
+      // CRITICAL: Clear generating flag if tab is not available
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+        summary_generating_start_time: null
+      });
+      
+      logError('No tab found when generating summary');
+      const noTabText = await t('noTabAvailable') || 'No active tab found. Please open a web page.';
+      showToast(noTabText, 'error');
       elements.generateSummaryBtn.disabled = false;
       const generateSummaryText = await t('generateSummary') || 'Generate Summary';
       elements.generateSummaryBtn.textContent = generateSummaryText;
       return;
     }
     
-    const currentUrl = tab.url; // КРИТИЧНО: Store URL for use in generateSummary
+    // Check if URL is accessible (not chrome://, about:, etc.)
+    if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
+      // CRITICAL: Clear generating flag if URL is not accessible
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+        summary_generating_start_time: null
+      });
+      
+      logError('Tab URL is not accessible for content extraction', { url: tab.url, tabId: tab.id });
+      const inaccessibleText = await t('pageNotAccessible') || 'This page is not accessible for content extraction. Please open a regular web page.';
+      showToast(inaccessibleText, 'error');
+      elements.generateSummaryBtn.disabled = false;
+      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+      elements.generateSummaryBtn.textContent = generateSummaryText;
+      return;
+    }
+    
+    const currentUrl = tab.url; // CRITICAL: Store URL for use in generateSummary
     
     // Normalize URLs for comparison (remove trailing slashes, fragments, etc.)
     function normalizeUrl(url) {
@@ -3599,74 +3712,25 @@ async function handleGenerateSummary() {
       }
     }
     
-    const normalizedCurrentUrl = normalizeUrl(currentUrl);
-    
-    // Get processing state to access extracted content
-    const state = await chrome.runtime.sendMessage({ action: 'getState' });
-    
-    // Try to get content from current state first - but only if URL matches
+    // CRITICAL: Always extract content first (never use cached content from state/storage)
+    // Flow: User clicks "Generate Summary" -> Extract content (with cache if enabled) -> Generate summary
+    // If cached selectors exist and useCache is enabled, they will be used for faster extraction
+    // But content is always extracted fresh for summary generation
     let contentItems = null;
-    if (state && state.result && state.result.content) {
-      // Check if URL matches (if URL is available in result)
-      const resultUrl = state.result.sourceUrl || state.result.url || '';
-      const normalizedResultUrl = normalizeUrl(resultUrl);
-      
-      if (!normalizedCurrentUrl || !normalizedResultUrl || normalizedCurrentUrl === normalizedResultUrl) {
-        contentItems = state.result.content;
-        log('Got content from processing state', { 
-          count: contentItems.length,
-          currentUrl: normalizedCurrentUrl,
-          resultUrl: normalizedResultUrl
-        });
-      } else {
-        logWarn('Content in state is from different URL, ignoring', {
-          currentUrl: normalizedCurrentUrl,
-          resultUrl: normalizedResultUrl
-        });
-      }
-    }
     
-    // If not in current state, try to get from storage (last processed result) - but only if URL matches
-    if ((!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) && normalizedCurrentUrl) {
-      try {
-        const stored = await chrome.storage.local.get(['lastProcessedResult']);
-        if (stored.lastProcessedResult && stored.lastProcessedResult.content) {
-          // Check if URL matches
-          const storedUrl = stored.lastProcessedResult.sourceUrl || stored.lastProcessedResult.url || '';
-          const normalizedStoredUrl = normalizeUrl(storedUrl);
-          
-          if (normalizedStoredUrl && normalizedCurrentUrl === normalizedStoredUrl) {
-            contentItems = stored.lastProcessedResult.content;
-            log('Got content from storage', { 
-              count: contentItems.length,
-              currentUrl: normalizedCurrentUrl,
-              storedUrl: normalizedStoredUrl
-            });
-          } else {
-            logWarn('Content in storage is from different URL, ignoring', {
-              currentUrl: normalizedCurrentUrl,
-              storedUrl: normalizedStoredUrl
-            });
-          }
-        }
-      } catch (error) {
-        logWarn('Failed to get last processed result from storage', error);
-      }
-    }
-    
-    // If no content found, extract it first
-    if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
+    // Check if it's YouTube or regular page
+    {
       // Check if it's YouTube
       const videoInfo = detectVideoPlatform(tab.url);
       
       if (videoInfo && videoInfo.platform === 'youtube') {
         // Extract and process YouTube subtitles
-        // КРИТИЧНО: Keep button disabled and status unchanged - no intermediate status updates
+        // CRITICAL: Keep button disabled and status unchanged - no intermediate status updates
         elements.generateSummaryBtn.disabled = true;
         
-        // КРИТИЧНО: Убедиться, что content script загружен перед извлечением субтитров
-        // Content script должен быть загружен через manifest.json, но дадим ему время
-        // Попробуем отправить тестовое сообщение в content script, чтобы проверить загрузку
+        // CRITICAL: Ensure content script is loaded before extracting subtitles
+        // Content script should be loaded via manifest.json, but give it time
+        // Try sending a test message to content script to verify it's loaded
         let contentScriptLoaded = false;
         try {
           const pingResponse = await chrome.tabs.sendMessage(tab.id, { action: 'ping' });
@@ -3675,21 +3739,21 @@ async function handleGenerateSummary() {
             log('Content script is loaded and responding', { timestamp: pingResponse.timestamp });
           }
         } catch (pingError) {
-          // Content script может не отвечать на ping - это нормально
-          // Просто дадим ему немного времени на загрузку
+          // Content script may not respond to ping - this is normal
+          // Just give it some time to load
           logWarn('Content script ping failed or not responding (may be normal)', pingError);
         }
         
-        // Небольшая задержка, чтобы content script точно загрузился (если еще не загружен)
+        // Small delay to ensure content script is loaded (if not already loaded)
         if (!contentScriptLoaded) {
           log('Waiting for content script to load...');
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
         try {
-          // КРИТИЧНО: Вызываем извлечение субтитров через background script
-          // Это гарантирует правильный контекст и доступ к content script
-          // (такой же подход, как при создании PDF)
+          // CRITICAL: Call subtitle extraction through background script
+          // This ensures correct context and access to content script
+          // (same approach as PDF creation)
           const extractResponse = await chrome.runtime.sendMessage({
             action: 'extractYouTubeSubtitlesForSummary',
             data: { tabId: tab.id }
@@ -3701,6 +3765,12 @@ async function handleGenerateSummary() {
           
           const subtitlesData = extractResponse.result;
           if (!subtitlesData || !subtitlesData.subtitles || subtitlesData.subtitles.length === 0) {
+            // CRITICAL: Clear generating flag if no subtitles
+            await chrome.storage.local.set({ 
+              [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+              summary_generating_start_time: null
+            });
+            
             const noSubtitlesText = await t('errorNoSubtitles') || 'No subtitles found.';
             showToast(noSubtitlesText, 'error');
             elements.generateSummaryBtn.disabled = false;
@@ -3709,8 +3779,9 @@ async function handleGenerateSummary() {
             return;
           }
           
-          // КРИТИЧНО: For summary, we don't need to process subtitles - send raw subtitles directly
-          // Convert raw subtitles to contentItems format for generateSummary
+          // CRITICAL: For YouTube, just convert subtitles to contentItems format
+          // No selectors needed - subtitles are already extracted text
+          // Then send generateSummary message directly
           contentItems = subtitlesData.subtitles.map(subtitle => ({
             type: 'paragraph',
             text: subtitle.text || subtitle
@@ -3726,6 +3797,13 @@ async function handleGenerateSummary() {
               apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
             } catch (error) {
               logError('Failed to decrypt API key', error);
+              
+              // CRITICAL: Clear generating flag on error
+              await chrome.storage.local.set({ 
+                [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+                summary_generating_start_time: null
+              });
+              
               const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
               showToast(failedDecryptText, 'error');
               elements.generateSummaryBtn.disabled = false;
@@ -3736,6 +3814,12 @@ async function handleGenerateSummary() {
           }
           
           if (!apiKey) {
+            // CRITICAL: Clear generating flag if no API key
+            await chrome.storage.local.set({ 
+              [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+              summary_generating_start_time: null
+            });
+            
             const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
             const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
             showToast(pleaseEnterKeyText, 'error');
@@ -3744,8 +3828,74 @@ async function handleGenerateSummary() {
             elements.generateSummaryBtn.textContent = generateSummaryText;
             return;
           }
+          
+          // CRITICAL: For YouTube, send generateSummary message directly with subtitles
+          // No need for extractContentOnly - subtitles are already extracted text
+          // Generation will continue in background
+          const targetLanguage = elements.languageSelect?.value || 'auto';
+          const uiLanguage = await getUILanguage();
+          const summaryLanguage = targetLanguage !== 'auto' ? targetLanguage : uiLanguage;
+          
+          log('Sending generateSummary for YouTube subtitles', {
+            contentItemsCount: contentItems?.length || 0,
+            model: model,
+            url: currentUrl,
+            language: summaryLanguage
+          });
+          
+          try {
+            const response = await chrome.runtime.sendMessage({
+              action: 'generateSummary',
+              data: {
+                contentItems: contentItems,
+                apiKey: apiKey,
+                model: model,
+                url: currentUrl,
+                language: summaryLanguage
+              }
+            });
+            
+            log('generateSummary message sent for YouTube, received immediate response', { 
+              started: response?.started,
+              error: response?.error 
+            });
+            
+            if (response?.error) {
+              throw new Error(response.error);
+            }
+            
+            if (!response?.started) {
+              throw new Error('Summary generation failed to start');
+            }
+            
+            // CRITICAL: Generation started in background - exit and let checkSummaryStatus handle completion
+            log('Summary generation started in background for YouTube, exiting - checkSummaryStatus will handle completion');
+            return; // Exit - checkSummaryStatus will poll and handle completion
+          } catch (sendError) {
+            logError('Failed to send generateSummary message for YouTube', sendError);
+            
+            // Clear flag on error
+            await chrome.storage.local.set({ 
+              [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+              summary_generating_start_time: null
+            });
+            
+            const errorText = await t('summaryGenerationError') || 'Error starting summary generation';
+            showToast(errorText, 'error');
+            elements.generateSummaryBtn.disabled = false;
+            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            elements.generateSummaryBtn.textContent = generateSummaryText;
+            return;
+          }
         } catch (error) {
           logError('Failed to extract/process YouTube subtitles', error);
+          
+          // CRITICAL: Clear generating flag on error
+          await chrome.storage.local.set({ 
+            [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+            summary_generating_start_time: null
+          });
+          
           const errorText = await t('errorSubtitleProcessingFailed') || 'Failed to process subtitles';
           showToast(errorText, 'error');
           elements.generateSummaryBtn.disabled = false;
@@ -3755,10 +3905,16 @@ async function handleGenerateSummary() {
         }
       } else {
         // Regular page - extract content first
-        // КРИТИЧНО: Keep button disabled and status unchanged - no intermediate status updates
+        log('Regular page detected, starting content extraction for summary', {
+          url: tab.url,
+          tabId: tab.id
+        });
+        
+        // CRITICAL: Keep button disabled and status unchanged - no intermediate status updates
         elements.generateSummaryBtn.disabled = true;
         
         // Get page data
+        log('About to execute script to get page HTML...');
         const htmlResult = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: () => ({
@@ -3777,7 +3933,20 @@ async function handleGenerateSummary() {
           return;
         }
         
+        log('HTML extraction script executed', {
+          hasResult: !!htmlResult,
+          hasFirstResult: !!htmlResult?.[0],
+          hasResultData: !!htmlResult?.[0]?.result
+        });
+        
         const pageData = htmlResult[0].result;
+        
+        log('Page data extracted', {
+          hasHtml: !!pageData?.html,
+          htmlLength: pageData?.html?.length || 0,
+          url: pageData?.url,
+          title: pageData?.title
+        });
         
         // Get API key and model (will be used for both extraction and summary generation)
         model = elements.modelSelect.value;
@@ -3809,30 +3978,123 @@ async function handleGenerateSummary() {
         }
         
         // Start extraction process (content only, no file generation)
-        // КРИТИЧНО: Keep button disabled and status unchanged - no intermediate status updates
+        // CRITICAL: Keep button disabled and status unchanged - no intermediate status updates
         elements.generateSummaryBtn.disabled = true;
         
-        // Send extraction request (content only, no file generation)
-        const extractResponse = await chrome.runtime.sendMessage({
-          action: 'extractContentOnly',
-          data: {
-            html: pageData.html,
-            url: pageData.url,
-            title: pageData.title || tab.title,
-            apiKey: apiKey,
-            provider: provider,
-            model: model,
-            mode: elements.modeSelect.value,
-            useCache: elements.useCache.checked,
-            tabId: tab.id
-          }
+        log('About to send extractContentOnly request', {
+          hasHtml: !!pageData.html,
+          htmlLength: pageData.html?.length || 0,
+          url: pageData.url,
+          title: pageData.title,
+          hasApiKey: !!apiKey,
+          hasModel: !!model,
+          mode: elements.modeSelect.value,
+          tabId: tab.id
         });
         
+        // Send extraction request (content only, no file generation)
+        let extractResponse;
+        try {
+          log('Calling chrome.runtime.sendMessage for extractContentOnly...');
+          // CRITICAL: Request auto-generate summary after extraction
+          // This allows popup to close and summary will generate in background
+          const targetLanguage = elements.languageSelect?.value || 'auto';
+          const uiLanguage = await getUILanguage();
+          const summaryLanguage = targetLanguage !== 'auto' ? targetLanguage : uiLanguage;
+          
+          extractResponse = await chrome.runtime.sendMessage({
+            action: 'extractContentOnly',
+            data: {
+              html: pageData.html,
+              url: pageData.url,
+              title: pageData.title || tab.title,
+              apiKey: apiKey,
+              provider: provider,
+              model: model,
+              mode: elements.modeSelect.value,
+              useCache: elements.useCache.checked,
+              tabId: tab.id,
+              autoGenerateSummary: true, // CRITICAL: Auto-generate summary after extraction
+              language: summaryLanguage
+            }
+          });
+          
+          // Check for chrome.runtime.lastError
+          if (chrome.runtime.lastError) {
+            logError('extractContentOnly sendMessage error', chrome.runtime.lastError);
+            throw new Error(chrome.runtime.lastError.message || 'Failed to communicate with background script');
+          }
+          
+          log('extractContentOnly response received', {
+            hasResponse: !!extractResponse,
+            hasError: !!extractResponse?.error,
+            hasResult: !!extractResponse?.result,
+            hasContent: !!extractResponse?.result?.content,
+            contentLength: extractResponse?.result?.content?.length || 0,
+            responseType: typeof extractResponse,
+            responseKeys: extractResponse ? Object.keys(extractResponse) : []
+          });
+        } catch (sendError) {
+          logError('extractContentOnly sendMessage failed', sendError);
+          logError('sendError details', {
+            message: sendError.message,
+            stack: sendError.stack,
+            name: sendError.name,
+            lastError: chrome.runtime.lastError?.message
+          });
+          throw sendError;
+        }
+        
+        log('After extractContentOnly try-catch block', {
+          hasExtractResponse: !!extractResponse,
+          extractResponseType: typeof extractResponse,
+          isNull: extractResponse === null,
+          isUndefined: extractResponse === undefined,
+          lastError: chrome.runtime.lastError?.message
+        });
+        
+        // Check for chrome.runtime.lastError AFTER await (it might be set after async operation)
+        if (chrome.runtime.lastError) {
+          logError('extractContentOnly chrome.runtime.lastError after await', chrome.runtime.lastError);
+          throw new Error(chrome.runtime.lastError.message || 'Failed to communicate with background script');
+        }
+        
+        if (!extractResponse) {
+          logError('extractContentOnly returned null/undefined response', {
+            lastError: chrome.runtime.lastError?.message,
+            responseType: typeof extractResponse
+          });
+          throw new Error('No response from background script. Service worker may have died.');
+        }
+        
         if (extractResponse.error) {
+          logError('extractContentOnly returned error', extractResponse.error);
           throw new Error(extractResponse.error);
         }
         
+        // CRITICAL: If extracting: true, background is handling extraction asynchronously
+        // Don't check result - just exit and let checkSummaryStatus poll for completion
+        if (extractResponse.extracting === true) {
+          log('extractContentOnly started async extraction - background will handle summary generation', {
+            success: extractResponse.success,
+            extracting: extractResponse.extracting,
+            timestamp: Date.now()
+          });
+          
+          // CRITICAL: Exit here - background will handle extraction and summary generation
+          // extractContentOnly with autoGenerateSummary: true automatically starts summary generation
+          // checkSummaryStatus will poll and show result when ready
+          return;
+        }
+        
+        // If not async extraction, check result synchronously
         if (!extractResponse.result || !extractResponse.result.content || !Array.isArray(extractResponse.result.content) || extractResponse.result.content.length === 0) {
+          logWarn('extractContentOnly returned empty or invalid content', {
+            hasResult: !!extractResponse?.result,
+            hasContent: !!extractResponse?.result?.content,
+            isArray: Array.isArray(extractResponse?.result?.content),
+            length: extractResponse?.result?.content?.length || 0
+          });
           const noContentText = await t('noContentAvailable') || 'Failed to extract content.';
           showToast(noContentText, 'error');
           elements.generateSummaryBtn.disabled = false;
@@ -3842,256 +4104,71 @@ async function handleGenerateSummary() {
         }
         
         contentItems = extractResponse.result.content;
-      }
-    }
-    
-    // At this point we have contentItems from either:
-    // 1. Existing state/storage
-    // 2. YouTube subtitles (processed)
-    // 3. Regular page extraction
-    
-    // Now generate summary from contentItems
-    
-    // Check if we have content
-    if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
-      const noContentText = await t('noContentAvailable') || 'No content available.';
-      showToast(noContentText, 'error');
-      elements.generateSummaryBtn.disabled = false;
-      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-      elements.generateSummaryBtn.textContent = generateSummaryText;
-      return;
-    }
-    
-    // Get API key and model for summary generation (if not already set)
-    if (!apiKey || !model) {
-      model = elements.modelSelect.value;
-      provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
-      apiKey = elements.apiKey.value.trim();
-      
-      if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
-        try {
-          apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
-        } catch (error) {
-          logError('Failed to decrypt API key', error);
-          const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
-          showToast(failedDecryptText, 'error');
-          elements.generateSummaryBtn.disabled = false;
-          const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-          elements.generateSummaryBtn.textContent = generateSummaryText;
-          return;
-        }
-      }
-      
-      if (!apiKey) {
-        const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
-        const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
-        showToast(pleaseEnterKeyText, 'error');
-        elements.generateSummaryBtn.disabled = false;
-        const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-        elements.generateSummaryBtn.textContent = generateSummaryText;
+        log('Content extracted successfully for summary', { 
+          contentItemsCount: contentItems?.length || 0,
+          hasApiKey: !!apiKey,
+          hasModel: !!model,
+          contentItemsType: typeof contentItems,
+          isArray: Array.isArray(contentItems),
+          apiKeyValue: apiKey ? 'present' : 'missing',
+          modelValue: model || 'missing',
+          autoGenerateSummary: true // Background will auto-generate summary
+        });
+        
+        // CRITICAL: Summary generation is handled automatically by background
+        // Background received autoGenerateSummary: true flag and will start generation
+        // Popup can close now - summary will generate in background
+        log('extractContentOnly completed with autoGenerateSummary flag - background will handle summary generation', {
+          contentItemsCount: contentItems?.length || 0,
+          timestamp: Date.now()
+        });
+        
+        // CRITICAL: Exit here - background will handle summary generation
+        // extractContentOnly with autoGenerateSummary: true automatically starts summary generation
+        // checkSummaryStatus will poll and show result when ready
         return;
       }
     }
     
-    // КРИТИЧНО: Button should already be disabled with "Generating summary..." text from the start
-    // Flag is already set at the beginning of the function - no need to set it again
-    elements.generateSummaryBtn.disabled = true;
-    log('Starting summary generation - flag already set, button already shows generating status', {
-      contentItemsCount: contentItems?.length || 0,
-      hasApiKey: !!apiKey,
-      model: model
-    });
-    
-    // Get current tab URL for logging (tab already defined above)
-    const url = currentUrl;
-    
-    // КРИТИЧНО: Ensure flag is set before sending message (in case service worker died and restarted)
-    await chrome.storage.local.set({ 
-      [STORAGE_KEYS.SUMMARY_GENERATING]: true,
-      summary_generating_start_time: Date.now()
-    });
-    log('Summary generation flag set before sending message', { timestamp: Date.now() });
-    
-    // КРИТИЧНО: Check if service worker is available before sending
-    let serviceWorkerAvailable = false;
-    try {
-      // Try to ping service worker
-      const pingResponse = await Promise.race([
-        chrome.runtime.sendMessage({ action: 'ping' }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('ping timeout')), 1000))
-      ]);
-      serviceWorkerAvailable = true;
-      log('Service worker is available, proceeding with generateSummary');
-    } catch (pingError) {
-      logWarn('Service worker may not be available, will retry generateSummary', pingError);
-      // Continue anyway - service worker may restart
-    }
-    
-    // Send request to background to generate summary
-    // This will continue even if popup is closed
-    // КРИТИЧНО: Add timeout wrapper to prevent hanging
-    let sendMessagePromise;
-    try {
-      log('Sending generateSummary message to background', {
-        contentItemsCount: contentItems?.length || 0,
-        model: model,
-        url: url,
-        serviceWorkerAvailable: serviceWorkerAvailable
-      });
-      
-      sendMessagePromise = chrome.runtime.sendMessage({
-        action: 'generateSummary',
-        data: {
-          contentItems: contentItems,
-          apiKey: apiKey,
-          model: model,
-          url: url
-        }
-      });
-      
-      log('generateSummary message sent, waiting for response');
-    } catch (sendError) {
-      // КРИТИЧНО: If sendMessage fails synchronously (service worker dead), set flag and let background continue
-      logError('Failed to send generateSummary message (service worker may be dead)', sendError);
-      
-      // Set flag so checkSummaryStatus knows to check
-      await chrome.storage.local.set({ 
-        [STORAGE_KEYS.SUMMARY_GENERATING]: true,
-        summary_generating_start_time: Date.now()
-      });
-      
-      // Try to send message again after a delay (service worker may restart)
-      setTimeout(async () => {
-        try {
-          log('Retrying generateSummary message after delay');
-          const retryResponse = await chrome.runtime.sendMessage({
-            action: 'generateSummary',
-            data: {
-              contentItems: contentItems,
-              apiKey: apiKey,
-              model: model,
-              url: url
-            }
-          });
-          
-          if (retryResponse?.error) {
-            logError('generateSummary retry failed', retryResponse.error);
-            await chrome.storage.local.set({ 
-              [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-              summary_generating_start_time: null
-            });
-            elements.generateSummaryBtn.disabled = false;
-            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-            elements.generateSummaryBtn.textContent = generateSummaryText;
-          }
-        } catch (retryError) {
-          logError('generateSummary retry also failed', retryError);
-          // Keep flag set - checkSummaryStatus will handle it
-        }
-      }, 2000);
-      
-      // Show message that process is continuing in background
-      const continuingText = await t('summaryGenerationContinuing') || 'Summary generation is continuing in background. Please wait...';
-      showToast(continuingText, 'info');
-      return; // Exit - checkSummaryStatus will handle completion
-    }
-    
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error('Summary generation timeout. The request took too long. Please try again.'));
-      }, 50 * 60 * 1000); // 50 minutes timeout for summary generation (longer than background timeout of 45 minutes)
-    });
-    
-    let summaryResponse;
-    try {
-      summaryResponse = await Promise.race([sendMessagePromise, timeoutPromise]);
-      log('generateSummary response received', { hasError: !!summaryResponse?.error, hasSummary: !!summaryResponse?.summary });
-    } catch (sendError) {
-      // Handle timeout or connection errors
-      logError('generateSummary request failed', sendError);
-      
-      if (sendError.message && sendError.message.includes('timeout')) {
-        throw new Error('Summary generation timeout. The request took too long. Please try again.');
-      }
-      if (sendError.message && (sendError.message.includes('port closed') || sendError.message.includes('Receiving end does not exist'))) {
-        // Background script may continue processing - don't throw error, just log
-        logWarn('Connection to background script lost, but summary generation may continue in background', sendError);
-        // Don't restore button - let checkSummaryStatus handle it
-        // Set flag so checkSummaryStatus knows to check
-        await chrome.storage.local.set({ 
-          [STORAGE_KEYS.SUMMARY_GENERATING]: true,
-          summary_generating_start_time: Date.now()
-        });
-        // Show message that process is continuing in background
-        const continuingText = await t('summaryGenerationContinuing') || 'Summary generation is continuing in background. Please wait...';
-        showToast(continuingText, 'info');
-        return; // Exit - checkSummaryStatus will handle completion
-      }
-      throw sendError;
-    }
-    
-    if (summaryResponse.error) {
-      throw new Error(summaryResponse.error);
-    }
-    
-    // Check if response is valid
-    if (!summaryResponse) {
-      throw new Error('No response from background script');
-    }
-    
-    // Display summary
-    if (summaryResponse.summary && typeof summaryResponse.summary === 'string' && summaryResponse.summary.trim()) {
-      const cleanSummary = summaryResponse.summary.trim();
-      
-      // Store original markdown text in data attribute for copying/downloading
-      if (elements.summaryText) {
-        elements.summaryText.dataset.originalMarkdown = cleanSummary;
-      }
-      
-      // Convert markdown to HTML for display
-      const htmlSummary = markdownToHtml(cleanSummary);
-      elements.summaryText.innerHTML = htmlSummary;
-      elements.summaryContainer.style.display = 'block';
-      // Collapse by default
-      elements.summaryContent.classList.remove('expanded');
-      const toggleIcon = elements.summaryToggle.querySelector('.summary-toggle-icon');
-      if (toggleIcon) toggleIcon.textContent = '▶';
-      
-      const successText = await t('summaryGenerated') || 'Summary generated successfully';
-      showToast(successText, 'success');
-      
-      // Clear generating flag on success
-      await chrome.storage.local.set({ 
-        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-        summary_generating_start_time: null
-      });
-    } else {
-      const errorText = await t('summaryGenerationFailed') || 'Failed to generate summary';
-      showToast(errorText, 'error');
-      // Clear generating flag on failure
-      await chrome.storage.local.set({ 
-        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-        summary_generating_start_time: null
-      });
-    }
-    
   } catch (error) {
     logError('Error generating summary', error);
-    const errorText = await t('summaryGenerationError') || 'Error generating summary';
-    showToast(errorText, 'error');
+    
     // Clear generating flag on error
-    await chrome.storage.local.set({ 
-      [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-      summary_generating_start_time: null
-    });
+    try {
+      await chrome.storage.local.set({ 
+        [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+        summary_generating_start_time: null
+      });
+    } catch (storageError) {
+      logError('Failed to clear summary_generating flag on error', storageError);
+    }
+    
+    // Show user-friendly error message
+    let errorText;
+    if (error.message && error.message.includes('Required UI elements not found')) {
+      errorText = await t('uiElementsNotFound') || 'Required UI elements not found. Please refresh the page.';
+    } else if (error.message) {
+      errorText = error.message;
+    } else {
+      errorText = await t('summaryGenerationError') || 'Error generating summary';
+    }
+    
+    showToast(errorText, 'error');
+    
+    // Restore button
+    if (elements.generateSummaryBtn) {
+      elements.generateSummaryBtn.disabled = false;
+      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+      elements.generateSummaryBtn.textContent = generateSummaryText;
+    }
   } finally {
-    // КРИТИЧНО: Restore button only if generation is not in progress
+    // CRITICAL: Restore button only if generation is not in progress
     // Check storage to see if generation is still in progress (may continue in background)
     // Use double-check to avoid race conditions
     try {
       const checkResult = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING, 'summary_generating_start_time']);
       
-      // КРИТИЧНО: Only restore button if flag is definitely false AND we're not in a race condition
+      // CRITICAL: Only restore button if flag is definitely false AND we're not in a race condition
       // If flag is true, keep button disabled - generation is in progress
       if (!checkResult[STORAGE_KEYS.SUMMARY_GENERATING]) {
         // Double-check: wait a tiny bit and check again to avoid race condition
@@ -4243,10 +4320,10 @@ async function closeSummary() {
       elements.summaryText.dataset.originalMarkdown = '';
     }
     
-    // Clear summary from storage
-    await chrome.storage.local.remove([STORAGE_KEYS.SUMMARY_TEXT]);
+    // Clear summary from storage completely
+    await chrome.storage.local.remove([STORAGE_KEYS.SUMMARY_TEXT, 'summary_saved_timestamp']);
     
-    log('Summary closed and cleared');
+    log('Summary closed and cleared completely');
   } catch (error) {
     logError('Failed to close summary', error);
   }
@@ -5242,29 +5319,36 @@ function startStatePolling() {
   poll();
 }
 
-// Check summary generation status from storage
+// Check summary generation status from storage AND processingState
 async function checkSummaryStatus() {
   try {
-    const result = await chrome.storage.local.get([
+    // CRITICAL: Summary generation now uses ONLY summary_generating flag
+    // It does NOT use processingState to avoid interfering with document generation UI
+    const storageResult = await chrome.storage.local.get([
       STORAGE_KEYS.SUMMARY_GENERATING,
       STORAGE_KEYS.SUMMARY_TEXT,
-      'summary_generating_start_time' // Track when generation started
+      'summary_generating_start_time',
+      'summary_saved_timestamp'
     ]);
     
-    // Check if generation flag is stale (more than 5 minutes old)
-    const STALE_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    const isSummaryGenerating = storageResult[STORAGE_KEYS.SUMMARY_GENERATING];
     
-    if (result[STORAGE_KEYS.SUMMARY_GENERATING]) {
-      if (!result.summary_generating_start_time) {
+    // Check if generation flag is stale
+    // CRITICAL: Use shorter threshold - summary should not take more than 15 minutes
+    // If it takes longer, it's likely stuck or failed
+    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
+    
+    if (isSummaryGenerating) {
+      // Check stale threshold
+      if (!storageResult.summary_generating_start_time) {
         // No timestamp - flag is from old version or was set incorrectly, reset it
         logWarn('Summary generation flag has no timestamp in checkSummaryStatus, resetting', {});
         await chrome.storage.local.set({ 
           [STORAGE_KEYS.SUMMARY_GENERATING]: false,
           summary_generating_start_time: null
         });
-        result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
       } else {
-        const timeSinceStart = Date.now() - result.summary_generating_start_time;
+        const timeSinceStart = Date.now() - storageResult.summary_generating_start_time;
         
         if (timeSinceStart > STALE_THRESHOLD) {
           // Flag is stale - reset it
@@ -5273,7 +5357,6 @@ async function checkSummaryStatus() {
             [STORAGE_KEYS.SUMMARY_GENERATING]: false,
             summary_generating_start_time: null
           });
-          result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
           
           // Ensure button is enabled after reset
           if (elements.generateSummaryBtn) {
@@ -5281,65 +5364,76 @@ async function checkSummaryStatus() {
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
           }
+          // Exit early - flag was stale
+          return;
         }
       }
     }
     
-    if (result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
+    // CRITICAL: Check if summary is generating (only from flag, not processingState)
+    if (isSummaryGenerating && elements.generateSummaryBtn) {
       // Summary generation is in progress - show status
       const generatingText = await t('generatingSummary') || 'Generating summary...';
       elements.generateSummaryBtn.textContent = generatingText;
       elements.generateSummaryBtn.disabled = true;
       log('checkSummaryStatus: Generation in progress - button disabled', { text: generatingText });
-    } else if (result[STORAGE_KEYS.SUMMARY_TEXT] && !result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryText && elements.summaryContainer) {
-      // Summary is ready - display it
-      // КРИТИЧНО: Restore button when summary is ready
+    } else if (storageResult[STORAGE_KEYS.SUMMARY_TEXT] && !isSummaryGenerating && elements.summaryText && elements.summaryContainer) {
+      // Summary exists and generation is not in progress - display it
+      // CRITICAL: Double-check that generation is not in progress (race condition protection)
+      const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
+      if (doubleCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
+        // Generation is in progress - don't show summary
+        log('checkSummaryStatus: Generation in progress on double-check, skipping summary display');
+        return;
+      }
+      
+      // CRITICAL: Summary persists - always show if it exists and not generating
+      const savedSummary = storageResult[STORAGE_KEYS.SUMMARY_TEXT];
+      const currentMarkdown = elements.summaryText.dataset.originalMarkdown;
+      const containerWasHidden = elements.summaryContainer.style.display === 'none';
+      
+      // Restore button when summary is ready
       if (elements.generateSummaryBtn) {
         elements.generateSummaryBtn.disabled = false;
         const generateSummaryText = await t('generateSummary') || 'Generate Summary';
         elements.generateSummaryBtn.textContent = generateSummaryText;
-        log('checkSummaryStatus: Summary ready - button restored', { text: generateSummaryText });
       }
       
-      // Check if summary content has changed before updating
-      const savedSummary = result[STORAGE_KEYS.SUMMARY_TEXT];
-      const currentMarkdown = elements.summaryText.dataset.originalMarkdown;
-      
-      // Only update if content changed or container is hidden
-      const wasExpanded = elements.summaryContent.classList.contains('expanded');
-      const containerWasHidden = elements.summaryContainer.style.display === 'none';
-      
+      // Update content if it changed or container is hidden
       if (currentMarkdown !== savedSummary || containerWasHidden) {
         elements.summaryText.dataset.originalMarkdown = savedSummary;
         const htmlSummary = markdownToHtml(savedSummary);
         elements.summaryText.innerHTML = htmlSummary;
         elements.summaryContainer.style.display = 'block';
         
-        // Only collapse if container was hidden (new summary)
-        // Preserve expanded state if user already expanded it and content is the same
+        // Preserve expanded state if content is the same
+        const wasExpanded = elements.summaryContent.classList.contains('expanded');
         if (containerWasHidden || !currentMarkdown) {
+          // New summary or container was hidden - collapse
           elements.summaryContent.classList.remove('expanded');
           const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
           if (toggleIcon) toggleIcon.textContent = '▶';
         } else if (wasExpanded && currentMarkdown === savedSummary) {
-          // Restore expanded state if it was expanded before and content is the same
+          // Same content - restore expanded state
           elements.summaryContent.classList.add('expanded');
           const toggleIcon = elements.summaryToggle?.querySelector('.summary-toggle-icon');
           if (toggleIcon) toggleIcon.textContent = '▼';
         }
-      } else {
-        // Content hasn't changed - preserve expanded state
-        // Don't touch the DOM if nothing changed
+        
+        log('checkSummaryStatus: Summary displayed', { summaryLength: savedSummary?.length || 0 });
       }
-    } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
-      // КРИТИЧНО: If generation is not in progress and no summary, ensure button is enabled
+    } else if (!isSummaryGenerating && elements.generateSummaryBtn) {
+      // CRITICAL: If generation is not in progress and no summary, ensure button is enabled
       // BUT: Only restore if button is currently disabled (to avoid race conditions)
       // Don't restore if button is already enabled or if we're in the middle of generation
       if (elements.generateSummaryBtn.disabled) {
         // Double-check: make sure generation really is not in progress
-        // This prevents race condition where flag hasn't been set yet
-        const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
-        if (!doubleCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
+        // Check only summary_generating flag (summary does NOT use processingState)
+        const doubleCheckStorage = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
+        
+        const doubleCheckGenerating = doubleCheckStorage[STORAGE_KEYS.SUMMARY_GENERATING];
+        
+        if (!doubleCheckGenerating) {
           elements.generateSummaryBtn.disabled = false;
           const generateSummaryText = await t('generateSummary') || 'Generate Summary';
           elements.generateSummaryBtn.textContent = generateSummaryText;
@@ -5352,12 +5446,6 @@ async function checkSummaryStatus() {
           log('checkSummaryStatus: Generation flag found on double-check - button kept disabled');
         }
       }
-    } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
-      // Generation finished but no summary - probably error or cancelled
-      // Re-enable button
-      elements.generateSummaryBtn.disabled = false;
-      const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-      elements.generateSummaryBtn.textContent = generateSummaryText;
     }
   } catch (error) {
     logWarn('Error checking summary status', error);

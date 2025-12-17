@@ -60,9 +60,16 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
   }
   
   let response;
+  const requestStartTime = Date.now();
   
   try {
-    log('Sending request to OpenAI...');
+    log('Sending request to OpenAI...', { 
+      model: modelName, 
+      promptLength: userPrompt.length,
+      systemPromptLength: systemPrompt.length,
+      reasoningEffort: reasoningEffort || 'none',
+      timestamp: requestStartTime
+    });
     
     // Use retry wrapper for fetch
     // Create new AbortController for each retry attempt to avoid timeout conflict
@@ -70,6 +77,18 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       async () => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+        
+        // Log periodic updates for long-running requests
+        const progressInterval = setInterval(() => {
+          const elapsed = Date.now() - requestStartTime;
+          const elapsedSeconds = Math.round(elapsed / 1000);
+          log('OpenAI API request still processing...', {
+            elapsedSeconds,
+            elapsedMinutes: Math.round(elapsedSeconds / 60 * 10) / 10,
+            model: modelName,
+            reasoningEffort: reasoningEffort || 'none'
+          });
+        }, 30000); // Log every 30 seconds
         
         try {
           const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -81,6 +100,8 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
             body: JSON.stringify(requestBody),
             signal: controller.signal
           });
+          
+          clearInterval(progressInterval);
         
           // If not ok and retryable, throw error for retry logic
           if (!fetchResponse.ok) {
@@ -108,6 +129,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
           clearTimeout(timeout);
           return fetchResponse;
         } catch (e) {
+          clearInterval(progressInterval);
           clearTimeout(timeout);
           throw e;
         }
@@ -150,15 +172,24 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
     throw new Error(`Network error: ${fetchError.message}`);
   }
 
-  log('OpenAI response', { status: response.status, ok: response.ok });
+  const responseTime = Date.now() - requestStartTime;
+  log('OpenAI response received', { 
+    status: response.status, 
+    ok: response.ok,
+    responseTimeMs: responseTime,
+    responseTimeSeconds: Math.round(responseTime / 1000)
+  });
 
   let result;
   try {
     result = await response.json();
+    const totalTime = Date.now() - requestStartTime;
     log('OpenAI response parsed', { 
       id: result.id, 
       model: result.model,
-      usage: result.usage 
+      usage: result.usage,
+      totalTimeMs: totalTime,
+      totalTimeSeconds: Math.round(totalTime / 1000)
     });
   } catch (parseError) {
     logError('Failed to parse response', parseError);

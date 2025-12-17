@@ -7,7 +7,7 @@ import { translateImageWithGemini } from '../api/gemini.js';
 import { imageToBase64 } from '../utils/images.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
-import { PROCESSING_STAGES } from '../state/processing.js';
+import { PROCESSING_STAGES, updateState, getProcessingState } from '../state/processing.js';
 import { tSync, getUILanguage } from '../locales.js';
 import { sanitizePromptInput } from '../utils/security.js';
 
@@ -1435,9 +1435,16 @@ Generate the TL;DR:`;
  * @returns {Promise<Object>} {summary: string}
  */
 export async function generateSummary(data) {
-  const { contentItems, apiKey, model, url } = data;
+  const { contentItems, apiKey, model, url, language } = data;
   
-  log('=== SUMMARY GENERATION START ===', { url, contentItems: contentItems?.length });
+  log('=== SUMMARY GENERATION START ===', { 
+    url, 
+    contentItemsCount: contentItems?.length || 0, 
+    language,
+    model,
+    hasApiKey: !!apiKey,
+    timestamp: Date.now()
+  });
   
   if (!contentItems || contentItems.length === 0) {
     throw new Error('No content items provided for summary generation');
@@ -1447,35 +1454,118 @@ export async function generateSummary(data) {
     throw new Error('API key and model are required for summary generation');
   }
   
+  // Determine target language for summary
+  // If language is provided, use it; otherwise use UI language as fallback
+  let targetLang = language;
+  if (!targetLang || targetLang === 'auto') {
+    targetLang = await getUILanguage();
+  }
+  
+  // Get language name from code
+  const langName = LANGUAGE_NAMES[targetLang] || targetLang;
+  
+  log('Summary target language', { targetLang, langName });
+  
   // Note: callAI will handle API key decryption internally with caching
   // No need to decrypt here - callAI uses getDecryptedKeyCached which handles both encrypted and plain keys
   
-  // Extract text content (skip code, images, etc.)
+  // Extract structured text content (preserve headings, lists, quotes, but skip code and images)
   let articleText = '';
   for (const item of contentItems) {
     if (item.type === 'code') continue; // Skip code blocks
     if (item.type === 'image') continue; // Skip images
     
-    if (item.text) {
-      // Strip HTML tags for cleaner text
-      const text = stripHtml(item.text);
-      if (text && text.trim()) {
-        articleText += text.trim() + '\n\n';
+    switch (item.type) {
+      case 'heading': {
+        const level = Math.min(Math.max(item.level || 2, 1), 6);
+        const prefix = '#'.repeat(level);
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          articleText += `${prefix} ${text.trim()}\n\n`;
+        }
+        break;
       }
-    }
-    
-    if (item.items && Array.isArray(item.items)) {
-      for (const listItem of item.items) {
-        if (typeof listItem === 'string') {
-          articleText += listItem.trim() + '\n';
-        } else if (listItem && listItem.html) {
-          const text = stripHtml(listItem.html);
+      
+      case 'paragraph': {
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          articleText += `${text.trim()}\n\n`;
+        }
+        break;
+      }
+      
+      case 'quote':
+      case 'blockquote': {
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          const quoted = text.trim().split('\n').map(line => `> ${line}`).join('\n');
+          articleText += `${quoted}\n\n`;
+        }
+        break;
+      }
+      
+      case 'list': {
+        const items = item.items || [];
+        const isOrdered = item.ordered || false;
+        items.forEach((listItem, index) => {
+          const prefix = isOrdered ? `${index + 1}.` : '-';
+          let itemText = '';
+          if (typeof listItem === 'string') {
+            itemText = listItem.trim();
+          } else if (listItem && listItem.html) {
+            itemText = stripHtml(listItem.html).trim();
+          } else if (listItem && listItem.text) {
+            itemText = stripHtml(listItem.text).trim();
+          }
+          if (itemText) {
+            articleText += `${prefix} ${itemText}\n`;
+          }
+        });
+        articleText += '\n';
+        break;
+      }
+      
+      case 'table': {
+        // Extract table as structured text
+        const headers = item.headers || [];
+        const rows = item.rows || [];
+        if (headers.length > 0) {
+          articleText += `Table:\n`;
+          articleText += `Headers: ${headers.map(h => stripHtml(h || '')).join(' | ')}\n`;
+          rows.forEach((row, index) => {
+            const rowText = (row || []).map(cell => stripHtml(cell || '')).join(' | ');
+            if (rowText) {
+              articleText += `Row ${index + 1}: ${rowText}\n`;
+            }
+          });
+          articleText += '\n';
+        }
+        break;
+      }
+      
+      default: {
+        // Fallback for other types
+        if (item.text) {
+          const text = stripHtml(item.text);
           if (text && text.trim()) {
-            articleText += text.trim() + '\n';
+            articleText += `${text.trim()}\n\n`;
           }
         }
+        if (item.items && Array.isArray(item.items)) {
+          for (const listItem of item.items) {
+            if (typeof listItem === 'string') {
+              articleText += `${listItem.trim()}\n`;
+            } else if (listItem && listItem.html) {
+              const text = stripHtml(listItem.html);
+              if (text && text.trim()) {
+                articleText += `${text.trim()}\n`;
+              }
+            }
+          }
+          articleText += '\n';
+        }
+        break;
       }
-      articleText += '\n';
     }
   }
   
@@ -1483,38 +1573,79 @@ export async function generateSummary(data) {
     throw new Error('No text extracted for summary generation');
   }
   
-  const systemPrompt = `You are an expert at creating comprehensive summaries. Generate a detailed summary of the article content in Markdown format.
+  const systemPrompt = `You are an expert at creating summaries. Generate a summary of the text content in Markdown format.
+
+Task: Summarize and summarize the main points, themes, key points, ideas, and concepts. Try to retell the key points as closely as possible to the meaning contained in the text. However, your goal is to formulate everything clearly, concisely, and concisely, so that it is understandable to anyone without context.
+
+When creating summaries, present ideas and arguments directly, as if explaining the content in your own words. Completely avoid metadiscourse and evidential markers such as "the author thinks/writes/argues," "the article demonstrates," "the study shows." Simply state the theses and facts directly. For example, instead of "The author argues that inflation is overstated," write "Inflation is overstated due to how CPI is calculated." Instead of "In the author's opinion, this doesn't explain the situation," write "This doesn't explain the situation" or "This explanation is unconvincing because..." The goal of a summary is to convey the essence of ideas directly, not to describe the process of their presentation or distance yourself from them through references to the author.
 
 STRICT REQUIREMENTS:
-- Write in the SAME LANGUAGE as the article content (detect automatically)
-- Create a well-structured summary with clear sections
-- Use Markdown formatting (headings, lists, paragraphs)
+- Write EXCLUSIVELY in ${langName} language
 - Include all key points and important information
-- Maintain the original meaning and context
 - Make it comprehensive but concise
-- Use proper Markdown syntax (## for headings, - for lists, etc.)
-- Output ONLY the summary content - no introductory phrases or meta-commentary`;
+- Don't write a "Summary" or any other introductions, get straight to the point.
+- Output ONLY the summary content - no introductory phrases or meta-commentary
+- IMPORTANT: The summary MUST be written in ${langName}, regardless of the article's original language`;
 
   const userPrompt = `Article URL: ${url || 'Unknown'}
 
 Article Content:
 ${articleText}
 
-Generate a comprehensive summary in Markdown format:`;
+Generate a summary in Markdown format in ${langName} language:`;
   
   try {
+    log('Starting AI generation for summary', { timestamp: Date.now() });
+    
+    // CRITICAL: Summary generation should NOT use processingState
+    // It should only use summary_generating flag to avoid interfering with document generation UI
+    // Save generating flag to storage (already set in background.js before calling this function)
+    log('Calling AI for summary generation', { 
+      articleTextLength: articleText.length,
+      promptLength: userPrompt.length,
+      timestamp: Date.now()
+    });
+    
     // Use callAI which automatically routes to the correct provider based on model
     // callAI handles API key decryption internally (supports both encrypted and plain keys)
+    log('=== CALLING AI FOR SUMMARY ===', { 
+      model, 
+      promptLength: userPrompt.length,
+      systemPromptLength: systemPrompt.length,
+      timestamp: Date.now()
+    });
+    
     const summary = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
     
+    log('=== AI RESPONSE RECEIVED ===', { 
+      summaryLength: summary?.length || 0,
+      hasSummary: !!summary,
+      timestamp: Date.now()
+    });
+    
     if (summary && typeof summary === 'string' && summary.trim()) {
-      log('=== SUMMARY GENERATION END ===', { summaryLength: summary.length });
+      log('AI returned valid summary', { summaryLength: summary.length, timestamp: Date.now() });
+      
+      log('=== SUMMARY GENERATION END ===', { 
+        summaryLength: summary.length,
+        timestamp: Date.now()
+      });
       return { summary: summary.trim() };
     }
     
+    logError('AI returned empty or invalid summary', { 
+      hasSummary: !!summary,
+      summaryType: typeof summary,
+      summaryLength: summary?.length || 0
+    });
     throw new Error('AI returned empty summary');
   } catch (error) {
-    logError('generateSummary failed', error);
+    logError('=== generateSummary FUNCTION ERROR ===', {
+      error: error.message,
+      stack: error.stack,
+      name: error.name,
+      timestamp: Date.now()
+    });
     throw error;
   }
 }

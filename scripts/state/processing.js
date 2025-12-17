@@ -119,9 +119,18 @@ export function updateState(updates) {
   // Popup reads from memory via getProcessingState(), not from storage.
   // See systemPatterns.md "Design Decisions" section.
   if (processingState.isProcessing) {
+    // CRITICAL: Always save processingState if isProcessing = true
+    // This ensures state persists across service worker restarts
     chrome.storage.local.set({ 
       processingState: { ...processingState, lastUpdate: Date.now() }
+    }).catch(error => {
+      // Log but don't throw - storage errors shouldn't break processing
+      logWarn('Failed to save processingState in updateState', error);
     });
+    
+    // CRITICAL: Summary generation no longer uses processingState
+    // It uses only summary_generating flag to avoid interfering with document generation UI
+    // No need to sync summary_generating flag here
   }
 }
 
@@ -267,24 +276,35 @@ export function restoreStateFromStorage() {
     // Use setTimeout to make this completely non-blocking
     setTimeout(async () => {
       try {
+        // CRITICAL: Summary generation no longer uses processingState
+        // It uses only summary_generating flag to avoid interfering with document generation UI
+        // Only restore processingState for document generation (PDF, EPUB, etc.)
         const result = await chrome.storage.local.get(['processingState']);
+        
         if (result.processingState && result.processingState.isProcessing) {
           const savedState = result.processingState;
           const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
           
-          // If state is stale (> 2 hours), reset it
-          if (timeSinceUpdate > CONFIG.STATE_EXPIRY_MS) {
-            log('Stale processing state found, resetting', { timeSinceUpdate, expiryMs: CONFIG.STATE_EXPIRY_MS });
+          // CRITICAL: Use standard threshold for document generation (2 hours)
+          // Summary generation does NOT use processingState, so no special handling needed
+          const STALE_THRESHOLD = CONFIG.STATE_EXPIRY_MS; // 2 hours for PDF
+          
+          // If state is stale, reset it
+          if (timeSinceUpdate > STALE_THRESHOLD) {
+            log('Stale processing state found, resetting', { 
+              timeSinceUpdate, 
+              threshold: STALE_THRESHOLD,
+              stage: savedState.currentStage
+            });
             await chrome.storage.local.remove(['processingState']);
           } else {
             log('Restored processing state from storage', { 
               savedState, 
               timeSinceUpdate, 
               progress: savedState.progress,
-              stage: savedState.currentStage 
+              stage: savedState.currentStage
             });
-            // Mark as error since we can't truly resume
-            // Use sync fallback to avoid async issues during initialization
+            // PDF generation - mark as error since we can't truly resume
             processingState = {
               isProcessing: false,
               progress: savedState.progress || 0,

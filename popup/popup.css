@@ -929,6 +929,19 @@ body[data-theme="light"] .summary-container {
   color: var(--text-primary);
 }
 
+/* Remove top margin from first element to eliminate empty space at the top */
+.summary-text > *:first-child {
+  margin-top: 0 !important;
+}
+
+/* Also remove top margin from first heading if it's the first element */
+.summary-text > h1:first-child,
+.summary-text > h2:first-child,
+.summary-text > h3:first-child,
+.summary-text > h4:first-child {
+  margin-top: 0 !important;
+}
+
 .summary-text h1 {
   font-size: 20px;
 }
