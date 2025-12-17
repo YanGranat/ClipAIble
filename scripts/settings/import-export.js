@@ -10,6 +10,7 @@ const STORAGE_KEYS_TO_EXPORT = [
   // AI settings
   'api_provider',
   'openai_model',
+  'model_by_provider',
   'custom_models',
   'hidden_models',
   'extraction_mode',
@@ -64,6 +65,7 @@ const API_KEY_NAMES = [
   'claude_api_key', 
   'gemini_api_key',
   'grok_api_key',
+  'openrouter_api_key',
   'google_api_key',
   'elevenlabs_api_key',
   'qwen_api_key',

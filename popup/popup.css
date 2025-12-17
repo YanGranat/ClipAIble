@@ -676,9 +676,10 @@ body[data-theme="light"] .btn-primary:disabled {
 }
 
 .save-action-group #mainFormatSelectContainer .custom-select-option {
-  height: 23px !important;
-  min-height: 23px !important;
-  max-height: 23px !important;
+  height: 25px !important;
+  min-height: 25px !important;
+  max-height: 25px !important;
+  font-size: 13px !important;
 }
 
 .format-select {
@@ -2984,7 +2985,7 @@ body[data-theme="light"] .slider-value {
 .popup-footer {
   margin-top: 0;
   padding-top: 0;
-  padding-bottom: 0;
+  padding-bottom: 5px;
   display: flex;
   flex-direction: column;
   align-items: center;
