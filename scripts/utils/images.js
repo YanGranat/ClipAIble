@@ -2,6 +2,7 @@
 
 import { log, logWarn, logError } from './logging.js';
 import { getUILanguage, tSync } from '../locales.js';
+import { isValidExternalUrl } from './security.js';
 
 /**
  * Get localized loading images status
@@ -28,6 +29,18 @@ async function getLocalizedLoadingStatus(processed, total) {
 export async function imageToBase64(url) {
   log('imageToBase64', { url: url.substring(0, 100) });
   
+  // SECURITY: Validate URL to prevent SSRF attacks
+  if (!url || typeof url !== 'string') {
+    logError('Invalid image URL', { url: url?.substring(0, 100) });
+    return null;
+  }
+  
+  // Skip validation for data URLs (already base64 encoded images)
+  if (url.startsWith('data:')) {
+    log('Image is already base64 data URL, skipping fetch');
+    return url;
+  }
+  
   // Clean up URL - some sites use special characters that need encoding
   let cleanUrl = url;
   try {
@@ -50,6 +63,12 @@ export async function imageToBase64(url) {
     }
   } catch (e) {
     log('URL cleanup failed, using original', { error: e.message });
+  }
+  
+  // SECURITY: Validate cleaned URL is safe
+  if (!isValidExternalUrl(cleanUrl)) {
+    logError('Blocked unsafe image URL', { url: cleanUrl.substring(0, 100) });
+    return null;
   }
   
   try {

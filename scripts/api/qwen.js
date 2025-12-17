@@ -5,6 +5,7 @@ import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { isValidExternalUrl } from '../utils/security.js';
 
 /**
  * Qwen3-TTS-Flash API configuration
@@ -257,6 +258,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
     
     // If audio contains URL, fetch it
     if (audioData.url) {
+      // SECURITY: Validate URL before fetching
+      if (!isValidExternalUrl(audioData.url)) {
+        logError('Invalid audio URL from Qwen API', { url: audioData.url?.substring(0, 100) });
+        throw new Error('Invalid audio URL received from API');
+      }
+      
       try {
         const audioResponse = await fetch(audioData.url);
         if (!audioResponse.ok) {
@@ -284,6 +291,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
   // Check for audio_url at output level
   else if (responseData.output?.audio_url) {
     log('Fetching audio from audio_url', { url: responseData.output.audio_url.substring(0, 100) + '...' });
+    
+    // SECURITY: Validate URL before fetching
+    if (!isValidExternalUrl(responseData.output.audio_url)) {
+      logError('Invalid audio URL from Qwen API', { url: responseData.output.audio_url?.substring(0, 100) });
+      throw new Error('Invalid audio URL received from API');
+    }
     
     try {
       const audioResponse = await fetch(responseData.output.audio_url);

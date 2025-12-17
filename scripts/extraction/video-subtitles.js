@@ -157,7 +157,18 @@ export async function extractYouTubeSubtitles(tabId) {
                   const element = document.getElementById('ClipAIblePendingSubtitles');
                   if (element && element.getAttribute('data-subtitles')) {
                     try {
-                      const data = JSON.parse(element.getAttribute('data-subtitles'));
+                      // SECURITY: Safe JSON parse to prevent crashes on malformed data
+                      const subtitleAttr = element.getAttribute('data-subtitles');
+                      if (!subtitleAttr) {
+                        return null;
+                      }
+                      let data;
+                      try {
+                        data = JSON.parse(subtitleAttr);
+                      } catch (e) {
+                        console.error('[ClipAIble:Video] Failed to parse subtitle data', e);
+                        return null;
+                      }
                       element.remove();
                       return data;
                     } catch (e) {
@@ -219,7 +230,18 @@ export async function extractYouTubeSubtitles(tabId) {
                   const element = document.getElementById('ClipAIblePendingSubtitles');
                   if (element && element.getAttribute('data-subtitles')) {
                     try {
-                      const data = JSON.parse(element.getAttribute('data-subtitles'));
+                      // SECURITY: Safe JSON parse to prevent crashes on malformed data
+                      const subtitleAttr = element.getAttribute('data-subtitles');
+                      if (!subtitleAttr) {
+                        return null;
+                      }
+                      let data;
+                      try {
+                        data = JSON.parse(subtitleAttr);
+                      } catch (e) {
+                        console.error('[ClipAIble:Video] Failed to parse subtitle data', e);
+                        return null;
+                      }
                       element.remove();
                       return data;
                     } catch (e) {

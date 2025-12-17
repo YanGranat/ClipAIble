@@ -8,6 +8,7 @@ import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate HTML file from content
@@ -221,10 +222,7 @@ export async function generateHtml(data, updateState) {
   if (updateState) updateState({ status: 'Saving file...', progress: 95 });
   
   // Generate safe filename
-  const safeTitle = (title || 'article')
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, '_')
-    .substring(0, 100);
+  const safeTitle = sanitizeFilename(title || 'article');
   const filename = `${safeTitle}.html`;
   
   // Download the file using object URL to avoid large base64 strings

@@ -5595,6 +5595,7 @@ async function handleSavePdf() {
         textColor: elements.textColor.value,
         headingColor: elements.headingColor.value,
         linkColor: elements.linkColor.value,
+        stylePreset: elements.stylePreset?.value || 'dark',
         tabId: tab.id,
         // Audio settings
         audioProvider: elements.audioProvider?.value || 'openai',

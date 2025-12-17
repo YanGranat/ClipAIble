@@ -8,6 +8,7 @@ import JSZip from '../../lib/jszip-wrapper.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate EPUB file from content
@@ -105,10 +106,7 @@ export async function generateEpub(data, updateState) {
   const epubBlob = new Blob([zipBlob], { type: 'application/epub+zip' });
   
   // Generate safe filename
-  const safeFilename = safeTitle
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, '_')
-    .substring(0, 100);
+  const safeFilename = sanitizeFilename(safeTitle);
   const filename = `${safeFilename}.epub`;
   
   log('Downloading EPUB...', { filename, size: epubBlob.size });

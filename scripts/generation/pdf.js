@@ -8,6 +8,7 @@ import { translateMetadata } from '../translation/index.js';
 import { saveLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
+import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 
 /**
@@ -254,7 +255,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     
     // Convert base64 to blob and download
     const pdfData = result.data;
-    const filename = (title || 'article').replace(/[<>:"/\\|?*]/g, '-') + '.pdf';
+    const filename = sanitizeFilename(title || 'article') + '.pdf';
     
     log('Downloading PDF...', { filename });
     

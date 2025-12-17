@@ -5,6 +5,7 @@ import { log } from '../utils/logging.js';
 import { stripHtml } from '../utils/html.js';
 import { formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
+import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate TXT file from content
@@ -103,10 +104,7 @@ export async function generateTxt(data, updateState) {
   if (updateState) updateState({ status: 'Saving file...', progress: 95 });
   
   // Generate safe filename
-  const safeTitle = (title || 'article')
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, '_')
-    .substring(0, 100);
+  const safeTitle = sanitizeFilename(title || 'article');
   const filename = `${safeTitle}.txt`;
   
   // Download the file using object URL to avoid large base64 strings

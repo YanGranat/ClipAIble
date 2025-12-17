@@ -153,7 +153,18 @@ export async function importSettings(jsonData, options = {}) {
   try {
     log('Importing settings', options);
     
-    const data = JSON.parse(jsonData);
+    // SECURITY: Safe JSON parse to prevent crashes on malformed data
+    let data;
+    try {
+      data = JSON.parse(jsonData);
+    } catch (parseError) {
+      logError('Failed to parse import JSON', parseError);
+      throw new Error('Invalid export file: JSON parsing failed. The file may be corrupted or not a valid ClipAIble export file.');
+    }
+    
+    if (!data || typeof data !== 'object') {
+      throw new Error('Invalid export file: data is not an object');
+    }
     
     if (!data.settings) {
       throw new Error('Invalid export file: missing settings');

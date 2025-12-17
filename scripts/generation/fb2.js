@@ -7,6 +7,7 @@ import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate FB2 file from content
@@ -73,10 +74,7 @@ ${generateBinaries(images)}
   if (updateState) updateState({ status: 'Saving FB2 file...', progress: 95 });
   
   // Generate safe filename
-  const safeFilename = safeTitle
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, '_')
-    .substring(0, 100);
+  const safeFilename = sanitizeFilename(safeTitle);
   const filename = `${safeFilename}.fb2`;
   
   // Create blob/object URL for download to avoid large base64 strings

@@ -80,9 +80,58 @@
       return;
     }
     
+    // SECURITY: Validate message size to prevent DoS
+    try {
+      const messageSize = JSON.stringify(event.data).length;
+      const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB
+      if (messageSize > MAX_MESSAGE_SIZE) {
+        console.error('[ClipAIble:Content] Message too large', { size: messageSize });
+        return;
+      }
+    } catch (e) {
+      console.error('[ClipAIble:Content] Failed to validate message size', e);
+      return;
+    }
+    
     // Обработка fetch requests для субтитров
     if (event.data.type === 'ClipAIbleSubtitleFetchRequest') {
-      fetch(event.data.url, {
+      // SECURITY: Validate URL to prevent SSRF attacks
+      const url = event.data.url;
+      if (!url || typeof url !== 'string') {
+        console.error('[ClipAIble:Content] Invalid URL in fetch request');
+        return;
+      }
+      
+      // Validate URL is external and safe
+      try {
+        const urlObj = new URL(url);
+        // Block non-HTTP(S) protocols
+        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+          console.error('[ClipAIble:Content] Invalid URL protocol', { protocol: urlObj.protocol });
+          return;
+        }
+        // Block internal addresses
+        const hostname = urlObj.hostname.toLowerCase();
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
+            hostname.startsWith('192.168.') || hostname.startsWith('10.') ||
+            hostname.startsWith('172.16.') || hostname.startsWith('172.17.') ||
+            hostname.startsWith('172.18.') || hostname.startsWith('172.19.') ||
+            hostname.startsWith('172.20.') || hostname.startsWith('172.21.') ||
+            hostname.startsWith('172.22.') || hostname.startsWith('172.23.') ||
+            hostname.startsWith('172.24.') || hostname.startsWith('172.25.') ||
+            hostname.startsWith('172.26.') || hostname.startsWith('172.27.') ||
+            hostname.startsWith('172.28.') || hostname.startsWith('172.29.') ||
+            hostname.startsWith('172.30.') || hostname.startsWith('172.31.') ||
+            hostname.startsWith('169.254.')) {
+          console.error('[ClipAIble:Content] Blocked internal URL', { hostname });
+          return;
+        }
+      } catch (e) {
+        console.error('[ClipAIble:Content] Invalid URL format', { url: url.substring(0, 100) });
+        return;
+      }
+      
+      fetch(url, {
         method: 'GET',
         credentials: 'include',
         mode: 'cors',
@@ -112,11 +161,12 @@
         });
         document.dispatchEvent(responseEvent);
         
+        // SECURITY: Use specific origin instead of '*' to prevent XSS
         window.postMessage({
           type: 'ClipAIbleSubtitleFetchResponse',
           requestId: event.data.requestId,
           responseText: responseText
-        }, '*');
+        }, window.location.origin);
       })
       .catch(error => {
         console.error('[ClipAIble:Content] Subtitle fetch failed', error);
@@ -132,11 +182,12 @@
         });
         document.dispatchEvent(errorEvent);
         
+        // SECURITY: Use specific origin instead of '*' to prevent XSS
         window.postMessage({
           type: 'ClipAIbleSubtitleFetchResponse',
           requestId: event.data.requestId,
           error: error.message || String(error)
-        }, '*');
+        }, window.location.origin);
       });
       return;
     }
@@ -576,8 +627,44 @@
   // Also listen for CustomEvent from MAIN world (for subtitle fetch requests)
   document.addEventListener('ClipAIbleSubtitleFetchRequest', (event) => {
     if (event.detail && event.detail.type === 'ClipAIbleSubtitleFetchRequest') {
+      // SECURITY: Validate URL to prevent SSRF attacks
+      const url = event.detail.url;
+      if (!url || typeof url !== 'string') {
+        console.error('[ClipAIble:Content] Invalid URL in CustomEvent fetch request');
+        return;
+      }
+      
+      // Validate URL is external and safe
+      try {
+        const urlObj = new URL(url);
+        // Block non-HTTP(S) protocols
+        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+          console.error('[ClipAIble:Content] Invalid URL protocol', { protocol: urlObj.protocol });
+          return;
+        }
+        // Block internal addresses
+        const hostname = urlObj.hostname.toLowerCase();
+        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
+            hostname.startsWith('192.168.') || hostname.startsWith('10.') ||
+            hostname.startsWith('172.16.') || hostname.startsWith('172.17.') ||
+            hostname.startsWith('172.18.') || hostname.startsWith('172.19.') ||
+            hostname.startsWith('172.20.') || hostname.startsWith('172.21.') ||
+            hostname.startsWith('172.22.') || hostname.startsWith('172.23.') ||
+            hostname.startsWith('172.24.') || hostname.startsWith('172.25.') ||
+            hostname.startsWith('172.26.') || hostname.startsWith('172.27.') ||
+            hostname.startsWith('172.28.') || hostname.startsWith('172.29.') ||
+            hostname.startsWith('172.30.') || hostname.startsWith('172.31.') ||
+            hostname.startsWith('169.254.')) {
+          console.error('[ClipAIble:Content] Blocked internal URL', { hostname });
+          return;
+        }
+      } catch (e) {
+        console.error('[ClipAIble:Content] Invalid URL format', { url: url.substring(0, 100) });
+        return;
+      }
+      
       // Fetch subtitle URL from content script
-      fetch(event.detail.url, {
+      fetch(url, {
         method: 'GET',
         credentials: 'include',
         mode: 'cors',
@@ -608,11 +695,12 @@
         });
         document.dispatchEvent(responseEvent);
         
+        // SECURITY: Use specific origin instead of '*' to prevent XSS
         window.postMessage({
           type: 'ClipAIbleSubtitleFetchResponse',
           requestId: event.detail.requestId,
           responseText: responseText
-        }, '*');
+        }, window.location.origin);
       })
       .catch(error => {
         console.error('[ClipAIble:Content] Subtitle fetch failed via CustomEvent', error);
@@ -628,11 +716,12 @@
         });
         document.dispatchEvent(errorEvent);
         
+        // SECURITY: Use specific origin instead of '*' to prevent XSS
         window.postMessage({
           type: 'ClipAIbleSubtitleFetchResponse',
           requestId: event.detail.requestId,
           error: error.message || String(error)
-        }, '*');
+        }, window.location.origin);
       });
     }
   });

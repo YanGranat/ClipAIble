@@ -9,6 +9,7 @@ import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate DOCX file from content
@@ -135,10 +136,7 @@ export async function generateDocx(data, updateState) {
   log('ZIP generated', { size: zipArrayBuffer.byteLength });
   
   // Generate safe filename
-  const safeFilename = (safeTitle || 'article')
-    .replace(/[<>:"/\\|?*]/g, '')
-    .replace(/\s+/g, '_')
-    .substring(0, 100);
+  const safeFilename = sanitizeFilename(safeTitle || 'article');
   const filename = `${safeFilename}.docx`;
   
   // Create blob from ArrayBuffer

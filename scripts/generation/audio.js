@@ -5,6 +5,7 @@ import { log, logError } from '../utils/logging.js';
 import { prepareContentForAudio, AUDIO_CONFIG } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
+import { sanitizeFilename } from '../utils/security.js';
 
 // Language to TTS instruction mapping
 const LANGUAGE_TTS_INSTRUCTIONS = {
@@ -304,19 +305,7 @@ function getMimeType(format) {
   return types[format] || 'audio/mpeg';
 }
 
-/**
- * Sanitize filename for safe download
- * @param {string} name - Raw filename
- * @returns {string} Sanitized filename
- */
-function sanitizeFilename(name) {
-  return name
-    .replace(/[<>:"/\\|?*]/g, '') // Remove invalid characters
-    .replace(/\s+/g, '_')         // Replace spaces with underscores
-    .replace(/_+/g, '_')          // Collapse multiple underscores
-    .replace(/^_|_$/g, '')        // Remove leading/trailing underscores
-    .substring(0, 100);           // Limit length
-}
+// sanitizeFilename is now imported from security.js
 
 /**
  * Estimate audio duration from text
