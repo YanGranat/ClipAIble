@@ -2799,6 +2799,21 @@ function extractFromPageInlined(selectors, baseUrl) {
     debugInfo.containerSelector = 'body';
   }
   
+  // Helper function to clean title from service data
+  function cleanTitle(title) {
+    if (!title || typeof title !== 'string') return '';
+    let cleaned = title;
+    // Remove budget token patterns and service markers
+    cleaned = cleaned.replace(/budgettoken[_\s]*budget\d*/gi, '');
+    cleaned = cleaned.replace(/budget\d+/gi, '');
+    cleaned = cleaned.replace(/token/gi, '');
+    cleaned = cleaned.replace(/budget\w+/gi, '');
+    cleaned = cleaned.replace(/#+/g, '');
+    cleaned = cleaned.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+    cleaned = cleaned.replace(/^[_\s-]+|[_\s-]+$/g, '');
+    return cleaned || title; // Return original if cleaned is empty
+  }
+  
   // Get title
   let articleTitle = '';
   if (selectors.title) {
@@ -2812,6 +2827,9 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
   }
   if (!articleTitle) { const h1 = document.querySelector('h1'); if (h1) articleTitle = h1.textContent.trim(); }
+  
+  // Clean title from service data immediately after extraction
+  articleTitle = cleanTitle(articleTitle);
   
   let articleAuthor = selectors.author || '';
   // NOTE: Author cleaning is now handled by AI in prompts
@@ -3206,6 +3224,19 @@ ${html}`;
   
   log('Single chunk result', { title: result.title, items: result.content?.length });
   
+  // Clean title from service data if present
+  if (result.title) {
+    result.title = result.title.replace(/budgettoken[_\s]*budget\d*/gi, '')
+      .replace(/budget\d+/gi, '')
+      .replace(/token/gi, '')
+      .replace(/budget\w+/gi, '')
+      .replace(/#+/g, '')
+      .replace(/_+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^[_\s-]+|[_\s-]+$/g, '') || result.title;
+  }
+  
   updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, progress: 15 });
   return result;
 }
@@ -3253,7 +3284,18 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
       log(`Chunk ${i + 1} result`, { title: result.title, contentItems: result.content?.length });
       
       if (isFirst) {
-        if (result.title) articleTitle = result.title;
+        if (result.title) {
+          // Clean title from service data
+          articleTitle = result.title.replace(/budgettoken[_\s]*budget\d*/gi, '')
+            .replace(/budget\d+/gi, '')
+            .replace(/token/gi, '')
+            .replace(/budget\w+/gi, '')
+            .replace(/#+/g, '')
+            .replace(/_+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/^[_\s-]+|[_\s-]+$/g, '') || result.title;
+        }
         if (result.publishDate) publishDate = result.publishDate;
       }
       

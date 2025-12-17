@@ -190,7 +190,9 @@ export async function generateAudio(params, updateState) {
   });
   
   const extension = getAudioExtension(actualFormat);
-  const filename = sanitizeFilename(title || 'article') + '.' + extension;
+  // Title should already be cleaned in background.js, but do final cleanup just in case
+  const cleanTitle = cleanTitleForFilename(title || 'article');
+  const filename = sanitizeFilename(cleanTitle) + '.' + extension;
   
   // Use actual format for MIME/extension to avoid corrupt files (e.g., WAV from Qwen/Respeecher)
   await downloadAudio(audioBuffer, filename, actualFormat);
@@ -306,6 +308,46 @@ function getMimeType(format) {
 }
 
 // sanitizeFilename is now imported from security.js
+
+/**
+ * Clean title from service data and artifacts for filename
+ * Removes budget tokens, service markers, and other non-title content
+ * @param {string} title - Raw title
+ * @returns {string} Clean title
+ */
+function cleanTitleForFilename(title) {
+  if (!title || typeof title !== 'string') {
+    return 'article';
+  }
+  
+  let cleaned = title;
+  
+  // Remove budget token patterns (budgettoken_budget, budget199985, etc.)
+  cleaned = cleaned.replace(/budgettoken[_\s]*budget\d*/gi, '');
+  cleaned = cleaned.replace(/budget\d+/gi, '');
+  
+  // Remove common service markers and artifacts
+  cleaned = cleaned.replace(/#+/g, ''); // Remove # symbols
+  cleaned = cleaned.replace(/token/gi, ''); // Remove "token" word
+  
+  // Remove patterns like "budget199985" that might remain
+  cleaned = cleaned.replace(/budget\w+/gi, '');
+  
+  // Clean up underscores and whitespace
+  cleaned = cleaned.replace(/_+/g, ' '); // Replace underscores with spaces
+  cleaned = cleaned.replace(/\s+/g, ' '); // Collapse multiple spaces
+  cleaned = cleaned.trim();
+  
+  // Remove leading/trailing separators that might remain
+  cleaned = cleaned.replace(/^[_\s-]+|[_\s-]+$/g, '');
+  
+  // If cleaned title is empty or too short, use original (sanitized)
+  if (!cleaned || cleaned.length < 2) {
+    return title.trim() || 'article';
+  }
+  
+  return cleaned;
+}
 
 /**
  * Estimate audio duration from text
