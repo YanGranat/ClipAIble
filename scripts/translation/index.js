@@ -2,13 +2,14 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG, LANGUAGE_NAMES, NO_TRANSLATION_MARKER } from '../utils/config.js';
-import { getProviderFromModel, parseModelConfig } from '../api/index.js';
+import { getProviderFromModel, parseModelConfig, callAI } from '../api/index.js';
 import { translateImageWithGemini } from '../api/gemini.js';
 import { imageToBase64 } from '../utils/images.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { tSync, getUILanguage } from '../locales.js';
+import { sanitizePromptInput } from '../utils/security.js';
 
 // Translation policy: quality-first. Do not downgrade accuracy to save cost or latency.
 
@@ -39,7 +40,8 @@ Rules:
 - Maintain the author's tone (formal/casual/technical)
 - No explanations, no notes, no comments - just the translated text`;
 
-  const userPrompt = text;
+  // SECURITY: Sanitize user input to prevent prompt injection
+  const userPrompt = sanitizePromptInput(text);
   
   try {
     const provider = getProviderFromModel(model);
@@ -186,7 +188,9 @@ Rules:
 - Output format: {"translations": ["translation1", "translation2", ...]}
 - No markdown, no code blocks, no explanations - raw JSON only`;
 
-  const userPrompt = `Translate to ${targetLang}:\n${JSON.stringify(texts)}`;
+  // SECURITY: Sanitize each text to prevent prompt injection
+  const sanitizedTexts = texts.map(text => sanitizePromptInput(text));
+  const userPrompt = `Translate to ${targetLang}:\n${JSON.stringify(sanitizedTexts)}`;
   
   try {
     const provider = getProviderFromModel(model);
@@ -1422,6 +1426,96 @@ Generate the TL;DR:`;
     logError('generateAbstract failed', error);
     // Don't throw - abstract generation is optional
     return '';
+  }
+}
+
+/**
+ * Generate summary for article content
+ * @param {Object} data - {contentItems, apiKey, model, url}
+ * @returns {Promise<Object>} {summary: string}
+ */
+export async function generateSummary(data) {
+  const { contentItems, apiKey, model, url } = data;
+  
+  log('=== SUMMARY GENERATION START ===', { url, contentItems: contentItems?.length });
+  
+  if (!contentItems || contentItems.length === 0) {
+    throw new Error('No content items provided for summary generation');
+  }
+  
+  if (!apiKey || !model) {
+    throw new Error('API key and model are required for summary generation');
+  }
+  
+  // Note: callAI will handle API key decryption internally with caching
+  // No need to decrypt here - callAI uses getDecryptedKeyCached which handles both encrypted and plain keys
+  
+  // Extract text content (skip code, images, etc.)
+  let articleText = '';
+  for (const item of contentItems) {
+    if (item.type === 'code') continue; // Skip code blocks
+    if (item.type === 'image') continue; // Skip images
+    
+    if (item.text) {
+      // Strip HTML tags for cleaner text
+      const text = stripHtml(item.text);
+      if (text && text.trim()) {
+        articleText += text.trim() + '\n\n';
+      }
+    }
+    
+    if (item.items && Array.isArray(item.items)) {
+      for (const listItem of item.items) {
+        if (typeof listItem === 'string') {
+          articleText += listItem.trim() + '\n';
+        } else if (listItem && listItem.html) {
+          const text = stripHtml(listItem.html);
+          if (text && text.trim()) {
+            articleText += text.trim() + '\n';
+          }
+        }
+      }
+      articleText += '\n';
+    }
+  }
+  
+  if (!articleText.trim()) {
+    throw new Error('No text extracted for summary generation');
+  }
+  
+  const systemPrompt = `You are an expert at creating comprehensive summaries. Generate a detailed summary of the article content in Markdown format.
+
+STRICT REQUIREMENTS:
+- Write in the SAME LANGUAGE as the article content (detect automatically)
+- Create a well-structured summary with clear sections
+- Use Markdown formatting (headings, lists, paragraphs)
+- Include all key points and important information
+- Maintain the original meaning and context
+- Make it comprehensive but concise
+- Use proper Markdown syntax (## for headings, - for lists, etc.)
+- Output ONLY the summary content - no introductory phrases or meta-commentary`;
+
+  const userPrompt = `Article URL: ${url || 'Unknown'}
+
+Article Content:
+${articleText}
+
+Generate a comprehensive summary in Markdown format:`;
+  
+  try {
+    // Use callAI which automatically routes to the correct provider based on model
+    // callAI handles API key decryption internally (supports both encrypted and plain keys)
+    const summary = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
+    
+    if (summary && typeof summary === 'string' && summary.trim()) {
+      log('=== SUMMARY GENERATION END ===', { summaryLength: summary.length });
+      return { summary: summary.trim() };
+    }
+    
+    throw new Error('AI returned empty summary');
+  } catch (error) {
+    logError('generateSummary failed', error);
+    throw error;
   }
 }
 
