@@ -5,7 +5,7 @@ import { CONFIG, LANGUAGE_NAMES, NO_TRANSLATION_MARKER } from '../utils/config.j
 import { getProviderFromModel, parseModelConfig, callAI } from '../api/index.js';
 import { translateImageWithGemini } from '../api/gemini.js';
 import { imageToBase64 } from '../utils/images.js';
-import { decryptApiKey } from '../utils/encryption.js';
+import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
 import { PROCESSING_STAGES, updateState, getProcessingState } from '../state/processing.js';
 import { tSync, getUILanguage } from '../locales.js';
@@ -22,10 +22,13 @@ import { sanitizePromptInput } from '../utils/security.js';
  * @returns {Promise<string>} Translated text
  */
 export async function translateText(text, targetLang, apiKey, model) {
-  // Decrypt API key if needed
+  // Get provider from model for automatic encryption
+  const provider = getProviderFromModel(model);
+  
+  // Decrypt API key if needed (with automatic encryption for unencrypted keys)
   let decryptedApiKey = apiKey;
   try {
-    decryptedApiKey = await decryptApiKey(apiKey);
+    decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
   } catch (error) {
     log('API key decryption failed for translateText, using as-is', error);
   }
@@ -922,10 +925,13 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
 export async function translateMetadata(text, targetLang, apiKey, model, type = 'author') {
   if (!text || !apiKey || targetLang === 'auto') return text;
   
-  // Decrypt API key if needed
+  // Get provider from model for automatic encryption
+  const provider = getProviderFromModel(model);
+  
+  // Decrypt API key if needed (with automatic encryption for unencrypted keys)
   let decryptedApiKey = apiKey;
   try {
-    decryptedApiKey = await decryptApiKey(apiKey);
+    decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
   } catch (error) {
     log('API key decryption failed for metadata translation, using as-is', error);
   }
@@ -963,7 +969,6 @@ Rules:
   }
   
   try {
-    const provider = getProviderFromModel(model);
     const { modelName } = parseModelConfig(model);
     let translated;
     
@@ -1104,10 +1109,13 @@ export async function detectContentLanguage(content, apiKey, model) {
     return lang;
   }
   
-  // Decrypt API key if needed
+  // Get provider from model for automatic encryption
+  const provider = getProviderFromModel(model);
+  
+  // Decrypt API key if needed (with automatic encryption for unencrypted keys)
   let decryptedApiKey = apiKey;
   try {
-    decryptedApiKey = await decryptApiKey(apiKey);
+    decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
   } catch (error) {
     log('API key decryption failed for detectContentLanguage, using as-is', error);
   }

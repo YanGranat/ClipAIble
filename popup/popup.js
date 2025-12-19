@@ -37,6 +37,8 @@ import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
 import { getProviderFromModel, callAI } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
+import { initUI } from './ui.js';
+import { initStats } from './stats.js';
 
 // Function to send error to service worker for centralized logging
 async function sendErrorToServiceWorker(message, error, context = {}) {
@@ -505,8 +507,11 @@ function updateTimerDisplay() {
   }
 }
 
-// Apply UI localization
+// Apply UI localization (kept for backward compatibility, now uses uiModule)
 async function applyLocalization() {
+  if (window.uiModule) {
+    return window.uiModule.applyLocalization();
+  }
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
   
@@ -766,15 +771,39 @@ async function init() {
     // Continue initialization even if loadSettings fails
   }
   
+  // Initialize UI module
+  const currentStartTimeRef = { current: currentStartTime };
+  const timerIntervalRef = { current: timerInterval };
+  const uiModule = initUI({
+    elements,
+    formatTime,
+    startTimerDisplay,
+    getElement,
+    setElementDisplay,
+    setElementGroupDisplay,
+    setDisplayForIds,
+    currentStartTime: currentStartTimeRef,
+    timerInterval: timerIntervalRef
+  });
+  
+  // Initialize stats module
+  const statsModule = initStats({
+    showToast
+  });
+  
+  // Make modules available globally for use in other functions
+  window.uiModule = uiModule;
+  window.statsModule = statsModule;
+  
   try {
-    await applyLocalization();
+    await uiModule.applyLocalization();
   } catch (error) {
     logError('CRITICAL: applyLocalization() failed in init()', error);
     // Continue initialization even if applyLocalization fails
   }
   
   try {
-    applyTheme();
+    uiModule.applyTheme();
   } catch (error) {
     logError('CRITICAL: applyTheme() failed in init()', error);
     // Continue initialization even if applyTheme fails
@@ -3461,8 +3490,11 @@ function setupEventListeners() {
   }
 }
 
-// Apply theme based on user preference or system preference
+// Apply theme based on user preference or system preference (kept for backward compatibility, now uses uiModule)
 function applyTheme() {
+  if (window.uiModule) {
+    return window.uiModule.applyTheme();
+  }
   if (!elements.themeSelect) {
     return; // Theme select not available, skip
   }
@@ -5759,8 +5791,11 @@ function extractPageContent() {
   };
 }
 
-// Set status indicator
+// Set status indicator (kept for backward compatibility, now uses uiModule)
 function setStatus(type, text, startTime = null) {
+  if (window.uiModule) {
+    return window.uiModule.setStatus(type, text, startTime);
+  }
   elements.statusDot.className = 'status-dot';
   if (type === 'processing') {
     elements.statusDot.classList.add('processing');
@@ -5780,15 +5815,21 @@ function setStatus(type, text, startTime = null) {
   }
 }
 
-// Set progress bar
+// Set progress bar (kept for backward compatibility, now uses uiModule)
 function setProgress(percent, show = true) {
+  if (window.uiModule) {
+    return window.uiModule.setProgress(percent, show);
+  }
   elements.progressContainer.style.display = show ? 'block' : 'none';
   elements.progressBar.style.width = `${percent}%`;
   elements.progressText.textContent = `${percent}%`;
 }
 
-// Show toast notification
+// Show toast notification (kept for backward compatibility, now uses uiModule)
 function showToast(message, type = 'success') {
+  if (window.uiModule) {
+    return window.uiModule.showToast(message, type);
+  }
   const existingToast = document.querySelector('.toast');
   if (existingToast) {
     existingToast.remove();
@@ -5826,6 +5867,10 @@ window.addEventListener('unload', () => {
 // ========================================
 
 async function loadAndDisplayStats() {
+  if (window.statsModule) {
+    return window.statsModule.loadAndDisplayStats();
+  }
+  // Fallback to original implementation if module not initialized
   try {
     const [statsResponse, cacheResponse] = await Promise.all([
       chrome.runtime.sendMessage({ action: 'getStats' }),

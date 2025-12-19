@@ -67,7 +67,7 @@ export async function generateMarkdown(data, updateState) {
   const metaItems = [];
   if (author) metaItems.push(`**${authorLabel}:** ${author}`);
   if (translatedDate) metaItems.push(`**${dateLabel}:** ${translatedDate}`);
-  if (sourceUrl) metaItems.push(`**${sourceLabel}:** [${sourceUrl}](${sourceUrl})`);
+  if (sourceUrl) metaItems.push(`**${sourceLabel}:** ${sourceUrl}`);
   
   if (metaItems.length > 0) {
     markdown += metaItems.join('  \n') + '\n\n';

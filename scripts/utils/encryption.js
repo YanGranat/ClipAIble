@@ -168,13 +168,46 @@ function hashString(str) {
 /**
  * Get decrypted API key with caching (per-provider)
  * Cache is cleared after processing to ensure security
- * @param {string} encryptedKey - Encrypted API key
+ * Automatically re-encrypts plain text keys for security
+ * @param {string} encryptedKey - Encrypted API key (or plain text for backward compatibility)
  * @param {string} provider - Provider name ('openai', 'claude', 'gemini', 'google', etc.)
  * @returns {Promise<string>} Decrypted API key
  */
 export async function getDecryptedKeyCached(encryptedKey, provider) {
   if (!encryptedKey || !provider) {
     throw new Error('Invalid parameters for getDecryptedKeyCached');
+  }
+  
+  // Check if key is encrypted, if not, encrypt it automatically
+  if (!isEncrypted(encryptedKey)) {
+    logWarn(`API key for ${provider} is not encrypted, encrypting automatically`);
+    try {
+      const encrypted = await encryptApiKey(encryptedKey);
+      // Save encrypted key back to storage (async, don't wait)
+      const storageKeyMap = {
+        'openai': 'openai_api_key',
+        'claude': 'claude_api_key',
+        'gemini': 'gemini_api_key',
+        'grok': 'grok_api_key',
+        'openrouter': 'openrouter_api_key',
+        'google': 'google_api_key',
+        'elevenlabs': 'elevenlabs_api_key',
+        'qwen': 'qwen_api_key',
+        'respeecher': 'respeecher_api_key',
+        'google-tts': 'google_tts_api_key'
+      };
+      const storageKey = storageKeyMap[provider];
+      if (storageKey) {
+        chrome.storage.local.set({ [storageKey]: encrypted }).catch(error => {
+          logError(`Failed to save encrypted ${provider} key`, error);
+        });
+      }
+      // Use encrypted version for caching
+      encryptedKey = encrypted;
+    } catch (error) {
+      logError(`Failed to encrypt ${provider} key automatically`, error);
+      // Continue with plain text key (backward compatibility)
+    }
   }
   
   // Use full hash instead of prefix to avoid collisions

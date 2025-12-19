@@ -117,6 +117,7 @@ async function migrateApiKeys() {
       'claude_api_key',
       'gemini_api_key',
       'grok_api_key',
+      'openrouter_api_key',
       'google_api_key',
       'elevenlabs_api_key',
       'qwen_api_key',
@@ -125,21 +126,16 @@ async function migrateApiKeys() {
       'api_keys_migrated' // Flag to prevent repeated migration
     ]);
 
-    // Skip if already migrated
-    if (result.api_keys_migrated) {
-      log('API keys already migrated, skipping');
-      return;
-    }
-
     const keysToEncrypt = {};
     let hasChanges = false;
 
-    // Check and encrypt each key if needed
+    // Check and encrypt each key if needed (always check, not just on first migration)
     const keyNames = [
       'openai_api_key',
       'claude_api_key',
       'gemini_api_key',
       'grok_api_key',
+      'openrouter_api_key',
       'google_api_key',
       'elevenlabs_api_key',
       'qwen_api_key',
@@ -166,10 +162,12 @@ async function migrateApiKeys() {
       keysToEncrypt.api_keys_migrated = true;
       await chrome.storage.local.set(keysToEncrypt);
       log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
-    } else {
-      // Mark as migrated even if no keys to encrypt
+    } else if (!result.api_keys_migrated) {
+      // Mark as migrated only if no keys to encrypt and not already migrated
       await chrome.storage.local.set({ api_keys_migrated: true });
       log('API keys migration check completed (no keys to migrate)');
+    } else {
+      log('API keys already migrated, checking for unencrypted keys');
     }
   } catch (error) {
     logError('API keys migration failed', error);
@@ -638,14 +636,27 @@ const FORMAT_MENU_IDS = {
   // 'save-as-txt': 'txt'
 };
 
+// Flag to prevent concurrent context menu updates
+let isUpdatingContextMenu = false;
+
 // Create or update context menu with localization
 async function updateContextMenu() {
+  // Prevent concurrent calls
+  if (isUpdatingContextMenu) {
+    logWarn('Context menu update already in progress, skipping');
+    return;
+  }
+  
+  isUpdatingContextMenu = true;
+  
   try {
     // Get current UI language
     const lang = await getUILanguage();
     
-    // Remove existing menu items
+    // Remove existing menu items and wait for completion
     await chrome.contextMenus.removeAll();
+    // Small delay to ensure removeAll() completes
+    await new Promise(resolve => setTimeout(resolve, 50));
     
     // Get localized strings
     const parentTitle = tSync('contextMenuSaveAs', lang);
@@ -659,43 +670,57 @@ async function updateContextMenu() {
     // const htmlTitle = tSync('saveAsHtml', lang);
     // const txtTitle = tSync('saveAsTxt', lang);
     
+    // Helper function to create menu item with error handling
+    const createMenuItem = (options) => {
+      try {
+        chrome.contextMenus.create(options);
+      } catch (error) {
+        // Ignore duplicate ID errors (can happen if removeAll() didn't complete yet)
+        if (error.message && error.message.includes('duplicate id')) {
+          logWarn(`Context menu item ${options.id} already exists, skipping`);
+        } else {
+          throw error;
+        }
+      }
+    };
+    
     // Create parent menu item
-    chrome.contextMenus.create({
+    createMenuItem({
       id: 'clipaible-save-as',
       title: parentTitle,
       contexts: ['page']
     });
     
     // Create child menu items
-    chrome.contextMenus.create({
+    createMenuItem({
       id: 'save-as-pdf',
       parentId: 'clipaible-save-as',
       title: pdfTitle,
       contexts: ['page']
     });
     
-    chrome.contextMenus.create({
+    createMenuItem({
       id: 'save-as-epub',
       parentId: 'clipaible-save-as',
       title: epubTitle,
       contexts: ['page']
     });
     
-    chrome.contextMenus.create({
+    createMenuItem({
       id: 'save-as-fb2',
       parentId: 'clipaible-save-as',
       title: fb2Title,
       contexts: ['page']
     });
     
-    chrome.contextMenus.create({
+    createMenuItem({
       id: 'save-as-markdown',
       parentId: 'clipaible-save-as',
       title: markdownTitle,
       contexts: ['page']
     });
     
-    chrome.contextMenus.create({
+    createMenuItem({
       id: 'save-as-audio',
       parentId: 'clipaible-save-as',
       title: audioTitle,
@@ -703,21 +728,21 @@ async function updateContextMenu() {
     });
     
     // Commented out: docx, html, txt formats removed from UI
-    // chrome.contextMenus.create({
+    // createMenuItem({
     //   id: 'save-as-docx',
     //   parentId: 'clipaible-save-as',
     //   title: docxTitle,
     //   contexts: ['page']
     // });
     // 
-    // chrome.contextMenus.create({
+    // createMenuItem({
     //   id: 'save-as-html',
     //   parentId: 'clipaible-save-as',
     //   title: htmlTitle,
     //   contexts: ['page']
     // });
     // 
-    // chrome.contextMenus.create({
+    // createMenuItem({
     //   id: 'save-as-txt',
     //   parentId: 'clipaible-save-as',
     //   title: txtTitle,
@@ -728,61 +753,81 @@ async function updateContextMenu() {
   } catch (error) {
     logError('Failed to create context menu', error);
     // Fallback to English if localization fails
-    chrome.contextMenus.removeAll();
-    chrome.contextMenus.create({
-      id: 'clipaible-save-as',
-      title: 'Save as',
-      contexts: ['page']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-pdf',
-      parentId: 'clipaible-save-as',
-      title: 'Save as PDF',
-      contexts: ['page']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-epub',
-      parentId: 'clipaible-save-as',
-      title: 'Save as EPUB',
-      contexts: ['page']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-fb2',
-      parentId: 'clipaible-save-as',
-      title: 'Save as FB2',
-      contexts: ['page']
-    });
-    chrome.contextMenus.create({
-      id: 'save-as-markdown',
-      parentId: 'clipaible-save-as',
-      title: 'Save as Markdown',
-      contexts: ['page']
-    });
-    // Commented out: docx, html, txt formats removed from UI
-    // chrome.contextMenus.create({
-    //   id: 'save-as-docx',
-    //   parentId: 'clipaible-save-as',
-    //   title: 'Save as DOCX',
-    //   contexts: ['page']
-    // });
-    // chrome.contextMenus.create({
-    //   id: 'save-as-html',
-    //   parentId: 'clipaible-save-as',
-    //   title: 'Save as HTML',
-    //   contexts: ['page']
-    // });
-    // chrome.contextMenus.create({
-    //   id: 'save-as-txt',
-    //   parentId: 'clipaible-save-as',
-    //   title: 'Save as TXT',
-    //   contexts: ['page']
-    // });
-    chrome.contextMenus.create({
-      id: 'save-as-audio',
-      parentId: 'clipaible-save-as',
-      title: 'Save as Audio',
-      contexts: ['page']
-    });
+    try {
+      await chrome.contextMenus.removeAll();
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      const createMenuItem = (options) => {
+        try {
+          chrome.contextMenus.create(options);
+        } catch (err) {
+          if (err.message && err.message.includes('duplicate id')) {
+            logWarn(`Context menu item ${options.id} already exists, skipping`);
+          } else {
+            throw err;
+          }
+        }
+      };
+      
+      createMenuItem({
+        id: 'clipaible-save-as',
+        title: 'Save as',
+        contexts: ['page']
+      });
+      createMenuItem({
+        id: 'save-as-pdf',
+        parentId: 'clipaible-save-as',
+        title: 'Save as PDF',
+        contexts: ['page']
+      });
+      createMenuItem({
+        id: 'save-as-epub',
+        parentId: 'clipaible-save-as',
+        title: 'Save as EPUB',
+        contexts: ['page']
+      });
+      createMenuItem({
+        id: 'save-as-fb2',
+        parentId: 'clipaible-save-as',
+        title: 'Save as FB2',
+        contexts: ['page']
+      });
+      createMenuItem({
+        id: 'save-as-markdown',
+        parentId: 'clipaible-save-as',
+        title: 'Save as Markdown',
+        contexts: ['page']
+      });
+      // Commented out: docx, html, txt formats removed from UI
+      // createMenuItem({
+      //   id: 'save-as-docx',
+      //   parentId: 'clipaible-save-as',
+      //   title: 'Save as DOCX',
+      //   contexts: ['page']
+      // });
+      // createMenuItem({
+      //   id: 'save-as-html',
+      //   parentId: 'clipaible-save-as',
+      //   title: 'Save as HTML',
+      //   contexts: ['page']
+      // });
+      // createMenuItem({
+      //   id: 'save-as-txt',
+      //   parentId: 'clipaible-save-as',
+      //   title: 'Save as TXT',
+      //   contexts: ['page']
+      // });
+      createMenuItem({
+        id: 'save-as-audio',
+        parentId: 'clipaible-save-as',
+        title: 'Save as Audio',
+        contexts: ['page']
+      });
+    } catch (fallbackError) {
+      logError('Failed to create fallback context menu', fallbackError);
+    }
+  } finally {
+    isUpdatingContextMenu = false;
   }
 }
 
