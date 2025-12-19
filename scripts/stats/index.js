@@ -16,8 +16,7 @@ function getDefaultStats() {
       epub: 0,
       fb2: 0,
       markdown: 0,
-      // Commented out: docx, html, txt formats removed from UI
-      // These are kept for backward compatibility with existing stats data
+      // Note: docx, html, txt formats removed from UI but kept in structure for backward compatibility with existing stats data
       docx: 0,
       html: 0,
       txt: 0,

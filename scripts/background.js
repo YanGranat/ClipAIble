@@ -43,10 +43,6 @@ import { generatePdf, generatePdfWithDebugger } from './generation/pdf.js';
 import { generateEpub } from './generation/epub.js';
 import { generateFb2 } from './generation/fb2.js';
 import { generateAudio } from './generation/audio.js';
-// Commented out: docx, html, txt formats removed from UI
-// import { generateDocx } from './generation/docx.js';
-// import { generateHtml } from './generation/html.js';
-// import { generateTxt } from './generation/txt.js';
 import { recordSave, getFormattedStats, clearStats, deleteHistoryItem } from './stats/index.js';
 import { 
   getCachedSelectors, 
@@ -629,11 +625,7 @@ const FORMAT_MENU_IDS = {
   'save-as-epub': 'epub',
   'save-as-fb2': 'fb2',
   'save-as-markdown': 'markdown',
-  'save-as-audio': 'audio',
-  // Commented out: docx, html, txt formats removed from UI
-  // 'save-as-docx': 'docx',
-  // 'save-as-html': 'html',
-  // 'save-as-txt': 'txt'
+  'save-as-audio': 'audio'
 };
 
 // Flag to prevent concurrent context menu updates
@@ -665,10 +657,6 @@ async function updateContextMenu() {
     const fb2Title = tSync('saveAsFb2', lang);
     const markdownTitle = tSync('saveAsMarkdown', lang);
     const audioTitle = tSync('saveAsAudio', lang);
-    // Commented out: docx, html, txt formats removed from UI
-    // const docxTitle = tSync('saveAsDocx', lang);
-    // const htmlTitle = tSync('saveAsHtml', lang);
-    // const txtTitle = tSync('saveAsTxt', lang);
     
     // Helper function to create menu item with error handling
     const createMenuItem = (options) => {
@@ -727,28 +715,6 @@ async function updateContextMenu() {
       contexts: ['page']
     });
     
-    // Commented out: docx, html, txt formats removed from UI
-    // createMenuItem({
-    //   id: 'save-as-docx',
-    //   parentId: 'clipaible-save-as',
-    //   title: docxTitle,
-    //   contexts: ['page']
-    // });
-    // 
-    // createMenuItem({
-    //   id: 'save-as-html',
-    //   parentId: 'clipaible-save-as',
-    //   title: htmlTitle,
-    //   contexts: ['page']
-    // });
-    // 
-    // createMenuItem({
-    //   id: 'save-as-txt',
-    //   parentId: 'clipaible-save-as',
-    //   title: txtTitle,
-    //   contexts: ['page']
-    // });
-    
     log('Context menu created with localization', { lang });
   } catch (error) {
     logError('Failed to create context menu', error);
@@ -798,25 +764,6 @@ async function updateContextMenu() {
         title: 'Save as Markdown',
         contexts: ['page']
       });
-      // Commented out: docx, html, txt formats removed from UI
-      // createMenuItem({
-      //   id: 'save-as-docx',
-      //   parentId: 'clipaible-save-as',
-      //   title: 'Save as DOCX',
-      //   contexts: ['page']
-      // });
-      // createMenuItem({
-      //   id: 'save-as-html',
-      //   parentId: 'clipaible-save-as',
-      //   title: 'Save as HTML',
-      //   contexts: ['page']
-      // });
-      // createMenuItem({
-      //   id: 'save-as-txt',
-      //   parentId: 'clipaible-save-as',
-      //   title: 'Save as TXT',
-      //   contexts: ['page']
-      // });
       createMenuItem({
         id: 'save-as-audio',
         parentId: 'clipaible-save-as',
@@ -1751,7 +1698,7 @@ async function startArticleProcessing(data) {
   }
   
   // Validate output format
-  // Commented out: docx, html, txt formats removed from UI (but kept in validation for backward compatibility)
+  // Note: docx, html, txt formats removed from UI but kept in validation for backward compatibility with old settings
   const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
   if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
     const uiLang = await getUILanguage();
@@ -2327,52 +2274,6 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       respeecherRepetitionPenalty: data.respeecherRepetitionPenalty !== undefined ? data.respeecherRepetitionPenalty : 1.0,
       respeecherTopP: data.respeecherTopP !== undefined ? data.respeecherTopP : 1.0
     }, updateState);
-  // Commented out: docx, html, txt formats removed from UI
-  // } else if (outputFormat === 'docx') {
-  //   const uiLang = await getUILanguage();
-  //   const status = tSync('statusGeneratingDocx', uiLang);
-  //   updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-  //   return generateDocx({
-  //     content: result.content,
-  //     title: result.title,
-  //     author: result.author || '',
-  //     sourceUrl: data.url,
-  //     publishDate: result.publishDate || '',
-  //     generateToc: data.generateToc || false,
-  //     generateAbstract: data.generateAbstract || false,
-  //     abstract: result.abstract || '',
-  //     language: effectiveLanguage
-  //   }, updateState);
-  // } else if (outputFormat === 'html') {
-  //   const uiLang = await getUILanguage();
-  //   const status = tSync('statusGeneratingHtml', uiLang);
-  //   updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-  //   return generateHtml({
-  //     content: result.content,
-  //     title: result.title,
-  //     author: result.author || '',
-  //     sourceUrl: data.url,
-  //     publishDate: result.publishDate || '',
-  //     generateToc: data.generateToc || false,
-  //     generateAbstract: data.generateAbstract || false,
-  //     abstract: result.abstract || '',
-  //     language: effectiveLanguage
-  //   }, updateState);
-  // } else if (outputFormat === 'txt') {
-  //   const uiLang = await getUILanguage();
-  //   const status = tSync('statusGeneratingTxt', uiLang);
-  //   updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-  //   return generateTxt({
-  //     content: result.content,
-  //     title: result.title,
-  //     author: result.author || '',
-  //     sourceUrl: data.url,
-  //     publishDate: result.publishDate || '',
-  //     generateToc: data.generateToc || false,
-  //     generateAbstract: data.generateAbstract || false,
-  //     abstract: result.abstract || '',
-  //     language: effectiveLanguage
-  //   }, updateState);
   } else {
     // PDF (default)
     const uiLang = await getUILanguage();

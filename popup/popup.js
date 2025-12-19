@@ -4690,10 +4690,6 @@ async function updateOutputFormatUI() {
     epub: { icon: '📚' },
     fb2: { icon: '📖' },
     markdown: { icon: '📝' },
-    // Commented out: docx, html, txt formats removed from UI
-    // docx: { icon: '📘' },
-    // html: { icon: '🌐' },
-    // txt: { icon: '📄' },
     audio: { icon: '🔊' }
   };
   const config = formatConfig[format] || formatConfig.pdf;
@@ -5585,10 +5581,6 @@ async function updateUIFromState(state) {
       epub: await t('saveAsEpub'),
       fb2: await t('saveAsFb2'),
       markdown: await t('saveAsMarkdown'),
-      // Commented out: docx, html, txt formats removed from UI
-      // docx: await t('saveAsDocx'),
-      // html: await t('saveAsHtml'),
-      // txt: await t('saveAsTxt'),
       audio: await t('saveAsAudio')
     };
     const formatName = formatNames[savedFormat] || formatNames.pdf;
@@ -5899,10 +5891,6 @@ async function displayStats(stats) {
   document.getElementById('formatEpub').textContent = stats.byFormat?.epub || 0;
   document.getElementById('formatFb2').textContent = stats.byFormat?.fb2 || 0;
   document.getElementById('formatMarkdown').textContent = stats.byFormat?.markdown || 0;
-  // Commented out: docx, html, txt formats removed from UI
-  // document.getElementById('formatDocx').textContent = stats.byFormat?.docx || 0;
-  // document.getElementById('formatHtml').textContent = stats.byFormat?.html || 0;
-  // document.getElementById('formatTxt').textContent = stats.byFormat?.txt || 0;
   document.getElementById('formatAudio').textContent = stats.byFormat?.audio || 0;
   
   // Update history
