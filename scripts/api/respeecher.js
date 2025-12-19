@@ -204,7 +204,6 @@ function getApiUrl(voice, textLanguage = null) {
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format)
  */
 export async function textToSpeech(text, apiKey, options = {}) {
-  // DEBUG: This log confirms we're using the updated version
   log('Respeecher TTS start', { textLength: text?.length, voice: options.voice, language: options.language });
   
   const {
@@ -239,7 +238,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
     throw new Error('API key appears to be masked. Please re-enter your Respeecher API key from https://space.respeecher.com/api-keys');
   }
   
-  // Log key format for debugging (without exposing full key)
   // Detect text language if not provided or if 'auto'
   // Convert 'auto' to null so detectLanguage can work
   const detectedLang = (language && language !== 'auto') ? language : detectLanguage(text);
@@ -249,7 +247,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
   // If Ukrainian text but voice is volodymyr, switch to Ukrainian voice BEFORE determining endpoint
   let validVoice = voice;
   
-  // Debug: check conditions
   const isUkrainianText = detectedLang === 'ua';
   const isVolodymyrVoice = voice === 'volodymyr';
   
@@ -282,7 +279,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
   const isUkrainianEndpoint = apiUrl.includes('ua-rt');
   const isUkrainianVoice = RESPEECHER_CONFIG.VOICE_LANGUAGE[validVoice] === 'ua';
   
-  // Log voice selection for debugging
   // Respeecher request body format
   // According to https://space.respeecher.com/docs/api/tts/sampling-params-guide:
   // - sampling_params are optional and can override default values for each voice

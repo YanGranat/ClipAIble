@@ -32,6 +32,9 @@ export const CONFIG = {
   DEFAULT_AUDIO_FORMAT: 'mp3',    // Default audio format
   DEFAULT_ELEVENLABS_MODEL: 'eleven_v3', // Default ElevenLabs model
   DEFAULT_RESPEECHER_VOICE: 'samantha',  // Default Respeecher English voice
+  
+  // Logging
+  LOG_LEVEL: 1,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: INFO)
 };
 
 // Language names for translation

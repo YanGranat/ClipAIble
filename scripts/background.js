@@ -12,7 +12,7 @@ self.addEventListener('unhandledrejection', (event) => {
   console.error('[ClipAIble] Rejection stack:', event.reason?.stack);
 });
 
-import { log, logError, logWarn } from './utils/logging.js';
+import { log, logError, logWarn, logDebug, LOG_LEVELS } from './utils/logging.js';
 import { CONFIG } from './utils/config.js';
 import { 
   getProcessingState, 
@@ -383,7 +383,7 @@ setTimeout(() => {
       logError('API keys migration failed', error);
     });
   } catch (error) {
-    console.error('[ClipAIble] Failed to start migration:', error);
+    logError('Failed to start migration', error);
   }
 
   // Initialize default settings (fire and forget)
@@ -392,7 +392,7 @@ setTimeout(() => {
       logError('Default settings initialization failed', error);
     });
   } catch (error) {
-    console.error('[ClipAIble] Failed to initialize default settings:', error);
+    logError('Failed to initialize default settings', error);
   }
 }, 0);
 
@@ -553,7 +553,7 @@ try {
     }
   });
 } catch (error) {
-  console.error('[ClipAIble] Failed to register alarms.onAlarm listener:', error);
+  logError('Failed to register alarms.onAlarm listener', error);
 }
 
 // Additional keep-alive mechanism: periodic state save during processing
@@ -839,7 +839,7 @@ try {
     });
   });
 } catch (error) {
-  console.error('[ClipAIble] Failed to register runtime.onInstalled listener:', error);
+  logError('Failed to register runtime.onInstalled listener', error);
 }
 
 // Update context menu when extension starts (in case language changed)
@@ -905,7 +905,7 @@ try {
     }
   });
 } catch (error) {
-  console.error('[ClipAIble] Failed to register storage.onChanged listener:', error);
+  logError('Failed to register storage.onChanged listener', error);
 }
 
 // Listen for context menu clicks
@@ -918,7 +918,7 @@ try {
     }
   });
 } catch (error) {
-  console.error('[ClipAIble] Failed to register contextMenus.onClicked listener:', error);
+  logError('Failed to register contextMenus.onClicked listener', error);
 }
 
 // ============================================
@@ -1735,7 +1735,7 @@ try {
   }
   });
 } catch (error) {
-  console.error('[ClipAIble] Failed to register runtime.onMessage listener:', error);
+  logError('Failed to register runtime.onMessage listener', error);
 }
 
 // ============================================
@@ -2641,11 +2641,6 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
 // It's injected as a single block via executeScript. All helper functions
 // must be defined inside. See systemPatterns.md "Design Decisions".
 function extractFromPageInlined(selectors, baseUrl) {
-  // Debug logging inside the page context is gated to avoid noisy consoles.
-  const DEBUG_LOG = false;
-  const debugLog = (...args) => { if (DEBUG_LOG) console.log(...args); };
-  if (DEBUG_LOG) console.log('[ClipAIble:Page] Starting extraction', { selectors, baseUrl });
-  
   const content = [];
   const debugInfo = {
     containerFound: false,
@@ -3043,7 +3038,6 @@ function extractFromPageInlined(selectors, baseUrl) {
         // Filter to only elements that are inside our container
         const filtered = Array.from(elements).filter(el => container.contains(el));
         if (filtered.length > 0) {
-          debugLog('[ClipAIble:Page] Found elements with absolute selector', { selector: contentSelector, count: filtered.length });
           return filtered;
         }
       }
@@ -3051,7 +3045,6 @@ function extractFromPageInlined(selectors, baseUrl) {
       // Strategy 2: Try selector relative to container
       elements = container.querySelectorAll(contentSelector);
       if (elements.length > 0) {
-        debugLog('[ClipAIble:Page] Found elements with relative selector', { selector: contentSelector, count: elements.length });
         return Array.from(elements);
       }
       
@@ -3069,7 +3062,6 @@ function extractFromPageInlined(selectors, baseUrl) {
         if (normalizedSelector && normalizedSelector !== contentSelector) {
           elements = container.querySelectorAll(normalizedSelector);
           if (elements.length > 0) {
-            debugLog('[ClipAIble:Page] Found elements with normalized selector', { original: contentSelector, normalized: normalizedSelector, count: elements.length });
             return Array.from(elements);
           }
         }
@@ -3080,7 +3072,6 @@ function extractFromPageInlined(selectors, baseUrl) {
         const flexibleSelector = contentSelector.replace(/\s*>\s*/g, ' ');
         elements = container.querySelectorAll(flexibleSelector);
         if (elements.length > 0) {
-          debugLog('[ClipAIble:Page] Found elements with flexible selector (removed >)', { original: contentSelector, flexible: flexibleSelector, count: elements.length });
           return Array.from(elements);
         }
       }
@@ -3090,7 +3081,6 @@ function extractFromPageInlined(selectors, baseUrl) {
         const id = contentSelector.substring(1);
         const element = document.getElementById(id);
         if (element && container.contains(element)) {
-          debugLog('[ClipAIble:Page] Found element by ID', { id, selector: contentSelector });
           return [element];
         }
       }
@@ -3101,15 +3091,12 @@ function extractFromPageInlined(selectors, baseUrl) {
         const tagName = tagMatch[1].toLowerCase();
         elements = container.querySelectorAll(tagName);
         if (elements.length > 0) {
-          debugLog('[ClipAIble:Page] Found elements by tag name fallback', { tag: tagName, selector: contentSelector, count: elements.length });
           return Array.from(elements);
         }
       }
       
-      debugLog('[ClipAIble:Page] No elements found with any strategy', { selector: contentSelector, containerSelector });
       return null; // No elements found with any strategy
     } catch (e) {
-      debugLog('[ClipAIble:Page] Selector error', { selector: contentSelector, error: e.message });
       return null; // Selector is invalid
     }
   }
@@ -3163,15 +3150,11 @@ function extractFromPageInlined(selectors, baseUrl) {
           }
           content.splice(insertIndex, 0, { type: 'image', src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) });
           addedImageUrls.add(ns);
-          debugLog('[ClipAIble:Page] Hero image extracted', { src: heroSrc.substring(0, 80), insertIndex });
         }
       }
     } catch (e) {
-      debugLog('[ClipAIble:Page] Hero image extraction failed', { error: e.message });
     }
   }
-  
-  if (DEBUG_LOG) console.log('[ClipAIble:Page] Extraction complete', { contentItems: content.length, headingCount: debugInfo.headingCount });
   
   return { title: articleTitle, author: articleAuthor, content: content, publishDate: publishDate, debug: debugInfo };
 }

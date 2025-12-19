@@ -240,7 +240,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
     throw new Error('Invalid response from Qwen3-TTS-Flash API');
   }
   
-  // Log full response for debugging
   log('Qwen TTS response received', { code: responseData.code, hasOutput: !!responseData.output });
   
   // Check for API errors

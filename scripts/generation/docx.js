@@ -76,7 +76,6 @@ export async function generateDocx(data, updateState) {
   if (updateState) updateState({ status: 'Converting content...', progress: 90 });
   const documentXml = generateDocumentXml(content, safeTitle, safeAuthor, translatedDate, sourceUrl, headings, language, generateAbstract, abstract, generateToc, imageManifest);
   
-  // Log hyperlink section for debugging
   const hyperlinkMatch = documentXml.match(/<w:hyperlink[^>]*>[\s\S]*?<\/w:hyperlink>/);
   if (hyperlinkMatch) {
     log('Hyperlink found in document.xml', { hyperlinkXml: hyperlinkMatch[0].substring(0, 200) });
@@ -94,7 +93,6 @@ export async function generateDocx(data, updateState) {
   // Generate document relationships
   const documentRelsXml = generateDocumentRelsXml(imageManifest, sourceUrl);
   
-  // Log relationship section for debugging
   const relationshipMatch = documentRelsXml.match(/<Relationship[^>]*Id="rId1"[^>]*Type="[^"]*hyperlink"[^>]*>/);
   if (relationshipMatch) {
     log('Relationship rId1 (hyperlink) found in document.xml.rels', { relationshipXml: relationshipMatch[0] });
