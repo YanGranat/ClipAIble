@@ -215,7 +215,13 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
             throw error;
           }
           // Non-retryable error (e.g., 401, 403) - throw immediately
-          const errorText = await fetchResponse.text().catch(() => 'Unknown error');
+          let errorText = 'Unknown error';
+          try {
+            errorText = await fetchResponse.text();
+          } catch (e) {
+            // If text extraction fails, use default message
+            errorText = 'Unknown error';
+          }
           logWarn('Gemini API error', { status: fetchResponse.status, error: errorText });
           const error = new Error(`HTTP ${fetchResponse.status}`);
           error.status = fetchResponse.status;

@@ -234,7 +234,13 @@ Rules:
       }
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        let errorData = {};
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          // If JSON parse fails, use empty object
+          errorData = {};
+        }
         
         // Don't retry on authentication errors (401, 403)
         const uiLang = await getUILanguage();

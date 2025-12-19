@@ -4670,7 +4670,7 @@ async function checkSummaryStatus() {
     // Check if generation flag is stale
     // CRITICAL: Use shorter threshold - summary should not take more than 15 minutes
     // If it takes longer, it's likely stuck or failed
-    const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes
+    const STALE_THRESHOLD = CONFIG.SUMMARY_STALE_THRESHOLD_MS;
     
     if (isSummaryGenerating) {
       // Check stale threshold

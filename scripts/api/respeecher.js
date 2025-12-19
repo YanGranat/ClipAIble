@@ -545,7 +545,13 @@ export async function getVoicesFromAPI(apiKey, language = 'en') {
     });
     
     if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
+      let errorText = 'Unknown error';
+      try {
+        errorText = await response.text();
+      } catch (e) {
+        // If text extraction fails, use default message
+        errorText = 'Unknown error';
+      }
       throw new Error(`Failed to fetch voices: ${response.status} ${errorText}`);
     }
     

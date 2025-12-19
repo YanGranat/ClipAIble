@@ -43,6 +43,9 @@ let processingState = {
   completedStages: []
 };
 
+// Simple lock to prevent concurrent updates (JavaScript is single-threaded, but async operations can interleave)
+let isUpdatingState = false;
+
 /**
  * Get current processing state (copy)
  * @returns {Object} Processing state
@@ -57,8 +60,21 @@ export function getProcessingState() {
  * @param {string} updates.stage - Optional stage ID to set
  */
 export function updateState(updates) {
-  // Handle stage updates
-  if (updates.stage) {
+  // Simple protection against concurrent updates
+  // While JavaScript is single-threaded, async operations can interleave
+  // This ensures we don't have overlapping state updates
+  if (isUpdatingState) {
+    // If update is in progress, queue this update (simple approach: skip if already updating)
+    // In practice, this is very rare since updateState is synchronous
+    logWarn('State update already in progress, skipping concurrent update', { updates });
+    return;
+  }
+  
+  isUpdatingState = true;
+  
+  try {
+    // Handle stage updates
+    if (updates.stage) {
     const stage = Object.values(PROCESSING_STAGES).find(s => s.id === updates.stage);
     if (stage) {
       processingState.currentStage = stage.id;
@@ -131,6 +147,9 @@ export function updateState(updates) {
     // CRITICAL: Summary generation no longer uses processingState
     // It uses only summary_generating flag to avoid interfering with document generation UI
     // No need to sync summary_generating flag here
+  }
+  } finally {
+    isUpdatingState = false;
   }
 }
 

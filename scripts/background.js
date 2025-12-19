@@ -245,7 +245,7 @@ setTimeout(() => {
     // CRITICAL: If extension was reloaded, reset all flags AND clear summary completely
     // We can't distinguish reload from restart, so we ALWAYS reset on service worker start
     // Only restore if state is very recent (< 1 minute) - this handles quick service worker restarts
-    const RESET_THRESHOLD = 60 * 1000; // 1 minute - if state is older, it's from before reload
+    const RESET_THRESHOLD = CONFIG.RESET_THRESHOLD_MS;
     
     // CRITICAL: Clear summary on extension reload (one of 3 events that must clear summary)
     if (hasSummary) {
@@ -479,6 +479,7 @@ setTimeout(() => {
 
 const KEEP_ALIVE_ALARM = 'keepAlive';
 let keepAliveInterval = null;
+let isKeepAliveStarting = false; // Flag to prevent concurrent startKeepAlive() calls
 
 /**
  * Perform keep-alive ping: check state and save to storage to keep service worker alive
@@ -546,35 +547,47 @@ async function performKeepAlivePing() {
 }
 
 function startKeepAlive() {
+  // Prevent concurrent calls: if already starting, skip
+  if (isKeepAliveStarting) {
+    logWarn('Keep-alive already starting, skipping duplicate call');
+    return;
+  }
+  
   // Prevent race condition: clear existing interval BEFORE creating new one
   if (keepAliveInterval) {
     clearInterval(keepAliveInterval);
     keepAliveInterval = null;
   }
   
-  // Create alarm as primary mechanism (MV3 requires >=1 minute)
-  chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
-  if (chrome.runtime.lastError) {
-    logWarn('Keep-alive alarm creation failed, using interval only', { error: chrome.runtime.lastError.message });
-  }
+  isKeepAliveStarting = true;
   
-  // Unified interval: performs both keep-alive ping and periodic state save
-  // Uses STATE_SAVE_INTERVAL (2 seconds) for frequent pings to prevent SW death
-  keepAliveInterval = setInterval(async () => {
-    const shouldContinue = await performKeepAlivePing();
-    
-    // Auto-stop if neither processing nor summary generating
-    if (!shouldContinue && keepAliveInterval) {
-      clearInterval(keepAliveInterval);
-      keepAliveInterval = null;
-      log('Keep-alive interval stopped - no active processing');
+  try {
+    // Create alarm as primary mechanism (MV3 requires >=1 minute)
+    chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
+    if (chrome.runtime.lastError) {
+      logWarn('Keep-alive alarm creation failed, using interval only', { error: chrome.runtime.lastError.message });
     }
-  }, CONFIG.STATE_SAVE_INTERVAL);
-  
-  log('Keep-alive started', { 
-    alarmIntervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL, 
-    pingIntervalMs: CONFIG.STATE_SAVE_INTERVAL 
-  });
+    
+    // Unified interval: performs both keep-alive ping and periodic state save
+    // Uses STATE_SAVE_INTERVAL (2 seconds) for frequent pings to prevent SW death
+    keepAliveInterval = setInterval(async () => {
+      const shouldContinue = await performKeepAlivePing();
+      
+      // Auto-stop if neither processing nor summary generating
+      if (!shouldContinue && keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+        log('Keep-alive interval stopped - no active processing');
+      }
+    }, CONFIG.STATE_SAVE_INTERVAL);
+    
+    log('Keep-alive started', { 
+      alarmIntervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL, 
+      pingIntervalMs: CONFIG.STATE_SAVE_INTERVAL 
+    });
+  } finally {
+    isKeepAliveStarting = false;
+  }
 }
 
 function stopKeepAlive() {

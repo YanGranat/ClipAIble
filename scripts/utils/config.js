@@ -16,6 +16,10 @@ export const CONFIG = {
   KEEP_ALIVE_INTERVAL: 1,         // Minutes (>=1 min per MV3 requirement)
   KEEP_ALIVE_PING_INTERVAL: 10,  // Seconds - ULTRA AGGRESSIVE ping every 10 seconds to prevent SW death
   
+  // State thresholds
+  RESET_THRESHOLD_MS: 60 * 1000,        // 1 minute - threshold for resetting state on extension reload
+  SUMMARY_STALE_THRESHOLD_MS: 15 * 60 * 1000, // 15 minutes - threshold for stale summary generation flag
+  
   // Polling
   POLL_INTERVAL_IDLE: 1000,       // ms - polling interval when idle
   POLL_INTERVAL_PROCESSING: 300,  // ms - polling interval when processing
