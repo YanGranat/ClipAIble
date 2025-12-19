@@ -507,7 +507,21 @@ export function initHandlers(deps) {
           if (result.statsImported) message += ', statistics';
           if (result.cacheImported) message += ', cache';
           
-          showToast(message, 'success');
+          // Show warnings if any
+          if (result.warnings && result.warnings.length > 0) {
+            const warningsText = result.warnings.join('; ');
+            logWarn('Import warnings', { warnings: result.warnings });
+            showToast(`${message}. Warnings: ${warningsText}`, 'warning');
+          } else {
+            showToast(message, 'success');
+          }
+          
+          // Show errors if any (non-fatal errors)
+          if (result.errors && result.errors.length > 0) {
+            const errorsText = result.errors.join('; ');
+            logError('Import errors', { errors: result.errors });
+            showToast(`Import completed with errors: ${errorsText}`, 'error');
+          }
           
           // Reload settings and stats
           if (window.settingsModule && window.settingsModule.loadSettings) {

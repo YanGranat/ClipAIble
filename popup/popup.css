@@ -2912,6 +2912,10 @@ body[data-theme="light"] .toast {
   border-left: 3px solid #f87171;
 }
 
+.toast.warning {
+  border-left: 3px solid #fbbf24;
+}
+
 @keyframes fadeInUp {
   from {
     opacity: 0;

@@ -4,6 +4,16 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { exportStats } from '../stats/index.js';
 import { getCacheStats } from '../cache/selectors.js';
 
+// Get current extension version from manifest
+function getCurrentVersion() {
+  try {
+    return chrome.runtime.getManifest().version || '3.0.3';
+  } catch (error) {
+    logWarn('Failed to get version from manifest, using fallback', error);
+    return '3.0.3';
+  }
+}
+
 // Settings that can be exported/imported
 // NOTE: API keys are NEVER included for security reasons
 const STORAGE_KEYS_TO_EXPORT = [
@@ -88,15 +98,15 @@ export async function exportSettings(includeStats = false, includeCache = false)
     const settings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     
     const exportData = {
-      version: '3.0.3',
+      version: getCurrentVersion(),
       exportDate: new Date().toISOString(),
       settings: {}
     };
     
-    // Copy settings (exclude empty values)
+    // Copy settings (exclude only undefined and null, but allow empty strings and 0/false)
     // Note: API keys are NOT in STORAGE_KEYS_TO_EXPORT, so they're never exported
     for (const key of STORAGE_KEYS_TO_EXPORT) {
-      if (settings[key] !== undefined && settings[key] !== null && settings[key] !== '') {
+      if (settings[key] !== undefined && settings[key] !== null) {
         exportData.settings[key] = settings[key];
       }
     }
@@ -109,6 +119,8 @@ export async function exportSettings(includeStats = false, includeCache = false)
         log('Statistics included in export');
       } catch (error) {
         logError('Failed to export statistics', error);
+        // Note: Error is logged but export continues without statistics
+        // This allows partial export to succeed even if stats fail
       }
     }
     
@@ -119,13 +131,23 @@ export async function exportSettings(includeStats = false, includeCache = false)
         // Get full cache data
         const cacheResult = await chrome.storage.local.get(['selector_cache']);
         if (cacheResult.selector_cache) {
-          exportData.selectorCache = cacheResult.selector_cache;
-          log('Selector cache included in export', { 
-            domains: Object.keys(cacheResult.selector_cache).length 
-          });
+          // Validate cache size to prevent extremely large exports
+          const cacheSize = JSON.stringify(cacheResult.selector_cache).length;
+          const maxCacheSize = 10 * 1024 * 1024; // 10MB limit
+          if (cacheSize > maxCacheSize) {
+            logWarn('Cache too large to export', { size: cacheSize, max: maxCacheSize });
+            // Skip cache export if too large
+          } else {
+            exportData.selectorCache = cacheResult.selector_cache;
+            log('Selector cache included in export', { 
+              domains: Object.keys(cacheResult.selector_cache).length 
+            });
+          }
         }
       } catch (error) {
         logError('Failed to export cache', error);
+        // Note: Error is logged but export continues without cache
+        // This allows partial export to succeed even if cache fails
       }
     }
     
@@ -172,17 +194,30 @@ export async function importSettings(jsonData, options = {}) {
       throw new Error('Invalid export file: missing settings');
     }
     
+    // Validate data size to prevent DoS attacks
+    const dataSize = JSON.stringify(data).length;
+    const maxDataSize = 50 * 1024 * 1024; // 50MB limit
+    if (dataSize > maxDataSize) {
+      throw new Error(`Import file is too large (${Math.round(dataSize / 1024 / 1024)}MB). Maximum size is ${Math.round(maxDataSize / 1024 / 1024)}MB.`);
+    }
+    
+    // Validate settings object structure
+    if (typeof data.settings !== 'object' || Array.isArray(data.settings)) {
+      throw new Error('Invalid export file: settings must be an object');
+    }
+    
     const result = {
       settingsImported: 0,
       settingsSkipped: 0,
       statsImported: false,
       cacheImported: false,
-      errors: []
+      errors: [],
+      warnings: []
     };
     
     // Validate version compatibility
     const exportVersion = data.version || 'unknown';
-    const currentVersion = '3.0.3'; // Should match manifest.json version
+    const currentVersion = getCurrentVersion();
     
     if (exportVersion !== 'unknown') {
       const exportMajor = parseInt(exportVersion.split('.')[0]) || 0;
@@ -203,6 +238,15 @@ export async function importSettings(jsonData, options = {}) {
       }
     }
     
+    // Check for unknown keys in import file
+    const unknownKeys = Object.keys(data.settings).filter(key => 
+      !STORAGE_KEYS_TO_EXPORT.includes(key) && !API_KEY_NAMES.includes(key)
+    );
+    if (unknownKeys.length > 0) {
+      logWarn('Unknown keys found in import file', { keys: unknownKeys });
+      result.warnings.push(`Found ${unknownKeys.length} unknown setting(s) in import file. They will be ignored.`);
+    }
+    
     // Import settings
     const currentSettings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     const settingsToImport = {};
@@ -217,6 +261,17 @@ export async function importSettings(jsonData, options = {}) {
     const preserveEnableSelectorCaching = overwriteExisting && 
                                           data.settings['enable_selector_caching'] === undefined && 
                                           currentSettings['enable_selector_caching'] !== undefined;
+    
+    // Valid enum values for validation
+    const VALID_ENUMS = {
+      api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter'],
+      audio_provider: ['openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
+      output_format: ['pdf', 'epub', 'fb2', 'markdown', 'txt', 'html', 'audio'],
+      extraction_mode: ['auto', 'manual'],
+      page_mode: ['single', 'multi'],
+      pdf_style_preset: ['light', 'dark', 'sepia', 'custom'],
+      popup_theme: ['light', 'dark', 'auto']
+    };
     
     for (const key of STORAGE_KEYS_TO_EXPORT) {
       // Security: Skip any API keys that might be in the import file
@@ -242,6 +297,35 @@ export async function importSettings(jsonData, options = {}) {
       }
       
       if (data.settings[key] !== undefined) {
+        // Validate enum values
+        if (VALID_ENUMS[key] && !VALID_ENUMS[key].includes(data.settings[key])) {
+          logWarn('Invalid enum value for setting', { key, value: data.settings[key], valid: VALID_ENUMS[key] });
+          result.warnings.push(`Invalid value for ${key}: "${data.settings[key]}". Skipping.`);
+          continue;
+        }
+        
+        // Validate numeric ranges for specific settings
+        if (key === 'audio_speed' && (typeof data.settings[key] !== 'number' || data.settings[key] < 0.25 || data.settings[key] > 4.0)) {
+          logWarn('Invalid audio_speed value', { value: data.settings[key] });
+          result.warnings.push(`Invalid audio_speed value: ${data.settings[key]}. Must be between 0.25 and 4.0. Skipping.`);
+          continue;
+        }
+        
+        if (key === 'pdf_font_size' && (typeof data.settings[key] !== 'number' || data.settings[key] < 8 || data.settings[key] > 72)) {
+          logWarn('Invalid pdf_font_size value', { value: data.settings[key] });
+          result.warnings.push(`Invalid pdf_font_size value: ${data.settings[key]}. Must be between 8 and 72. Skipping.`);
+          continue;
+        }
+        
+        // Validate boolean settings
+        if ((key === 'generate_toc' || key === 'generate_abstract' || key === 'translate_images' || 
+             key === 'use_selector_cache' || key === 'enable_selector_caching' || key === 'enable_statistics') &&
+            typeof data.settings[key] !== 'boolean') {
+          logWarn('Invalid boolean value for setting', { key, value: data.settings[key] });
+          result.warnings.push(`Invalid boolean value for ${key}. Skipping.`);
+          continue;
+        }
+        
         if (overwriteExisting || !currentSettings[key]) {
           settingsToImport[key] = data.settings[key];
           result.settingsImported++;
@@ -279,20 +363,9 @@ export async function importSettings(jsonData, options = {}) {
     }
     
     // Ensure enable_selector_caching has a default value if not imported
-    log('🔍🔍🔍 importSettings: Checking enable_selector_caching after import', {
-      value: finalSettings.enable_selector_caching,
-      type: typeof finalSettings.enable_selector_caching,
-      isUndefined: finalSettings.enable_selector_caching === undefined,
-      isNull: finalSettings.enable_selector_caching === null
-    });
     if (finalSettings.enable_selector_caching === undefined || finalSettings.enable_selector_caching === null) {
-      log('🔍🔍🔍 importSettings: Setting enable_selector_caching to default (true) after import');
       await chrome.storage.local.set({ enable_selector_caching: true });
-      log('🔍🔍🔍 importSettings: Set enable_selector_caching to default (true) after import');
-    } else {
-      log('🔍🔍🔍 importSettings: enable_selector_caching already set, NOT changing', {
-        value: finalSettings.enable_selector_caching
-      });
+      log('Set enable_selector_caching to default (true) after import');
     }
     
     // Import statistics
@@ -310,6 +383,18 @@ export async function importSettings(jsonData, options = {}) {
     // Import cache
     if (importCache && data.selectorCache) {
       try {
+        // Validate cache structure
+        if (typeof data.selectorCache !== 'object' || Array.isArray(data.selectorCache)) {
+          throw new Error('Invalid cache structure: must be an object');
+        }
+        
+        // Validate cache size
+        const cacheSize = JSON.stringify(data.selectorCache).length;
+        const maxCacheSize = 10 * 1024 * 1024; // 10MB limit
+        if (cacheSize > maxCacheSize) {
+          throw new Error(`Cache is too large (${Math.round(cacheSize / 1024 / 1024)}MB). Maximum size is ${Math.round(maxCacheSize / 1024 / 1024)}MB.`);
+        }
+        
         await chrome.storage.local.set({ selector_cache: data.selectorCache });
         result.cacheImported = true;
         const domainCount = Object.keys(data.selectorCache).length;
