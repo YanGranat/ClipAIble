@@ -20,7 +20,7 @@ ClipAIble uses AI to intelligently extract article content from any webpage — 
 - 📚 **EPUB** — Compatible with Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatible with PocketBook, FBReader
 - 📝 **Markdown** — Plain text format for notes
-- 🎧 **Audio (MP3/WAV)** — Listen with AI-powered narration
+- 🎧 **Audio** — Listen with AI-powered narration
 
 All formats support **translation to 11 languages** — even translating text on images!
 

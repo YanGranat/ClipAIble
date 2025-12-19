@@ -18,7 +18,7 @@ ClipAIble utilizza l'intelligenza artificiale per estrarre intelligentemente il 
 - 📚 **EPUB** — Compatibile con Kindle, Kobo, Apple Books
 - 📖 **FB2** — Compatibile con PocketBook, FBReader
 - 📝 **Markdown** — Testo semplice per appunti
-- 🎧 **Audio (MP3/WAV)** — Ascolta con narrazione IA
+- 🎧 **Audio** — Ascolta con narrazione IA
 
 Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzione del testo sulle immagini!
 

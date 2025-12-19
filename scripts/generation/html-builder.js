@@ -1,7 +1,7 @@
 // HTML builder for PDF generation
 
 import { log, logWarn } from '../utils/logging.js';
-import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness } from '../utils/html.js';
+import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle } from '../utils/html.js';
 import { PDF_LOCALIZATION } from '../utils/config.js';
 
 /**
@@ -32,12 +32,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   const l10n = PDF_LOCALIZATION[language] || PDF_LOCALIZATION['auto'];
   
   // Clean title from soft hyphens and special characters
-  const cleanTitle = (title || '')
-    .replace(/\u00AD/g, '')
-    .replace(/\u200B/g, '')
-    .replace(/[\u2010-\u2015]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const cleanedTitle = cleanTitle(title || '');
   
   const contentHtml = content.map((item, index) => {
     try {
@@ -171,13 +166,13 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
 <html lang="${docLang}">
 <head>
   <meta charset="UTF-8">
-  <title>${escapeHtml(cleanTitle)}</title>
+  <title>${escapeHtml(cleanedTitle)}</title>
   <style>${styles}</style>
 </head>
 <body>
   <article class="article">
     <header class="article-header">
-      <h1 class="article-title">${escapeHtml(cleanTitle)}</h1>
+      <h1 class="article-title">${escapeHtml(cleanedTitle)}</h1>
       ${metaHtml}
     </header>
     ${abstractHtml}
@@ -251,8 +246,8 @@ function countWords(content, title) {
   
   let allText = [];
   if (title) {
-    const cleanTitle = stripHtmlAndEntities(title);
-    if (cleanTitle) allText.push(cleanTitle);
+    const strippedTitle = stripHtmlAndEntities(title);
+    if (strippedTitle) allText.push(strippedTitle);
   }
   
   extractAllText(content, allText);

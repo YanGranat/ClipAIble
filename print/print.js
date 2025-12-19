@@ -1,24 +1,12 @@
 // Print page script - prepares content and signals background for PDF generation
 
 import { getLargeData, removeLargeData } from '../scripts/utils/storage.js';
+import { cleanTitleForFilename } from '../scripts/utils/html.js';
 
 const LOG_PREFIX = '[ClipAIble:Print]';
 
 function log(message) {
   console.log(`${LOG_PREFIX} ${message}`);
-}
-
-function cleanTitle(title) {
-  return (title || '')
-    .replace(/\u00AD/g, '')
-    .replace(/\u200B/g, '')
-    .replace(/\u200C/g, '')
-    .replace(/\u200D/g, '')
-    .replace(/\uFEFF/g, '')
-    .replace(/[\u2010-\u2015]/g, '-')
-    .replace(/[<>:"/\\|?*]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 async function init() {
@@ -37,7 +25,8 @@ async function init() {
     // Get metadata from chrome.storage
     const result = await chrome.storage.local.get(['printTitle', 'pageMode']);
     
-    const title = cleanTitle(result.printTitle);
+    // Use cleanTitleForFilename to remove invalid filename chars (print page title is used for PDF filename)
+    const title = cleanTitleForFilename(result.printTitle, 'Untitled');
     const pageMode = result.pageMode || 'single';
     
     log(`Content loaded: ${printHtml.length} chars, pageMode=${pageMode}`);

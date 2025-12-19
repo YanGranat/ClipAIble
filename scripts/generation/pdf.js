@@ -1,7 +1,7 @@
 // PDF generation module for ClipAIble extension
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { escapeAttr } from '../utils/html.js';
+import { escapeAttr, cleanTitle } from '../utils/html.js';
 import { embedImages } from '../utils/images.js';
 import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { translateMetadata } from '../translation/index.js';
@@ -108,16 +108,11 @@ export async function generatePdf(data, updateState) {
     });
     
     // Clean title from soft hyphens and special characters
-    const cleanTitle = (title || '')
-      .replace(/\u00AD/g, '')
-      .replace(/\u200B/g, '')
-      .replace(/[\u2010-\u2015]/g, '-')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const cleanedTitle = cleanTitle(title || '');
     
     const htmlContent = buildHtmlForPdf(
       contentWithIds,
-      cleanTitle,
+      cleanedTitle,
       translatedAuthor,
       styles,
       sourceUrl,

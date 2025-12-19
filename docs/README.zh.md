@@ -18,7 +18,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - 📚 **EPUB** — 适用于 Kindle、Kobo、Apple Books
 - 📖 **FB2** — 适用于 PocketBook、FBReader
 - 📝 **Markdown** — 纯文本格式，适合笔记
-- 🎧 **音频 (MP3/WAV)** — 使用AI语音朗读
+- 🎧 **音频** — 使用AI语音朗读
 
 所有格式都支持**翻译为11种语言** — 甚至翻译图像上的文字！
 

@@ -18,7 +18,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - 📚 **EPUB** — Kindle, Kobo, Apple Books에 적합
 - 📖 **FB2** — PocketBook, FBReader에 적합
 - 📝 **Markdown** — 노트용 일반 텍스트
-- 🎧 **오디오 (MP3/WAV)** — AI 내레이션으로 듣기
+- 🎧 **오디오** — AI 내레이션으로 듣기
 
 모든 형식이 **11개 언어로 번역**을 지원합니다 — 이미지의 텍스트 번역도 가능합니다!
 

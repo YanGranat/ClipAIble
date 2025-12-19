@@ -18,7 +18,7 @@ ClipAIble nutzt künstliche Intelligenz, um Artikelinhalte intelligent von jeder
 - 📚 **EPUB** — Geeignet für Kindle, Kobo, Apple Books
 - 📖 **FB2** — Geeignet für PocketBook, FBReader
 - 📝 **Markdown** — Klartext für Notizen
-- 🎧 **Audio (MP3/WAV)** — Anhören mit KI-Vorlesung
+- 🎧 **Audio** — Anhören mit KI-Vorlesung
 
 Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzung von Text auf Bildern!
 

@@ -6,6 +6,7 @@ import { prepareContentForAudio, AUDIO_CONFIG } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
+import { cleanTitleForFilename } from '../utils/html.js';
 
 // Language to TTS instruction mapping
 const LANGUAGE_TTS_INSTRUCTIONS = {
@@ -307,47 +308,7 @@ function getMimeType(format) {
   return types[format] || 'audio/mpeg';
 }
 
-// sanitizeFilename is now imported from security.js
-
-/**
- * Clean title from service data and artifacts for filename
- * Removes budget tokens, service markers, and other non-title content
- * @param {string} title - Raw title
- * @returns {string} Clean title
- */
-function cleanTitleForFilename(title) {
-  if (!title || typeof title !== 'string') {
-    return 'article';
-  }
-  
-  let cleaned = title;
-  
-  // Remove budget token patterns (budgettoken_budget, budget199985, etc.)
-  cleaned = cleaned.replace(/budgettoken[_\s]*budget\d*/gi, '');
-  cleaned = cleaned.replace(/budget\d+/gi, '');
-  
-  // Remove common service markers and artifacts
-  cleaned = cleaned.replace(/#+/g, ''); // Remove # symbols
-  cleaned = cleaned.replace(/token/gi, ''); // Remove "token" word
-  
-  // Remove patterns like "budget199985" that might remain
-  cleaned = cleaned.replace(/budget\w+/gi, '');
-  
-  // Clean up underscores and whitespace
-  cleaned = cleaned.replace(/_+/g, ' '); // Replace underscores with spaces
-  cleaned = cleaned.replace(/\s+/g, ' '); // Collapse multiple spaces
-  cleaned = cleaned.trim();
-  
-  // Remove leading/trailing separators that might remain
-  cleaned = cleaned.replace(/^[_\s-]+|[_\s-]+$/g, '');
-  
-  // If cleaned title is empty or too short, use original (sanitized)
-  if (!cleaned || cleaned.length < 2) {
-    return title.trim() || 'article';
-  }
-  
-  return cleaned;
-}
+// cleanTitleForFilename is now imported from utils/html.js
 
 /**
  * Estimate audio duration from text
