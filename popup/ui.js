@@ -197,7 +197,7 @@ export function initUI(deps) {
   function setProgress(percent, show = true) {
     elements.progressContainer.style.display = show ? 'block' : 'none';
     elements.progressBar.style.width = `${percent}%`;
-    elements.progressText.textContent = `${percent}%`;
+    elements.progressText.textContent = `${Math.round(percent)}%`;
   }
 
   // Show toast notification
