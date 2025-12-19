@@ -27,6 +27,7 @@ import {
   ERROR_CODES,
   isCancelled
 } from './state/processing.js';
+import { handleError, createErrorHandler } from './utils/error-handler.js';
 import { callAI, getProviderFromModel } from './api/index.js';
 import { callWithRetry } from './utils/retry.js';
 import { 
@@ -1472,10 +1473,15 @@ try {
                   })
                   .catch(async error => {
                     clearInterval(summaryProgressInterval);
-                    logError('=== AUTO-SUMMARY GENERATION FAILED ===', {
-                      error: error.message,
-                      stack: error.stack,
-                      timestamp: Date.now()
+                    // Use centralized error handling
+                    await handleError(error, {
+                      source: 'summaryGeneration',
+                      errorType: 'abstractGenerationFailed',
+                      logError: true,
+                      context: {
+                        url: data.url,
+                        timestamp: Date.now()
+                      }
                     });
                     
                     // CRITICAL: Clear generating flag on error
@@ -1625,7 +1631,15 @@ try {
               log('=== SUMMARY GENERATION COMPLETE ===', { timestamp: Date.now() });
             })
             .catch(async error => {
-              logError('generateSummary failed', error);
+              // Use centralized error handling
+              await handleError(error, {
+                source: 'summaryGeneration',
+                errorType: 'abstractGenerationFailed',
+                logError: true,
+                context: {
+                  url: data.url || ''
+                }
+              });
               
               // CRITICAL: Clear generating flag on error
               // Summary generation does NOT use processingState, so just clear the flag
@@ -1816,10 +1830,21 @@ async function startArticleProcessing(data) {
           return;
         }
         
-        logError('Video processing failed', error);
+        // Use centralized error handling
+        const normalized = await handleError(error, {
+          source: 'videoProcessing',
+          errorType: 'videoProcessingFailed',
+          logError: true,
+          createUserMessage: true,
+          context: {
+            platform: videoInfo.platform,
+            videoId: videoInfo.videoId
+          }
+        });
+        
         await setError({
-          message: error.message || 'Video processing failed',
-          code: ERROR_CODES.UNKNOWN_ERROR
+          message: normalized.userMessage || normalized.message || 'Video processing failed',
+          code: normalized.userCode || normalized.code
         }, stopKeepAlive);
       });
     return true;
@@ -1874,35 +1899,23 @@ async function startArticleProcessing(data) {
         return;
       }
       
-      logError('Processing failed', error);
+      // Use centralized error handling
+      const normalized = await handleError(error, {
+        source: 'articleProcessing',
+        errorType: 'contentExtractionFailed',
+        logError: true,
+        createUserMessage: true,
+        context: {
+          url: data.url,
+          format: data.outputFormat,
+          mode: data.extractionMode
+        }
+      });
       
-      // Determine error code from error
-      const ERROR_PATTERNS = {
-        AUTH: ['authentication', '401', '403', 'unauthorized', 'forbidden'],
-        RATE_LIMIT: ['429', 'rate limit', 'quota', 'too many requests'],
-        TIMEOUT: ['timeout', 'timed out', 'aborted'],
-        NETWORK: ['network', 'fetch', 'connection', 'failed to fetch'],
-        PARSE: ['parse', 'json', 'invalid json', 'syntax error']
-      };
-      
-      let errorCode = ERROR_CODES.UNKNOWN_ERROR;
-      const errorMsgLower = (error.message || '').toLowerCase();
-      
-      if (ERROR_PATTERNS.AUTH.some(pattern => errorMsgLower.includes(pattern))) {
-        errorCode = ERROR_CODES.AUTH_ERROR;
-      } else if (ERROR_PATTERNS.RATE_LIMIT.some(pattern => errorMsgLower.includes(pattern))) {
-        errorCode = ERROR_CODES.RATE_LIMIT;
-      } else if (ERROR_PATTERNS.TIMEOUT.some(pattern => errorMsgLower.includes(pattern))) {
-        errorCode = ERROR_CODES.TIMEOUT;
-      } else if (ERROR_PATTERNS.NETWORK.some(pattern => errorMsgLower.includes(pattern))) {
-        errorCode = ERROR_CODES.NETWORK_ERROR;
-      } else if (ERROR_PATTERNS.PARSE.some(pattern => errorMsgLower.includes(pattern))) {
-        errorCode = ERROR_CODES.PARSE_ERROR;
-      }
-      
+      // Set error with normalized message and code
       await setError({
-        message: error.message || 'Processing failed',
-        code: errorCode
+        message: normalized.userMessage || normalized.message || 'Processing failed',
+        code: normalized.userCode || normalized.code
       }, stopKeepAlive);
     });
   
