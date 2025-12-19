@@ -10,9 +10,12 @@ let cachedEncryptionKey = null;
 // Cache for decrypted API keys (in-memory, per-provider, cleared after processing)
 // Security: Keys are only cached during processing, cleared on resetState()
 // Additional security: Auto-clear cache after 10 minutes of inactivity
+// Maximum security: Force clear after 30 minutes regardless of processing state
 const decryptedKeyCache = new Map(); // provider:encryptedPrefix -> decryptedKey
 let cacheClearTimeout = null;
-const CACHE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+let cacheStartTime = null; // Track when cache was first populated
+const CACHE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes - normal timeout
+const MAX_CACHE_TIME_MS = 30 * 60 * 1000; // 30 minutes - maximum time keys can stay in memory
 
 /**
  * Get or generate encryption key based on extension ID
@@ -224,6 +227,12 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
   // Decrypt and cache
   const decrypted = await decryptApiKey(encryptedKey);
   decryptedKeyCache.set(cacheKey, decrypted);
+  
+  // Track cache start time for maximum timeout enforcement
+  if (cacheStartTime === null) {
+    cacheStartTime = Date.now();
+  }
+  
   log('Decrypted key cached', { provider });
   
   // Schedule automatic cache clear after timeout (security: prevent keys from staying in memory too long)
@@ -235,7 +244,7 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
 /**
  * Schedule automatic cache clear after timeout
  * Security: Ensures keys don't remain in memory indefinitely
- * Important: Does NOT clear cache if processing is active (to avoid interrupting long operations)
+ * Important: For long operations (>10 min), cache is cleared after max timeout (30 min) regardless of processing state
  */
 function scheduleCacheClear() {
   // Clear existing timeout
@@ -245,13 +254,32 @@ function scheduleCacheClear() {
   
   // Schedule new timeout
   cacheClearTimeout = setTimeout(() => {
-    // Check if processing is active - don't clear cache during active processing
     const processingState = getProcessingState();
+    const cacheAge = cacheStartTime ? (Date.now() - cacheStartTime) : 0;
+    
+    // SECURITY: Force clear cache after maximum time, even if processing is active
+    // This prevents keys from staying in memory indefinitely during very long operations
+    // IMPORTANT: Keys will be re-decrypted on next use - this does NOT break processing
+    if (cacheAge >= MAX_CACHE_TIME_MS) {
+      logWarn('Decrypted key cache maximum time reached, forcing clear for security (even during processing)', {
+        cacheAge,
+        maxTime: MAX_CACHE_TIME_MS,
+        isProcessing: processingState.isProcessing
+      });
+      clearDecryptedKeyCache();
+      cacheClearTimeout = null;
+      // NOTE: scheduleCacheClear() will be called again on next getDecryptedKeyCached() call
+      // This ensures continuous protection for very long operations (5+ hours)
+      return;
+    }
+    
+    // Normal timeout: Check if processing is active - don't clear cache during active processing
     if (processingState.isProcessing) {
       // Processing is active - reschedule cache clear (don't interrupt long operations)
       log('Cache clear postponed - processing is active', { 
         status: processingState.status,
-        progress: processingState.progress 
+        progress: processingState.progress,
+        cacheAge
       });
       scheduleCacheClear(); // Reschedule for another timeout period
       return;
@@ -269,10 +297,14 @@ function scheduleCacheClear() {
 /**
  * Clear decrypted key cache (called after processing completes)
  * Security: Ensures keys don't remain in memory
+ * Also called on service worker restart to ensure clean state
  */
 export function clearDecryptedKeyCache() {
   const cacheSize = decryptedKeyCache.size;
   decryptedKeyCache.clear();
+  
+  // Reset cache start time
+  cacheStartTime = null;
   
   // Clear timeout if exists
   if (cacheClearTimeout) {

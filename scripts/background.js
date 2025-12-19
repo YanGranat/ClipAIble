@@ -56,7 +56,7 @@ import {
 } from './cache/selectors.js';
 import { exportSettings, importSettings } from './settings/import-export.js';
 import { removeLargeData } from './utils/storage.js';
-import { encryptApiKey, isEncrypted, decryptApiKey } from './utils/encryption.js';
+import { encryptApiKey, isEncrypted, decryptApiKey, clearDecryptedKeyCache } from './utils/encryption.js';
 import { getUILanguage, tSync } from './locales.js';
 import { detectVideoPlatform } from './utils/video.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
@@ -233,6 +233,11 @@ setTimeout(() => {
   } catch (error) {
     console.error('[ClipAIble] Failed to log:', error);
   }
+
+  // SECURITY: Clear decrypted key cache on service worker restart
+  // This ensures keys don't remain in memory after SW restart
+  clearDecryptedKeyCache();
+  log('Decrypted key cache cleared on service worker start (security)');
 
   // CRITICAL: On extension reload/restart, ALWAYS reset all generation flags AND clear summary
   // This ensures clean state after extension reload
