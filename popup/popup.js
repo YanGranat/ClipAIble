@@ -1077,6 +1077,7 @@ async function updateModelList() {
       { value: 'claude-sonnet-4-5', isCustom: false }
     ],
     gemini: [
+      { value: 'gemini-3-flash-preview', isCustom: false },
       { value: 'gemini-3-pro-preview', isCustom: false }
     ],
     grok: [
@@ -1197,7 +1198,7 @@ async function showCustomModelDropdown() {
   const modelsByProvider = {
     openai: ['gpt-5.2', 'gpt-5.2-high', 'gpt-5.1', 'gpt-5.1-high'],
     claude: ['claude-sonnet-4-5'],
-    gemini: ['gemini-3-pro-preview'],
+    gemini: ['gemini-3-flash-preview', 'gemini-3-pro-preview'],
     grok: ['grok-4-1-fast-reasoning'],
     openrouter: [
       'openai/gpt-5.1', 'openai/gpt-5.1-high', 'google/gemini-3-pro-preview',
