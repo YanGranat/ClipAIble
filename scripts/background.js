@@ -370,7 +370,6 @@ setTimeout(() => {
                     threshold: RESET_THRESHOLD
                   });
                   startKeepAlive();
-                  startPeriodicStateSave(); // Also start periodic state save
                 } else {
                   // Too old - extension was reloaded, clear it
                   log('summary_generating is too old - clearing (extension reload)', {
@@ -479,107 +478,103 @@ setTimeout(() => {
 // ============================================
 
 const KEEP_ALIVE_ALARM = 'keepAlive';
-let keepAliveFallbackTimer = null;
+let keepAliveInterval = null;
+
+/**
+ * Perform keep-alive ping: check state and save to storage to keep service worker alive
+ * This is the unified logic used by both alarm and interval
+ */
+async function performKeepAlivePing() {
+  const state = getProcessingState();
+  
+  try {
+    // Check both processingState AND summary_generating
+    const result = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+    const isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
+    const isProcessing = state.isProcessing;
+    
+    // If neither is active, stop keep-alive (called from interval check)
+    if (!isProcessing && !isSummaryGenerating) {
+      return false; // Signal to stop
+    }
+    
+    const savePromises = [];
+    
+    if (isProcessing) {
+      // Save state to keep service worker alive and preserve progress
+      savePromises.push(
+        chrome.storage.local.set({
+          processingState: { ...state, lastUpdate: Date.now() }
+        })
+      );
+    }
+    
+    // CRITICAL: Also keep alive if summary is generating
+    if (isSummaryGenerating) {
+      // Update timestamp to keep service worker alive
+      savePromises.push(
+        chrome.storage.local.set({
+          summary_generating: true,
+          summary_generating_start_time: result.summary_generating_start_time
+        })
+      );
+    }
+    
+    if (savePromises.length > 0) {
+      await Promise.all(savePromises);
+    }
+    
+    return true; // Signal to continue
+  } catch (error) {
+    // On error, still try to save processingState if active (fallback)
+    if (state.isProcessing) {
+      try {
+        await chrome.storage.local.set({
+          processingState: { ...state, lastUpdate: Date.now() }
+        });
+      } catch (fallbackError) {
+        logWarn('Keep-alive ping failed (including fallback)', { 
+          error: error.message, 
+          fallbackError: fallbackError.message 
+        });
+      }
+    } else {
+      logWarn('Keep-alive ping failed', error);
+    }
+    return true; // Continue on error to be safe
+  }
+}
 
 function startKeepAlive() {
-  // Prevent race condition: clear existing timer BEFORE creating new one
-  // This ensures we don't have multiple timers running simultaneously
-  if (keepAliveFallbackTimer) {
-    clearInterval(keepAliveFallbackTimer);
-    keepAliveFallbackTimer = null;
+  // Prevent race condition: clear existing interval BEFORE creating new one
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
   }
   
+  // Create alarm as primary mechanism (MV3 requires >=1 minute)
   chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
   if (chrome.runtime.lastError) {
-    logWarn('Keep-alive alarm creation failed, enabling fallback timer', { error: chrome.runtime.lastError.message });
+    logWarn('Keep-alive alarm creation failed, using interval only', { error: chrome.runtime.lastError.message });
   }
   
-  // Fallback ping in case alarms are throttled; MV3 requires >=1m, this keeps SW alive during long tasks.
-  // Create new timer only after clearing old one to prevent race condition
-  // Use more frequent pings to prevent service worker from being killed
-  keepAliveFallbackTimer = setInterval(() => {
-    const state = getProcessingState();
+  // Unified interval: performs both keep-alive ping and periodic state save
+  // Uses STATE_SAVE_INTERVAL (2 seconds) for frequent pings to prevent SW death
+  keepAliveInterval = setInterval(async () => {
+    const shouldContinue = await performKeepAlivePing();
     
-    // CRITICAL: Check both processingState AND summary_generating
-    // This ensures service worker stays alive for both PDF and summary generation
-    chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
-      const isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
-      const isProcessing = state.isProcessing;
-      
-      log('Keep-alive fallback ping', { 
-        isProcessing: isProcessing,
-        isSummaryGenerating: isSummaryGenerating
-      });
-      
-      const savePromises = [];
-      
-      if (isProcessing) {
-        // Save state more frequently to keep service worker alive
-        savePromises.push(
-          chrome.storage.local.set({
-            processingState: { ...state, lastUpdate: Date.now() }
-          })
-        );
-      }
-      
-      // CRITICAL: Also keep alive if summary is generating
-      if (isSummaryGenerating) {
-        // Update to keep service worker alive
-        savePromises.push(
-          chrome.storage.local.set({
-            summary_generating: true,
-            summary_generating_start_time: result.summary_generating_start_time
-          })
-        );
-      }
-      
-      // CRITICAL: If neither is active, keep-alive should stop (but we don't stop it here - stopKeepAlive does that)
-      Promise.all(savePromises)
-        .catch(createErrorHandler({
-          source: 'keepAlive',
-          errorType: 'storageSaveFailed',
-          logError: false,
-          createUserMessage: false,
-          context: { operation: 'keepAliveFallbackPing' }
-        }))
-        .then(normalizedError => {
-          if (normalizedError) logWarn('Keep-alive fallback ping save failed', normalizedError);
-        });
-    })
-      .catch(createErrorHandler({
-        source: 'keepAlive',
-        errorType: 'storageGetFailed',
-        logError: false,
-        createUserMessage: false,
-        context: { operation: 'checkSummaryGeneratingFallback' }
-      }))
-      .then(normalizedError => {
-        if (normalizedError) {
-          logWarn('Failed to check summary_generating in fallback ping', normalizedError);
-          // Fallback: still save processingState if active
-          if (state.isProcessing) {
-            chrome.storage.local.set({
-              processingState: { ...state, lastUpdate: Date.now() }
-            })
-              .catch(createErrorHandler({
-                source: 'keepAlive',
-                errorType: 'storageSaveFailed',
-                logError: false,
-                createUserMessage: false,
-                context: { operation: 'saveProcessingStateFallback' }
-              }))
-              .then(err => {
-                if (err) logWarn('Failed to save processingState in fallback ping', err);
-              });
-          }
-        }
-      });
-  }, CONFIG.KEEP_ALIVE_PING_INTERVAL * 1000); // Use seconds-based interval for more frequent pings
+    // Auto-stop if neither processing nor summary generating
+    if (!shouldContinue && keepAliveInterval) {
+      clearInterval(keepAliveInterval);
+      keepAliveInterval = null;
+      log('Keep-alive interval stopped - no active processing');
+    }
+  }, CONFIG.STATE_SAVE_INTERVAL);
   
-  // Start periodic state save for additional reliability
-  startPeriodicStateSave();
-  
-  log('Keep-alive started', { intervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL, pingIntervalSeconds: CONFIG.KEEP_ALIVE_PING_INTERVAL });
+  log('Keep-alive started', { 
+    alarmIntervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL, 
+    pingIntervalMs: CONFIG.STATE_SAVE_INTERVAL 
+  });
 }
 
 function stopKeepAlive() {
@@ -589,188 +584,42 @@ function stopKeepAlive() {
     logWarn('Failed to clear keep-alive alarm', error);
   }
   
-  // Guaranteed cleanup of fallback timer
-  if (keepAliveFallbackTimer) {
+  // Guaranteed cleanup of interval
+  if (keepAliveInterval) {
     try {
-      clearInterval(keepAliveFallbackTimer);
+      clearInterval(keepAliveInterval);
     } catch (error) {
-      logWarn('Failed to clear keep-alive fallback timer', error);
+      logWarn('Failed to clear keep-alive interval', error);
     } finally {
-      keepAliveFallbackTimer = null;
+      keepAliveInterval = null;
     }
   }
-  
-  // Stop periodic state save
-  stopPeriodicStateSave();
   
   log('Keep-alive stopped');
 }
 
+// Alarm listener: uses same unified ping logic
 try {
-  chrome.alarms.onAlarm.addListener((alarm) => {
+  chrome.alarms.onAlarm.addListener(async (alarm) => {
     if (alarm.name === KEEP_ALIVE_ALARM) {
-      const state = getProcessingState();
-      log('Keep-alive ping', { isProcessing: state.isProcessing });
-      
-      // CRITICAL: Keep service worker alive for both processingState AND summary generation
-      // Check both synchronously to ensure proper keep-alive
-      chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
-        const isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
-        const isProcessing = state.isProcessing;
-        
-        const keepAlivePromises = [];
-        
-        if (isProcessing) {
-          // Save state to keep service worker alive and preserve progress
-          keepAlivePromises.push(
-            chrome.storage.local.set({ 
-              processingState: { ...state, lastUpdate: Date.now() }
-            })
-          );
-        }
-        
-        // CRITICAL: Also keep alive if summary is generating
-        if (isSummaryGenerating) {
-          // Update timestamp to keep service worker alive
-          keepAlivePromises.push(
-            chrome.storage.local.set({
-              summary_generating: true,
-              summary_generating_start_time: result.summary_generating_start_time // Keep original start time
-            })
-          );
-        }
-        
-        Promise.all(keepAlivePromises)
-          .catch(createErrorHandler({
-            source: 'keepAlive',
-            errorType: 'storageSaveFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'keepAliveStateSave' }
-          }))
-          .then(normalizedError => {
-            if (normalizedError) logWarn('Keep-alive state save failed', normalizedError);
-          });
-      })
-        .catch(createErrorHandler({
-          source: 'keepAlive',
-          errorType: 'storageGetFailed',
-          logError: false,
-          createUserMessage: false,
-          context: { operation: 'checkSummaryGeneratingKeepAlive' }
-        }))
-        .then(normalizedError => {
-          if (normalizedError) {
-            logWarn('Failed to check summary_generating in keep-alive', normalizedError);
-            // Fallback: still save processingState if active
-            if (state.isProcessing) {
-              chrome.storage.local.set({ 
-                processingState: { ...state, lastUpdate: Date.now() }
-              })
-                .catch(createErrorHandler({
-                  source: 'keepAlive',
-                  errorType: 'storageSaveFailed',
-                  logError: false,
-                  createUserMessage: false,
-                  context: { operation: 'saveProcessingStateKeepAlive' }
-                }))
-                .then(err => {
-                  if (err) logWarn('Keep-alive state save failed', err);
-                });
-            }
-          }
-        });
+      log('Keep-alive alarm ping');
+      await performKeepAlivePing();
     }
   });
 } catch (error) {
   logError('Failed to register alarms.onAlarm listener', error);
 }
 
-// Additional keep-alive mechanism: periodic state save during processing
-// This ensures service worker stays alive even if alarms are throttled
-let stateSaveInterval = null;
+// Backward compatibility: keep old function names but they're now no-ops
+// This ensures existing code that calls them doesn't break
 function startPeriodicStateSave() {
-  if (stateSaveInterval) {
-    clearInterval(stateSaveInterval);
-  }
-  stateSaveInterval = setInterval(() => {
-    const state = getProcessingState();
-    const savePromises = [];
-    
-    if (state.isProcessing) {
-      savePromises.push(
-        chrome.storage.local.set({
-          processingState: { ...state, lastUpdate: Date.now() }
-        })
-      );
-    }
-    
-    // CRITICAL: Also save summary_generating state to keep service worker alive
-    // Use non-blocking approach to avoid interfering with other operations
-    chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
-      if (result.summary_generating && result.summary_generating_start_time) {
-        // Update to keep service worker alive
-        chrome.storage.local.set({
-          summary_generating: true,
-          summary_generating_start_time: result.summary_generating_start_time
-        })
-          .catch(createErrorHandler({
-            source: 'keepAlive',
-            errorType: 'storageSaveFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'saveSummaryGeneratingPeriodic' }
-          }))
-          .then(normalizedError => {
-            if (normalizedError) logWarn('Failed to save summary_generating in periodic save', normalizedError);
-          });
-      }
-    })
-      .catch(createErrorHandler({
-        source: 'keepAlive',
-        errorType: 'storageGetFailed',
-        logError: false,
-        createUserMessage: false,
-        context: { operation: 'checkSummaryGeneratingPeriodic' }
-      }))
-      .then(normalizedError => {
-        if (normalizedError) logWarn('Failed to check summary_generating in periodic save', normalizedError);
-      });
-    
-    // CRITICAL: Stop saving only if neither processing nor summary generating
-    // Check both synchronously to avoid race conditions
-    chrome.storage.local.get(['summary_generating']).then(result => {
-      const isSummaryGenerating = result.summary_generating;
-      const isProcessing = state.isProcessing;
-      
-      // Only stop if BOTH are false
-      if (!isProcessing && !isSummaryGenerating && stateSaveInterval) {
-        clearInterval(stateSaveInterval);
-        stateSaveInterval = null;
-        log('Periodic state save stopped - no active processing');
-      }
-    })
-      .catch(createErrorHandler({
-        source: 'keepAlive',
-        errorType: 'storageGetFailed',
-        logError: false,
-        createUserMessage: false,
-        context: { operation: 'checkSummaryGeneratingStopPeriodic' }
-      }))
-      .then(() => {
-        // On error, keep interval running to be safe
-        // Don't stop if we can't check summary_generating
-      });
-  }, CONFIG.STATE_SAVE_INTERVAL);
-  log('Periodic state save started', { interval: CONFIG.STATE_SAVE_INTERVAL });
+  // No-op: functionality merged into startKeepAlive()
+  // Kept for backward compatibility
 }
 
 function stopPeriodicStateSave() {
-  if (stateSaveInterval) {
-    clearInterval(stateSaveInterval);
-    stateSaveInterval = null;
-    log('Periodic state save stopped');
-  }
+  // No-op: functionality merged into stopKeepAlive()
+  // Kept for backward compatibility
 }
 
 // ============================================
@@ -1679,8 +1528,7 @@ try {
                 
                 // CRITICAL: Start keep-alive for summary generation
                 startKeepAlive();
-                startPeriodicStateSave();
-                log('Keep-alive and periodic state save started for auto-summary generation', { timestamp: Date.now() });
+                log('Keep-alive started for auto-summary generation', { timestamp: Date.now() });
                 
                 // Generate summary
                 const summaryStartTime = Date.now();
@@ -1853,8 +1701,7 @@ try {
           // CRITICAL: Start keep-alive for summary generation
           // This ensures service worker stays alive during generation even if popup is closed
           startKeepAlive();
-          startPeriodicStateSave(); // Also start periodic state save for summary generation
-          log('Keep-alive and periodic state save started for summary generation', { timestamp: Date.now() });
+          log('Keep-alive started for summary generation', { timestamp: Date.now() });
           
           // CRITICAL: Respond immediately (like processArticle does)
           // This allows popup to close without interrupting generation
