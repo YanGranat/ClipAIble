@@ -39,6 +39,7 @@ import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
 import { initUI } from './ui.js';
 import { initStats } from './stats.js';
+import { initSettings } from './settings.js';
 
 // Function to send error to service worker for centralized logging
 async function sendErrorToServiceWorker(message, error, context = {}) {
@@ -758,19 +759,6 @@ async function init() {
     logWarn('Theme select element not found');
   }
   
-  try {
-    log('init: calling loadSettings()');
-    await loadSettings();
-    log('init: loadSettings() completed successfully');
-  } catch (error) {
-    logError('CRITICAL: loadSettings() failed in init()', error);
-    logError('init: loadSettings error details', { 
-      message: error.message, 
-      stack: error.stack 
-    });
-    // Continue initialization even if loadSettings fails
-  }
-  
   // Initialize UI module
   const currentStartTimeRef = { current: currentStartTime };
   const timerIntervalRef = { current: timerInterval };
@@ -791,9 +779,43 @@ async function init() {
     showToast
   });
   
+  // Initialize settings module
+  const settingsModule = initSettings({
+    elements,
+    STORAGE_KEYS,
+    DEFAULT_STYLES,
+    STYLE_PRESETS,
+    debouncedSaveSettings,
+    showToast,
+    setCustomSelectValue,
+    getElement,
+    setElementDisplay,
+    setElementGroupDisplay,
+    setDisplayForIds,
+    applyTheme,
+    markdownToHtml,
+    audioVoiceMap: { current: audioVoiceMap }
+  });
+  
   // Make modules available globally for use in other functions
   window.uiModule = uiModule;
   window.statsModule = statsModule;
+  window.settingsModule = settingsModule;
+  
+  // Load settings after modules are initialized
+  // Note: loadSettings will be moved to settings.js module in next step
+  try {
+    log('init: calling loadSettings()');
+    await loadSettings();
+    log('init: loadSettings() completed successfully');
+  } catch (error) {
+    logError('CRITICAL: loadSettings() failed in init()', error);
+    logError('init: loadSettings error details', { 
+      message: error.message, 
+      stack: error.stack 
+    });
+    // Continue initialization even if loadSettings fails
+  }
   
   try {
     await uiModule.applyLocalization();
@@ -2356,12 +2378,22 @@ function setupEventListeners() {
       }
       
       // Update UI (label, placeholder)
-      await updateApiProviderUI();
+      if (window.settingsModule) {
+        await window.settingsModule.updateApiProviderUI();
+      } else {
+        await updateApiProviderUI();
+      }
     });
   }
 
   if (elements.saveApiKey) {
-    elements.saveApiKey.addEventListener('click', saveApiKey);
+    elements.saveApiKey.addEventListener('click', () => {
+      if (window.settingsModule) {
+        window.settingsModule.saveApiKey();
+      } else {
+        saveApiKey();
+      }
+    });
   }
 
   if (elements.toggleSettings) {
@@ -2548,7 +2580,11 @@ function setupEventListeners() {
       
       // Update model list if custom_models or hidden_models were imported
       if (result.settingsImported > 0) {
-        await updateModelList();
+        if (window.settingsModule) {
+          await window.settingsModule.updateModelList();
+        } else {
+          await updateModelList();
+        }
       }
       
       // Reload page to apply settings
@@ -2593,7 +2629,11 @@ function setupEventListeners() {
   if (elements.addModelBtn) {
     elements.addModelBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await showAddModelDialog();
+      if (window.settingsModule) {
+        await window.settingsModule.showAddModelDialog();
+      } else {
+        await showAddModelDialog();
+      }
     });
   }
 
@@ -2603,7 +2643,7 @@ function setupEventListeners() {
   
   if (elements.modelSelect) {
     // Use mousedown to intercept before native dropdown opens
-    elements.modelSelect.addEventListener('mousedown', (e) => {
+    elements.modelSelect.addEventListener('mousedown', async (e) => {
       const isVisible = elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none';
       
       if (isVisible) {
@@ -2618,15 +2658,23 @@ function setupEventListeners() {
         e.stopPropagation();
         e.stopImmediatePropagation();
         dropdownOpenTime = Date.now();
-        showCustomModelDropdown();
+        if (window.settingsModule) {
+          await window.settingsModule.showCustomModelDropdown();
+        } else {
+          await showCustomModelDropdown();
+        }
       }
     }, true); // Use capture phase
 
     // Model select change handler - update custom dropdown if visible
-    elements.modelSelect.addEventListener('change', () => {
+    elements.modelSelect.addEventListener('change', async () => {
       // Update custom dropdown if it's visible (for when user uses keyboard navigation)
       if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
-        showCustomModelDropdown();
+        if (window.settingsModule) {
+          await window.settingsModule.showCustomModelDropdown();
+        } else {
+          await showCustomModelDropdown();
+        }
       }
     });
   }
@@ -2659,8 +2707,13 @@ function setupEventListeners() {
 
   elements.modeSelect.addEventListener('change', () => {
     debouncedSaveSettings(STORAGE_KEYS.MODE, elements.modeSelect.value, async () => {
-      await updateModeHint();
-      updateCacheVisibility();
+      if (window.settingsModule) {
+        await window.settingsModule.updateModeHint();
+        window.settingsModule.updateCacheVisibility();
+      } else {
+        await updateModeHint();
+        updateCacheVisibility();
+      }
     });
   });
 
@@ -2712,7 +2765,11 @@ function setupEventListeners() {
       }
       // updateOutputFormatUI() handles all UI visibility updates based on format
       // It calls updateAudioProviderUI() and updateTranslationVisibility() internally
-      await updateOutputFormatUI();
+      if (window.settingsModule) {
+        await window.settingsModule.updateOutputFormatUI();
+      } else {
+        await updateOutputFormatUI();
+      }
     });
   });
   
@@ -2721,7 +2778,11 @@ function setupEventListeners() {
     elements.mainFormatSelect.addEventListener('change', () => {
       elements.outputFormat.value = elements.mainFormatSelect.value;
       debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.mainFormatSelect.value, async () => {
-        await updateOutputFormatUI();
+        if (window.settingsModule) {
+          await window.settingsModule.updateOutputFormatUI();
+        } else {
+          await updateOutputFormatUI();
+        }
       });
     });
   }
@@ -2739,14 +2800,22 @@ function setupEventListeners() {
   });
 
   elements.languageSelect.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.LANGUAGE, elements.languageSelect.value, () => {
-      updateTranslationVisibility();
+    debouncedSaveSettings(STORAGE_KEYS.LANGUAGE, elements.languageSelect.value, async () => {
+      if (window.settingsModule) {
+        await window.settingsModule.updateTranslationVisibility();
+      } else {
+        await updateTranslationVisibility();
+      }
     });
   });
 
   elements.translateImages.addEventListener('change', () => {
-    debouncedSaveSettings(STORAGE_KEYS.TRANSLATE_IMAGES, elements.translateImages.checked, () => {
-      updateTranslationVisibility();
+    debouncedSaveSettings(STORAGE_KEYS.TRANSLATE_IMAGES, elements.translateImages.checked, async () => {
+      if (window.settingsModule) {
+        await window.settingsModule.updateTranslationVisibility();
+      } else {
+        await updateTranslationVisibility();
+      }
     });
   });
   
@@ -2937,13 +3006,21 @@ function setupEventListeners() {
   document.querySelectorAll('.btn-reset-inline').forEach(btn => {
     btn.addEventListener('click', async () => {
       const resetType = btn.dataset.reset;
-      await resetStyleSetting(resetType);
+      if (window.settingsModule) {
+        await window.settingsModule.resetStyleSetting(resetType);
+      } else {
+        await resetStyleSetting(resetType);
+      }
     });
   });
 
   // Reset all styles
   elements.resetStylesBtn.addEventListener('click', async () => {
-    await resetAllStyles();
+    if (window.settingsModule) {
+      await window.settingsModule.resetAllStyles();
+    } else {
+      await resetAllStyles();
+    }
   });
 
   elements.savePdfBtn.addEventListener('click', handleSavePdf);
@@ -3001,7 +3078,11 @@ function setupEventListeners() {
   
   elements.audioVoice.addEventListener('change', () => {
     const provider = elements.audioProvider?.value || 'openai';
-    saveAudioVoice(provider, elements.audioVoice.value);
+    if (window.settingsModule) {
+      window.settingsModule.saveAudioVoice(provider, elements.audioVoice.value);
+    } else {
+      saveAudioVoice(provider, elements.audioVoice.value);
+    }
   });
   
   elements.audioSpeed.addEventListener('input', () => {
@@ -3072,10 +3153,17 @@ function setupEventListeners() {
      */
     elements.audioProvider.addEventListener('change', () => {
       debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value, () => {
-        // Update voice list first (populates dropdown with provider-specific voices)
-        updateVoiceList(elements.audioProvider.value);
-        // Then update UI visibility (shows/hides provider-specific fields)
-        updateAudioProviderUI();
+        if (window.settingsModule) {
+          // Update voice list first (populates dropdown with provider-specific voices)
+          window.settingsModule.updateVoiceList(elements.audioProvider.value);
+          // Then update UI visibility (shows/hides provider-specific fields)
+          window.settingsModule.updateAudioProviderUI();
+        } else {
+          // Update voice list first (populates dropdown with provider-specific voices)
+          updateVoiceList(elements.audioProvider.value);
+          // Then update UI visibility (shows/hides provider-specific fields)
+          updateAudioProviderUI();
+        }
       });
     });
   }
@@ -3580,8 +3668,24 @@ async function resetAllStyles() {
   elements.linkColor.value = DEFAULT_STYLES.linkColor;
   elements.linkColorText.value = DEFAULT_STYLES.linkColor;
   
+  // Reset style preset to dark (default)
+  elements.stylePreset.value = 'dark';
+  const stylePresetContainer = document.getElementById('stylePresetContainer');
+  if (stylePresetContainer) {
+    const valueSpan = stylePresetContainer.querySelector('.custom-select-value');
+    const selectedOption = stylePresetContainer.querySelector('[data-value="dark"]');
+    if (valueSpan && selectedOption) {
+      valueSpan.textContent = selectedOption.textContent;
+      stylePresetContainer.querySelectorAll('.custom-select-option').forEach(opt => {
+        opt.classList.remove('selected');
+      });
+      selectedOption.classList.add('selected');
+    }
+  }
+  
   await chrome.storage.local.remove([STORAGE_KEYS.FONT_FAMILY]);
   await chrome.storage.local.set({
+    [STORAGE_KEYS.STYLE_PRESET]: 'dark',
     [STORAGE_KEYS.FONT_SIZE]: DEFAULT_STYLES.fontSize,
     [STORAGE_KEYS.BG_COLOR]: DEFAULT_STYLES.bgColor,
     [STORAGE_KEYS.TEXT_COLOR]: DEFAULT_STYLES.textColor,
