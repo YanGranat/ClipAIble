@@ -116,7 +116,7 @@ All formats support **translation to 11 languages** — even translating text on
   - Text is automatically split intelligently at sentence/word boundaries
 
 ### Technical Constraints
-- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes. Extension uses ultra-aggressive keep-alive (ping every 10 seconds) to prevent service worker from dying.
+- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes. Extension uses unified keep-alive mechanism (alarm every 1 minute + state save every 2 seconds) to prevent service worker from dying.
 - **CORS for images**: Some images may fail to load if the website blocks cross-origin requests. The extension will skip these images.
 - **Cancel not instant**: Cancellation may take a few seconds to fully stop all background processes.
 - **Service Worker recovery**: Operations automatically resume after service worker restart (within 2 hours).
@@ -450,7 +450,7 @@ ClipAIble requires the following permissions to function. All permissions are us
 | `scripting` | Inject the content extraction script into web pages. This script finds and extracts the article content (text, images, headings) from the page DOM. |
 | `downloads` | Save the generated files (PDF, EPUB, FB2, Markdown, Audio) to your computer. Without this permission, the extension cannot download files. |
 | `debugger` | **PDF generation only** - Uses Chrome's built-in print-to-PDF functionality to generate high-quality PDFs with proper page layout and styling. The debugger is attached only during PDF generation and immediately detached after completion. This is the only way to generate PDFs with custom styling in Chrome extensions. |
-| `alarms` | Keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Interval is set to ≥1 minute per MV3 rules. |
+| `alarms` | Keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Uses unified keep-alive mechanism (alarm every 1 minute + state save every 2 seconds) per MV3 rules. |
 | `contextMenus` | Add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/Audio) to the right-click context menu on web pages. |
 | `notifications` | Show desktop notifications when using the context menu "Save" feature. Notifies you if there's an error (e.g., missing API key). |
 | `unlimitedStorage` | Store selector cache and temporary print data locally. This enables faster repeat extractions without calling AI again (offline mode). |

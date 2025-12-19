@@ -114,7 +114,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
   - 文本会在句子/单词边界处智能自动分割
 
 ### 技术约束
-- **Keep-alive要求**：Chrome MV3要求keep-alive间隔至少1分钟。长时间处理任务可能需要几分钟。扩展使用超激进的keep-alive（每10秒ping一次）以防止service worker停止。
+- **Keep-alive要求**：Chrome MV3要求keep-alive间隔至少1分钟。长时间处理任务可能需要几分钟。扩展使用统一的keep-alive机制（每1分钟警报 + 每2秒保存状态）以防止service worker停止。
 - **图像的CORS**：如果网站阻止跨域请求，某些图像可能无法加载。扩展将跳过这些图像。
 - **取消不是即时的**：取消可能需要几秒钟才能完全停止所有后台进程。
 - **Service Worker恢复**：操作在service worker重启后自动恢复（2小时内）。
@@ -448,7 +448,7 @@ ClipAIble需要以下权限才能正常工作。所有权限仅用于所述目�
 | `scripting` | 将内容提取脚本注入到网页中。此脚本从页面DOM中查找并提取文章内容（文本、图像、标题）。 |
 | `downloads` | 将生成的文件（PDF、EPUB、FB2、Markdown、音频）保存到您的计算机。没有此权限，扩展无法下载文件。 |
 | `debugger` | **仅用于PDF生成** — 使用Chrome的内置print-to-PDF功能生成具有适当页面布局和样式的高质量PDF。调试器仅在PDF生成期间附加，完成后立即分离。这是在Chrome扩展中生成具有自定义样式的PDF的唯一方法。 |
-| `alarms` | 在长时间操作（大文章、翻译）期间保持后台service worker处于活动状态。Chrome Manifest V3会在30秒后暂停service worker，但文章处理可能需要几分钟。根据MV3规则，间隔设置为≥1分钟。 |
+| `alarms` | 在长时间操作（大文章、翻译）期间保持后台service worker处于活动状态。Chrome Manifest V3会在30秒后暂停service worker，但文章处理可能需要几分钟。使用统一的keep-alive机制（每1分钟警报 + 每2秒保存状态）根据MV3规则。 |
 | `contextMenus` | 在网页上的右键上下文菜单中添加"使用ClipAIble保存"选项（PDF/EPUB/FB2/MD/音频）。 |
 | `notifications` | 使用上下文菜单"保存"功能时显示桌面通知。如果有错误（例如，缺少API密钥），会通知您。 |
 | `unlimitedStorage` | 本地存储选择器缓存和临时打印数据。这可以在不再次调用AI的情况下实现更快的重复提取（离线模式）。 |

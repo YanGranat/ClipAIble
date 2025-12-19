@@ -114,7 +114,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
   - O texto é automaticamente dividido de forma inteligente nos limites de frases/palavras
 
 ### Restrições Técnicas
-- **Requisito keep-alive**: Chrome MV3 requer um intervalo keep-alive de pelo menos 1 minuto. Tarefas de processamento longas podem levar vários minutos. A extensão usa keep-alive ultra-agressivo (ping a cada 10 segundos) para evitar que o service worker pare.
+- **Requisito keep-alive**: Chrome MV3 requer um intervalo keep-alive de pelo menos 1 minuto. Tarefas de processamento longas podem levar vários minutos. A extensão usa mecanismo unificado de keep-alive (alarme a cada 1 minuto + salvamento de estado a cada 2 segundos) para evitar que o service worker pare.
 - **CORS para imagens**: Algumas imagens podem não carregar se o site bloquear solicitações cross-origin. A extensão ignorará essas imagens.
 - **Cancelamento não instantâneo**: O cancelamento pode levar alguns segundos para parar completamente todos os processos em segundo plano.
 - **Recuperação do Service Worker**: Operações retomam automaticamente após reinicialização do service worker (dentro de 2 horas).
@@ -448,7 +448,7 @@ ClipAIble requer as seguintes permissões para funcionar. Todas as permissões s
 | `scripting` | Injetar o script de extração de conteúdo em páginas web. Este script encontra e extrai o conteúdo do artigo (texto, imagens, cabeçalhos) do DOM da página. |
 | `downloads` | Salvar os arquivos gerados (PDF, EPUB, FB2, Markdown, Áudio) no seu computador. Sem esta permissão, a extensão não pode baixar arquivos. |
 | `debugger` | **Apenas geração PDF** — Usa a funcionalidade integrada print-to-PDF do Chrome para gerar PDFs de alta qualidade com layout de página e estilo adequados. O depurador é anexado apenas durante a geração PDF e imediatamente desanexado após a conclusão. Esta é a única forma de gerar PDFs com estilo personalizado em extensões Chrome. |
-| `alarms` | Manter o service worker em segundo plano ativo durante operações longas (artigos grandes, tradução). Chrome Manifest V3 suspende service workers após 30 segundos, mas o processamento de artigos pode levar vários minutos. O intervalo é definido como ≥1 minuto de acordo com as regras MV3. |
+| `alarms` | Manter o service worker em segundo plano ativo durante operações longas (artigos grandes, tradução). Chrome Manifest V3 suspende service workers após 30 segundos, mas o processamento de artigos pode levar vários minutos. Usa mecanismo unificado de keep-alive (alarme a cada 1 minuto + salvamento de estado a cada 2 segundos) de acordo com as regras MV3. |
 | `contextMenus` | Adicionar opções "Salvar com ClipAIble" (PDF/EPUB/FB2/MD/Áudio) ao menu contextual de clique direito em páginas web. |
 | `notifications` | Mostrar notificações de desktop ao usar a função "Salvar" do menu contextual. Notifica você se houver um erro (por exemplo, chave API ausente). |
 | `unlimitedStorage` | Armazenar o cache de seletores e dados de impressão temporários localmente. Isso permite extrações repetidas mais rápidas sem chamar a IA novamente (modo offline). |

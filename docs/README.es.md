@@ -114,7 +114,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
   - El texto se divide automáticamente de forma inteligente en los límites de oraciones/palabras
 
 ### Restricciones Técnicas
-- **Requisito de keep-alive**: Chrome MV3 requiere un intervalo de keep-alive de al menos 1 minuto. Las tareas de procesamiento largas pueden tardar varios minutos. La extensión usa keep-alive ultra-agresivo (ping cada 10 segundos) para evitar que el service worker se detenga.
+- **Requisito de keep-alive**: Chrome MV3 requiere un intervalo de keep-alive de al menos 1 minuto. Las tareas de procesamiento largas pueden tardar varios minutos. La extensión usa mecanismo unificado de keep-alive (alarma cada 1 minuto + guardado de estado cada 2 segundos) para evitar que el service worker se detenga.
 - **CORS para imágenes**: Algunas imágenes pueden no cargarse si el sitio web bloquea las solicitudes cross-origin. La extensión omitirá estas imágenes.
 - **Cancelación no instantánea**: La cancelación puede tardar unos segundos en detener completamente todos los procesos en segundo plano.
 - **Recuperación del Service Worker**: Las operaciones se reanudan automáticamente después del reinicio del service worker (dentro de 2 horas).
@@ -431,7 +431,7 @@ ClipAIble requiere los siguientes permisos para funcionar. Todos los permisos se
 | `scripting` | Inyectar el script de extracción de contenido en páginas web. Este script encuentra y extrae el contenido del artículo (texto, imágenes, encabezados) del DOM de la página. |
 | `downloads` | Guardar los archivos generados (PDF, EPUB, FB2, Markdown, Audio) en tu computadora. Sin este permiso, la extensión no puede descargar archivos. |
 | `debugger` | **Solo generación PDF** — Usa la funcionalidad integrada print-to-PDF de Chrome para generar PDFs de alta calidad con diseño de página y estilo adecuados. El depurador se adjunta solo durante la generación PDF y se desvincula inmediatamente después de completarse. Esta es la única forma de generar PDFs con estilo personalizado en extensiones de Chrome. |
-| `alarms` | Mantener el service worker en segundo plano activo durante operaciones largas (artículos grandes, traducción). Chrome Manifest V3 suspende los service workers después de 30 segundos, pero el procesamiento de artículos puede tomar varios minutos. El intervalo se establece en ≥1 minuto según las reglas MV3. |
+| `alarms` | Mantener el service worker en segundo plano activo durante operaciones largas (artículos grandes, traducción). Chrome Manifest V3 suspende los service workers después de 30 segundos, pero el procesamiento de artículos puede tomar varios minutos. Usa mecanismo unificado de keep-alive (alarma cada 1 minuto + guardado de estado cada 2 segundos) según las reglas MV3. |
 | `contextMenus` | Agregar opciones "Guardar con ClipAIble" (PDF/EPUB/FB2/MD/Audio) al menú contextual de clic derecho en páginas web. |
 | `notifications` | Mostrar notificaciones de escritorio al usar la función "Guardar" del menú contextual. Te notifica si hay un error (por ejemplo, clave API faltante). |
 | `unlimitedStorage` | Almacenar el caché de selectores y datos de impresión temporales localmente. Esto permite extracciones repetidas más rápidas sin volver a llamar a la IA (modo offline). |

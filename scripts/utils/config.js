@@ -14,7 +14,7 @@ export const CONFIG = {
   
   // Keep-alive
   KEEP_ALIVE_INTERVAL: 1,         // Minutes (>=1 min per MV3 requirement)
-  KEEP_ALIVE_PING_INTERVAL: 10,  // Seconds - ULTRA AGGRESSIVE ping every 10 seconds to prevent SW death
+  // NOTE: KEEP_ALIVE_PING_INTERVAL removed - unified keep-alive uses STATE_SAVE_INTERVAL (2 seconds) instead
   
   // State thresholds
   RESET_THRESHOLD_MS: 60 * 1000,        // 1 minute - threshold for resetting state on extension reload
