@@ -27,7 +27,7 @@ import {
   ERROR_CODES,
   isCancelled
 } from './state/processing.js';
-import { handleError, createErrorHandler } from './utils/error-handler.js';
+import { handleError, createErrorHandler, normalizeError } from './utils/error-handler.js';
 import { callAI, getProviderFromModel } from './api/index.js';
 import { callWithRetry } from './utils/retry.js';
 import { 
@@ -255,9 +255,17 @@ setTimeout(() => {
           summaryAge,
           threshold: RESET_THRESHOLD
         });
-        chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp']).catch(err => {
-          logWarn('Failed to remove summary_text on reload', err);
-        });
+        chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp'])
+          .catch(createErrorHandler({
+            source: 'initialization',
+            errorType: 'storageRemoveFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'removeSummaryText' }
+          }))
+          .then(normalizedError => {
+            if (normalizedError) logWarn('Failed to remove summary_text on reload', normalizedError);
+          });
       } else {
         log('Summary is recent - may keep (quick restart)', {
           summaryAge,
@@ -273,9 +281,17 @@ setTimeout(() => {
           timeSinceUpdate,
           threshold: RESET_THRESHOLD
         });
-        chrome.storage.local.remove(['processingState']).catch(err => {
-          logWarn('Failed to remove processingState on reload', err);
-        });
+        chrome.storage.local.remove(['processingState'])
+          .catch(createErrorHandler({
+            source: 'initialization',
+            errorType: 'storageRemoveFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'removeProcessingState' }
+          }))
+          .then(normalizedError => {
+            if (normalizedError) logWarn('Failed to remove processingState on reload', normalizedError);
+          });
       } else {
         log('ProcessingState is recent - may restore (quick restart)', {
           timeSinceUpdate,
@@ -297,9 +313,17 @@ setTimeout(() => {
         chrome.storage.local.set({
           summary_generating: false,
           summary_generating_start_time: null
-        }).catch(err => {
-          logWarn('Failed to clear summary_generating on reload', err);
-        });
+        })
+          .catch(createErrorHandler({
+            source: 'initialization',
+            errorType: 'storageSetFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'clearSummaryGenerating' }
+          }))
+          .then(normalizedError => {
+            if (normalizedError) logWarn('Failed to clear summary_generating on reload', normalizedError);
+          });
       } else {
         log('summary_generating is recent - may restore (quick restart)', {
           timeSinceStart,
@@ -359,37 +383,94 @@ setTimeout(() => {
                   });
                 }
               }
-            }).catch(error => {
-              logWarn('Failed to check summary_generating on service worker start', error);
-            });
+            })
+              .catch(createErrorHandler({
+                source: 'initialization',
+                errorType: 'storageGetFailed',
+                logError: false,
+                createUserMessage: false,
+                context: { operation: 'checkSummaryGenerating' }
+              }))
+              .then(normalizedError => {
+                if (normalizedError) logWarn('Failed to check summary_generating on service worker start', normalizedError);
+              });
           }
         } catch (error) {
-          logWarn('Failed to restore keep-alive on service worker start', error);
+          handleError(error, {
+            source: 'initialization',
+            errorType: 'keepAliveRestoreFailed',
+            logError: false,
+            createUserMessage: false
+          }).then(normalizedError => {
+            logWarn('Failed to restore keep-alive on service worker start', normalizedError);
+          });
         }
       }, 100);
-    }).catch(error => {
-      logWarn('Failed to restore state on service worker start', error);
+    })
+      .catch(createErrorHandler({
+        source: 'initialization',
+        errorType: 'stateRestoreFailed',
+        logError: false,
+        createUserMessage: false
+      }))
+      .then(normalizedError => {
+        if (normalizedError) logWarn('Failed to restore state on service worker start', normalizedError);
+      });
+  })
+    .catch(createErrorHandler({
+      source: 'initialization',
+      errorType: 'stateCheckFailed',
+      logError: false,
+      createUserMessage: false
+    }))
+    .then(normalizedError => {
+      if (normalizedError) logWarn('Failed to check state on extension load', normalizedError);
     });
-  }).catch(error => {
-    logWarn('Failed to check state on extension load', error);
-  });
 
   // Migrate existing API keys to encrypted format (fire and forget)
   try {
-    migrateApiKeys().catch(error => {
-      logError('API keys migration failed', error);
-    });
+    migrateApiKeys()
+      .catch(createErrorHandler({
+        source: 'initialization',
+        errorType: 'apiKeyMigrationFailed',
+        logError: true,
+        createUserMessage: false
+      }))
+      .then(normalizedError => {
+        if (normalizedError) logError('API keys migration failed', normalizedError);
+      });
   } catch (error) {
-    logError('Failed to start migration', error);
+    handleError(error, {
+      source: 'initialization',
+      errorType: 'apiKeyMigrationStartFailed',
+      logError: true,
+      createUserMessage: false
+    }).then(normalizedError => {
+      logError('Failed to start migration', normalizedError);
+    });
   }
 
   // Initialize default settings (fire and forget)
   try {
-    initializeDefaultSettings().catch(error => {
-      logError('Default settings initialization failed', error);
-    });
+    initializeDefaultSettings()
+      .catch(createErrorHandler({
+        source: 'initialization',
+        errorType: 'settingsInitializationFailed',
+        logError: true,
+        createUserMessage: false
+      }))
+      .then(normalizedError => {
+        if (normalizedError) logError('Default settings initialization failed', normalizedError);
+      });
   } catch (error) {
-    logError('Failed to initialize default settings', error);
+    handleError(error, {
+      source: 'initialization',
+      errorType: 'settingsInitializationStartFailed',
+      logError: true,
+      createUserMessage: false
+    }).then(normalizedError => {
+      logError('Failed to initialize default settings', normalizedError);
+    });
   }
 }, 0);
 
@@ -453,20 +534,46 @@ function startKeepAlive() {
       }
       
       // CRITICAL: If neither is active, keep-alive should stop (but we don't stop it here - stopKeepAlive does that)
-      Promise.all(savePromises).catch(error => {
-        logWarn('Keep-alive fallback ping save failed', error);
-      });
-    }).catch(error => {
-      logWarn('Failed to check summary_generating in fallback ping', error);
-      // Fallback: still save processingState if active
-      if (state.isProcessing) {
-        chrome.storage.local.set({
-          processingState: { ...state, lastUpdate: Date.now() }
-        }).catch(err => {
-          logWarn('Failed to save processingState in fallback ping', err);
+      Promise.all(savePromises)
+        .catch(createErrorHandler({
+          source: 'keepAlive',
+          errorType: 'storageSaveFailed',
+          logError: false,
+          createUserMessage: false,
+          context: { operation: 'keepAliveFallbackPing' }
+        }))
+        .then(normalizedError => {
+          if (normalizedError) logWarn('Keep-alive fallback ping save failed', normalizedError);
         });
-      }
-    });
+    })
+      .catch(createErrorHandler({
+        source: 'keepAlive',
+        errorType: 'storageGetFailed',
+        logError: false,
+        createUserMessage: false,
+        context: { operation: 'checkSummaryGeneratingFallback' }
+      }))
+      .then(normalizedError => {
+        if (normalizedError) {
+          logWarn('Failed to check summary_generating in fallback ping', normalizedError);
+          // Fallback: still save processingState if active
+          if (state.isProcessing) {
+            chrome.storage.local.set({
+              processingState: { ...state, lastUpdate: Date.now() }
+            })
+              .catch(createErrorHandler({
+                source: 'keepAlive',
+                errorType: 'storageSaveFailed',
+                logError: false,
+                createUserMessage: false,
+                context: { operation: 'saveProcessingStateFallback' }
+              }))
+              .then(err => {
+                if (err) logWarn('Failed to save processingState in fallback ping', err);
+              });
+          }
+        }
+      });
   }, CONFIG.KEEP_ALIVE_PING_INTERVAL * 1000); // Use seconds-based interval for more frequent pings
   
   // Start periodic state save for additional reliability
@@ -533,20 +640,46 @@ try {
           );
         }
         
-        Promise.all(keepAlivePromises).catch(error => {
-          logWarn('Keep-alive state save failed', error);
-        });
-      }).catch(error => {
-        logWarn('Failed to check summary_generating in keep-alive', error);
-        // Fallback: still save processingState if active
-        if (state.isProcessing) {
-          chrome.storage.local.set({ 
-            processingState: { ...state, lastUpdate: Date.now() }
-          }).catch(err => {
-            logWarn('Keep-alive state save failed', err);
+        Promise.all(keepAlivePromises)
+          .catch(createErrorHandler({
+            source: 'keepAlive',
+            errorType: 'storageSaveFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'keepAliveStateSave' }
+          }))
+          .then(normalizedError => {
+            if (normalizedError) logWarn('Keep-alive state save failed', normalizedError);
           });
-        }
-      });
+      })
+        .catch(createErrorHandler({
+          source: 'keepAlive',
+          errorType: 'storageGetFailed',
+          logError: false,
+          createUserMessage: false,
+          context: { operation: 'checkSummaryGeneratingKeepAlive' }
+        }))
+        .then(normalizedError => {
+          if (normalizedError) {
+            logWarn('Failed to check summary_generating in keep-alive', normalizedError);
+            // Fallback: still save processingState if active
+            if (state.isProcessing) {
+              chrome.storage.local.set({ 
+                processingState: { ...state, lastUpdate: Date.now() }
+              })
+                .catch(createErrorHandler({
+                  source: 'keepAlive',
+                  errorType: 'storageSaveFailed',
+                  logError: false,
+                  createUserMessage: false,
+                  context: { operation: 'saveProcessingStateKeepAlive' }
+                }))
+                .then(err => {
+                  if (err) logWarn('Keep-alive state save failed', err);
+                });
+            }
+          }
+        });
     }
   });
 } catch (error) {
@@ -580,13 +713,29 @@ function startPeriodicStateSave() {
         chrome.storage.local.set({
           summary_generating: true,
           summary_generating_start_time: result.summary_generating_start_time
-        }).catch(error => {
-          logWarn('Failed to save summary_generating in periodic save', error);
-        });
+        })
+          .catch(createErrorHandler({
+            source: 'keepAlive',
+            errorType: 'storageSaveFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'saveSummaryGeneratingPeriodic' }
+          }))
+          .then(normalizedError => {
+            if (normalizedError) logWarn('Failed to save summary_generating in periodic save', normalizedError);
+          });
       }
-    }).catch(error => {
-      logWarn('Failed to check summary_generating in periodic save', error);
-    });
+    })
+      .catch(createErrorHandler({
+        source: 'keepAlive',
+        errorType: 'storageGetFailed',
+        logError: false,
+        createUserMessage: false,
+        context: { operation: 'checkSummaryGeneratingPeriodic' }
+      }))
+      .then(normalizedError => {
+        if (normalizedError) logWarn('Failed to check summary_generating in periodic save', normalizedError);
+      });
     
     // CRITICAL: Stop saving only if neither processing nor summary generating
     // Check both synchronously to avoid race conditions
@@ -600,10 +749,18 @@ function startPeriodicStateSave() {
         stateSaveInterval = null;
         log('Periodic state save stopped - no active processing');
       }
-    }).catch(() => {
-      // On error, keep interval running to be safe
-      // Don't stop if we can't check summary_generating
-    });
+    })
+      .catch(createErrorHandler({
+        source: 'keepAlive',
+        errorType: 'storageGetFailed',
+        logError: false,
+        createUserMessage: false,
+        context: { operation: 'checkSummaryGeneratingStopPeriodic' }
+      }))
+      .then(() => {
+        // On error, keep interval running to be safe
+        // Don't stop if we can't check summary_generating
+      });
   }, CONFIG.STATE_SAVE_INTERVAL);
   log('Periodic state save started', { interval: CONFIG.STATE_SAVE_INTERVAL });
 }
@@ -782,9 +939,17 @@ async function updateContextMenu() {
 // Initialize context menu on install
 try {
   chrome.runtime.onInstalled.addListener(() => {
-    updateContextMenu().catch(error => {
-      logError('Failed to update context menu on install', error);
-    });
+    updateContextMenu()
+      .catch(createErrorHandler({
+        source: 'contextMenu',
+        errorType: 'contextMenuUpdateFailed',
+        logError: true,
+        createUserMessage: false,
+        context: { operation: 'onInstalled' }
+      }))
+      .then(normalizedError => {
+        if (normalizedError) logError('Failed to update context menu on install', normalizedError);
+      });
   });
 } catch (error) {
   logError('Failed to register runtime.onInstalled listener', error);
@@ -793,9 +958,17 @@ try {
 // Update context menu when extension starts (in case language changed)
 // Use setTimeout to avoid blocking service worker initialization
 setTimeout(() => {
-  updateContextMenu().catch(error => {
-    logError('Failed to update context menu on startup', error);
-  });
+  updateContextMenu()
+    .catch(createErrorHandler({
+      source: 'contextMenu',
+      errorType: 'contextMenuUpdateFailed',
+      logError: true,
+      createUserMessage: false,
+      context: { operation: 'onStartup' }
+    }))
+    .then(normalizedError => {
+      if (normalizedError) logError('Failed to update context menu on startup', normalizedError);
+    });
 }, 0);
 
 // Update context menu when UI language changes
@@ -806,9 +979,17 @@ try {
       // Handle UI language change
       if (changes.ui_language) {
         log('UI language changed, updating context menu', { newLang: changes.ui_language.newValue });
-        updateContextMenu().catch(error => {
-          logError('Failed to update context menu after language change', error);
-        });
+        updateContextMenu()
+          .catch(createErrorHandler({
+            source: 'contextMenu',
+            errorType: 'contextMenuUpdateFailed',
+            logError: true,
+            createUserMessage: false,
+            context: { operation: 'onLanguageChange' }
+          }))
+          .then(normalizedError => {
+            if (normalizedError) logError('Failed to update context menu after language change', normalizedError);
+          });
       }
       
       // Handle pending subtitles (fallback when Extension context invalidated)
@@ -829,9 +1010,17 @@ try {
               subtitles: pendingData.subtitles,
               metadata: pendingData.metadata
             }
-          }).catch(() => {
-            // Ignore if no listener (extractYouTubeSubtitles may have timed out)
-          });
+          })
+            .catch(createErrorHandler({
+              source: 'messageHandler',
+              errorType: 'messageSendFailed',
+              logError: false,
+              createUserMessage: false,
+              context: { operation: 'sendPendingSubtitles', note: 'May timeout if no listener' }
+            }))
+            .then(() => {
+              // Ignore if no listener (extractYouTubeSubtitles may have timed out)
+            });
           
           // Also save to lastSubtitles for popup
           chrome.storage.local.set({
@@ -840,14 +1029,39 @@ try {
               metadata: pendingData.metadata,
               timestamp: pendingData.timestamp
             }
-          }).catch(storageError => {
-            logError('Failed to save lastSubtitles', storageError);
-          });
+          })
+            .catch(createErrorHandler({
+              source: 'messageHandler',
+              errorType: 'storageSaveFailed',
+              logError: true,
+              createUserMessage: false,
+              context: { operation: 'saveLastSubtitles' }
+            }))
+            .then(normalizedError => {
+              if (normalizedError) logError('Failed to save lastSubtitles', normalizedError);
+            });
           
           // Clear pendingSubtitles after processing
-          chrome.storage.local.remove('pendingSubtitles').catch(() => {});
+          chrome.storage.local.remove('pendingSubtitles')
+            .catch(createErrorHandler({
+              source: 'messageHandler',
+              errorType: 'storageRemoveFailed',
+              logError: false,
+              createUserMessage: false,
+              context: { operation: 'removePendingSubtitles' }
+            }))
+            .then(() => {
+              // Ignore errors when clearing pending subtitles
+            });
         } catch (error) {
-          logError('Failed to process pendingSubtitles', error);
+          handleError(error, {
+            source: 'messageHandler',
+            errorType: 'pendingSubtitlesProcessingFailed',
+            logError: true,
+            createUserMessage: false
+          }).then(normalizedError => {
+            logError('Failed to process pendingSubtitles', normalizedError);
+          });
         }
       }
     }
@@ -1145,9 +1359,14 @@ try {
         .then(() => {
           sendResponse({ started: true });
         })
-        .catch(error => {
-          logError('processArticle failed', error);
-          sendResponse({ error: error.message || 'Processing failed' });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'contentExtractionFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message || 'Processing failed' });
         });
       return true;
     }
@@ -1169,7 +1388,15 @@ try {
         async (errorMsg) => await setError(errorMsg, stopKeepAlive)
       )
         .then(() => log('PDF generated and downloaded'))
-        .catch(error => logError('generatePdfDebugger failed', error));
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'pdfGenerationFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          logError('generatePdfDebugger failed', normalized);
+        });
       
       sendResponse({ success: true });
       return true;
@@ -1178,9 +1405,14 @@ try {
     if (request.action === 'getStats') {
       getFormattedStats()
         .then(stats => sendResponse({ stats }))
-        .catch(error => {
-          logError('getStats failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'statsRetrievalFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1188,9 +1420,14 @@ try {
     if (request.action === 'clearStats') {
       clearStats()
         .then(() => sendResponse({ success: true }))
-        .catch(error => {
-          logError('clearStats failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'statsClearFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1198,9 +1435,14 @@ try {
     if (request.action === 'deleteHistoryItem') {
       deleteHistoryItem(request.index)
         .then(() => sendResponse({ success: true }))
-        .catch(error => {
-          logError('deleteHistoryItem failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'historyDeleteFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1208,9 +1450,14 @@ try {
     if (request.action === 'getCacheStats') {
       getCacheStats()
         .then(stats => sendResponse({ stats }))
-        .catch(error => {
-          logError('getCacheStats failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'cacheStatsRetrievalFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1218,9 +1465,14 @@ try {
     if (request.action === 'clearSelectorCache') {
       clearSelectorCache()
         .then(() => sendResponse({ success: true }))
-        .catch(error => {
-          logError('clearSelectorCache failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'cacheClearFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1228,9 +1480,14 @@ try {
     if (request.action === 'deleteDomainFromCache') {
       deleteDomainFromCache(request.domain)
         .then(() => sendResponse({ success: true }))
-        .catch(error => {
-          logError('deleteDomainFromCache failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'domainDeleteFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1238,9 +1495,14 @@ try {
     if (request.action === 'exportSettings') {
       exportSettings(request.includeStats, request.includeCache)
         .then(jsonData => sendResponse({ success: true, data: jsonData }))
-        .catch(error => {
-          logError('exportSettings failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'settingsExportFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1248,9 +1510,14 @@ try {
     if (request.action === 'importSettings') {
       importSettings(request.jsonData, request.options)
         .then(result => sendResponse({ success: true, result }))
-        .catch(error => {
-          logError('importSettings failed', error);
-          sendResponse({ error: error.message });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'settingsImportFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message });
         });
       return true;
     }
@@ -1288,8 +1555,15 @@ try {
           log('🟢 Saved subtitles to storage for popup (fallback)', {
             subtitleCount: request.result.subtitles?.length || 0
           });
-        }).catch(storageError => {
-          logError('Failed to save subtitles to storage', storageError);
+        }).catch(createErrorHandler({
+          source: 'messageHandler',
+          errorType: 'storageSaveFailed',
+          logError: true,
+          createUserMessage: false,
+          context: { operation: 'saveSubtitles' }
+        }))
+        .then(normalizedError => {
+          logError('Failed to save subtitles to storage', normalizedError);
         });
       }
       
@@ -1317,9 +1591,14 @@ try {
           log('extractYouTubeSubtitlesForSummary success', { subtitleCount: result?.subtitles?.length || 0 });
           sendResponse({ success: true, result });
         })
-        .catch(error => {
-          logError('extractYouTubeSubtitlesForSummary failed', error);
-          sendResponse({ error: error.message || 'Failed to extract subtitles' });
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'subtitleExtractionFailed',
+            logError: true,
+            createUserMessage: false
+          });
+          sendResponse({ error: normalized.message || 'Failed to extract subtitles' });
         });
       return true;
     }
@@ -1473,11 +1752,12 @@ try {
                   })
                   .catch(async error => {
                     clearInterval(summaryProgressInterval);
-                    // Use centralized error handling
-                    await handleError(error, {
+                    
+                    const normalized = await handleError(error, {
                       source: 'summaryGeneration',
                       errorType: 'abstractGenerationFailed',
                       logError: true,
+                      createUserMessage: false,
                       context: {
                         url: data.url,
                         timestamp: Date.now()
@@ -1511,10 +1791,17 @@ try {
             }
           }
         })
-        .catch(error => {
+        .catch(createErrorHandler({
+          source: 'messageHandler',
+          errorType: 'contentExtractionFailed',
+          logError: true,
+          createUserMessage: false,
+          context: { operation: 'extractContentOnly' }
+        }))
+        .then(normalizedError => {
           logError('=== extractContentOnly FAILED ===', {
-            error: error.message,
-            stack: error.stack,
+            error: normalizedError.message,
+            code: normalizedError.code,
             timestamp: Date.now()
           });
         });
@@ -1631,11 +1918,11 @@ try {
               log('=== SUMMARY GENERATION COMPLETE ===', { timestamp: Date.now() });
             })
             .catch(async error => {
-              // Use centralized error handling
-              await handleError(error, {
+              const normalized = await handleError(error, {
                 source: 'summaryGeneration',
                 errorType: 'abstractGenerationFailed',
                 logError: true,
+                createUserMessage: false,
                 context: {
                   url: data.url || ''
                 }
@@ -1830,7 +2117,6 @@ async function startArticleProcessing(data) {
           return;
         }
         
-        // Use centralized error handling
         const normalized = await handleError(error, {
           source: 'videoProcessing',
           errorType: 'videoProcessingFailed',
@@ -1899,7 +2185,6 @@ async function startArticleProcessing(data) {
         return;
       }
       
-      // Use centralized error handling
       const normalized = await handleError(error, {
         source: 'articleProcessing',
         errorType: 'contentExtractionFailed',

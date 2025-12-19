@@ -204,6 +204,7 @@ export async function handleError(error, options = {}) {
     } catch (msgError) {
       logError('Failed to create user-friendly error message', msgError);
       // Return normalized error even if user message creation failed
+      return normalized;
     }
   }
   
@@ -256,6 +257,14 @@ export function createErrorHandler(options = {}) {
     normalizedError.code = handled.code;
     normalizedError.originalError = handled.originalError;
     normalizedError.context = handled.context;
+    
+    // Include user-friendly message and code if available
+    if (handled.userMessage) {
+      normalizedError.userMessage = handled.userMessage;
+    }
+    if (handled.userCode) {
+      normalizedError.userCode = handled.userCode;
+    }
     
     return normalizedError;
   };
