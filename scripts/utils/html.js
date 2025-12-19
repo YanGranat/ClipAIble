@@ -130,6 +130,88 @@ export function sanitizeHtml(html, sourceUrl = '') {
 }
 
 /**
+ * Sanitize HTML from markdown - allows block tags (h1-h6, hr, pre, code) but protects against XSS
+ * This is a specialized sanitizer for markdown-generated HTML that needs to preserve block structure
+ * @param {string} html - HTML to sanitize (from markdown conversion)
+ * @returns {string} Sanitized HTML safe for innerHTML
+ */
+export function sanitizeMarkdownHtml(html) {
+  if (!html) return '';
+  
+  let result = String(html);
+  
+  // Remove dangerous content completely
+  result = result.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+  result = result.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '');
+  result = result.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, ''); // Remove event handlers
+  result = result.replace(/href\s*=\s*["']javascript:[^"']*["']/gi, 'href="#"'); // Remove javascript: links
+  result = result.replace(/<(iframe|object|embed|form|input|button)[^>]*>.*?<\/\1>/gi, '');
+  result = result.replace(/<(iframe|object|embed|form|input|button)[^>]*>/gi, '');
+  
+  // Allowed tags for markdown HTML (includes block tags)
+  const allowedTags = [
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', // Headers
+    'p', 'br', 'hr', // Block elements
+    'pre', 'code', // Code blocks
+    'strong', 'b', 'em', 'i', 'u', 's', 'del', 'ins', // Inline formatting
+    'a', 'span', 'mark', 'small', 'sub', 'sup' // Other inline
+  ];
+  
+  const allowedAttrs = {
+    'a': ['href', 'title', 'target'],
+    'code': ['class'],
+    'span': ['class']
+  };
+  
+  // Process tags - keep allowed, escape content of others
+  result = result.replace(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi, (match, tagName) => {
+    const tag = tagName.toLowerCase();
+    
+    if (allowedTags.includes(tag)) {
+      if (match.startsWith('</')) {
+        return `</${tag}>`;
+      }
+      
+      // Extract and sanitize attributes
+      const attrs = [];
+      const allowed = allowedAttrs[tag] || [];
+      
+      for (const attr of allowed) {
+        const m = match.match(new RegExp(`${attr}\\s*=\\s*["']([^"']*)["']`, 'i'));
+        if (m) {
+          if (attr === 'href') {
+            let href = m[1];
+            // Allow valid URL schemes only
+            if (href.startsWith('http://') || href.startsWith('https://') || 
+                href.startsWith('/') || href.startsWith('#') || 
+                href.startsWith('mailto:') || href.startsWith('tel:')) {
+              attrs.push(`${attr}="${escapeAttr(href)}"`);
+            }
+          } else {
+            attrs.push(`${attr}="${escapeAttr(m[1])}"`);
+          }
+        }
+      }
+      
+      // Add target="_blank" for external links
+      if (tag === 'a' && attrs.some(a => a.startsWith('href='))) {
+        const hrefMatch = match.match(/href\s*=\s*["']([^"']*)["']/i);
+        if (hrefMatch && (hrefMatch[1].startsWith('http://') || hrefMatch[1].startsWith('https://'))) {
+          attrs.push('target="_blank"', 'rel="noopener noreferrer"');
+        }
+      }
+      
+      return `<${tag}${attrs.length ? ' ' + attrs.join(' ') : ''}>`;
+    }
+    
+    // For non-allowed tags: escape the tag itself
+    return escapeHtml(match);
+  });
+  
+  return result;
+}
+
+/**
  * Check if a URL points to the same page (internal anchor link)
  * @param {string} href - Link href
  * @param {string} sourceUrl - Source page URL

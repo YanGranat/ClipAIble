@@ -17,6 +17,23 @@ export async function extractYouTubeSubtitles(tabId) {
     let resolved = false;
     let storageCheckInterval = null; // КРИТИЧНО: Объявить раньше, чтобы использовать в ранних проверках DOM
     
+    // Cleanup function to prevent memory leaks - ensures all timers and listeners are cleared
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (storageCheckInterval) {
+        clearInterval(storageCheckInterval);
+        storageCheckInterval = null;
+      }
+      try {
+        chrome.runtime.onMessage.removeListener(messageListener);
+      } catch (e) {
+        // Ignore errors when removing listener (may already be removed)
+      }
+    };
+    
     // Set up one-time message listener
     const messageListener = (message, sender, sendResponse) => {
       // Check both action and type to catch messages in different formats
@@ -44,8 +61,7 @@ export async function extractYouTubeSubtitles(tabId) {
         }
         
         resolved = true;
-        if (timeoutId) clearTimeout(timeoutId);
-        chrome.runtime.onMessage.removeListener(messageListener);
+        cleanup();
         
         try {
         if (message.error) {
@@ -184,9 +200,7 @@ export async function extractYouTubeSubtitles(tabId) {
                 const age = Date.now() - (domData.timestamp || 0);
                 if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) { // Increased from 30s to 60s
                   resolved = true;
-                  if (timeoutId) clearTimeout(timeoutId);
-                  if (storageCheckInterval) clearInterval(storageCheckInterval);
-                  chrome.runtime.onMessage.removeListener(messageListener);
+                  cleanup();
                   
                   
                   resolve({
@@ -203,9 +217,7 @@ export async function extractYouTubeSubtitles(tabId) {
             // Если DOM пустой - reject
             if (!resolved) {
               resolved = true;
-              if (timeoutId) clearTimeout(timeoutId);
-              if (storageCheckInterval) clearInterval(storageCheckInterval);
-              chrome.runtime.onMessage.removeListener(messageListener);
+              cleanup();
               logError('Script execution returned no results', {
                 results: results,
                 resultsType: typeof results,
@@ -257,9 +269,7 @@ export async function extractYouTubeSubtitles(tabId) {
                 const age = Date.now() - (domData.timestamp || 0);
                 if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) { // Increased from 30s to 60s
                   resolved = true;
-                  if (timeoutId) clearTimeout(timeoutId);
-                  if (storageCheckInterval) clearInterval(storageCheckInterval);
-                  chrome.runtime.onMessage.removeListener(messageListener);
+                  cleanup();
                   
                   
                   resolve({
@@ -276,9 +286,7 @@ export async function extractYouTubeSubtitles(tabId) {
             // Если DOM пустой - reject
             if (!resolved) {
               resolved = true;
-              if (timeoutId) clearTimeout(timeoutId);
-              if (storageCheckInterval) clearInterval(storageCheckInterval);
-              chrome.runtime.onMessage.removeListener(messageListener);
+              cleanup();
               logError('Subtitle extraction script error', {
                 error: results[0].error,
                 errorMessage: results[0].error?.message || String(results[0].error),
@@ -324,10 +332,7 @@ export async function extractYouTubeSubtitles(tabId) {
               const age = Date.now() - (domData.timestamp || 0);
               if (age < 30000 && domData.subtitles && domData.subtitles.length > 0) {
                 resolved = true;
-                if (timeoutId) clearTimeout(timeoutId);
-                if (storageCheckInterval) clearInterval(storageCheckInterval);
-                chrome.runtime.onMessage.removeListener(messageListener);
-                
+                cleanup();
                 
                 resolve({
                   subtitles: domData.subtitles,
@@ -343,9 +348,7 @@ export async function extractYouTubeSubtitles(tabId) {
           // Если DOM пустой - reject
           if (!resolved) {
             resolved = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            if (storageCheckInterval) clearInterval(storageCheckInterval);
-            chrome.runtime.onMessage.removeListener(messageListener);
+            cleanup();
             logError('Subtitle extraction script execution error (from results)', {
               error: results[0].error,
               errorMessage: results[0].error?.message || String(results[0].error),
@@ -386,9 +389,7 @@ export async function extractYouTubeSubtitles(tabId) {
             if (age < 60000) { // Increased from 30s to 60s
               
               resolved = true;
-              if (timeoutId) clearTimeout(timeoutId);
-              if (storageCheckInterval) clearInterval(storageCheckInterval);
-              chrome.runtime.onMessage.removeListener(messageListener);
+              cleanup();
               
               if (domData.subtitles && domData.subtitles.length > 0) {
                 resolve({
@@ -434,10 +435,7 @@ export async function extractYouTubeSubtitles(tabId) {
               const age = Date.now() - (domData.timestamp || 0);
               if (age < 30000) { // В пределах 30 секунд
                 resolved = true;
-                if (timeoutId) clearTimeout(timeoutId);
-                if (storageCheckInterval) clearInterval(storageCheckInterval);
-                chrome.runtime.onMessage.removeListener(messageListener);
-                
+                cleanup();
                 
                 resolve({
                   subtitles: domData.subtitles,
@@ -453,9 +451,7 @@ export async function extractYouTubeSubtitles(tabId) {
         
         // Если DOM пустой или проверка не удалась - продолжить с reject
         resolved = true;
-        if (timeoutId) clearTimeout(timeoutId);
-        if (storageCheckInterval) clearInterval(storageCheckInterval);
-        chrome.runtime.onMessage.removeListener(messageListener);
+        cleanup();
         logError('Script execution failed (catch block)', {
           error: error,
           errorMessage: error?.message || String(error),
@@ -485,9 +481,7 @@ export async function extractYouTubeSubtitles(tabId) {
             
             
             resolved = true;
-            if (timeoutId) clearTimeout(timeoutId);
-            if (storageCheckInterval) clearInterval(storageCheckInterval);
-            chrome.runtime.onMessage.removeListener(messageListener);
+            cleanup();
             
             // Clear pendingSubtitles
             chrome.storage.local.remove('pendingSubtitles').catch(() => {});
@@ -533,9 +527,7 @@ export async function extractYouTubeSubtitles(tabId) {
             if (age < 60000) { // Increased from 30s to 60s
               
               resolved = true;
-              if (timeoutId) clearTimeout(timeoutId);
-              if (storageCheckInterval) clearInterval(storageCheckInterval);
-              chrome.runtime.onMessage.removeListener(messageListener);
+              cleanup();
               
               if (domData.subtitles && domData.subtitles.length > 0) {
                 resolve({
@@ -600,9 +592,7 @@ export async function extractYouTubeSubtitles(tabId) {
               if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) {
                 
                 resolved = true;
-                if (timeoutId) clearTimeout(timeoutId);
-                if (storageCheckInterval) clearInterval(storageCheckInterval);
-                chrome.runtime.onMessage.removeListener(messageListener);
+                cleanup();
                 
                 resolve({
                   subtitles: domData.subtitles,
@@ -620,9 +610,7 @@ export async function extractYouTubeSubtitles(tabId) {
         // Если DOM тоже пустой - reject
         if (!resolved) {
           resolved = true;
-          if (timeoutId) clearTimeout(timeoutId);
-          if (storageCheckInterval) clearInterval(storageCheckInterval);
-          chrome.runtime.onMessage.removeListener(messageListener);
+          cleanup();
           logError('Subtitle extraction timeout - no message received from page script');
           reject(new Error('Subtitle extraction timeout. The page may be taking too long to load subtitles.'));
         }

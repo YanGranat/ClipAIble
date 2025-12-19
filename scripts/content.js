@@ -21,6 +21,41 @@
     }
   }
   
+  // Send error to background script for centralized logging
+  // This prevents console.error from being visible to users in page console
+  function sendErrorToBackground(message, error, context = {}) {
+    try {
+      if (isExtensionContextValid()) {
+        const errorData = {
+          message: message,
+          error: error ? {
+            name: error.name || String(error),
+            message: error.message || String(error),
+            stack: error.stack
+          } : null,
+          context: context,
+          source: 'content',
+          timestamp: Date.now(),
+          url: window.location.href
+        };
+        
+        // Send to background (fire and forget)
+        chrome.runtime.sendMessage({
+          action: 'logError',
+          data: errorData
+        }).catch(() => {
+          // Ignore errors when sending error report
+        });
+      }
+    } catch (sendError) {
+      // Ignore errors when sending error report (to avoid infinite loop)
+      // Fallback to console.error only if background is unavailable
+      if (!isExtensionContextValid()) {
+        console.error('[ClipAIble:Content]', message, error);
+      }
+    }
+  }
+  
   // Helper function to save subtitles to DOM as fallback when chrome.storage is unavailable
   function saveToDOMFallback(subtitleData) {
     try {
@@ -64,10 +99,14 @@
       // Проверка что элемент действительно в DOM
       const verification = document.getElementById('ClipAIblePendingSubtitles');
       if (!verification) {
-        console.error('[ClipAIble:Content] DOM element NOT found after adding');
+        sendErrorToBackground('DOM element NOT found after adding', null, {
+          action: 'saveToDOMFallback'
+        });
       }
     } catch (domError) {
-      console.error('[ClipAIble:Content] Failed to save to DOM fallback:', domError);
+      sendErrorToBackground('Failed to save to DOM fallback', domError, {
+        action: 'saveToDOMFallback'
+      });
     }
   }
   
@@ -85,11 +124,17 @@
       const messageSize = JSON.stringify(event.data).length;
       const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB
       if (messageSize > MAX_MESSAGE_SIZE) {
-        console.error('[ClipAIble:Content] Message too large', { size: messageSize });
+        sendErrorToBackground('Message too large', null, {
+          action: 'validateMessageSize',
+          size: messageSize,
+          maxSize: MAX_MESSAGE_SIZE
+        });
         return;
       }
     } catch (e) {
-      console.error('[ClipAIble:Content] Failed to validate message size', e);
+      sendErrorToBackground('Failed to validate message size', e, {
+        action: 'validateMessageSize'
+      });
       return;
     }
     
@@ -98,7 +143,10 @@
       // SECURITY: Validate URL to prevent SSRF attacks
       const url = event.data.url;
       if (!url || typeof url !== 'string') {
-        console.error('[ClipAIble:Content] Invalid URL in fetch request');
+        sendErrorToBackground('Invalid URL in fetch request', null, {
+          action: 'validateSubtitleUrl',
+          url: url
+        });
         return;
       }
       
@@ -107,7 +155,11 @@
         const urlObj = new URL(url);
         // Block non-HTTP(S) protocols
         if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-          console.error('[ClipAIble:Content] Invalid URL protocol', { protocol: urlObj.protocol });
+          sendErrorToBackground('Invalid URL protocol', null, {
+            action: 'validateSubtitleUrl',
+            protocol: urlObj.protocol,
+            url: url
+          });
           return;
         }
         // Block internal addresses
@@ -123,11 +175,18 @@
             hostname.startsWith('172.28.') || hostname.startsWith('172.29.') ||
             hostname.startsWith('172.30.') || hostname.startsWith('172.31.') ||
             hostname.startsWith('169.254.')) {
-          console.error('[ClipAIble:Content] Blocked internal URL', { hostname });
+          sendErrorToBackground('Blocked internal URL', null, {
+            action: 'validateSubtitleUrl',
+            hostname: hostname,
+            url: url
+          });
           return;
         }
       } catch (e) {
-        console.error('[ClipAIble:Content] Invalid URL format', { url: url.substring(0, 100) });
+        sendErrorToBackground('Invalid URL format', e, {
+          action: 'validateSubtitleUrl',
+          url: url ? url.substring(0, 100) : null
+        });
         return;
       }
       
@@ -169,7 +228,10 @@
         }, window.location.origin);
       })
       .catch(error => {
-        console.error('[ClipAIble:Content] Subtitle fetch failed', error);
+        sendErrorToBackground('Subtitle fetch failed', error, {
+          action: 'fetchSubtitles',
+          url: url
+        });
         
         const errorEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
           detail: {
@@ -237,14 +299,20 @@
                     source: 'content_script_timeout_fallback'
                   }
                 }).catch(storageError => {
-                  console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+                  sendErrorToBackground('Failed to save to storage (timeout fallback)', storageError, {
+                    action: 'saveSubtitlesToStorage',
+                    context: 'timeoutFallback'
+                  });
                   saveToDOMFallback(subtitleData);
                 });
               } else {
                 saveToDOMFallback(subtitleData);
               }
             } catch (storageException) {
-              console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+              sendErrorToBackground('Exception accessing chrome.storage (timeout fallback)', storageException, {
+                action: 'accessStorage',
+                context: 'timeoutFallback'
+              });
               saveToDOMFallback(subtitleData);
             }
           }
@@ -256,7 +324,9 @@
           
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
-            console.error('[ClipAIble:Content] Failed to forward postMessage to background:', chrome.runtime.lastError);
+            sendErrorToBackground('Failed to forward postMessage to background', chrome.runtime.lastError, {
+              action: 'forwardPostMessage'
+            });
             
             if (subtitleData && !storageSaved) {
               storageSaved = true;
@@ -269,14 +339,18 @@
                       timestamp: Date.now()
                     }
                   }).catch(storageError => {
-                    console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+                    sendErrorToBackground('Failed to save to storage', storageError, {
+                      action: 'saveSubtitlesToStorage'
+                    });
                     saveToDOMFallback(subtitleData);
                   });
                 } else {
                   saveToDOMFallback(subtitleData);
                 }
               } catch (storageException) {
-                console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+                sendErrorToBackground('Exception accessing chrome.storage', storageException, {
+                  action: 'accessStorage'
+                });
                 saveToDOMFallback(subtitleData);
               }
             }
@@ -284,7 +358,10 @@
           }
         });
       } catch (e) {
-        console.error('[ClipAIble:Content] Exception while forwarding postMessage:', e);
+        sendErrorToBackground('Exception while forwarding postMessage', e, {
+          action: 'forwardPostMessage',
+          eventData: event.data ? { type: event.data.type, action: event.data.action } : null
+        });
         
         // Try to save to storage if we have subtitle data
         if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
@@ -311,14 +388,20 @@
                     timestamp: Date.now()
                   }
                 }).catch(storageError => {
-                  console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+                  sendErrorToBackground('Failed to save to storage (timeout fallback)', storageError, {
+                    action: 'saveSubtitlesToStorage',
+                    context: 'timeoutFallback'
+                  });
                   saveToDOMFallback(subtitleData);
                 });
               } else {
                 saveToDOMFallback(subtitleData);
               }
             } catch (storageException) {
-              console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+              sendErrorToBackground('Exception accessing chrome.storage (timeout fallback)', storageException, {
+                action: 'accessStorage',
+                context: 'timeoutFallback'
+              });
               saveToDOMFallback(subtitleData);
             }
           }
@@ -480,14 +563,20 @@
                   timestamp: Date.now()
                 }
               }).catch(storageError => {
-                console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+                sendErrorToBackground('Failed to save to storage (CustomEvent timeout)', storageError, {
+                  action: 'saveSubtitlesToStorage',
+                  context: 'customEventTimeout'
+                });
                 saveToDOMFallback(subtitleData);
               });
             } else {
               saveToDOMFallback(subtitleData);
             }
           } catch (storageException) {
-            console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+            sendErrorToBackground('Exception accessing chrome.storage (CustomEvent timeout)', storageException, {
+              action: 'accessStorage',
+              context: 'customEventTimeout'
+            });
             saveToDOMFallback(subtitleData);
           }
         }
@@ -502,7 +591,9 @@
           // КРИТИЧЕСКИ ВАЖНО: Проверить chrome.runtime.lastError!
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
-            console.error('[ClipAIble:Content] Failed to forward message to background:', chrome.runtime.lastError);
+            sendErrorToBackground('Failed to forward message to background (CustomEvent)', chrome.runtime.lastError, {
+              action: 'forwardCustomEventMessage'
+            });
             
             // If "Extension context invalidated", use DOM fallback immediately
             if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
@@ -522,14 +613,20 @@
                         timestamp: Date.now()
                       }
                     }).catch(storageError => {
-                      console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+                      sendErrorToBackground('Failed to save to storage (CustomEvent sendMessage)', storageError, {
+                        action: 'saveSubtitlesToStorage',
+                        context: 'customEventSendMessage'
+                      });
                       saveToDOMFallback(subtitleData);
                     });
                   } else {
                     saveToDOMFallback(subtitleData);
                   }
                 } catch (storageException) {
-                  console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+                  sendErrorToBackground('Exception accessing chrome.storage (CustomEvent sendMessage)', storageException, {
+                    action: 'accessStorage',
+                    context: 'customEventSendMessage'
+                  });
                   saveToDOMFallback(subtitleData);
                 }
               }
@@ -548,7 +645,10 @@
         backgroundResponded = true;
         clearTimeout(fallbackTimeout);
         
-        console.error('[ClipAIble:Content] Synchronous error from sendMessage:', sendError);
+        sendErrorToBackground('Synchronous error from sendMessage', sendError, {
+          action: 'sendMessage',
+          context: 'synchronousError'
+        });
         const errorMsg = sendError.message || '';
         
         if (errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated')) {
@@ -568,21 +668,30 @@
                     timestamp: Date.now()
                   }
                 }).catch(storageError => {
-                  console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+                  sendErrorToBackground('Failed to save to storage (timeout fallback)', storageError, {
+                    action: 'saveSubtitlesToStorage',
+                    context: 'timeoutFallback'
+                  });
                   saveToDOMFallback(subtitleData);
                 });
               } else {
                 saveToDOMFallback(subtitleData);
               }
             } catch (storageException) {
-              console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+              sendErrorToBackground('Exception accessing chrome.storage (timeout fallback)', storageException, {
+                action: 'accessStorage',
+                context: 'timeoutFallback'
+              });
               saveToDOMFallback(subtitleData);
             }
           }
         }
       }
     } catch (e) {
-      console.error('[ClipAIble:Content] Exception while forwarding message:', e);
+      sendErrorToBackground('Exception while forwarding message (CustomEvent)', e, {
+        action: 'forwardCustomEventMessage',
+        context: 'exception'
+      });
       
       // Проверяем тип ошибки
       const errorMsg = e.message || '';
@@ -603,14 +712,20 @@
                 timestamp: Date.now()
               }
             }).catch(storageError => {
-              console.error('[ClipAIble:Content] Failed to save to storage:', storageError);
+              sendErrorToBackground('Failed to save to storage (CustomEvent catch)', storageError, {
+                action: 'saveSubtitlesToStorage',
+                context: 'customEventCatch'
+              });
               saveToDOMFallback(subtitleData);
             });
           } else {
             saveToDOMFallback(subtitleData);
           }
         } catch (storageException) {
-          console.error('[ClipAIble:Content] Exception accessing chrome.storage:', storageException);
+          sendErrorToBackground('Exception accessing chrome.storage (CustomEvent catch)', storageException, {
+            action: 'accessStorage',
+            context: 'customEventCatch'
+          });
           saveToDOMFallback(subtitleData);
         }
       }
@@ -630,7 +745,11 @@
       // SECURITY: Validate URL to prevent SSRF attacks
       const url = event.detail.url;
       if (!url || typeof url !== 'string') {
-        console.error('[ClipAIble:Content] Invalid URL in CustomEvent fetch request');
+        sendErrorToBackground('Invalid URL in CustomEvent fetch request', null, {
+          action: 'validateSubtitleUrl',
+          context: 'customEvent',
+          url: url
+        });
         return;
       }
       
@@ -639,7 +758,12 @@
         const urlObj = new URL(url);
         // Block non-HTTP(S) protocols
         if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-          console.error('[ClipAIble:Content] Invalid URL protocol', { protocol: urlObj.protocol });
+          sendErrorToBackground('Invalid URL protocol (CustomEvent)', null, {
+            action: 'validateSubtitleUrl',
+            context: 'customEvent',
+            protocol: urlObj.protocol,
+            url: url
+          });
           return;
         }
         // Block internal addresses
@@ -655,11 +779,20 @@
             hostname.startsWith('172.28.') || hostname.startsWith('172.29.') ||
             hostname.startsWith('172.30.') || hostname.startsWith('172.31.') ||
             hostname.startsWith('169.254.')) {
-          console.error('[ClipAIble:Content] Blocked internal URL', { hostname });
+          sendErrorToBackground('Blocked internal URL (CustomEvent)', null, {
+            action: 'validateSubtitleUrl',
+            context: 'customEvent',
+            hostname: hostname,
+            url: url
+          });
           return;
         }
       } catch (e) {
-        console.error('[ClipAIble:Content] Invalid URL format', { url: url.substring(0, 100) });
+        sendErrorToBackground('Invalid URL format (CustomEvent)', e, {
+          action: 'validateSubtitleUrl',
+          context: 'customEvent',
+          url: url ? url.substring(0, 100) : null
+        });
         return;
       }
       
@@ -703,7 +836,11 @@
         }, window.location.origin);
       })
       .catch(error => {
-        console.error('[ClipAIble:Content] Subtitle fetch failed via CustomEvent', error);
+        sendErrorToBackground('Subtitle fetch failed via CustomEvent', error, {
+          action: 'fetchSubtitles',
+          context: 'customEvent',
+          url: url
+        });
         
         const errorEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
           detail: {

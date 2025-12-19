@@ -6,6 +6,7 @@ import { t, tSync, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { getProviderFromModel } from '../scripts/api/index.js';
+import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
 
 /**
  * Initialize settings module with dependencies
@@ -1926,7 +1927,9 @@ export function initSettings(deps) {
         const savedSummary = result[STORAGE_KEYS.SUMMARY_TEXT];
         elements.summaryText.dataset.originalMarkdown = savedSummary;
         const htmlSummary = markdownToHtml(savedSummary);
-        elements.summaryText.innerHTML = htmlSummary;
+        // SECURITY: Sanitize HTML to prevent XSS attacks from AI-generated content
+        const sanitizedHtml = sanitizeMarkdownHtml(htmlSummary);
+        elements.summaryText.innerHTML = sanitizedHtml;
         elements.summaryContainer.style.display = 'block';
         log('loadSettings: Summary restored from storage');
       } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryContainer) {

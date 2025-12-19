@@ -63,6 +63,7 @@ export function updateState(updates) {
   // Simple protection against concurrent updates
   // While JavaScript is single-threaded, async operations can interleave
   // This ensures we don't have overlapping state updates
+  // Check and set flag atomically to prevent race conditions
   if (isUpdatingState) {
     // If update is in progress, queue this update (simple approach: skip if already updating)
     // In practice, this is very rare since updateState is synchronous
@@ -70,6 +71,8 @@ export function updateState(updates) {
     return;
   }
   
+  // Set flag immediately to prevent concurrent updates
+  // This check-then-set pattern is safe in single-threaded JavaScript
   isUpdatingState = true;
   
   try {

@@ -37,6 +37,7 @@ import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
 import { getProviderFromModel, callAI } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
+import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
 import { initUI } from './ui.js';
 import { initStats } from './stats.js';
 import { initSettings } from './settings.js';
@@ -4737,7 +4738,9 @@ async function checkSummaryStatus() {
       if (currentMarkdown !== savedSummary || containerWasHidden) {
         elements.summaryText.dataset.originalMarkdown = savedSummary;
         const htmlSummary = markdownToHtml(savedSummary);
-        elements.summaryText.innerHTML = htmlSummary;
+        // SECURITY: Sanitize HTML to prevent XSS attacks from AI-generated content
+        const sanitizedHtml = sanitizeMarkdownHtml(htmlSummary);
+        elements.summaryText.innerHTML = sanitizedHtml;
         elements.summaryContainer.style.display = 'block';
         
         // Preserve expanded state if content is the same
