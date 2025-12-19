@@ -336,8 +336,8 @@ const elements = {
   audioSpeedValue: null
 };
 
-// State polling interval
-let statePollingInterval = null;
+// State polling timeout
+let statePollingTimeout = null;
 
 // Timer interval for display updates
 let timerInterval = null;
@@ -1684,13 +1684,16 @@ function setupEventListeners() {
       // Download file
       const blob = new Blob([response.data], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `clipaible-settings-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `clipaible-settings-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
       
       const settingsExportedText = await t('settingsExportedSuccessfully');
       showToast(settingsExportedText, 'success');
@@ -3700,13 +3703,16 @@ async function downloadSummary() {
     
     const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${title}-summary.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title}-summary.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
     
     const downloadedText = await t('downloaded') || 'Downloaded';
     showToast(downloadedText, 'success');
@@ -4561,9 +4567,9 @@ async function checkProcessingState() {
 
 // Start polling for state updates
 function startStatePolling() {
-  // Clear existing interval
-  if (statePollingInterval) {
-    clearInterval(statePollingInterval);
+  // Clear existing timeout
+  if (statePollingTimeout) {
+    clearTimeout(statePollingTimeout);
   }
   
   let pollInterval = 2000; // Default 2s for idle (increased from 1s to reduce load)
@@ -4641,7 +4647,7 @@ function startStatePolling() {
     }
     
     // Schedule next poll
-    statePollingInterval = setTimeout(poll, pollInterval);
+    statePollingTimeout = setTimeout(poll, pollInterval);
   }
   
   poll();
@@ -5041,7 +5047,7 @@ async function handleSavePdf() {
 
     // Processing started in background
     // Ensure state polling is active to update UI
-    if (!statePollingInterval) {
+    if (!statePollingTimeout) {
       startStatePolling();
     }
     // Immediately check state to update UI
@@ -5140,9 +5146,9 @@ function showToast(message, type = 'success') {
 
 // Cleanup on popup close
 window.addEventListener('unload', () => {
-  if (statePollingInterval) {
-    clearTimeout(statePollingInterval);
-    statePollingInterval = null;
+  if (statePollingTimeout) {
+    clearTimeout(statePollingTimeout);
+    statePollingTimeout = null;
   }
   if (timerInterval) {
     clearInterval(timerInterval);
