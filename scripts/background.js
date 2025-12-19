@@ -256,15 +256,15 @@ setTimeout(() => {
           threshold: RESET_THRESHOLD
         });
         chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp'])
-          .catch(createErrorHandler({
-            source: 'initialization',
-            errorType: 'storageRemoveFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'removeSummaryText' }
-          }))
-          .then(normalizedError => {
-            if (normalizedError) logWarn('Failed to remove summary_text on reload', normalizedError);
+          .catch(async error => {
+            const normalized = await handleError(error, {
+              source: 'initialization',
+              errorType: 'storageRemoveFailed',
+              logError: false,
+              createUserMessage: false,
+              context: { operation: 'removeSummaryText' }
+            });
+            logWarn('Failed to remove summary_text on reload', normalized);
           });
       } else {
         log('Summary is recent - may keep (quick restart)', {
@@ -282,15 +282,15 @@ setTimeout(() => {
           threshold: RESET_THRESHOLD
         });
         chrome.storage.local.remove(['processingState'])
-          .catch(createErrorHandler({
-            source: 'initialization',
-            errorType: 'storageRemoveFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'removeProcessingState' }
-          }))
-          .then(normalizedError => {
-            if (normalizedError) logWarn('Failed to remove processingState on reload', normalizedError);
+          .catch(async error => {
+            const normalized = await handleError(error, {
+              source: 'initialization',
+              errorType: 'storageRemoveFailed',
+              logError: false,
+              createUserMessage: false,
+              context: { operation: 'removeProcessingState' }
+            });
+            logWarn('Failed to remove processingState on reload', normalized);
           });
       } else {
         log('ProcessingState is recent - may restore (quick restart)', {
@@ -314,15 +314,15 @@ setTimeout(() => {
           summary_generating: false,
           summary_generating_start_time: null
         })
-          .catch(createErrorHandler({
-            source: 'initialization',
-            errorType: 'storageSetFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'clearSummaryGenerating' }
-          }))
-          .then(normalizedError => {
-            if (normalizedError) logWarn('Failed to clear summary_generating on reload', normalizedError);
+          .catch(async error => {
+            const normalized = await handleError(error, {
+              source: 'initialization',
+              errorType: 'storageSetFailed',
+              logError: false,
+              createUserMessage: false,
+              context: { operation: 'clearSummaryGenerating' }
+            });
+            logWarn('Failed to clear summary_generating on reload', normalized);
           });
       } else {
         log('summary_generating is recent - may restore (quick restart)', {
@@ -383,15 +383,15 @@ setTimeout(() => {
                 }
               }
             })
-              .catch(createErrorHandler({
-                source: 'initialization',
-                errorType: 'storageGetFailed',
-                logError: false,
-                createUserMessage: false,
-                context: { operation: 'checkSummaryGenerating' }
-              }))
-              .then(normalizedError => {
-                if (normalizedError) logWarn('Failed to check summary_generating on service worker start', normalizedError);
+              .catch(async error => {
+                const normalized = await handleError(error, {
+                  source: 'initialization',
+                  errorType: 'storageGetFailed',
+                  logError: false,
+                  createUserMessage: false,
+                  context: { operation: 'checkSummaryGenerating' }
+                });
+                logWarn('Failed to check summary_generating on service worker start', normalized);
               });
           }
         } catch (error) {
@@ -400,43 +400,43 @@ setTimeout(() => {
             errorType: 'keepAliveRestoreFailed',
             logError: false,
             createUserMessage: false
-          }).then(normalizedError => {
-            logWarn('Failed to restore keep-alive on service worker start', normalizedError);
+          }).then(normalized => {
+            logWarn('Failed to restore keep-alive on service worker start', normalized);
           });
         }
       }, 100);
     })
-      .catch(createErrorHandler({
-        source: 'initialization',
-        errorType: 'stateRestoreFailed',
-        logError: false,
-        createUserMessage: false
-      }))
-      .then(normalizedError => {
-        if (normalizedError) logWarn('Failed to restore state on service worker start', normalizedError);
+      .catch(async error => {
+        const normalized = await handleError(error, {
+          source: 'initialization',
+          errorType: 'stateRestoreFailed',
+          logError: false,
+          createUserMessage: false
+        });
+        logWarn('Failed to restore state on service worker start', normalized);
       });
   })
-    .catch(createErrorHandler({
-      source: 'initialization',
-      errorType: 'stateCheckFailed',
-      logError: false,
-      createUserMessage: false
-    }))
-    .then(normalizedError => {
-      if (normalizedError) logWarn('Failed to check state on extension load', normalizedError);
+    .catch(async error => {
+      const normalized = await handleError(error, {
+        source: 'initialization',
+        errorType: 'stateCheckFailed',
+        logError: false,
+        createUserMessage: false
+      });
+      logWarn('Failed to check state on extension load', normalized);
     });
 
   // Migrate existing API keys to encrypted format (fire and forget)
   try {
     migrateApiKeys()
-      .catch(createErrorHandler({
-        source: 'initialization',
-        errorType: 'apiKeyMigrationFailed',
-        logError: true,
-        createUserMessage: false
-      }))
-      .then(normalizedError => {
-        if (normalizedError) logError('API keys migration failed', normalizedError);
+      .catch(async error => {
+        const normalized = await handleError(error, {
+          source: 'initialization',
+          errorType: 'apiKeyMigrationFailed',
+          logError: true,
+          createUserMessage: false
+        });
+        logError('API keys migration failed', normalized);
       });
   } catch (error) {
     handleError(error, {
@@ -444,22 +444,22 @@ setTimeout(() => {
       errorType: 'apiKeyMigrationStartFailed',
       logError: true,
       createUserMessage: false
-    }).then(normalizedError => {
-      logError('Failed to start migration', normalizedError);
+    }).then(normalized => {
+      logError('Failed to start migration', normalized);
     });
   }
 
   // Initialize default settings (fire and forget)
   try {
     initializeDefaultSettings()
-      .catch(createErrorHandler({
-        source: 'initialization',
-        errorType: 'settingsInitializationFailed',
-        logError: true,
-        createUserMessage: false
-      }))
-      .then(normalizedError => {
-        if (normalizedError) logError('Default settings initialization failed', normalizedError);
+      .catch(async error => {
+        const normalized = await handleError(error, {
+          source: 'initialization',
+          errorType: 'settingsInitializationFailed',
+          logError: true,
+          createUserMessage: false
+        });
+        logError('Default settings initialization failed', normalized);
       });
   } catch (error) {
     handleError(error, {
@@ -467,8 +467,8 @@ setTimeout(() => {
       errorType: 'settingsInitializationStartFailed',
       logError: true,
       createUserMessage: false
-    }).then(normalizedError => {
-      logError('Failed to initialize default settings', normalizedError);
+    }).then(normalized => {
+      logError('Failed to initialize default settings', normalized);
     });
   }
 }, 0);
@@ -789,15 +789,15 @@ async function updateContextMenu() {
 try {
   chrome.runtime.onInstalled.addListener(() => {
     updateContextMenu()
-      .catch(createErrorHandler({
-        source: 'contextMenu',
-        errorType: 'contextMenuUpdateFailed',
-        logError: true,
-        createUserMessage: false,
-        context: { operation: 'onInstalled' }
-      }))
-      .then(normalizedError => {
-        if (normalizedError) logError('Failed to update context menu on install', normalizedError);
+      .catch(async error => {
+        const normalized = await handleError(error, {
+          source: 'contextMenu',
+          errorType: 'contextMenuUpdateFailed',
+          logError: true,
+          createUserMessage: false,
+          context: { operation: 'onInstalled' }
+        });
+        logError('Failed to update context menu on install', normalized);
       });
   });
 } catch (error) {
@@ -808,15 +808,15 @@ try {
 // Use setTimeout to avoid blocking service worker initialization
 setTimeout(() => {
   updateContextMenu()
-    .catch(createErrorHandler({
-      source: 'contextMenu',
-      errorType: 'contextMenuUpdateFailed',
-      logError: true,
-      createUserMessage: false,
-      context: { operation: 'onStartup' }
-    }))
-    .then(normalizedError => {
-      if (normalizedError) logError('Failed to update context menu on startup', normalizedError);
+    .catch(async error => {
+      const normalized = await handleError(error, {
+        source: 'contextMenu',
+        errorType: 'contextMenuUpdateFailed',
+        logError: true,
+        createUserMessage: false,
+        context: { operation: 'onStartup' }
+      });
+      logError('Failed to update context menu on startup', normalized);
     });
 }, 0);
 
@@ -829,15 +829,15 @@ try {
       if (changes.ui_language) {
         log('UI language changed, updating context menu', { newLang: changes.ui_language.newValue });
         updateContextMenu()
-          .catch(createErrorHandler({
-            source: 'contextMenu',
-            errorType: 'contextMenuUpdateFailed',
-            logError: true,
-            createUserMessage: false,
-            context: { operation: 'onLanguageChange' }
-          }))
-          .then(normalizedError => {
-            if (normalizedError) logError('Failed to update context menu after language change', normalizedError);
+          .catch(async error => {
+            const normalized = await handleError(error, {
+              source: 'contextMenu',
+              errorType: 'contextMenuUpdateFailed',
+              logError: true,
+              createUserMessage: false,
+              context: { operation: 'onLanguageChange' }
+            });
+            logError('Failed to update context menu after language change', normalized);
           });
       }
       
@@ -860,14 +860,14 @@ try {
               metadata: pendingData.metadata
             }
           })
-            .catch(createErrorHandler({
-              source: 'messageHandler',
-              errorType: 'messageSendFailed',
-              logError: false,
-              createUserMessage: false,
-              context: { operation: 'sendPendingSubtitles', note: 'May timeout if no listener' }
-            }))
-            .then(() => {
+            .catch(async error => {
+              const normalized = await handleError(error, {
+                source: 'messageHandler',
+                errorType: 'messageSendFailed',
+                logError: false,
+                createUserMessage: false,
+                context: { operation: 'sendPendingSubtitles', note: 'May timeout if no listener' }
+              });
               // Ignore if no listener (extractYouTubeSubtitles may have timed out)
             });
           
@@ -879,27 +879,27 @@ try {
               timestamp: pendingData.timestamp
             }
           })
-            .catch(createErrorHandler({
-              source: 'messageHandler',
-              errorType: 'storageSaveFailed',
-              logError: true,
-              createUserMessage: false,
-              context: { operation: 'saveLastSubtitles' }
-            }))
-            .then(normalizedError => {
-              if (normalizedError) logError('Failed to save lastSubtitles', normalizedError);
+            .catch(async error => {
+              const normalized = await handleError(error, {
+                source: 'messageHandler',
+                errorType: 'storageSaveFailed',
+                logError: true,
+                createUserMessage: false,
+                context: { operation: 'saveLastSubtitles' }
+              });
+              logError('Failed to save lastSubtitles', normalized);
             });
           
           // Clear pendingSubtitles after processing
           chrome.storage.local.remove('pendingSubtitles')
-            .catch(createErrorHandler({
-              source: 'messageHandler',
-              errorType: 'storageRemoveFailed',
-              logError: false,
-              createUserMessage: false,
-              context: { operation: 'removePendingSubtitles' }
-            }))
-            .then(() => {
+            .catch(async error => {
+              const normalized = await handleError(error, {
+                source: 'messageHandler',
+                errorType: 'storageRemoveFailed',
+                logError: false,
+                createUserMessage: false,
+                context: { operation: 'removePendingSubtitles' }
+              });
               // Ignore errors when clearing pending subtitles
             });
         } catch (error) {
@@ -908,8 +908,8 @@ try {
             errorType: 'pendingSubtitlesProcessingFailed',
             logError: true,
             createUserMessage: false
-          }).then(normalizedError => {
-            logError('Failed to process pendingSubtitles', normalizedError);
+          }).then(normalized => {
+            logError('Failed to process pendingSubtitles', normalized);
           });
         }
       }
@@ -1404,15 +1404,15 @@ try {
           log('🟢 Saved subtitles to storage for popup (fallback)', {
             subtitleCount: request.result.subtitles?.length || 0
           });
-        }).catch(createErrorHandler({
-          source: 'messageHandler',
-          errorType: 'storageSaveFailed',
-          logError: true,
-          createUserMessage: false,
-          context: { operation: 'saveSubtitles' }
-        }))
-        .then(normalizedError => {
-          logError('Failed to save subtitles to storage', normalizedError);
+        }).catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'storageSaveFailed',
+            logError: true,
+            createUserMessage: false,
+            context: { operation: 'saveSubtitles' }
+          });
+          logError('Failed to save subtitles to storage', normalized);
         });
       }
       
@@ -1639,17 +1639,17 @@ try {
             }
           }
         })
-        .catch(createErrorHandler({
-          source: 'messageHandler',
-          errorType: 'contentExtractionFailed',
-          logError: true,
-          createUserMessage: false,
-          context: { operation: 'extractContentOnly' }
-        }))
-        .then(normalizedError => {
+        .catch(async error => {
+          const normalized = await handleError(error, {
+            source: 'messageHandler',
+            errorType: 'contentExtractionFailed',
+            logError: true,
+            createUserMessage: false,
+            context: { operation: 'extractContentOnly' }
+          });
           logError('=== extractContentOnly FAILED ===', {
-            error: normalizedError.message,
-            code: normalizedError.code,
+            error: normalized.message,
+            code: normalized.code,
             timestamp: Date.now()
           });
         });

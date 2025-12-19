@@ -1156,30 +1156,104 @@ Example outputs: ru, en, ua, de`;
     const provider = getProviderFromModel(model);
     const { modelName } = parseModelConfig(model);
     let langCode = null;
+    let rawResponse = null;
+    let parsedResult = null;
+    
+    log('Starting AI language detection', { 
+      provider, 
+      model: modelName, 
+      textLength: textForAI.length,
+      textPreview: textForAI.substring(0, 100) + '...'
+    });
     
     if (provider === 'openai') {
+      // GPT-5.1 and GPT-5.2 models don't support max_tokens parameter
+      const supportsMaxTokens = !modelName.startsWith('gpt-5.1') && !modelName.startsWith('gpt-5.2');
+      
+      const requestBody = {
+        model: modelName,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Detect the language of this text:\n\n${textForAI}` }
+        ],
+        temperature: 0
+      };
+      
+      // Only add max_tokens for models that support it
+      if (supportsMaxTokens) {
+        requestBody.max_tokens = 10;
+      }
+      
+      log('Sending request to OpenAI', { 
+        model: modelName, 
+        maxTokens: supportsMaxTokens ? 10 : 'not supported',
+        supportsMaxTokens 
+      });
+      
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${decryptedApiKey}`
         },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Detect the language of this text:\n\n${textForAI}` }
-          ],
-          max_tokens: 10,
-          temperature: 0
-        })
+        body: JSON.stringify(requestBody)
+      });
+      
+      log('OpenAI response received', { 
+        status: response.status, 
+        ok: response.ok,
+        statusText: response.statusText 
       });
       
       if (response.ok) {
-        const result = await response.json();
-        langCode = result.choices?.[0]?.message?.content?.trim().toLowerCase();
+        parsedResult = await response.json();
+        rawResponse = JSON.stringify(parsedResult);
+        
+        log('OpenAI response parsed', {
+          hasChoices: !!parsedResult.choices,
+          choicesLength: parsedResult.choices?.length || 0,
+          firstChoice: parsedResult.choices?.[0] || null,
+          fullResponse: rawResponse.substring(0, 500) + (rawResponse.length > 500 ? '...' : '')
+        });
+        
+        const rawContent = parsedResult.choices?.[0]?.message?.content;
+        log('Extracting langCode from OpenAI response', {
+          rawContent: rawContent,
+          rawContentType: typeof rawContent,
+          rawContentLength: rawContent?.length
+        });
+        
+        if (rawContent) {
+          langCode = rawContent.trim().toLowerCase();
+          log('langCode after trim/toLowerCase', {
+            langCode: langCode,
+            langCodeLength: langCode?.length,
+            isValidFormat: /^[a-z]{2}$/.test(langCode)
+          });
+        } else {
+          log('No content in OpenAI response', {
+            message: parsedResult.choices?.[0]?.message,
+            fullChoice: parsedResult.choices?.[0]
+          });
+        }
+      } else {
+        const errorText = await response.text();
+        log('OpenAI API error', {
+          status: response.status,
+          statusText: response.statusText,
+          errorBody: errorText.substring(0, 500)
+        });
       }
     } else if (provider === 'claude') {
+      const requestBody = {
+        model: modelName,
+        max_tokens: 10,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: `Detect the language of this text:\n\n${textForAI}` }]
+      };
+      
+      log('Sending request to Claude', { model: modelName, maxTokens: 10 });
+      
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -1188,41 +1262,137 @@ Example outputs: ru, en, ua, de`;
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true'
         },
-        body: JSON.stringify({
-          model: modelName,
-          max_tokens: 10,
-          system: systemPrompt,
-          messages: [{ role: 'user', content: `Detect the language of this text:\n\n${textForAI}` }]
-        })
+        body: JSON.stringify(requestBody)
+      });
+      
+      log('Claude response received', { 
+        status: response.status, 
+        ok: response.ok,
+        statusText: response.statusText 
       });
       
       if (response.ok) {
-        const result = await response.json();
-        langCode = result.content?.[0]?.text?.trim().toLowerCase();
+        parsedResult = await response.json();
+        rawResponse = JSON.stringify(parsedResult);
+        
+        log('Claude response parsed', {
+          hasContent: !!parsedResult.content,
+          contentLength: parsedResult.content?.length || 0,
+          firstContent: parsedResult.content?.[0] || null,
+          fullResponse: rawResponse.substring(0, 500) + (rawResponse.length > 500 ? '...' : '')
+        });
+        
+        const rawText = parsedResult.content?.[0]?.text;
+        log('Extracting langCode from Claude response', {
+          rawText: rawText,
+          rawTextType: typeof rawText,
+          rawTextLength: rawText?.length
+        });
+        
+        if (rawText) {
+          langCode = rawText.trim().toLowerCase();
+          log('langCode after trim/toLowerCase', {
+            langCode: langCode,
+            langCodeLength: langCode?.length,
+            isValidFormat: /^[a-z]{2}$/.test(langCode)
+          });
+        } else {
+          log('No text in Claude response', {
+            content: parsedResult.content?.[0],
+            fullContent: parsedResult.content
+          });
+        }
+      } else {
+        const errorText = await response.text();
+        log('Claude API error', {
+          status: response.status,
+          statusText: response.statusText,
+          errorBody: errorText.substring(0, 500)
+        });
       }
     } else if (provider === 'gemini') {
+      const requestBody = {
+        contents: [{ parts: [{ text: `${systemPrompt}\n\nDetect the language of this text:\n\n${textForAI}` }] }]
+      };
+      
+      log('Sending request to Gemini', { model: modelName });
+      
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${decryptedApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `${systemPrompt}\n\nDetect the language of this text:\n\n${textForAI}` }] }]
-        })
+        body: JSON.stringify(requestBody)
+      });
+      
+      log('Gemini response received', { 
+        status: response.status, 
+        ok: response.ok,
+        statusText: response.statusText 
       });
       
       if (response.ok) {
-        const result = await response.json();
-        langCode = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase();
+        parsedResult = await response.json();
+        rawResponse = JSON.stringify(parsedResult);
+        
+        log('Gemini response parsed', {
+          hasCandidates: !!parsedResult.candidates,
+          candidatesLength: parsedResult.candidates?.length || 0,
+          firstCandidate: parsedResult.candidates?.[0] || null,
+          fullResponse: rawResponse.substring(0, 500) + (rawResponse.length > 500 ? '...' : '')
+        });
+        
+        const rawText = parsedResult.candidates?.[0]?.content?.parts?.[0]?.text;
+        log('Extracting langCode from Gemini response', {
+          rawText: rawText,
+          rawTextType: typeof rawText,
+          rawTextLength: rawText?.length
+        });
+        
+        if (rawText) {
+          langCode = rawText.trim().toLowerCase();
+          log('langCode after trim/toLowerCase', {
+            langCode: langCode,
+            langCodeLength: langCode?.length,
+            isValidFormat: /^[a-z]{2}$/.test(langCode)
+          });
+        } else {
+          log('No text in Gemini response', {
+            candidate: parsedResult.candidates?.[0],
+            fullCandidates: parsedResult.candidates
+          });
+        }
+      } else {
+        const errorText = await response.text();
+        log('Gemini API error', {
+          status: response.status,
+          statusText: response.statusText,
+          errorBody: errorText.substring(0, 500)
+        });
       }
     }
     
     // Validate language code (should be exactly 2 lowercase letters)
+    log('Validating langCode', {
+      langCode: langCode,
+      langCodeType: typeof langCode,
+      isNull: langCode === null,
+      isUndefined: langCode === undefined,
+      isEmpty: langCode === '',
+      isValidFormat: langCode ? /^[a-z]{2}$/.test(langCode) : false,
+      validationRegex: '/^[a-z]{2}$/'
+    });
+    
     if (langCode && /^[a-z]{2}$/.test(langCode)) {
       log('Language detected by AI', { langCode, provider });
       return langCode;
     }
     
     // AI returned invalid format, fallback to character analysis
-    log('AI returned invalid language code, using character fallback', { aiResponse: langCode });
+    log('AI returned invalid language code, using character fallback', { 
+      aiResponse: langCode,
+      aiResponseType: typeof langCode,
+      rawResponse: rawResponse ? rawResponse.substring(0, 1000) : null,
+      parsedResult: parsedResult ? JSON.stringify(parsedResult).substring(0, 1000) : null
+    });
     const fallbackLang = detectLanguageByCharacters(sampleText);
     log('Language detected by characters (AI fallback)', { langCode: fallbackLang });
     return fallbackLang;
