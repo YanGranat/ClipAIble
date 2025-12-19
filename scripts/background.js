@@ -57,6 +57,7 @@ import {
 import { exportSettings, importSettings } from './settings/import-export.js';
 import { removeLargeData } from './utils/storage.js';
 import { encryptApiKey, isEncrypted, decryptApiKey, clearDecryptedKeyCache } from './utils/encryption.js';
+import { validateAudioApiKeys } from './utils/validation.js';
 import { getUILanguage, tSync } from './locales.js';
 import { detectVideoPlatform } from './utils/video.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
@@ -1898,43 +1899,8 @@ async function startArticleProcessing(data) {
   });
   
   // Pre-flight key checks for audio to avoid long work before failing
-  if ((data.outputFormat || 'pdf') === 'audio') {
-    const provider = data.audioProvider || 'openai';
-    if (provider === 'openai' && !data.apiKey) {
-      await setError({
-        message: 'OpenAI API key is required for audio. Please add it in settings.',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
-      return false;
-    }
-    if (provider === 'elevenlabs' && !data.elevenlabsApiKey) {
-      await setError({
-        message: 'ElevenLabs API key is required for audio. Please add it in settings.',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
-      return false;
-    }
-    if (provider === 'qwen' && !data.qwenApiKey) {
-      await setError({
-        message: 'Qwen API key is required for audio. Please add it in settings.',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
-      return false;
-    }
-    if (provider === 'respeecher' && !data.respeecherApiKey) {
-      await setError({
-        message: 'Respeecher API key is required for audio. Please add it in settings.',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
-      return false;
-    }
-    if (provider === 'google' && !data.googleTtsApiKey) {
-      await setError({
-        message: 'Google TTS API key is required for Google TTS. Please add it in settings.',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
-      return false;
-    }
+  if (!(await validateAudioApiKeys(data, stopKeepAlive))) {
+    return false;
   }
   
   // Check if this is a video page (YouTube/Vimeo)
@@ -2701,7 +2667,7 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
 // Inlined extraction function for chrome.scripting.executeScript
 // This runs in the page's main world context
 // 
-// NOTE: This function is ~460 lines - DO NOT SPLIT IT!
+// NOTE: This function is 517 lines (2707-3223) - DO NOT SPLIT IT!
 // It's injected as a single block via executeScript. All helper functions
 // must be defined inside. See systemPatterns.md "Design Decisions".
 function extractFromPageInlined(selectors, baseUrl) {
