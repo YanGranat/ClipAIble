@@ -3,6 +3,7 @@
 
 import { getCacheStats, clearSelectorCache, deleteDomainFromCache } from '../cache/selectors.js';
 import { withErrorHandling } from './utils.js';
+import { log } from '../utils/logging.js';
 
 /**
  * Handle getCacheStats request

@@ -132,7 +132,12 @@ export function routeMessage(request, sender, sendResponse, deps) {
   
   if (handler) {
     try {
-      return handler();
+      const result = handler();
+      log('routeMessage: handler called', { action: request.action, returnsPromise: result instanceof Promise, returnsBoolean: result === true });
+      
+      // If handler returns a promise, Chrome will wait for it
+      // If handler returns true, it means async response will be sent
+      return result;
     } catch (error) {
       logError('Message handler error', error);
       sendResponse({ error: error.message });

@@ -48,7 +48,8 @@ async function saveCache(cache) {
   try {
     await chrome.storage.local.set({ [STORAGE_KEY]: cache });
   } catch (error) {
-    logWarn('Failed to save selector cache', error);
+    logError('Failed to save selector cache', error);
+    throw error; // Re-throw to let caller handle it
   }
 }
 
@@ -155,57 +156,66 @@ export async function getCachedSelectors(url) {
  * @param {Object} selectors - Selectors object from AI
  */
 export async function cacheSelectors(url, selectors) {
-  // Check if caching is enabled
-  if (!(await isCachingEnabled())) {
-    log('Caching disabled, skipping cache save');
-    return;
+  try {
+    // Check if caching is enabled
+    if (!(await isCachingEnabled())) {
+      log('Caching disabled, skipping cache save');
+      return;
+    }
+    
+    const domain = extractDomain(url);
+    if (!domain || !selectors) {
+      log('Cannot cache: missing domain or selectors', { domain: !!domain, selectors: !!selectors });
+      return;
+    }
+    
+    // Don't cache if selectors are incomplete
+    if (!selectors.content && !selectors.articleContainer) {
+      log('Not caching - no content selector');
+      return;
+    }
+    
+    const cache = await loadCache();
+    
+    // Check if we need to evict old entries
+    const domains = Object.keys(cache);
+    if (domains.length >= MAX_CACHED_DOMAINS) {
+      // Remove least recently used
+      const sorted = domains.sort((a, b) => 
+        (cache[a].lastUsed || 0) - (cache[b].lastUsed || 0)
+      );
+      const toRemove = sorted.slice(0, Math.floor(MAX_CACHED_DOMAINS / 4));
+      toRemove.forEach(d => delete cache[d]);
+      log('Evicted old cache entries', { count: toRemove.length });
+    }
+    
+    const existing = cache[domain];
+    
+    if (existing && !existing.invalidated) {
+      // Update existing entry
+      existing.selectors = selectors;
+      existing.successCount = (existing.successCount || 0) + 1;
+      existing.lastUsed = Date.now();
+      existing.invalidated = false;
+      log('Updated cached selectors', { domain, successCount: existing.successCount });
+    } else {
+      // Create new entry
+      cache[domain] = {
+        selectors,
+        successCount: 1,
+        created: Date.now(),
+        lastUsed: Date.now(),
+        invalidated: false
+      };
+      log('Cached new selectors', { domain });
+    }
+    
+    await saveCache(cache);
+    log('Cache saved successfully', { domain });
+  } catch (error) {
+    logError('Failed to cache selectors', error);
+    // Don't throw - caching failure shouldn't break the main flow
   }
-  
-  const domain = extractDomain(url);
-  if (!domain || !selectors) return;
-  
-  // Don't cache if selectors are incomplete
-  if (!selectors.content && !selectors.articleContainer) {
-    log('Not caching - no content selector');
-    return;
-  }
-  
-  const cache = await loadCache();
-  
-  // Check if we need to evict old entries
-  const domains = Object.keys(cache);
-  if (domains.length >= MAX_CACHED_DOMAINS) {
-    // Remove least recently used
-    const sorted = domains.sort((a, b) => 
-      (cache[a].lastUsed || 0) - (cache[b].lastUsed || 0)
-    );
-    const toRemove = sorted.slice(0, Math.floor(MAX_CACHED_DOMAINS / 4));
-    toRemove.forEach(d => delete cache[d]);
-    log('Evicted old cache entries', { count: toRemove.length });
-  }
-  
-  const existing = cache[domain];
-  
-  if (existing && !existing.invalidated) {
-    // Update existing entry
-    existing.selectors = selectors;
-    existing.successCount = (existing.successCount || 0) + 1;
-    existing.lastUsed = Date.now();
-    existing.invalidated = false;
-    log('Updated cached selectors', { domain, successCount: existing.successCount });
-  } else {
-    // Create new entry
-    cache[domain] = {
-      selectors,
-      successCount: 1,
-      created: Date.now(),
-      lastUsed: Date.now(),
-      invalidated: false
-    };
-    log('Cached new selectors', { domain });
-  }
-  
-  await saveCache(cache);
 }
 
 /**
@@ -214,23 +224,33 @@ export async function cacheSelectors(url, selectors) {
  * @param {string} url - Page URL
  */
 export async function markCacheSuccess(url) {
-  // Check if caching is enabled (for saving)
-  if (!(await isCachingEnabled())) {
-    return;
-  }
-  
-  const domain = extractDomain(url);
-  if (!domain) return;
-  
-  const cache = await loadCache();
-  const entry = cache[domain];
-  
-  if (entry) {
-    entry.successCount = (entry.successCount || 0) + 1;
-    entry.lastUsed = Date.now();
-    entry.invalidated = false;
-    await saveCache(cache);
-    log('Cache success recorded', { domain, successCount: entry.successCount });
+  try {
+    // Check if caching is enabled (for saving)
+    if (!(await isCachingEnabled())) {
+      return;
+    }
+    
+    const domain = extractDomain(url);
+    if (!domain) {
+      log('Cannot mark cache success: missing domain');
+      return;
+    }
+    
+    const cache = await loadCache();
+    const entry = cache[domain];
+    
+    if (entry) {
+      entry.successCount = (entry.successCount || 0) + 1;
+      entry.lastUsed = Date.now();
+      entry.invalidated = false;
+      await saveCache(cache);
+      log('Cache success recorded', { domain, successCount: entry.successCount });
+    } else {
+      log('No cache entry found to mark success', { domain });
+    }
+  } catch (error) {
+    logError('Failed to mark cache success', error);
+    // Don't throw - caching failure shouldn't break the main flow
   }
 }
 
@@ -281,31 +301,36 @@ export async function clearSelectorCache() {
  * @returns {Promise<Object>}
  */
 export async function getCacheStats() {
-  const cache = await loadCache();
-  const domains = Object.keys(cache);
-  
-  const validCount = domains.filter(d => !cache[d].invalidated).length;
-  const totalSuccesses = domains.reduce((sum, d) => sum + (cache[d].successCount || 0), 0);
-  
-  // Get all valid domains sorted by last used (most recent first)
-  const validDomainsList = domains
-    .filter(d => !cache[d].invalidated)
-    .map(d => ({
-      domain: d,
-      successCount: cache[d].successCount || 0,
-      invalidated: false,
-      lastUsed: cache[d].lastUsed || cache[d].created,
-      age: Math.round((Date.now() - (cache[d].lastUsed || cache[d].created)) / 1000 / 60 / 60) + 'h'
-    }))
-    .sort((a, b) => b.lastUsed - a.lastUsed); // Most recently used first
-  
-  return {
-    totalDomains: domains.length,
-    validDomains: validCount,
-    invalidatedDomains: domains.length - validCount,
-    totalSuccesses,
-    domains: validDomainsList
-  };
+  try {
+    const cache = await loadCache();
+    const domains = Object.keys(cache);
+    
+    const validCount = domains.filter(d => !cache[d].invalidated).length;
+    const totalSuccesses = domains.reduce((sum, d) => sum + (cache[d].successCount || 0), 0);
+    
+    // Get all valid domains sorted by last used (most recent first)
+    const validDomainsList = domains
+      .filter(d => !cache[d].invalidated)
+      .map(d => ({
+        domain: d,
+        successCount: cache[d].successCount || 0,
+        invalidated: false,
+        lastUsed: cache[d].lastUsed || cache[d].created,
+        age: Math.round((Date.now() - (cache[d].lastUsed || cache[d].created)) / 1000 / 60 / 60) + 'h'
+      }))
+      .sort((a, b) => b.lastUsed - a.lastUsed); // Most recently used first
+    
+    return {
+      totalDomains: domains.length,
+      validDomains: validCount,
+      invalidatedDomains: domains.length - validCount,
+      totalSuccesses,
+      domains: validDomainsList
+    };
+  } catch (error) {
+    logError('Failed to get cache stats', error);
+    throw error;
+  }
 }
 
 /**

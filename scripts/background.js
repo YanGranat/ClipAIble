@@ -1249,20 +1249,27 @@ async function startArticleProcessing(data) {
         // After generation, record stats and complete
         log('File generation complete');
         
-        // Record stats
-        const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
-        const state = getProcessingState();
-        const savedTitle = state.result?.title || data.title || 'Untitled';
-        const savedFormat = data.outputFormat || 'pdf';
-        
-        await recordSave({
-          title: savedTitle,
-          url: data.url,
-          format: savedFormat,
-          processingTime
-        });
+        // Record stats (non-blocking - errors are handled inside recordSave)
+        try {
+          const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
+          const state = getProcessingState();
+          const savedTitle = state.result?.title || data.title || 'Untitled';
+          const savedFormat = data.outputFormat || 'pdf';
+          
+          await recordSave({
+            title: savedTitle,
+            url: data.url,
+            format: savedFormat,
+            processingTime
+          });
+        } catch (error) {
+          logError('Failed to record stats (non-critical)', error);
+          // Continue even if stats recording fails
+        }
         
         // Store format in state for success message
+        const state = getProcessingState();
+        const savedFormat = data.outputFormat || 'pdf';
         updateState({ outputFormat: savedFormat });
         
         processingStartTime = null;
@@ -1313,29 +1320,36 @@ async function startArticleProcessing(data) {
       // Continue with standard pipeline: translation, TOC/Abstract, generation
       await continueProcessingPipeline(data, result, stopKeepAlive);
     })
-    .then(async () => {
-      // After generation, record stats and complete
-      log('File generation complete');
-      
-      // Record stats
-      const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
-      const state = getProcessingState();
-      const savedTitle = state.result?.title || data.title || 'Untitled';
-      const savedFormat = data.outputFormat || 'pdf';
-      
-      await recordSave({
-        title: savedTitle,
-        url: data.url,
-        format: savedFormat,
-        processingTime
-      });
-      
-      // Store format in state for success message
-      updateState({ outputFormat: savedFormat });
-      
-      processingStartTime = null;
-      await completeProcessing(stopKeepAlive);
-    })
+      .then(async () => {
+        // After generation, record stats and complete
+        log('File generation complete');
+        
+        // Record stats (non-blocking - errors are handled inside recordSave)
+        try {
+          const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
+          const state = getProcessingState();
+          const savedTitle = state.result?.title || data.title || 'Untitled';
+          const savedFormat = data.outputFormat || 'pdf';
+          
+          await recordSave({
+            title: savedTitle,
+            url: data.url,
+            format: savedFormat,
+            processingTime
+          });
+        } catch (error) {
+          logError('Failed to record stats (non-critical)', error);
+          // Continue even if stats recording fails
+        }
+        
+        // Store format in state for success message
+        const state = getProcessingState();
+        const savedFormat = data.outputFormat || 'pdf';
+        updateState({ outputFormat: savedFormat });
+        
+        processingStartTime = null;
+        await completeProcessing(stopKeepAlive);
+      })
     .catch(async error => {
       // Check if processing was cancelled - don't set error if cancelled
       if (isCancelled()) {
@@ -1872,10 +1886,15 @@ async function processWithSelectorMode(data) {
   
   // Cache selectors after successful extraction ONLY
   // If extraction failed, cache is already invalidated above
-  if (!fromCache) {
-    await cacheSelectors(url, selectors);
-  } else {
-    await markCacheSuccess(url);
+  try {
+    if (!fromCache) {
+      await cacheSelectors(url, selectors);
+    } else {
+      await markCacheSuccess(url);
+    }
+  } catch (error) {
+    logError('Failed to update cache (non-critical)', error);
+    // Don't throw - cache update failure shouldn't break extraction
   }
   
   const uiLangComplete = await getUILanguage();

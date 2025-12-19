@@ -3,6 +3,7 @@
 
 import { getFormattedStats, clearStats, deleteHistoryItem } from '../stats/index.js';
 import { withErrorHandling } from './utils.js';
+import { log } from '../utils/logging.js';
 
 /**
  * Handle getStats request

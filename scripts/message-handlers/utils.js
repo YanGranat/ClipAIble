@@ -2,7 +2,7 @@
 // Provides common error handling patterns
 
 import { handleError } from '../utils/error-handler.js';
-import { logError } from '../utils/logging.js';
+import { logError, log } from '../utils/logging.js';
 
 /**
  * Wrapper for promise-based handlers with consistent error handling
@@ -11,21 +11,43 @@ import { logError } from '../utils/logging.js';
  * @param {Function} sendResponse - Response function
  * @returns {boolean} - Always returns true for async handlers
  */
-export async function withErrorHandling(promise, errorType, sendResponse) {
-  try {
-    const result = await promise;
-    sendResponse(result);
-    return true;
-  } catch (error) {
-    const normalized = await handleError(error, {
-      source: 'messageHandler',
-      errorType,
-      logError: true,
-      createUserMessage: false
+export function withErrorHandling(promise, errorType, sendResponse) {
+  // CRITICAL: Return true IMMEDIATELY to keep message channel open for async response
+  // Then handle the promise and call sendResponse when ready
+  promise
+    .then(result => {
+      try {
+        sendResponse(result);
+      } catch (sendError) {
+        logError('withErrorHandling: sendResponse failed', { 
+          errorType, 
+          error: sendError.message,
+          lastError: chrome.runtime.lastError?.message
+        });
+      }
+    })
+    .catch(async error => {
+      logError('withErrorHandling: promise rejected', { errorType, error: error.message });
+      const normalized = await handleError(error, {
+        source: 'messageHandler',
+        errorType,
+        logError: true,
+        createUserMessage: false
+      });
+      
+      try {
+        sendResponse({ error: normalized.message });
+      } catch (sendError) {
+        logError('withErrorHandling: sendResponse failed in catch', { 
+          errorType, 
+          error: sendError.message,
+          lastError: chrome.runtime.lastError?.message
+        });
+      }
     });
-    sendResponse({ error: normalized.message });
-    return true;
-  }
+  
+  // Return true immediately to keep channel open
+  return true;
 }
 
 /**

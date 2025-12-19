@@ -2,7 +2,7 @@
 // Handles statistics display, cache stats, history
 
 import { t, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
-import { logError } from '../scripts/utils/logging.js';
+import { logError, log } from '../scripts/utils/logging.js';
 
 /**
  * Initialize stats module with dependencies
