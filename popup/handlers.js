@@ -1299,6 +1299,54 @@ export function initHandlers(deps) {
       });
     }
     
+    // Google API key for image translation handler
+    if (elements.saveGoogleApiKey) {
+      elements.saveGoogleApiKey.addEventListener('click', async () => {
+        const key = elements.googleApiKey.value.trim();
+        if (!key) {
+          const pleaseEnterKeyText = await t('pleaseEnterGoogleApiKey');
+          showToast(pleaseEnterKeyText, 'error');
+          return;
+        }
+        
+        // Skip if key is masked (already saved) - silently return
+        if (key.startsWith('****') || key.startsWith('••••')) {
+          return;
+        }
+        
+        // Validate API key is ASCII only (required for HTTP headers)
+        if (!/^[\x20-\x7E]+$/.test(key)) {
+          const invalidKeyText = await t('invalidKeyFormat');
+          showToast(invalidKeyText, 'error');
+          return;
+        }
+        
+        // Validate key looks like Google API format (starts with AIza)
+        if (!key.startsWith('AIza')) {
+          const invalidGoogleKeyText = await t('invalidGoogleKeyFormat');
+          showToast(invalidGoogleKeyText, 'error');
+          return;
+        }
+        
+        try {
+          const encrypted = await encryptApiKey(key);
+          await chrome.storage.local.set({ [STORAGE_KEYS.GOOGLE_API_KEY]: encrypted });
+          elements.googleApiKey.value = maskApiKey(key);
+          elements.googleApiKey.type = 'password';
+          elements.googleApiKey.dataset.encrypted = encrypted;
+          if (elements.toggleGoogleApiKey) {
+            elements.toggleGoogleApiKey.querySelector('.eye-icon').textContent = '👁';
+          }
+          const googleKeySavedText = await t('googleKeySaved') || await t('apiKeysSaved');
+          showToast(googleKeySavedText, 'success');
+        } catch (error) {
+          logError('Failed to save Google API key', error);
+          const failedToSaveText = await t('failedToSave');
+          showToast(failedToSaveText, 'error');
+        }
+      });
+    }
+    
     // Qwen API key handlers
     if (elements.toggleQwenApiKey) {
       elements.toggleQwenApiKey.addEventListener('click', async () => {

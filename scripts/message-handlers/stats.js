@@ -37,3 +37,4 @@ export function handleDeleteHistoryItem(request, sender, sendResponse) {
   );
 }
 
+

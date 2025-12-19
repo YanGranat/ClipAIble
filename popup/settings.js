@@ -592,7 +592,6 @@ export function initSettings(deps) {
   async function saveApiKey() {
     const provider = elements.apiProviderSelect?.value || 'openai';
     const apiKey = elements.apiKey.value.trim();
-    const googleApiKey = elements.googleApiKey.value.trim();
     
     // Check if main API key is provided (not masked)
     const hasKey = apiKey && !apiKey.startsWith('****');
@@ -700,32 +699,8 @@ export function initSettings(deps) {
       }
     }
     
-    // Save Google API key for image translation if provided
-    if (googleApiKey) {
-      if (googleApiKey.startsWith('****') && elements.googleApiKey.dataset.encrypted) {
-        // Keep existing encrypted key if masked
-        keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = elements.googleApiKey.dataset.encrypted;
-      } else if (!googleApiKey.startsWith('****')) {
-        // New key provided, validate and encrypt
-        if (!googleApiKey.startsWith('AIza')) {
-          const invalidGoogleKeyText = await t('invalidGoogleKeyFormat');
-          showToast(invalidGoogleKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = await encryptApiKey(googleApiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      }
-    } else {
-      // If field is empty, explicitly remove the key from storage
-      // This ensures the key is cleared if user intentionally removed it
-      keysToSave[STORAGE_KEYS.GOOGLE_API_KEY] = null;
-    }
+    // Google API key is now saved separately via saveGoogleApiKey button in settings
+    // Removed from here to avoid confusion
 
     // Remove null values before saving (explicitly remove keys)
     const keysToRemove = [];
@@ -1158,7 +1133,7 @@ export function initSettings(deps) {
     setElementGroupDisplay('translateImagesGroup', (isTranslating && !isAudio) ? 'block' : 'none');
     
     // Show Google API key input when image translation is enabled
-    setElementDisplay('googleApiGroup', (isTranslating && translateImagesEnabled) ? 'block' : 'none');
+    setElementGroupDisplay('googleApiGroup', (isTranslating && translateImagesEnabled) ? 'block' : 'none');
     
     // Show hint if translateImages is enabled but Google key is missing
     const translateImagesHint = getElement('translateImagesHint');

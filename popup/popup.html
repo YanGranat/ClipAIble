@@ -86,21 +86,6 @@
             </button>
           </div>
         </div>
-        <div class="api-key-group" id="googleApiGroup" style="display: none;">
-          <label for="googleApiKey"><span data-i18n="googleApiKey">Google AI API Key</span> <span class="optional-badge" data-i18n="optionalBadge">for image translation</span></label>
-          <div class="input-group">
-            <input 
-              type="password" 
-              id="googleApiKey" 
-              data-i18n-placeholder="enterGoogleApiKey"
-              placeholder="AIza..."
-              autocomplete="off"
-            >
-            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
-              <span class="eye-icon">👁</span>
-            </button>
-          </div>
-        </div>
         <button id="saveApiKey" class="btn btn-secondary" data-i18n="saveKeys">Save Keys</button>
       </section>
 
@@ -555,6 +540,23 @@
             <span class="checkbox-text" data-i18n="translateImages">Translate images with text</span>
           </label>
           <p class="setting-hint" data-i18n="translateImagesHint">Uses Google Gemini AI to translate text on images</p>
+        </div>
+        <div class="setting-item" id="googleApiGroup" style="display: none;">
+          <label for="googleApiKey" data-i18n="googleApiKey">Google AI API Key for image translation</label>
+          <div class="input-group">
+            <input 
+              type="password" 
+              id="googleApiKey" 
+              data-i18n-placeholder="enterGoogleApiKey"
+              placeholder="AIza..."
+              autocomplete="off"
+            >
+            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+              <span class="eye-icon">👁</span>
+            </button>
+            <button type="button" id="saveGoogleApiKey" class="btn btn-small" data-i18n="save">Save</button>
+          </div>
+          <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a></p>
         </div>
         <div class="setting-item">
           <label class="checkbox-label">
