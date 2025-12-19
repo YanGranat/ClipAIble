@@ -2,7 +2,7 @@
 
 > **AI驱动的文章提取器** — 将网页上的任何文章保存为PDF、EPUB、FB2、Markdown或音频。支持11种语言翻译。适用于任何网站。
 
-![版本](https://img.shields.io/badge/版本-3.0.0-blue)
+![版本](https://img.shields.io/badge/版本-3.0.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-扩展-green)
 ![许可证](https://img.shields.io/badge/许可证-MIT-brightgreen)
 

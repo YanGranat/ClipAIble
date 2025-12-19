@@ -2,7 +2,7 @@
 
 > **Извлечение статей с помощью ИИ** — Сохраняйте любые статьи из интернета в форматах PDF, EPUB, FB2, Markdown или Аудио. Перевод на 11 языков. Работает на любом сайте.
 
-![Версия](https://img.shields.io/badge/версия-3.0.0-blue)
+![Версия](https://img.shields.io/badge/версия-3.0.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Расширение-green)
 ![Лицензия](https://img.shields.io/badge/лицензия-MIT-brightgreen)
 

@@ -270,7 +270,7 @@ ${authorXml}
       <author>
         <nickname>ClipAIble Extension</nickname>
       </author>
-      <program-used>ClipAIble v3.0.0</program-used>
+      <program-used>ClipAIble v3.0.1</program-used>
       <date value="${new Date().toISOString().split('T')[0]}">${new Date().toISOString().split('T')[0]}</date>
       <id>${docId}</id>
       <version>1.0</version>

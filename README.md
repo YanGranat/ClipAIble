@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-3.0.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -31,7 +31,7 @@ All formats support **translation to 11 languages** — even translating text on
 ### 🤖 AI-Powered Extraction
 - **Two modes**: AI Selector (fast, reusable) and AI Extract (thorough)
 - **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
-- **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles (v3.0.0)
+- **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles
   - Multiple extraction methods with fallbacks
   - Priority: manual subtitles > auto-generated > translated
   - AI processing: removes timestamps, merges paragraphs, fixes errors
@@ -70,7 +70,7 @@ All formats support **translation to 11 languages** — even translating text on
 
 
 ### ⚡ Smart Features
-- **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles (v3.0.0)
+- **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles
   - Direct subtitle extraction (no API keys required from YouTube/Vimeo)
   - AI processing: removes timestamps, merges paragraphs, fixes errors
   - Audio transcription fallback: automatic transcription when subtitles unavailable (gpt-4o-transcribe)
