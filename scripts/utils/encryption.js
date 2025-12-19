@@ -2,13 +2,17 @@
 // Uses Web Crypto API for secure encryption
 
 import { log, logError, logWarn } from './logging.js';
+import { getProcessingState } from '../state/processing.js';
 
 // Cache for encryption key to avoid regenerating
 let cachedEncryptionKey = null;
 
 // Cache for decrypted API keys (in-memory, per-provider, cleared after processing)
 // Security: Keys are only cached during processing, cleared on resetState()
+// Additional security: Auto-clear cache after 10 minutes of inactivity
 const decryptedKeyCache = new Map(); // provider:encryptedPrefix -> decryptedKey
+let cacheClearTimeout = null;
+const CACHE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Get or generate encryption key based on extension ID
@@ -222,7 +226,44 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
   decryptedKeyCache.set(cacheKey, decrypted);
   log('Decrypted key cached', { provider });
   
+  // Schedule automatic cache clear after timeout (security: prevent keys from staying in memory too long)
+  scheduleCacheClear();
+  
   return decrypted;
+}
+
+/**
+ * Schedule automatic cache clear after timeout
+ * Security: Ensures keys don't remain in memory indefinitely
+ * Important: Does NOT clear cache if processing is active (to avoid interrupting long operations)
+ */
+function scheduleCacheClear() {
+  // Clear existing timeout
+  if (cacheClearTimeout) {
+    clearTimeout(cacheClearTimeout);
+  }
+  
+  // Schedule new timeout
+  cacheClearTimeout = setTimeout(() => {
+    // Check if processing is active - don't clear cache during active processing
+    const processingState = getProcessingState();
+    if (processingState.isProcessing) {
+      // Processing is active - reschedule cache clear (don't interrupt long operations)
+      log('Cache clear postponed - processing is active', { 
+        status: processingState.status,
+        progress: processingState.progress 
+      });
+      scheduleCacheClear(); // Reschedule for another timeout period
+      return;
+    }
+    
+    // Processing is not active - safe to clear cache
+    if (decryptedKeyCache.size > 0) {
+      logWarn('Decrypted key cache timeout reached, clearing for security');
+      clearDecryptedKeyCache();
+    }
+    cacheClearTimeout = null;
+  }, CACHE_TIMEOUT_MS);
 }
 
 /**
@@ -232,6 +273,13 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
 export function clearDecryptedKeyCache() {
   const cacheSize = decryptedKeyCache.size;
   decryptedKeyCache.clear();
+  
+  // Clear timeout if exists
+  if (cacheClearTimeout) {
+    clearTimeout(cacheClearTimeout);
+    cacheClearTimeout = null;
+  }
+  
   log('Decrypted key cache cleared', { clearedKeys: cacheSize });
 }
 

@@ -184,6 +184,9 @@ export async function cancelProcessing(stopKeepAlive) {
     processingState.status = tSync('statusCancelled', uiLang);
     processingState.error = tSync('statusCancelled', uiLang);
     if (stopKeepAlive) stopKeepAlive();
+    
+    // Clear decrypted key cache for security (processing was cancelled)
+    clearDecryptedKeyCache();
   }
   return { success: true };
 }
@@ -224,6 +227,9 @@ export async function setError(error, stopKeepAlive) {
   processingState.status = tSync('statusError', uiLang);
   if (stopKeepAlive) stopKeepAlive();
   chrome.storage.local.remove(['processingState']);
+  
+  // Clear decrypted key cache for security (processing failed)
+  clearDecryptedKeyCache();
 }
 
 /**
