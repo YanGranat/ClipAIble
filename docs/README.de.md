@@ -2,7 +2,7 @@
 
 > **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
 
-![Version](https://img.shields.io/badge/version-3.0.2-blue)
+![Version](https://img.shields.io/badge/version-3.0.3-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Erweiterung-green)
 ![Lizenz](https://img.shields.io/badge/lizenz-MIT-brightgreen)
 
@@ -399,7 +399,7 @@ clipaible/
 │   ├── background.js   # Service Worker (2635 Zeilen)
 │   ├── content.js      # Content Script für YouTube
 │   ├── locales.js      # UI-Lokalisierung (11 Sprachen)
-│   ├── message-handlers/ # Nachrichtenhandler-Module (v3.0.2)
+│   ├── message-handlers/ # Nachrichtenhandler-Module (v3.0.3)
 │   │   ├── index.js    # Nachrichten-Router
 │   │   ├── utils.js    # Handler-Utilities
 │   │   ├── simple.js   # Einfache Handler

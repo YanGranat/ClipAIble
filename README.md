@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.0.2-blue)
+![Version](https://img.shields.io/badge/version-3.0.3-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 lines)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
-│   ├── message-handlers/ # Message handler modules (v3.0.2)
+│   ├── message-handlers/ # Message handler modules (v3.0.3)
 │   │   ├── index.js    # Message router
 │   │   ├── utils.js    # Handler utilities
 │   │   ├── simple.js   # Simple handlers

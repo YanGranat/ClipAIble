@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClipAIble",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "AI-powered article extractor. Save any webpage as PDF, EPUB, FB2, Markdown, or Audio with translation.",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self';"
