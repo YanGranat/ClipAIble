@@ -2,7 +2,7 @@
 
 > **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
-![バージョン](https://img.shields.io/badge/バージョン-3.0.1-blue)
+![バージョン](https://img.shields.io/badge/バージョン-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
 ![ライセンス](https://img.shields.io/badge/ライセンス-MIT-brightgreen)
 
@@ -389,10 +389,27 @@ ClipAIbleはドメインごとにAI生成セレクターをキャッシュ：
 clipaible/
 ├── manifest.json       # 拡張機能設定
 ├── popup/              # UI（HTML、CSS、JS）
+│   ├── popup.js       # メインオーケストレーション（2670行）
+│   ├── core.js        # ビジネスロジック（1459行）
+│   ├── handlers.js    # イベントハンドラー（1567行）
+│   ├── ui.js          # UI管理
+│   ├── stats.js       # 統計表示
+│   └── settings.js    # 設定管理
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635行)
 │   ├── content.js      # YouTube用コンテンツスクリプト
 │   ├── locales.js      # UIローカライゼーション（11言語）
+│   ├── message-handlers/ # メッセージハンドラーモジュール（v3.0.2）
+│   │   ├── index.js    # メッセージルーター
+│   │   ├── utils.js    # ハンドラーユーティリティ
+│   │   ├── simple.js   # シンプルハンドラー
+│   │   ├── stats.js    # 統計ハンドラー
+│   │   ├── cache.js    # キャッシュハンドラー
+│   │   ├── settings.js # 設定ハンドラー
+│   │   ├── processing.js # 処理ハンドラー
+│   │   ├── video.js    # 動画/字幕ハンドラー
+│   │   ├── summary.js  # 要約生成ヘルパー
+│   │   └── complex.js  # 複雑なハンドラー
 │   ├── api/            # AI & TTSプロバイダー
 │   │   ├── openai.js   # OpenAI（GPTモデル）
 │   │   ├── claude.js   # Anthropic Claude
@@ -418,6 +435,7 @@ clipaible/
 │   ├── state/          # 処理状態管理
 │   └── utils/          # 設定、暗号化、ヘルパー
 │       ├── video.js    # 動画プラットフォーム検出
+│       ├── validation.js # 検証ユーティリティ
 │       └── api-error-handler.js # 共通APIエラーハンドリング
 ├── print/              # PDFレンダリング
 ├── config/             # スタイル

@@ -2,7 +2,7 @@
 
 > **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
 
-![버전](https://img.shields.io/badge/버전-3.0.1-blue)
+![버전](https://img.shields.io/badge/버전-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-확장-프로그램-green)
 ![라이선스](https://img.shields.io/badge/라이선스-MIT-brightgreen)
 
@@ -389,10 +389,27 @@ ClipAIble은 도메인별로 AI 생성 선택자를 캐시합니다:
 clipaible/
 ├── manifest.json       # 확장 프로그램 구성
 ├── popup/              # UI (HTML, CSS, JS)
+│   ├── popup.js       # 메인 오케스트레이션 (2670줄)
+│   ├── core.js        # 비즈니스 로직 (1459줄)
+│   ├── handlers.js    # 이벤트 핸들러 (1567줄)
+│   ├── ui.js          # UI 관리
+│   ├── stats.js       # 통계 표시
+│   └── settings.js    # 설정 관리
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635줄)
 │   ├── content.js      # YouTube용 콘텐츠 스크립트
 │   ├── locales.js      # UI 현지화 (11개 언어)
+│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.0.2)
+│   │   ├── index.js    # 메시지 라우터
+│   │   ├── utils.js    # 핸들러 유틸리티
+│   │   ├── simple.js   # 간단한 핸들러
+│   │   ├── stats.js    # 통계 핸들러
+│   │   ├── cache.js    # 캐시 핸들러
+│   │   ├── settings.js # 설정 핸들러
+│   │   ├── processing.js # 처리 핸들러
+│   │   ├── video.js    # 비디오/자막 핸들러
+│   │   ├── summary.js  # 요약 생성 도우미
+│   │   └── complex.js  # 복잡한 핸들러
 │   ├── api/            # AI & TTS 제공업체
 │   │   ├── openai.js   # OpenAI (GPT 모델)
 │   │   ├── claude.js   # Anthropic Claude
@@ -418,6 +435,7 @@ clipaible/
 │   ├── state/          # 처리 상태 관리
 │   └── utils/          # 구성, 암호화, 유틸리티
 │       ├── video.js    # 비디오 플랫폼 감지
+│       ├── validation.js # 검증 유틸리티
 │       └── api-error-handler.js # 공통 API 오류 처리
 ├── print/              # PDF 렌더링
 ├── config/             # 스타일

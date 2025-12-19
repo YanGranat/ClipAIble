@@ -2,7 +2,7 @@
 
 > **Estrattore di articoli alimentato da IA** — Salva qualsiasi articolo dal web come PDF, EPUB, FB2, Markdown o Audio. Traduzione in 11 lingue. Funziona su qualsiasi sito web.
 
-![Versione](https://img.shields.io/badge/versione-3.0.1-blue)
+![Versione](https://img.shields.io/badge/versione-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Estensione-green)
 ![Licenza](https://img.shields.io/badge/licenza-MIT-brightgreen)
 
@@ -389,10 +389,27 @@ ClipAIble memorizza in cache i selettori generati dall'IA per dominio:
 clipaible/
 ├── manifest.json       # Configurazione estensione
 ├── popup/              # Interfaccia (HTML, CSS, JS)
+│   ├── popup.js       # Orchestrazione principale (2670 righe)
+│   ├── core.js        # Logica di business (1459 righe)
+│   ├── handlers.js    # Gestori di eventi (1567 righe)
+│   ├── ui.js          # Gestione interfaccia
+│   ├── stats.js       # Visualizzazione statistiche
+│   └── settings.js    # Gestione impostazioni
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635 righe)
 │   ├── content.js      # Content script per YouTube
 │   ├── locales.js      # Localizzazione UI (11 lingue)
+│   ├── message-handlers/ # Moduli gestori messaggi (v3.0.2)
+│   │   ├── index.js    # Router messaggi
+│   │   ├── utils.js    # Utilità gestori
+│   │   ├── simple.js   # Gestori semplici
+│   │   ├── stats.js    # Gestori statistiche
+│   │   ├── cache.js    # Gestori cache
+│   │   ├── settings.js # Gestori impostazioni
+│   │   ├── processing.js # Gestori elaborazione
+│   │   ├── video.js    # Gestori video/sottotitoli
+│   │   ├── summary.js  # Helper generazione riassunti
+│   │   └── complex.js  # Gestori complessi
 │   ├── api/            # Fornitori AI & TTS
 │   │   ├── openai.js   # OpenAI (modelli GPT)
 │   │   ├── claude.js   # Anthropic Claude
@@ -418,6 +435,7 @@ clipaible/
 │   ├── state/          # Gestione stato elaborazione
 │   └── utils/          # Configurazione, crittografia, utilità
 │       ├── video.js    # Rilevamento piattaforma video
+│       ├── validation.js # Utilità validazione
 │       └── api-error-handler.js # Gestione errori API comune
 ├── print/              # Rendering PDF
 ├── config/             # Stili

@@ -2,7 +2,7 @@
 
 > **Извлечение статей с помощью ИИ** — Сохраняйте любые статьи из интернета в форматах PDF, EPUB, FB2, Markdown или Аудио. Перевод на 11 языков. Работает на любом сайте.
 
-![Версия](https://img.shields.io/badge/версия-3.0.1-blue)
+![Версия](https://img.shields.io/badge/версия-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Расширение-green)
 ![Лицензия](https://img.shields.io/badge/лицензия-MIT-brightgreen)
 
@@ -389,10 +389,27 @@ ClipAIble кэширует сгенерированные ИИ селектор�
 clipaible/
 ├── manifest.json       # Конфигурация расширения
 ├── popup/              # Интерфейс (HTML, CSS, JS)
+│   ├── popup.js       # Основная оркестрация (2670 строк)
+│   ├── core.js        # Бизнес-логика (1459 строк)
+│   ├── handlers.js    # Обработчики событий (1567 строк)
+│   ├── ui.js          # Управление UI
+│   ├── stats.js       # Отображение статистики
+│   └── settings.js    # Управление настройками
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635 строк)
 │   ├── content.js      # Content script для YouTube
 │   ├── locales.js      # Локализация UI (11 языков)
+│   ├── message-handlers/ # Модули обработчиков сообщений (v3.0.2)
+│   │   ├── index.js    # Роутер сообщений
+│   │   ├── utils.js    # Утилиты обработчиков
+│   │   ├── simple.js   # Простые обработчики
+│   │   ├── stats.js    # Обработчики статистики
+│   │   ├── cache.js    # Обработчики кэша
+│   │   ├── settings.js # Обработчики настроек
+│   │   ├── processing.js # Обработчики обработки
+│   │   ├── video.js    # Обработчики видео/субтитров
+│   │   ├── summary.js  # Помощник генерации саммари
+│   │   └── complex.js  # Сложные обработчики
 │   ├── api/            # AI & TTS провайдеры
 │   │   ├── openai.js   # OpenAI (GPT модели)
 │   │   ├── claude.js   # Anthropic Claude
@@ -418,6 +435,7 @@ clipaible/
 │   ├── state/          # Управление состоянием обработки
 │   └── utils/          # Конфигурация, шифрование, помощники
 │       ├── video.js    # Определение платформы видео
+│       ├── validation.js # Утилиты валидации
 │       └── api-error-handler.js # Общая обработка ошибок API
 ├── print/              # Рендеринг PDF
 ├── config/             # Стили

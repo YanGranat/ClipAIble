@@ -999,7 +999,7 @@ async function init() {
   // Load and display version
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '3.0.1';
+    const version = manifest.version || '3.0.2';
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;

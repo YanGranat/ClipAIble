@@ -2,7 +2,7 @@
 
 > **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
 
-![Version](https://img.shields.io/badge/version-3.0.1-blue)
+![Version](https://img.shields.io/badge/version-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Erweiterung-green)
 ![Lizenz](https://img.shields.io/badge/lizenz-MIT-brightgreen)
 
@@ -389,10 +389,27 @@ ClipAIble cached KI-generierte Selektoren nach Domain:
 clipaible/
 ├── manifest.json       # Erweiterungskonfiguration
 ├── popup/              # UI (HTML, CSS, JS)
+│   ├── popup.js       # Hauptorchestrierung (2670 Zeilen)
+│   ├── core.js        # Geschäftslogik (1459 Zeilen)
+│   ├── handlers.js    # Event-Handler (1567 Zeilen)
+│   ├── ui.js          # UI-Verwaltung
+│   ├── stats.js       # Statistikanzeige
+│   └── settings.js    # Einstellungsverwaltung
 ├── scripts/
-│   ├── background.js   # Service Worker
+│   ├── background.js   # Service Worker (2635 Zeilen)
 │   ├── content.js      # Content Script für YouTube
 │   ├── locales.js      # UI-Lokalisierung (11 Sprachen)
+│   ├── message-handlers/ # Nachrichtenhandler-Module (v3.0.2)
+│   │   ├── index.js    # Nachrichten-Router
+│   │   ├── utils.js    # Handler-Utilities
+│   │   ├── simple.js   # Einfache Handler
+│   │   ├── stats.js    # Statistik-Handler
+│   │   ├── cache.js    # Cache-Handler
+│   │   ├── settings.js # Einstellungs-Handler
+│   │   ├── processing.js # Verarbeitungs-Handler
+│   │   ├── video.js    # Video/Untertitel-Handler
+│   │   ├── summary.js  # Zusammenfassungs-Generierungshelfer
+│   │   └── complex.js  # Komplexe Handler
 │   ├── api/            # AI & TTS Anbieter
 │   │   ├── openai.js   # OpenAI (GPT Modelle)
 │   │   ├── claude.js   # Anthropic Claude
@@ -418,6 +435,7 @@ clipaible/
 │   ├── state/          # Verarbeitungsstatus-Verwaltung
 │   └── utils/          # Konfiguration, Verschlüsselung, Helfer
 │       ├── video.js    # Video-Plattform-Erkennung
+│       ├── validation.js # Validierungs-Utilities
 │       └── api-error-handler.js # Gemeinsame API-Fehlerbehandlung
 ├── print/              # PDF-Rendering
 ├── config/             # Stile

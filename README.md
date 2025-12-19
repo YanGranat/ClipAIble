@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.0.1-blue)
+![Version](https://img.shields.io/badge/version-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -391,10 +391,27 @@ ClipAIble caches AI-generated selectors by domain:
 clipaible/
 ├── manifest.json       # Extension config
 ├── popup/              # UI (HTML, CSS, JS)
+│   ├── popup.js       # Main orchestration (2670 lines)
+│   ├── core.js        # Business logic (1459 lines)
+│   ├── handlers.js    # Event handlers (1567 lines)
+│   ├── ui.js          # UI management
+│   ├── stats.js       # Statistics display
+│   └── settings.js    # Settings management
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635 lines)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
+│   ├── message-handlers/ # Message handler modules (v3.0.2)
+│   │   ├── index.js    # Message router
+│   │   ├── utils.js    # Handler utilities
+│   │   ├── simple.js   # Simple handlers
+│   │   ├── stats.js    # Statistics handlers
+│   │   ├── cache.js    # Cache handlers
+│   │   ├── settings.js # Settings handlers
+│   │   ├── processing.js # Processing handlers
+│   │   ├── video.js    # Video/subtitle handlers
+│   │   ├── summary.js  # Summary generation helper
+│   │   └── complex.js  # Complex handlers
 │   ├── api/            # AI & TTS providers
 │   │   ├── openai.js   # OpenAI (GPT models)
 │   │   ├── claude.js   # Anthropic Claude
@@ -420,6 +437,7 @@ clipaible/
 │   ├── state/          # Processing state management
 │   └── utils/          # Config, encryption, helpers
 │       ├── video.js    # Video platform detection
+│       ├── validation.js # Validation utilities
 │       └── api-error-handler.js # Common API error handling
 ├── print/              # PDF rendering
 ├── config/             # Styles

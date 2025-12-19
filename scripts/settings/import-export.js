@@ -88,7 +88,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
     const settings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     
     const exportData = {
-      version: '3.0.1',
+      version: '3.0.2',
       exportDate: new Date().toISOString(),
       settings: {}
     };
@@ -182,7 +182,7 @@ export async function importSettings(jsonData, options = {}) {
     
     // Validate version compatibility
     const exportVersion = data.version || 'unknown';
-    const currentVersion = '3.0.1'; // Should match manifest.json version
+    const currentVersion = '3.0.2'; // Should match manifest.json version
     
     if (exportVersion !== 'unknown') {
       const exportMajor = parseInt(exportVersion.split('.')[0]) || 0;

@@ -2,7 +2,7 @@
 
 > **Витяг статей за допомогою ШІ** — Зберігайте будь-які статті з інтернету у форматах PDF, EPUB, FB2, Markdown або Аудіо. Переклад на 11 мов. Працює на будь-якому сайті.
 
-![Версія](https://img.shields.io/badge/версія-3.0.1-blue)
+![Версія](https://img.shields.io/badge/версія-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Розширення-green)
 ![Ліцензія](https://img.shields.io/badge/ліцензія-MIT-brightgreen)
 
@@ -389,10 +389,27 @@ ClipAIble кешує згенеровані ШІ селектори за дом�
 clipaible/
 ├── manifest.json       # Конфігурація розширення
 ├── popup/              # Інтерфейс (HTML, CSS, JS)
+│   ├── popup.js       # Основна оркестрація (2670 рядків)
+│   ├── core.js        # Бізнес-логіка (1459 рядків)
+│   ├── handlers.js    # Обробники подій (1567 рядків)
+│   ├── ui.js          # Управління UI
+│   ├── stats.js       # Відображення статистики
+│   └── settings.js    # Управління налаштуваннями
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635 рядків)
 │   ├── content.js      # Content script для YouTube
 │   ├── locales.js      # Локалізація UI (11 мов)
+│   ├── message-handlers/ # Модулі обробників повідомлень (v3.0.2)
+│   │   ├── index.js    # Роутер повідомлень
+│   │   ├── utils.js    # Утиліти обробників
+│   │   ├── simple.js   # Прості обробники
+│   │   ├── stats.js    # Обробники статистики
+│   │   ├── cache.js    # Обробники кешу
+│   │   ├── settings.js # Обробники налаштувань
+│   │   ├── processing.js # Обробники обробки
+│   │   ├── video.js    # Обробники відео/субтитрів
+│   │   ├── summary.js  # Помічник генерації саммари
+│   │   └── complex.js  # Складні обробники
 │   ├── api/            # AI & TTS провайдери
 │   │   ├── openai.js   # OpenAI (GPT моделі)
 │   │   ├── claude.js   # Anthropic Claude
@@ -418,6 +435,7 @@ clipaible/
 │   ├── state/          # Управління станом обробки
 │   └── utils/          # Конфігурація, шифрування, помічники
 │       ├── video.js    # Визначення платформи відео
+│       ├── validation.js # Утиліти валідації
 │       └── api-error-handler.js # Загальна обробка помилок API
 ├── print/              # Рендеринг PDF
 ├── config/             # Стилі

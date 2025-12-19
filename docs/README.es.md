@@ -2,7 +2,7 @@
 
 > **Extractor de artículos con IA** — Guarda cualquier artículo de la web como PDF, EPUB, FB2, Markdown o Audio. Traducción a 11 idiomas. Funciona en cualquier sitio web.
 
-![Versión](https://img.shields.io/badge/versión-3.0.1-blue)
+![Versión](https://img.shields.io/badge/versión-3.0.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensión-green)
 ![Licencia](https://img.shields.io/badge/licencia-MIT-brightgreen)
 
@@ -389,12 +389,44 @@ ClipAIble almacena en caché los selectores generados por IA por dominio:
 clipaible/
 ├── manifest.json       # Configuración de extensión
 ├── popup/              # Interfaz (HTML, CSS, JS)
+│   ├── popup.js       # Orquestación principal (2670 líneas)
+│   ├── core.js        # Lógica de negocio (1459 líneas)
+│   ├── handlers.js    # Manejadores de eventos (1567 líneas)
+│   ├── ui.js          # Gestión de interfaz
+│   ├── stats.js       # Visualización de estadísticas
+│   └── settings.js    # Gestión de configuración
 ├── scripts/
-│   ├── background.js   # Service worker
+│   ├── background.js   # Service worker (2635 líneas)
 │   ├── content.js      # Content script para YouTube
 │   ├── locales.js      # Localización UI (11 idiomas)
+│   ├── message-handlers/ # Módulos de manejadores de mensajes (v3.0.2)
+│   │   ├── index.js    # Enrutador de mensajes
+│   │   ├── utils.js    # Utilidades de manejadores
+│   │   ├── simple.js   # Manejadores simples
+│   │   ├── stats.js    # Manejadores de estadísticas
+│   │   ├── cache.js    # Manejadores de caché
+│   │   ├── settings.js # Manejadores de configuración
+│   │   ├── processing.js # Manejadores de procesamiento
+│   │   ├── video.js    # Manejadores de video/subtítulos
+│   │   ├── summary.js  # Ayudante de generación de resúmenes
+│   │   └── complex.js  # Manejadores complejos
 │   ├── api/            # Proveedores AI & TTS
+│   │   ├── openai.js   # OpenAI (modelos GPT)
+│   │   ├── claude.js   # Anthropic Claude
+│   │   ├── gemini.js   # Google Gemini
+│   │   ├── grok.js     # Grok
+│   │   ├── openrouter.js # OpenRouter
+│   │   ├── elevenlabs.js # ElevenLabs TTS
+│   │   ├── google-tts.js # Google Gemini 2.5 TTS
+│   │   ├── qwen.js     # Qwen3-TTS-Flash
+│   │   ├── respeecher.js # Respeecher TTS
+│   │   ├── tts.js      # Enrutador TTS
+│   │   └── index.js    # Enrutador API
 │   ├── extraction/     # Extracción de contenido
+│   │   ├── prompts.js  # Prompts IA
+│   │   ├── html-utils.js # Utilidades HTML
+│   │   ├── video-subtitles.js # Extracción de subtítulos YouTube/Vimeo
+│   │   └── video-processor.js # Procesamiento de subtítulos IA
 │   ├── translation/    # Traducción y detección de idioma
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Caché de selectores
@@ -402,6 +434,9 @@ clipaible/
 │   ├── settings/       # Importar/Exportar configuración
 │   ├── state/          # Gestión del estado de procesamiento
 │   └── utils/          # Configuración, encriptación, utilidades
+│       ├── video.js    # Detección de plataforma de video
+│       ├── validation.js # Utilidades de validación
+│       └── api-error-handler.js # Manejo común de errores API
 ├── print/              # Renderizado PDF
 ├── config/             # Estilos
 ├── lib/                # JSZip
