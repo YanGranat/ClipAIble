@@ -1387,7 +1387,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
       let bestElement = null;
       let bestScore = 0;
       const candidates = document.querySelectorAll('div, section, article, main');
-      for (const candidate of candidates) {
+      for (const candidate of Array.from(candidates)) {
         if (isExcluded(candidate)) continue;
         const score = calculateContentScore(candidate);
         if (score > bestScore && hasSubstantialContentModule(candidate)) {
@@ -2253,7 +2253,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
         if (article) {
           // Look for "By Author Name" pattern in metadata area
           const metaElements = article.querySelectorAll('.post-author, .meta-wrapper, .byline, [class*="author"]');
-          for (const el of metaElements) {
+          for (const el of Array.from(metaElements)) {
             const text = el.textContent || '';
             // Match "By Author Name" or "Author Name" patterns
             const byMatch = text.match(/by\s+([A-Z][a-zA-Z\s]+?)(?:\s+September|\s+\d|$)/i);
@@ -2268,7 +2268,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
             // Check both /author/ and /profile/ patterns
             // IMPORTANT: Check ALL author links, not just the first one (first might be image-only)
             const authorLinks = el.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]');
-            for (const authorLink of authorLinks) {
+            for (const authorLink of Array.from(authorLinks)) {
               // First try to extract text from link
               let authorText = authorLink.textContent.trim();
               
@@ -2306,7 +2306,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
             
             // Also check for any link with author-like text
             const allLinks = el.querySelectorAll('a');
-            for (const link of allLinks) {
+            for (const link of Array.from(allLinks)) {
               const linkText = link.textContent.trim();
               // Check if link text looks like an author name (2-4 words, starts with capital)
               const namePattern = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/;
@@ -2394,7 +2394,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
         if (article) {
           // Check metadata area (usually near author)
           const metaElements = article.querySelectorAll('.meta-date, .meta-text.meta-date, .post-date, .published-date, [class*="date"]');
-          for (const el of metaElements) {
+          for (const el of Array.from(metaElements)) {
             const text = el.textContent.trim();
             const dateMatch = text.match(/(\w+)\s+(\d+),?\s+(\d{4})/i);
             if (dateMatch) {
@@ -2493,7 +2493,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           const firstElements = Array.from(container.querySelectorAll('img, figure')).slice(0, 10);
           for (const el of firstElements) {
             const img = el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-            if (img) {
+            if (img && img instanceof HTMLImageElement) {
               const src = extractBestImageUrl(img);
               if (src && !isTrackingPixel(img) && !isDecorativeImage(img)) {
                 // Check if image is reasonably large (likely featured image)
@@ -2675,10 +2675,11 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
                 const isTracking = src ? isTrackingPixel(img) : false;
                 const isDecorative = src ? isDecorativeImage(img) : false;
                 if (src && !isTracking && !isDecorative) {
+                  const imgElement = img instanceof HTMLImageElement ? img : null;
                   content.push({
                     type: 'image',
                     src: toAbsoluteUrl(src, baseUrl),
-                    alt: img.alt || '',
+                    alt: imgElement?.alt || '',
                     caption: getImageCaption(img)
                   });
                 }
@@ -2718,7 +2719,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
                 return acc;
               }, {});
               debugInfo.contentTypes = contentTypes;
-              debugInfo.imageCount = contentTypes.image || 0;
+              debugInfo.imageCount = ((contentTypes['image'] || 0));
             }
             
             return {
@@ -3530,7 +3531,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
         let hasRealContent = false;
         
         if (links.length > 0) {
-          for (const link of links) {
+          for (const link of Array.from(links)) {
             if (!isFootnoteLink(link)) {
               hasOnlyFootnotes = false;
               break;
@@ -3539,28 +3540,30 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           // If all links are footnotes, check if there's actual text content beyond them
           if (hasOnlyFootnotes) {
             const textWithoutLinks = element.cloneNode(true);
-            // Remove all footnote links
-            const linkElements = textWithoutLinks.querySelectorAll('a');
-            linkElements.forEach(link => {
-              if (isFootnoteLink(link)) {
-                link.remove();
-              }
-            });
-            // Remove icons and sup elements with arrows
-            const allElements = textWithoutLinks.querySelectorAll('*');
-            allElements.forEach(el => {
-              if (isIcon(el)) {
-                el.remove();
-              }
-            });
-            const supElements = textWithoutLinks.querySelectorAll('sup');
-            supElements.forEach(sup => {
-              const supText = sup.textContent.trim();
-              if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
-                sup.remove();
-              }
-            });
-            const remainingText = textWithoutLinks.textContent.trim();
+            if (textWithoutLinks instanceof Element) {
+              // Remove all footnote links
+              const linkElements = textWithoutLinks.querySelectorAll('a');
+              linkElements.forEach(link => {
+                if (isFootnoteLink(link)) {
+                  link.remove();
+                }
+              });
+              // Remove icons and sup elements with arrows
+              const allElements = textWithoutLinks.querySelectorAll('*');
+              allElements.forEach(el => {
+                if (isIcon(el)) {
+                  el.remove();
+                }
+              });
+              const supElements = textWithoutLinks.querySelectorAll('sup');
+              supElements.forEach(sup => {
+                const supText = sup.textContent.trim();
+                if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
+                  sup.remove();
+                }
+              });
+            }
+            const remainingText = textWithoutLinks instanceof Element ? textWithoutLinks.textContent.trim() : '';
             hasRealContent = remainingText.length > 10; // At least 10 chars of non-link text
           }
         } else {
@@ -3600,22 +3603,23 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
             NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
             {
               acceptNode: (node) => {
-                if (node.nodeType === Node.ELEMENT_NODE) {
-                  const tagName = node.tagName.toLowerCase();
+                if (node.nodeType === Node.ELEMENT_NODE && node instanceof Element) {
+                  const element = node;
+                  const tagName = element.tagName.toLowerCase();
                   
                   // Remove footnote links
-                  if (tagName === 'a' && isFootnoteLink(node)) {
+                  if (tagName === 'a' && isFootnoteLink(element)) {
                     return NodeFilter.FILTER_REJECT;
                   }
                   
                   // Remove icons
-                  if (isIcon(node)) {
+                  if (isIcon(element)) {
                     return NodeFilter.FILTER_REJECT;
                   }
                   
                   // Remove sup elements with arrows
                   if (tagName === 'sup') {
-                    const supText = node.textContent.trim();
+                    const supText = element.textContent.trim();
                     if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
                       return NodeFilter.FILTER_REJECT;
                     }
@@ -3627,22 +3631,22 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
                   }
                   
                   // Remove elements that contain only "OBJ" text
-                  const elText = node.textContent.trim();
+                  const elText = element.textContent.trim();
                   if (/^obj\s*$/i.test(elText) || /^\[obj\]\s*$/i.test(elText)) {
                     return NodeFilter.FILTER_REJECT;
                   }
                   
                   // Clean attributes in the same pass
-                  node.removeAttribute('style');
+                  element.removeAttribute('style');
                   const safeAttributes = ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel'];
-                  for (const attr of Array.from(node.attributes)) {
+                  for (const attr of Array.from(element.attributes)) {
                     if (attr.name.startsWith('on') || !safeAttributes.includes(attr.name.toLowerCase())) {
-                      node.removeAttribute(attr.name);
+                      element.removeAttribute(attr.name);
                     }
                   }
                   
                   // Remove empty spans and divs
-                  if ((tagName === 'span' || tagName === 'div') && !node.textContent.trim() && !node.querySelector('img')) {
+                  if ((tagName === 'span' || tagName === 'div') && !element.textContent.trim() && !element.querySelector('img')) {
                     return NodeFilter.FILTER_REJECT;
                   }
                 } else if (node.nodeType === Node.TEXT_NODE) {
@@ -3658,8 +3662,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
                 }
                 return NodeFilter.FILTER_ACCEPT;
               }
-            },
-            false
+            }
           );
           
           // Process all nodes
@@ -3670,15 +3673,15 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           }
           
           // Get cleaned text to check if there's still meaningful content
-          const cleanedText = htmlClone.textContent.trim().replace(/\s*\[?obj\]?\s*/gi, '').trim();
+          const cleanedText = htmlClone instanceof Element ? htmlClone.textContent.trim().replace(/\s*\[?obj\]?\s*/gi, '').trim() : '';
           
           // Only add if there's still meaningful content after cleaning
           if (cleanedText && cleanedText.length >= 5) {
             // Final cleanup: remove any remaining OBJ markers from HTML
-            let cleanedHtml = htmlClone.innerHTML
+            let cleanedHtml = htmlClone instanceof Element ? htmlClone.innerHTML
               .replace(/\s*\[?obj\]?\s*/gi, '') // Remove any remaining OBJ markers
               .replace(/<[^>]*>\s*\[?obj\]?\s*<\/[^>]*>/gi, '') // Remove empty tags with OBJ
-              .trim();
+              .trim() : '';
             
             // Only add if HTML is not empty after all cleaning
             if (cleanedHtml && cleanedHtml.length > 0) {
@@ -3771,10 +3774,11 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           if (parentFigure) {
             continue; // Will be processed when we encounter the figure
           }
+          const imgElement = element instanceof HTMLImageElement ? element : null;
           content.push({
             type: 'image',
             src: absoluteSrc,
-            alt: element.alt || '',
+            alt: imgElement?.alt || '',
             caption: getImageCaption(element)
           });
           processedImages.add(normalizedSrc);
@@ -3849,7 +3853,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           const rowCount = rows.length;
           let maxColCount = 0;
           
-          for (const row of rows) {
+          for (const row of Array.from(rows)) {
             const cells = row.querySelectorAll('td, th');
             maxColCount = Math.max(maxColCount, cells.length);
           }
@@ -3862,26 +3866,28 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           if (hasStructure || hasSubstantialText) {
             // Clean table HTML: remove inline styles, scripts, event handlers
             const tableClone = element.cloneNode(true);
-            const allElements = tableClone.querySelectorAll('*');
-            
-            // Remove dangerous attributes
-            for (const el of allElements) {
-              // Remove style attributes
-              el.removeAttribute('style');
-              // Remove event handlers
-              for (const attr of el.attributes) {
-                if (attr.name.startsWith('on')) {
-                  el.removeAttribute(attr.name);
+            if (tableClone instanceof Element) {
+              const allElements = tableClone.querySelectorAll('*');
+              
+              // Remove dangerous attributes
+              for (const el of Array.from(allElements)) {
+                // Remove style attributes
+                el.removeAttribute('style');
+                // Remove event handlers
+                for (const attr of Array.from(el.attributes)) {
+                  if (attr.name.startsWith('on')) {
+                    el.removeAttribute(attr.name);
+                  }
                 }
               }
+              
+              const tableHtml = tableClone.outerHTML;
+              content.push({
+                type: 'paragraph', // Treat table as special paragraph
+                text: tableHtml,
+                html: tableHtml
+              });
             }
-            
-            const tableHtml = tableClone.outerHTML;
-            content.push({
-              type: 'paragraph', // Treat table as special paragraph
-              text: tableHtml,
-              html: tableHtml
-            });
           }
         }
       }
@@ -3895,7 +3901,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
       debugInfo.contentTypes = contentTypes;
       debugInfo.processedCount = processedCount;
       debugInfo.skippedCount = skippedCount;
-      debugInfo.finalImageCount = contentTypes.image || 0;
+      debugInfo.finalImageCount = ((contentTypes['image'] || 0));
     } else {
       // Skip expensive contentTypes calculation if debug is disabled
       // This is a performance optimization - contentTypes is only used for debug logging
