@@ -121,9 +121,13 @@ export function initUI(deps) {
     // Update specific dynamic elements
     if (elements.modeHint) {
       const mode = elements.modeSelect?.value || 'selector';
-      elements.modeHint.textContent = mode === 'selector' 
-        ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
-        : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
+      if (mode === 'automatic') {
+        elements.modeHint.textContent = locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic;
+      } else if (mode === 'selector') {
+        elements.modeHint.textContent = locale.extractionModeHint || UI_LOCALES.en.extractionModeHint;
+      } else {
+        elements.modeHint.textContent = locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract;
+      }
     }
     
     // Update output format button text

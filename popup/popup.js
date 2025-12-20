@@ -1001,7 +1001,7 @@ async function init() {
   // Load and display version
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '3.0.3';
+    const version = manifest.version || '3.1.0';
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;
@@ -1790,9 +1790,14 @@ async function updateModeHint() {
   const mode = elements.modeSelect.value;
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-  elements.modeHint.textContent = mode === 'selector' 
-    ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
-    : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
+  
+  if (mode === 'automatic') {
+    elements.modeHint.textContent = locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic;
+  } else if (mode === 'selector') {
+    elements.modeHint.textContent = locale.extractionModeHint || UI_LOCALES.en.extractionModeHint;
+  } else {
+    elements.modeHint.textContent = locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract;
+  }
 }
 
 // Show/hide cache option based on mode

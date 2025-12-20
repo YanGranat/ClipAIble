@@ -2,7 +2,7 @@
 
 > **AI驱动的文章提取器** — 将网页上的任何文章保存为PDF、EPUB、FB2、Markdown或音频。支持11种语言翻译。适用于任何网站。
 
-![版本](https://img.shields.io/badge/版本-3.0.3-blue)
+![版本](https://img.shields.io/badge/版本-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-扩展-green)
 ![许可证](https://img.shields.io/badge/许可证-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 ## 🚀 功能
 
 ### 🤖 AI驱动的提取
-- **两种模式**：AI Selector（快速、可重用）和 AI Extract（彻底）
+- **三种模式**：自动（无AI，快速）、AI Selector（快速、可重用）和 AI Extract（彻底）
+- **自动模式**：无需AI创建文档 — 无需API密钥，即时提取
 - **支持多个提供商**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
 - **视频支持**：从YouTube/Vimeo视频提取字幕并转换为文章（v3.0.0）
   - 多种提取方法，带后备方案
@@ -267,6 +268,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 
 | 模式 | 速度 | 最适合 |
 |------|------|--------|
+| **自动** | ⚡⚡ 即时 | 简单文章，无需API密钥 |
 | **AI Selector** | ⚡ 快速 | 大多数网站、博客、新闻 |
 | **AI Extract** | 🐢 彻底 | 复杂页面、Notion、SPA |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635行)
 │   ├── content.js      # YouTube内容脚本
 │   ├── locales.js      # UI本地化（11种语言）
-│   ├── message-handlers/ # 消息处理器模块（v3.0.3）
+│   ├── message-handlers/ # 消息处理器模块（v3.0.2+）
 │   │   ├── index.js    # 消息路由器
 │   │   ├── utils.js    # 处理器工具
 │   │   ├── simple.js   # 简单处理器

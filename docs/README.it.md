@@ -2,7 +2,7 @@
 
 > **Estrattore di articoli alimentato da IA** — Salva qualsiasi articolo dal web come PDF, EPUB, FB2, Markdown o Audio. Traduzione in 11 lingue. Funziona su qualsiasi sito web.
 
-![Versione](https://img.shields.io/badge/versione-3.0.3-blue)
+![Versione](https://img.shields.io/badge/versione-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Estensione-green)
 ![Licenza](https://img.shields.io/badge/licenza-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 ## 🚀 Funzionalità
 
 ### 🤖 Estrazione alimentata da IA
-- **Due modalità**: AI Selector (veloce, riutilizzabile) e AI Extract (approfondita)
+- **Tre modalità**: Automatico (senza IA, veloce), AI Selector (veloce, riutilizzabile) e AI Extract (approfondita)
+- **Modalità automatica**: Crea documenti senza IA — nessuna chiave API richiesta, estrazione istantanea
 - **Più fornitori**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Supporto video**: Estrarre sottotitoli da video YouTube/Vimeo e convertirli in articoli (v3.0.0)
   - Metodi di estrazione multipli con fallback
@@ -267,6 +268,7 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 
 | Modalità | Velocità | Migliore per |
 |----------|----------|--------------|
+| **Automatico** | ⚡⚡ Istantaneo | Articoli semplici, nessuna chiave API richiesta |
 | **AI Selector** | ⚡ Veloce | La maggior parte dei siti, blog, notizie |
 | **AI Extract** | 🐢 Approfondita | Pagine complesse, Notion, SPAs |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 righe)
 │   ├── content.js      # Content script per YouTube
 │   ├── locales.js      # Localizzazione UI (11 lingue)
-│   ├── message-handlers/ # Moduli gestori messaggi (v3.0.3)
+│   ├── message-handlers/ # Moduli gestori messaggi (v3.0.2+)
 │   │   ├── index.js    # Router messaggi
 │   │   ├── utils.js    # Utilità gestori
 │   │   ├── simple.js   # Gestori semplici

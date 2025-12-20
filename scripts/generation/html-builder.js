@@ -34,7 +34,39 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   // Clean title from soft hyphens and special characters
   const cleanedTitle = cleanTitle(title || '');
   
+  // Check if first content item is a heading that matches the title
+  // If so, we'll skip it since title is already in header
+  const firstItem = content[0];
+  const firstItemIsTitle = firstItem && 
+    firstItem.type === 'heading' && 
+    firstItem.level === 1 &&
+    cleanedTitle && 
+    (firstItem.text || '').replace(/<[^>]+>/g, '').trim() === cleanedTitle;
+  
+  // Extract subtitle from content to place it in header (after title, before meta)
+  let subtitleHtml = '';
+  let subtitleIndex = -1;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i].type === 'subtitle') {
+      const item = content[i];
+      const idAttr = item.id ? ` id="${escapeAttr(item.id)}"` : '';
+      subtitleHtml = `<p class="standfirst"${idAttr}>${sanitizeHtml(item.text, sourceUrl)}</p>`;
+      subtitleIndex = i;
+      break;
+    }
+  }
+  
   const contentHtml = content.map((item, index) => {
+    // Skip first heading if it matches the title (title is already in header)
+    if (index === 0 && firstItemIsTitle && item.type === 'heading' && item.level === 1) {
+      return '';
+    }
+    
+    // Skip subtitle - it will be in header
+    if (item.type === 'subtitle') {
+      return '';
+    }
+    
     try {
       const idAttr = item.id ? ` id="${escapeAttr(item.id)}"` : '';
       const anchorTag = item.id ? `<a name="${escapeAttr(item.id)}"></a>` : '';
@@ -173,6 +205,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   <article class="article">
     <header class="article-header">
       <h1 class="article-title">${escapeHtml(cleanedTitle)}</h1>
+      ${subtitleHtml}
       ${metaHtml}
     </header>
     ${abstractHtml}

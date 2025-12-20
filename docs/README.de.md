@@ -2,7 +2,7 @@
 
 > **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
 
-![Version](https://img.shields.io/badge/version-3.0.3-blue)
+![Version](https://img.shields.io/badge/version-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Erweiterung-green)
 ![Lizenz](https://img.shields.io/badge/lizenz-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 ## 🚀 Funktionen
 
 ### 🤖 KI-gestützte Extraktion
-- **Zwei Modi**: AI Selector (schnell, wiederverwendbar) und AI Extract (gründlich)
+- **Drei Modi**: Automatisch (ohne KI, schnell), AI Selector (schnell, wiederverwendbar) und AI Extract (gründlich)
+- **Automatischer Modus**: Dokumente ohne KI erstellen — keine API-Schlüssel erforderlich, sofortige Extraktion
 - **Mehrere Anbieter**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Video-Unterstützung**: Untertitel von YouTube/Vimeo-Videos extrahieren und in Artikel umwandeln (v3.0.0)
   - Mehrere Extraktionsmethoden mit Fallbacks
@@ -267,6 +268,7 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 
 | Modus | Geschwindigkeit | Am besten für |
 |-------|-----------------|---------------|
+| **Automatisch** | ⚡⚡ Sofort | Einfache Artikel, kein API-Schlüssel erforderlich |
 | **AI Selector** | ⚡ Schnell | Die meisten Websites, Blogs, Nachrichten |
 | **AI Extract** | 🐢 Gründlich | Komplexe Seiten, Notion, SPAs |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service Worker (2635 Zeilen)
 │   ├── content.js      # Content Script für YouTube
 │   ├── locales.js      # UI-Lokalisierung (11 Sprachen)
-│   ├── message-handlers/ # Nachrichtenhandler-Module (v3.0.3)
+│   ├── message-handlers/ # Nachrichtenhandler-Module (v3.0.2+)
 │   │   ├── index.js    # Nachrichten-Router
 │   │   ├── utils.js    # Handler-Utilities
 │   │   ├── simple.js   # Einfache Handler

@@ -1289,7 +1289,9 @@ export function initCore(deps) {
         return;
       }
     }
-    if (!apiKey) {
+    // Check API key only if not using automatic mode
+    const mode = elements.modeSelect.value;
+    if (mode !== 'automatic' && !apiKey) {
       const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : 'Gemini';
       showToast(await t(`pleaseEnter${providerName}ApiKey`), 'error');
       return;

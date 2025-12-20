@@ -39,7 +39,7 @@ import {
 } from './extraction/prompts.js';
 import { trimHtmlForAnalysis, splitHtmlIntoChunks, deduplicateContent } from './extraction/html-utils.js';
 import { cleanTitleFromServiceTokens } from './utils/html.js';
-import { translateContent, translateImages, detectSourceLanguage, generateAbstract, detectContentLanguage, generateSummary } from './translation/index.js';
+import { translateContent, translateImages, detectSourceLanguage, generateAbstract, detectContentLanguage, generateSummary, detectLanguageByCharacters } from './translation/index.js';
 import { generateMarkdown } from './generation/markdown.js';
 import { generatePdf, generatePdfWithDebugger } from './generation/pdf.js';
 import { generateEpub } from './generation/epub.js';
@@ -63,6 +63,7 @@ import { getUILanguage, tSync } from './locales.js';
 import { detectVideoPlatform } from './utils/video.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from './extraction/video-processor.js';
+import { extractAutomaticallyInlined } from './extraction/automatic.js';
 import { routeMessage } from './message-handlers/index.js';
 
 // ============================================
@@ -1306,7 +1307,9 @@ async function startArticleProcessing(data) {
   // Standard article processing
   const { mode } = data;
   
-  const processFunction = mode === 'selector' 
+  const processFunction = mode === 'automatic'
+    ? processWithoutAI
+    : mode === 'selector' 
     ? processWithSelectorMode 
     : processWithExtractMode;
   
@@ -1496,6 +1499,7 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   const language = data.language || 'auto';
   const hasImageTranslation = data.translateImages && data.googleApiKey;
   
+  // Only translate if user explicitly selected a target language (not 'auto')
   if (language !== 'auto' && result.content && result.content.length > 0) {
     const uiLang = await getUILanguage();
     const translatingStatus = tSync('statusTranslatingContent', uiLang);
@@ -1514,7 +1518,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       const analyzingImagesStatus = tSync('statusAnalyzingImages', uiLang);
       updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: analyzingImagesStatus, progress: 40 });
       
-      const sourceLang = detectSourceLanguage(result.content);
+      // Use detected language from automatic extraction if available, otherwise detect from content
+      const sourceLang = result.detectedLanguage || detectSourceLanguage(result.content);
       result.content = await translateImages(
         result.content, sourceLang, language, 
         data.apiKey, data.googleApiKey, data.model, updateState
@@ -1577,7 +1582,11 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
                                  result.content.length > 0 && 
                                  data.apiKey;
   if (shouldGenerateAbstract) {
-    const abstractLang = data.language || 'auto';
+    // Use detected source language for abstract (not target translation language)
+    // For automatic mode, result.detectedLanguage contains the source language
+    // For AI modes, if result.detectedLanguage is not available, use 'auto'
+    // to let generateAbstract detect the language from content
+    const abstractLang = result.detectedLanguage || 'auto';
     try {
       const uiLang = await getUILanguage();
       const abstractStatus = tSync('stageGeneratingAbstract', uiLang);
@@ -1605,15 +1614,22 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   
   // Detect content language for 'auto' mode
   let effectiveLanguage = data.language || 'auto';
-  if (effectiveLanguage === 'auto' && result.content && result.content.length > 0 && data.apiKey) {
-    try {
-      const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
-      if (detectedLang && detectedLang !== 'en') {
-        effectiveLanguage = detectedLang;
-        log('Using detected language for localization', { detectedLang });
+  if (effectiveLanguage === 'auto') {
+    // Use detected language from automatic extraction if available
+    if (result.detectedLanguage) {
+      effectiveLanguage = result.detectedLanguage;
+      log('Using detected language from automatic extraction for localization', { detectedLang: effectiveLanguage });
+    } else if (result.content && result.content.length > 0 && data.apiKey) {
+      // Fallback to AI detection if API key available
+      try {
+        const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
+        if (detectedLang && detectedLang !== 'en') {
+          effectiveLanguage = detectedLang;
+          log('Using detected language for localization', { detectedLang });
+        }
+      } catch (error) {
+        logWarn('Language detection failed, using auto', error);
       }
-    } catch (error) {
-      logWarn('Language detection failed, using auto', error);
     }
   }
   
@@ -1751,6 +1767,12 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
     updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
     
     // Use generatePdf (not generatePdfWithDebugger) - it accepts object parameters
+    const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
+    log('Calling generatePdf', {
+      contentItems: result.content?.length || 0,
+      imageCount: imageCount,
+      contentTypes: result.content ? [...new Set(result.content.map(item => item?.type).filter(Boolean))] : []
+    });
     return generatePdf({
       content: result.content,
       title: result.title,
@@ -2007,6 +2029,74 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
     contentItems: results[0].result.content?.length
   });
   
+  // Log subtitle debug info if available
+  if (results[0].result.debug?.subtitleDebug) {
+    const subDebug = results[0].result.debug.subtitleDebug;
+    log('=== SUBTITLE EXTRACTION DEBUG ===', {
+      subtitleFound: subDebug.subtitleFound,
+      subtitleText: subDebug.subtitleText,
+      firstHeadingFound: subDebug.firstHeadingFound,
+      firstHeadingIndex: subDebug.firstHeadingIndex,
+      firstHeadingText: subDebug.firstHeadingText,
+      titleInContent: subDebug.titleInContent,
+      titleAdded: subDebug.titleAdded,
+      subtitleInserted: subDebug.subtitleInserted,
+      subtitleInsertIndex: subDebug.subtitleInsertIndex,
+      elementsProcessedBeforeFirstHeading: subDebug.elementsProcessedBeforeFirstHeading,
+      totalContentItemsBeforeInsert: subDebug.totalContentItemsBeforeInsert,
+      articleTitle: results[0].result.title
+    });
+    
+    // Log content before insert with full details
+    if (subDebug.contentBeforeInsert && subDebug.contentBeforeInsert.length > 0) {
+      log('Content BEFORE subtitle insert (first 5 items):');
+      subDebug.contentBeforeInsert.forEach((item, idx) => {
+        log(`  [${item.index}] ${item.type}: "${item.text}"`);
+      });
+    } else {
+      log('Content BEFORE subtitle insert: EMPTY or not logged');
+    }
+    
+    // Log content after insert with full details
+    if (subDebug.contentAfterInsert && subDebug.contentAfterInsert.length > 0) {
+      log('Content AFTER subtitle insert (first 5 items):');
+      subDebug.contentAfterInsert.forEach((item, idx) => {
+        log(`  [${item.index}] ${item.type}: "${item.text}"`);
+      });
+    } else {
+      log('Content AFTER subtitle insert: EMPTY or not logged');
+    }
+    
+    // Log actual final content structure with FULL text (not truncated)
+    const firstItems = results[0].result.content?.slice(0, 10).map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      level: item.level || null,
+      text: (item.text || '').replace(/<[^>]+>/g, '').trim(),
+      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length
+    }));
+    log('Final content structure (first 10 items with FULL text):');
+    firstItems?.forEach((item) => {
+      const levelStr = item.level ? ` (level ${item.level})` : '';
+      log(`  [${item.index}] ${item.type}${levelStr}: "${item.text.substring(0, 150)}${item.text.length > 150 ? '...' : ''}" (${item.textLength} chars)`);
+    });
+    
+    // Check if subtitle is actually in the right position
+    const subtitleIndex = results[0].result.content?.findIndex(item => item.type === 'subtitle');
+    const titleIndex = results[0].result.content?.findIndex(item => 
+      item.type === 'heading' && 
+      (item.text || '').replace(/<[^>]+>/g, '').trim() === results[0].result.title
+    );
+    log('Position check:', {
+      subtitleIndex: subtitleIndex !== undefined ? subtitleIndex : 'NOT FOUND',
+      titleIndex: titleIndex !== undefined ? titleIndex : 'NOT FOUND',
+      expectedSubtitleIndex: titleIndex !== undefined ? titleIndex + 1 : 'N/A',
+      isSubtitleRightAfterTitle: subtitleIndex === titleIndex + 1
+    });
+  } else {
+    log('No subtitle debug info available');
+  }
+  
   return results[0].result;
 }
 
@@ -2029,6 +2119,25 @@ function extractFromPageInlined(selectors, baseUrl) {
   const tocMapping = {};
   let footnotesHeaderAdded = false;
   const addedImageUrls = new Set();
+  let firstHeadingIndex = -1; // Track position of first heading for subtitle insertion
+  let subtitleToInsert = null; // Store subtitle to insert after first heading
+  
+  // Debug info for subtitle insertion
+  const subtitleDebug = {
+    subtitleFound: false,
+    subtitleText: null,
+    firstHeadingFound: false,
+    firstHeadingIndex: -1,
+    firstHeadingText: null,
+    titleInContent: false,
+    titleAdded: false,
+    subtitleInserted: false,
+    subtitleInsertIndex: -1,
+    contentBeforeInsert: [],
+    contentAfterInsert: [],
+    elementsProcessedBeforeFirstHeading: 0,
+    totalContentItemsBeforeInsert: 0
+  };
   
   // Helper functions
   function toAbsoluteUrl(url) {
@@ -2288,7 +2397,9 @@ function extractFromPageInlined(selectors, baseUrl) {
     if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
       const text = element.textContent.trim();
       const formattedText = getFormattedHtml(element);
-      if (text && text !== articleTitle) {
+      // Include heading even if it matches articleTitle (it's the main title)
+      // Only skip if it's clearly author name or other metadata
+      if (text) {
         if (articleAuthor) {
           const tl = text.toLowerCase(), al = articleAuthor.toLowerCase();
           if (tl === al || (text.length < 50 && tl.includes(al))) return;
@@ -2300,7 +2411,27 @@ function extractFromPageInlined(selectors, baseUrl) {
           else headingId = String(debugInfo.headingCount + 1);
         }
         debugInfo.headingCount++;
-        content.push({ type: 'heading', level: parseInt(tagName[1]), text: formattedText, id: headingId });
+        const headingItem = { type: 'heading', level: parseInt(tagName[1]), text: formattedText, id: headingId };
+        content.push(headingItem);
+        
+        // Track first heading position and insert subtitle immediately after it
+        // This ensures subtitle is right after the title, before any other content
+        if (firstHeadingIndex === -1) {
+          firstHeadingIndex = content.length - 1;
+          subtitleDebug.firstHeadingFound = true;
+          subtitleDebug.firstHeadingIndex = firstHeadingIndex;
+          subtitleDebug.firstHeadingText = text.substring(0, 100);
+          subtitleDebug.titleInContent = articleTitle && (
+            text === articleTitle || text.toLowerCase() === articleTitle.toLowerCase()
+          );
+          // If we have a subtitle to insert, insert it now (right after this heading)
+          if (subtitleToInsert) {
+            content.splice(firstHeadingIndex + 1, 0, subtitleToInsert);
+            subtitleDebug.subtitleInserted = true;
+            subtitleDebug.subtitleInsertIndex = firstHeadingIndex + 1;
+            subtitleToInsert = null; // Clear it so we don't insert it again
+          }
+        }
       }
     }
     else if (tagName === 'p') {
@@ -2474,6 +2605,56 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
   }
   
+  // Extract subtitle if selector provided (BEFORE processing content)
+  // Subtitle should be added after the title (first heading), before main content
+  // We'll store it and insert it immediately after the first heading is found
+  if (selectors.subtitle && selectors.subtitle.trim()) {
+    try {
+      const subtitleEl = document.querySelector(selectors.subtitle);
+      if (subtitleEl) {
+        subtitleDebug.subtitleFound = true;
+        // Check if element is visible (not hidden)
+        try {
+          const style = window.getComputedStyle(subtitleEl);
+          if (style.display === 'none' || style.visibility === 'hidden') {
+            // Element is hidden, skip it
+          } else {
+            const subtitleText = subtitleEl.textContent.trim();
+            subtitleDebug.subtitleText = subtitleText.substring(0, 100);
+            // Subtitle should be meaningful (at least 20 characters, typically 50-300)
+            if (subtitleText && subtitleText.length >= 20) {
+              // Check if subtitle is not excluded
+              if (!shouldExclude(subtitleEl)) {
+                const subtitleHtml = getFormattedHtml(subtitleEl);
+                subtitleToInsert = { 
+                  type: 'subtitle', 
+                  text: subtitleText, 
+                  html: `<p class="standfirst">${subtitleHtml}</p>`,
+                  isStandfirst: true 
+                };
+              }
+            }
+          }
+        } catch (styleError) {
+          // If style check fails, try to extract anyway
+          const subtitleText = subtitleEl.textContent.trim();
+          if (subtitleText && subtitleText.length >= 20 && !shouldExclude(subtitleEl)) {
+            subtitleDebug.subtitleText = subtitleText.substring(0, 100);
+            const subtitleHtml = getFormattedHtml(subtitleEl);
+            subtitleToInsert = { 
+              type: 'subtitle', 
+              text: subtitleText, 
+              html: `<p class="standfirst">${subtitleHtml}</p>`,
+              isStandfirst: true 
+            };
+          }
+        }
+      }
+    } catch (e) {
+      // Selector might be invalid, continue without subtitle
+    }
+  }
+  
   // Start processing
   const containerSelector = selectors.articleContainer || 'body';
   if (containers.length > 0) {
@@ -2502,8 +2683,105 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
   }
   
+  // If subtitle wasn't inserted yet, ensure title is in content and insert subtitle after it
+  // CRITICAL: Title (h1) might be outside article, so it won't be processed
+  // We need to add it to content if it's missing, but ONLY if it's not already there
+  if (subtitleToInsert) {
+    // Store debug info
+    subtitleDebug.totalContentItemsBeforeInsert = content.length;
+    subtitleDebug.elementsProcessedBeforeFirstHeading = debugInfo.elementsProcessed;
+    
+    // Store content state before insertion for debugging
+    subtitleDebug.contentBeforeInsert = content.slice(0, 5).map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      text: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 80)
+    }));
+    
+    // Find the first heading in content
+    let firstHeadingIndex = -1;
+    let titleInContent = false;
+    
+    for (let i = 0; i < content.length; i++) {
+      if (content[i].type === 'heading') {
+        firstHeadingIndex = i;
+        subtitleDebug.firstHeadingFound = true;
+        subtitleDebug.firstHeadingIndex = i;
+        subtitleDebug.firstHeadingText = (content[i].text || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
+        // Check if this heading matches article title
+        if (articleTitle) {
+          const headingText = (content[i].text || '').replace(/<[^>]+>/g, '').trim();
+          if (headingText === articleTitle || headingText.toLowerCase() === articleTitle.toLowerCase()) {
+            titleInContent = true;
+            subtitleDebug.titleInContent = true;
+          }
+        }
+        break;
+      }
+    }
+    
+    // If no heading found AND title is not in content, add title at the beginning
+    // This handles case when title is outside article and not processed
+    if (firstHeadingIndex === -1 && articleTitle && !titleInContent) {
+      // Double-check: search entire content for title text to avoid duplicates
+      let titleExists = false;
+      for (let i = 0; i < content.length; i++) {
+        const itemText = (content[i].text || '').replace(/<[^>]+>/g, '').trim();
+        if (itemText === articleTitle || itemText.toLowerCase() === articleTitle.toLowerCase()) {
+          titleExists = true;
+          break;
+        }
+      }
+      
+      // Only add title if it doesn't exist anywhere in content
+      if (!titleExists) {
+        const titleItem = { type: 'heading', level: 1, text: articleTitle, id: 'article-title' };
+        content.unshift(titleItem);
+        firstHeadingIndex = 0;
+        subtitleDebug.titleAdded = true;
+        subtitleDebug.firstHeadingIndex = 0;
+        subtitleDebug.firstHeadingText = articleTitle.substring(0, 100);
+        subtitleDebug.titleInContent = true;
+      } else {
+        subtitleDebug.titleInContent = true;
+        // Title exists but might not be a heading - find its position
+        for (let i = 0; i < content.length; i++) {
+          const itemText = (content[i].text || '').replace(/<[^>]+>/g, '').trim();
+          if (itemText === articleTitle || itemText.toLowerCase() === articleTitle.toLowerCase()) {
+            if (content[i].type === 'heading') {
+              firstHeadingIndex = i;
+              subtitleDebug.firstHeadingIndex = i;
+              subtitleDebug.firstHeadingText = articleTitle.substring(0, 100);
+            }
+            break;
+          }
+        }
+      }
+    }
+    
+    // Insert subtitle right after first heading (or at beginning if no heading)
+    if (firstHeadingIndex >= 0) {
+      content.splice(firstHeadingIndex + 1, 0, subtitleToInsert);
+      subtitleDebug.subtitleInserted = true;
+      subtitleDebug.subtitleInsertIndex = firstHeadingIndex + 1;
+    } else {
+      // No heading found, insert at the beginning
+      content.unshift(subtitleToInsert);
+      subtitleDebug.subtitleInserted = true;
+      subtitleDebug.subtitleInsertIndex = 0;
+    }
+    subtitleToInsert = null;
+    
+    // Store content state after insertion for debugging
+    subtitleDebug.contentAfterInsert = content.slice(0, 5).map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      text: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 80)
+    }));
+  }
+  
   // Extract hero image if selector provided
-  // Hero image should be added after the first heading (title), not at the very beginning
+  // Hero image should be added after the title and subtitle (if subtitle exists), not at the very beginning
   if (selectors.heroImage) {
     try {
       const heroImgEl = document.querySelector(selectors.heroImage);
@@ -2512,15 +2790,26 @@ function extractFromPageInlined(selectors, baseUrl) {
         heroSrc = toAbsoluteUrl(heroSrc);
         const ns = normalizeImageUrl(heroSrc);
         if (heroSrc && !isTrackingPixelOrSpacer(heroImgEl, heroSrc) && !isPlaceholderUrl(heroSrc) && !isSmallOrAvatarImage(heroImgEl, heroSrc) && !addedImageUrls.has(ns)) {
-          // Find first heading position and insert hero image after it
-          // If no heading found, insert at position 0 (beginning)
-          let insertIndex = 0;
+          // Find first heading position
+          let firstHeadingIndex = -1;
           for (let i = 0; i < content.length; i++) {
             if (content[i].type === 'heading') {
-              insertIndex = i + 1;
+              firstHeadingIndex = i;
               break;
             }
           }
+          
+          // Determine insert position:
+          // 1. If heading found, check if subtitle is right after it
+          // 2. If subtitle exists at firstHeadingIndex + 1, insert hero image after subtitle
+          // 3. Otherwise, insert hero image after heading (or at position 0 if no heading)
+          let insertIndex = firstHeadingIndex >= 0 ? firstHeadingIndex + 1 : 0;
+          
+          // Check if subtitle is at the position right after heading
+          if (firstHeadingIndex >= 0 && content[firstHeadingIndex + 1]?.type === 'subtitle') {
+            insertIndex = firstHeadingIndex + 2; // Insert after subtitle
+          }
+          
           content.splice(insertIndex, 0, { type: 'image', src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) });
           addedImageUrls.add(ns);
         }
@@ -2529,11 +2818,151 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
   }
   
+  // Add subtitle debug info to debug object
+  if (subtitleToInsert || subtitleDebug.subtitleFound) {
+    debugInfo.subtitleDebug = subtitleDebug;
+  }
+  
   return { title: articleTitle, author: articleAuthor, content: content, publishDate: publishDate, debug: debugInfo };
 }
 
 // ============================================
-// MODE 2: EXTRACT MODE
+// MODE 2: AUTOMATIC MODE (NO AI)
+// ============================================
+
+async function processWithoutAI(data) {
+  const { html, url, title, tabId } = data;
+
+  log('=== AUTOMATIC MODE START (NO AI) ===');
+  log('Input data', { url, title, htmlLength: html?.length });
+
+  if (!html) throw new Error('No HTML content provided');
+  if (!tabId) throw new Error('Tab ID is required for automatic extraction');
+
+  // Check if processing was cancelled
+  if (isCancelled()) {
+    log('Processing cancelled before automatic extraction');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('statusCancelled', uiLang));
+  }
+
+  const uiLangExtracting = await getUILanguage();
+  const extractingStatus = tSync('statusExtractingContent', uiLangExtracting);
+  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
+
+  // Execute automatic extraction in page context
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      world: 'MAIN',
+      func: extractAutomaticallyInlined,
+      args: [url]
+    });
+    log('Automatic extraction executed', { resultsLength: results?.length });
+  } catch (scriptError) {
+    logError('Automatic extraction script execution failed', scriptError);
+    throw new Error(`Failed to execute automatic extraction: ${scriptError.message}`);
+  }
+
+  if (!results || !results[0]) {
+    throw new Error('Automatic extraction returned empty results');
+  }
+
+  if (results[0].error) {
+    logError('Automatic extraction error', results[0].error);
+    throw new Error(`Automatic extraction error: ${results[0].error.message || results[0].error}`);
+  }
+
+  if (!results[0].result) {
+    throw new Error('Automatic extraction returned no result');
+  }
+
+  const result = results[0].result;
+  const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
+  
+  // Log debug info if available
+  if (result.debugInfo) {
+    log('Automatic extraction debug info', {
+      foundElements: result.debugInfo.foundElements,
+      imageCount: result.debugInfo.imageCount,
+      allByType: result.debugInfo.allByType,
+      filteredElements: result.debugInfo.filteredElements,
+      filteredByType: result.debugInfo.filteredByType,
+      excludedByType: result.debugInfo.excludedByType,
+      excludedImageCount: result.debugInfo.excludedImageCount,
+      filteredImageCount: result.debugInfo.filteredImageCount,
+      processedCount: result.debugInfo.processedCount,
+      skippedCount: result.debugInfo.skippedCount,
+      finalImageCount: result.debugInfo.finalImageCount,
+      contentTypes: result.debugInfo.contentTypes,
+      finalContentTypes: result.debugInfo.finalContentTypes,
+      duplicateHeadingsRemoved: result.debugInfo.duplicateHeadingsRemoved
+    });
+  }
+  
+  log('Automatic extraction result', {
+    title: result.title,
+    author: result.author,
+    publishDate: result.publishDate,
+    contentItems: result.content?.length || 0,
+    imageCount: imageCount,
+    contentTypes: result.content ? [...new Set(result.content.map(item => item?.type).filter(Boolean))] : [],
+    hasError: !!result.error,
+    error: result.error
+  });
+  
+  // Log error details if present
+  if (result.error) {
+    logError('Automatic extraction returned error in result', {
+      error: result.error,
+      errorStack: result.errorStack
+    });
+  }
+
+  if (!result.content || result.content.length === 0) {
+    // Provide more detailed error message
+    const errorMsg = result.error 
+      ? `Automatic extraction failed: ${result.error}. The page structure may be too complex. Try using AI modes.`
+      : 'Automatic extraction returned no content. The page structure may be too complex. Try using AI modes.';
+    throw new Error(errorMsg);
+  }
+
+  // Detect language from content
+  let detectedLanguage = 'en';
+  try {
+    // Extract text for language detection
+    let text = '';
+    for (const item of result.content) {
+      if (item.text) {
+        const textOnly = item.text.replace(/<[^>]+>/g, ' ').trim();
+        text += textOnly + ' ';
+        if (text.length > 5000) break;
+      }
+    }
+    
+    if (text.trim()) {
+      // Use character-based detection (no AI needed)
+      detectedLanguage = detectLanguageByCharacters(text);
+      log('Language detected automatically', { language: detectedLanguage });
+    }
+  } catch (error) {
+    logWarn('Language detection failed, using default', error);
+  }
+
+  updateState({ progress: 15 });
+
+  return {
+    title: result.title || title || 'Untitled',
+    author: result.author || '',
+    content: result.content,
+    publishDate: result.publishDate || '',
+    detectedLanguage: detectedLanguage
+  };
+}
+
+// ============================================
+// MODE 3: EXTRACT MODE
 // ============================================
 
 async function processWithExtractMode(data) {

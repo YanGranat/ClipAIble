@@ -2,7 +2,7 @@
 
 > **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
-![バージョン](https://img.shields.io/badge/バージョン-3.0.3-blue)
+![バージョン](https://img.shields.io/badge/バージョン-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
 ![ライセンス](https://img.shields.io/badge/ライセンス-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 ## 🚀 機能
 
 ### 🤖 AI駆動の抽出
-- **2つのモード**：AI Selector（高速、再利用可能）とAI Extract（徹底的）
+- **3つのモード**：自動（AIなし、高速）、AI Selector（高速、再利用可能）とAI Extract（徹底的）
+- **自動モード**：AIなしでドキュメントを作成 — APIキー不要、即座に抽出
 - **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
 - **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v3.0.0）
   - 複数の抽出方法とフォールバック
@@ -267,6 +268,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 
 | モード | 速度 | 最適な用途 |
 |--------|------|-----------|
+| **自動** | ⚡⚡ 即座 | シンプルな記事、APIキー不要 |
 | **AI Selector** | ⚡ 高速 | ほとんどのサイト、ブログ、ニュース |
 | **AI Extract** | 🐢 徹底的 | 複雑なページ、Notion、SPA |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635行)
 │   ├── content.js      # YouTube用コンテンツスクリプト
 │   ├── locales.js      # UIローカライゼーション（11言語）
-│   ├── message-handlers/ # メッセージハンドラーモジュール（v3.0.3）
+│   ├── message-handlers/ # メッセージハンドラーモジュール（v3.0.2+）
 │   │   ├── index.js    # メッセージルーター
 │   │   ├── utils.js    # ハンドラーユーティリティ
 │   │   ├── simple.js   # シンプルハンドラー

@@ -132,7 +132,11 @@ export async function generatePdf(data, updateState) {
       updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 82 });
     }
     
-    log('Embedding images...');
+    log('Embedding images...', { 
+      contentLength: content.length,
+      imageItems: content.filter(item => item.type === 'image').length,
+      imageSources: content.filter(item => item.type === 'image').map(img => img.src?.substring(0, 80) || 'no src')
+    });
     const htmlWithImages = await embedImages(htmlContent, content, updateState, escapeAttr);
     log('Images embedded', { finalLength: htmlWithImages.length });
     

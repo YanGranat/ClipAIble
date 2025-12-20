@@ -2,7 +2,7 @@
 
 > **Extractor de artículos con IA** — Guarda cualquier artículo de la web como PDF, EPUB, FB2, Markdown o Audio. Traducción a 11 idiomas. Funciona en cualquier sitio web.
 
-![Versión](https://img.shields.io/badge/versión-3.0.3-blue)
+![Versión](https://img.shields.io/badge/versión-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensión-green)
 ![Licencia](https://img.shields.io/badge/licencia-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 ## 🚀 Características
 
 ### 🤖 Extracción con IA
-- **Dos modos**: AI Selector (rápido, reutilizable) y AI Extract (exhaustivo)
+- **Tres modos**: Automático (sin IA, rápido), AI Selector (rápido, reutilizable) y AI Extract (exhaustivo)
+- **Modo automático**: Crear documentos sin IA — no se requieren claves API, extracción instantánea
 - **Varios proveedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Soporte de video**: Extraer subtítulos de videos YouTube/Vimeo y convertirlos en artículos (v3.0.0)
   - Múltiples métodos de extracción con respaldos
@@ -267,6 +268,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 
 | Modo | Velocidad | Mejor para |
 |------|-----------|------------|
+| **Automático** | ⚡⚡ Instantáneo | Artículos simples, no se requiere clave API |
 | **AI Selector** | ⚡ Rápido | La mayoría de sitios, blogs, noticias |
 | **AI Extract** | 🐢 Exhaustivo | Páginas complejas, Notion, SPAs |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 líneas)
 │   ├── content.js      # Content script para YouTube
 │   ├── locales.js      # Localización UI (11 idiomas)
-│   ├── message-handlers/ # Módulos de manejadores de mensajes (v3.0.3)
+│   ├── message-handlers/ # Módulos de manejadores de mensajes (v3.0.2+)
 │   │   ├── index.js    # Enrutador de mensajes
 │   │   ├── utils.js    # Utilidades de manejadores
 │   │   ├── simple.js   # Manejadores simples

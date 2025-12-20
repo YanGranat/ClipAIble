@@ -1622,6 +1622,8 @@ export function initHandlers(deps) {
         }
       });
     }
+    
+    log('setupEventListeners: completed successfully');
   }
 
   return {

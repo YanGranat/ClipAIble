@@ -222,6 +222,21 @@ NEVER EXCLUDE these (important article content):
 - Footnotes / Endnotes
 - Main article body
 
+CRITICAL - SUBTITLE SELECTOR:
+- "subtitle" = CSS selector for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content
+- This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
+- Look for:
+  * Elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
+  * First paragraph (<p>) inside article/main that appears right after the title (h1)
+  * Paragraph that is shorter than typical article paragraphs and appears before the main content
+- Common patterns:
+  * "article > p:first-child" or "article p:first-of-type" (if first paragraph is the subtitle)
+  * ".standfirst", ".subtitle", ".deck" (if element has specific class)
+  * "article > div > p:first-child" (if subtitle is in a wrapper div)
+- IMPORTANT: If the first paragraph after title looks like a subtitle (short, introductory, no links or few links), include it even if it has no special class
+- If no subtitle/standfirst exists, return empty string ""
+- The subtitle selector should match the element that contains ONLY the subtitle text, not the entire article
+
 Return ONLY valid JSON.`;
 
 /**
@@ -257,6 +272,15 @@ OTHER REQUIREMENTS:
 - Example: If content is in <section>, use "section" or "section p", NOT "body > section > p"
 - NEVER use css-* or random hash classes
 - "author" and "publishDate" should be actual TEXT values, not selectors
+- CRITICAL - SUBTITLE SELECTOR:
+  * Look for introductory text (standfirst/deck/subtitle) that appears AFTER the title (h1) but BEFORE the main article content
+  * This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
+  * First, check for elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
+  * If no such classes exist, look for the FIRST paragraph (<p>) inside article/main that appears right after the title
+  * Common selectors: "article > p:first-child", "article p:first-of-type", "article > div > p:first-child"
+  * The subtitle should be shorter than typical article paragraphs and appear before the main content starts
+  * If you see a paragraph that looks like a subtitle (short, introductory, summarizes the article), include it even if it has no special class
+  * If no subtitle/standfirst exists, return empty string ""
 - CRITICAL - TITLE AND AUTHOR SEPARATION:
   * If title contains author name (e.g., "Article by John Smith", "Статья от Ивана", "Post von Max"), you MUST:
     1. Return CLEAN title in "title" field (without author name)
@@ -324,6 +348,7 @@ Return JSON:
   "publishDate": "Date in ISO format (YYYY-MM-DD, YYYY-MM, or YYYY) or empty string if not found",
   "content": [
     {"type": "heading", "level": 1, "text": "Heading text"},
+    {"type": "subtitle", "text": "Subtitle/standfirst text below title (if present)", "html": "<p class=\"standfirst\">Subtitle text</p>"},
     {"type": "paragraph", "text": "Text with <a href=\\"url\\">links</a> and <strong>formatting</strong>."},
     {"type": "image", "src": "https://full-url/image.jpg", "alt": "Description"},
     {"type": "quote", "text": "Quote text..."},
@@ -332,6 +357,13 @@ Return JSON:
     {"type": "table", "headers": ["Col1", "Col2"], "rows": [["a", "b"]]}
   ]
 }
+
+CRITICAL - SUBTITLE EXTRACTION:
+- Look for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content
+- This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
+- Common patterns: paragraph immediately after h1, text in elements with classes like "standfirst", "subtitle", "deck", "lede", "intro"
+- If you find such text, add it as {"type": "subtitle", "text": "...", "html": "<p class=\"standfirst\">...</p>"} RIGHT AFTER the title heading
+- If no subtitle/standfirst exists, do NOT add a subtitle item
 
 RULES FOR publishDate (CRITICAL - MUST FOLLOW):
 - ALWAYS return date in ISO format: YYYY-MM-DD (full date), YYYY-MM (year and month), or YYYY (year only)
@@ -393,6 +425,7 @@ Return JSON with content array:
   ${isFirst ? '"publishDate": "Date in ISO format ONLY (YYYY-MM-DD, YYYY-MM, or YYYY) - MUST convert any format to ISO, or empty string if not found",' : ''}
   "content": [
     {"type": "heading", "level": 2, "text": "Section title"},
+    ${isFirst ? '{"type": "subtitle", "text": "Subtitle/standfirst text below title (if present)", "html": "<p class=\\"standfirst\\">Subtitle text</p>"},' : ''}
     {"type": "paragraph", "text": "Text with <a href=\\"url\\">links</a> preserved."},
     {"type": "image", "src": "https://full-url/image.jpg", "alt": "Caption"},
     {"type": "list", "ordered": false, "items": ["Item 1", "Item 2"]},
@@ -400,6 +433,8 @@ Return JSON with content array:
     {"type": "code", "language": "js", "text": "code here"}
   ]
 }
+
+${isFirst ? 'CRITICAL - SUBTITLE EXTRACTION (first chunk only):\n- Look for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content\n- This is usually a short paragraph (50-300 characters) that summarizes or introduces the article\n- Common patterns: paragraph immediately after h1, text in elements with classes like "standfirst", "subtitle", "deck", "lede", "intro"\n- If you find such text, add it as {"type": "subtitle", "text": "...", "html": "<p class=\\"standfirst\\">...</p>"} RIGHT AFTER the title heading\n- If no subtitle/standfirst exists, do NOT add a subtitle item' : ''}
 
 ${isFirst ? 'For title and author (CRITICAL): If title contains author name (e.g., "Article by John", "Статья от Ивана"), return CLEAN title without author in "title" field and author name ONLY (without prefix) in "author" field. Common prefixes: "от", "by", "автор:", "written by", "von", "par", "por", "da", "di". Examples: "How to Code by John Smith" → title="How to Code", author="John Smith". NEVER return title with author included!' : ''}
 ${isFirst ? 'For publishDate (CRITICAL): ALWAYS return date in ISO format ONLY (YYYY-MM-DD for full date, YYYY-MM for year+month, YYYY for year only). Examples: "2016-05-03", "2025-11", "2025". Convert ANY date format to ISO before returning. Remove ALL prefixes like "First published", "Published on", "Posted", "Updated". Examples: "First published May 3, 2016" → "2016-05-03", "31st Jul 2007" → "2007-07-31", "December 2025" → "2025-12", "2025" → "2025". VALIDATION: Before returning, verify format matches YYYY-MM-DD, YYYY-MM, or YYYY (4 digits). If no date found, return empty string "".' : ''}

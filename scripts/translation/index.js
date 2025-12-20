@@ -1047,7 +1047,7 @@ Rules:
  * @param {string} text - Text to analyze
  * @returns {string} Language code (defaults to 'en' if uncertain)
  */
-function detectLanguageByCharacters(text) {
+export function detectLanguageByCharacters(text) {
   if (!text || text.length < 50) return 'en';
   
   // Count character types

@@ -2,7 +2,7 @@
 
 > **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
 
-![버전](https://img.shields.io/badge/버전-3.0.3-blue)
+![버전](https://img.shields.io/badge/버전-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-확장-프로그램-green)
 ![라이선스](https://img.shields.io/badge/라이선스-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 ## 🚀 기능
 
 ### 🤖 AI 기반 추출
-- **두 가지 모드**: AI Selector (빠름, 재사용 가능) 및 AI Extract (철저함)
+- **세 가지 모드**: 자동 (AI 없음, 빠름), AI Selector (빠름, 재사용 가능) 및 AI Extract (철저함)
+- **자동 모드**: AI 없이 문서 생성 — API 키 불필요, 즉시 추출
 - **여러 제공업체 지원**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **비디오 지원**: YouTube/Vimeo 비디오에서 자막 추출 및 기사로 변환 (v3.0.0)
   - 여러 추출 방법 및 폴백
@@ -267,6 +268,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 
 | 모드 | 속도 | 최적 용도 |
 |------|------|-----------|
+| **자동** | ⚡⚡ 즉시 | 간단한 기사, API 키 불필요 |
 | **AI Selector** | ⚡ 빠름 | 대부분의 사이트, 블로그, 뉴스 |
 | **AI Extract** | 🐢 철저함 | 복잡한 페이지, Notion, SPA |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635줄)
 │   ├── content.js      # YouTube용 콘텐츠 스크립트
 │   ├── locales.js      # UI 현지화 (11개 언어)
-│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.0.3)
+│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.0.2+)
 │   │   ├── index.js    # 메시지 라우터
 │   │   ├── utils.js    # 핸들러 유틸리티
 │   │   ├── simple.js   # 간단한 핸들러

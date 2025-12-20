@@ -223,11 +223,22 @@ async function processImagesInBatchesForEmbed(images, concurrency, updateState) 
  * @returns {Promise<string>} HTML with embedded images
  */
 export async function embedImages(html, content, updateState, escapeAttr) {
+  log('embedImages called', { 
+    contentLength: content?.length || 0,
+    contentTypes: content ? content.map(item => item?.type).filter(Boolean) : []
+  });
+  
   const images = content.filter(item => item.type === 'image');
-  log('embedImages', { imageCount: images.length });
+  log('embedImages', { 
+    imageCount: images.length,
+    imageSources: images.map(img => img.src?.substring(0, 80) || 'no src')
+  });
   
   if (images.length === 0) {
-    log('No images to embed');
+    log('No images to embed', { 
+      totalContentItems: content?.length || 0,
+      contentTypes: content ? [...new Set(content.map(item => item?.type).filter(Boolean))] : []
+    });
     return html;
   }
   

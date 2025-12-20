@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.0.3-blue)
+![Version](https://img.shields.io/badge/version-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -14,7 +14,7 @@
 
 ## ✨ What is ClipAIble?
 
-ClipAIble uses AI to intelligently extract article content from any webpage — removing ads, navigation, popups, and clutter. Then it exports to your preferred format:
+ClipAIble intelligently extracts article content from any webpage — removing ads, navigation, popups, and clutter. Works with or without AI (Automatic mode requires no API keys). Then it exports to your preferred format:
 
 - 📄 **PDF** — Beautiful styling with customization options
 - 📚 **EPUB** — Compatible with Kindle, Kobo, Apple Books
@@ -29,7 +29,8 @@ All formats support **translation to 11 languages** — even translating text on
 ## 🚀 Features
 
 ### 🤖 AI-Powered Extraction
-- **Two modes**: AI Selector (fast, reusable) and AI Extract (thorough)
+- **Three modes**: Automatic (no AI, fast), AI Selector (fast, reusable), and AI Extract (thorough)
+- **Automatic mode**: Create documents without AI — no API keys required, instant extraction
 - **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles
   - Multiple extraction methods with fallbacks
@@ -144,11 +145,14 @@ All formats support **translation to 11 languages** — even translating text on
 ### Requirements
 
 - Chrome, Edge, Brave, or Arc browser
-- API key from at least one provider (see below)
+- (Optional) API key from at least one provider for AI modes (see below)
+  - **Note**: Automatic mode works without any API keys!
 
 ---
 
 ## 🔑 Getting API Keys
+
+> **💡 New in v3.1.0**: You can now use ClipAIble without any API keys! Automatic mode works instantly using local algorithms. API keys are only needed for AI-powered features (translation, abstract generation, AI Extract mode).
 
 ### OpenAI (GPT models + Audio)
 
@@ -269,6 +273,7 @@ All formats support **translation to 11 languages** — even translating text on
 
 | Mode | Speed | Best For |
 |------|-------|----------|
+| **Automatic** | ⚡⚡ Instant | Simple articles, no API key needed |
 | **AI Selector** | ⚡ Fast | Most sites, blogs, news |
 | **AI Extract** | 🐢 Thorough | Complex pages, Notion, SPAs |
 
@@ -401,7 +406,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 lines)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
-│   ├── message-handlers/ # Message handler modules (v3.0.3)
+│   ├── message-handlers/ # Message handler modules (v3.0.2+)
 │   │   ├── index.js    # Message router
 │   │   ├── utils.js    # Handler utilities
 │   │   ├── simple.js   # Simple handlers
@@ -436,6 +441,7 @@ clipaible/
 │   ├── settings/       # Settings import/export
 │   ├── state/          # Processing state management
 │   └── utils/          # Config, encryption, helpers
+│       ├── html.js     # HTML utilities (title cleaning, sanitization)
 │       ├── video.js    # Video platform detection
 │       ├── validation.js # Validation utilities
 │       └── api-error-handler.js # Common API error handling

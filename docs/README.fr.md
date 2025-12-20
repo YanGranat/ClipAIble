@@ -2,7 +2,7 @@
 
 > **Extracteur d'articles alimenté par l'IA** — Enregistrez n'importe quel article du web au format PDF, EPUB, FB2, Markdown ou Audio. Traduction en 11 langues. Fonctionne sur n'importe quel site.
 
-![Version](https://img.shields.io/badge/version-3.0.3-blue)
+![Version](https://img.shields.io/badge/version-3.1.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![Licence](https://img.shields.io/badge/licence-MIT-brightgreen)
 
@@ -27,7 +27,8 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 ## 🚀 Fonctionnalités
 
 ### 🤖 Extraction alimentée par l'IA
-- **Deux modes** : AI Selector (rapide, réutilisable) et AI Extract (approfondi)
+- **Trois modes** : Automatique (sans IA, rapide), AI Selector (rapide, réutilisable) et AI Extract (approfondi)
+- **Mode automatique** : Créer des documents sans IA — aucune clé API requise, extraction instantanée
 - **Plusieurs fournisseurs** : OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
 - **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v3.0.0)
   - Plusieurs méthodes d'extraction avec replis
@@ -267,6 +268,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 
 | Mode | Vitesse | Idéal pour |
 |------|---------|------------|
+| **Automatique** | ⚡⚡ Instantané | Articles simples, aucune clé API requise |
 | **AI Selector** | ⚡ Rapide | La plupart des sites, blogs, actualités |
 | **AI Extract** | 🐢 Approfondi | Pages complexes, Notion, SPAs |
 
@@ -399,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 lignes)
 │   ├── content.js      # Content script pour YouTube
 │   ├── locales.js      # Localisation UI (11 langues)
-│   ├── message-handlers/ # Modules de gestionnaires de messages (v3.0.3)
+│   ├── message-handlers/ # Modules de gestionnaires de messages (v3.0.2+)
 │   │   ├── index.js    # Routeur de messages
 │   │   ├── utils.js    # Utilitaires de gestionnaires
 │   │   ├── simple.js   # Gestionnaires simples
