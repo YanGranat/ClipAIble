@@ -72,7 +72,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - **비디오 지원**: YouTube/Vimeo 비디오에서 자막 추출 및 기사로 변환 (v3.0.0)
   - 직접 자막 추출 (YouTube/Vimeo의 API 키 불필요)
   - AI 처리: 타임스탬프 제거, 단락 병합, 오류 수정
-  - 오디오 전사 폴백: 자막을 사용할 수 없을 때 자동 전사 (gpt-4o-transcribe)
+  - 오디오 전사 폴백: 자막을 사용할 수 없을 때 자동 전사 (gpt-4o-transcribe 모델이 있는 OpenAI API 키 필요)
   - 완전한 파이프라인 통합: 번역, 목차, 요약, 모든 내보내기 형식
 - **요약 생성**: 모든 기사 또는 비디오의 상세한 AI 요약 생성
   - **"요약 생성"** 버튼을 클릭하여 완전한 요약 생성
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635줄)
 │   ├── content.js      # YouTube용 콘텐츠 스크립트
 │   ├── locales.js      # UI 현지화 (11개 언어)
-│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.0.2+)
+│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.1.0+)
 │   │   ├── index.js    # 메시지 라우터
 │   │   ├── utils.js    # 핸들러 유틸리티
 │   │   ├── simple.js   # 간단한 핸들러

@@ -74,7 +74,7 @@ All formats support **translation to 11 languages** — even translating text on
 - **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles
   - Direct subtitle extraction (no API keys required from YouTube/Vimeo)
   - AI processing: removes timestamps, merges paragraphs, fixes errors
-  - Audio transcription fallback: automatic transcription when subtitles unavailable (gpt-4o-transcribe)
+  - Audio transcription fallback: automatic transcription when subtitles unavailable (requires OpenAI API key with gpt-4o-transcribe model)
   - Full pipeline integration: translation, TOC, abstract, all export formats
 - **Summary Generation**: Generate detailed AI summaries of any article or video
   - Click **"Generate Summary"** button to create comprehensive summary
@@ -406,7 +406,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 lines)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
-│   ├── message-handlers/ # Message handler modules (v3.0.2+)
+│   ├── message-handlers/ # Message handler modules (v3.1.0+)
 │   │   ├── index.js    # Message router
 │   │   ├── utils.js    # Handler utilities
 │   │   ├── simple.js   # Simple handlers

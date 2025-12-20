@@ -72,7 +72,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 - **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v3.0.0)
   - Extração direta de legendas (nenhuma chave API do YouTube/Vimeo necessária)
   - Processamento IA: remove timestamps, mescla parágrafos, corrige erros
-  - Fallback de transcrição de áudio: transcrição automática quando legendas não estão disponíveis (gpt-4o-transcribe)
+  - Fallback de transcrição de áudio: transcrição automática quando legendas não estão disponíveis (requer chave API OpenAI com modelo gpt-4o-transcribe)
   - Integração completa do pipeline: tradução, índice, resumo, todos os formatos de exportação
 - **Geração de resumo**: Crie resumos IA detalhados de qualquer artigo ou vídeo
   - Clique no botão **"Gerar resumo"** para criar um resumo completo
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 linhas)
 │   ├── content.js      # Content script para YouTube
 │   ├── locales.js      # Localização UI (11 idiomas)
-│   ├── message-handlers/ # Módulos de manipuladores de mensagens (v3.0.2+)
+│   ├── message-handlers/ # Módulos de manipuladores de mensagens (v3.1.0+)
 │   │   ├── index.js    # Roteador de mensagens
 │   │   ├── utils.js    # Utilitários de manipuladores
 │   │   ├── simple.js   # Manipuladores simples

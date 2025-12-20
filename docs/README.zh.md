@@ -72,7 +72,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - **视频支持**：从YouTube/Vimeo视频提取字幕并转换为文章（v3.0.0）
   - 直接提取字幕（不需要YouTube/Vimeo的API密钥）
   - AI处理：移除时间戳，合并段落，修正错误
-  - 音频转录后备方案：字幕不可用时自动转录（gpt-4o-transcribe）
+  - 音频转录后备方案：字幕不可用时自动转录（需要带有 gpt-4o-transcribe 模型的 OpenAI API 密钥）
   - 完整的管道集成：翻译、目录、摘要、所有导出格式
 - **摘要生成**：生成任何文章或视频的详细AI摘要
   - 点击**"生成摘要"**按钮创建完整摘要
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635行)
 │   ├── content.js      # YouTube内容脚本
 │   ├── locales.js      # UI本地化（11种语言）
-│   ├── message-handlers/ # 消息处理器模块（v3.0.2+）
+│   ├── message-handlers/ # 消息处理器模块（v3.1.0+）
 │   │   ├── index.js    # 消息路由器
 │   │   ├── utils.js    # 处理器工具
 │   │   ├── simple.js   # 简单处理器

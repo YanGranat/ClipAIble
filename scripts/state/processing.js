@@ -84,20 +84,20 @@ export function updateState(updates) {
   try {
     // Handle stage updates
     if (updates.stage) {
-    const stage = Object.values(PROCESSING_STAGES).find(s => s.id === updates.stage);
-    if (stage) {
-      processingState.currentStage = stage.id;
-      // Mark previous stages as completed
-      if (!processingState.completedStages.includes(stage.id)) {
-        const stageOrder = stage.order;
-        Object.values(PROCESSING_STAGES).forEach(s => {
-          if (s.order < stageOrder && !processingState.completedStages.includes(s.id)) {
-            processingState.completedStages.push(s.id);
-          }
-        });
+      const stage = Object.values(PROCESSING_STAGES).find(s => s.id === updates.stage);
+      if (stage) {
+        processingState.currentStage = stage.id;
+        // Mark previous stages as completed
+        if (!processingState.completedStages.includes(stage.id)) {
+          const stageOrder = stage.order;
+          Object.values(PROCESSING_STAGES).forEach(s => {
+            if (s.order < stageOrder && !processingState.completedStages.includes(s.id)) {
+              processingState.completedStages.push(s.id);
+            }
+          });
+        }
       }
     }
-  }
   
   // Protect progress from rolling back - progress should only increase
   // Exception: allow 0% (reset) and 100% (completion) explicitly

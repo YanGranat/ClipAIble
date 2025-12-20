@@ -72,7 +72,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 - **Soporte de video**: Extraer subtítulos de videos YouTube/Vimeo y convertirlos en artículos (v3.0.0)
   - Extracción directa de subtítulos (no se requieren claves API de YouTube/Vimeo)
   - Procesamiento IA: elimina marcas de tiempo, fusiona párrafos, corrige errores
-  - Respaldo de transcripción de audio: transcripción automática cuando los subtítulos no están disponibles (gpt-4o-transcribe)
+  - Respaldo de transcripción de audio: transcripción automática cuando los subtítulos no están disponibles (requiere clave API de OpenAI con modelo gpt-4o-transcribe)
   - Integración completa del pipeline: traducción, tabla de contenidos, resumen, todos los formatos de exportación
 - **Generación de resumen**: Crea resúmenes IA detallados de cualquier artículo o video
   - Haz clic en el botón **"Generar resumen"** para crear un resumen completo
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 líneas)
 │   ├── content.js      # Content script para YouTube
 │   ├── locales.js      # Localización UI (11 idiomas)
-│   ├── message-handlers/ # Módulos de manejadores de mensajes (v3.0.2+)
+│   ├── message-handlers/ # Módulos de manejadores de mensajes (v3.1.0+)
 │   │   ├── index.js    # Enrutador de mensajes
 │   │   ├── utils.js    # Utilidades de manejadores
 │   │   ├── simple.js   # Manejadores simples

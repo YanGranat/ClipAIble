@@ -74,7 +74,7 @@ function getFallbackMessage(errorType) {
     'scriptExecutionFailed': 'Failed to read page content. The page may be blocking extensions. Try refreshing the page and try again.',
     'emptySelectors': 'AI could not find content selectors. Try switching to "AI Extract" mode in settings.',
     'extractModeNoContent': 'AI Extract mode returned no content. The page may use dynamic loading. Try scrolling to load all content before saving.',
-    'videoProcessingFailed': 'Failed to process video. Make sure subtitles are enabled, or try enabling "Transcribe audio if no subtitles" in settings.',
+    'videoProcessingFailed': 'Failed to process video. Make sure subtitles are enabled on the video page.',
     'subtitleProcessingFailed': 'Failed to process subtitles. Try again or check your API key.',
     'imageTranslationFailed': 'Failed to translate images. Check your Google API key in settings (required for image translation).',
     'abstractGenerationFailed': 'Failed to generate summary. Check your API key and try again.',

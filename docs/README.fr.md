@@ -72,7 +72,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 - **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v3.0.0)
   - Extraction directe des sous-titres (aucune clé API de YouTube/Vimeo requise)
   - Traitement IA : supprime les horodatages, fusionne les paragraphes, corrige les erreurs
-  - Repli de transcription audio : transcription automatique lorsque les sous-titres ne sont pas disponibles (gpt-4o-transcribe)
+  - Repli de transcription audio : transcription automatique lorsque les sous-titres ne sont pas disponibles (nécessite une clé API OpenAI avec le modèle gpt-4o-transcribe)
   - Intégration complète du pipeline : traduction, table des matières, résumé, tous les formats d'export
 - **Génération de résumé** : Créez des résumés IA détaillés de n'importe quel article ou vidéo
   - Cliquez sur le bouton **"Générer un résumé"** pour créer un résumé complet
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 lignes)
 │   ├── content.js      # Content script pour YouTube
 │   ├── locales.js      # Localisation UI (11 langues)
-│   ├── message-handlers/ # Modules de gestionnaires de messages (v3.0.2+)
+│   ├── message-handlers/ # Modules de gestionnaires de messages (v3.1.0+)
 │   │   ├── index.js    # Routeur de messages
 │   │   ├── utils.js    # Utilitaires de gestionnaires
 │   │   ├── simple.js   # Gestionnaires simples
