@@ -1,28 +1,48 @@
+# Dependencies
+node_modules/
+# package-lock.json should be committed for dependency consistency
+yarn.lock
+pnpm-lock.yaml
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Test cache
+.vitest/
+.cache/
+.test-results/
+.vscode-test/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
 # OS files
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*.code-workspace
+$RECYCLE.BIN/
+*.lnk
 
 # Logs
 *.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Build outputs
 dist/
 build/
 *.zip
+*.crx
+*.pem
 
-# Dependencies (if any added later)
-node_modules/
-
-# Environment variables (if any)
+# Environment variables
 .env
 .env.local
 .env.*.local
