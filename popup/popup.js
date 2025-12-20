@@ -69,8 +69,20 @@ async function sendErrorToServiceWorker(message, error, context = {}) {
       // Ignore errors when sending error report (to avoid infinite loop)
     });
   } catch (sendError) {
-    // Ignore errors when sending error report (to avoid infinite loop)
-    console.error('[ClipAIble] Failed to send error to service worker', sendError);
+    // CRITICAL: Fallback to console.error if sending to service worker fails
+    // This is the only place where console.error is acceptable in sendErrorToServiceWorker
+    // It's a fallback when the service worker is unavailable
+    try {
+      if (typeof originalLogError === 'function') {
+        originalLogError('Failed to send error to service worker', sendError);
+      } else {
+        console.error('[ClipAIble] Failed to send error to service worker', sendError);
+      }
+    } catch (loggingError) {
+      // Ultimate fallback if even error logging fails
+      console.error('[ClipAIble] Failed to send error to service worker', sendError);
+      console.error('[ClipAIble] Failed to log sendError failure:', loggingError);
+    }
   }
 }
 
@@ -88,11 +100,28 @@ const enhancedLogError = function(message, error = null) {
 // Replace logError with enhanced version
 const logError = enhancedLogError;
 
-// Global error handler for unhandled promise rejections
+// Global error handler for uncaught errors
+// Uses logError with fallback to console.error if logging system is not yet initialized
 window.addEventListener('error', (event) => {
   const errorMessage = `Global error handler caught error: ${event.message || 'Unknown error'}`;
-  console.error('[ClipAIble] popup.js:', errorMessage, event.error, event.filename, event.lineno);
   
+  try {
+    if (typeof logError === 'function') {
+      logError(errorMessage, event.error);
+      if (event.filename || event.lineno) {
+        logError('Error location', new Error(`File: ${event.filename || 'unknown'}, Line: ${event.lineno || 'unknown'}, Col: ${event.colno || 'unknown'}`));
+      }
+    } else {
+      // Fallback if logError is not yet available (should not happen, but safety first)
+      console.error('[ClipAIble] popup.js:', errorMessage, event.error, event.filename, event.lineno);
+    }
+  } catch (loggingError) {
+    // Ultimate fallback if even error logging fails
+    console.error('[ClipAIble] popup.js:', errorMessage, event.error, event.filename, event.lineno);
+    console.error('[ClipAIble] Failed to log error:', loggingError);
+  }
+  
+  // Always try to send to service worker for centralized logging
   sendErrorToServiceWorker(errorMessage, event.error, {
     source: 'popup.globalError',
     filename: event.filename,
@@ -101,14 +130,28 @@ window.addEventListener('error', (event) => {
   });
 });
 
+// Global error handler for unhandled promise rejections
+// Uses logError with fallback to console.error if logging system is not yet initialized
 window.addEventListener('unhandledrejection', (event) => {
   const errorMessage = `Unhandled promise rejection: ${event.reason?.message || String(event.reason)}`;
-  console.error('[ClipAIble] popup.js:', errorMessage, event.reason);
-  
   const error = event.reason instanceof Error 
     ? event.reason 
     : new Error(String(event.reason));
   
+  try {
+    if (typeof logError === 'function') {
+      logError(errorMessage, error);
+    } else {
+      // Fallback if logError is not yet available (should not happen, but safety first)
+      console.error('[ClipAIble] popup.js:', errorMessage, event.reason);
+    }
+  } catch (loggingError) {
+    // Ultimate fallback if even error logging fails
+    console.error('[ClipAIble] popup.js:', errorMessage, event.reason);
+    console.error('[ClipAIble] Failed to log rejection:', loggingError);
+  }
+  
+  // Always try to send to service worker for centralized logging
   sendErrorToServiceWorker(errorMessage, error, {
     source: 'popup.unhandledRejection'
   });
@@ -1012,7 +1055,7 @@ async function init() {
   
   log('popup.js: init() completed successfully');
   } catch (error) {
-    console.error('[ClipAIble] popup.js: CRITICAL ERROR in init()', error);
+    // Use logError for centralized logging (console.error is redundant here)
     logError('CRITICAL: init() failed completely', error);
     // Show error to user
     const statusText = document.getElementById('statusText');
@@ -2641,12 +2684,36 @@ async function displayCacheStats(stats) {
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     init().catch(error => {
-      console.error('[ClipAIble] popup.js: init() failed after DOMContentLoaded', error);
+      // Use logError for centralized logging with fallback
+      try {
+        if (typeof logError === 'function') {
+          logError('init() failed after DOMContentLoaded', error);
+        } else {
+          // Fallback if logError is not yet available
+          console.error('[ClipAIble] popup.js: init() failed after DOMContentLoaded', error);
+        }
+      } catch (loggingError) {
+        // Ultimate fallback if even error logging fails
+        console.error('[ClipAIble] popup.js: init() failed after DOMContentLoaded', error);
+        console.error('[ClipAIble] Failed to log init error:', loggingError);
+      }
     });
   });
 } else {
   // DOM is already loaded, call init immediately
   init().catch(error => {
-    console.error('[ClipAIble] popup.js: init() failed immediately', error);
+    // Use logError for centralized logging with fallback
+    try {
+      if (typeof logError === 'function') {
+        logError('init() failed immediately', error);
+      } else {
+        // Fallback if logError is not yet available
+        console.error('[ClipAIble] popup.js: init() failed immediately', error);
+      }
+    } catch (loggingError) {
+      // Ultimate fallback if even error logging fails
+      console.error('[ClipAIble] popup.js: init() failed immediately', error);
+      console.error('[ClipAIble] Failed to log init error:', loggingError);
+    }
   });
 }

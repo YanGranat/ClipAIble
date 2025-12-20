@@ -1,18 +1,50 @@
 // Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
 
+// Import logging utilities first for use in global error handlers
+import { log, logError, logWarn, logDebug, LOG_LEVELS } from './utils/logging.js';
+
 // Global error handler for uncaught errors during module loading
+// Uses logError with fallback to console.error if logging system is not yet initialized
 self.addEventListener('error', (event) => {
-  console.error('[ClipAIble] Uncaught error during module loading:', event.error);
-  console.error('[ClipAIble] Error stack:', event.error?.stack);
+  try {
+    if (typeof logError === 'function') {
+      logError('Uncaught error during module loading', event.error);
+      if (event.error?.stack) {
+        logError('Error stack', new Error(event.error.stack));
+      }
+    } else {
+      // Fallback if logError is not yet available (should not happen, but safety first)
+      console.error('[ClipAIble] Uncaught error during module loading:', event.error);
+      console.error('[ClipAIble] Error stack:', event.error?.stack);
+    }
+  } catch (loggingError) {
+    // Ultimate fallback if even error logging fails
+    console.error('[ClipAIble] Uncaught error during module loading:', event.error);
+    console.error('[ClipAIble] Error stack:', event.error?.stack);
+    console.error('[ClipAIble] Failed to log error:', loggingError);
+  }
 });
 
 self.addEventListener('unhandledrejection', (event) => {
-  console.error('[ClipAIble] Unhandled promise rejection:', event.reason);
-  console.error('[ClipAIble] Rejection stack:', event.reason?.stack);
+  try {
+    if (typeof logError === 'function') {
+      logError('Unhandled promise rejection', event.reason instanceof Error ? event.reason : new Error(String(event.reason)));
+      if (event.reason?.stack) {
+        logError('Rejection stack', new Error(event.reason.stack));
+      }
+    } else {
+      // Fallback if logError is not yet available (should not happen, but safety first)
+      console.error('[ClipAIble] Unhandled promise rejection:', event.reason);
+      console.error('[ClipAIble] Rejection stack:', event.reason?.stack);
+    }
+  } catch (loggingError) {
+    // Ultimate fallback if even error logging fails
+    console.error('[ClipAIble] Unhandled promise rejection:', event.reason);
+    console.error('[ClipAIble] Rejection stack:', event.reason?.stack);
+    console.error('[ClipAIble] Failed to log rejection:', loggingError);
+  }
 });
-
-import { log, logError, logWarn, logDebug, LOG_LEVELS } from './utils/logging.js';
 import { CONFIG } from './utils/config.js';
 import { 
   getProcessingState, 
@@ -235,7 +267,10 @@ setTimeout(() => {
   try {
     log('Extension loaded', { config: CONFIG });
   } catch (error) {
-    console.error('[ClipAIble] Failed to log:', error);
+    // CRITICAL: Fallback to console.error if logging system itself fails
+    // This is the only place where console.error is acceptable - it's a fallback
+    // when the centralized logging system cannot be used
+    console.error('[ClipAIble] Failed to log (logging system error):', error);
   }
 
   // SECURITY: Clear decrypted key cache on service worker restart
