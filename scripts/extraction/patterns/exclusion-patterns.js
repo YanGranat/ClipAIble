@@ -399,3 +399,4 @@ export const PLACEHOLDER_PATTERNS = [
   'placeholder', 'spacer', 'blank', '1x1', 'pixel.gif'
 ];
 
+

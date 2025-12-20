@@ -2957,8 +2957,9 @@ async function processWithoutAI(data) {
     });
     
     // Add timeout to prevent hanging (30 seconds should be enough for most pages)
+    let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
           timeout: 30000,
           timestamp: Date.now()
@@ -2984,7 +2985,19 @@ async function processWithoutAI(data) {
       timestamp: Date.now()
     });
     
-    results = await Promise.race([scriptPromise, timeoutPromise]);
+    try {
+      results = await Promise.race([scriptPromise, timeoutPromise]);
+      // Clear timeout if script completed successfully
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    } catch (error) {
+      // Clear timeout on error too
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      throw error;
+    }
     
     log('=== processWithoutAI: Promise.race completed ===', {
       hasResults: !!results,

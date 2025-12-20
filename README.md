@@ -430,10 +430,19 @@ clipaible/
 │   │   ├── tts.js      # TTS router
 │   │   └── index.js    # API router
 │   ├── extraction/     # Content extraction
+│   │   ├── automatic.js # Automatic extraction (no AI) - extractAutomaticallyInlined()
 │   │   ├── prompts.js  # AI prompts
 │   │   ├── html-utils.js # HTML utilities
 │   │   ├── video-subtitles.js # YouTube/Vimeo subtitle extraction
-│   │   └── video-processor.js # AI subtitle processing
+│   │   ├── video-processor.js # AI subtitle processing
+│   │   └── modules/    # Modular helper functions for automatic extraction
+│   │       ├── utils.js # Basic utilities
+│   │       ├── content-finder.js # Content finding
+│   │       ├── element-filter.js # Element filtering
+│   │       ├── image-processor.js # Image processing
+│   │       ├── metadata-extractor.js # Metadata extraction
+│   │       ├── content-cleaner.js # Content cleaning
+│   │       └── builder.js # Build-time inlining
 │   ├── translation/    # Translation & language detection
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Selector caching

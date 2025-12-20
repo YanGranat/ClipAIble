@@ -1,13 +1,14 @@
 // Automatic content extraction without AI
 // Uses heuristics and DOM analysis to extract article content
 
-// Note: All imports removed - extractAutomaticallyInlined runs in page context via executeScript
-// where imports are not available. Helper functions must be defined inside the function.
+// Note: This function uses modular helper functions that are inlined at build time
+// All modules are in scripts/extraction/modules/ and are assembled by builder.js
+// The function runs in page context via executeScript where imports are not available
 
 /**
  * Inlined automatic extraction function for chrome.scripting.executeScript
  * This runs in the page's main world context
- * All helper functions must be defined inside (cannot use imports)
+ * Helper functions are inlined from modules (see scripts/extraction/modules/)
  */
 export function extractAutomaticallyInlined(baseUrl) {
   // Log start (this will appear in page console, not service worker)
@@ -189,25 +190,26 @@ export function extractAutomaticallyInlined(baseUrl) {
     // END OF INLINED CONSTANTS
     // ============================================
     
-    // Helper: Convert relative URL to absolute
-    function toAbsoluteUrl(url) {
+    // ============================================
+    // INLINED MODULE FUNCTIONS
+    // Functions from scripts/extraction/modules/
+    // ============================================
+    
+    // Utils module functions
+    function toAbsoluteUrl(url, baseUrl) {
       if (!url) return '';
       if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
       try { return new URL(url, baseUrl).href; } catch (e) { return url; }
     }
     
-    // Helper: Check if element is a footnote link (number or arrow that links to #)
     function isFootnoteLink(element) {
       if (element.tagName.toLowerCase() !== 'a') return false;
       const href = element.getAttribute('href') || '';
-      // Check if it's a link to an anchor (#) or contains #note
       if (href === '#' || (href.startsWith('#') && href.length > 1) || href.includes('#note')) {
         const text = element.textContent.trim();
-        // Check if it's just a number or arrow symbol
         if (/^[\d\s]+$/.test(text) || /^[←→↑↓↗↘↩]+$/.test(text) || text.toLowerCase().includes('open these')) {
           return true;
         }
-        // Check if it contains only an emoji arrow image
         const img = element.querySelector('img');
         if (img && (img.alt === '↩' || img.src.includes('emoji') || String(img.className || '').includes('emoji'))) {
           return true;
@@ -216,34 +218,23 @@ export function extractAutomaticallyInlined(baseUrl) {
       return false;
     }
     
-    // Helper: Check if element is an icon (SVG or icon font)
     function isIcon(element) {
       const tagName = element.tagName.toLowerCase();
-      // SVG elements are icons
       if (tagName === 'svg') return true;
-      
       const className = String(element.className || '').toLowerCase();
       const id = (element.id || '').toLowerCase();
-      
-      // Check for icon classes
       if (className.includes('icon-') || className.includes('icon') || id.includes('icon')) {
         return true;
       }
-      
-      // Check if it's a span/div/i/em/sup with only arrow symbols or very short text
       if (tagName === 'span' || tagName === 'i' || tagName === 'em' || tagName === 'sup') {
         const text = element.textContent.trim();
-        // If it's very short (1-3 chars) and contains arrow symbols, it's likely an icon
         if (text.length <= 3 && /[←→↑↓↗↘◀▶▲▼↩]/.test(text)) {
           return true;
         }
-        // Check for "open these" text in sup elements
         if (tagName === 'sup' && text.toLowerCase().includes('open these')) {
           return true;
         }
       }
-      
-      // Check for emoji arrow images
       if (tagName === 'img') {
         const alt = (element.alt || '').trim();
         const src = (element.src || '').toLowerCase();
@@ -251,935 +242,44 @@ export function extractAutomaticallyInlined(baseUrl) {
           return true;
         }
       }
-      
       return false;
     }
     
-    // Helper: Check if element should be excluded
-    function isExcluded(element) {
-      const tagName = element.tagName.toLowerCase();
-      
-      // For semantic content containers (article, main), be more lenient
-      // They should only be excluded if they're clearly not content containers
-      const isSemanticContainer = tagName === 'article' || tagName === 'main';
-      
-      // Declare className and id early - they are used throughout the function
-      const className = String(element.className || '').toLowerCase();
-      const id = (element.id || '').toLowerCase();
-      
-      // Skip debug logging for semantic containers (moved to service worker)
-      
-      // Check if element is hidden
-      // BUT: For figure/img elements, be more lenient (lazy loading, fade-in effects, etc.)
-      const isImageOrFigure = tagName === 'img' || tagName === 'figure';
-      
-      // Safely get computed style with error handling
-      let style = null;
+    function normalizeImageUrl(url) {
+      if (!url) return '';
       try {
-        style = window.getComputedStyle(element);
+        const urlObj = new URL(url);
+        return urlObj.origin + urlObj.pathname;
       } catch (e) {
-        // Element might be in iframe or detached from DOM
-        // If we can't get style, assume element is visible (don't exclude)
-        return false;
-      }
-      
-      if (style) {
-        // For images/figures, only exclude if completely hidden (display: none or visibility: hidden)
-        // Don't exclude based on opacity alone - images may be hidden for fade-in effects
-        if (isImageOrFigure) {
-          // For images, only exclude if display is none or visibility is hidden
-          // Opacity can be 0 for fade-in effects, but image still has valid src
-          if (style.display === 'none' || style.visibility === 'hidden') {
-            // Check if it's lazy-loaded - if so, don't exclude
-            const hasLazySrc = element.hasAttribute('data-src') || 
-                              element.hasAttribute('data-lazy-src') ||
-                              element.hasAttribute('data-original') ||
-                              element.hasAttribute('data-srcset');
-            if (hasLazySrc) {
-              return false; // Don't exclude lazy-loaded images
-            }
-            // For figure, check if img inside has lazy src
-            if (tagName === 'figure') {
-              const img = element.querySelector('img');
-              if (img) {
-                const imgHasLazySrc = img.hasAttribute('data-src') || 
-                                     img.hasAttribute('data-lazy-src') ||
-                                     img.hasAttribute('data-original') ||
-                                     img.hasAttribute('data-srcset');
-                if (imgHasLazySrc) {
-                  return false; // Don't exclude figure with lazy-loaded img
-                }
-              }
-            }
-            // If image is hidden and not lazy-loaded, exclude it
-            return true;
-          }
-          // For images, don't exclude based on opacity alone
-        } else {
-          // For non-image elements, exclude if hidden in any way
-          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-            return true;
-          }
-        }
-      }
-      
-      // Exclude iframe elements (except those that might be embedded content)
-      if (tagName === 'iframe') {
-        // Check if iframe is likely an ad or tracking
-        const src = (element.src || '').toLowerCase();
-        const adPatterns = ['ad', 'ads', 'advertisement', 'doubleclick', 'googleads', 'pubmatic', 'openx', 'adsystem'];
-        if (adPatterns.some(pattern => src.includes(pattern))) {
-          return true;
-        }
-        // Check parent for ad indicators
-        const parent = element.parentElement;
-        if (parent) {
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('ad') || parentId.includes('ad') || 
-              parentClass.includes('advertisement') || parentId.includes('advertisement')) {
-            return true;
-          }
-        }
-        // For now, exclude all iframes to avoid ads/videos - can be refined later
-        return true;
-      }
-      
-      // Exclude footnotes
-      if (isFootnoteLink(element)) return true;
-      
-      // Exclude icons
-      if (isIcon(element)) return true;
-      
-      // Exclude sidebar elements (aside, complementary)
-      if (tagName === 'aside' || element.getAttribute('role') === 'complementary') {
-        return true;
-      }
-      
-      // Exclude elements containing email input fields (newsletter signup)
-      if (element.querySelector && element.querySelector('input[type="email"]')) {
-        return true;
-      }
-      
-      // Exclude elements with specific ad-related classes
-      const adClasses = ['book-cta', 'course-cta', 'product-cta', 'course-ad', 'product-ad'];
-      if (adClasses.some(adClass => className.includes(adClass) || id.includes(adClass))) {
-        return true;
-      }
-      
-      // Exclude paywall/subscription-related classes
-      const paywallClasses = [
-        'freebie-message', 'subscribe-text', 'message--freebie', 'subscribe-',
-        'paywall', 'subscription', 'freebie', 'article-limit', 'access-message'
-      ];
-      if (paywallClasses.some(paywallClass => className.includes(paywallClass) || id.includes(paywallClass))) {
-        return true;
-      }
-      
-      // For paragraphs and headings, be more lenient with text-based exclusions
-      // Only exclude if it's clearly not content (metadata, navigation, ads)
-      const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
-      
-      // Check for navigation text patterns
-      const text = element.textContent || '';
-      const textLower = text.toLowerCase();
-      const textTrimmed = text.trim();
-      
-      // For paragraphs/headings, only exclude if text is very short and clearly metadata
-      if (isParagraphOrHeading) {
-        // Exclude word count metadata (e.g., "4,500 words", "Original article • 3,617 words")
-        // But only if it's the ONLY content (very short)
-        if (textTrimmed.length < 100 && 
-            (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed))) {
-          return true;
-        }
-
-        // Exclude metadata lines with "Original article" and word count
-        // But only if it's short (clearly just metadata)
-        if (textTrimmed.length < 150 && 
-            (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
-             (/^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)))) {
-          return true;
-        }
-        
-        // Exclude "Edited by" metadata - but only if very short
-        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 100) {
-          return true;
-        }
-      } else {
-        // For non-paragraph/heading elements, use original strict logic
-        if (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed)) {
-          return true;
-        }
-        
-        if (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
-            /^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)) {
-          return true;
-        }
-        
-        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 200) {
-          return true;
-        }
-      }
-      
-      // Exclude "SYNDICATE THIS ESSAY" links
-      if (tagName === 'a' && textLower.includes('syndicate this essay')) {
-        return true;
-      }
-      
-      // Exclude donation blocks
-      if ((textLower.includes('donate') || textLower.includes('donation')) && 
-          (textLower.includes('support') || textLower.includes('mission') || 
-           textLower.includes('select amount') || textLower.includes('per month'))) {
-        return true;
-      }
-      
-      // Check for course/product advertisements with prices
-      const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
-      const hasPrice = pricePattern.test(text);
-      
-      // Check for course/training advertisement patterns
-      const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
-      
-      // If element contains price and course ad patterns, exclude it
-      if (hasPrice && isCourseAd) {
-        return true;
-      }
-      
-      // Exclude summary sections that contain course advertisements
-      if ((className.includes('summary') || id.includes('summary') || 
-           className.includes('quick-summary') || id.includes('quick-summary')) &&
-          (textLower.includes('measure ux & design impact') || 
-           textLower.includes('use the code') || textLower.includes('save 20%') ||
-           textLower.includes('save') && textLower.includes('off'))) {
-        return true;
-      }
-      
-      // Exclude headings that are clearly advertisements
-      if (tagName.match(/^h[1-6]$/)) {
-        const headingText = textLower;
-        // "Meet" headings that are typically ads
-        if (headingText.startsWith('meet ') && 
-            (headingText.includes('course') || headingText.includes('book') || 
-             headingText.includes('training') || headingText.includes('product') ||
-             headingText.includes('measure ux'))) {
-          // Check if parent or next sibling contains price
-          let parent = element.parentElement;
-          let nextSibling = element.nextElementSibling;
-          for (let i = 0; i < 3 && (parent || nextSibling); i++) {
-            const checkText = ((parent ? parent.textContent : '') + 
-                             (nextSibling ? nextSibling.textContent : '')).toLowerCase();
-            if (checkText.includes('$') || checkText.includes('price') || 
-                checkText.includes('money-back') || checkText.includes('guarantee') ||
-                checkText.includes('495') || checkText.includes('799') ||
-                checkText.includes('250') || checkText.includes('395')) {
-              return true;
-            }
-            if (parent) parent = parent.parentElement;
-            if (nextSibling) nextSibling = nextSibling.nextElementSibling;
-          }
-        }
-        // Video training headings with prices
-        if (headingText.includes('video') && 
-            (headingText.includes('training') || headingText.includes('course'))) {
-          // Check if parent or next sibling contains price
-          let parent = element.parentElement;
-          let nextSibling = element.nextElementSibling;
-          for (let i = 0; i < 3 && (parent || nextSibling); i++) {
-            const checkText = ((parent ? parent.textContent : '') + 
-                             (nextSibling ? nextSibling.textContent : '')).toLowerCase();
-            if (checkText.includes('$') || checkText.includes('price') || 
-                checkText.includes('money-back') || checkText.includes('guarantee')) {
-              return true;
-            }
-            if (parent) parent = parent.parentElement;
-            if (nextSibling) nextSibling = nextSibling.nextElementSibling;
-          }
-        }
-        // "Useful Resources" and "Further Reading" - typically just link lists
-        if (headingText.includes('useful resources') || headingText.includes('further reading')) {
-          // Check if it's followed by mostly links
-          let nextSibling = element.nextElementSibling;
-          let linkCount = 0;
-          let textLength = 0;
-          for (let i = 0; i < 5 && nextSibling; i++) {
-            const links = nextSibling.querySelectorAll('a');
-            linkCount += links.length;
-            const siblingText = nextSibling.textContent.replace(/<[^>]+>/g, '').trim();
-            textLength += siblingText.length;
-            nextSibling = nextSibling.nextElementSibling;
-          }
-          // If mostly links with little text, exclude
-          if (linkCount >= 3 && textLength < 500) {
-            return true;
-          }
-        }
-        // "Tags" - metadata section, typically just links
-        if (headingText.trim() === 'tags') {
-          return true;
-        }
-        // "More from" - related articles section
-        if (headingText.includes('more from')) {
-          return true;
-        }
-        // "Related" - related articles section
-        if (headingText.trim().toLowerCase() === 'related') {
-          return true;
-        }
-        // "From the Archive" - subscription/archive section
-        if (headingText.includes('from the archive')) {
-          return true;
-        }
-      }
-      
-      // Exclude separator elements (hr, separators)
-      if (tagName === 'hr' || tagName === 'separator' || 
-          element.getAttribute('role') === 'separator' ||
-          className.includes('separator') || id.includes('separator')) {
-        return true;
-      }
-      
-      // Exclude control elements (Adjust, Share buttons, Email, Save, Post)
-      if (className.includes('share-buttons') || className.includes('component-share-buttons') ||
-          className.includes('aria-font-adjusts') || className.includes('font-adjust') ||
-          id.includes('share-buttons') || id.includes('font-adjust')) {
-        return true;
-      }
-      
-      // Exclude control buttons by text content
-      if (tagName === 'button') {
-        const buttonText = text.trim().toLowerCase();
-        if (buttonText === 'email' || buttonText === 'save' || buttonText === 'post' || 
-            buttonText === 'share' || buttonText.includes('syndicate')) {
-          return true;
-        }
-      }
-      
-      // Exclude related articles (links with "essay/" and images)
-      if (tagName === 'a') {
-        const href = (element.getAttribute('href') || '').toLowerCase();
-        const hasImage = element.querySelector('img');
-        const linkText = text.trim();
-        // If link contains "essay/" and has an image, it's likely a related article
-        if (href.includes('/essay/') && hasImage && linkText.length > 30) {
-          // Check if parent contains multiple such links (related articles section)
-          const parent = element.parentElement;
-          if (parent) {
-            const siblingLinks = parent.querySelectorAll('a[href*="/essay/"]');
-            if (siblingLinks.length >= 2) {
-              return true;
-            }
-          }
-        }
-      }
-      
-      // Exclude links that are section markers (e.g., "[Easy Chair]")
-      if (tagName === 'a') {
-        const linkText = text.trim();
-        if (linkText.startsWith('[') && linkText.endsWith(']') && linkText.length < 50) {
-          return true;
-        }
-      }
-      
-      // Use inlined excluded classes (defined at function start)
-    
-    // CRITICAL: Exclude newsletter blocks inside content
-    if (textLower.includes('sign up to our newsletter') || 
-        textLower.includes('join more than') && textLower.includes('newsletter subscribers') ||
-        (textLower.includes('newsletter') && textLower.includes('subscribe') && 
-         element.querySelector('input[type="email"]'))) {
-      return true;
-    }
-    
-    // Exclude "Get the latest [category] stories in your inbox" pattern
-    if (/get\s+the\s+latest\s+.+\s+stories?\s+in\s+your\s+inbox/i.test(text)) {
-      return true;
-    }
-    
-    // Exclude Salesforce Marketing Cloud and similar email service providers
-    if (textLower.includes('email powered by') ||
-        textLower.includes('powered by salesforce') ||
-        textLower.includes('salesforce marketing cloud') ||
-        textLower.includes('marketing cloud') ||
-        (textLower.includes('privacy notice') && textLower.includes('terms')) ||
-        (textLower.includes('privacy') && textLower.includes('terms') && textLower.includes('conditions'))) {
-      return true;
-    }
-    
-    // Check if element contains email signup form
-    if (element.querySelector('input[type="email"]') || 
-        element.querySelector('input[name*="email"]') ||
-        element.querySelector('input[id*="email"]')) {
-      // Check if it's a signup form (not a contact form in article)
-      if (textLower.includes('newsletter') || textLower.includes('subscribe') ||
-          textLower.includes('signup') || textLower.includes('sign-up') ||
-          textLower.includes('get the latest') || textLower.includes('inbox') ||
-          textLower.includes('marketing cloud')) {
-        return true;
+        return url.split('?')[0].split('#')[0];
       }
     }
     
-    // Use inlined navigation patterns (defined at function start)
-    const navTextPatterns = NAV_PATTERNS_CONTAINS;
-    
-    // For semantic containers (article, main), skip navigation pattern check on element itself
-    // They are top-level content containers and should not be excluded based on text patterns
-    // For images/figures, skip text-based checks (they don't have text content)
-    // For paragraphs and headings, be more lenient - only exclude if text is short and clearly navigation
-    if (!isSemanticContainer && !isImageOrFigure) {
-      const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
-      if (isParagraphOrHeading) {
-        // For paragraphs/headings, only exclude if text is short (< 200 chars) and matches navigation pattern
-        // Long paragraphs with navigation patterns are likely part of article content
-        if (textTrimmed.length < 200 && navTextPatterns.some(pattern => pattern.test(text))) {
-          return true;
-        }
-      } else {
-        // For other elements, use original strict logic
-        if (navTextPatterns.some(pattern => pattern.test(text))) {
-          return true;
-        }
-      }
-    }
-    
-    // Check for email newsletter sections (textLower already declared above)
-    // Skip for images - they don't have text content
-    if (!isImageOrFigure) {
-      if (textLower.includes('email newsletter') || 
-          (textLower.includes('newsletter') && textLower.includes('email')) ||
-          textLower.includes('weekly tips') ||
-          (textLower.includes('trusted by') && textLower.includes('folks'))) {
-        // Check if this element or parent contains email input
-        let checkEl = element;
-        for (let i = 0; i < 3 && checkEl; i++) {
-          if (checkEl.querySelector && checkEl.querySelector('input[type="email"]')) {
-            return true;
-          }
-          checkEl = checkEl.parentElement;
-        }
-      }
-    }
-    
-    // Check for advertisement sections with prices
-    if (text.includes('$') || text.includes('€') || text.includes('£')) {
-      // Check if it's likely an ad (contains price + ad keywords)
-      const adKeywords = ['video', 'training', 'course', 'get', 'buy', 'purchase', 
-                          'money-back', 'guarantee', 'enroll', 'sign up'];
-      const hasAdKeywords = adKeywords.some(keyword => textLower.includes(keyword));
-      if (hasAdKeywords && (text.includes('$') || text.match(/\$\s*\d+/))) {
-        return true;
-      }
-    }
-    
-    // Check for "Meet" sections that are advertisements
-    if (textLower.startsWith('meet ') && 
-        (textLower.includes('course') || textLower.includes('book') || 
-         textLower.includes('training') || textLower.includes('product'))) {
-      return true;
-    }
-    
-    // For images/figures, be more lenient with excludedClasses - use word boundaries
-    // to avoid false positives (e.g., "article-image" contains "article" but isn't excluded)
-    if (isImageOrFigure) {
-      // Only exclude if class/id is clearly an excluded class (whole word match)
-      let hasExcludedClass = false;
-      for (const excluded of EXCLUDED_CLASSES) {
-        // Check for exact match or word boundaries
-        const pattern = new RegExp(`\\b${excluded}\\b`);
-        if (pattern.test(className) || pattern.test(id) ||
-            className === excluded || className.startsWith(excluded + '-') || className.endsWith('-' + excluded) ||
-            id === excluded || id.startsWith(excluded + '-') || id.endsWith('-' + excluded)) {
-          hasExcludedClass = true;
-          break;
-        }
-      }
-      if (hasExcludedClass) {
-        return true;
-      }
-    } else {
-      // For non-image elements, use normal exclusion logic
-      for (const excluded of EXCLUDED_CLASSES) {
-        if (className.includes(excluded) || id.includes(excluded)) {
-          return true;
-        }
-      }
-    }
-    
-    // Check parent elements
-    // For semantic containers, skip parent checks (they are top-level content containers)
-    // For images/figures, be more lenient - only exclude if parent is clearly an ad
-    if (!isSemanticContainer) {
-      let parent = element.parentElement;
-      if (isImageOrFigure) {
-        // For images, only exclude if parent has clear ad indicators
-        let iterations = 0;
-        const maxIterations = 50; // Safety limit to prevent infinite loops
-        while (parent && parent !== document.body && iterations < maxIterations) {
-          iterations++;
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          const parentTag = parent.tagName.toLowerCase();
-          
-          // Only exclude if parent is clearly an ad (not just any excluded class)
-          const clearAdIndicators = [
-            /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
-            'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container'
-          ];
-          const isClearAd = clearAdIndicators.some(indicator => {
-            if (typeof indicator === 'string') {
-              return parentClass.includes(indicator) || parentId.includes(indicator);
-            }
-            return indicator.test(parentClass) || indicator.test(parentId);
-          });
-          
-          // Also exclude if parent is iframe or aside (clear non-content)
-          if (isClearAd || parentTag === 'iframe' || parentTag === 'aside') {
-            return true;
-          }
-          
-          parent = parent.parentElement;
-        }
-      } else {
-        // For non-image elements (paragraphs, headings), be VERY lenient
-        // Since we're checking elements inside mainContent, they're likely legitimate content
-        // Only exclude if parent is clearly not content (aside, nav, footer, header, or clear ad)
-        // Don't exclude just because parent has some excluded class
-        
-        const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
-        
-        let iterations = 0;
-        const maxIterations = 50; // Safety limit to prevent infinite loops
-        while (parent && parent !== document.body && iterations < maxIterations) {
-          iterations++;
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          const parentText = parent.textContent || '';
-          const parentTag = parent.tagName.toLowerCase();
-          
-          // For paragraphs/headings, only exclude if parent is clearly outside main content
-          if (isParagraphOrHeading) {
-            // Only exclude if parent is clearly not content (aside, nav, footer, header)
-            if (parentTag === 'aside' || parentTag === 'nav' || parentTag === 'footer' || parentTag === 'header') {
-              return true;
-            }
-            
-            // Exclude if parent is clearly an ad container
-            const clearAdIndicators = [
-              /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
-              'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container'
-            ];
-            const isClearAd = clearAdIndicators.some(indicator => {
-              if (typeof indicator === 'string') {
-                return parentClass.includes(indicator) || parentId.includes(indicator);
-              }
-              return indicator.test(parentClass) || indicator.test(parentId);
-            });
-            
-            if (isClearAd) {
-              return true;
-            }
-            
-            // Exclude if parent is a section with "related-articles" class AND has multiple article links
-            if (parentTag === 'section' && 
-                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
-              const articleLinks = parent.querySelectorAll('a[href*="/article/"], a[href*="/post/"], a[href*="/essay/"]');
-              // Only exclude if it has multiple article links (clear related articles section)
-              if (articleLinks.length >= 2) {
-                return true;
-              }
-            }
-          } else {
-            // For other non-image elements, use original logic
-            // Exclude if parent is a section with "related-articles" class (even inside article)
-            if (parentTag === 'section' && 
-                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
-              return true;
-            }
-            
-            // Check parent for navigation patterns
-            if (navTextPatterns.some(pattern => pattern.test(parentText))) {
-              return true;
-            }
-            
-            // Check if parent is an ad container
-            if (parentTag === 'aside' && (parentClass.includes('ad') || parentId.includes('ad'))) {
-              return true;
-            }
-            
-            for (const excluded of EXCLUDED_CLASSES) {
-              if (parentClass.includes(excluded) || parentId.includes(excluded)) {
-                return true;
-              }
-            }
-            parent = parent.parentElement;
-          }
-        }
-      }
-    }
-    
-    // Final check: for semantic containers, only exclude if clearly not content
-    
-    return false;
-    }
-    
-    // Helper: Check if image is decorative (logo, icon, brand image)
-    function isDecorativeImage(img) {
-      if (!img) return false;
-      
-      const src = (img.src || '').toLowerCase();
-      const alt = (img.alt || '').toLowerCase();
-      const className = String(img.className || '').toLowerCase();
-      const id = (img.id || '').toLowerCase();
-      
-      // CRITICAL: Exclude author headshots/photos
-      // Check for headshot class (common pattern for author photos)
-      if (className.includes('headshot') || id.includes('headshot') ||
-          className.includes('author-photo') || className.includes('author-image') ||
-          className.includes('author-avatar') || id.includes('author-photo') ||
-          id.includes('author-image') || id.includes('author-avatar') ||
-          className.includes('byline-thumbnail') || className.includes('byline-thumb') ||
-          className.includes('contributor-thumbnail') || className.includes('contributor-thumb') ||
-          className.includes('rich-byline') || className.includes('wp-post-image') ||
-          id.includes('byline-thumbnail') || id.includes('contributor-thumbnail')) {
-        return true;
-      }
-      
-      // Check if image is in a contributors/authors section
-      let checkParent = img.parentElement;
-      for (let i = 0; i < 5 && checkParent; i++) {
-            const parentClass = String(checkParent.className || '').toLowerCase();
-        const parentId = (checkParent.id || '').toLowerCase();
-        const parentTag = checkParent.tagName.toLowerCase();
-        
-        // Check for contributor/author sections
-        if (parentClass.includes('contributor') || parentClass.includes('contributors') ||
-            parentClass.includes('byline') || parentClass.includes('author-info') ||
-            parentClass.includes('author-bio') || parentClass.includes('author-meta') ||
-            parentId.includes('contributor') || parentId.includes('contributors') ||
-            parentId.includes('byline') || parentId.includes('author-info') ||
-            parentTag === 'address' || parentClass.includes('vcard')) {
-          // Check if image is small (typical for author thumbnails)
-          const naturalWidth = img.naturalWidth || img.width || 0;
-          const naturalHeight = img.naturalHeight || img.height || 0;
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            // Author thumbnails are typically small (50-150px)
-            if (naturalWidth <= 150 && naturalHeight <= 150) {
-              return true; // It's an author thumbnail
-            }
-          } else {
-            // If dimensions not available, check CSS dimensions
-            const cssWidth = parseInt(img.style.width) || img.width || 0;
-            const cssHeight = parseInt(img.style.height) || img.height || 0;
-            if (cssWidth > 0 && cssHeight > 0 && cssWidth <= 150 && cssHeight <= 150) {
-              return true;
-            }
-          }
-          // Even if larger, if it's in contributor section and has empty alt, likely author photo
-          if (!alt || alt.length === 0) {
-            return true;
-          }
-        }
-        checkParent = checkParent.parentElement;
-      }
-      
-      // Check if alt text is just an author name (not a descriptive caption)
-      // Author photos typically have alt text that's just the name OR empty alt
-      // Also check for empty alt in contributor sections
-      if (!alt || alt.length === 0) {
-        // Empty alt in contributor/author section = likely author thumbnail
-        let parent = img.parentElement;
-        for (let i = 0; i < 5 && parent; i++) {
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('contributor') || parentClass.includes('contributors') ||
-              parentClass.includes('byline') || parentClass.includes('author-info') ||
-              parentClass.includes('author-bio') || parentClass.includes('author-meta') ||
-              parentId.includes('contributor') || parentId.includes('byline')) {
-            // Check if image is small (typical for author thumbnails)
-            const naturalWidth = img.naturalWidth || img.width || 0;
-            const naturalHeight = img.naturalHeight || img.height || 0;
-            if (naturalWidth > 0 && naturalHeight > 0) {
-              if (naturalWidth <= 150 && naturalHeight <= 150) {
-                return true; // Small image with empty alt in contributor section
-              }
-            } else {
-              // Check CSS dimensions
-              const cssWidth = parseInt(img.style.width) || img.width || 0;
-              const cssHeight = parseInt(img.style.height) || img.height || 0;
-              if (cssWidth > 0 && cssHeight > 0 && cssWidth <= 150 && cssHeight <= 150) {
-                return true;
-              }
-            }
-          }
-          parent = parent.parentElement;
-        }
-      } else if (alt.length > 0 && alt.length < 100) {
-        // Check if it looks like just a name (2-4 words, starts with capital, no descriptive text)
-        // Pattern: "FirstName LastName" or "FirstName MiddleName LastName"
-        const namePattern = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/;
-        if (namePattern.test(alt.trim())) {
-          // Check if it's inside an author section OR if it has headshot class
-          // (headshot class is a strong indicator even without parent check)
-          if (className.includes('headshot') || id.includes('headshot') ||
-              className.includes('byline-thumbnail') || className.includes('contributor-thumbnail')) {
-            return true; // Definitely an author photo
-          }
-          
-          // Check if it's inside an author section
-          let parent = img.parentElement;
-          for (let i = 0; i < 5 && parent; i++) {
-            const parentClass = String(parent.className || '').toLowerCase();
-            const parentId = (parent.id || '').toLowerCase();
-            const parentTag = parent.tagName.toLowerCase();
-            if (parentClass.includes('author') || parentId.includes('author') ||
-                parentClass.includes('byline') || parentId.includes('byline') ||
-                parentClass.includes('headshot') || parentId.includes('headshot') ||
-                parentClass.includes('contributor') || parentId.includes('contributor') ||
-                parentTag === 'address' || parentClass.includes('vcard') ||
-                parentClass.includes('author-info') || parentClass.includes('author-bio')) {
-              return true; // It's an author photo
-            }
-            parent = parent.parentElement;
-          }
-          
-          // Also check if image is small and square/portrait (typical author photo size)
-          const naturalWidth = img.naturalWidth || img.width || 0;
-          const naturalHeight = img.naturalHeight || img.height || 0;
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            if ((naturalWidth <= 250 && naturalHeight <= 250) && 
-                (naturalWidth === naturalHeight || Math.abs(naturalWidth - naturalHeight) < 50)) {
-              // Small square/portrait image with name as alt - likely author photo
-              return true;
-            }
-          }
-        }
-      }
-      
-      // Check for small author photos (typically 200x200, 160x80, etc.)
-      const naturalWidth = img.naturalWidth || img.width || 0;
-      const naturalHeight = img.naturalHeight || img.height || 0;
-      if (naturalWidth > 0 && naturalHeight > 0) {
-        // Author photos are typically square or portrait, small to medium size
-        // Check if it's a small square/portrait image (likely author photo)
-        if ((naturalWidth <= 250 && naturalHeight <= 250) && 
-            (naturalWidth === naturalHeight || Math.abs(naturalWidth - naturalHeight) < 50)) {
-          // Check if it's in an author section or has author-related attributes
-          let parent = img.parentElement;
-          for (let i = 0; i < 3 && parent; i++) {
-            const parentClass = String(parent.className || '').toLowerCase();
-            const parentId = (parent.id || '').toLowerCase();
-            if (parentClass.includes('author') || parentId.includes('author') ||
-                parentClass.includes('byline') || parentId.includes('byline')) {
-              return true; // Likely author photo
-            }
-            parent = parent.parentElement;
-          }
-        }
-      }
-      
-      // CRITICAL: Exclude avatar images (facepile, user avatars, etc.)
-      // First check if image is in a facepile/likes/restacks section
-      let checkParentForFacepile = img.parentElement;
-      for (let i = 0; i < 6 && checkParentForFacepile; i++) {
-        const parentClass = String(checkParentForFacepile.className || '').toLowerCase();
-        const parentId = (checkParentForFacepile.id || '').toLowerCase();
-        const parentText = checkParentForFacepile.textContent || '';
-        
-        // Check for facepile, likes, restacks, engagement indicators
-        if (parentClass.includes('facepile') || parentId.includes('facepile') ||
-            parentClass.includes('likes') || parentClass.includes('restacks') ||
-            parentClass.includes('engagement') || parentClass.includes('reactions') ||
-            parentText.includes('Likes') || parentText.includes('Restacks') ||
-            parentText.includes('likes') || parentText.includes('restacks')) {
-          // If in facepile section, exclude small images (avatars)
-          const naturalWidth = img.naturalWidth || img.width || 0;
-          const naturalHeight = img.naturalHeight || img.height || 0;
-          const cssWidth = parseInt(img.style.width) || img.width || 0;
-          const cssHeight = parseInt(img.style.height) || img.height || 0;
-          
-          if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 100 && naturalHeight <= 100) ||
-              (cssWidth > 0 && cssHeight > 0 && cssWidth <= 100 && cssHeight <= 100)) {
-            return true; // Avatar in facepile section
-          }
-        }
-        checkParentForFacepile = checkParentForFacepile.parentElement;
-      }
-      
-      // Check alt text for "avatar" pattern (e.g., "Tom's avatar", "user avatar")
-      if (alt && (alt.includes("'s avatar") || alt.includes("'s avatar") || 
-                  alt.includes(' avatar') || alt === 'avatar' || alt.endsWith('avatar'))) {
-        // Also check dimensions - avatars are typically small (<= 50px)
-        const naturalWidth = img.naturalWidth || img.width || 0;
-        const naturalHeight = img.naturalHeight || img.height || 0;
-        const cssWidth = parseInt(img.style.width) || img.width || 0;
-        const cssHeight = parseInt(img.style.height) || img.height || 0;
-        
-        // If it's clearly an avatar (alt contains "avatar") and small, exclude it
-        if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) ||
-            (cssWidth > 0 && cssHeight > 0 && cssWidth <= 50 && cssHeight <= 50)) {
-          return true; // Small avatar image
-        }
-        // Even if larger, if alt explicitly says "avatar", it's likely decorative
-        if (alt.toLowerCase().includes("'s avatar") || alt.toLowerCase().endsWith(' avatar')) {
-          return true;
-        }
-      }
-      
-      // Check for logo/brand patterns in URL (more comprehensive)
-      const logoPatterns = [
-        'logo', 'brand', 'icon', 'badge', 'watermark', 'sprite', 'spacer', 'blank', 'clear', 'pixel',
-        'youtube', 'facebook', 'twitter', 'instagram', 'linkedin', 'pinterest', 'rss',
-        'social-media', 'social-icon', 'share-icon', 'share-button',
-        'youtube-white-logo', 'youtube-logo', 'yt-logo',
-        'facebook-logo', 'twitter-logo', 'instagram-logo',
-        'arrow', 'chevron', 'bullet', 'dot', 'gradient', 'bg', 'background', 'shadow', 'border',
-        'divider', 'line', 'separator', 'spinner', 'loader', 'loading',
-        'placeholder', 'default', 'avatar', 'user', 'profile', 'gravatar',
-        'data:image/gif;base64,r0lgodlh', // Common 1x1 transparent GIF
-        'data:image/png;base64,i' // Common small transparent PNG
-      ];
-      
-      if (logoPatterns.some(pattern => src.includes(pattern))) {
-        return true;
-      }
-      
-      // Check for logo patterns in alt text
-      if (alt && (alt.includes('logo') || alt.includes('icon') || alt.includes('brand') || 
-                  alt.includes('social') || alt.includes('share') || alt.includes('button'))) {
-        // But allow if it's clearly a content image (e.g., "Photo of company logo on building")
-        if (alt.length > 30 && (alt.includes('photo') || alt.includes('image') || alt.includes('picture'))) {
-          return false; // Likely content image
-        }
-        return true;
-      }
-      
-      // Check for logo patterns in class/id
-      if (className.includes('logo') || className.includes('icon') || className.includes('brand') ||
-          className.includes('social') || className.includes('share') || className.includes('button') ||
-          id.includes('logo') || id.includes('icon') || id.includes('brand') ||
-          id.includes('social') || id.includes('share') || id.includes('button')) {
-        return true;
-      }
-      
-      // Check for very small dimensions (e.g., social media icons, UI elements)
-      // Note: naturalWidth/naturalHeight already declared above for author photo check
-      if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
-        // Be careful not to exclude legitimate small images like author avatars
-        // But exclude if it's clearly a social icon or UI element
-        // (headshot check already done above, so we can exclude small social icons)
-        if (!className.includes('author-avatar') && !className.includes('profile-pic') &&
-            !className.includes('author') && !id.includes('author') &&
-            !className.includes('headshot') && !id.includes('headshot') &&
-            (src.includes('icon') || src.includes('logo') || src.includes('social') || 
-             alt.includes('icon') || alt.includes('logo') || alt.includes('social'))) {
-          return true;
-        }
-      }
-      
-      // Check if it's a background image (often decorative)
-      const style = window.getComputedStyle(img);
-      if (style.backgroundImage !== 'none' && style.backgroundImage.includes(src)) {
-        return true;
-      }
-      
-      // Check if it's a very small image with no alt text and no meaningful context
-      if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth < 100 && naturalHeight < 100) &&
-          !alt && !img.closest('figure') && !img.closest('a')) {
-        // Check if it's inside a social/share container
-        let parent = img.parentElement;
-        for (let i = 0; i < 3 && parent; i++) {
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('social') || parentClass.includes('share') || 
-              parentClass.includes('icon') || parentClass.includes('logo') ||
-              parentId.includes('social') || parentId.includes('share') ||
-              parentId.includes('icon') || parentId.includes('logo')) {
-            return true;
-          }
-          parent = parent.parentElement;
-        }
-      }
-    
-      return false;
-    }
-    
-    // Helper: Check if image is tracking pixel
-    function isTrackingPixel(img) {
-      // Check if element is hidden (tracking pixels are often hidden)
-      try {
-        const style = window.getComputedStyle(img);
-        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-          // If hidden and very small, likely a tracking pixel
-          // Use both natural and CSS dimensions (natural may be 0 for unloaded images)
-          const naturalWidth = img.naturalWidth || 0;
-          const naturalHeight = img.naturalHeight || 0;
-          const cssWidth = parseInt(style.width) || img.width || 0;
-          const cssHeight = parseInt(style.height) || img.height || 0;
-          
-          // Only exclude if BOTH natural and CSS dimensions are very small
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            if (naturalWidth <= 3 && naturalHeight <= 3) return true;
-          } else if (cssWidth > 0 && cssHeight > 0) {
-            // If natural dimensions not available, check CSS
-            if (cssWidth <= 3 && cssHeight <= 3) return true;
-          }
-        }
-      } catch (e) {
-        // Continue if getComputedStyle fails
-      }
-      
-      // Check dimensions - use natural if available, otherwise CSS
-      const naturalWidth = img.naturalWidth || 0;
-      const naturalHeight = img.naturalHeight || 0;
-      const cssWidth = img.width || 0;
-      const cssHeight = img.height || 0;
-      
-      // Only exclude if we have dimensions and they're very small
-      if (naturalWidth > 0 && naturalHeight > 0) {
-        if (naturalWidth <= 3 && naturalHeight <= 3) return true;
-      } else if (cssWidth > 0 && cssHeight > 0) {
-        // If natural dimensions not available, check CSS (but be more lenient)
-        if (cssWidth <= 1 && cssHeight <= 1) return true;
-      }
-      
-      const src = (img.src || '').toLowerCase();
-      const trackingPatterns = ['pixel', 'tracking', 'beacon', 'analytics', 'facebook.com/tr', 'doubleclick', 'googleads'];
-      return trackingPatterns.some(pattern => src.includes(pattern));
-    }
-    
-    // Helper: Check if URL is a placeholder (base64 1x1 transparent pixel, etc.)
-    function isPlaceholderUrl(url) {
+    // Image processor module functions (inlined)
+    function isPlaceholderUrlModule(url) {
       if (!url) return true;
       if (url.startsWith('data:image')) {
-        // Check if it's a 1x1 transparent pixel
         if (url.includes('1x1') || url.includes('transparent') || url.length < 100) {
           return true;
         }
       }
-      // Check for common placeholder patterns
       const placeholderPatterns = ['placeholder', 'spacer', 'blank', '1x1', 'pixel.gif'];
       const urlLower = url.toLowerCase();
       return placeholderPatterns.some(pattern => urlLower.includes(pattern));
     }
     
-    // Helper: Extract best URL from srcset attribute
-    function getBestSrcsetUrl(srcset) {
+    function getBestSrcsetUrlModule(srcset, isPlaceholderUrl) {
       if (!srcset) return null;
-      // Parse srcset: "url1 1x, url2 2x" or "url1 100w, url2 200w"
       const sources = srcset.split(',').map(s => s.trim());
       let bestUrl = null;
       let bestSize = 0;
-      
       for (const source of sources) {
         const parts = source.trim().split(/\s+/);
         if (parts.length < 1) continue;
         const url = parts[0];
         if (isPlaceholderUrl(url)) continue;
-        
-        // Try to extract size descriptor
         if (parts.length > 1) {
           const descriptor = parts[1];
-          // Handle "2x" or "200w" format
           if (descriptor.endsWith('x')) {
             const multiplier = parseFloat(descriptor);
             if (multiplier > bestSize) {
@@ -1194,45 +294,30 @@ export function extractAutomaticallyInlined(baseUrl) {
             }
           }
         } else {
-          // No descriptor, use as fallback if no better option
           if (!bestUrl) bestUrl = url;
         }
       }
-      
       return bestUrl;
     }
     
-    // Helper: Extract best image URL from element (handles lazy loading, srcset, etc.)
-    function extractBestImageUrl(imgElement) {
+    function extractBestImageUrlModule(imgElement, isPlaceholderUrl, getBestSrcsetUrl) {
       if (!imgElement) return null;
-      
       let src = null;
-      
-      // Priority 1: currentSrc (browser's selected src from srcset)
-      // But only if it's not empty (some browsers set currentSrc to empty string for unloaded images)
       if (imgElement.currentSrc && imgElement.currentSrc.length > 0 && !isPlaceholderUrl(imgElement.currentSrc)) {
         src = imgElement.currentSrc;
       }
-      
-      // Priority 2: src attribute (if not placeholder)
-      // This is critical for images that haven't loaded yet (currentSrc may be empty)
-      // Also important for Smithsonian and similar sites where currentSrc can be empty but src is valid
       if (!src) {
         const imgSrc = imgElement.src || imgElement.getAttribute('src');
         if (imgSrc && imgSrc.length > 0 && !isPlaceholderUrl(imgSrc)) {
           src = imgSrc;
         }
       }
-      
-      // Priority 3: srcset (extract best quality)
       if (!src) {
         const srcset = imgElement.getAttribute('srcset');
         if (srcset) {
           src = getBestSrcsetUrl(srcset);
         }
       }
-      
-      // Priority 4: Check picture element sources
       if (!src) {
         const picture = imgElement.closest('picture');
         if (picture) {
@@ -1248,8 +333,6 @@ export function extractAutomaticallyInlined(baseUrl) {
           }
         }
       }
-      
-      // Priority 5: Lazy loading data attributes (check all data-* attributes containing src)
       if (!src) {
         const dataAttrs = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 
                            'data-full-src', 'data-high-res', 'data-srcset', 'data-original-src'];
@@ -1265,8 +348,6 @@ export function extractAutomaticallyInlined(baseUrl) {
           }
         }
       }
-      
-      // Priority 6: Check parent link (some sites wrap images in links)
       if (!src) {
         const parentLink = imgElement.closest('a[href]');
         if (parentLink) {
@@ -1276,33 +357,257 @@ export function extractAutomaticallyInlined(baseUrl) {
           }
         }
       }
-      
       return src;
     }
     
-    // Helper: Get image caption
-    function getImageCaption(img) {
-      // Check for figcaption in figure
+    function isTrackingPixelModule(img) {
+      try {
+        const style = window.getComputedStyle(img);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+          const naturalWidth = img.naturalWidth || 0;
+          const naturalHeight = img.naturalHeight || 0;
+          const cssWidth = parseInt(style.width) || img.width || 0;
+          const cssHeight = parseInt(style.height) || img.height || 0;
+          if (naturalWidth > 0 && naturalHeight > 0) {
+            if (naturalWidth <= 3 && naturalHeight <= 3) return true;
+          } else if (cssWidth > 0 && cssHeight > 0) {
+            if (cssWidth <= 3 && cssHeight <= 3) return true;
+          }
+        }
+      } catch (e) {}
+      const naturalWidth = img.naturalWidth || 0;
+      const naturalHeight = img.naturalHeight || 0;
+      const cssWidth = img.width || 0;
+      const cssHeight = img.height || 0;
+      if (naturalWidth > 0 && naturalHeight > 0) {
+        if (naturalWidth <= 3 && naturalHeight <= 3) return true;
+      } else if (cssWidth > 0 && cssHeight > 0) {
+        if (cssWidth <= 1 && cssHeight <= 1) return true;
+      }
+      const src = (img.src || '').toLowerCase();
+      const trackingPatterns = ['pixel', 'tracking', 'beacon', 'analytics', 'facebook.com/tr', 'doubleclick', 'googleads'];
+      return trackingPatterns.some(pattern => src.includes(pattern));
+    }
+    
+    function isDecorativeImageModule(img, constants) {
+      if (!img) return false;
+      const { LOGO_PATTERNS } = constants;
+      const src = (img.src || '').toLowerCase();
+      const alt = (img.alt || '').toLowerCase();
+      const className = String(img.className || '').toLowerCase();
+      const id = (img.id || '').toLowerCase();
+      if (className.includes('headshot') || id.includes('headshot') ||
+          className.includes('author-photo') || className.includes('author-image') ||
+          className.includes('author-avatar') || id.includes('author-photo') ||
+          id.includes('author-image') || id.includes('author-avatar') ||
+          className.includes('byline-thumbnail') || className.includes('byline-thumb') ||
+          className.includes('contributor-thumbnail') || className.includes('contributor-thumb') ||
+          className.includes('rich-byline') || className.includes('wp-post-image') ||
+          id.includes('byline-thumbnail') || id.includes('contributor-thumbnail')) {
+        return true;
+      }
+      let checkParent = img.parentElement;
+      for (let i = 0; i < 5 && checkParent; i++) {
+        const parentClass = String(checkParent.className || '').toLowerCase();
+        const parentId = (checkParent.id || '').toLowerCase();
+        const parentTag = checkParent.tagName.toLowerCase();
+        if (parentClass.includes('contributor') || parentClass.includes('contributors') ||
+            parentClass.includes('byline') || parentClass.includes('author-info') ||
+            parentClass.includes('author-bio') || parentClass.includes('author-meta') ||
+            parentId.includes('contributor') || parentId.includes('contributors') ||
+            parentId.includes('byline') || parentId.includes('author-info') ||
+            parentTag === 'address' || parentClass.includes('vcard')) {
+          const naturalWidth = img.naturalWidth || img.width || 0;
+          const naturalHeight = img.naturalHeight || img.height || 0;
+          if (naturalWidth > 0 && naturalHeight > 0) {
+            if (naturalWidth <= 150 && naturalHeight <= 150) {
+              return true;
+            }
+          } else {
+            const cssWidth = parseInt(img.style.width) || img.width || 0;
+            const cssHeight = parseInt(img.style.height) || img.height || 0;
+            if (cssWidth > 0 && cssHeight > 0 && cssWidth <= 150 && cssHeight <= 150) {
+              return true;
+            }
+          }
+          if (!alt || alt.length === 0) {
+            return true;
+          }
+        }
+        checkParent = checkParent.parentElement;
+      }
+      if (!alt || alt.length === 0) {
+        let parent = img.parentElement;
+        for (let i = 0; i < 5 && parent; i++) {
+          const parentClass = String(parent.className || '').toLowerCase();
+          const parentId = (parent.id || '').toLowerCase();
+          if (parentClass.includes('contributor') || parentClass.includes('contributors') ||
+              parentClass.includes('byline') || parentClass.includes('author-info') ||
+              parentClass.includes('author-bio') || parentClass.includes('author-meta') ||
+              parentId.includes('contributor') || parentId.includes('byline')) {
+            const naturalWidth = img.naturalWidth || img.width || 0;
+            const naturalHeight = img.naturalHeight || img.height || 0;
+            if (naturalWidth > 0 && naturalHeight > 0) {
+              if (naturalWidth <= 150 && naturalHeight <= 150) {
+                return true;
+              }
+            } else {
+              const cssWidth = parseInt(img.style.width) || img.width || 0;
+              const cssHeight = parseInt(img.style.height) || img.height || 0;
+              if (cssWidth > 0 && cssHeight > 0 && cssWidth <= 150 && cssHeight <= 150) {
+                return true;
+              }
+            }
+          }
+          parent = parent.parentElement;
+        }
+      } else if (alt.length > 0 && alt.length < 100) {
+        const namePattern = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/;
+        if (namePattern.test(alt.trim())) {
+          if (className.includes('headshot') || id.includes('headshot') ||
+              className.includes('byline-thumbnail') || className.includes('contributor-thumbnail')) {
+            return true;
+          }
+          let parent = img.parentElement;
+          for (let i = 0; i < 5 && parent; i++) {
+            const parentClass = String(parent.className || '').toLowerCase();
+            const parentId = (parent.id || '').toLowerCase();
+            const parentTag = parent.tagName.toLowerCase();
+            if (parentClass.includes('author') || parentId.includes('author') ||
+                parentClass.includes('byline') || parentId.includes('byline') ||
+                parentClass.includes('headshot') || parentId.includes('headshot') ||
+                parentClass.includes('contributor') || parentId.includes('contributor') ||
+                parentTag === 'address' || parentClass.includes('vcard') ||
+                parentClass.includes('author-info') || parentClass.includes('author-bio')) {
+              return true;
+            }
+            parent = parent.parentElement;
+          }
+          const naturalWidth = img.naturalWidth || img.width || 0;
+          const naturalHeight = img.naturalHeight || img.height || 0;
+          if (naturalWidth > 0 && naturalHeight > 0) {
+            if ((naturalWidth <= 250 && naturalHeight <= 250) && 
+                (naturalWidth === naturalHeight || Math.abs(naturalWidth - naturalHeight) < 50)) {
+              return true;
+            }
+          }
+        }
+      }
+      const naturalWidth = img.naturalWidth || img.width || 0;
+      const naturalHeight = img.naturalHeight || img.height || 0;
+      if (naturalWidth > 0 && naturalHeight > 0) {
+        if ((naturalWidth <= 250 && naturalHeight <= 250) && 
+            (naturalWidth === naturalHeight || Math.abs(naturalWidth - naturalHeight) < 50)) {
+          let parent = img.parentElement;
+          for (let i = 0; i < 3 && parent; i++) {
+            const parentClass = String(parent.className || '').toLowerCase();
+            const parentId = (parent.id || '').toLowerCase();
+            if (parentClass.includes('author') || parentId.includes('author') ||
+                parentClass.includes('byline') || parentId.includes('byline')) {
+              return true;
+            }
+            parent = parent.parentElement;
+          }
+        }
+      }
+      let checkParentForFacepile = img.parentElement;
+      for (let i = 0; i < 6 && checkParentForFacepile; i++) {
+        const parentClass = String(checkParentForFacepile.className || '').toLowerCase();
+        const parentId = (checkParentForFacepile.id || '').toLowerCase();
+        const parentText = checkParentForFacepile.textContent || '';
+        if (parentClass.includes('facepile') || parentId.includes('facepile') ||
+            parentClass.includes('likes') || parentClass.includes('restacks') ||
+            parentClass.includes('engagement') || parentClass.includes('reactions') ||
+            parentText.includes('Likes') || parentText.includes('Restacks') ||
+            parentText.includes('likes') || parentText.includes('restacks')) {
+          const naturalWidth = img.naturalWidth || img.width || 0;
+          const naturalHeight = img.naturalHeight || img.height || 0;
+          const cssWidth = parseInt(img.style.width) || img.width || 0;
+          const cssHeight = parseInt(img.style.height) || img.height || 0;
+          if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 100 && naturalHeight <= 100) ||
+              (cssWidth > 0 && cssHeight > 0 && cssWidth <= 100 && cssHeight <= 100)) {
+            return true;
+          }
+        }
+        checkParentForFacepile = checkParentForFacepile.parentElement;
+      }
+      if (alt && (alt.includes("'s avatar") || alt.includes("'s avatar") || 
+                  alt.includes(' avatar') || alt === 'avatar' || alt.endsWith('avatar'))) {
+        const naturalWidth = img.naturalWidth || img.width || 0;
+        const naturalHeight = img.naturalHeight || img.height || 0;
+        const cssWidth = parseInt(img.style.width) || img.width || 0;
+        const cssHeight = parseInt(img.style.height) || img.height || 0;
+        if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) ||
+            (cssWidth > 0 && cssHeight > 0 && cssWidth <= 50 && cssHeight <= 50)) {
+          return true;
+        }
+        if (alt.toLowerCase().includes("'s avatar") || alt.toLowerCase().endsWith(' avatar')) {
+          return true;
+        }
+      }
+      if (LOGO_PATTERNS.some(pattern => src.includes(pattern))) {
+        return true;
+      }
+      if (alt && (alt.includes('logo') || alt.includes('icon') || alt.includes('brand') || 
+                  alt.includes('social') || alt.includes('share') || alt.includes('button'))) {
+        if (alt.length > 30 && (alt.includes('photo') || alt.includes('image') || alt.includes('picture'))) {
+          return false;
+        }
+        return true;
+      }
+      if (className.includes('logo') || className.includes('icon') || className.includes('brand') ||
+          className.includes('social') || className.includes('share') || className.includes('button') ||
+          id.includes('logo') || id.includes('icon') || id.includes('brand') ||
+          id.includes('social') || id.includes('share') || id.includes('button')) {
+        return true;
+      }
+      if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
+        if (!className.includes('author-avatar') && !className.includes('profile-pic') &&
+            !className.includes('author') && !id.includes('author') &&
+            !className.includes('headshot') && !id.includes('headshot') &&
+            (src.includes('icon') || src.includes('logo') || src.includes('social') || 
+             alt.includes('icon') || alt.includes('logo') || alt.includes('social'))) {
+          return true;
+        }
+      }
+      try {
+        const style = window.getComputedStyle(img);
+        if (style.backgroundImage !== 'none' && style.backgroundImage.includes(src)) {
+          return true;
+        }
+      } catch (e) {}
+      if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth < 100 && naturalHeight < 100) &&
+          !alt && !img.closest('figure') && !img.closest('a')) {
+        let parent = img.parentElement;
+        for (let i = 0; i < 3 && parent; i++) {
+          const parentClass = String(parent.className || '').toLowerCase();
+          const parentId = (parent.id || '').toLowerCase();
+          if (parentClass.includes('social') || parentClass.includes('share') || 
+              parentClass.includes('icon') || parentClass.includes('logo') ||
+              parentId.includes('social') || parentId.includes('share') ||
+              parentId.includes('icon') || parentId.includes('logo')) {
+            return true;
+          }
+          parent = parent.parentElement;
+        }
+      }
+      return false;
+    }
+    
+    function getImageCaptionModule(img) {
       const figure = img.closest('figure');
       if (figure) {
         const figcaption = figure.querySelector('figcaption');
         if (figcaption) return figcaption.textContent.trim();
       }
-      
-      // Check aria-label or title on image itself
       const ariaLabel = img.getAttribute('aria-label');
       if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
-      
       const title = img.getAttribute('title');
       if (title && title.trim() && title !== img.alt) return title.trim();
-      
-      // Check next sibling
       const nextSibling = img.nextElementSibling;
       if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
         return nextSibling.textContent.trim();
       }
-      
-      // Check for caption in parent container
       const parent = img.parentElement;
       if (parent) {
         const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption, [class*="caption"]');
@@ -1311,140 +616,102 @@ export function extractAutomaticallyInlined(baseUrl) {
           if (captionText && captionText !== img.alt) return captionText;
         }
       }
-      
       return '';
     }
     
-    // Helper: Check if element is likely content container (less strict than isExcluded)
-    function isLikelyContentContainer(element) {
+    // Content finder module functions (inlined)
+    function isLikelyContentContainerModule(element) {
       const className = String(element.className || '').toLowerCase();
       const id = (element.id || '').toLowerCase();
-      
-      // These are strong indicators of content containers
       const contentIndicators = [
         'article', 'content', 'post', 'entry', 'main', 'story', 'text'
       ];
-      
       for (const indicator of contentIndicators) {
         if (className.includes(indicator) || id.includes(indicator)) {
           return true;
         }
       }
-      
       return false;
     }
     
-    // Helper: Calculate content score for element (Readability-inspired algorithm)
-    function calculateContentScore(element) {
+    function calculateContentScoreModule(element, isLikelyContentContainer) {
       const paragraphs = element.querySelectorAll('p');
       const headings = element.querySelectorAll('h1, h2, h3, h4, h5, h6');
       const links = element.querySelectorAll('a');
       const text = element.textContent || '';
       const textLength = text.length;
-      
-      // Base score from structure
       let score = paragraphs.length * 10;
       score += headings.length * 5;
       score += Math.min(textLength / 100, 50);
-      
-      // Link density penalty (high link density = navigation, not content)
-      // Readability uses: if (linkDensity > 0.5) penalty
-      // But be more lenient: only penalize if REALLY high link density
       const linkDensity = paragraphs.length > 0 
         ? links.length / Math.max(paragraphs.length, 1)
         : links.length / Math.max(textLength / 100, 1);
-      
-      // More lenient: only heavy penalty if link density is very high (>1.0)
       if (linkDensity > 1.0) {
-        score *= 0.5; // Heavy penalty for navigation-like content
+        score *= 0.5;
       } else if (linkDensity > 0.7) {
-        score *= 0.75; // Moderate penalty
+        score *= 0.75;
       } else if (linkDensity > 0.5) {
-        score *= 0.9; // Light penalty
+        score *= 0.9;
       }
-      
-      // Comma count bonus (many commas = likely prose text, not navigation)
-      // Readability considers this as indicator of real content
       const commaCount = (text.match(/,/g) || []).length;
       if (commaCount > 10) {
-        score *= 1.2; // Bonus for text-rich content
+        score *= 1.2;
       } else if (commaCount > 5) {
         score *= 1.1;
       }
-      
-      // Sentence count (more sentences = more content)
       const sentenceCount = (text.match(/[.!?]+\s+/g) || []).length;
       if (sentenceCount > 5) {
         score += Math.min(sentenceCount * 2, 30);
       }
-      
-      // Semantic HTML bonus (stronger bonus)
       const tagName = element.tagName.toLowerCase();
       if (tagName === 'article') {
-        score *= 2.0; // Very strong indicator of content
+        score *= 2.0;
       } else if (tagName === 'main') {
         score *= 1.5;
       } else if (tagName === 'section' && paragraphs.length >= 3) {
         score *= 1.2;
       }
-      
-      // Content-like class/id bonus (stronger)
       if (isLikelyContentContainer(element)) {
-        score += 100; // Increased bonus
+        score += 100;
       }
-      
-      // Penalty for very short content (less strict)
       if (textLength < 100) {
         score *= 0.5;
       } else if (textLength < 200) {
-        score *= 0.8; // Less penalty
+        score *= 0.8;
       }
-      
-      // Penalty for too many lists (likely navigation) - more lenient
       const lists = element.querySelectorAll('ul, ol');
       if (lists.length > paragraphs.length * 3 && paragraphs.length < 3) {
         score *= 0.6;
       } else if (lists.length > paragraphs.length * 2 && paragraphs.length < 5) {
-        score *= 0.8; // Less penalty
+        score *= 0.8;
       }
-      
-      // HEAVY PENALTY for email signup/newsletter content
       const textLower = text.toLowerCase();
       if (textLower.includes('get the latest') && textLower.includes('inbox') ||
           textLower.includes('email powered by') ||
           textLower.includes('salesforce marketing cloud') ||
           textLower.includes('marketing cloud')) {
-        score -= 1000; // Very heavy penalty - should never be selected
+        score -= 1000;
       }
-      
-      // HEAVY PENALTY for email signup forms/newsletters
       const emailInputs = element.querySelectorAll('input[type="email"]');
       if (emailInputs.length > 0) {
-        // Check if it's a newsletter signup (not a contact form)
         const hasNewsletterText = textLower.includes('newsletter') || 
-                                  textLower.includes('subscribe') ||
-                                  textLower.includes('get the latest') ||
-                                  textLower.includes('inbox') ||
-                                  textLower.includes('marketing cloud');
+                                textLower.includes('subscribe') ||
+                                textLower.includes('get the latest') ||
+                                textLower.includes('inbox') ||
+                                textLower.includes('marketing cloud');
         if (hasNewsletterText) {
-          score -= 1000; // Very heavy penalty for newsletter signups
+          score -= 1000;
         } else {
-          score -= 50; // Still penalty for email inputs
+          score -= 50;
         }
       }
-      
-      // Penalty for marketing cloud indicators
       if (textLower.includes('marketing cloud') || textLower.includes('salesforce')) {
         score -= 500;
       }
-      
-      // Bonus for images (content usually has images)
       const images = element.querySelectorAll('img');
-      if (images.length > 0 && images.length < 20) { // Not too many (could be gallery)
+      if (images.length > 0 && images.length < 20) {
         score += Math.min(images.length * 3, 20);
       }
-      
-      // Bonus for long paragraphs (indicator of article content, not navigation)
       let longParagraphs = 0;
       for (const p of paragraphs) {
         if (p.textContent.trim().length > 200) {
@@ -1452,182 +719,755 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
       }
       if (longParagraphs > 3) {
-        score += longParagraphs * 5; // Bonus for substantial paragraphs
+        score += longParagraphs * 5;
       }
-      
       return score;
     }
     
-    // Helper: Find main content container
-    function findMainContent() {
-      // Strategy 1: Semantic HTML5 (less strict checks)
-      // IMPORTANT: Check if article is actually the main content, not a related article card
+    function hasSubstantialContentModule(element) {
+      const text = element.textContent.trim();
+      const paragraphs = element.querySelectorAll('p');
+      return text.length > 100 && (paragraphs.length >= 1 || text.length > 300);
+    }
+    
+    function findMainContentModule(isExcluded, isLikelyContentContainer, calculateContentScore) {
       const article = document.querySelector('article');
       if (article) {
-        const articleText = article.textContent.trim();
-        // Even if doesn't meet hasSubstantialContent, check if it has reasonable content
-        if (articleText.length > 100) {
-          // Check if article is likely a related article card (small content, has image placeholder, etc.)
-          const isRelatedArticle = articleText.length < 500 || 
-                                   article.querySelector('.gc__image-placeholder') !== null ||
-                                   article.className.includes('gc--type-post') ||
-                                   article.className.includes('card') ||
-                                   article.closest('aside, .related, .sidebar') !== null;
-          
-          // Only use article if it's substantial content (not a card)
-          if (!isRelatedArticle && articleText.length > 500) {
-            const isExcludedResult = isExcluded(article);
-            const isLikelyContent = isLikelyContentContainer(article);
-            // For semantic containers, only exclude if clearly not content (very strict)
-            // Since isExcluded is now more lenient for semantic containers, we can trust it
-            if (!isExcludedResult) {
-              return article;
-            }
-            // Fallback: if excluded but is likely content container, still use it
-            // (this handles edge cases where exclusion might be too strict)
-            if (isLikelyContent) {
-              return article;
-            }
-          }
+        const articleScore = calculateContentScore(article);
+        if (articleScore > 0 && hasSubstantialContentModule(article)) {
+          return article;
         }
       }
-      
       const main = document.querySelector('main');
       if (main) {
-        const mainText = main.textContent.trim();
-        if (mainText.length > 100) {
-          // Check if there's a more specific content container inside main
-          // (e.g., .wysiwyg for Al Jazeera, .article-content for other sites)
-          const specificContent = main.querySelector('.wysiwyg, .wysiwyg--all-content, .article-content, .post-content, .entry-content, .article-body, .post-body');
-          if (specificContent && specificContent.textContent.trim().length > 500) {
-            // Use the specific content container instead of main
-            const isExcludedResult = isExcluded(specificContent);
-            if (!isExcludedResult) {
-              return specificContent;
+        const mainScore = calculateContentScore(main);
+        if (mainScore > 0 && hasSubstantialContentModule(main)) {
+          return main;
+        }
+      }
+      let bestElement = null;
+      let bestScore = 0;
+      const candidates = document.querySelectorAll('div, section, article, main');
+      for (const candidate of candidates) {
+        if (isExcluded(candidate)) continue;
+        const score = calculateContentScore(candidate);
+        if (score > bestScore && hasSubstantialContentModule(candidate)) {
+          bestScore = score;
+          bestElement = candidate;
+        }
+      }
+      return bestElement;
+    }
+    
+    // Element filter module functions (inlined)
+    function isNavigationParagraphModule(text, NAV_PATTERNS_STARTS_WITH, PAYWALL_PATTERNS) {
+      const textTrimmed = text.trim();
+      const textLength = textTrimmed.length;
+      if (textLength > 200) {
+        return false;
+      }
+      const linkCount = (textTrimmed.match(/<a\s+/gi) || []).length;
+      const textWithoutLinks = textTrimmed.replace(/<[^>]+>/g, '').trim();
+      const linkDensity = textWithoutLinks.length > 0 ? linkCount / (textWithoutLinks.length / 50) : linkCount;
+      if (linkCount >= 2 && textLength < 100) {
+        return true;
+      }
+      if (NAV_PATTERNS_STARTS_WITH.some(pattern => pattern.test(textTrimmed))) {
+        return true;
+      }
+      const textLower = text.toLowerCase();
+      if (PAYWALL_PATTERNS.some(pattern => textLower.includes(pattern))) {
+        return true;
+      }
+      return false;
+    }
+    
+    function isExcludedModule(element, constants, helpers) {
+      const {
+        EXCLUDED_CLASSES,
+        PAYWALL_CLASSES,
+        NAV_PATTERNS_CONTAINS,
+        COURSE_AD_PATTERNS
+      } = constants;
+      
+      const {
+        isFootnoteLink,
+        isIcon
+      } = helpers;
+      
+      const tagName = element.tagName.toLowerCase();
+      const isSemanticContainer = tagName === 'article' || tagName === 'main';
+      const className = String(element.className || '').toLowerCase();
+      const id = (element.id || '').toLowerCase();
+      const isImageOrFigure = tagName === 'img' || tagName === 'figure';
+      
+      let style = null;
+      try {
+        style = window.getComputedStyle(element);
+      } catch (e) {
+        return false;
+      }
+      
+      if (style) {
+        if (isImageOrFigure) {
+          if (style.display === 'none' || style.visibility === 'hidden') {
+            const hasLazySrc = element.hasAttribute('data-src') || 
+                              element.hasAttribute('data-lazy-src') ||
+                              element.hasAttribute('data-original') ||
+                              element.hasAttribute('data-srcset');
+            if (hasLazySrc) {
+              return false;
             }
+            if (tagName === 'figure') {
+              const img = element.querySelector('img');
+              if (img) {
+                const imgHasLazySrc = img.hasAttribute('data-src') || 
+                                     img.hasAttribute('data-lazy-src') ||
+                                     img.hasAttribute('data-original') ||
+                                     img.hasAttribute('data-srcset');
+                if (imgHasLazySrc) {
+                  return false;
+                }
+              }
+            }
+            return true;
           }
-          
-          const isExcludedResult = isExcluded(main);
-          const isLikelyContent = isLikelyContentContainer(main);
-          // Same logic as for article
-          if (!isExcludedResult) {
-            return main;
-          }
-          if (isLikelyContent) {
-            return main;
+        } else {
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            return true;
           }
         }
       }
       
-      // Strategy 2: Common content selectors (prioritize these)
-      const contentSelectors = [
-        '[role="main"]',
-        '.article-content', '.post-content', '.entry-content', '.content',
-        '.post-body', '.article-body', '.entry-body',
-        '#content', '#main-content', '#article-content',
-        '.wp-block-post-content', '.entry', '.post',
-        // Additional common patterns
-        '.prose', '.article-text', '.story-body', '.article-body-content',
-        '.wysiwyg', '.wysiwyg--all-content', // Al Jazeera uses this
-        '[class*="article"]', '[class*="content"]', '[id*="article"]', '[id*="content"]'
-      ];
+      if (tagName === 'iframe') {
+        const src = (element.src || '').toLowerCase();
+        const adPatterns = ['ad', 'ads', 'advertisement', 'doubleclick', 'googleads', 'pubmatic', 'openx', 'adsystem'];
+        if (adPatterns.some(pattern => src.includes(pattern))) {
+          return true;
+        }
+        const parent = element.parentElement;
+        if (parent) {
+          const parentClass = String(parent.className || '').toLowerCase();
+          const parentId = (parent.id || '').toLowerCase();
+          if (parentClass.includes('ad') || parentId.includes('ad') || 
+              parentClass.includes('advertisement') || parentId.includes('advertisement')) {
+            return true;
+          }
+        }
+        return true;
+      }
       
-      for (const selector of contentSelectors) {
-        try {
-          const element = document.querySelector(selector);
-          if (element) {
-            const elementText = element.textContent.trim();
-            // Less strict: accept if has reasonable text length
-            if (elementText.length > 100) {
-              // For known content containers, be less strict about exclusions
-              if (isLikelyContentContainer(element) || !isExcluded(element)) {
-                // If we found main/article, check if there's a more specific content container inside
-                // (e.g., .wysiwyg inside main for Al Jazeera)
-                if ((element.tagName.toLowerCase() === 'main' || element.tagName.toLowerCase() === 'article') && 
-                    elementText.length > 500) {
-                  const specificContent = element.querySelector('.wysiwyg, .wysiwyg--all-content, .article-content, .post-content, .entry-content');
-                  if (specificContent && specificContent.textContent.trim().length > 500) {
-                    return specificContent;
+      if (isFootnoteLink(element)) return true;
+      if (isIcon(element)) return true;
+      if (tagName === 'aside' || element.getAttribute('role') === 'complementary') {
+        return true;
+      }
+      if (element.querySelector && element.querySelector('input[type="email"]')) {
+        return true;
+      }
+      
+      const adClasses = ['book-cta', 'course-cta', 'product-cta', 'course-ad', 'product-ad'];
+      if (adClasses.some(adClass => className.includes(adClass) || id.includes(adClass))) {
+        return true;
+      }
+      
+      const paywallClasses = [
+        'freebie-message', 'subscribe-text', 'message--freebie', 'subscribe-',
+        'paywall', 'subscription', 'freebie', 'article-limit', 'access-message'
+      ];
+      if (paywallClasses.some(paywallClass => className.includes(paywallClass) || id.includes(paywallClass))) {
+        return true;
+      }
+      
+      const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
+      const text = element.textContent || '';
+      const textLower = text.toLowerCase();
+      const textTrimmed = text.trim();
+      
+      if (isParagraphOrHeading) {
+        if (textTrimmed.length < 100 && 
+            (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed))) {
+          return true;
+        }
+        if (textTrimmed.length < 150 && 
+            (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
+             (/^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)))) {
+          return true;
+        }
+        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 100) {
+          return true;
+        }
+      } else {
+        if (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed)) {
+          return true;
+        }
+        if (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
+            /^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)) {
+          return true;
+        }
+        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 200) {
+          return true;
+        }
+      }
+      
+      if (tagName === 'a' && textLower.includes('syndicate this essay')) {
+        return true;
+      }
+      
+      if ((textLower.includes('donate') || textLower.includes('donation')) && 
+          (textLower.includes('support') || textLower.includes('mission') || 
+           textLower.includes('select amount') || textLower.includes('per month'))) {
+        return true;
+      }
+      
+      const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
+      const hasPrice = pricePattern.test(text);
+      const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
+      if (hasPrice && isCourseAd) {
+        return true;
+      }
+      
+      if ((className.includes('summary') || id.includes('summary') || 
+           className.includes('quick-summary') || id.includes('quick-summary')) &&
+          (textLower.includes('measure ux & design impact') || 
+           textLower.includes('use the code') || textLower.includes('save 20%') ||
+           textLower.includes('save') && textLower.includes('off'))) {
+        return true;
+      }
+      
+      if (tagName.match(/^h[1-6]$/)) {
+        const headingText = textLower;
+        if (headingText.startsWith('meet ') && 
+            (headingText.includes('course') || headingText.includes('book') || 
+             headingText.includes('training') || headingText.includes('product') ||
+             headingText.includes('measure ux'))) {
+          let parent = element.parentElement;
+          let nextSibling = element.nextElementSibling;
+          for (let i = 0; i < 3 && (parent || nextSibling); i++) {
+            const checkText = ((parent ? parent.textContent : '') + 
+                             (nextSibling ? nextSibling.textContent : '')).toLowerCase();
+            if (checkText.includes('$') || checkText.includes('price') || 
+                checkText.includes('money-back') || checkText.includes('guarantee') ||
+                checkText.includes('495') || checkText.includes('799') ||
+                checkText.includes('250') || checkText.includes('395')) {
+              return true;
+            }
+            if (parent) parent = parent.parentElement;
+            if (nextSibling) nextSibling = nextSibling.nextElementSibling;
+          }
+        }
+        if (headingText.includes('video') && 
+            (headingText.includes('training') || headingText.includes('course'))) {
+          let parent = element.parentElement;
+          let nextSibling = element.nextElementSibling;
+          for (let i = 0; i < 3 && (parent || nextSibling); i++) {
+            const checkText = ((parent ? parent.textContent : '') + 
+                             (nextSibling ? nextSibling.textContent : '')).toLowerCase();
+            if (checkText.includes('$') || checkText.includes('price') || 
+                checkText.includes('money-back') || checkText.includes('guarantee')) {
+              return true;
+            }
+            if (parent) parent = parent.parentElement;
+            if (nextSibling) nextSibling = nextSibling.nextElementSibling;
+          }
+        }
+        if (headingText.includes('useful resources') || headingText.includes('further reading')) {
+          let nextSibling = element.nextElementSibling;
+          let linkCount = 0;
+          let textLength = 0;
+          for (let i = 0; i < 5 && nextSibling; i++) {
+            const links = nextSibling.querySelectorAll('a');
+            linkCount += links.length;
+            const siblingText = nextSibling.textContent.replace(/<[^>]+>/g, '').trim();
+            textLength += siblingText.length;
+            nextSibling = nextSibling.nextElementSibling;
+          }
+          if (linkCount >= 3 && textLength < 500) {
+            return true;
+          }
+        }
+        if (headingText.trim() === 'tags') {
+          return true;
+        }
+        if (headingText.includes('more from')) {
+          return true;
+        }
+        if (headingText.trim().toLowerCase() === 'related') {
+          return true;
+        }
+        if (headingText.includes('from the archive')) {
+          return true;
+        }
+      }
+      
+      if (tagName === 'hr' || tagName === 'separator' || 
+          element.getAttribute('role') === 'separator' ||
+          className.includes('separator') || id.includes('separator')) {
+        return true;
+      }
+      
+      if (className.includes('share-buttons') || className.includes('component-share-buttons') ||
+          className.includes('aria-font-adjusts') || className.includes('font-adjust') ||
+          id.includes('share-buttons') || id.includes('font-adjust')) {
+        return true;
+      }
+      
+      if (tagName === 'button') {
+        const buttonText = text.trim().toLowerCase();
+        if (buttonText === 'email' || buttonText === 'save' || buttonText === 'post' || 
+            buttonText === 'share' || buttonText.includes('syndicate')) {
+          return true;
+        }
+      }
+      
+      if (tagName === 'a') {
+        const href = (element.getAttribute('href') || '').toLowerCase();
+        const hasImage = element.querySelector('img');
+        const linkText = text.trim();
+        if (href.includes('/essay/') && hasImage && linkText.length > 30) {
+          const parent = element.parentElement;
+          if (parent) {
+            const siblingLinks = parent.querySelectorAll('a[href*="/essay/"]');
+            if (siblingLinks.length >= 2) {
+              return true;
+            }
+          }
+        }
+        const linkText2 = text.trim();
+        if (linkText2.startsWith('[') && linkText2.endsWith(']') && linkText2.length < 50) {
+          return true;
+        }
+      }
+      
+    if (textLower.includes('sign up to our newsletter') || 
+        textLower.includes('join more than') && textLower.includes('newsletter subscribers') ||
+        (textLower.includes('newsletter') && textLower.includes('subscribe') && 
+         element.querySelector('input[type="email"]'))) {
+      return true;
+    }
+    
+    if (/get\s+the\s+latest\s+.+\s+stories?\s+in\s+your\s+inbox/i.test(text)) {
+      return true;
+    }
+    
+    if (textLower.includes('email powered by') ||
+        textLower.includes('powered by salesforce') ||
+        textLower.includes('salesforce marketing cloud') ||
+        textLower.includes('marketing cloud') ||
+        (textLower.includes('privacy notice') && textLower.includes('terms')) ||
+        (textLower.includes('privacy') && textLower.includes('terms') && textLower.includes('conditions'))) {
+      return true;
+    }
+    
+    if (element.querySelector('input[type="email"]') || 
+        element.querySelector('input[name*="email"]') ||
+        element.querySelector('input[id*="email"]')) {
+      if (textLower.includes('newsletter') || textLower.includes('subscribe') ||
+          textLower.includes('signup') || textLower.includes('sign-up') ||
+          textLower.includes('get the latest') || textLower.includes('inbox') ||
+          textLower.includes('marketing cloud')) {
+        return true;
+      }
+    }
+    
+    const navTextPatterns = NAV_PATTERNS_CONTAINS;
+    if (!isSemanticContainer && !isImageOrFigure) {
+        const isParagraphOrHeading2 = tagName === 'p' || tagName.match(/^h[1-6]$/);
+        if (isParagraphOrHeading2) {
+        if (textTrimmed.length < 200 && navTextPatterns.some(pattern => pattern.test(text))) {
+          return true;
+        }
+      } else {
+        if (navTextPatterns.some(pattern => pattern.test(text))) {
+          return true;
+        }
+      }
+    }
+    
+    if (!isImageOrFigure) {
+      if (textLower.includes('email newsletter') || 
+          (textLower.includes('newsletter') && textLower.includes('email')) ||
+          textLower.includes('weekly tips') ||
+          (textLower.includes('trusted by') && textLower.includes('folks'))) {
+        let checkEl = element;
+        for (let i = 0; i < 3 && checkEl; i++) {
+          if (checkEl.querySelector && checkEl.querySelector('input[type="email"]')) {
+            return true;
+          }
+          checkEl = checkEl.parentElement;
+        }
+      }
+    }
+    
+    if (text.includes('$') || text.includes('€') || text.includes('£')) {
+      const adKeywords = ['video', 'training', 'course', 'get', 'buy', 'purchase', 
+                          'money-back', 'guarantee', 'enroll', 'sign up'];
+      const hasAdKeywords = adKeywords.some(keyword => textLower.includes(keyword));
+      if (hasAdKeywords && (text.includes('$') || text.match(/\$\s*\d+/))) {
+        return true;
+      }
+    }
+    
+    if (textLower.startsWith('meet ') && 
+        (textLower.includes('course') || textLower.includes('book') || 
+         textLower.includes('training') || textLower.includes('product'))) {
+      return true;
+    }
+    
+    if (isImageOrFigure) {
+      let hasExcludedClass = false;
+      for (const excluded of EXCLUDED_CLASSES) {
+        const pattern = new RegExp(`\\b${excluded}\\b`);
+        if (pattern.test(className) || pattern.test(id) ||
+            className === excluded || className.startsWith(excluded + '-') || className.endsWith('-' + excluded) ||
+            id === excluded || id.startsWith(excluded + '-') || id.endsWith('-' + excluded)) {
+          hasExcludedClass = true;
+          break;
+        }
+      }
+      if (hasExcludedClass) {
+        return true;
+      }
+    } else {
+      for (const excluded of EXCLUDED_CLASSES) {
+        if (className.includes(excluded) || id.includes(excluded)) {
+          return true;
+        }
+      }
+    }
+    
+    if (!isSemanticContainer) {
+      let parent = element.parentElement;
+      if (isImageOrFigure) {
+        let iterations = 0;
+          const maxIterations = 50;
+        while (parent && parent !== document.body && iterations < maxIterations) {
+          iterations++;
+          const parentClass = String(parent.className || '').toLowerCase();
+          const parentId = (parent.id || '').toLowerCase();
+          const parentTag = parent.tagName.toLowerCase();
+          const clearAdIndicators = [
+            /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
+            'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container'
+          ];
+          const isClearAd = clearAdIndicators.some(indicator => {
+            if (typeof indicator === 'string') {
+              return parentClass.includes(indicator) || parentId.includes(indicator);
+            }
+            return indicator.test(parentClass) || indicator.test(parentId);
+          });
+          if (isClearAd || parentTag === 'iframe' || parentTag === 'aside') {
+            return true;
+          }
+          parent = parent.parentElement;
+        }
+      } else {
+          const isParagraphOrHeading3 = tagName === 'p' || tagName.match(/^h[1-6]$/);
+        let iterations = 0;
+          const maxIterations = 50;
+        while (parent && parent !== document.body && iterations < maxIterations) {
+          iterations++;
+          const parentClass = String(parent.className || '').toLowerCase();
+          const parentId = (parent.id || '').toLowerCase();
+          const parentText = parent.textContent || '';
+          const parentTag = parent.tagName.toLowerCase();
+            if (isParagraphOrHeading3) {
+            if (parentTag === 'aside' || parentTag === 'nav' || parentTag === 'footer' || parentTag === 'header') {
+              return true;
+            }
+            const clearAdIndicators = [
+              /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
+              'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container'
+            ];
+            const isClearAd = clearAdIndicators.some(indicator => {
+              if (typeof indicator === 'string') {
+                return parentClass.includes(indicator) || parentId.includes(indicator);
+              }
+              return indicator.test(parentClass) || indicator.test(parentId);
+            });
+            if (isClearAd) {
+              return true;
+            }
+            if (parentTag === 'section' && 
+                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
+              const articleLinks = parent.querySelectorAll('a[href*="/article/"], a[href*="/post/"], a[href*="/essay/"]');
+              if (articleLinks.length >= 2) {
+                return true;
+              }
+            }
+          } else {
+            if (parentTag === 'section' && 
+                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
+              return true;
+            }
+            if (navTextPatterns.some(pattern => pattern.test(parentText))) {
+              return true;
+            }
+            if (parentTag === 'aside' && (parentClass.includes('ad') || parentId.includes('ad'))) {
+              return true;
+            }
+            for (const excluded of EXCLUDED_CLASSES) {
+              if (parentClass.includes(excluded) || parentId.includes(excluded)) {
+                return true;
+                }
+              }
+            }
+            parent = parent.parentElement;
+        }
+      }
+    }
+    
+    return false;
+    }
+    
+    // Metadata extractor module functions (inlined)
+    function isValidArticleTitleModule(h1Element) {
+      if (!h1Element || !h1Element.textContent) return false;
+      const text = h1Element.textContent.trim();
+      if (text.length < 5) return false;
+      const siteNamePatterns = ['home', 'about', 'contact', 'blog', 'news', 'archive'];
+      const lowerText = text.toLowerCase();
+      if (siteNamePatterns.some(pattern => lowerText === pattern)) return false;
+        return true;
+      }
+      
+    function extractAuthorFromUrlModule(url) {
+      if (!url) return null;
+      try {
+        const profileMatch = url.match(/\/(?:profile|author)\/([^\/\?]+)/i);
+        if (profileMatch) {
+          const slug = profileMatch[1];
+          const parts = slug.split(/[-_]/);
+          if (parts.length > 1) {
+            const name = parts
+              .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+              .join(' ');
+            if (name.length > 2 && name.length < 100) {
+              return name;
+            }
+          }
+          const singlePart = parts[0];
+          const camelCaseMatch = singlePart.match(/^([a-z]+)([A-Z][a-z]*)$/);
+          if (camelCaseMatch) {
+            const name = [
+              camelCaseMatch[1].charAt(0).toUpperCase() + camelCaseMatch[1].slice(1).toLowerCase(),
+              camelCaseMatch[2].charAt(0).toUpperCase() + camelCaseMatch[2].slice(1).toLowerCase()
+            ].join(' ');
+            if (name.length > 2 && name.length < 100) {
+              return name;
+            }
+          }
+          if (singlePart.length > 6 && /^[a-z]+$/.test(singlePart)) {
+            const commonEndings = ['a', 'ia', 'na', 'ra', 'la', 'sa'];
+            for (const ending of commonEndings) {
+              if (singlePart.endsWith(ending) && singlePart.length > ending.length + 3) {
+                const firstPart = singlePart.slice(0, -ending.length);
+                const secondPart = singlePart.slice(-ending.length);
+                if (firstPart.length >= 3 && firstPart.length <= 15 && 
+                    secondPart.length >= 3 && secondPart.length <= 15) {
+                  const name = [
+                    firstPart.charAt(0).toUpperCase() + firstPart.slice(1),
+                    secondPart.charAt(0).toUpperCase() + secondPart.slice(1)
+                  ].join(' ');
+                  if (name.length > 2 && name.length < 100) {
+                    return name;
                   }
                 }
-                return element;
+              }
+            }
+            if (singlePart.length > 10) {
+              const mid = Math.floor(singlePart.length / 2);
+              const firstPart = singlePart.slice(0, mid);
+              const secondPart = singlePart.slice(mid);
+              if (firstPart.length >= 3 && secondPart.length >= 3) {
+                const name = [
+                  firstPart.charAt(0).toUpperCase() + firstPart.slice(1),
+                  secondPart.charAt(0).toUpperCase() + secondPart.slice(1)
+                ].join(' ');
+                if (name.length > 2 && name.length < 100) {
+                  return name;
+                }
               }
             }
           }
-        } catch (e) {
-          // Invalid selector, continue
+          const name = singlePart.charAt(0).toUpperCase() + singlePart.slice(1).toLowerCase();
+          if (name.length > 2 && name.length < 100) {
+            return name;
+          }
         }
-      }
-      
-      // Strategy 3: Score-based search (Readability-inspired)
-      // Check all potential containers
-      const candidates = Array.from(document.querySelectorAll('div, article, main, section'));
-      
-      let bestCandidate = null;
-      let maxScore = 0;
-      const topCandidates = []; // Track top 5 for debugging
-      
-      // Cache for textContent to avoid repeated expensive operations
-      const textContentCache = new WeakMap();
-      function getCachedTextContent(element) {
-        if (!textContentCache.has(element)) {
-          textContentCache.set(element, element.textContent.trim());
-        }
-        return textContentCache.get(element);
-      }
-      
-      for (const candidate of candidates) {
-        // Skip if clearly excluded (but be lenient for content-like containers)
-        if (!isLikelyContentContainer(candidate) && isExcluded(candidate)) continue;
-        
-        // Use cached textContent
-        const candidateText = getCachedTextContent(candidate);
-        // Less strict: accept candidates with at least 100 chars
-        if (candidateText.length < 100) continue;
-        
-        // Calculate score using improved algorithm
-        const score = calculateContentScore(candidate);
-        
-        // Early exit if we found a very good candidate
-        if (score > 100) {
-          return candidate;
-        }
-        
-        // Track top candidates for debugging
-        if (topCandidates.length < 5 || score > topCandidates[topCandidates.length - 1].score) {
-          topCandidates.push({ element: candidate, score: score });
-          topCandidates.sort((a, b) => b.score - a.score);
-          if (topCandidates.length > 5) topCandidates.pop();
-        }
-        
-        if (score > maxScore) {
-          maxScore = score;
-          bestCandidate = candidate;
-        }
-      }
-      
-      // If we found a good candidate, return it
-      // Lower threshold to be less strict (was 20, now 10)
-      if (bestCandidate && maxScore > 10) {
-        return bestCandidate;
-      }
-      
-      // Fallback: return best candidate even if score is lower (but must have some content)
-      if (bestCandidate && maxScore > 0) {
-        return bestCandidate;
+      } catch (e) {
+        // Continue
       }
       return null;
     }
     
-    // Helper: Check if element has substantial content
-    function hasSubstantialContent(element) {
-      const text = element.textContent.trim();
-      const paragraphs = element.querySelectorAll('p');
-      // Less strict: allow elements with at least 100 chars OR 1 paragraph
-      // This helps with pages that have less structured content
-      return text.length > 100 && (paragraphs.length >= 1 || text.length > 300);
+    function getMonthNumberModule(monthName) {
+      const months = {
+        'january': '01', 'jan': '01',
+        'february': '02', 'feb': '02',
+        'march': '03', 'mar': '03',
+        'april': '04', 'apr': '04',
+        'may': '05',
+        'june': '06', 'jun': '06',
+        'july': '07', 'jul': '07',
+        'august': '08', 'aug': '08',
+        'september': '09', 'sep': '09', 'sept': '09',
+        'october': '10', 'oct': '10',
+        'november': '11', 'nov': '11',
+        'december': '12', 'dec': '12'
+      };
+      return months[monthName.toLowerCase()] || null;
     }
-  
+    
+    function parseDateToISOModule(dateStr, getMonthNumber) {
+      if (!dateStr) return null;
+      const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        return isoMatch[0];
+      }
+      try {
+        const date = new Date(dateStr);
+        if (!isNaN(date.getTime())) {
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          return `${year}-${month}-${day}`;
+        }
+      } catch (e) {
+        // Continue with regex parsing
+      }
+      const ordinalMatch = dateStr.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)\s+(\d{4})/i);
+      if (ordinalMatch) {
+        const day = ordinalMatch[1].padStart(2, '0');
+        const monthName = ordinalMatch[2];
+        const year = ordinalMatch[3];
+        const month = getMonthNumber(monthName);
+        if (month) {
+          return `${year}-${month}-${day}`;
+        }
+      }
+      const monthYearMatch = dateStr.match(/(\w+)\s+(\d{4})/i);
+      if (monthYearMatch) {
+        const monthName = monthYearMatch[1];
+        const year = monthYearMatch[2];
+        const month = getMonthNumber(monthName);
+        if (month) {
+          return `${year}-${month}`;
+        }
+      }
+      const yearMatch = dateStr.match(/^(\d{4})$/);
+      if (yearMatch) {
+        return yearMatch[1];
+      }
+      return null;
+    }
+    
+    // Content cleaner module functions (inlined)
+    function cleanHeadingTextModule(headingText) {
+      if (!headingText) return '';
+      return headingText
+        .replace(/\uFFFC/g, '')
+        .replace(/<OBJ>/g, '')
+        .replace(/<\/OBJ>/g, '')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+    }
+    
+    // Create helper objects for dependency injection
+    const helpers = {
+      isFootnoteLink,
+      isIcon,
+      toAbsoluteUrl: (url) => toAbsoluteUrl(url, baseUrl),
+      normalizeImageUrl
+    };
+    
+    const constantsForModules = {
+      EXCLUDED_CLASSES,
+      PAYWALL_CLASSES,
+      NAV_PATTERNS_CONTAINS,
+      COURSE_AD_PATTERNS,
+      LOGO_PATTERNS: [
+        'logo', 'brand', 'icon', 'badge', 'watermark', 'sprite', 'spacer', 'blank', 'clear', 'pixel',
+        'youtube', 'facebook', 'twitter', 'instagram', 'linkedin', 'pinterest', 'rss',
+        'social-media', 'social-icon', 'share-icon', 'share-button',
+        'youtube-white-logo', 'youtube-logo', 'yt-logo',
+        'facebook-logo', 'twitter-logo', 'instagram-logo',
+        'arrow', 'chevron', 'bullet', 'dot', 'gradient', 'bg', 'background', 'shadow', 'border',
+        'divider', 'line', 'separator', 'spinner', 'loader', 'loading',
+        'placeholder', 'default', 'avatar', 'user', 'profile', 'gravatar',
+        'data:image/gif;base64,r0lgodlh',
+        'data:image/png;base64,i'
+      ]
+    };
+    
+    // Image processor module functions
+    // These are wrappers that call the inlined module functions with dependencies
+    function isPlaceholderUrl(url) {
+      // Module function doesn't need dependencies
+      return isPlaceholderUrlModule(url);
+    }
+    
+    function getBestSrcsetUrl(srcset) {
+      // Module function needs isPlaceholderUrl as dependency
+      return getBestSrcsetUrlModule(srcset, isPlaceholderUrl);
+    }
+    
+    function extractBestImageUrl(imgElement) {
+      // Module function needs isPlaceholderUrl and getBestSrcsetUrl as dependencies
+      return extractBestImageUrlModule(imgElement, isPlaceholderUrl, getBestSrcsetUrl);
+    }
+    
+    function isTrackingPixel(img) {
+      // Module function doesn't need dependencies
+      return isTrackingPixelModule(img);
+    }
+    
+    function isDecorativeImage(img) {
+      // Module function needs constants with LOGO_PATTERNS
+      return isDecorativeImageModule(img, constantsForModules);
+    }
+    
+    function getImageCaption(img) {
+      // Module function doesn't need dependencies
+      return getImageCaptionModule(img);
+    }
+    
+    // Content finder module functions
+    function isLikelyContentContainer(element) {
+      // Module function doesn't need dependencies
+      return isLikelyContentContainerModule(element);
+    }
+    
+    function calculateContentScore(element) {
+      // Module function needs isLikelyContentContainer as dependency
+      return calculateContentScoreModule(element, isLikelyContentContainer);
+    }
+    
+    // Original calculateContentScore implementation removed - using module version above
+    
+    // Use module function for findMainContent
+    // Note: The module function findMainContent is inlined above and takes dependencies as parameters
+    // We create a wrapper that calls it with the correct dependencies
+    // The inlined findMainContent from content-finder.js module expects:
+    // findMainContent(isExcluded, isLikelyContentContainer, calculateContentScore)
+    function findMainContent() {
+      // Call the inlined module function with dependencies
+      // All these functions are inlined from their respective modules
+      return findMainContentModule(isExcluded, isLikelyContentContainer, calculateContentScore);
+    }
+    
+    // Element filter module functions
+    function isExcluded(element) {
+      // Module function needs constants and helpers as dependencies
+      const helpers = {
+        isFootnoteLink: isFootnoteLink,
+        isIcon: isIcon
+      };
+      return isExcludedModule(element, constantsForModules, helpers);
+    }
+    
+    // Original isExcluded implementation removed - using module version above
+    
     // Extract metadata
     const metadata = {
       title: '',
@@ -1645,16 +1485,10 @@ export function extractAutomaticallyInlined(baseUrl) {
     
     // Helper: Check if h1 looks like a valid article title (not site name)
     function isValidArticleTitle(h1Element) {
-      if (!h1Element || !h1Element.textContent) return false;
-      const text = h1Element.textContent.trim();
-      // Too short - likely not an article title
-      if (text.length < 5) return false;
-      // Common site/publication name patterns (very short, common words)
-      const siteNamePatterns = ['home', 'about', 'contact', 'blog', 'news', 'archive'];
-      const lowerText = text.toLowerCase();
-      if (siteNamePatterns.some(pattern => lowerText === pattern)) return false;
-      return true;
+      // Module function doesn't need dependencies
+      return isValidArticleTitleModule(h1Element);
     }
+    
     
     // First try: h1 inside article
     if (article) {
@@ -1692,103 +1526,29 @@ export function extractAutomaticallyInlined(baseUrl) {
     if (h1 && h1.textContent.trim()) {
       const h1Text = h1.textContent.trim();
       // Clean title from OBJ markers and Object Replacement Character (U+FFFC)
-      metadata.title = h1Text
-        .replace(/\s*\[?obj\]?\s*/gi, '')
-        .replace(/\uFFFC/g, '') // Remove Object Replacement Character
-        .trim() || h1Text;
+      // Use cleanHeadingText from content-cleaner module
+      metadata.title = cleanHeadingTextModule(h1Text) || h1Text;
     } else {
       metadata.title = document.title || '';
     }
     
-    // Author
-    // Helper: Extract author name from profile URL
+    // Metadata extractor module functions
     function extractAuthorFromUrl(url) {
-      if (!url) return null;
-      try {
-        // Match patterns like /profile/susannarustin or /author/john-smith
-        const profileMatch = url.match(/\/(?:profile|author)\/([^\/\?]+)/i);
-        if (profileMatch) {
-          const slug = profileMatch[1];
-          
-          // First, try splitting by common separators (hyphen, underscore)
-          const parts = slug.split(/[-_]/);
-          
-          // If we have multiple parts, capitalize each
-          if (parts.length > 1) {
-            const name = parts
-              .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-              .join(' ');
-            if (name.length > 2 && name.length < 100) {
-              return name;
-            }
-          }
-          
-          // If single part, try to split by camelCase or find word boundaries
-          const singlePart = parts[0];
-          
-          // Try camelCase: "johnSmith" -> ["john", "Smith"]
-          const camelCaseMatch = singlePart.match(/^([a-z]+)([A-Z][a-z]*)$/);
-          if (camelCaseMatch) {
-            const name = [
-              camelCaseMatch[1].charAt(0).toUpperCase() + camelCaseMatch[1].slice(1).toLowerCase(),
-              camelCaseMatch[2].charAt(0).toUpperCase() + camelCaseMatch[2].slice(1).toLowerCase()
-            ].join(' ');
-            if (name.length > 2 && name.length < 100) {
-              return name;
-            }
-          }
-          
-          // Try to split long lowercase strings by common name patterns
-          // For example: "susannarustin" -> try to find where "susanna" ends
-          if (singlePart.length > 6 && /^[a-z]+$/.test(singlePart)) {
-            // Common first name endings that might indicate where to split
-            const commonEndings = ['a', 'ia', 'na', 'ra', 'la', 'sa'];
-            for (const ending of commonEndings) {
-              if (singlePart.endsWith(ending) && singlePart.length > ending.length + 3) {
-                const firstPart = singlePart.slice(0, -ending.length);
-                const secondPart = singlePart.slice(-ending.length);
-                // Check if both parts are reasonable lengths (3-15 chars each)
-                if (firstPart.length >= 3 && firstPart.length <= 15 && 
-                    secondPart.length >= 3 && secondPart.length <= 15) {
-                  const name = [
-                    firstPart.charAt(0).toUpperCase() + firstPart.slice(1),
-                    secondPart.charAt(0).toUpperCase() + secondPart.slice(1)
-                  ].join(' ');
-                  if (name.length > 2 && name.length < 100) {
-                    return name;
-                  }
-                }
-              }
-            }
-            
-            // Fallback: try splitting in the middle if it's very long
-            if (singlePart.length > 10) {
-              const mid = Math.floor(singlePart.length / 2);
-              const firstPart = singlePart.slice(0, mid);
-              const secondPart = singlePart.slice(mid);
-              if (firstPart.length >= 3 && secondPart.length >= 3) {
-                const name = [
-                  firstPart.charAt(0).toUpperCase() + firstPart.slice(1),
-                  secondPart.charAt(0).toUpperCase() + secondPart.slice(1)
-                ].join(' ');
-                if (name.length > 2 && name.length < 100) {
-                  return name;
-                }
-              }
-            }
-          }
-          
-          // Last resort: capitalize the whole thing as a single name
-          const name = singlePart.charAt(0).toUpperCase() + singlePart.slice(1).toLowerCase();
-          if (name.length > 2 && name.length < 100) {
-            return name;
-          }
-        }
-      } catch (e) {
-        // Continue
-      }
-      return null;
+      // Module function doesn't need dependencies
+      return extractAuthorFromUrlModule(url);
     }
+    
+    function getMonthNumber(monthName) {
+      // Module function doesn't need dependencies
+      return getMonthNumberModule(monthName);
+    }
+    
+    function parseDateToISO(dateStr) {
+      // Module function needs getMonthNumber as dependency
+      return parseDateToISOModule(dateStr, getMonthNumber);
+    }
+    
+    // Original extractAuthorFromUrl implementation removed - using module version above
     
     const authorSelectors = [
       'meta[name="author"]',
@@ -2073,7 +1833,7 @@ export function extractAutomaticallyInlined(baseUrl) {
         if (element) {
           const imageUrl = element.getAttribute('content') || element.getAttribute('src') || '';
           if (imageUrl && !imageUrl.includes('logo') && !imageUrl.includes('icon')) {
-            featuredImage = toAbsoluteUrl(imageUrl);
+            featuredImage = toAbsoluteUrl(imageUrl, baseUrl);
             break;
           }
         }
@@ -2112,7 +1872,7 @@ export function extractAutomaticallyInlined(baseUrl) {
                 // 2. Is in a figure with caption (likely featured), OR
                 // 3. Is the very first image and not decorative
                 if (hasLargeDimensions || (hasCaption && isFirstImage) || (isFirstImage && naturalWidth === 0 && naturalHeight === 0)) {
-                  featuredImage = toAbsoluteUrl(src);
+                  featuredImage = toAbsoluteUrl(src, baseUrl);
                   break;
                 }
               }
@@ -2278,7 +2038,7 @@ export function extractAutomaticallyInlined(baseUrl) {
                 if (src && !isTracking && !isDecorative) {
                   content.push({
                     type: 'image',
-                    src: toAbsoluteUrl(src),
+                    src: toAbsoluteUrl(src, baseUrl),
                     alt: img.alt || '',
                     caption: getImageCaption(img)
                   });
@@ -2515,19 +2275,6 @@ export function extractAutomaticallyInlined(baseUrl) {
     // Note: addedHeadings and mainTitleText are already initialized above (before findMainContent)
     const processedImages = new Set();
     
-    // Helper: Normalize image URL for comparison (remove query params, fragments)
-    function normalizeImageUrl(url) {
-      if (!url) return '';
-      try {
-        const urlObj = new URL(url);
-        // Return base URL without query params and fragments
-        return urlObj.origin + urlObj.pathname;
-      } catch (e) {
-        // If URL parsing fails, try simple string manipulation
-        return url.split('?')[0].split('#')[0];
-      }
-    }
-    
     // Add featured image at the beginning if found
     // But only if it's not already in the content (to avoid duplicates)
     if (featuredImage) {
@@ -2555,42 +2302,10 @@ export function extractAutomaticallyInlined(baseUrl) {
       });
     }
     
-    // Helper: Check if paragraph is navigation/non-content
-    // IMPORTANT: Only match if paragraph is SHORT and clearly navigation
-    // Long paragraphs (>200 chars) are likely article content, not navigation
+    // Element filter module functions
     function isNavigationParagraph(text) {
-      const textTrimmed = text.trim();
-      const textLength = textTrimmed.length;
-      
-      // If paragraph is long (>200 chars), it's likely article content, not navigation
-      // Navigation messages are typically short
-      if (textLength > 200) {
-        return false;
-      }
-      
-      // Check if paragraph is mostly links (navigation indicator)
-      const linkCount = (textTrimmed.match(/<a\s+/gi) || []).length;
-      const textWithoutLinks = textTrimmed.replace(/<[^>]+>/g, '').trim();
-      const linkDensity = textWithoutLinks.length > 0 ? linkCount / (textWithoutLinks.length / 50) : linkCount;
-      
-      // If more than 2 links in short paragraph, likely navigation
-      if (linkCount >= 2 && textLength < 100) {
-        return true;
-      }
-      
-      // Check if it's a navigation pattern (only if starts with pattern)
-      if (NAV_PATTERNS_STARTS_WITH.some(pattern => pattern.test(textTrimmed))) {
-        return true;
-      }
-      
-      // Check if it's a paywall message (all 11 languages)
-      const textLower = text.toLowerCase();
-      if (PAYWALL_PATTERNS.some(pattern => textLower.includes(pattern))) {
-        return true;
-      }
-      
-      // If none of the navigation conditions matched, it's not navigation
-      return false;
+      // Module function needs NAV_PATTERNS_STARTS_WITH and PAYWALL_PATTERNS as dependencies
+      return isNavigationParagraphModule(text, NAV_PATTERNS_STARTS_WITH, PAYWALL_PATTERNS);
     }
     
     let processedCount = 0;
@@ -3338,7 +3053,7 @@ export function extractAutomaticallyInlined(baseUrl) {
             const isTracking = isTrackingPixel(img);
             const isDecorative = isDecorativeImage(img);
             if (!isTracking && !isDecorative) {
-              const absoluteSrc = toAbsoluteUrl(src);
+              const absoluteSrc = toAbsoluteUrl(src, baseUrl);
               // Normalize URL for comparison to avoid duplicates with different query params
               const normalizedSrc = normalizeImageUrl(absoluteSrc);
               // Skip if already processed (e.g., as featured image)
@@ -3397,7 +3112,7 @@ export function extractAutomaticallyInlined(baseUrl) {
         const isTracking = src ? isTrackingPixel(element) : false;
         const isDecorative = src ? isDecorativeImage(element) : false;
         if (src && !isTracking && !isDecorative) {
-          const absoluteSrc = toAbsoluteUrl(src);
+          const absoluteSrc = toAbsoluteUrl(src, baseUrl);
           // Normalize URL for comparison to avoid duplicates
           const normalizedSrc = normalizeImageUrl(absoluteSrc);
           // Skip if already processed (e.g., as featured image or in a figure)
@@ -4082,4 +3797,5 @@ export function extractArticleContent(doc) {
   // Note: log() not available in page context, removed for executeScript compatibility
   return content;
 }
+
 
