@@ -576,7 +576,7 @@ export async function extractYouTubeSubtitles(tabId) {
                     element.remove(); // Очистить после чтения
                     return data;
                   } catch (e) {
-                    console.error('[ClipAIble] ❌ Failed to parse DOM data:', e);
+                    logError(' ❌ Failed to parse DOM data:', e);
                     return null;
                   }
                 }
@@ -1202,7 +1202,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
           }
           
       } catch (e) {
-          console.error('[ClipAIble] Failed to dispatch CustomEvent:', e);
+          logError(' Failed to dispatch CustomEvent:', e);
         }
       };
       
@@ -1283,7 +1283,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       // Но мы все равно отправляем его, на случай если content script загрузится позже
       sendViaCustomEventWithRetries();
     } catch (error) {
-      console.error('[ClipAIble] Error in subtitle extraction:', error);
+      logError(' Error in subtitle extraction:', error);
       
       // Send error back to background script via postMessage
       // NOTE: chrome.runtime is NOT available in MAIN world
@@ -1302,7 +1302,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         });
         document.dispatchEvent(customEvent);
       } catch (e) {
-        console.error('[ClipAIble] Failed to send error message', e);
+        logError(' Failed to send error message', e);
       }
     }
   })(); // Return Promise from async IIFE - executeScript will wait for it
@@ -1316,28 +1316,55 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
 export async function extractVimeoSubtitles(tabId) {
   log('Extracting Vimeo subtitles', { tabId });
   
-  const results = await chrome.scripting.executeScript({
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
     func: extractVimeoSubtitlesInlined
   });
+    log('Vimeo script executed', { 
+      hasResults: !!results,
+      resultsLength: results?.length,
+      hasFirstResult: !!results?.[0],
+      firstResultKeys: results?.[0] ? Object.keys(results[0]) : []
+    });
+  } catch (scriptError) {
+    logError('Failed to execute Vimeo subtitle script', scriptError);
+    throw new Error(`Failed to execute subtitle extraction script: ${scriptError.message}`);
+  }
   
   if (!results || !results[0]) {
+    logError('Vimeo script returned no results', { results });
     throw new Error('Failed to execute subtitle extraction script');
   }
   
   if (results[0].error) {
-    logError('Subtitle extraction script error', results[0].error);
+    logError('Subtitle extraction script error', {
+      error: results[0].error,
+      errorMessage: results[0].error?.message,
+      errorStack: results[0].error?.stack
+    });
     throw new Error(`Subtitle extraction failed: ${results[0].error.message || results[0].error}`);
   }
   
   if (!results[0].result) {
+    logError('Subtitle extraction returned no result', {
+      results: results[0],
+      resultType: typeof results[0].result,
+      resultValue: results[0].result
+    });
     throw new Error('Subtitle extraction returned no result');
   }
   
   const result = results[0].result;
   
   if (!result.subtitles || result.subtitles.length === 0) {
+    logError('No subtitles in result', {
+      hasSubtitles: !!result.subtitles,
+      subtitlesLength: result.subtitles?.length,
+      resultKeys: Object.keys(result)
+    });
     throw new Error('No subtitles found. Make sure subtitles are enabled for this video.');
   }
   
@@ -1352,14 +1379,26 @@ export async function extractVimeoSubtitles(tabId) {
 /**
  * Inline function to extract Vimeo subtitles
  * Runs in page context (MAIN world)
+ * Returns Promise so executeScript can wait for result
  */
 function extractVimeoSubtitlesInlined() {
-  const subtitles = [];
-  let metadata = {
-    title: document.title.replace(' on Vimeo', ''),
-    author: '',
-    publishDate: ''
-  };
+  return (async () => {
+    try {
+      // Enable debug logging only in development (can be controlled via flag)
+      const DEBUG = false; // Set to true for detailed debugging
+      const log = DEBUG ? console.log.bind(console, '[ClipAIble]') : () => {};
+      const logError = console.error.bind(console, '[ClipAIble]');
+      
+      log('Starting Vimeo subtitle extraction');
+      const subtitles = [];
+      let metadata = {
+        title: document.title.replace(' on Vimeo', ''),
+        author: '',
+        publishDate: ''
+      };
+      
+      log('Page URL:', window.location.href);
+      log('Page title:', metadata.title);
   
   // Extract title
   const titleElement = document.querySelector('h1, [data-title]');
@@ -1382,34 +1421,15 @@ function extractVimeoSubtitlesInlined() {
     }
   }
   
-  // Vimeo stores subtitle data in player config
-  // Check for player data
-  if (window.vimeoPlayerConfig) {
-    const config = window.vimeoPlayerConfig;
-    if (config.video && config.video.textTracks) {
-      const tracks = config.video.textTracks;
-      // Find best track (prefer manual, then auto-generated)
-      const selectedTrack = tracks.find(t => t.kind === 'captions' && !t.auto) || 
-                          tracks.find(t => t.kind === 'captions') ||
-                          tracks[0];
-      
-      if (selectedTrack && selectedTrack.src) {
-        // Fetch subtitles (Vimeo uses WebVTT format)
-        return fetch(selectedTrack.src)
-          .then(response => {
-            if (!response.ok) {
-              throw new Error(`Failed to fetch subtitles: ${response.status}`);
-            }
-            return response.text();
-          })
-          .then(vtt => {
-            // Parse WebVTT format
+      // Helper function to parse WebVTT format
+      const parseWebVTT = (vtt) => {
+        const subtitles = [];
             const lines = vtt.split('\n');
             let currentTime = null;
             let currentText = [];
             
             for (const line of lines) {
-              // Time cue: 00:00:00.000 --> 00:00:03.500
+          // Time cue: 00:00:00.000 --> 00:00:03.500 or 00:00:00.000 --> 00:00:03.500 align:start
               const timeMatch = line.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
               if (timeMatch) {
                 // Save previous subtitle if exists
@@ -1436,9 +1456,9 @@ function extractVimeoSubtitlesInlined() {
                 
                 currentTime = { start, end };
                 currentText = [];
-              } else if (line.trim() && !line.startsWith('WEBVTT') && !line.startsWith('NOTE') && currentTime !== null) {
-                // Text line (remove HTML tags)
-                const cleanText = line.replace(/<[^>]*>/g, '').trim();
+          } else if (line.trim() && !line.startsWith('WEBVTT') && !line.startsWith('NOTE') && !line.startsWith('STYLE') && currentTime !== null) {
+            // Text line (remove HTML tags and WebVTT formatting)
+            const cleanText = line.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
                 if (cleanText) {
                   currentText.push(cleanText);
                 }
@@ -1454,32 +1474,450 @@ function extractVimeoSubtitlesInlined() {
               });
             }
             
-            if (subtitles.length === 0) {
-              throw new Error('Subtitles VTT is empty or invalid');
+        return subtitles;
+      };
+      
+      // ============================================
+      // METHOD 1: window.vimeoPlayerConfig
+      // ============================================
+      log('Method 1: Checking window.vimeoPlayerConfig');
+      if (window.vimeoPlayerConfig) {
+        try {
+          log('Method 1: vimeoPlayerConfig found');
+          const config = window.vimeoPlayerConfig;
+          if (config.video && config.video.textTracks) {
+            log('Method 1: textTracks found', config.video.textTracks.length);
+            const tracks = config.video.textTracks;
+            // Find best track (prefer manual, then auto-generated)
+            const selectedTrack = tracks.find(t => t.kind === 'captions' && !t.auto) || 
+                                tracks.find(t => t.kind === 'captions') ||
+                                tracks[0];
+            
+            log('Method 1: selectedTrack', selectedTrack ? { kind: selectedTrack.kind, hasSrc: !!selectedTrack.src } : 'none');
+            if (selectedTrack && selectedTrack.src) {
+              log('Method 1: Fetching subtitles from', selectedTrack.src);
+              const response = await fetch(selectedTrack.src);
+              if (response.ok) {
+                const vtt = await response.text();
+                log('Method 1: VTT received, length:', vtt.length);
+                const parsedSubtitles = parseWebVTT(vtt);
+                log('Method 1: Parsed subtitles count:', parsedSubtitles.length);
+                if (parsedSubtitles.length > 0) {
+                  log('Method 1: SUCCESS');
+                  return { subtitles: parsedSubtitles, metadata };
+                }
+              } else {
+                log('Method 1: Fetch failed', response.status);
+              }
+            }
+          } else {
+            log('Method 1: No textTracks in config');
+          }
+        } catch (e) {
+          logError('Method 1 failed:', e);
+        }
+      } else {
+        log('Method 1: window.vimeoPlayerConfig not found');
+      }
+      
+      // ============================================
+      // METHOD 2: window.player or window.vimeoPlayer
+      // ============================================
+      log('Method 2: Checking window.player/vimeoPlayer');
+      const player = window.player || window.vimeoPlayer;
+      if (player) {
+        log('Method 2: Player found');
+        try {
+          // Try to get text tracks from player
+          if (player.textTracks && player.textTracks.length > 0) {
+            log('Method 2: textTracks found', player.textTracks.length);
+            const tracks = Array.from(player.textTracks);
+            const selectedTrack = tracks.find(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing') ||
+                                tracks.find(t => t.kind === 'captions' || t.kind === 'subtitles') ||
+                                tracks[0];
+            
+            if (selectedTrack && selectedTrack.cues && selectedTrack.cues.length > 0) {
+              log('Method 2: Cues found', selectedTrack.cues.length);
+              const parsedSubtitles = Array.from(selectedTrack.cues).map(cue => ({
+                start: cue.startTime,
+                duration: cue.endTime - cue.startTime,
+                text: cue.text.trim().replace(/\n/g, ' ').replace(/<[^>]*>/g, '')
+              }));
+              
+              if (parsedSubtitles.length > 0) {
+                log('Method 2: SUCCESS');
+                return { subtitles: parsedSubtitles, metadata };
+              }
+            } else {
+              log('Method 2: No cues in selectedTrack');
+            }
+          } else {
+            log('Method 2: No textTracks in player');
+          }
+        } catch (e) {
+          logError('Method 2 failed:', e);
+        }
+      } else {
+        log('Method 2: Player not found');
+      }
+      
+      // ============================================
+      // METHOD 3: video.textTracks (DOM element) - IMPROVED
+      // ============================================
+      log('Method 3: Checking video element');
+      const videoElement = document.querySelector('video');
+      if (videoElement && videoElement.textTracks && videoElement.textTracks.length > 0) {
+        log('Method 3: Video element with textTracks found', videoElement.textTracks.length);
+        try {
+          const tracks = Array.from(videoElement.textTracks);
+          let activeTrack = tracks.find(t => 
+            (t.kind === 'subtitles' || t.kind === 'captions') && t.mode === 'showing'
+          );
+          
+          if (!activeTrack) {
+            activeTrack = tracks.find(t => 
+              t.kind === 'subtitles' || t.kind === 'captions'
+            );
+            
+            if (activeTrack) {
+              log('Method 3: Activating track', activeTrack.language, activeTrack.label);
+              activeTrack.mode = 'showing';
+              
+              // Try multiple wait times and check for cues
+              for (let attempt = 0; attempt < 5; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Force cue loading by accessing cues property
+                try {
+                  if (activeTrack.cues && activeTrack.cues.length > 0) {
+                    log('Method 3: Cues loaded after', (attempt + 1), 'seconds');
+                    break;
+                  }
+                  
+                  // Try to trigger cue loading by accessing activeCues
+                  if (activeTrack.activeCues && activeTrack.activeCues.length > 0) {
+                    log('Method 3: Active cues found');
+                    break;
+                  }
+                } catch (e) {
+                  // Ignore errors when accessing cues
+                }
+              }
+            }
+          }
+          
+          // Check for cues
+          if (activeTrack) {
+            // Try both cues and activeCues
+            let cues = null;
+            if (activeTrack.cues && activeTrack.cues.length > 0) {
+              cues = activeTrack.cues;
+              log('Method 3: Using cues', cues.length);
+            } else if (activeTrack.activeCues && activeTrack.activeCues.length > 0) {
+              cues = activeTrack.activeCues;
+              log('Method 3: Using activeCues', cues.length);
             }
             
-            return { subtitles, metadata };
-          })
-          .catch(error => {
-            console.error('[ClipAIble] Failed to fetch/parse Vimeo subtitles:', error);
-            throw new Error(`Failed to fetch subtitles: ${error.message}`);
-          });
+            if (cues && cues.length > 0) {
+              const parsedSubtitles = Array.from(cues).map(cue => ({
+                start: cue.startTime || 0,
+                duration: (cue.endTime || cue.startTime || 0) - (cue.startTime || 0),
+                text: (cue.text || cue.getCueAsHTML?.()?.textContent || '').trim().replace(/\n/g, ' ').replace(/<[^>]*>/g, '')
+              })).filter(sub => sub.text && sub.text.length > 0);
+              
+              if (parsedSubtitles.length > 0) {
+                log('Method 3: SUCCESS', parsedSubtitles.length, 'subtitles');
+                return { subtitles: parsedSubtitles, metadata };
+              }
+            } else {
+              log('Method 3: No cues available after activation');
+            }
+          }
+        } catch (e) {
+          logError('Method 3 failed:', e);
+        }
+      } else {
+        log('Method 3: Video element not found or no textTracks');
       }
-    }
-  }
+      
+      // ============================================
+      // METHOD 4: window.__INITIAL_STATE__ or window.vimeoData
+      // ============================================
+      log('Method 4: Checking window state objects');
+      const state = window.__INITIAL_STATE__ || window.vimeoData || window.vimeo;
+      if (state) {
+        log(' Method 4: State object found');
+        try {
+          // Try different possible structures
+          let videoData = null;
+          
+          if (state.video) {
+            videoData = state.video;
+            log(' Method 4: Found state.video');
+          } else if (state.data && state.data.video) {
+            videoData = state.data.video;
+            log(' Method 4: Found state.data.video');
+          } else if (state.player && state.player.video) {
+            videoData = state.player.video;
+            log(' Method 4: Found state.player.video');
+          }
+          
+          if (videoData && videoData.textTracks) {
+            log(' Method 4: textTracks found', videoData.textTracks.length);
+            const tracks = videoData.textTracks;
+            const selectedTrack = tracks.find(t => t.kind === 'captions' && !t.auto) || 
+                                tracks.find(t => t.kind === 'captions') ||
+                                tracks[0];
+            
+            if (selectedTrack && selectedTrack.src) {
+              log(' Method 4: Fetching subtitles from', selectedTrack.src);
+              const response = await fetch(selectedTrack.src);
+              if (response.ok) {
+                const vtt = await response.text();
+                log(' Method 4: VTT received, length:', vtt.length);
+                const parsedSubtitles = parseWebVTT(vtt);
+                log(' Method 4: Parsed subtitles count:', parsedSubtitles.length);
+                if (parsedSubtitles.length > 0) {
+                  log(' Method 4: SUCCESS');
+                  return { subtitles: parsedSubtitles, metadata };
+                }
+              } else {
+                log(' Method 4: Fetch failed', response.status);
+              }
+            } else {
+              log(' Method 4: No selectedTrack or src');
+            }
+          } else {
+            log(' Method 4: No textTracks in videoData');
+          }
+        } catch (e) {
+          logError(' Method 4 failed:', e);
+        }
+      } else {
+        log(' Method 4: No state object found');
+      }
+      
+      // ============================================
+      // METHOD 5: Extract video ID and search for subtitle URLs
+      // ============================================
+      log('Method 5: Searching for subtitle URLs in scripts and page data');
+      try {
+        const url = new URL(window.location.href);
+        const videoIdMatch = url.pathname.match(/\/(\d+)/);
+        if (videoIdMatch) {
+          const videoId = videoIdMatch[1];
+          log(' Method 5: Video ID found', videoId);
+          
+          // Try multiple patterns for subtitle URLs
+          const subtitlePatterns = [
+            /https?:\/\/[^"'\s]+\.vtt[^"'\s]*/g,
+            /"src"\s*:\s*"([^"]+\.vtt[^"]*)"/g,
+            /'src'\s*:\s*'([^']+\.vtt[^']*)'/g,
+            /textTracks[^}]*src[^}]*["']([^"']+\.vtt[^"']*)["']/g,
+            /captions[^}]*src[^}]*["']([^"']+\.vtt[^"']*)["']/g
+          ];
+          
+          // Search in scripts
+          const scripts = Array.from(document.querySelectorAll('script'));
+          log(' Method 5: Checking', scripts.length, 'scripts');
+          for (const script of scripts) {
+            const scriptText = script.textContent || script.innerHTML;
+            if (scriptText.includes('textTracks') || scriptText.includes('captions') || scriptText.includes('.vtt')) {
+              log(' Method 5: Found script with subtitle references');
+              
+              for (const pattern of subtitlePatterns) {
+                const matches = scriptText.matchAll(pattern);
+                for (const match of matches) {
+                  const subtitleUrl = match[1] || match[0];
+                  if (subtitleUrl && subtitleUrl.includes('.vtt')) {
+                    log(' Method 5: Found subtitle URL', subtitleUrl);
+                    try {
+                      const response = await fetch(subtitleUrl);
+                      if (response.ok) {
+                        const vtt = await response.text();
+                        log(' Method 5: VTT received, length:', vtt.length);
+                        const parsedSubtitles = parseWebVTT(vtt);
+                        log(' Method 5: Parsed subtitles count:', parsedSubtitles.length);
+                        if (parsedSubtitles.length > 0) {
+                          log(' Method 5: SUCCESS');
+                          return { subtitles: parsedSubtitles, metadata };
+                        }
+                      } else {
+                        log(' Method 5: Fetch failed', response.status);
+                      }
+                    } catch (fetchError) {
+                      log(' Method 5: Fetch error', fetchError.message);
+                    }
+                  }
+                }
+              }
+            }
+          }
+          
+          // Also search in page HTML
+          const pageHtml = document.documentElement.outerHTML;
+          for (const pattern of subtitlePatterns) {
+            const matches = pageHtml.matchAll(pattern);
+            for (const match of matches) {
+              const subtitleUrl = match[1] || match[0];
+              if (subtitleUrl && subtitleUrl.includes('.vtt') && !subtitleUrl.includes('example')) {
+                log(' Method 5: Found subtitle URL in HTML', subtitleUrl);
+                try {
+                  const response = await fetch(subtitleUrl);
+                  if (response.ok) {
+                    const vtt = await response.text();
+                    const parsedSubtitles = parseWebVTT(vtt);
+                    if (parsedSubtitles.length > 0) {
+                      log(' Method 5: SUCCESS from HTML');
+                      return { subtitles: parsedSubtitles, metadata };
+                    }
+                  }
+                } catch (fetchError) {
+                  // Continue to next match
+                }
+              }
+            }
+          }
+          
+          log(' Method 5: No subtitle URLs found');
+        } else {
+          log(' Method 5: No video ID found in URL');
+        }
+      } catch (e) {
+        logError(' Method 5 failed:', e);
+      }
+      
+      // ============================================
+      // METHOD 6: DOM Parsing - Extract visible subtitles from screen
+      // ============================================
+      log('Method 6: Parsing visible subtitles from DOM');
+      try {
+        // Common Vimeo subtitle selectors
+        const subtitleSelectors = [
+          '.vp-captions',
+          '.vp-captions-text',
+          '.vp-subtitle',
+          '[class*="caption"]',
+          '[class*="subtitle"]',
+          '[data-testid*="subtitle"]',
+          '[data-testid*="caption"]',
+          'track[kind="captions"]',
+          'track[kind="subtitles"]',
+          '.video-subtitles',
+          '.vp-video-wrapper caption',
+          'video + *[class*="subtitle"]',
+          'video + *[class*="caption"]'
+        ];
+        
+        let visibleSubtitles = [];
+        let subtitleElements = [];
+        
+        // Try each selector
+        for (const selector of subtitleSelectors) {
+          try {
+            const elements = document.querySelectorAll(selector);
+            if (elements.length > 0) {
+              log(' Method 6: Found elements with selector', selector, elements.length);
+              subtitleElements.push(...Array.from(elements));
+            }
+          } catch (e) {
+            // Invalid selector, continue
+          }
+        }
+        
+        // Also search for elements near video player
+        const videoContainer = document.querySelector('video')?.closest('[class*="player"], [class*="video"], [id*="player"], [id*="video"]');
+        if (videoContainer) {
+          log(' Method 6: Searching in video container');
+          const containerElements = videoContainer.querySelectorAll('*');
+          for (const el of containerElements) {
+            const text = el.textContent?.trim();
+            const style = window.getComputedStyle(el);
+            
+            // Check if element looks like a subtitle (small text, positioned over video, visible)
+            if (text && 
+                text.length > 0 && 
+                text.length < 200 && // Subtitle lines are usually short
+                style.position !== 'static' &&
+                (style.zIndex > 0 || style.position === 'absolute' || style.position === 'fixed') &&
+                style.display !== 'none' &&
+                style.visibility !== 'hidden' &&
+                style.opacity !== '0') {
+              
+              // Check if it's likely a subtitle (not navigation, buttons, etc.)
+              const tagName = el.tagName.toLowerCase();
+              if (tagName !== 'button' && 
+                  tagName !== 'a' && 
+                  !el.closest('nav') &&
+                  !el.closest('header') &&
+                  !el.closest('footer')) {
+                subtitleElements.push(el);
+              }
+            }
+          }
+        }
+        
+        // Remove duplicates and extract text
+        const uniqueElements = Array.from(new Set(subtitleElements));
+        log(' Method 6: Found', uniqueElements.length, 'potential subtitle elements');
+        
+        for (const el of uniqueElements) {
+          const text = el.textContent?.trim();
+          if (text && text.length > 0 && text.length < 200) {
+            // Avoid duplicates
+            if (!visibleSubtitles.some(s => s.text === text)) {
+              visibleSubtitles.push({
+                text: text,
+                element: el
+              });
+            }
+          }
+        }
+        
+        if (visibleSubtitles.length > 0) {
+          log(' Method 6: Found', visibleSubtitles.length, 'visible subtitle texts');
+          
+          // Convert to subtitle format (without timestamps, estimate based on order)
+          const parsedSubtitles = visibleSubtitles.map((sub, index) => ({
+            start: index * 3, // Estimate 3 seconds per subtitle
+            duration: 3,
+            text: sub.text
+          }));
+          
+          if (parsedSubtitles.length >= 5) { // Minimum threshold for reliability
+            log(' Method 6: SUCCESS - extracted', parsedSubtitles.length, 'subtitles from DOM');
+            return { 
+              subtitles: parsedSubtitles, 
+              metadata,
+              note: 'Subtitles extracted from visible DOM elements (text only, no timestamps)'
+            };
+          } else {
+            log(' Method 6: Too few subtitles found', parsedSubtitles.length);
+          }
+        } else {
+          log(' Method 6: No visible subtitles found');
+        }
+      } catch (e) {
+        logError(' Method 6 failed:', e);
+      }
   
-  // Alternative: Check for Vimeo API data in page
-  if (window.__INITIAL_STATE__) {
-    try {
-      const state = window.__INITIAL_STATE__;
-      // Vimeo stores video data in different structures
-      // This may need adjustment based on actual Vimeo page structure
-    } catch (e) {
-      console.error('[ClipAIble] Failed to parse Vimeo initial state', e);
+      // If no subtitles found
+      logError('All methods failed - no subtitles found');
+      log('Available window objects:', {
+        hasVimeoPlayerConfig: !!window.vimeoPlayerConfig,
+        hasPlayer: !!window.player,
+        hasVimeoPlayer: !!window.vimeoPlayer,
+        hasInitialState: !!window.__INITIAL_STATE__,
+        hasVimeoData: !!window.vimeoData,
+        hasVimeo: !!window.vimeo,
+        hasVideoElement: !!document.querySelector('video')
+      });
+      throw new Error('No subtitles found. Make sure subtitles are enabled for this video.');
+    } catch (error) {
+      logError('Error in Vimeo subtitle extraction:', error);
+      logError('Error stack:', error.stack);
+      throw error;
     }
-  }
-  
-  // If no subtitles found
-  throw new Error('No subtitles found. Make sure subtitles are enabled for this video.');
+  })(); // Return Promise from async IIFE
 }
 
