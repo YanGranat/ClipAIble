@@ -1,5 +1,8 @@
 // PDF generation module for ClipAIble extension
 
+// @typedef {import('../types.js').ContentItem} ContentItem
+// @typedef {import('../types.js').GenerationData} GenerationData
+
 import { log, logError, logWarn } from '../utils/logging.js';
 import { escapeAttr, cleanTitle } from '../utils/html.js';
 import { embedImages } from '../utils/images.js';
@@ -13,8 +16,9 @@ import { PROCESSING_STAGES } from '../state/processing.js';
 
 /**
  * Generate PDF from content
- * @param {Object} data - Generation data
- * @param {Function} updateState - State update function
+ * @param {GenerationData & {pageMode?: string, fontFamily?: string, fontSize?: string, bgColor?: string, textColor?: string, headingColor?: string, linkColor?: string}} data - Generation data with PDF-specific options
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @returns {Promise<Blob>} Generated PDF blob
  */
 export async function generatePdf(data, updateState) {
   const { 

@@ -1,6 +1,9 @@
 // Message handler router
 // Routes incoming messages to appropriate handlers
 
+// @typedef {import('../types.js').MessageRequest} MessageRequest
+// @typedef {import('../types.js').MessageResponse} MessageResponse
+
 import { log, logWarn, logError } from '../utils/logging.js';
 
 // Simple handlers
@@ -53,9 +56,9 @@ import {
 
 /**
  * Route message to appropriate handler
- * @param {Object} request - Request object
- * @param {Object} sender - Sender object
- * @param {Function} sendResponse - Response function
+ * @param {MessageRequest} request - Request object
+ * @param {chrome.runtime.MessageSender} sender - Sender object
+ * @param {function(MessageResponse): void} sendResponse - Response function
  * @param {Object} deps - Dependencies (functions from background.js)
  * @returns {boolean|Promise<boolean>} - Return value for message handler
  */

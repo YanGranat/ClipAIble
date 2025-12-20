@@ -1,5 +1,8 @@
 // API router for ClipAIble extension
 
+// @typedef {import('../types.js').AIProvider} AIProvider
+// @typedef {import('../types.js').AIResponse} AIResponse
+
 import { log } from '../utils/logging.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { callOpenAI, parseModelConfig } from './openai.js';
@@ -18,7 +21,7 @@ export { callOpenRouterAPI } from './openrouter.js';
 /**
  * Get AI provider from model name
  * @param {string} model - Model name
- * @returns {string} Provider name: 'openai', 'claude', 'gemini', 'grok', or 'openrouter'
+ * @returns {AIProvider} Provider name
  */
 export function getProviderFromModel(model) {
   if (!model) return 'openai';
@@ -37,8 +40,8 @@ export function getProviderFromModel(model) {
  * @param {string} userPrompt - User prompt
  * @param {string} apiKey - API key for the provider (encrypted or plain)
  * @param {string} model - Model name (determines provider)
- * @param {boolean} jsonResponse - Whether to expect JSON response
- * @returns {Promise<Object|string>} Parsed JSON or text response
+ * @param {boolean} [jsonResponse=true] - Whether to expect JSON response
+ * @returns {Promise<AIResponse|string>} Parsed JSON or text response
  */
 export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
   const provider = getProviderFromModel(model);

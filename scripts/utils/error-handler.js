@@ -1,6 +1,8 @@
 // Centralized error handling for ClipAIble extension
 // Provides unified error normalization, classification, and user-friendly message generation
 //
+// @typedef {import('../types.js').NormalizedError} NormalizedError
+//
 // USAGE EXAMPLES:
 //
 // 1. Basic error handling in async function:
@@ -58,8 +60,10 @@ export const ERROR_PATTERNS = {
  * Normalize error to standard format
  * Converts various error types (Error objects, strings, API responses) to unified format
  * @param {Error|string|Object} error - Error to normalize
- * @param {Object} context - Additional context (errorType, source, etc.)
- * @returns {Object} Normalized error {message, code, originalError, context}
+ * @param {Object} [context] - Additional context (errorType, source, etc.)
+ * @param {string} [context.errorType] - Error type identifier
+ * @param {string} [context.source] - Source module name
+ * @returns {NormalizedError} Normalized error object
  */
 export function normalizeError(error, context = {}) {
   let message = '';
@@ -159,13 +163,13 @@ export function detectErrorCode(message) {
  * Handle error with centralized processing
  * Normalizes error, logs it, and optionally creates user-friendly message
  * @param {Error|string|Object} error - Error to handle
- * @param {Object} options - Handling options
- * @param {string} options.errorType - Error type for user-friendly message (e.g., 'contentExtractionFailed')
- * @param {string} options.source - Source module (e.g., 'extraction', 'translation')
- * @param {Object} options.context - Additional context
- * @param {boolean} options.logError - Whether to log error (default: true)
- * @param {boolean} options.createUserMessage - Whether to create user-friendly message (default: false)
- * @returns {Promise<Object>} Normalized error with optional user-friendly message
+ * @param {Object} [options] - Handling options
+ * @param {string} [options.errorType] - Error type for user-friendly message (e.g., 'contentExtractionFailed')
+ * @param {string} [options.source] - Source module (e.g., 'extraction', 'translation')
+ * @param {Object} [options.context] - Additional context
+ * @param {boolean} [options.logError=true] - Whether to log error
+ * @param {boolean} [options.createUserMessage=false] - Whether to create user-friendly message
+ * @returns {Promise<NormalizedError & {userMessage?: string, userCode?: string}>} Normalized error with optional user-friendly message
  */
 export async function handleError(error, options = {}) {
   const {
@@ -214,9 +218,10 @@ export async function handleError(error, options = {}) {
 /**
  * Wrap async function with centralized error handling
  * Catches errors, normalizes them, and optionally handles them
- * @param {Function} fn - Async function to wrap
- * @param {Object} options - Error handling options (same as handleError)
- * @returns {Function} Wrapped function
+ * @template T
+ * @param {(...args: any[]) => Promise<T>} fn - Async function to wrap
+ * @param {Object} [options] - Error handling options (same as handleError)
+ * @returns {(...args: any[]) => Promise<T>} Wrapped function
  */
 export function withErrorHandling(fn, options = {}) {
   return async (...args) => {

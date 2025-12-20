@@ -1,5 +1,7 @@
 // Processing state management for ClipAIble extension
 
+// @typedef {import('../types.js').ProcessingState} ProcessingState
+
 import { log, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { clearDecryptedKeyCache } from '../utils/encryption.js';
@@ -48,7 +50,7 @@ let isUpdatingState = false;
 
 /**
  * Get current processing state (copy)
- * @returns {Object} Processing state
+ * @returns {ProcessingState} Processing state
  */
 export function getProcessingState() {
   return { ...processingState };
@@ -56,8 +58,12 @@ export function getProcessingState() {
 
 /**
  * Update processing state
- * @param {Object} updates - State updates
- * @param {string} updates.stage - Optional stage ID to set
+ * @param {Partial<ProcessingState> & {stage?: string}} updates - State updates
+ * @param {number} [updates.progress] - Progress percentage (0-100)
+ * @param {string} [updates.status] - Status message
+ * @param {string} [updates.stage] - Optional stage ID to set
+ * @param {Error|Object|null} [updates.error] - Error object
+ * @param {Object|null} [updates.result] - Processing result
  */
 export function updateState(updates) {
   // Simple protection against concurrent updates

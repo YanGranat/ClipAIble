@@ -1,5 +1,9 @@
 // Statistics module for ClipAIble extension
 
+// @typedef {import('../types.js').StatsData} StatsData
+// @typedef {import('../types.js').HistoryItem} HistoryItem
+// @typedef {import('../types.js').ExportFormat} ExportFormat
+
 import { log, logError } from '../utils/logging.js';
 import { getUILanguage, tSync } from '../locales.js';
 
@@ -32,7 +36,7 @@ function getDefaultStats() {
 
 /**
  * Load stats from storage
- * @returns {Promise<Object>} Stats object
+ * @returns {Promise<StatsData>} Stats object
  */
 export async function loadStats() {
   try {
@@ -88,7 +92,7 @@ function getCurrentMonthKey() {
  * @param {Object} data - Save data
  * @param {string} data.title - Article title
  * @param {string} data.url - Article URL
- * @param {string} data.format - Output format (pdf, epub, fb2, markdown, audio)
+ * @param {ExportFormat} data.format - Output format
  * @param {number} data.processingTime - Processing time in ms
  */
 export async function recordSave(data) {

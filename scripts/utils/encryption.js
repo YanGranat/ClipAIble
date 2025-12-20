@@ -1,6 +1,8 @@
 // Encryption utilities for API keys
 // Uses Web Crypto API for secure encryption
 
+// @typedef {import('../types.js').AIProvider} AIProvider
+
 import { log, logError, logWarn } from './logging.js';
 import { getProcessingState } from '../state/processing.js';
 
@@ -177,7 +179,7 @@ function hashString(str) {
  * Cache is cleared after processing to ensure security
  * Automatically re-encrypts plain text keys for security
  * @param {string} encryptedKey - Encrypted API key (or plain text for backward compatibility)
- * @param {string} provider - Provider name ('openai', 'claude', 'gemini', 'google', etc.)
+ * @param {AIProvider} provider - Provider name
  * @returns {Promise<string>} Decrypted API key
  */
 export async function getDecryptedKeyCached(encryptedKey, provider) {

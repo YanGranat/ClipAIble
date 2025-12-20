@@ -1,5 +1,7 @@
 // AI prompts for content extraction
 
+// @typedef {import('../types.js').SelectorResult} SelectorResult
+
 /**
  * System prompt for AI to return CSS selectors
  */

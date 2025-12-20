@@ -1,5 +1,8 @@
 // Translation module for ClipAIble extension
 
+// @typedef {import('../types.js').ContentItem} ContentItem
+// @typedef {import('../types.js').ExtractionResult} ExtractionResult
+
 import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG, LANGUAGE_NAMES, NO_TRANSLATION_MARKER } from '../utils/config.js';
 import { getProviderFromModel, parseModelConfig, callAI } from '../api/index.js';
@@ -159,7 +162,7 @@ Rules:
  * @param {string} targetLang - Target language name
  * @param {string} apiKey - API key
  * @param {string} model - Model name
- * @param {number} retryCount - Retry attempt counter
+ * @param {number} [retryCount=0] - Retry attempt counter
  * @returns {Promise<Array<string>>} Translated texts
  */
 export async function translateBatch(texts, targetLang, apiKey, model, retryCount = 0) {
@@ -458,6 +461,15 @@ Rules:
  * @param {string} model - Model name
  * @param {Function} updateState - State update function
  * @returns {Promise<Object>} Translated result
+ */
+/**
+ * Translate content items
+ * @param {ExtractionResult} result - Extraction result with content items
+ * @param {string} targetLang - Target language name
+ * @param {string} apiKey - API key
+ * @param {string} model - Model name
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @returns {Promise<ExtractionResult>} Translated extraction result
  */
 export async function translateContent(result, targetLang, apiKey, model, updateState) {
   log('=== TRANSLATION START ===', { targetLang, contentItems: result.content?.length });
@@ -815,6 +827,17 @@ Respond with ONLY "yes" or "no".`;
  * @param {string} model - Model name
  * @param {Function} updateState - State update function
  * @returns {Promise<Array>} Content with translated images
+ */
+/**
+ * Translate text in images using OCR
+ * @param {Array<ContentItem>} content - Content items with images
+ * @param {string} sourceLang - Source language
+ * @param {string} targetLang - Target language
+ * @param {string} apiKey - AI API key for translation
+ * @param {string} googleApiKey - Google API key for Gemini Vision
+ * @param {string} model - Model name
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @returns {Promise<Array<ContentItem>>} Content items with translated image text
  */
 export async function translateImages(content, sourceLang, targetLang, apiKey, googleApiKey, model, updateState) {
   log('=== IMAGE TRANSLATION START ===', { sourceLang, targetLang });
@@ -1419,6 +1442,16 @@ Example outputs: ru, en, ua, de`;
  * @param {string} model - Model name
  * @param {string} language - Target language code ('auto' or specific language)
  * @param {Function} updateState - State update function
+ * @returns {Promise<string>} Generated abstract
+ */
+/**
+ * Generate abstract for content
+ * @param {Array<ContentItem>} content - Content items
+ * @param {string} title - Article title
+ * @param {string} apiKey - API key
+ * @param {string} model - Model name
+ * @param {string} [language='auto'] - Target language
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
  * @returns {Promise<string>} Generated abstract
  */
 export async function generateAbstract(content, title, apiKey, model, language = 'auto', updateState) {

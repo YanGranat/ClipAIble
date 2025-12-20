@@ -2949,10 +2949,16 @@ async function processWithoutAI(data) {
     timestamp: Date.now()
   });
 
+  // Performance optimization: only collect debug info if LOG_LEVEL is DEBUG (0)
+  // This significantly reduces memory and CPU usage in production
+  const enableDebugInfo = CONFIG.LOG_LEVEL === 0; // 0 = DEBUG level
+
   // Execute automatic extraction in page context with timeout
   let results;
   try {
     log('=== processWithoutAI: Creating timeout and script promises ===', {
+      enableDebugInfo: enableDebugInfo,
+      logLevel: CONFIG.LOG_LEVEL,
       timestamp: Date.now()
     });
     
@@ -2971,6 +2977,7 @@ async function processWithoutAI(data) {
     log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {
       tabId: tabId,
       url: url,
+      enableDebugInfo: enableDebugInfo,
       timestamp: Date.now()
     });
     
@@ -2978,7 +2985,7 @@ async function processWithoutAI(data) {
       target: { tabId: tabId },
       world: 'MAIN',
       func: extractAutomaticallyInlined,
-      args: [url]
+      args: [url, enableDebugInfo] // Pass enableDebugInfo flag
     });
     
     log('=== processWithoutAI: Waiting for Promise.race ===', {
@@ -3059,8 +3066,9 @@ async function processWithoutAI(data) {
   const result = results[0].result;
   const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
   
-  // Log debug info if available
-  if (result.debugInfo) {
+  // Log debug info if available and LOG_LEVEL is DEBUG (0)
+  // Performance optimization: skip debug logging in production (LOG_LEVEL >= 1)
+  if (result.debugInfo && CONFIG.LOG_LEVEL === 0) {
     log('Automatic extraction debug info', {
       foundElements: result.debugInfo.foundElements,
       imageCount: result.debugInfo.imageCount,

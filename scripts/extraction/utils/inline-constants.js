@@ -95,13 +95,124 @@ export function getInlinedConstants() {
 
 /**
  * Generate JavaScript code string for inlined constants
- * This can be embedded directly in extractAutomaticallyInlined
+ * This generates individual const declarations (as used in automatic.js)
+ * @returns {string} JavaScript code with const declarations
  */
 export function generateInlinedConstantsCode() {
   const constants = getInlinedConstants();
   
-  // Convert to JavaScript object literal string
-  const code = `const CONSTANTS = ${JSON.stringify(constants, null, 2)};`;
+  let code = '    // ============================================\n';
+  code += '    // INLINED CONSTANTS AND PATTERNS\n';
+  code += '    // (Generated from scripts/extraction/constants/ and scripts/extraction/patterns/)\n';
+  code += '    // (Cannot use imports in executeScript context)\n';
+  code += '    // ============================================\n';
+  code += '    \n';
+  
+  // Content thresholds
+  code += '    // Content thresholds\n';
+  code += `    const MIN_CONTENT_LENGTH = ${constants.MIN_CONTENT_LENGTH};\n`;
+  code += `    const SUBSTANTIAL_CONTENT_LENGTH = ${constants.SUBSTANTIAL_CONTENT_LENGTH};\n`;
+  code += `    const MIN_PARAGRAPH_LENGTH = ${constants.MIN_PARAGRAPH_LENGTH};\n`;
+  code += `    const MIN_HEADING_LENGTH = ${constants.MIN_HEADING_LENGTH};\n`;
+  code += `    const MIN_STANDFIRST_LENGTH = ${constants.MIN_STANDFIRST_LENGTH};\n`;
+  code += `    const MAX_STANDFIRST_LENGTH = ${constants.MAX_STANDFIRST_LENGTH};\n`;
+  code += `    const SHORT_PARAGRAPH_THRESHOLD = ${constants.SHORT_PARAGRAPH_THRESHOLD};\n`;
+  code += `    const VERY_SHORT_PARAGRAPH = ${constants.VERY_SHORT_PARAGRAPH};\n`;
+  code += `    const MAX_AUTHOR_METADATA_LENGTH = ${constants.MAX_AUTHOR_METADATA_LENGTH};\n`;
+  code += `    const MAX_WORD_COUNT_METADATA_LENGTH = ${constants.MAX_WORD_COUNT_METADATA_LENGTH};\n`;
+  code += '    \n';
+  
+  // Image thresholds
+  code += '    // Image thresholds\n';
+  code += `    const FEATURED_IMAGE_MIN_WIDTH = ${constants.FEATURED_IMAGE_MIN_WIDTH};\n`;
+  code += `    const FEATURED_IMAGE_MIN_HEIGHT = ${constants.FEATURED_IMAGE_MIN_HEIGHT};\n`;
+  code += `    const AUTHOR_PHOTO_MAX_SIZE = ${constants.AUTHOR_PHOTO_MAX_SIZE};\n`;
+  code += `    const AUTHOR_PHOTO_SMALL_SIZE = ${constants.AUTHOR_PHOTO_SMALL_SIZE};\n`;
+  code += `    const TRACKING_PIXEL_MAX_SIZE = ${constants.TRACKING_PIXEL_MAX_SIZE};\n`;
+  code += '    \n';
+  
+  // Scoring thresholds
+  code += '    // Scoring thresholds\n';
+  code += `    const MIN_CONTENT_SCORE = ${constants.MIN_CONTENT_SCORE};\n`;
+  code += `    const GOOD_ENOUGH_SCORE = ${constants.GOOD_ENOUGH_SCORE};\n`;
+  code += '    \n';
+  
+  // Navigation patterns (contains)
+  code += '    // Navigation patterns (contains) - used in isExcluded and isNavigationParagraph\n';
+  code += '    const NAV_PATTERNS_CONTAINS = [\n';
+  constants.NAVIGATION_PATTERNS_CONTAINS.forEach((pattern, index) => {
+    const isLast = index === constants.NAVIGATION_PATTERNS_CONTAINS.length - 1;
+    // Convert RegExp to string representation
+    const patternStr = pattern.toString();
+    code += `      ${patternStr}${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  // Navigation patterns (starts with)
+  code += '    // Navigation patterns (starts with) - used in isNavigationParagraph\n';
+  code += '    const NAV_PATTERNS_STARTS_WITH = [\n';
+  constants.NAVIGATION_PATTERNS_STARTS_WITH.forEach((pattern, index) => {
+    const isLast = index === constants.NAVIGATION_PATTERNS_STARTS_WITH.length - 1;
+    const patternStr = pattern.toString();
+    code += `      ${patternStr}${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  // Paywall patterns
+  code += '    // Paywall patterns (all languages flattened)\n';
+  code += '    const PAYWALL_PATTERNS = [\n';
+  constants.PAYWALL_PATTERNS.forEach((pattern, index) => {
+    const isLast = index === constants.PAYWALL_PATTERNS.length - 1;
+    code += `      '${pattern.replace(/'/g, "\\'")}'${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  // Related articles patterns
+  code += '    // Related articles patterns (all languages flattened)\n';
+  code += '    const RELATED_PATTERNS = [\n';
+  constants.RELATED_ARTICLES_PATTERNS.forEach((pattern, index) => {
+    const isLast = index === constants.RELATED_ARTICLES_PATTERNS.length - 1;
+    code += `      '${pattern.replace(/'/g, "\\'")}'${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  // Course ad patterns
+  code += '    // Course ad patterns\n';
+  code += '    const COURSE_AD_PATTERNS = [\n';
+  constants.COURSE_AD_PATTERNS.forEach((pattern, index) => {
+    const isLast = index === constants.COURSE_AD_PATTERNS.length - 1;
+    code += `      '${pattern.replace(/'/g, "\\'")}'${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  // Excluded classes
+  code += '    // Excluded classes\n';
+  code += '    const EXCLUDED_CLASSES = [\n';
+  constants.EXCLUDED_CLASSES.forEach((className, index) => {
+    const isLast = index === constants.EXCLUDED_CLASSES.length - 1;
+    code += `      '${className.replace(/'/g, "\\'")}'${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  // Paywall classes
+  code += '    // Paywall classes\n';
+  code += '    const PAYWALL_CLASSES = [\n';
+  constants.PAYWALL_CLASSES.forEach((className, index) => {
+    const isLast = index === constants.PAYWALL_CLASSES.length - 1;
+    code += `      '${className.replace(/'/g, "\\'")}'${isLast ? '' : ','}\n`;
+  });
+  code += '    ];\n';
+  code += '    \n';
+  
+  code += '    // ============================================\n';
+  code += '    // END OF INLINED CONSTANTS\n';
+  code += '    // ============================================\n';
   
   return code;
 }

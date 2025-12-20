@@ -1,6 +1,9 @@
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
 
+// @typedef {import('../types.js').ContentItem} ContentItem
+// @typedef {import('../types.js').GenerationData} GenerationData
+
 import { log, logError } from '../utils/logging.js';
 import { stripHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
@@ -12,8 +15,9 @@ import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate EPUB file from content
- * @param {Object} data - Generation data
- * @param {Function} updateState - State update function
+ * @param {GenerationData} data - Generation data
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @returns {Promise<Blob>} Generated EPUB blob
  */
 export async function generateEpub(data, updateState) {
   const { 

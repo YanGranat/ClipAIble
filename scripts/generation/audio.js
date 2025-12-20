@@ -1,6 +1,8 @@
 // Audio generation module for ClipAIble extension
 // Orchestrates text preparation and TTS conversion
 
+// @typedef {import('../types.js').ContentItem} ContentItem
+
 import { log, logError } from '../utils/logging.js';
 import { prepareContentForAudio, AUDIO_CONFIG } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
@@ -36,7 +38,7 @@ const LANGUAGE_TTS_INSTRUCTIONS = {
  * @param {number} params.speed - TTS speed 0.25-4.0 (default: 1.0)
  * @param {string} params.format - Audio format (default: 'mp3')
  * @param {string} params.language - Target language for TTS pronunciation (default: 'auto')
- * @param {Function} updateState - State update callback
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update callback
  * @returns {Promise<void>} Triggers download when complete
  */
 export async function generateAudio(params, updateState) {

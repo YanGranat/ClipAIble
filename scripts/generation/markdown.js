@@ -1,5 +1,8 @@
 // Markdown generation module for ClipAIble extension
 
+// @typedef {import('../types.js').ContentItem} ContentItem
+// @typedef {import('../types.js').GenerationData} GenerationData
+
 import { log, logWarn } from '../utils/logging.js';
 import { stripHtml, htmlToMarkdown } from '../utils/html.js';
 import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
@@ -8,8 +11,9 @@ import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate Markdown file from content
- * @param {Object} data - Generation data
- * @param {Function} updateState - State update function
+ * @param {GenerationData} data - Generation data
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @returns {Promise<string>} Generated markdown content
  */
 export async function generateMarkdown(data, updateState) {
   const { content, title, author = '', sourceUrl = '', publishDate = '', generateToc = false, generateAbstract = false, abstract = '', language = 'en', apiKey, model } = data;

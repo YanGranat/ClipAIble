@@ -1,6 +1,9 @@
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
 
+// @typedef {import('../types.js').ContentItem} ContentItem
+// @typedef {import('../types.js').GenerationData} GenerationData
+
 import { log, logError } from '../utils/logging.js';
 import { stripHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
@@ -11,8 +14,9 @@ import { sanitizeFilename } from '../utils/security.js';
 
 /**
  * Generate FB2 file from content
- * @param {Object} data - Generation data
- * @param {Function} updateState - State update function
+ * @param {GenerationData} data - Generation data
+ * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @returns {Promise<Blob>} Generated FB2 blob
  */
 export async function generateFb2(data, updateState) {
   const { 

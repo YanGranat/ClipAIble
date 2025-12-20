@@ -1,6 +1,9 @@
 // Selector cache module for offline mode
 // Caches AI-generated selectors by domain for faster subsequent extractions
 
+// @typedef {import('../types.js').SelectorResult} SelectorResult
+// @typedef {import('../types.js').CacheEntry} CacheEntry
+
 import { log, logWarn } from '../utils/logging.js';
 
 const STORAGE_KEY = 'selector_cache';
@@ -109,7 +112,7 @@ async function isUsingCacheEnabled() {
 /**
  * Get cached selectors for a URL
  * @param {string} url - Page URL
- * @returns {Promise<Object|null>} Cached selectors or null
+ * @returns {Promise<SelectorResult|null>} Cached selectors or null
  */
 export async function getCachedSelectors(url) {
   // Check if using cache is enabled
@@ -154,6 +157,12 @@ export async function getCachedSelectors(url) {
  * Cache selectors after successful extraction
  * @param {string} url - Page URL
  * @param {Object} selectors - Selectors object from AI
+ */
+/**
+ * Cache selectors for URL
+ * @param {string} url - Page URL
+ * @param {SelectorResult} selectors - Selectors to cache
+ * @returns {Promise<void>}
  */
 export async function cacheSelectors(url, selectors) {
   try {
