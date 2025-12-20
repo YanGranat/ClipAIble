@@ -1,5 +1,15 @@
+// @ts-check
 // Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
+
+// @typedef {import('./types.js').ChromeStorageResult} ChromeStorageResult
+// @typedef {import('./types.js').SubtitleData} SubtitleData
+// @typedef {import('./types.js').InjectionResult} InjectionResult
+// @typedef {import('./types.js').ExtendedCacheEntry} ExtendedCacheEntry
+// @typedef {import('./types.js').ExtendedProcessingState} ExtendedProcessingState
+// @typedef {import('./types.js').ExtendedGenerationData} ExtendedGenerationData
+// @typedef {import('./types.js').AudioGenerationData} AudioGenerationData
+// @typedef {import('./types.js').RetryOptions} RetryOptions
 
 // Import logging utilities first for use in global error handlers
 import { log, logError, logWarn, logDebug, LOG_LEVELS } from './utils/logging.js';
@@ -281,8 +291,10 @@ setTimeout(() => {
   // CRITICAL: On extension reload/restart, ALWAYS reset all generation flags AND clear summary
   // This ensures clean state after extension reload
   // Check if this is a fresh start (no active processing) and reset flags
-  chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp']).then(result => {
-    const hasProcessingState = result.processingState && result.processingState.isProcessing;
+  chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp']).then(/** @type {ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number}} */ (result) => {
+    /** @type {Partial<ProcessingState>|undefined} */
+    const processingState = result.processingState && typeof result.processingState === 'object' ? result.processingState : undefined;
+    const hasProcessingState = processingState && processingState.isProcessing === true;
     const hasSummaryGenerating = result.summary_generating;
     const hasSummary = result.summary_text;
     
@@ -293,7 +305,8 @@ setTimeout(() => {
     
     // CRITICAL: Clear summary on extension reload (one of 3 events that must clear summary)
     if (hasSummary) {
-      const summaryAge = result.summary_saved_timestamp ? (Date.now() - result.summary_saved_timestamp) : Infinity;
+      const savedTimestamp = result.summary_saved_timestamp;
+      const summaryAge = savedTimestamp && typeof savedTimestamp === 'number' ? (Date.now() - savedTimestamp) : Infinity;
       if (summaryAge > RESET_THRESHOLD) {
         log('Extension reloaded - clearing summary (too old)', {
           summaryAge,
@@ -318,8 +331,9 @@ setTimeout(() => {
       }
     }
     
-    if (hasProcessingState) {
-      const timeSinceUpdate = Date.now() - (result.processingState.lastUpdate || 0);
+    if (hasProcessingState && processingState) {
+      const lastUpdate = processingState.lastUpdate;
+      const timeSinceUpdate = lastUpdate && typeof lastUpdate === 'number' ? (Date.now() - lastUpdate) : Infinity;
       if (timeSinceUpdate > RESET_THRESHOLD) {
         log('Extension reloaded - resetting processingState (too old)', {
           timeSinceUpdate,
@@ -345,9 +359,8 @@ setTimeout(() => {
     }
     
     if (hasSummaryGenerating) {
-      const timeSinceStart = result.summary_generating_start_time 
-        ? Date.now() - result.summary_generating_start_time 
-        : Infinity;
+      const startTime = result.summary_generating_start_time;
+      const timeSinceStart = startTime && typeof startTime === 'number' ? (Date.now() - startTime) : Infinity;
       
       if (timeSinceStart > RESET_THRESHOLD) {
         log('Extension reloaded - resetting summary_generating flag (too old)', {
@@ -403,9 +416,10 @@ setTimeout(() => {
             }
           } else {
             // CRITICAL: Check summary_generating only if very recent (< 1 minute)
-            chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(result => {
-              if (result.summary_generating && result.summary_generating_start_time) {
-                const timeSinceStart = Date.now() - result.summary_generating_start_time;
+            chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(/** @type {{summary_generating?: boolean, summary_generating_start_time?: number}} */ (result) => {
+              const startTime = result.summary_generating_start_time;
+              if (result.summary_generating && startTime && typeof startTime === 'number') {
+                const timeSinceStart = Date.now() - startTime;
                 
                 if (timeSinceStart < RESET_THRESHOLD) {
                   // Very recent - might be quick restart, restore
@@ -900,6 +914,7 @@ try {
       
       // Handle pending subtitles (fallback when Extension context invalidated)
       if (changes.pendingSubtitles && changes.pendingSubtitles.newValue) {
+        /** @type {SubtitleData} */
         const pendingData = changes.pendingSubtitles.newValue;
         log('🟢 Received pendingSubtitles from storage (Extension context invalidated fallback)', {
           subtitleCount: pendingData.subtitles?.length || 0,
@@ -933,7 +948,7 @@ try {
             lastSubtitles: {
               subtitles: pendingData.subtitles,
               metadata: pendingData.metadata,
-              timestamp: pendingData.timestamp
+              timestamp: pendingData.timestamp || Date.now()
             }
           })
             .catch(async error => {
@@ -1045,15 +1060,18 @@ async function handleQuickSave(outputFormat = 'pdf') {
       'translate_images', 'google_api_key'
     ]);
     
+    /** @type {Record<string, any>} */
+    const settingsObj = settings;
+    
     // Determine provider: use api_provider from settings, fallback to getProviderFromModel
-    let provider = settings.api_provider || 'openai';
+    let provider = settingsObj.api_provider || 'openai';
     
     // Determine model: use model_by_provider for selected provider, fallback to openai_model
     let model = 'gpt-5.1'; // Default fallback
-    if (settings.model_by_provider && settings.model_by_provider[provider]) {
-      model = settings.model_by_provider[provider];
-    } else if (settings.openai_model) {
-      model = settings.openai_model;
+    if (settingsObj.model_by_provider && typeof settingsObj.model_by_provider === 'object' && settingsObj.model_by_provider[provider]) {
+      model = String(settingsObj.model_by_provider[provider]);
+    } else if (settingsObj.openai_model) {
+      model = String(settingsObj.openai_model);
       // If using openai_model, verify provider matches
       const modelProvider = getProviderFromModel(model);
       if (modelProvider !== provider) {
@@ -1078,7 +1096,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
       encryptedKey = settings.openrouter_api_key;
     }
     
-    if (encryptedKey) {
+    if (encryptedKey && typeof encryptedKey === 'string') {
       try {
         apiKey = await decryptApiKey(encryptedKey);
       } catch (error) {
@@ -1148,23 +1166,25 @@ async function handleQuickSave(outputFormat = 'pdf') {
       linkColor: settings.pdf_link_color || '#6cacff',
       tabId: tab.id,
       // Audio settings (if format is audio)
-      audioProvider: settings.audio_provider || 'openai',
-      elevenlabsApiKey: settings.elevenlabs_api_key || null,
-      qwenApiKey: settings.qwen_api_key || null,
-      respeecherApiKey: settings.respeecher_api_key || null,
+      audioProvider: String(settingsObj.audio_provider || 'openai'),
+      elevenlabsApiKey: settingsObj.elevenlabs_api_key || null,
+      qwenApiKey: settingsObj.qwen_api_key || null,
+      respeecherApiKey: settingsObj.respeecher_api_key || null,
       // Determine voice: use per-provider map if available, otherwise use legacy audio_voice
       // For Google TTS, use google_tts_voice if available, otherwise fallback to map/legacy
       audioVoice: (() => {
-        const provider = settings.audio_provider || 'openai';
+        const provider = String(settingsObj.audio_provider || 'openai');
         if (provider === 'google') {
           // Google TTS has its own voice setting
-          return settings.google_tts_voice || 'Callirrhoe';
+          return String(settingsObj.google_tts_voice || 'Callirrhoe');
         }
-        const voiceMap = settings.audio_voice_map || {};
-        return voiceMap[provider] || settings.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE;
+        const voiceMap = (settingsObj.audio_voice_map && typeof settingsObj.audio_voice_map === 'object') ? settingsObj.audio_voice_map : {};
+        return String(voiceMap[provider] || settingsObj.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE);
       })(),
       audioSpeed: (() => {
-        const speed = parseFloat(settings.audio_speed || CONFIG.DEFAULT_AUDIO_SPEED);
+        const audioSpeed = settingsObj.audio_speed;
+        const speedStr = audioSpeed && typeof audioSpeed === 'string' ? audioSpeed : String(CONFIG.DEFAULT_AUDIO_SPEED);
+        const speed = parseFloat(speedStr);
         return isNaN(speed) ? CONFIG.DEFAULT_AUDIO_SPEED : speed;
       })(),
       audioFormat: CONFIG.DEFAULT_AUDIO_FORMAT, // Default format for quick save (matches popup behavior)
@@ -1360,6 +1380,7 @@ async function startArticleProcessing(data) {
         // Store format in state for success message
         const state = getProcessingState();
         const savedFormat = data.outputFormat || 'pdf';
+        // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
         updateState({ outputFormat: savedFormat });
         
         processingStartTime = null;
@@ -1462,6 +1483,7 @@ async function startArticleProcessing(data) {
         // Store format in state for success message
         const state = getProcessingState();
         const savedFormat = data.outputFormat || 'pdf';
+        // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
         updateState({ outputFormat: savedFormat });
         
         processingStartTime = null;
@@ -1855,7 +1877,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       ttsApiKey = data.apiKey;
     }
     
-    return generateAudio({
+    /** @type {AudioGenerationData} */
+    const audioParams = {
       content: result.content,
       title: result.title,
       apiKey: data.apiKey, // For text preparation
@@ -1880,7 +1903,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       respeecherTemperature: data.respeecherTemperature !== undefined ? data.respeecherTemperature : 1.0,
       respeecherRepetitionPenalty: data.respeecherRepetitionPenalty !== undefined ? data.respeecherRepetitionPenalty : 1.0,
       respeecherTopP: data.respeecherTopP !== undefined ? data.respeecherTopP : 1.0
-    }, updateState);
+    };
+    return generateAudio(audioParams, updateState);
   } else {
     // PDF (default)
     const uiLang = await getUILanguage();
@@ -1894,7 +1918,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       imageCount: imageCount,
       contentTypes: result.content ? [...new Set(result.content.map(item => item?.type).filter(Boolean))] : []
     });
-    return generatePdf({
+    /** @type {ExtendedGenerationData} */
+    const pdfParams = {
       content: result.content,
       title: result.title,
       author: result.author || '',
@@ -1904,6 +1929,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       generateAbstract: data.generateAbstract || false,
       abstract: result.abstract || '',
       language: effectiveLanguage,
+      apiKey: data.apiKey,
+      model: data.model,
       stylePreset: data.stylePreset || 'dark',
       fontFamily: data.fontFamily || '',
       fontSize: data.fontSize || '31',
@@ -1912,7 +1939,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       headingColor: data.headingColor || '#cfcfcf',
       linkColor: data.linkColor || '#6cacff',
       pageMode: data.pageMode || 'single'
-    }, updateState);
+    };
+    return generatePdf(pdfParams, updateState);
   }
   
   // Note: recordSave and completeProcessing are handled by the promise chain
@@ -1941,6 +1969,7 @@ async function processWithSelectorMode(data) {
   const useCache = data.useCache !== false; // true if undefined/null/true, false only if explicitly false
   
   if (useCache) {
+    /** @type {ExtendedCacheEntry|null} */
     const cached = await getCachedSelectors(url);
     if (cached) {
       selectors = cached.selectors;
@@ -1948,7 +1977,7 @@ async function processWithSelectorMode(data) {
       const uiLang = await getUILanguage();
       const cachedStatus = tSync('statusUsingCachedSelectors', uiLang);
       updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: cachedStatus, progress: 3 });
-      log('Using cached selectors', { url, successCount: cached.successCount });
+      log('Using cached selectors', { url, successCount: cached.successCount || 0 });
     }
   }
   
@@ -2080,13 +2109,15 @@ async function getSelectorsFromAI(html, url, title, apiKey, model) {
   log('Sending request to AI...', { model, promptLength: userPrompt.length });
   
   // Wrap callAI with retry mechanism for reliability (429/5xx errors)
+  /** @type {RetryOptions} */
+  const retryOptions = {
+    maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+    delays: CONFIG.RETRY_DELAYS,
+    retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
+  };
   const parsed = await callWithRetry(
     () => callAI(systemPrompt, userPrompt, apiKey, model, true),
-    {
-      maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-      delays: CONFIG.RETRY_DELAYS,
-      retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-    }
+    retryOptions
   );
   log('Parsed selectors', parsed);
   
@@ -2136,23 +2167,40 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
     throw new Error('Script execution returned empty results');
   }
   
-  if (results[0].error) {
-    logError('Script execution error', results[0].error);
-    throw new Error(`Script error: ${results[0].error.message || results[0].error}`);
+  /** @type {InjectionResult} */
+  const injectionResult = results[0].result;
+  
+  if (injectionResult && 'error' in injectionResult && injectionResult.error) {
+    const error = injectionResult.error;
+    logError('Script execution error', error);
+    let errorMsg = '';
+    if (typeof error === 'string') {
+      errorMsg = error;
+    } else if (error && typeof error === 'object') {
+      const errorObj = /** @type {Record<string, any>} */ (error);
+      if ('message' in errorObj && typeof errorObj.message === 'string') {
+        errorMsg = errorObj.message;
+      } else {
+        errorMsg = String(error);
+      }
+    } else {
+      errorMsg = String(error);
+    }
+    throw new Error(`Script error: ${errorMsg}`);
   }
   
-  if (!results[0].result) {
+  if (!injectionResult) {
     throw new Error('Script returned no result');
   }
 
   log('Extraction result', { 
-    title: results[0].result.title,
-    contentItems: results[0].result.content?.length
+    title: injectionResult.title,
+    contentItems: injectionResult.content?.length
   });
   
   // Log subtitle debug info if available
-  if (results[0].result.debug?.subtitleDebug) {
-    const subDebug = results[0].result.debug.subtitleDebug;
+  if (injectionResult && injectionResult.debug && injectionResult.debug.subtitleDebug) {
+    const subDebug = injectionResult.debug.subtitleDebug;
     log('=== SUBTITLE EXTRACTION DEBUG ===', {
       subtitleFound: subDebug.subtitleFound,
       subtitleText: subDebug.subtitleText,
@@ -2165,7 +2213,7 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
       subtitleInsertIndex: subDebug.subtitleInsertIndex,
       elementsProcessedBeforeFirstHeading: subDebug.elementsProcessedBeforeFirstHeading,
       totalContentItemsBeforeInsert: subDebug.totalContentItemsBeforeInsert,
-      articleTitle: results[0].result.title
+      articleTitle: injectionResult.title
     });
     
     // Log content before insert with full details
@@ -2189,12 +2237,12 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
     }
     
     // Log actual final content structure with FULL text (not truncated)
-    const firstItems = results[0].result.content?.slice(0, 10).map((item, idx) => ({
+    const firstItems = injectionResult.content?.slice(0, 10).map((item, idx) => ({
       index: idx,
       type: item.type,
-      level: item.level || null,
-      text: (item.text || '').replace(/<[^>]+>/g, '').trim(),
-      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length
+      level: ('level' in item ? item.level : null) || null,
+      text: (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim(),
+      textLength: (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim().length
     }));
     log('Final content structure (first 10 items with FULL text):');
     firstItems?.forEach((item) => {
@@ -2203,10 +2251,10 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
     });
     
     // Check if subtitle is actually in the right position
-    const subtitleIndex = results[0].result.content?.findIndex(item => item.type === 'subtitle');
-    const titleIndex = results[0].result.content?.findIndex(item => 
+    const subtitleIndex = injectionResult.content?.findIndex(item => item.type === 'subtitle');
+    const titleIndex = injectionResult.content?.findIndex(item => 
       item.type === 'heading' && 
-      (item.text || '').replace(/<[^>]+>/g, '').trim() === results[0].result.title
+      (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim() === injectionResult.title
     );
     log('Position check:', {
       subtitleIndex: subtitleIndex !== undefined ? subtitleIndex : 'NOT FOUND',
@@ -2218,7 +2266,7 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
     log('No subtitle debug info available');
   }
   
-  return results[0].result;
+  return injectionResult;
 }
 
 // Inlined extraction function for chrome.scripting.executeScript
@@ -2867,9 +2915,10 @@ function extractFromPageInlined(selectors, baseUrl) {
         subtitleDebug.titleInContent = true;
         // Title exists but might not be a heading - find its position
         for (let i = 0; i < content.length; i++) {
-          const itemText = (content[i].text || '').replace(/<[^>]+>/g, '').trim();
+          const item = content[i];
+          const itemText = ('text' in item && item.text ? String(item.text) : '').replace(/<[^>]+>/g, '').trim();
           if (itemText === articleTitle || itemText.toLowerCase() === articleTitle.toLowerCase()) {
-            if (content[i].type === 'heading') {
+            if (item.type === 'heading') {
               firstHeadingIndex = i;
               subtitleDebug.firstHeadingIndex = i;
               subtitleDebug.firstHeadingText = articleTitle.substring(0, 100);
@@ -2881,12 +2930,14 @@ function extractFromPageInlined(selectors, baseUrl) {
     }
     
     // Insert subtitle right after first heading (or at beginning if no heading)
-    if (firstHeadingIndex >= 0) {
+    if (firstHeadingIndex >= 0 && subtitleToInsert) {
+      // @ts-ignore - subtitleToInsert is a ContentItem but TypeScript infers union type
       content.splice(firstHeadingIndex + 1, 0, subtitleToInsert);
       subtitleDebug.subtitleInserted = true;
       subtitleDebug.subtitleInsertIndex = firstHeadingIndex + 1;
-    } else {
+    } else if (subtitleToInsert) {
       // No heading found, insert at the beginning
+      // @ts-ignore - subtitleToInsert is a ContentItem but TypeScript infers union type
       content.unshift(subtitleToInsert);
       subtitleDebug.subtitleInserted = true;
       subtitleDebug.subtitleInsertIndex = 0;
@@ -2931,7 +2982,10 @@ function extractFromPageInlined(selectors, baseUrl) {
             insertIndex = firstHeadingIndex + 2; // Insert after subtitle
           }
           
-          content.splice(insertIndex, 0, { type: 'image', src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) });
+          /** @type {ContentItem} */
+          const imageItem = { type: 'image', url: heroSrc, src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) };
+          // @ts-ignore - imageItem is a ContentItem but TypeScript infers union type
+          content.splice(insertIndex, 0, imageItem);
           addedImageUrls.add(ns);
         }
       }
@@ -3076,15 +3130,19 @@ async function processWithoutAI(data) {
   }
 
   if (results[0].error) {
+    const error = results[0].error;
     logError('=== processWithoutAI: Result contains error ===', {
-      error: results[0].error,
+      error: error,
       timestamp: Date.now()
     });
-    logError('Automatic extraction error', results[0].error);
-    throw new Error(`Automatic extraction error: ${results[0].error.message || results[0].error}`);
+    logError('Automatic extraction error', error);
+    throw new Error(`Automatic extraction error: ${error && typeof error === 'object' && 'message' in error ? error.message : String(error)}`);
   }
 
-  if (!results[0].result) {
+  /** @type {InjectionResult} */
+  const automaticResult = results[0].result;
+  
+  if (!automaticResult) {
     logError('=== processWithoutAI: No result in results[0] ===', {
       results0Keys: Object.keys(results[0]),
       timestamp: Date.now()
@@ -3093,12 +3151,12 @@ async function processWithoutAI(data) {
   }
   
   log('=== processWithoutAI: Results validated successfully ===', {
-    hasResult: !!results[0].result,
-    resultKeys: results[0].result ? Object.keys(results[0].result) : [],
+    hasResult: !!automaticResult,
+    resultKeys: automaticResult ? Object.keys(automaticResult) : [],
     timestamp: Date.now()
   });
 
-  const result = results[0].result;
+  const result = automaticResult;
   const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
   
   // Log debug info if available and LOG_LEVEL is DEBUG (0)
@@ -3264,13 +3322,15 @@ ${html}`;
   updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: processingStatus, progress: 10 });
   
   // Wrap callAI with retry mechanism for reliability (429/5xx errors)
+  /** @type {RetryOptions} */
+  const retryOptions2 = {
+    maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+    delays: CONFIG.RETRY_DELAYS,
+    retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
+  };
   const result = await callWithRetry(
     () => callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true),
-    {
-      maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-      delays: CONFIG.RETRY_DELAYS,
-      retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-    }
+    retryOptions2
   );
   
   log('Single chunk result', { title: result.title, items: result.content?.length });
@@ -3306,8 +3366,8 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
     const progressBase = 5 + Math.floor((i / chunks.length) * 10);
     const uiLangChunk = await getUILanguage();
     const chunkStatus = tSync('statusProcessingChunk', uiLangChunk)
-      .replace('{current}', i + 1)
-      .replace('{total}', chunks.length);
+      .replace('{current}', String(i + 1))
+      .replace('{total}', String(chunks.length));
     updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: chunkStatus, progress: progressBase });
 
     const systemPrompt = buildChunkSystemPrompt(i, chunks.length);
@@ -3315,13 +3375,15 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
 
     try {
       // Wrap callAI with retry mechanism for reliability (429/5xx errors)
+      /** @type {RetryOptions} */
+      const retryOptions4 = {
+        maxRetries: 3,
+        delays: [1000, 2000, 4000],
+        retryableStatusCodes: [429, 500, 502, 503, 504]
+      };
       const result = await callWithRetry(
         () => callAI(systemPrompt, userPrompt, apiKey, model, true),
-        {
-          maxRetries: 3,
-          delays: [1000, 2000, 4000],
-          retryableStatusCodes: [429, 500, 502, 503, 504]
-        }
+        retryOptions4
       );
       
       log(`Chunk ${i + 1} result`, { title: result.title, contentItems: result.content?.length });

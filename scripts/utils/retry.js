@@ -41,12 +41,12 @@ function sleep(ms) {
 /**
  * Call function with retry logic
  * @param {Function} fn - Function to call (should return Promise)
- * @param {Object} options - Retry options
- * @param {number} options.maxRetries - Maximum number of retries
- * @param {Array<number>} options.delays - Array of delay times in ms for each retry
- * @param {Array<number>} options.retryableStatusCodes - HTTP status codes that should trigger retry
- * @param {Function} options.onRetry - Callback called before each retry (attempt, delay)
- * @param {Function} options.shouldRetry - Custom function to determine if should retry (error) => boolean
+ * @param {Object} [options] - Retry options
+ * @param {number} [options.maxRetries] - Maximum number of retries
+ * @param {Array<number>} [options.delays] - Array of delay times in ms for each retry
+ * @param {Array<number>} [options.retryableStatusCodes] - HTTP status codes that should trigger retry
+ * @param {Function} [options.onRetry] - Callback called before each retry (attempt, delay)
+ * @param {Function} [options.shouldRetry] - Custom function to determine if should retry (error) => boolean
  * @returns {Promise<any>} Result of function call
  */
 export async function callWithRetry(fn, options = {}) {

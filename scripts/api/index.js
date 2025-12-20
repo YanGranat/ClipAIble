@@ -1,3 +1,4 @@
+// @ts-check
 // API router for ClipAIble extension
 
 // @typedef {import('../types.js').AIProvider} AIProvider

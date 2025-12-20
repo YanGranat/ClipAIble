@@ -1,3 +1,4 @@
+// @ts-check
 // Message handler router
 // Routes incoming messages to appropriate handlers
 

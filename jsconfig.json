@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"],
+    "checkJs": true,
+    "allowJs": true,
+    "strict": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./scripts/*"]
+    }
+  },
+  "include": [
+    "scripts/**/*.js",
+    "popup/**/*.js",
+    "print/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "coverage",
+    "tests",
+    "lib",
+    "docs",
+    "doc",
+    "memory-bank"
+  ],
+  "typeAcquisition": {
+    "enable": true,
+    "include": ["chrome"]
+  }
+}
+

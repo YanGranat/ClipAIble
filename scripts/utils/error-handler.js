@@ -1,3 +1,4 @@
+// @ts-check
 // Centralized error handling for ClipAIble extension
 // Provides unified error normalization, classification, and user-friendly message generation
 //

@@ -1,4 +1,7 @@
+// @ts-check
 // Popup script for ClipAIble extension
+//
+// @typedef {import('../scripts/types.js').WindowWithModules} WindowWithModules
 //
 // UI VISIBILITY MANAGEMENT STRUCTURE:
 // ====================================
@@ -500,7 +503,9 @@ function setElementGroupDisplay(key, displayValue) {
   const el = getElement(key);
   if (el) {
     const group = el.closest('.setting-item') || el;
-    group.style.display = displayValue;
+    if (group instanceof HTMLElement) {
+      group.style.display = displayValue;
+    }
   }
 }
 
@@ -512,7 +517,9 @@ function setDisplayForIds(ids, displayValue) {
       return;
     }
     const group = el.closest('.setting-item') || el;
-    group.style.display = displayValue;
+    if (group instanceof HTMLElement) {
+      group.style.display = displayValue;
+    }
   });
 }
 
@@ -628,18 +635,21 @@ function updateTimerDisplay() {
 
 // Apply UI localization (kept for backward compatibility, now uses uiModule)
 async function applyLocalization() {
-  if (window.uiModule) {
-    return window.uiModule.applyLocalization();
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  if (windowWithModules.uiModule) {
+    return windowWithModules.uiModule.applyLocalization();
   }
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
   
   // Apply translations to elements with data-i18n attribute
   document.querySelectorAll('[data-i18n]').forEach(element => {
+    if (!(element instanceof HTMLElement)) return;
     const key = element.getAttribute('data-i18n');
     const translation = locale[key] || UI_LOCALES.en[key] || key;
     
-    if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'password')) {
+    if (element instanceof HTMLInputElement && (element.type === 'text' || element.type === 'password')) {
       // For inputs, check if they have a separate placeholder key
       if (element.hasAttribute('data-i18n-placeholder')) {
         const placeholderKey = element.getAttribute('data-i18n-placeholder');
@@ -647,7 +657,7 @@ async function applyLocalization() {
       } else {
         element.placeholder = translation;
       }
-    } else if (element.tagName === 'OPTION') {
+    } else if (element instanceof HTMLOptionElement) {
       // Options are handled separately
     } else {
       element.textContent = translation;
@@ -656,6 +666,7 @@ async function applyLocalization() {
   
   // Handle elements with only data-i18n-placeholder (no data-i18n)
   document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+    if (!(element instanceof HTMLInputElement)) return;
     if (!element.hasAttribute('data-i18n')) {
       const placeholderKey = element.getAttribute('data-i18n-placeholder');
       element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
@@ -706,6 +717,7 @@ async function applyLocalization() {
   
   // Update title attributes
   document.querySelectorAll('[data-i18n-title]').forEach(element => {
+    if (!(element instanceof HTMLElement)) return;
     const key = element.getAttribute('data-i18n-title');
     element.title = locale[key] || UI_LOCALES.en[key] || key;
   });
@@ -916,9 +928,11 @@ async function init() {
   });
   
   // Make modules available globally for use in other functions
-  window.uiModule = uiModule;
-  window.statsModule = statsModule;
-  window.settingsModule = settingsModule;
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  windowWithModules.uiModule = uiModule;
+  windowWithModules.statsModule = statsModule;
+  windowWithModules.settingsModule = settingsModule;
   
   // Initialize core module (business logic)
   const coreModule = initCore({
@@ -942,7 +956,7 @@ async function init() {
     CONFIG,
     stateRefs
   });
-  window.coreModule = coreModule;
+  windowWithModules.coreModule = coreModule;
   
   // Initialize handlers module (event listeners)
   const handlersModule = initHandlers({
@@ -973,13 +987,13 @@ async function init() {
     downloadSummary: coreModule.downloadSummary,
     closeSummary: coreModule.closeSummary
   });
-  window.handlersModule = handlersModule;
+  windowWithModules.handlersModule = handlersModule;
   
   // Load settings after modules are initialized
   try {
     log('init: calling loadSettings()');
-    if (window.settingsModule && window.settingsModule.loadSettings) {
-      await window.settingsModule.loadSettings();
+    if (windowWithModules.settingsModule && windowWithModules.settingsModule.loadSettings) {
+      await windowWithModules.settingsModule.loadSettings();
     } else {
       logError('CRITICAL: settingsModule.loadSettings not available');
       throw new Error('settingsModule.loadSettings not available');
@@ -1009,7 +1023,13 @@ async function init() {
   }
   
   try {
-    handlersModule.setupEventListeners();
+    // @ts-ignore - handlersModule is returned from initHandlers which has setupEventListeners method
+    const handlersModuleTyped = /** @type {{setupEventListeners: () => void}} */ (handlersModule);
+    if (handlersModuleTyped && typeof handlersModuleTyped.setupEventListeners === 'function') {
+      handlersModuleTyped.setupEventListeners();
+    } else {
+      logError('CRITICAL: handlersModule.setupEventListeners is not a function');
+    }
   } catch (error) {
     logError('CRITICAL: setupEventListeners() failed in init()', error);
     // This is critical - without event listeners, buttons won't work
@@ -1205,10 +1225,12 @@ async function updateModelList() {
   if (modelToSelect) {
     elements.modelSelect.value = modelToSelect;
     // Save to both general model key (for backward compatibility) and provider-specific
+    /** @type {Record<string, any>} */
+    const modelsByProvider = savedModelsByProvider && typeof savedModelsByProvider === 'object' ? savedModelsByProvider : {};
     await chrome.storage.local.set({ 
       [STORAGE_KEYS.MODEL]: modelToSelect,
       [STORAGE_KEYS.MODEL_BY_PROVIDER]: {
-        ...savedModelsByProvider,
+        ...modelsByProvider,
         [provider]: modelToSelect
       }
     });
@@ -1302,7 +1324,8 @@ async function showCustomModelDropdown() {
     // Add click handler to entire option div for full-width clickable area
     optionDiv.addEventListener('click', (e) => {
       // Don't trigger selection if clicking on delete button
-      if (e.target.classList.contains('custom-model-delete') || e.target.closest('.custom-model-delete')) {
+      const target = e.target;
+      if (target instanceof HTMLElement && (target.classList.contains('custom-model-delete') || target.closest('.custom-model-delete'))) {
         return;
       }
       
@@ -1501,8 +1524,10 @@ async function updateApiProviderUI() {
 
 // Apply theme based on user preference or system preference (kept for backward compatibility, now uses uiModule)
 function applyTheme() {
-  if (window.uiModule) {
-    return window.uiModule.applyTheme();
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  if (windowWithModules.uiModule) {
+    return windowWithModules.uiModule.applyTheme();
   }
   if (!elements.themeSelect) {
     return; // Theme select not available, skip
@@ -1529,11 +1554,13 @@ function applyTheme() {
     };
     
     // Remove old listener if exists
-    if (window.themeChangeListener) {
-      mediaQuery.removeListener(window.themeChangeListener);
+    /** @type {WindowWithModules} */
+    const windowWithModules = window;
+    if (windowWithModules.themeChangeListener) {
+      mediaQuery.removeListener(windowWithModules.themeChangeListener);
     }
     
-    window.themeChangeListener = handleThemeChange;
+    windowWithModules.themeChangeListener = handleThemeChange;
     mediaQuery.addListener(handleThemeChange);
   }
 }
@@ -1678,6 +1705,7 @@ function initCustomSelect(selectId, options = {}) {
   // Function to populate options
   const populateOptions = () => {
     optionsDiv.innerHTML = '';
+    if (!(select instanceof HTMLSelectElement)) return;
     Array.from(select.options).forEach((option) => {
       const customOption = document.createElement('div');
       customOption.className = 'custom-select-option';
@@ -1736,13 +1764,18 @@ function initCustomSelect(selectId, options = {}) {
   });
   
   optionsDiv.addEventListener('click', (e) => {
-    const option = e.target.closest('.custom-select-option');
-    if (!option) return;
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    const option = target.closest('.custom-select-option');
+    if (!(option instanceof HTMLElement)) return;
     
     const value = option.dataset.value;
+    if (!value) return;
     
     // Update native select
-    select.value = value;
+    if (select instanceof HTMLSelectElement) {
+      select.value = value;
+    }
     select.dispatchEvent(new Event('change', { bubbles: true }));
     
     // Update display
@@ -1767,11 +1800,14 @@ function initCustomSelect(selectId, options = {}) {
   
   // Sync with native select value changes
   select.addEventListener('change', () => {
+    if (!(select instanceof HTMLSelectElement)) return;
     const selectedOption = optionsDiv.querySelector(`[data-value="${select.value}"]`);
-    if (selectedOption) {
+    if (selectedOption instanceof HTMLElement) {
       valueSpan.textContent = selectedOption.textContent;
       optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
-        opt.classList.remove('selected');
+        if (opt instanceof HTMLElement) {
+          opt.classList.remove('selected');
+        }
       });
       selectedOption.classList.add('selected');
     } else {
@@ -1782,10 +1818,11 @@ function initCustomSelect(selectId, options = {}) {
   
   // Watch for option changes (for dynamic selects)
   const observer = new MutationObserver(() => {
+    if (!(select instanceof HTMLSelectElement)) return;
     const currentValue = select.value;
     populateOptions();
     // Restore value after repopulation
-    if (currentValue) {
+    if (currentValue && select instanceof HTMLSelectElement) {
       select.value = currentValue;
       const selectedOption = optionsDiv.querySelector(`[data-value="${currentValue}"]`);
       if (selectedOption) {
@@ -2166,11 +2203,11 @@ function updateVoiceList(provider) {
  */
 function updateAudioProviderUI() {
   const audioProvider = getElement('audioProvider');
-  if (!audioProvider) return;
+  if (!(audioProvider instanceof HTMLSelectElement)) return;
   
   // Safety check: If format is not audio, hide all audio fields and return
   const outputFormat = getElement('outputFormat');
-  const format = outputFormat?.value;
+  const format = outputFormat instanceof HTMLSelectElement ? outputFormat.value : '';
   if (format !== 'audio') {
     hideAllAudioFields();
     return;
@@ -2217,7 +2254,7 @@ function updateAudioProviderUI() {
   setElementGroupDisplay('audioSpeedGroup', supportsSpeed ? 'flex' : 'none');
   
   const audioSpeed = getElement('audioSpeed');
-  if (audioSpeed) {
+  if (audioSpeed instanceof HTMLInputElement) {
     audioSpeed.disabled = !supportsSpeed;
     if (!supportsSpeed) {
       audioSpeed.value = '1.0';
@@ -2244,7 +2281,7 @@ async function updateTranslationVisibility() {
   const translateImages = getElement('translateImages');
   const outputFormat = getElement('outputFormat');
   
-  if (!languageSelect || !translateImages || !outputFormat) return;
+  if (!(languageSelect instanceof HTMLSelectElement) || !(translateImages instanceof HTMLInputElement) || !(outputFormat instanceof HTMLSelectElement)) return;
   
   const isTranslating = languageSelect.value !== 'auto';
   const translateImagesEnabled = translateImages.checked;
@@ -2261,7 +2298,7 @@ async function updateTranslationVisibility() {
   const translateImagesHint = getElement('translateImagesHint');
   if (isTranslating && translateImagesEnabled && translateImagesHint) {
     const googleApiKey = getElement('googleApiKey');
-    const googleApiKeyValue = googleApiKey?.value?.trim() || '';
+    const googleApiKeyValue = (googleApiKey instanceof HTMLInputElement ? googleApiKey.value : '').trim() || '';
     const hasGoogleKey = googleApiKeyValue && !googleApiKeyValue.startsWith('****');
     
     // Check if key exists in storage (might be encrypted/masked)
@@ -2460,8 +2497,10 @@ async function saveApiKey() {
 
 // Set status indicator (kept for backward compatibility, now uses uiModule)
 function setStatus(type, text, startTime = null) {
-  if (window.uiModule) {
-    return window.uiModule.setStatus(type, text, startTime);
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  if (windowWithModules.uiModule) {
+    return windowWithModules.uiModule.setStatus(type, text, startTime);
   }
   elements.statusDot.className = 'status-dot';
   if (type === 'processing') {
@@ -2484,8 +2523,10 @@ function setStatus(type, text, startTime = null) {
 
 // Set progress bar (kept for backward compatibility, now uses uiModule)
 function setProgress(percent, show = true) {
-  if (window.uiModule) {
-    return window.uiModule.setProgress(percent, show);
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  if (windowWithModules.uiModule) {
+    return windowWithModules.uiModule.setProgress(percent, show);
   }
   elements.progressContainer.style.display = show ? 'block' : 'none';
   elements.progressBar.style.width = `${percent}%`;
@@ -2494,8 +2535,10 @@ function setProgress(percent, show = true) {
 
 // Show toast notification (kept for backward compatibility, now uses uiModule)
 function showToast(message, type = 'success') {
-  if (window.uiModule) {
-    return window.uiModule.showToast(message, type);
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  if (windowWithModules.uiModule) {
+    return windowWithModules.uiModule.showToast(message, type);
   }
   const existingToast = document.querySelector('.toast');
   if (existingToast) {
@@ -2534,8 +2577,10 @@ window.addEventListener('unload', () => {
 // ========================================
 
 async function loadAndDisplayStats() {
-  if (window.statsModule) {
-    return window.statsModule.loadAndDisplayStats();
+  /** @type {WindowWithModules} */
+  const windowWithModules = window;
+  if (windowWithModules.statsModule) {
+    return windowWithModules.statsModule.loadAndDisplayStats();
   }
   // Fallback to original implementation if module not initialized
   try {
@@ -2593,10 +2638,12 @@ async function displayStats(stats) {
     
     // Add delete handlers
     historyContainer.querySelectorAll('.history-delete').forEach(btn => {
+      if (!(btn instanceof HTMLElement)) return;
       btn.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const index = parseInt(btn.dataset.index);
+        const indexStr = btn.dataset.index;
+        const index = indexStr ? parseInt(indexStr, 10) : NaN;
         await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', index });
         await loadAndDisplayStats();
       });
@@ -2617,7 +2664,8 @@ function escapeHtml(text) {
 
 function formatRelativeDate(date) {
   const now = new Date();
-  const diffMs = now - date;
+  const dateTime = date instanceof Date ? date.getTime() : (typeof date === 'number' ? date : Date.now());
+  const diffMs = now.getTime() - dateTime;
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
   const minutes = Math.floor(diffMs / 60000);
   const hours = Math.floor(diffMs / 3600000);
@@ -2660,6 +2708,7 @@ async function displayCacheStats(stats) {
       
       // Add delete handlers
       domainsListEl.querySelectorAll('.cache-domain-delete').forEach(btn => {
+        if (!(btn instanceof HTMLElement)) return;
         btn.addEventListener('click', async (e) => {
           e.preventDefault();
           e.stopPropagation();
