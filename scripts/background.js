@@ -1167,16 +1167,48 @@ async function handleQuickSave(outputFormat = 'pdf') {
 // ============================================
 
 try {
+  log('=== background.js: Registering chrome.runtime.onMessage listener ===', {
+    timestamp: Date.now()
+  });
+  
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    return routeMessage(request, sender, sendResponse, {
+    log('=== chrome.runtime.onMessage: MESSAGE RECEIVED ===', {
+      action: request?.action,
+      hasData: !!request?.data,
+      senderUrl: sender?.tab?.url || sender?.url || 'popup',
+      senderTabId: sender?.tab?.id,
+      timestamp: Date.now()
+    });
+    
+    const result = routeMessage(request, sender, sendResponse, {
       startArticleProcessing,
       processWithSelectorMode,
       processWithExtractMode,
+      processWithoutAI,
       stopKeepAlive,
       startKeepAlive
     });
+    
+    log('=== chrome.runtime.onMessage: routeMessage returned ===', {
+      action: request?.action,
+      resultType: typeof result,
+      isPromise: result instanceof Promise,
+      isBoolean: typeof result === 'boolean',
+      timestamp: Date.now()
+    });
+    
+    return result;
+  });
+  
+  log('=== background.js: chrome.runtime.onMessage listener registered successfully ===', {
+    timestamp: Date.now()
   });
 } catch (error) {
+  logError('=== background.js: Failed to register runtime.onMessage listener ===', {
+    error: error?.message || String(error),
+    errorStack: error?.stack,
+    timestamp: Date.now()
+  });
   logError('Failed to register runtime.onMessage listener', error);
 }
 
@@ -1188,9 +1220,31 @@ try {
 let processingStartTime = null;
 
 async function startArticleProcessing(data) {
+  log('=== startArticleProcessing: ENTRY ===', {
+    hasData: !!data,
+    dataKeys: data ? Object.keys(data) : [],
+    mode: data?.mode,
+    url: data?.url,
+    hasTabId: !!data?.tabId,
+    tabId: data?.tabId,
+    outputFormat: data?.outputFormat,
+    timestamp: Date.now()
+  });
+  
+  log('=== startArticleProcessing: Calling startProcessing ===', {
+    timestamp: Date.now()
+  });
+  
   if (!(await startProcessing(startKeepAlive))) {
+    logError('=== startArticleProcessing: startProcessing returned false ===', {
+      timestamp: Date.now()
+    });
     return false;
   }
+  
+  log('=== startArticleProcessing: startProcessing returned true ===', {
+    timestamp: Date.now()
+  });
   
   // Validate output format
   // Note: docx, html, txt formats removed from UI but kept in validation for backward compatibility with old settings
@@ -1307,14 +1361,39 @@ async function startArticleProcessing(data) {
   // Standard article processing
   const { mode } = data;
   
+  log('=== startArticleProcessing: Selecting process function ===', {
+    mode: mode,
+    hasProcessWithoutAI: typeof processWithoutAI === 'function',
+    hasProcessWithSelectorMode: typeof processWithSelectorMode === 'function',
+    hasProcessWithExtractMode: typeof processWithExtractMode === 'function',
+    timestamp: Date.now()
+  });
+  
   const processFunction = mode === 'automatic'
     ? processWithoutAI
     : mode === 'selector' 
     ? processWithSelectorMode 
     : processWithExtractMode;
   
+  log('=== startArticleProcessing: Process function selected ===', {
+    mode: mode,
+    functionName: processFunction?.name || 'unknown',
+    timestamp: Date.now()
+  });
+  
+  log('=== startArticleProcessing: About to call processFunction ===', {
+    functionName: processFunction?.name || 'unknown',
+    timestamp: Date.now()
+  });
+  
   processFunction(data)
     .then(async result => {
+      log('=== startArticleProcessing: processFunction completed ===', {
+        hasResult: !!result,
+        resultKeys: result ? Object.keys(result) : [],
+        timestamp: Date.now()
+      });
+      
       log('Processing complete', { 
         title: result.title, 
         contentItems: result.content?.length || 0 
@@ -1354,6 +1433,13 @@ async function startArticleProcessing(data) {
         await completeProcessing(stopKeepAlive);
       })
     .catch(async error => {
+      logError('=== startArticleProcessing: processFunction FAILED ===', {
+        error: error?.message || String(error),
+        errorStack: error?.stack,
+        errorName: error?.name,
+        timestamp: Date.now()
+      });
+      
       // Check if processing was cancelled - don't set error if cancelled
       if (isCancelled()) {
         log('Processing was cancelled, not setting error');
@@ -2831,10 +2917,16 @@ function extractFromPageInlined(selectors, baseUrl) {
 // ============================================
 
 async function processWithoutAI(data) {
+  log('=== processWithoutAI: ENTRY ===', {
+    hasData: !!data,
+    dataKeys: data ? Object.keys(data) : [],
+    timestamp: Date.now()
+  });
+  
   const { html, url, title, tabId } = data;
 
   log('=== AUTOMATIC MODE START (NO AI) ===');
-  log('Input data', { url, title, htmlLength: html?.length });
+  log('Input data', { url, title, htmlLength: html?.length, tabId: tabId });
 
   if (!html) throw new Error('No HTML content provided');
   if (!tabId) throw new Error('Tab ID is required for automatic extraction');
@@ -2850,33 +2942,106 @@ async function processWithoutAI(data) {
   const extractingStatus = tSync('statusExtractingContent', uiLangExtracting);
   updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
 
-  // Execute automatic extraction in page context
+  log('=== processWithoutAI: About to execute script ===', {
+    tabId: tabId,
+    url: url,
+    hasExtractAutomaticallyInlined: typeof extractAutomaticallyInlined === 'function',
+    timestamp: Date.now()
+  });
+
+  // Execute automatic extraction in page context with timeout
   let results;
   try {
-    results = await chrome.scripting.executeScript({
+    log('=== processWithoutAI: Creating timeout and script promises ===', {
+      timestamp: Date.now()
+    });
+    
+    // Add timeout to prevent hanging (30 seconds should be enough for most pages)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
+          timeout: 30000,
+          timestamp: Date.now()
+        });
+        reject(new Error('Automatic extraction timeout after 30 seconds'));
+      }, 30000);
+    });
+    
+    log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {
+      tabId: tabId,
+      url: url,
+      timestamp: Date.now()
+    });
+    
+    const scriptPromise = chrome.scripting.executeScript({
       target: { tabId: tabId },
       world: 'MAIN',
       func: extractAutomaticallyInlined,
       args: [url]
     });
+    
+    log('=== processWithoutAI: Waiting for Promise.race ===', {
+      timestamp: Date.now()
+    });
+    
+    results = await Promise.race([scriptPromise, timeoutPromise]);
+    
+    log('=== processWithoutAI: Promise.race completed ===', {
+      hasResults: !!results,
+      resultsLength: results?.length,
+      timestamp: Date.now()
+    });
+    
     log('Automatic extraction executed', { resultsLength: results?.length });
   } catch (scriptError) {
+    logError('=== processWithoutAI: Script execution FAILED ===', {
+      error: scriptError?.message || String(scriptError),
+      errorStack: scriptError?.stack,
+      errorName: scriptError?.name,
+      timestamp: Date.now()
+    });
     logError('Automatic extraction script execution failed', scriptError);
     throw new Error(`Failed to execute automatic extraction: ${scriptError.message}`);
   }
 
+  log('=== processWithoutAI: Validating results ===', {
+    hasResults: !!results,
+    resultsLength: results?.length,
+    hasFirstResult: !!results?.[0],
+    firstResultKeys: results?.[0] ? Object.keys(results[0]) : [],
+    timestamp: Date.now()
+  });
+
   if (!results || !results[0]) {
+    logError('=== processWithoutAI: Empty results ===', {
+      results: results,
+      timestamp: Date.now()
+    });
     throw new Error('Automatic extraction returned empty results');
   }
 
   if (results[0].error) {
+    logError('=== processWithoutAI: Result contains error ===', {
+      error: results[0].error,
+      timestamp: Date.now()
+    });
     logError('Automatic extraction error', results[0].error);
     throw new Error(`Automatic extraction error: ${results[0].error.message || results[0].error}`);
   }
 
   if (!results[0].result) {
+    logError('=== processWithoutAI: No result in results[0] ===', {
+      results0Keys: Object.keys(results[0]),
+      timestamp: Date.now()
+    });
     throw new Error('Automatic extraction returned no result');
   }
+  
+  log('=== processWithoutAI: Results validated successfully ===', {
+    hasResult: !!results[0].result,
+    resultKeys: results[0].result ? Object.keys(results[0].result) : [],
+    timestamp: Date.now()
+  });
 
   const result = results[0].result;
   const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;

@@ -1012,7 +1012,21 @@ export function initHandlers(deps) {
     }
 
     if (elements.savePdfBtn) {
-      elements.savePdfBtn.addEventListener('click', handleSavePdf);
+      log('=== setupEventListeners: Adding click handler to savePdfBtn ===', {
+        hasButton: !!elements.savePdfBtn,
+        hasHandler: typeof handleSavePdf === 'function',
+        timestamp: Date.now()
+      });
+      elements.savePdfBtn.addEventListener('click', () => {
+        log('=== savePdfBtn: CLICK EVENT FIRED ===', {
+          timestamp: Date.now()
+        });
+        handleSavePdf();
+      });
+    } else {
+      logError('=== setupEventListeners: savePdfBtn not found ===', {
+        timestamp: Date.now()
+      });
     }
     if (elements.cancelBtn) {
       elements.cancelBtn.addEventListener('click', handleCancel);

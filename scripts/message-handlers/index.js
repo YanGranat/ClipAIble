@@ -64,6 +64,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
     startArticleProcessing,
     processWithSelectorMode,
     processWithExtractMode,
+    processWithoutAI,
     stopKeepAlive,
     startKeepAlive
   } = deps;
@@ -113,6 +114,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
       sendResponse, 
       processWithSelectorMode, 
       processWithExtractMode,
+      processWithoutAI,
       startKeepAlive,
       stopKeepAlive
     ),
@@ -130,15 +132,43 @@ export function routeMessage(request, sender, sendResponse, deps) {
   // Get handler for action
   const handler = handlers[request.action];
   
+  log('=== routeMessage: Looking for handler ===', {
+    action: request.action,
+    hasHandler: !!handler,
+    handlerType: typeof handler,
+    availableActions: Object.keys(handlers),
+    timestamp: Date.now()
+  });
+  
   if (handler) {
     try {
+      log('=== routeMessage: Calling handler ===', {
+        action: request.action,
+        timestamp: Date.now()
+      });
+      
       const result = handler();
+      
+      log('=== routeMessage: Handler returned ===', {
+        action: request.action,
+        returnsPromise: result instanceof Promise,
+        returnsBoolean: result === true,
+        resultType: typeof result,
+        timestamp: Date.now()
+      });
+      
       log('routeMessage: handler called', { action: request.action, returnsPromise: result instanceof Promise, returnsBoolean: result === true });
       
       // If handler returns a promise, Chrome will wait for it
       // If handler returns true, it means async response will be sent
       return result;
     } catch (error) {
+      logError('=== routeMessage: Handler threw error ===', {
+        action: request.action,
+        error: error?.message || String(error),
+        errorStack: error?.stack,
+        timestamp: Date.now()
+      });
       logError('Message handler error', error);
       sendResponse({ error: error.message });
       return true;
@@ -146,6 +176,11 @@ export function routeMessage(request, sender, sendResponse, deps) {
   }
   
   // Unknown action
+  logError('=== routeMessage: Unknown action ===', {
+    action: request.action,
+    availableActions: Object.keys(handlers),
+    timestamp: Date.now()
+  });
   logWarn('Unknown action received', { action: request.action });
   sendResponse({ error: 'Unknown action' });
   return true;

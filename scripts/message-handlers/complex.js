@@ -14,6 +14,7 @@ import { startSummaryGeneration } from './summary.js';
  * @param {Function} sendResponse - Response function
  * @param {Function} processWithSelectorMode - Function to process with selector mode
  * @param {Function} processWithExtractMode - Function to process with extract mode
+ * @param {Function} processWithoutAI - Function to process without AI (automatic mode)
  * @param {Function} startKeepAlive - Function to start keep-alive
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  * @returns {boolean} - Always returns true for async handlers
@@ -24,6 +25,7 @@ export function handleExtractContentOnly(
   sendResponse, 
   processWithSelectorMode, 
   processWithExtractMode,
+  processWithoutAI,
   startKeepAlive,
   stopKeepAlive
 ) {
@@ -41,6 +43,21 @@ export function handleExtractContentOnly(
   
   const { html, url, title, apiKey, model, mode, useCache, tabId, autoGenerateSummary, language } = request.data;
   
+  log('=== extractContentOnly: Extracted parameters ===', {
+    hasHtml: !!html,
+    htmlLength: html?.length || 0,
+    hasUrl: !!url,
+    url: url,
+    hasTitle: !!title,
+    hasApiKey: !!apiKey,
+    hasModel: !!model,
+    mode: mode,
+    hasTabId: !!tabId,
+    tabId: tabId,
+    autoGenerateSummary: autoGenerateSummary,
+    timestamp: Date.now()
+  });
+  
   if (!html || !url || !apiKey || !model) {
     logError('extractContentOnly missing required parameters', {
       hasHtml: !!html,
@@ -52,9 +69,25 @@ export function handleExtractContentOnly(
     return true;
   }
   
-  const processFunction = mode === 'selector' 
+  log('=== extractContentOnly: Selecting process function ===', {
+    mode: mode,
+    hasProcessWithoutAI: typeof processWithoutAI === 'function',
+    hasProcessWithSelectorMode: typeof processWithSelectorMode === 'function',
+    hasProcessWithExtractMode: typeof processWithExtractMode === 'function',
+    timestamp: Date.now()
+  });
+  
+  const processFunction = mode === 'automatic'
+    ? processWithoutAI
+    : mode === 'selector' 
     ? processWithSelectorMode 
     : processWithExtractMode;
+  
+  log('=== extractContentOnly: Process function selected ===', {
+    mode: mode,
+    functionName: processFunction?.name || 'unknown',
+    timestamp: Date.now()
+  });
   
   log('Starting content extraction', { mode, url, autoGenerateSummary, timestamp: Date.now() });
   
@@ -62,8 +95,21 @@ export function handleExtractContentOnly(
   // Then continue extraction and optionally generate summary in background
   sendResponse({ success: true, extracting: true });
   
+  log('=== extractContentOnly: Calling processFunction ===', {
+    mode: mode,
+    functionName: processFunction?.name || 'unknown',
+    hasTabId: !!tabId,
+    timestamp: Date.now()
+  });
+  
   processFunction({ html, url, title, apiKey, model, mode, useCache, tabId })
     .then(async result => {
+      log('=== extractContentOnly: processFunction completed ===', {
+        hasResult: !!result,
+        resultKeys: result ? Object.keys(result) : [],
+        timestamp: Date.now()
+      });
+      
       log('=== extractContentOnly SUCCESS ===', {
         title: result.title,
         contentItemsCount: result.content?.length || 0,
@@ -108,6 +154,13 @@ export function handleExtractContentOnly(
       }
     })
     .catch(async error => {
+      logError('=== extractContentOnly: processFunction FAILED ===', {
+        error: error?.message || String(error),
+        errorStack: error?.stack,
+        errorName: error?.name,
+        timestamp: Date.now()
+      });
+      
       const normalized = await handleError(error, {
         source: 'messageHandler',
         errorType: 'contentExtractionFailed',

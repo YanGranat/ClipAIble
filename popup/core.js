@@ -1272,9 +1272,19 @@ export function initCore(deps) {
 
   // Handle Save PDF button click
   async function handleSavePdf() {
+    log('=== handleSavePdf: ENTRY ===', {
+      timestamp: Date.now()
+    });
+    
     const model = elements.modelSelect.value;
     // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
     const provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+    
+    log('=== handleSavePdf: Got model and provider ===', {
+      model: model,
+      provider: provider,
+      timestamp: Date.now()
+    });
     
     // Get the appropriate API key based on selected provider
     let apiKey = '';
@@ -1304,25 +1314,146 @@ export function initCore(deps) {
       if (!tab) {
         throw new Error('No active tab found');
       }
+      
+      log('=== handleSavePdf: Tab found ===', {
+        tabId: tab.id,
+        url: tab.url,
+        status: tab.status,
+        timestamp: Date.now()
+      });
+      
+      // Check if we can inject scripts on this page
+      if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
+        throw new Error('Cannot extract content from browser internal pages');
+      }
 
+      log('=== handleSavePdf: Setting status and disabling button ===', {
+        timestamp: Date.now()
+      });
+      
       setStatus('processing', await t('extractingPageContent'));
       setProgress(0);
       elements.savePdfBtn.disabled = true;
 
-      // Wait a bit for dynamic content to load (Notion, React apps, etc.)
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Inject content script and get page HTML
-      const htmlResult = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: extractPageContent
+      log('=== handleSavePdf: Waiting 500ms for dynamic content ===', {
+        timestamp: Date.now()
       });
 
-      if (!htmlResult || !htmlResult[0]?.result) {
-        throw new Error('Failed to extract page content');
+      // Wait a bit for dynamic content to load (Notion, React apps, etc.)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Try to get HTML via content script message first (faster and more reliable)
+      let pageData = null;
+      try {
+        log('=== handleSavePdf: Trying to get HTML via content script message ===', {
+          tabId: tab.id,
+          timestamp: Date.now()
+        });
+        
+        const contentResponse = await chrome.tabs.sendMessage(tab.id, { action: 'extractContent' });
+        if (contentResponse && contentResponse.html) {
+          log('=== handleSavePdf: Got HTML via content script ===', {
+            htmlLength: contentResponse.html?.length || 0,
+            timestamp: Date.now()
+          });
+          pageData = contentResponse;
+        }
+      } catch (contentError) {
+        log('=== handleSavePdf: Content script not available, will use executeScript ===', {
+          error: contentError?.message,
+          timestamp: Date.now()
+        });
       }
 
-      const pageData = htmlResult[0].result;
+      // If content script didn't work, use executeScript
+      if (!pageData) {
+        log('=== handleSavePdf: About to execute extractPageContent script ===', {
+          tabId: tab.id,
+          timestamp: Date.now()
+        });
+
+        // Inject content script and get page HTML with timeout
+        // Use inline function to ensure proper serialization
+        let htmlResult;
+        try {
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('extractPageContent timeout after 5 seconds')), 5000);
+          });
+          
+          const scriptPromise = chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: function() {
+              try {
+                // Always use full HTML - let AI figure out what's important
+                const html = document.documentElement.outerHTML;
+                
+                // Get title from various sources
+                let pageTitle = document.title;
+                const h1 = document.querySelector('h1');
+                if (h1 && h1.textContent.trim()) {
+                  pageTitle = h1.textContent.trim();
+                }
+                
+                const images = Array.from(document.querySelectorAll('img')).map(img => ({
+                  src: img.src,
+                  alt: img.alt || '',
+                  width: img.naturalWidth,
+                  height: img.naturalHeight
+                }));
+
+                return {
+                  html: html,
+                  images: images,
+                  url: window.location.href,
+                  title: pageTitle
+                };
+              } catch (e) {
+                return {
+                  html: '',
+                  images: [],
+                  url: window.location.href,
+                  title: document.title,
+                  error: e.message
+                };
+              }
+            }
+          });
+          
+          htmlResult = await Promise.race([scriptPromise, timeoutPromise]);
+          
+          log('=== handleSavePdf: extractPageContent script executed ===', {
+            hasResult: !!htmlResult,
+            hasFirstResult: !!htmlResult?.[0],
+            timestamp: Date.now()
+          });
+          
+          if (htmlResult && htmlResult[0]?.result) {
+            pageData = htmlResult[0].result;
+          }
+        } catch (scriptError) {
+          logError('=== handleSavePdf: extractPageContent script FAILED ===', {
+            error: scriptError?.message || String(scriptError),
+            errorStack: scriptError?.stack,
+            tabId: tab.id,
+            chromeRuntimeLastError: chrome.runtime.lastError?.message,
+            timestamp: Date.now()
+          });
+          throw new Error(`Failed to extract page content: ${scriptError.message}`);
+        }
+      }
+      
+      if (!pageData || !pageData.html) {
+        throw new Error('Failed to extract page content: no HTML data received');
+      }
+
+      log('=== handleSavePdf: Page data extracted ===', {
+        hasPageData: !!pageData,
+        hasHtml: !!pageData?.html,
+        htmlLength: pageData?.html?.length || 0,
+        url: pageData?.url,
+        title: pageData?.title,
+        timestamp: Date.now()
+      });
 
       // Get Google API key if needed
       let googleApiKey = elements.googleApiKey.value.trim();
@@ -1337,6 +1468,15 @@ export function initCore(deps) {
         }
       }
       const translateImages = elements.translateImages.checked && elements.languageSelect.value !== 'auto';
+
+      log('=== handleSavePdf: About to send processArticle message ===', {
+        mode: elements.modeSelect.value,
+        outputFormat: elements.mainFormatSelect?.value || elements.outputFormat.value,
+        hasApiKey: !!apiKey,
+        hasTabId: !!tab.id,
+        tabId: tab.id,
+        timestamp: Date.now()
+      });
 
       // Send to background script for processing
       const response = await chrome.runtime.sendMessage({
@@ -1390,10 +1530,34 @@ export function initCore(deps) {
           respeecherApiKey: elements.respeecherApiKey?.dataset.encrypted || null
         }
       });
+      
+      log('=== handleSavePdf: processArticle response received ===', {
+        hasResponse: !!response,
+        hasError: !!response?.error,
+        error: response?.error,
+        started: response?.started,
+        timestamp: Date.now()
+      });
+
+      if (chrome.runtime.lastError) {
+        logError('=== handleSavePdf: chrome.runtime.lastError after sendMessage ===', {
+          error: chrome.runtime.lastError.message,
+          timestamp: Date.now()
+        });
+        throw new Error(chrome.runtime.lastError.message || 'Failed to communicate with background script');
+      }
 
       if (response.error) {
+        logError('=== handleSavePdf: Response contains error ===', {
+          error: response.error,
+          timestamp: Date.now()
+        });
         throw new Error(response.error);
       }
+      
+      log('=== handleSavePdf: Processing started successfully ===', {
+        timestamp: Date.now()
+      });
 
       // Processing started in background
       // Ensure state polling is active to update UI
@@ -1404,6 +1568,12 @@ export function initCore(deps) {
       await checkProcessingState();
 
     } catch (error) {
+      logError('=== handleSavePdf: EXCEPTION CAUGHT ===', {
+        error: error?.message || String(error),
+        errorStack: error?.stack,
+        errorName: error?.name,
+        timestamp: Date.now()
+      });
       logError('Error', error);
       setStatus('error', error.message);
       showToast(error.message, 'error');

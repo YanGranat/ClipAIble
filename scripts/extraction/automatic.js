@@ -1,8 +1,8 @@
 // Automatic content extraction without AI
 // Uses heuristics and DOM analysis to extract article content
 
-import { log, logWarn } from '../utils/logging.js';
-import { detectLanguageByCharacters } from '../translation/index.js';
+// Note: All imports removed - extractAutomaticallyInlined runs in page context via executeScript
+// where imports are not available. Helper functions must be defined inside the function.
 
 /**
  * Inlined automatic extraction function for chrome.scripting.executeScript
@@ -10,6 +10,11 @@ import { detectLanguageByCharacters } from '../translation/index.js';
  * All helper functions must be defined inside (cannot use imports)
  */
 export function extractAutomaticallyInlined(baseUrl) {
+  // Log start (this will appear in page console, not service worker)
+  try {
+    console.log('[ClipAIble] extractAutomaticallyInlined: START', { baseUrl, timestamp: Date.now() });
+  } catch (e) {}
+  
   const content = [];
   
   // Collect debug info to return to service worker
@@ -24,6 +29,165 @@ export function extractAutomaticallyInlined(baseUrl) {
   };
   
   try {
+    // ============================================
+    // INLINED CONSTANTS AND PATTERNS
+    // (Cannot use imports in executeScript context)
+    // ============================================
+    
+    // Content thresholds
+    const MIN_CONTENT_LENGTH = 100;
+    const SUBSTANTIAL_CONTENT_LENGTH = 500;
+    const MIN_PARAGRAPH_LENGTH = 10;
+    const MIN_HEADING_LENGTH = 3;
+    const MIN_STANDFIRST_LENGTH = 50;
+    const MAX_STANDFIRST_LENGTH = 500;
+    const SHORT_PARAGRAPH_THRESHOLD = 200;
+    const VERY_SHORT_PARAGRAPH = 100;
+    const MAX_AUTHOR_METADATA_LENGTH = 100;
+    const MAX_WORD_COUNT_METADATA_LENGTH = 150;
+    
+    // Image thresholds
+    const FEATURED_IMAGE_MIN_WIDTH = 400;
+    const FEATURED_IMAGE_MIN_HEIGHT = 300;
+    const AUTHOR_PHOTO_MAX_SIZE = 250;
+    const AUTHOR_PHOTO_SMALL_SIZE = 150;
+    const TRACKING_PIXEL_MAX_SIZE = 3;
+    
+    // Scoring thresholds
+    const MIN_CONTENT_SCORE = 10;
+    const GOOD_ENOUGH_SCORE = 100;
+    
+    // Navigation patterns (contains) - used in isExcluded and isNavigationParagraph
+    const NAV_PATTERNS_CONTAINS = [
+      /previous\s+post/i, /next\s+post/i, /related\s+posts?/i, /recommended\s+posts?/i,
+      /read\s+more/i, /keep\s+reading/i, /you\s+might\s+also\s+like/i,
+      /you\s+may\s+also\s+like/i, /also\s+in\s+/i, /more\s+in\s+/i,
+      /next\s+article/i, /previous\s+article/i, /next:/i,
+      /subscribe\s+(now|today|for)/i, /sign\s+up/i, /start\s+(free\s+)?trial/i,
+      /support\s+(independent\s+)?journalism/i, /donate\s+(to|now)/i,
+      /essential\s+journalism/i, /give\s+a\s+gift/i,
+      /comment\s+on\s+this\s+article/i, /view\s+\/\s+add\s+comments/i,
+      /published\s+in\s+the\s+print\s+edition/i,
+      /get\s+access\s+to\s+print\s+and\s+digital/i, /subscribe\s+for\s+full\s+access/i,
+      /free\s+articles?\s+this\s+month/i, /subscribe\s+for\s+less\s+than/i,
+      /subscribe\s+or\s+log\s+in\s+to\s+access/i, /connect\s+to\s+your\s+subscription/i,
+      /you've\s+read\s+(one|your)/i, /you've\s+reached\s+your\s+free/i,
+      /subscribe\s+or\s+log\s+in\s+to\s+access\s+this\s+pdf/i, /download\s+pdf/i,
+      // Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese, Japanese, Korean
+      /чтобы\s+прочитать\s+целиком/i, /купите\s+подписку/i, /платный\s+журнал/i,
+      /щоб\s+прочитати\s+цілком/i, /купити\s+підписку/i, /платний\s+журнал/i,
+      /um\s+weiterzulesen/i, /abonnement\s+kaufen/i, /bezahltes\s+magazin/i,
+      /pour\s+lire\s+en\s+entier/i, /acheter\s+un\s+abonnement/i, /magazine\s+payant/i,
+      /para\s+leer\s+completo/i, /comprar\s+suscripción/i, /revista\s+de\s+pago/i,
+      /per\s+leggere\s+completo/i, /acquista\s+abbonamento/i, /rivista\s+a\s+pagamento/i,
+      /para\s+ler\s+completo/i, /comprar\s+assinatura/i, /revista\s+paga/i,
+      /阅读全文/i, /购买订阅/i, /付费杂志/i,
+      /全文を読む/i, /購読を購入/i, /有料雑誌/i,
+      /전체\s+읽기/i, /구독\s+구매/i, /유료\s+잡지/i
+    ];
+    
+    // Navigation patterns (starts with) - used in isNavigationParagraph
+    const NAV_PATTERNS_STARTS_WITH = [
+      /^next:/i, /^read more/i, /^keep reading/i, /^subscribe/i,
+      /^sign (in|up)/i, /^already have an account/i, /^try \d+ days/i,
+      /^start (free )?trial/i, /^give a gift/i, /^manage subscription/i,
+      /^essential journalism/i, /^support independent journalism/i,
+      /^you might also like/i, /^you may also like/i, /^also in /i, /^more in /i,
+      /^previous post/i, /^next post/i, /^related posts?/i, /^recommended posts?/i,
+      /^subscribe (now|today|for)/i, /^support (independent )?journalism/i,
+      /^donate (to|now)/i, /^give a year of/i, /^plus a free/i,
+      /^comment on this article/i, /^view \/ add comments/i,
+      /^published in the print edition/i, /^published in the/i,
+      /^fuel your wonder/i, /^feed your curiosity/i, /^expand your mind/i,
+      /^access the entire/i, /^ad-free/i, /^become a member/i,
+      /^nautilus members enjoy/i, /^log in or join/i,
+      /^чтобы прочитать целиком/i, /^купите подписку/i, /^платный журнал/i,
+      /^щоб прочитати цілком/i, /^купити підписку/i, /^платний журнал/i,
+      /^um weiterzulesen/i, /^abonnement kaufen/i, /^bezahltes magazin/i,
+      /^pour lire en entier/i, /^acheter un abonnement/i, /^magazine payant/i,
+      /^para leer completo/i, /^comprar suscripción/i, /^revista de pago/i,
+      /^per leggere completo/i, /^acquista abbonamento/i, /^rivista a pagamento/i,
+      /^para ler completo/i, /^comprar assinatura/i, /^revista paga/i,
+      /^阅读全文/i, /^购买订阅/i, /^付费杂志/i,
+      /^全文を読む/i, /^購読を購入/i, /^有料雑誌/i,
+      /^전체 읽기/i, /^구독 구매/i, /^유료 잡지/i
+    ];
+    
+    // Paywall patterns (all languages flattened)
+    const PAYWALL_PATTERNS = [
+      'keep reading', 'subscribe', 'sign up', 'try 30 days',
+      'already have an account', 'start free trial',
+      'чтобы прочитать целиком', 'купите подписку', 'платный журнал',
+      'щоб прочитати цілком', 'купити підписку', 'платний журнал',
+      'um weiterzulesen', 'abonnement kaufen', 'bezahltes magazin',
+      'pour lire en entier', 'acheter un abonnement', 'magazine payant',
+      'para leer completo', 'comprar suscripción', 'revista de pago',
+      'per leggere completo', 'acquista abbonamento', 'rivista a pagamento',
+      'para ler completo', 'comprar assinatura', 'revista paga',
+      '阅读全文', '购买订阅', '付费杂志',
+      '全文を読む', '購読を購入', '有料雑誌',
+      '전체 읽기', '구독 구매', '유료 잡지',
+      'get access to print and digital', 'subscribe for full access',
+      'free articles this month', 'subscribe for less than',
+      'subscribe or log in to access', 'connect to your subscription',
+      "you've read one", "you've read your", "you've reached your free"
+    ];
+    
+    // Related articles patterns (all languages flattened)
+    const RELATED_PATTERNS = [
+      'new and best', 'first page', 'recommend', 'read also', 'similar articles', 'related articles',
+      'новое и лучшее', 'первая полоса', 'рекомендуем', 'читайте также', 'похожие статьи', 'связанные статьи',
+      'нове і краще', 'перша смуга', 'рекомендуємо', 'читайте також', 'схожі статті', 'пов\'язані статті',
+      'neu und besser', 'erste seite', 'empfehlen', 'lesen sie auch', 'ähnliche artikel', 'verwandte artikel',
+      'nouveau et mieux', 'première page', 'recommandons', 'lisez aussi', 'articles similaires', 'articles connexes',
+      'nuevo y mejor', 'primera página', 'recomendamos', 'lee también', 'artículos similares', 'artículos relacionados',
+      'nuovo e migliore', 'prima pagina', 'consigliamo', 'leggi anche', 'articoli simili', 'articoli correlati',
+      'novo e melhor', 'primeira página', 'recomendamos', 'leia também', 'artigos similares', 'artigos relacionados',
+      '最新和最佳', '头版', '推荐', '也阅读', '相似文章', '相关文章',
+      '新しくて最高', '第一面', 'おすすめ', 'こちらも読む', '類似記事', '関連記事',
+      '새로운 것과 최고', '첫 페이지', '추천', '또한 읽기', '유사한 기사', '관련 기사'
+    ];
+    
+    // Course ad patterns
+    const COURSE_AD_PATTERNS = [
+      'video + ux training', 'get video', 'video training', 'video course',
+      'measure ux & design impact', 'money-back-guarantee', 'money back guarantee',
+      'get the video course', 'get video + ux training', 'use the code', 'save 20%', 'save 20% off'
+    ];
+    
+    // Excluded classes
+    const EXCLUDED_CLASSES = [
+      'nav', 'navigation', 'menu', 'sidebar', 'footer', 'header',
+      'ad', 'advertisement', 'ads', 'sponsor', 'sponsored', 'advert',
+      'comment', 'comments', 'discussion', 'thread', 'disqus',
+      'related', 'related-posts', 'related-articles', 'related-articles__title', 'recommended', 'also-in',
+      'article-section-title', 'entry-wrapper', 'c-accordion', 'accordion',
+      'social', 'share', 'share-buttons', 'share-menu',
+      'author-bio', 'author-info', 'about-author',
+      'translation-notice', 'translation-badge',
+      'post-navigation', 'post-nav', 'prev', 'next', 'previous',
+      'read-more', 'readmore', 'keep-reading', 'subscribe', 'paywall', 'gate',
+      'newsletter', 'newsletter-signup', 'subscribe-box',
+      'support', 'donate', 'donation',
+      'corrections', 'correction',
+      'you-might-also-like', 'you-may-also-like', 'more-in',
+      'next-article', 'previous-article', 'article-nav',
+      'comment-section', 'comments-section', 'view-comments', 'add-comment',
+      'book-cta', 'course-cta', 'product-cta', 'course-ad', 'product-ad',
+      'content-tabs', 'content-tab', 'book-cta__inverted', 'book-cta__col',
+      'useful-resources', 'further-reading', 'resources-section',
+      'component-share-buttons', 'aria-font-adjusts', 'font-adjust'
+    ];
+    
+    // Paywall classes
+    const PAYWALL_CLASSES = [
+      'freebie-message', 'subscribe-text', 'message--freebie', 'subscribe-',
+      'paywall', 'subscription', 'freebie', 'article-limit', 'access-message'
+    ];
+    
+    // ============================================
+    // END OF INLINED CONSTANTS
+    // ============================================
     
     // Helper: Convert relative URL to absolute
     function toAbsoluteUrl(url) {
@@ -109,11 +273,20 @@ export function extractAutomaticallyInlined(baseUrl) {
       // BUT: For figure/img elements, be more lenient (lazy loading, fade-in effects, etc.)
       const isImageOrFigure = tagName === 'img' || tagName === 'figure';
       
+      // Safely get computed style with error handling
+      let style = null;
       try {
-        const style = window.getComputedStyle(element);
+        style = window.getComputedStyle(element);
+      } catch (e) {
+        // Element might be in iframe or detached from DOM
+        // If we can't get style, assume element is visible (don't exclude)
+        return false;
+      }
+      
+      if (style) {
         // For images/figures, only exclude if completely hidden (display: none or visibility: hidden)
         // Don't exclude based on opacity alone - images may be hidden for fade-in effects
-          if (isImageOrFigure) {
+        if (isImageOrFigure) {
           // For images, only exclude if display is none or visibility is hidden
           // Opacity can be 0 for fade-in effects, but image still has valid src
           if (style.display === 'none' || style.visibility === 'hidden') {
@@ -139,7 +312,7 @@ export function extractAutomaticallyInlined(baseUrl) {
               }
             }
             // If image is hidden and not lazy-loaded, exclude it
-          return true;
+            return true;
           }
           // For images, don't exclude based on opacity alone
         } else {
@@ -148,8 +321,6 @@ export function extractAutomaticallyInlined(baseUrl) {
             return true;
           }
         }
-      } catch (e) {
-        // Continue if getComputedStyle fails
       }
       
       // Exclude iframe elements (except those that might be embedded content)
@@ -216,14 +387,14 @@ export function extractAutomaticallyInlined(baseUrl) {
       
       // For paragraphs/headings, only exclude if text is very short and clearly metadata
       if (isParagraphOrHeading) {
-      // Exclude word count metadata (e.g., "4,500 words", "Original article • 3,617 words")
+        // Exclude word count metadata (e.g., "4,500 words", "Original article • 3,617 words")
         // But only if it's the ONLY content (very short)
         if (textTrimmed.length < 100 && 
             (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed))) {
-        return true;
-      }
-      
-      // Exclude metadata lines with "Original article" and word count
+          return true;
+        }
+
+        // Exclude metadata lines with "Original article" and word count
         // But only if it's short (clearly just metadata)
         if (textTrimmed.length < 150 && 
             (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
@@ -241,13 +412,13 @@ export function extractAutomaticallyInlined(baseUrl) {
           return true;
         }
         
-      if (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
-          /^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)) {
-        return true;
-      }
-      
-      if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 200) {
-        return true;
+        if (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
+            /^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)) {
+          return true;
+        }
+        
+        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 200) {
+          return true;
         }
       }
       
@@ -268,13 +439,7 @@ export function extractAutomaticallyInlined(baseUrl) {
       const hasPrice = pricePattern.test(text);
       
       // Check for course/training advertisement patterns
-      const courseAdPatterns = [
-        'video + ux training', 'get video', 'video training', 'video course',
-        'measure ux & design impact', 'money-back-guarantee', 'money back guarantee',
-        'get the video course', 'get video + ux training', 'book-cta',
-        'course-ad', 'course ad', 'product-ad', 'product ad'
-      ];
-      const isCourseAd = courseAdPatterns.some(pattern => textLower.includes(pattern));
+      const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
       
       // If element contains price and course ad patterns, exclude it
       if (hasPrice && isCourseAd) {
@@ -416,29 +581,7 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
       }
       
-      // Check for excluded class names
-      const excludedClasses = [
-        'nav', 'navigation', 'menu', 'sidebar', 'footer', 'header',
-        'ad', 'advertisement', 'ads', 'sponsor', 'sponsored', 'advert',
-        'comment', 'comments', 'discussion', 'thread', 'disqus',
-        'related', 'related-posts', 'related-articles', 'related-articles__title', 'recommended', 'also-in',
-        'article-section-title', 'entry-wrapper', 'c-accordion', 'accordion',
-        'social', 'share', 'share-buttons', 'share-menu',
-        'author-bio', 'author-info', 'about-author',
-        'translation-notice', 'translation-badge',
-        'post-navigation', 'post-nav', 'prev', 'next', 'previous',
-        'read-more', 'readmore', 'keep-reading', 'subscribe', 'paywall', 'gate',
-        'newsletter', 'newsletter-signup', 'subscribe-box',
-        'support', 'donate', 'donation',
-        'corrections', 'correction',
-        'you-might-also-like', 'you-may-also-like', 'more-in',
-        'next-article', 'previous-article', 'article-nav',
-        'comment-section', 'comments-section', 'view-comments', 'add-comment',
-        'book-cta', 'course-cta', 'product-cta', 'course-ad', 'product-ad',
-        'content-tabs', 'content-tab', 'book-cta__inverted', 'book-cta__col',
-        'useful-resources', 'further-reading', 'resources-section',
-        'component-share-buttons', 'aria-font-adjusts', 'font-adjust'
-      ];
+      // Use inlined excluded classes (defined at function start)
     
     // CRITICAL: Exclude newsletter blocks inside content
     if (textLower.includes('sign up to our newsletter') || 
@@ -476,96 +619,8 @@ export function extractAutomaticallyInlined(baseUrl) {
       }
     }
     
-    // Check for navigation text patterns (text and textLower already declared above)
-    // Define navTextPatterns outside conditional block so it's available for parent checks
-    const navTextPatterns = [
-      // English patterns
-      /previous\s+post/i, /next\s+post/i, /related\s+posts?/i, /recommended\s+posts?/i,
-      /read\s+more/i, /keep\s+reading/i, /you\s+might\s+also\s+like/i,
-      /you\s+may\s+also\s+like/i, /also\s+in\s+/i, /more\s+in\s+/i,
-      /next\s+article/i, /previous\s+article/i, /next:/i,
-      /subscribe\s+(now|today|for)/i, /sign\s+up/i, /start\s+(free\s+)?trial/i,
-      /support\s+(independent\s+)?journalism/i, /donate\s+(to|now)/i,
-      /essential\s+journalism/i, /give\s+a\s+gift/i,
-      /comment\s+on\s+this\s+article/i, /view\s+\/\s+add\s+comments/i,
-      /published\s+in\s+the\s+print\s+edition/i,
-      // Paywall/subscription messages
-      /get\s+access\s+to\s+print\s+and\s+digital/i, /subscribe\s+for\s+full\s+access/i,
-      /free\s+articles?\s+this\s+month/i, /subscribe\s+for\s+less\s+than/i,
-      /subscribe\s+or\s+log\s+in\s+to\s+access/i, /connect\s+to\s+your\s+subscription/i,
-      /you've\s+read\s+(one|your)/i, /you've\s+reached\s+your\s+free/i,
-      /subscribe\s+or\s+log\s+in\s+to\s+access\s+this\s+pdf/i, /download\s+pdf/i,
-      // Russian (ru) patterns
-      /чтобы\s+прочитать\s+целиком/i, /купите\s+подписку/i, /платный\s+журнал/i,
-      /я\s+уже\s+подписчик/i, /подписка\s+предоставлена/i, /оформить\s+подписку/i,
-      /чтобы\s+читать\s+далее/i, /подпишитесь\s+чтобы/i, /чтобы\s+продолжить/i,
-      /новое\s+и\s+лучшее/i, /первая\s+полоса/i, /рекомендуем/i,
-      /читайте\s+также/i, /похожие\s+статьи/i, /связанные\s+статьи/i,
-      /другие\s+статьи/i, /ещё\s+по\s+теме/i, /по\s+теме/i,
-      // Ukrainian (ua) patterns
-      /щоб\s+прочитати\s+цілком/i, /купити\s+підписку/i, /платний\s+журнал/i,
-      /я\s+вже\s+передплатник/i, /підписка\s+надана/i, /оформити\s+підписку/i,
-      /щоб\s+читати\s+далі/i, /підпишіться\s+щоб/i, /щоб\s+продовжити/i,
-      /нове\s+і\s+краще/i, /перша\s+смуга/i, /рекомендуємо/i,
-      /читайте\s+також/i, /схожі\s+статті/i, /пов'язані\s+статті/i,
-      /інші\s+статті/i, /ще\s+за\s+темою/i, /за\s+темою/i,
-      // German (de) patterns
-      /um\s+weiterzulesen/i, /abonnement\s+kaufen/i, /bezahltes\s+magazin/i,
-      /ich\s+bin\s+bereits\s+abonnent/i, /abonnement\s+bereitgestellt/i, /abonnement\s+abschließen/i,
-      /um\s+weiter\s+zu\s+lesen/i, /abonnieren\s+um/i, /um\s+fortzufahren/i,
-      /neu\s+und\s+besser/i, /erste\s+seite/i, /empfehlen/i,
-      /lesen\s+sie\s+auch/i, /ähnliche\s+artikel/i, /verwandte\s+artikel/i,
-      /andere\s+artikel/i, /mehr\s+zum\s+thema/i, /zum\s+thema/i,
-      // French (fr) patterns
-      /pour\s+lire\s+en\s+entier/i, /acheter\s+un\s+abonnement/i, /magazine\s+payant/i,
-      /je\s+suis\s+déjà\s+abonné/i, /abonnement\s+fourni/i, /s'abonner/i,
-      /pour\s+continuer\s+à\s+lire/i, /abonnez-vous\s+pour/i, /pour\s+continuer/i,
-      /nouveau\s+et\s+mieux/i, /première\s+page/i, /recommandons/i,
-      /lisez\s+aussi/i, /articles\s+similaires/i, /articles\s+connexes/i,
-      /autres\s+articles/i, /plus\s+sur\s+le\s+sujet/i, /sur\s+le\s+sujet/i,
-      // Spanish (es) patterns
-      /para\s+leer\s+completo/i, /comprar\s+suscripción/i, /revista\s+de\s+pago/i,
-      /ya\s+soy\s+suscriptor/i, /suscripción\s+proporcionada/i, /suscribirse/i,
-      /para\s+seguir\s+leyendo/i, /suscríbete\s+para/i, /para\s+continuar/i,
-      /nuevo\s+y\s+mejor/i, /primera\s+página/i, /recomendamos/i,
-      /lee\s+también/i, /artículos\s+similares/i, /artículos\s+relacionados/i,
-      /otros\s+artículos/i, /más\s+sobre\s+el\s+tema/i, /sobre\s+el\s+tema/i,
-      // Italian (it) patterns
-      /per\s+leggere\s+completo/i, /acquista\s+abbonamento/i, /rivista\s+a\s+pagamento/i,
-      /sono\s+già\s+abbonato/i, /abbonamento\s+fornito/i, /abbonarsi/i,
-      /per\s+continuare\s+a\s+leggere/i, /abbonati\s+per/i, /per\s+continuare/i,
-      /nuovo\s+e\s+migliore/i, /prima\s+pagina/i, /consigliamo/i,
-      /leggi\s+anche/i, /articoli\s+simili/i, /articoli\s+correlati/i,
-      /altri\s+articoli/i, /altro\s+sull'argomento/i, /sull'argomento/i,
-      // Portuguese (pt) patterns
-      /para\s+ler\s+completo/i, /comprar\s+assinatura/i, /revista\s+paga/i,
-      /já\s+sou\s+assinante/i, /assinatura\s+fornecida/i, /assinar/i,
-      /para\s+continuar\s+lendo/i, /assine\s+para/i, /para\s+continuar/i,
-      /novo\s+e\s+melhor/i, /primeira\s+página/i, /recomendamos/i,
-      /leia\s+também/i, /artigos\s+similares/i, /artigos\s+relacionados/i,
-      /outros\s+artigos/i, /mais\s+sobre\s+o\s+tema/i, /sobre\s+o\s+tema/i,
-      // Chinese (zh) patterns
-      /阅读全文/i, /购买订阅/i, /付费杂志/i,
-      /我已经是订阅者/i, /已提供订阅/i, /订阅/i,
-      /继续阅读/i, /订阅以/i, /继续/i,
-      /最新和最佳/i, /头版/i, /推荐/i,
-      /也阅读/i, /相似文章/i, /相关文章/i,
-      /其他文章/i, /更多主题/i, /主题/i,
-      // Japanese (ja) patterns
-      /全文を読む/i, /購読を購入/i, /有料雑誌/i,
-      /既に購読者です/i, /購読が提供されました/i, /購読する/i,
-      /続きを読む/i, /購読して/i, /続ける/i,
-      /新しくて最高/i, /第一面/i, /おすすめ/i,
-      /こちらも読む/i, /類似記事/i, /関連記事/i,
-      /その他の記事/i, /トピックの詳細/i, /トピック/i,
-      // Korean (ko) patterns
-      /전체\s+읽기/i, /구독\s+구매/i, /유료\s+잡지/i,
-      /이미\s+구독자입니다/i, /구독\s+제공됨/i, /구독하기/i,
-      /계속\s+읽기/i, /구독하여/i, /계속/i,
-      /새로운\s+것과\s+최고/i, /첫\s+페이지/i, /추천/i,
-      /또한\s+읽기/i, /유사한\s+기사/i, /관련\s+기사/i,
-      /다른\s+기사/i, /주제에\s+대해\s+더/i, /주제/i
-    ];
+    // Use inlined navigation patterns (defined at function start)
+    const navTextPatterns = NAV_PATTERNS_CONTAINS;
     
     // For semantic containers (article, main), skip navigation pattern check on element itself
     // They are top-level content containers and should not be excluded based on text patterns
@@ -581,8 +636,8 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
       } else {
         // For other elements, use original strict logic
-      if (navTextPatterns.some(pattern => pattern.test(text))) {
-        return true;
+        if (navTextPatterns.some(pattern => pattern.test(text))) {
+          return true;
         }
       }
     }
@@ -590,17 +645,18 @@ export function extractAutomaticallyInlined(baseUrl) {
     // Check for email newsletter sections (textLower already declared above)
     // Skip for images - they don't have text content
     if (!isImageOrFigure) {
-    if (textLower.includes('email newsletter') || 
-        (textLower.includes('newsletter') && textLower.includes('email')) ||
-        textLower.includes('weekly tips') ||
-        (textLower.includes('trusted by') && textLower.includes('folks'))) {
-      // Check if this element or parent contains email input
-      let checkEl = element;
-      for (let i = 0; i < 3 && checkEl; i++) {
-        if (checkEl.querySelector && checkEl.querySelector('input[type="email"]')) {
-          return true;
+      if (textLower.includes('email newsletter') || 
+          (textLower.includes('newsletter') && textLower.includes('email')) ||
+          textLower.includes('weekly tips') ||
+          (textLower.includes('trusted by') && textLower.includes('folks'))) {
+        // Check if this element or parent contains email input
+        let checkEl = element;
+        for (let i = 0; i < 3 && checkEl; i++) {
+          if (checkEl.querySelector && checkEl.querySelector('input[type="email"]')) {
+            return true;
+          }
+          checkEl = checkEl.parentElement;
         }
-        checkEl = checkEl.parentElement;
       }
     }
     
@@ -620,7 +676,6 @@ export function extractAutomaticallyInlined(baseUrl) {
         (textLower.includes('course') || textLower.includes('book') || 
          textLower.includes('training') || textLower.includes('product'))) {
       return true;
-      }
     }
     
     // For images/figures, be more lenient with excludedClasses - use word boundaries
@@ -628,7 +683,7 @@ export function extractAutomaticallyInlined(baseUrl) {
     if (isImageOrFigure) {
       // Only exclude if class/id is clearly an excluded class (whole word match)
       let hasExcludedClass = false;
-      for (const excluded of excludedClasses) {
+      for (const excluded of EXCLUDED_CLASSES) {
         // Check for exact match or word boundaries
         const pattern = new RegExp(`\\b${excluded}\\b`);
         if (pattern.test(className) || pattern.test(id) ||
@@ -643,9 +698,9 @@ export function extractAutomaticallyInlined(baseUrl) {
       }
     } else {
       // For non-image elements, use normal exclusion logic
-    for (const excluded of excludedClasses) {
-      if (className.includes(excluded) || id.includes(excluded)) {
-        return true;
+      for (const excluded of EXCLUDED_CLASSES) {
+        if (className.includes(excluded) || id.includes(excluded)) {
+          return true;
         }
       }
     }
@@ -657,7 +712,10 @@ export function extractAutomaticallyInlined(baseUrl) {
       let parent = element.parentElement;
       if (isImageOrFigure) {
         // For images, only exclude if parent has clear ad indicators
-      while (parent && parent !== document.body) {
+        let iterations = 0;
+        const maxIterations = 50; // Safety limit to prevent infinite loops
+        while (parent && parent !== document.body && iterations < maxIterations) {
+          iterations++;
           const parentClass = String(parent.className || '').toLowerCase();
           const parentId = (parent.id || '').toLowerCase();
           const parentTag = parent.tagName.toLowerCase();
@@ -689,12 +747,15 @@ export function extractAutomaticallyInlined(baseUrl) {
         
         const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
         
-        while (parent && parent !== document.body) {
+        let iterations = 0;
+        const maxIterations = 50; // Safety limit to prevent infinite loops
+        while (parent && parent !== document.body && iterations < maxIterations) {
+          iterations++;
           const parentClass = String(parent.className || '').toLowerCase();
-        const parentId = (parent.id || '').toLowerCase();
-        const parentText = parent.textContent || '';
-        const parentTag = parent.tagName.toLowerCase();
-        
+          const parentId = (parent.id || '').toLowerCase();
+          const parentText = parent.textContent || '';
+          const parentTag = parent.tagName.toLowerCase();
+          
           // For paragraphs/headings, only exclude if parent is clearly outside main content
           if (isParagraphOrHeading) {
             // Only exclude if parent is clearly not content (aside, nav, footer, header)
@@ -729,30 +790,29 @@ export function extractAutomaticallyInlined(baseUrl) {
             }
           } else {
             // For other non-image elements, use original logic
-        // Exclude if parent is a section with "related-articles" class (even inside article)
-        if (parentTag === 'section' && 
-            (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
-          return true;
-        }
-        
-        // Check parent for navigation patterns
-        if (navTextPatterns.some(pattern => pattern.test(parentText))) {
-          return true;
-        }
-        
-        // Check if parent is an ad container
-        if (parentTag === 'aside' && (parentClass.includes('ad') || parentId.includes('ad'))) {
-          return true;
-        }
-        
-        for (const excluded of excludedClasses) {
-          if (parentClass.includes(excluded) || parentId.includes(excluded)) {
-            return true;
+            // Exclude if parent is a section with "related-articles" class (even inside article)
+            if (parentTag === 'section' && 
+                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
+              return true;
+            }
+            
+            // Check parent for navigation patterns
+            if (navTextPatterns.some(pattern => pattern.test(parentText))) {
+              return true;
+            }
+            
+            // Check if parent is an ad container
+            if (parentTag === 'aside' && (parentClass.includes('ad') || parentId.includes('ad'))) {
+              return true;
+            }
+            
+            for (const excluded of EXCLUDED_CLASSES) {
+              if (parentClass.includes(excluded) || parentId.includes(excluded)) {
+                return true;
+              }
+            }
+            parent = parent.parentElement;
           }
-        }
-          }
-          
-        parent = parent.parentElement;
         }
       }
     }
@@ -917,6 +977,54 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
       }
       
+      // CRITICAL: Exclude avatar images (facepile, user avatars, etc.)
+      // First check if image is in a facepile/likes/restacks section
+      let checkParentForFacepile = img.parentElement;
+      for (let i = 0; i < 6 && checkParentForFacepile; i++) {
+        const parentClass = String(checkParentForFacepile.className || '').toLowerCase();
+        const parentId = (checkParentForFacepile.id || '').toLowerCase();
+        const parentText = checkParentForFacepile.textContent || '';
+        
+        // Check for facepile, likes, restacks, engagement indicators
+        if (parentClass.includes('facepile') || parentId.includes('facepile') ||
+            parentClass.includes('likes') || parentClass.includes('restacks') ||
+            parentClass.includes('engagement') || parentClass.includes('reactions') ||
+            parentText.includes('Likes') || parentText.includes('Restacks') ||
+            parentText.includes('likes') || parentText.includes('restacks')) {
+          // If in facepile section, exclude small images (avatars)
+          const naturalWidth = img.naturalWidth || img.width || 0;
+          const naturalHeight = img.naturalHeight || img.height || 0;
+          const cssWidth = parseInt(img.style.width) || img.width || 0;
+          const cssHeight = parseInt(img.style.height) || img.height || 0;
+          
+          if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 100 && naturalHeight <= 100) ||
+              (cssWidth > 0 && cssHeight > 0 && cssWidth <= 100 && cssHeight <= 100)) {
+            return true; // Avatar in facepile section
+          }
+        }
+        checkParentForFacepile = checkParentForFacepile.parentElement;
+      }
+      
+      // Check alt text for "avatar" pattern (e.g., "Tom's avatar", "user avatar")
+      if (alt && (alt.includes("'s avatar") || alt.includes("'s avatar") || 
+                  alt.includes(' avatar') || alt === 'avatar' || alt.endsWith('avatar'))) {
+        // Also check dimensions - avatars are typically small (<= 50px)
+        const naturalWidth = img.naturalWidth || img.width || 0;
+        const naturalHeight = img.naturalHeight || img.height || 0;
+        const cssWidth = parseInt(img.style.width) || img.width || 0;
+        const cssHeight = parseInt(img.style.height) || img.height || 0;
+        
+        // If it's clearly an avatar (alt contains "avatar") and small, exclude it
+        if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) ||
+            (cssWidth > 0 && cssHeight > 0 && cssWidth <= 50 && cssHeight <= 50)) {
+          return true; // Small avatar image
+        }
+        // Even if larger, if alt explicitly says "avatar", it's likely decorative
+        if (alt.toLowerCase().includes("'s avatar") || alt.toLowerCase().endsWith(' avatar')) {
+          return true;
+        }
+      }
+      
       // Check for logo/brand patterns in URL (more comprehensive)
       const logoPatterns = [
         'logo', 'brand', 'icon', 'badge', 'watermark', 'sprite', 'spacer', 'blank', 'clear', 'pixel',
@@ -990,9 +1098,9 @@ export function extractAutomaticallyInlined(baseUrl) {
           }
           parent = parent.parentElement;
         }
-    }
+      }
     
-    return false;
+      return false;
     }
     
     // Helper: Check if image is tracking pixel
@@ -1459,16 +1567,31 @@ export function extractAutomaticallyInlined(baseUrl) {
       let maxScore = 0;
       const topCandidates = []; // Track top 5 for debugging
       
+      // Cache for textContent to avoid repeated expensive operations
+      const textContentCache = new WeakMap();
+      function getCachedTextContent(element) {
+        if (!textContentCache.has(element)) {
+          textContentCache.set(element, element.textContent.trim());
+        }
+        return textContentCache.get(element);
+      }
+      
       for (const candidate of candidates) {
         // Skip if clearly excluded (but be lenient for content-like containers)
         if (!isLikelyContentContainer(candidate) && isExcluded(candidate)) continue;
         
-        const candidateText = candidate.textContent.trim();
+        // Use cached textContent
+        const candidateText = getCachedTextContent(candidate);
         // Less strict: accept candidates with at least 100 chars
         if (candidateText.length < 100) continue;
         
         // Calculate score using improved algorithm
         const score = calculateContentScore(candidate);
+        
+        // Early exit if we found a very good candidate
+        if (score > 100) {
+          return candidate;
+        }
         
         // Track top candidates for debugging
         if (topCandidates.length < 5 || score > topCandidates[topCandidates.length - 1].score) {
@@ -1512,8 +1635,60 @@ export function extractAutomaticallyInlined(baseUrl) {
       publishDate: ''
     };
     
-    // Title - prefer visible h1 (clean it from OBJ markers and Object Replacement Character)
-    const h1 = document.querySelector('h1');
+    // Title - prefer h1 inside article/main, then first h1, then document.title
+    // This avoids picking up site/publication titles that appear before article content
+    // But with fallback for pages without article/main or multi-chapter books
+    let h1 = null;
+    let h1FromArticle = null;
+    const article = document.querySelector('article');
+    const main = document.querySelector('main');
+    
+    // Helper: Check if h1 looks like a valid article title (not site name)
+    function isValidArticleTitle(h1Element) {
+      if (!h1Element || !h1Element.textContent) return false;
+      const text = h1Element.textContent.trim();
+      // Too short - likely not an article title
+      if (text.length < 5) return false;
+      // Common site/publication name patterns (very short, common words)
+      const siteNamePatterns = ['home', 'about', 'contact', 'blog', 'news', 'archive'];
+      const lowerText = text.toLowerCase();
+      if (siteNamePatterns.some(pattern => lowerText === pattern)) return false;
+      return true;
+    }
+    
+    // First try: h1 inside article
+    if (article) {
+      h1FromArticle = article.querySelector('h1');
+      if (h1FromArticle && isValidArticleTitle(h1FromArticle)) {
+        h1 = h1FromArticle;
+      }
+    }
+    
+    // Second try: h1 inside main (if not in article or article h1 was invalid)
+    if (!h1 && main) {
+      const h1FromMain = main.querySelector('h1');
+      if (h1FromMain && isValidArticleTitle(h1FromMain)) {
+        h1 = h1FromMain;
+      }
+    }
+    
+    // Third try: first h1 on page (fallback for pages without article/main or multi-chapter books)
+    // This is safe because:
+    // - Pages without article/main will use this (old behavior preserved)
+    // - Multi-chapter books have h1 OUTSIDE main (as per prompts.js documentation)
+    // - Only used if article/main h1 was not found or invalid
+    if (!h1) {
+      const firstH1 = document.querySelector('h1');
+      if (firstH1 && isValidArticleTitle(firstH1)) {
+        h1 = firstH1;
+      }
+    }
+    
+    // Final fallback: use article/main h1 even if validation failed (better than nothing)
+    if (!h1 && h1FromArticle) {
+      h1 = h1FromArticle;
+    }
+    
     if (h1 && h1.textContent.trim()) {
       const h1Text = h1.textContent.trim();
       // Clean title from OBJ markers and Object Replacement Character (U+FFFC)
@@ -1976,17 +2151,28 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
         
         // If not found, look for first paragraph that might be standfirst
+        // Be more conservative: only if it's clearly a subtitle (shorter, no links, specific patterns)
         if (!standfirst) {
           const firstP = mainContent.querySelector('p');
           if (firstP) {
             const text = firstP.textContent.trim();
-            // Check if it looks like a standfirst (short, before main content)
-            if (text.length >= 50 && text.length <= 300) {
-              // Check if it's not just a regular paragraph (has no links, is descriptive)
+            // More restrictive: standfirst should be shorter (50-200 chars, not 300)
+            // and should not look like regular article content
+            if (text.length >= 50 && text.length <= 200) {
               const linkCount = firstP.querySelectorAll('a').length;
-              if (linkCount <= 1) {
-                standfirst = text;
-                standfirstElement = firstP;
+              // No links, and should not start with common article opening phrases
+              if (linkCount === 0) {
+                // Check if it doesn't look like regular article content
+                // (e.g., doesn't start with "The", "A", "In", "When", etc. - common article starters)
+                const firstWords = text.split(/\s+/).slice(0, 3).join(' ').toLowerCase();
+                const commonStarters = ['the ', 'a ', 'an ', 'in ', 'on ', 'at ', 'when ', 'where ', 'why ', 'how ', 'what ', 'this ', 'that ', 'these ', 'those '];
+                const looksLikeArticleStart = commonStarters.some(starter => firstWords.startsWith(starter));
+                
+                // Only treat as standfirst if it doesn't look like regular article content
+                if (!looksLikeArticleStart) {
+                  standfirst = text;
+                  standfirstElement = firstP;
+                }
               }
             }
           }
@@ -2060,26 +2246,12 @@ export function extractAutomaticallyInlined(baseUrl) {
                   continue;
                 }
                 
-                // CRITICAL: Check if we've already added this heading
+                // CRITICAL: Check if we've already added this heading (Set lookup is O(1))
                 if (addedHeadings.has(normalizedText)) {
                   continue;
                 }
                 
-                // FINAL CHECK: Verify this heading is not already in content array
-                const alreadyInContent = content.some(item => 
-                  item.type === 'heading' && 
-                  item.text && 
-                  item.text.toLowerCase().trim()
-                    .replace(/\s*\[?obj\]?\s*/gi, '')
-                    .replace(/\uFFFC/g, '') // Remove Object Replacement Character
-                    .trim() === normalizedText
-                );
-                
-                if (alreadyInContent) {
-                  continue;
-                }
-                
-                // Add to set BEFORE pushing to content
+                // Add to set BEFORE pushing to content (prevents duplicates)
                 addedHeadings.add(normalizedText);
                 content.push({
                   type: 'heading',
@@ -2260,7 +2432,10 @@ export function extractAutomaticallyInlined(baseUrl) {
         
         // For images, check parent for clear ad containers
       let parent = el.parentElement;
-      while (parent && parent !== mainContent) {
+      let iterations = 0;
+      const maxIterations = 50; // Safety limit to prevent infinite loops
+      while (parent && parent !== mainContent && iterations < maxIterations) {
+        iterations++;
           const parentClass = String(parent.className || '').toLowerCase();
           const parentId = (parent.id || '').toLowerCase();
           const parentTag = parent.tagName.toLowerCase();
@@ -2399,161 +2574,19 @@ export function extractAutomaticallyInlined(baseUrl) {
       const linkDensity = textWithoutLinks.length > 0 ? linkCount / (textWithoutLinks.length / 50) : linkCount;
       
       // If more than 2 links in short paragraph, likely navigation
-      if (linkCount >= 2 && textLength < 150) {
-        // But check if it's actually navigation text
-        const navPatterns = [
-          // English patterns - only match if starts with these (not contains)
-          /^next:/i, /^read more/i, /^keep reading/i, /^subscribe/i,
-          /^sign (in|up)/i, /^already have an account/i, /^try \d+ days/i,
-          /^start (free )?trial/i, /^give a gift/i, /^manage subscription/i,
-          /^essential journalism/i, /^support independent journalism/i,
-          /^you might also like/i, /^you may also like/i, /^also in /i, /^more in /i,
-          /^previous post/i, /^next post/i, /^related posts?/i, /^recommended posts?/i,
-          /^subscribe (now|today|for)/i, /^support (independent )?journalism/i,
-          /^donate (to|now)/i, /^give a year of/i, /^plus a free/i,
-          /^comment on this article/i, /^view \/ add comments/i,
-          /^published in the print edition/i, /^published in the/i,
-          /^fuel your wonder/i, /^feed your curiosity/i, /^expand your mind/i,
-          /^access the entire/i, /^ad-free/i, /^become a member/i,
-          /^nautilus members enjoy/i, /^log in or join/i,
-          // Paywall/subscription messages (Harper's, etc.)
-          /get access to print and digital/i, /subscribe for full access/i,
-          /free articles? this month/i, /subscribe for less than/i,
-          /subscribe or log in to access/i, /connect to your subscription/i,
-          /you've read (one|your)/i, /you've reached your free/i,
-          // Russian (ru) patterns
-          /чтобы прочитать целиком/i, /купите подписку/i, /платный журнал/i,
-          /я уже подписчик/i, /подписка предоставлена/i, /оформить подписку/i,
-          /чтобы читать далее/i, /подпишитесь чтобы/i, /чтобы продолжить/i,
-          /новое и лучшее/i, /первая полоса/i, /рекомендуем/i,
-          /читайте также/i, /похожие статьи/i, /связанные статьи/i,
-          /другие статьи/i, /ещё по теме/i, /по теме/i,
-          // Ukrainian (ua) patterns
-          /щоб прочитати цілком/i, /купити підписку/i, /платний журнал/i,
-          /я вже передплатник/i, /підписка надана/i, /оформити підписку/i,
-          /щоб читати далі/i, /підпишіться щоб/i, /щоб продовжити/i,
-          /нове і краще/i, /перша смуга/i, /рекомендуємо/i,
-          /читайте також/i, /схожі статті/i, /пов'язані статті/i,
-          /інші статті/i, /ще за темою/i, /за темою/i,
-          // German (de) patterns
-          /^um weiterzulesen/i, /^abonnement kaufen/i, /^bezahltes magazin/i,
-          /^ich bin bereits abonnent/i, /^abonnement bereitgestellt/i, /^abonnement abschließen/i,
-          /^um weiter zu lesen/i, /^abonnieren um/i, /^um fortzufahren/i,
-          /^neu und besser/i, /^erste seite/i, /^empfehlen/i,
-          /^lesen sie auch/i, /^ähnliche artikel/i, /^verwandte artikel/i,
-          /^andere artikel/i, /^mehr zum thema/i, /^zum thema/i,
-          // French (fr) patterns
-          /^pour lire en entier/i, /^acheter un abonnement/i, /^magazine payant/i,
-          /^je suis déjà abonné/i, /^abonnement fourni/i, /^s'abonner/i,
-          /^pour continuer à lire/i, /^abonnez-vous pour/i, /^pour continuer/i,
-          /^nouveau et mieux/i, /^première page/i, /^recommandons/i,
-          /^lisez aussi/i, /^articles similaires/i, /^articles connexes/i,
-          /^autres articles/i, /^plus sur le sujet/i, /^sur le sujet/i,
-          // Spanish (es) patterns
-          /^para leer completo/i, /^comprar suscripción/i, /^revista de pago/i,
-          /^ya soy suscriptor/i, /^suscripción proporcionada/i, /^suscribirse/i,
-          /^para seguir leyendo/i, /^suscríbete para/i, /^para continuar/i,
-          /^nuevo y mejor/i, /^primera página/i, /^recomendamos/i,
-          /^lee también/i, /^artículos similares/i, /^artículos relacionados/i,
-          /^otros artículos/i, /^más sobre el tema/i, /^sobre el tema/i,
-          // Italian (it) patterns
-          /^per leggere completo/i, /^acquista abbonamento/i, /^rivista a pagamento/i,
-          /^sono già abbonato/i, /^abbonamento fornito/i, /^abbonarsi/i,
-          /^per continuare a leggere/i, /^abbonati per/i, /^per continuare/i,
-          /^nuovo e migliore/i, /^prima pagina/i, /^consigliamo/i,
-          /^leggi anche/i, /^articoli simili/i, /^articoli correlati/i,
-          /^altri articoli/i, /^altro sull'argomento/i, /^sull'argomento/i,
-          // Portuguese (pt) patterns
-          /^para ler completo/i, /^comprar assinatura/i, /^revista paga/i,
-          /^já sou assinante/i, /^assinatura fornecida/i, /^assinar/i,
-          /^para continuar lendo/i, /^assine para/i, /^para continuar/i,
-          /^novo e melhor/i, /^primeira página/i, /^recomendamos/i,
-          /^leia também/i, /^artigos similares/i, /^artigos relacionados/i,
-          /^outros artigos/i, /^mais sobre o tema/i, /^sobre o tema/i,
-          // Chinese (zh) patterns
-          /^阅读全文/i, /^购买订阅/i, /^付费杂志/i,
-          /^我已经是订阅者/i, /^已提供订阅/i, /^订阅/i,
-          /^继续阅读/i, /^订阅以/i, /^继续/i,
-          /^最新和最佳/i, /^头版/i, /^推荐/i,
-          /^也阅读/i, /^相似文章/i, /^相关文章/i,
-          /^其他文章/i, /^更多主题/i, /^主题/i,
-          // Japanese (ja) patterns
-          /^全文を読む/i, /^購読を購入/i, /^有料雑誌/i,
-          /^既に購読者です/i, /^購読が提供されました/i, /^購読する/i,
-          /^続きを読む/i, /^購読して/i, /^続ける/i,
-          /^新しくて最高/i, /^第一面/i, /^おすすめ/i,
-          /^こちらも読む/i, /^類似記事/i, /^関連記事/i,
-          /^その他の記事/i, /^トピックの詳細/i, /^トピック/i,
-          // Korean (ko) patterns
-          /^전체 읽기/i, /^구독 구매/i, /^유료 잡지/i,
-          /^이미 구독자입니다/i, /^구독 제공됨/i, /^구독하기/i,
-          /^계속 읽기/i, /^구독하여/i, /^계속/i,
-          /^새로운 것과 최고/i, /^첫 페이지/i, /^추천/i,
-          /^또한 읽기/i, /^유사한 기사/i, /^관련 기사/i,
-          /^다른 기사/i, /^주제에 대해 더/i, /^주제/i
-        ];
-        
-        // Check if it's a navigation pattern (only if starts with pattern)
-        if (navPatterns.some(pattern => pattern.test(textTrimmed))) {
-          return true;
-        }
-        
-        // Already checked link density above, but double-check
-        // If more than 2 links in short paragraph, likely navigation
-        if (linkCount >= 2 && textLength < 100) {
-          return true;
-        }
-        // Check if it's a paywall message (all 11 languages)
-        const textLower = text.toLowerCase();
-        const paywallPatterns = [
-          // English
-          'keep reading', 'subscribe', 'sign up', 'try 30 days',
-          'already have an account', 'start free trial',
-          // Russian (ru)
-          'чтобы прочитать целиком', 'купите подписку', 'платный журнал',
-          'я уже подписчик', 'подписка предоставлена', 'оформить подписку',
-          'чтобы читать далее', 'подпишитесь чтобы', 'чтобы продолжить',
-          // Ukrainian (ua)
-          'щоб прочитати цілком', 'купити підписку', 'платний журнал',
-          'я вже передплатник', 'підписка надана', 'оформити підписку',
-          'щоб читати далі', 'підпишіться щоб', 'щоб продовжити',
-          // German (de)
-          'um weiterzulesen', 'abonnement kaufen', 'bezahltes magazin',
-          'ich bin bereits abonnent', 'abonnement bereitgestellt', 'abonnement abschließen',
-          'um weiter zu lesen', 'abonnieren um', 'um fortzufahren',
-          // French (fr)
-          'pour lire en entier', 'acheter un abonnement', 'magazine payant',
-          'je suis déjà abonné', 'abonnement fourni', 's\'abonner',
-          'pour continuer à lire', 'abonnez-vous pour', 'pour continuer',
-          // Spanish (es)
-          'para leer completo', 'comprar suscripción', 'revista de pago',
-          'ya soy suscriptor', 'suscripción proporcionada', 'suscribirse',
-          'para seguir leyendo', 'suscríbete para', 'para continuar',
-          // Italian (it)
-          'per leggere completo', 'acquista abbonamento', 'rivista a pagamento',
-          'sono già abbonato', 'abbonamento fornito', 'abbonarsi',
-          'per continuare a leggere', 'abbonati per', 'per continuare',
-          // Portuguese (pt)
-          'para ler completo', 'comprar assinatura', 'revista paga',
-          'já sou assinante', 'assinatura fornecida', 'assinar',
-          'para continuar lendo', 'assine para', 'para continuar',
-          // Chinese (zh)
-          '阅读全文', '购买订阅', '付费杂志',
-          '我已经是订阅者', '已提供订阅', '订阅',
-          '继续阅读', '订阅以', '继续',
-          // Japanese (ja)
-          '全文を読む', '購読を購入', '有料雑誌',
-          '既に購読者です', '購読が提供されました', '購読する',
-          '続きを読む', '購読して', '続ける',
-          // Korean (ko)
-          '전체 읽기', '구독 구매', '유료 잡지',
-          '이미 구독자입니다', '구독 제공됨', '구독하기',
-          '계속 읽기', '구독하여', '계속'
-        ];
-        if (paywallPatterns.some(pattern => textLower.includes(pattern))) {
-          return true;
-        }
-        return false;
+      if (linkCount >= 2 && textLength < 100) {
+        return true;
+      }
+      
+      // Check if it's a navigation pattern (only if starts with pattern)
+      if (NAV_PATTERNS_STARTS_WITH.some(pattern => pattern.test(textTrimmed))) {
+        return true;
+      }
+      
+      // Check if it's a paywall message (all 11 languages)
+      const textLower = text.toLowerCase();
+      if (PAYWALL_PATTERNS.some(pattern => textLower.includes(pattern))) {
+        return true;
       }
       
       // If none of the navigation conditions matched, it's not navigation
@@ -2562,6 +2595,11 @@ export function extractAutomaticallyInlined(baseUrl) {
     
     let processedCount = 0;
     let skippedCount = 0;
+    
+    // Safety check: ensure elements is defined
+    if (!elements || !Array.isArray(elements)) {
+      throw new Error(`elements is not defined or not an array. filteredElements: ${typeof filteredElements}, mainContent: ${!!mainContent}`);
+    }
     
     for (const element of elements) {
       // Get tag name first - used throughout
@@ -2573,38 +2611,50 @@ export function extractAutomaticallyInlined(baseUrl) {
       // For images/figures, be more lenient with visibility checks (lazy loading)
       // Only skip if clearly hidden AND not a lazy-loaded image
       if (!isImageOrFigure) {
-        const style = window.getComputedStyle(element);
-        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+        let style;
+        try {
+          style = window.getComputedStyle(element);
+        } catch (e) {
+          // Element might be in iframe or detached, continue processing
+          // Don't skip based on style check failure
+        }
+        if (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')) {
           skippedCount++;
           continue;
         }
       } else {
         // For images/figures, be very lenient - only skip if completely hidden
         // Many images are hidden via opacity for fade-in effects but have valid src
-        const style = window.getComputedStyle(element);
+        let style;
+        try {
+          style = window.getComputedStyle(element);
+        } catch (e) {
+          // Element might be in iframe or detached, continue processing
+          // Don't skip based on style check failure
+        }
         // Only skip if display is none or visibility is hidden (not opacity)
-        if (style.display === 'none' || style.visibility === 'hidden') {
+        if (style && (style.display === 'none' || style.visibility === 'hidden')) {
           // Check if it's lazy-loaded - if so, don't skip
-        let hasLazySrc = false;
-        if (tagName === 'figure') {
-          const img = element.querySelector('img');
-          if (img) {
-            hasLazySrc = img.hasAttribute('data-src') || 
-                        img.hasAttribute('data-lazy-src') ||
-                        img.hasAttribute('data-original') ||
-                        img.hasAttribute('data-srcset');
+          let hasLazySrc = false;
+          if (tagName === 'figure') {
+            const img = element.querySelector('img');
+            if (img) {
+              hasLazySrc = img.hasAttribute('data-src') || 
+                          img.hasAttribute('data-lazy-src') ||
+                          img.hasAttribute('data-original') ||
+                          img.hasAttribute('data-srcset');
+            }
+          } else {
+            hasLazySrc = element.hasAttribute('data-src') || 
+                        element.hasAttribute('data-lazy-src') ||
+                        element.hasAttribute('data-original') ||
+                        element.hasAttribute('data-srcset');
           }
-        } else {
-          hasLazySrc = element.hasAttribute('data-src') || 
-                      element.hasAttribute('data-lazy-src') ||
-                      element.hasAttribute('data-original') ||
-                      element.hasAttribute('data-srcset');
-        }
-        // Only skip if hidden AND not lazy-loaded
+          // Only skip if hidden AND not lazy-loaded
           if (!hasLazySrc) {
-          skippedCount++;
-          continue;
-        }
+            skippedCount++;
+            continue;
+          }
         }
         // Don't skip images based on opacity alone - they may be hidden for fade-in effects
       }
@@ -2672,7 +2722,10 @@ export function extractAutomaticallyInlined(baseUrl) {
       let isInIframeAd = false;
       if (!isImageOrFigure) {
         // For non-image elements, use original logic
-        while (parent && parent !== mainContent) {
+        let iterations = 0;
+        const maxIterations = 50; // Safety limit to prevent infinite loops
+        while (parent && parent !== mainContent && iterations < maxIterations) {
+          iterations++;
           if (parent.tagName.toLowerCase() === 'iframe' || 
               (parent.querySelector('iframe') && (className.includes('ad') || id.includes('ad')))) {
             isInIframeAd = true;
@@ -2682,7 +2735,10 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
       } else {
         // For images/figures, only exclude if parent has clear ad indicators (whole words)
-        while (parent && parent !== mainContent) {
+        let iterations = 0;
+        const maxIterations = 50; // Safety limit to prevent infinite loops
+        while (parent && parent !== mainContent && iterations < maxIterations) {
+          iterations++;
           if (parent.tagName.toLowerCase() === 'iframe') {
             isInIframeAd = true;
             break;
@@ -2735,7 +2791,7 @@ export function extractAutomaticallyInlined(baseUrl) {
             continue;
           }
           
-          // CRITICAL: Check if we've already added this exact heading
+          // CRITICAL: Check if we've already added this exact heading (Set lookup is O(1))
           if (addedHeadings.has(normalizedHeading)) {
             continue;
           }
@@ -2812,7 +2868,10 @@ export function extractAutomaticallyInlined(baseUrl) {
           // Check if heading is in a related articles section by class
           let parent = element.parentElement;
           let isInRelatedSection = false;
-          while (parent && parent !== mainContent) {
+          let iterations = 0;
+          const maxIterations = 50; // Safety limit to prevent infinite loops
+          while (parent && parent !== mainContent && iterations < maxIterations) {
+            iterations++;
             const parentClass = String(parent.className || '').toLowerCase();
             const parentId = (parent.id || '').toLowerCase();
             if (parentClass.includes('related-articles') || parentId.includes('related-articles') ||
@@ -2846,19 +2905,8 @@ export function extractAutomaticallyInlined(baseUrl) {
             continue;
           }
           
-          // FINAL CHECK: Verify this heading is not already in content array
-          // This is a safety check in case something went wrong
-          const alreadyInContent = content.some(item => 
-            item.type === 'heading' && 
-            item.text && 
-            item.text.toLowerCase().trim().replace(/\s*\[?obj\]?\s*/gi, '').trim() === normalizedHeading
-          );
-          
-          if (alreadyInContent) {
-            continue;
-          }
-          
           // Add to set BEFORE pushing to content (to prevent duplicates)
+          // Set.has() is O(1), so no need for additional array check
           addedHeadings.add(normalizedHeading);
           content.push({
             type: 'heading',
@@ -3080,13 +3128,7 @@ export function extractAutomaticallyInlined(baseUrl) {
         const hasPrice = pricePattern.test(text);
         
         // Check for course/training advertisement patterns
-        const courseAdPatterns = [
-          'video + ux training', 'get video', 'video training', 'video course',
-          'measure ux & design impact', 'money-back-guarantee', 'money back guarantee',
-          'get the video course', 'get video + ux training',
-          'use the code', 'save 20%', 'save 20% off'
-        ];
-        const isCourseAd = courseAdPatterns.some(pattern => textLower.includes(pattern));
+        const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
         
         // If paragraph contains price and course ad patterns, exclude it
         if (hasPrice && isCourseAd) {
@@ -3102,7 +3144,10 @@ export function extractAutomaticallyInlined(baseUrl) {
         // Check if paragraph is in a course ad container
         let parent = element.parentElement;
         let isInCourseAd = false;
-        while (parent && parent !== mainContent) {
+        let iterations = 0;
+        const maxIterations = 50; // Safety limit to prevent infinite loops
+        while (parent && parent !== mainContent && iterations < maxIterations) {
+          iterations++;
           const parentClass = String(parent.className || '').toLowerCase();
           const parentId = (parent.id || '').toLowerCase();
           if (parentClass.includes('book-cta') || parentClass.includes('course-cta') || 
@@ -3166,206 +3211,100 @@ export function extractAutomaticallyInlined(baseUrl) {
         }
         
         // Exclude if paragraph contains navigation text (already checked in isNavigationParagraph, but double-check)
-        const navTextPatterns = [
-          /previous\s+post/i, /next\s+post/i, /related\s+posts?/i, /recommended\s+posts?/i,
-          /you might also like/i, /you may also like/i, /also in /i, /more in /i,
-          /next article/i, /previous article/i, /next:/i,
-          /subscribe (now|today|for)/i, /support (independent )?journalism/i,
-          /donate (to|now)/i, /give a year of/i, /plus a free/i,
-          /comment on this article/i, /view \/ add comments/i,
-          /published in the print edition/i, /published in the/i,
-          /fuel your wonder/i, /feed your curiosity/i, /expand your mind/i,
-          /access the entire/i, /ad-free/i, /become a member/i,
-          /nautilus members enjoy/i, /log in or join/i
-        ];
-        if (navTextPatterns.some(pattern => pattern.test(text))) {
+        if (NAV_PATTERNS_CONTAINS.some(pattern => pattern.test(text))) {
           continue;
         }
         
         // Exclude paragraphs that are clearly paywall/subscription prompts (all 11 languages)
         // textLower already declared above
-        const paywallPatterns = [
-          // English
-          'keep reading', 'subscribe', 'sign up', 'try 30 days',
-          'already have an account', 'start free trial',
-          // Russian (ru)
-          'чтобы прочитать целиком', 'купите подписку', 'платный журнал',
-          'я уже подписчик', 'подписка предоставлена', 'оформить подписку',
-          'чтобы читать далее', 'подпишитесь чтобы', 'чтобы продолжить',
-          // Ukrainian (ua)
-          'щоб прочитати цілком', 'купити підписку', 'платний журнал',
-          'я вже передплатник', 'підписка надана', 'оформити підписку',
-          'щоб читати далі', 'підпишіться щоб', 'щоб продовжити',
-          // German (de)
-          'um weiterzulesen', 'abonnement kaufen', 'bezahltes magazin',
-          'ich bin bereits abonnent', 'abonnement bereitgestellt', 'abonnement abschließen',
-          'um weiter zu lesen', 'abonnieren um', 'um fortzufahren',
-          // French (fr)
-          'pour lire en entier', 'acheter un abonnement', 'magazine payant',
-          'je suis déjà abonné', 'abonnement fourni', 's\'abonner',
-          'pour continuer à lire', 'abonnez-vous pour', 'pour continuer',
-          // Spanish (es)
-          'para leer completo', 'comprar suscripción', 'revista de pago',
-          'ya soy suscriptor', 'suscripción proporcionada', 'suscribirse',
-          'para seguir leyendo', 'suscríbete para', 'para continuar',
-          // Italian (it)
-          'per leggere completo', 'acquista abbonamento', 'rivista a pagamento',
-          'sono già abbonato', 'abbonamento fornito', 'abbonarsi',
-          'per continuare a leggere', 'abbonati per', 'per continuare',
-          // Portuguese (pt)
-          'para ler completo', 'comprar assinatura', 'revista paga',
-          'já sou assinante', 'assinatura fornecida', 'assinar',
-          'para continuar lendo', 'assine para', 'para continuar',
-          // Chinese (zh)
-          '阅读全文', '购买订阅', '付费杂志',
-          '我已经是订阅者', '已提供订阅', '订阅',
-          '继续阅读', '订阅以', '继续',
-          // Japanese (ja)
-          '全文を読む', '購読を購入', '有料雑誌',
-          '既に購読者です', '購読が提供されました', '購読する',
-          '続きを読む', '購読して', '続ける',
-          // Korean (ko)
-          '전체 읽기', '구독 구매', '유료 잡지',
-          '이미 구독자입니다', '구독 제공됨', '구독하기',
-          '계속 읽기', '구독하여', '계속',
-          // Paywall/subscription messages (Harper's, etc.)
-          'get access to print and digital', 'subscribe for full access',
-          'free articles this month', 'subscribe for less than',
-          'subscribe or log in to access', 'connect to your subscription',
-          'you\'ve read one', 'you\'ve read your', 'you\'ve reached your free'
-        ];
-        if (paywallPatterns.some(pattern => textLower.includes(pattern))) {
+        if (PAYWALL_PATTERNS.some(pattern => textLower.includes(pattern))) {
           continue;
         }
         
         // Exclude paragraphs that are clearly related articles sections (all 11 languages)
-        const relatedPatterns = [
-          // English
-          'new and best', 'first page', 'recommend',
-          'read also', 'similar articles', 'related articles',
-          'other articles', 'more on topic', 'on topic',
-          // Russian (ru)
-          'новое и лучшее', 'первая полоса', 'рекомендуем',
-          'читайте также', 'похожие статьи', 'связанные статьи',
-          'другие статьи', 'ещё по теме', 'по теме',
-          // Ukrainian (ua)
-          'нове і краще', 'перша смуга', 'рекомендуємо',
-          'читайте також', 'схожі статті', 'пов\'язані статті',
-          'інші статті', 'ще за темою', 'за темою',
-          // German (de)
-          'neu und besser', 'erste seite', 'empfehlen',
-          'lesen sie auch', 'ähnliche artikel', 'verwandte artikel',
-          'andere artikel', 'mehr zum thema', 'zum thema',
-          // French (fr)
-          'nouveau et mieux', 'première page', 'recommandons',
-          'lisez aussi', 'articles similaires', 'articles connexes',
-          'autres articles', 'plus sur le sujet', 'sur le sujet',
-          // Spanish (es)
-          'nuevo y mejor', 'primera página', 'recomendamos',
-          'lee también', 'artículos similares', 'artículos relacionados',
-          'otros artículos', 'más sobre el tema', 'sobre el tema',
-          // Italian (it)
-          'nuovo e migliore', 'prima pagina', 'consigliamo',
-          'leggi anche', 'articoli simili', 'articoli correlati',
-          'altri articoli', 'altro sull\'argomento', 'sull\'argomento',
-          // Portuguese (pt)
-          'novo e melhor', 'primeira página', 'recomendamos',
-          'leia também', 'artigos similares', 'artigos relacionados',
-          'outros artigos', 'mais sobre o tema', 'sobre o tema',
-          // Chinese (zh)
-          '最新和最佳', '头版', '推荐',
-          '也阅读', '相似文章', '相关文章',
-          '其他文章', '更多主题', '主题',
-          // Japanese (ja)
-          '新しくて最高', '第一面', 'おすすめ',
-          'こちらも読む', '類似記事', '関連記事',
-          'その他の記事', 'トピックの詳細', 'トピック',
-          // Korean (ko)
-          '새로운 것과 최고', '첫 페이지', '추천',
-          '또한 읽기', '유사한 기사', '관련 기사',
-          '다른 기사', '주제에 대해 더', '주제'
-        ];
-        if (relatedPatterns.some(pattern => textLower.includes(pattern))) {
+        if (RELATED_PATTERNS.some(pattern => textLower.includes(pattern))) {
           continue;
         }
         
         // Include paragraphs with meaningful content (at least 5 characters)
         // This helps capture short but important paragraphs
         if (text && text.length >= 5) {
-          // Clean HTML: remove footnotes and icons
+          // Clean HTML: remove footnotes, icons, and OBJ markers in one pass
           const htmlClone = element.cloneNode(true);
           
-          // Remove footnote links (including those with emoji images)
-          const footnoteLinks = htmlClone.querySelectorAll('a');
-          footnoteLinks.forEach(link => {
-            if (isFootnoteLink(link)) {
-              link.remove();
-            }
-          });
-          
-          // Remove icons (SVG, icon spans, sup with arrows, emoji images, etc.)
-          const allElements = htmlClone.querySelectorAll('*');
-          allElements.forEach(el => {
-            if (isIcon(el)) {
-              el.remove();
-            }
-          });
-          
-          // Also remove sup elements that contain only arrows or "open these"
-          const supElements = htmlClone.querySelectorAll('sup');
-          supElements.forEach(sup => {
-            const supText = sup.textContent.trim();
-            if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
-              sup.remove();
-            }
-          });
-          
-          // Remove object elements and "OBJ" text nodes
-          const objectElements = htmlClone.querySelectorAll('object, embed');
-          objectElements.forEach(obj => obj.remove());
-          
-          // Remove elements that contain only "OBJ" text
-          const allElementsInClone = htmlClone.querySelectorAll('*');
-          allElementsInClone.forEach(el => {
-            const elText = el.textContent.trim();
-            if (/^obj\s*$/i.test(elText) || /^\[obj\]\s*$/i.test(elText)) {
-              el.remove();
-            }
-          });
-          
-          // Remove text nodes that are just "OBJ" or "[OBJ]"
+          // Single-pass TreeWalker for efficient cleaning
           const walker = document.createTreeWalker(
             htmlClone,
-            NodeFilter.SHOW_TEXT,
-            null,
+            NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+            {
+              acceptNode: (node) => {
+                if (node.nodeType === Node.ELEMENT_NODE) {
+                  const tagName = node.tagName.toLowerCase();
+                  
+                  // Remove footnote links
+                  if (tagName === 'a' && isFootnoteLink(node)) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  
+                  // Remove icons
+                  if (isIcon(node)) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  
+                  // Remove sup elements with arrows
+                  if (tagName === 'sup') {
+                    const supText = node.textContent.trim();
+                    if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
+                      return NodeFilter.FILTER_REJECT;
+                    }
+                  }
+                  
+                  // Remove object/embed elements
+                  if (tagName === 'object' || tagName === 'embed') {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  
+                  // Remove elements that contain only "OBJ" text
+                  const elText = node.textContent.trim();
+                  if (/^obj\s*$/i.test(elText) || /^\[obj\]\s*$/i.test(elText)) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  
+                  // Clean attributes in the same pass
+                  node.removeAttribute('style');
+                  const safeAttributes = ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel'];
+                  for (const attr of Array.from(node.attributes)) {
+                    if (attr.name.startsWith('on') || !safeAttributes.includes(attr.name.toLowerCase())) {
+                      node.removeAttribute(attr.name);
+                    }
+                  }
+                  
+                  // Remove empty spans and divs
+                  if ((tagName === 'span' || tagName === 'div') && !node.textContent.trim() && !node.querySelector('img')) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                } else if (node.nodeType === Node.TEXT_NODE) {
+                  // Clean OBJ markers from text nodes
+                  const text = node.textContent.trim();
+                  if (/^obj\s*$/i.test(text) || /^\[obj\]\s*$/i.test(text)) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  // Remove OBJ markers from text content
+                  if (node.textContent && /obj/i.test(node.textContent)) {
+                    node.textContent = node.textContent.replace(/\s*\[?obj\]?\s*/gi, '');
+                  }
+                }
+                return NodeFilter.FILTER_ACCEPT;
+              }
+            },
             false
           );
-          const textNodes = [];
-          let node;
-          while (node = walker.nextNode()) {
-            const text = node.textContent.trim();
-            if (/^obj\s*$/i.test(text) || /^\[obj\]\s*$/i.test(text)) {
-              textNodes.push(node);
-            }
-          }
-          textNodes.forEach(textNode => {
-            if (textNode.parentNode) {
-              textNode.parentNode.removeChild(textNode);
-            }
-          });
           
-          // Also remove "OBJ" from remaining text content
-          const walker2 = document.createTreeWalker(
-            htmlClone,
-            NodeFilter.SHOW_TEXT,
-            null,
-            false
-          );
-          let node2;
-          while (node2 = walker2.nextNode()) {
-            if (node2.textContent && /obj/i.test(node2.textContent)) {
-              node2.textContent = node2.textContent.replace(/\s*\[?obj\]?\s*/gi, '');
-            }
+          // Process all nodes
+          const nodesToProcess = [];
+          let currentNode;
+          while (currentNode = walker.nextNode()) {
+            nodesToProcess.push(currentNode);
           }
           
           // Get cleaned text to check if there's still meaningful content
@@ -3373,38 +3312,10 @@ export function extractAutomaticallyInlined(baseUrl) {
           
           // Only add if there's still meaningful content after cleaning
           if (cleanedText && cleanedText.length >= 5) {
-            // Clean HTML: remove inline styles, scripts, and dangerous attributes
-            const allElements = htmlClone.querySelectorAll('*');
-            for (const el of allElements) {
-              // Remove style attributes
-              el.removeAttribute('style');
-              // Remove event handlers (onclick, onload, etc.)
-              for (const attr of Array.from(el.attributes)) {
-                if (attr.name.startsWith('on')) {
-                  el.removeAttribute(attr.name);
-                }
-              }
-              // Remove empty spans and divs (often used for styling)
-              if ((el.tagName === 'SPAN' || el.tagName === 'DIV') && !el.textContent.trim() && !el.querySelector('img')) {
-                el.remove();
-              }
-            }
-            
-            // Keep only safe attributes: href, src, alt, title, class, id
-            const safeAttributes = ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel'];
-            for (const el of htmlClone.querySelectorAll('*')) {
-              for (const attr of Array.from(el.attributes)) {
-                if (!safeAttributes.includes(attr.name.toLowerCase())) {
-                  el.removeAttribute(attr.name);
-                }
-              }
-            }
-            
             // Final cleanup: remove any remaining OBJ markers from HTML
             let cleanedHtml = htmlClone.innerHTML
               .replace(/\s*\[?obj\]?\s*/gi, '') // Remove any remaining OBJ markers
               .replace(/<[^>]*>\s*\[?obj\]?\s*<\/[^>]*>/gi, '') // Remove empty tags with OBJ
-              .replace(/\s*\[?obj\]?\s*/gi, '') // One more pass to catch any missed
               .trim();
             
             // Only add if HTML is not empty after all cleaning
@@ -3427,56 +3338,56 @@ export function extractAutomaticallyInlined(baseUrl) {
             const isTracking = isTrackingPixel(img);
             const isDecorative = isDecorativeImage(img);
             if (!isTracking && !isDecorative) {
-            const absoluteSrc = toAbsoluteUrl(src);
-            // Normalize URL for comparison to avoid duplicates with different query params
-            const normalizedSrc = normalizeImageUrl(absoluteSrc);
-            // Skip if already processed (e.g., as featured image)
-            if (processedImages.has(normalizedSrc)) {
-              continue;
-            }
-            // Mark this image as processed
-            processedImages.add(normalizedSrc);
-            
-            // Extract caption from figcaption or other elements
-            let caption = '';
-            const figcaption = element.querySelector('figcaption');
-            if (figcaption) {
-              caption = figcaption.textContent.trim();
-            } else {
-              // Look for caption in other text elements (p, div, span with caption-like classes)
-              const captionSelectors = ['p', 'div', 'span'];
-              for (const selector of captionSelectors) {
-                const captionEl = element.querySelector(selector);
-                if (captionEl) {
-                  const captionText = captionEl.textContent.trim();
-                  const className = (captionEl.className || '').toLowerCase();
-                  // Check if it looks like a caption
-                  if (captionText && (className.includes('caption') || className.includes('credit') || className.includes('credit'))) {
-                    caption = captionText;
-                    break;
+              const absoluteSrc = toAbsoluteUrl(src);
+              // Normalize URL for comparison to avoid duplicates with different query params
+              const normalizedSrc = normalizeImageUrl(absoluteSrc);
+              // Skip if already processed (e.g., as featured image)
+              if (processedImages.has(normalizedSrc)) {
+                continue;
+              }
+              // Mark this image as processed
+              processedImages.add(normalizedSrc);
+              
+              // Extract caption from figcaption or other elements
+              let caption = '';
+              const figcaption = element.querySelector('figcaption');
+              if (figcaption) {
+                caption = figcaption.textContent.trim();
+              } else {
+                // Look for caption in other text elements (p, div, span with caption-like classes)
+                const captionSelectors = ['p', 'div', 'span'];
+                for (const selector of captionSelectors) {
+                  const captionEl = element.querySelector(selector);
+                  if (captionEl) {
+                    const captionText = captionEl.textContent.trim();
+                    const className = (captionEl.className || '').toLowerCase();
+                    // Check if it looks like a caption
+                    if (captionText && (className.includes('caption') || className.includes('credit') || className.includes('credit'))) {
+                      caption = captionText;
+                      break;
+                    }
+                  }
+                }
+                // If still no caption, try to extract from all text (excluding img alt)
+                if (!caption) {
+                  const allText = element.textContent.trim();
+                  const imgAlt = img.alt || '';
+                  if (allText && allText !== imgAlt) {
+                    // Remove img alt from text to get caption
+                    caption = allText.replace(imgAlt, '').trim();
+                    // Clean up common prefixes
+                    caption = caption.replace(/^(image|photo|picture|credit|source)[:\s]*/i, '').trim();
                   }
                 }
               }
-              // If still no caption, try to extract from all text (excluding img alt)
-              if (!caption) {
-                const allText = element.textContent.trim();
-                const imgAlt = img.alt || '';
-                if (allText && allText !== imgAlt) {
-                  // Remove img alt from text to get caption
-                  caption = allText.replace(imgAlt, '').trim();
-                  // Clean up common prefixes
-                  caption = caption.replace(/^(image|photo|picture|credit|source)[:\s]*/i, '').trim();
-                }
-              }
-            }
-            
-            content.push({
-              type: 'image',
-              src: absoluteSrc,
-              alt: img.alt || caption || '',
-              caption: caption
-            });
-            processedCount++;
+              
+              content.push({
+                type: 'image',
+                src: absoluteSrc,
+                alt: img.alt || caption || '',
+                caption: caption
+              });
+              processedCount++;
             }
           }
         }
@@ -3559,7 +3470,10 @@ export function extractAutomaticallyInlined(baseUrl) {
         // Check if table is inside an excluded container
         let parent = element.parentElement;
         let isInExcludedContainer = false;
-        while (parent && parent !== mainContent) {
+        let iterations = 0;
+        const maxIterations = 50; // Safety limit to prevent infinite loops
+        while (parent && parent !== mainContent && iterations < maxIterations) {
+          iterations++;
           if (isExcluded(parent)) {
             isInExcludedContainer = true;
             break;
@@ -3683,23 +3597,12 @@ export function extractAutomaticallyInlined(baseUrl) {
               continue;
             }
             
-            // CRITICAL: Check if we've already added this heading
+            // CRITICAL: Check if we've already added this heading (Set lookup is O(1))
             if (addedHeadings.has(normalizedText)) {
               continue;
             }
             
-            // FINAL CHECK: Verify this heading is not already in content array
-            const alreadyInContent = content.some(item => 
-              item.type === 'heading' && 
-              item.text && 
-              item.text.toLowerCase().trim().replace(/\s*\[?obj\]?\s*/gi, '').trim() === normalizedText
-            );
-            
-            if (alreadyInContent) {
-              continue;
-            }
-            
-            // Add to set BEFORE pushing to content
+            // Add to set BEFORE pushing to content (prevents duplicates)
             addedHeadings.add(normalizedText);
             content.push({
               type: 'heading',
@@ -3743,14 +3646,34 @@ export function extractAutomaticallyInlined(baseUrl) {
     }, {});
     debugInfo.finalContentTypes = finalContentTypes;
     
-    return {
+    const result = {
       title: metadata.title,
       author: metadata.author,
       publishDate: metadata.publishDate,
       content: deduplicatedContent,
       debugInfo: debugInfo
     };
-  } catch (error) { // End of try block
+    
+    // Log completion (this will appear in page console, not service worker)
+    try {
+      console.log('[ClipAIble] extractAutomaticallyInlined: SUCCESS', {
+        contentLength: deduplicatedContent.length,
+        title: metadata.title,
+        timestamp: Date.now()
+      });
+    } catch (e) {}
+    
+    return result;
+  } catch (error) {
+    // Log error (this will appear in page console, not service worker)
+    try {
+      console.error('[ClipAIble] extractAutomaticallyInlined: ERROR', {
+        error: error.message,
+        errorStack: error.stack,
+        timestamp: Date.now()
+      });
+    } catch (e) {}
+    
     // Return minimal result on error with error info
     return {
       title: document.title || '',
@@ -3761,8 +3684,8 @@ export function extractAutomaticallyInlined(baseUrl) {
       error: error.message,
       errorStack: error.stack
     };
-  }
-}
+  } // end try-catch
+} // end extractAutomaticallyInlined
 
 /**
  * Extract metadata from HTML using common patterns
@@ -3838,7 +3761,7 @@ export function extractMetadata(doc) {
     }
   }
   
-  log('Metadata extracted', metadata);
+  // Note: log() not available in page context, removed for executeScript compatibility
   return metadata;
 }
 
@@ -3927,6 +3850,149 @@ function getMonthNumber(monthName) {
 }
 
 /**
+ * Find main content container using heuristics (for extractArticleContent)
+ * @param {Document} doc - Document object
+ * @returns {Element|null} Main content element
+ */
+function findMainContentForExtract(doc) {
+  // Strategy 1: Look for semantic HTML5 elements
+  const article = doc.querySelector('article');
+  if (article) return article;
+  
+  const main = doc.querySelector('main');
+  if (main) return main;
+  
+  // Strategy 2: Look for common content class names
+  const contentSelectors = [
+    '[role="main"]',
+    '.content',
+    '.post-content',
+    '.article-content',
+    '.entry-content',
+    '.post-body',
+    '.article-body',
+    '#content',
+    '#main-content',
+    '#article-content'
+  ];
+  
+  for (const selector of contentSelectors) {
+    try {
+      const element = doc.querySelector(selector);
+      if (element) {
+        const text = element.textContent.trim();
+        if (text.length > 200) {
+          return element;
+        }
+      }
+    } catch (e) {
+      // Invalid selector, continue
+    }
+  }
+  
+  // Strategy 3: Find largest container with paragraphs
+  const allDivs = Array.from(doc.querySelectorAll('div'));
+  let bestCandidate = null;
+  let maxScore = 0;
+  
+  for (const div of allDivs) {
+    const paragraphs = div.querySelectorAll('p');
+    const headings = div.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    const textLength = div.textContent.length;
+    
+    // Score based on content density
+    const score = paragraphs.length * 10 + headings.length * 5 + Math.min(textLength / 100, 50);
+    
+    if (score > maxScore && textLength > 200) {
+      maxScore = score;
+      bestCandidate = div;
+    }
+  }
+  
+  return bestCandidate;
+}
+
+/**
+ * Check if element should be excluded (for extractArticleContent)
+ * @param {Element} element - Element to check
+ * @returns {boolean} True if element should be excluded
+ */
+function isExcludedForExtract(element) {
+  // Check if element is hidden
+  try {
+    const style = window.getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+      return true;
+    }
+  } catch (e) {
+    // Element might be in iframe or detached, continue
+  }
+  
+  // Check for excluded class names
+  const excludedClasses = [
+    'nav', 'navigation', 'menu', 'sidebar', 'footer', 'header',
+    'ad', 'advertisement', 'ads', 'sponsor', 'sponsored',
+    'comment', 'comments', 'discussion', 'thread',
+    'related', 'related-posts', 'related-articles',
+    'social', 'share', 'share-buttons',
+    'author-bio', 'author-info', 'about-author',
+    'translation-notice', 'translation-badge'
+  ];
+  
+  const className = String(element.className || '').toLowerCase();
+  const id = element.id.toLowerCase();
+  
+  for (const excluded of excludedClasses) {
+    if (className.includes(excluded) || id.includes(excluded)) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Check if image is a tracking pixel (for extractArticleContent)
+ * @param {HTMLImageElement} img - Image element
+ * @returns {boolean} True if image is likely a tracking pixel
+ */
+function isTrackingPixelForExtract(img) {
+  const width = img.naturalWidth || img.width || 0;
+  const height = img.naturalHeight || img.height || 0;
+  
+  // Very small images are likely tracking pixels
+  if (width <= 3 && height <= 3) return true;
+  
+  const src = (img.src || '').toLowerCase();
+  const trackingPatterns = ['pixel', 'tracking', 'beacon', 'analytics', 'facebook.com/tr', 'doubleclick', 'googleads'];
+  return trackingPatterns.some(pattern => src.includes(pattern));
+}
+
+/**
+ * Get image caption from nearby elements (for extractArticleContent)
+ * @param {HTMLImageElement} img - Image element
+ * @returns {string} Caption text or empty string
+ */
+function getImageCaptionForExtract(img) {
+  // Check for figcaption
+  const figure = img.closest('figure');
+  if (figure) {
+    const figcaption = figure.querySelector('figcaption');
+    if (figcaption) {
+      return figcaption.textContent.trim();
+    }
+  }
+  
+  // Check next sibling
+  const nextSibling = img.nextElementSibling;
+  if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
+    return nextSibling.textContent.trim();
+  }
+  
+  return '';
+}
+
+/**
  * Extract article content using Readability-like heuristics
  * This function should be injected into page context
  * @param {Document} doc - Document object
@@ -3936,9 +4002,9 @@ export function extractArticleContent(doc) {
   const content = [];
   
   // Find main content container using heuristics
-  const mainContent = findMainContent(doc);
+  const mainContent = findMainContentForExtract(doc);
   if (!mainContent) {
-    logWarn('Could not find main content container');
+    // Note: logWarn() not available in page context, removed for executeScript compatibility
     return content;
   }
   
@@ -3947,7 +4013,7 @@ export function extractArticleContent(doc) {
   
   for (const element of elements) {
     // Skip if element is hidden or in excluded sections
-    if (isExcluded(element)) continue;
+    if (isExcludedForExtract(element)) continue;
     
     const tagName = element.tagName.toLowerCase();
     
@@ -3975,12 +4041,12 @@ export function extractArticleContent(doc) {
       }
     } else if (tagName === 'img') {
       const src = element.src || element.getAttribute('data-src');
-      if (src && !isTrackingPixel(element)) {
+      if (src && !isTrackingPixelForExtract(element)) {
         content.push({
           type: 'image',
           src: src,
           alt: element.alt || '',
-          caption: getImageCaption(element)
+          caption: getImageCaptionForExtract(element)
         });
       }
     } else if (tagName === 'blockquote') {
@@ -4013,196 +4079,7 @@ export function extractArticleContent(doc) {
     }
   }
   
-  log('Content extracted automatically', { itemsCount: content.length });
+  // Note: log() not available in page context, removed for executeScript compatibility
   return content;
-}
-
-/**
- * Find main content container using heuristics
- * Similar to Readability algorithm
- * @param {Document} doc - Document object
- * @returns {Element|null} Main content element
- */
-function findMainContent(doc) {
-  // Strategy 1: Look for semantic HTML5 elements
-  const article = doc.querySelector('article');
-  if (article) return article;
-  
-  const main = doc.querySelector('main');
-  if (main) return main;
-  
-  // Strategy 2: Look for common content class names
-  const contentSelectors = [
-    '[role="main"]',
-    '.content',
-    '.post-content',
-    '.article-content',
-    '.entry-content',
-    '.post-body',
-    '.article-body',
-    '#content',
-    '#main-content',
-    '#article-content'
-  ];
-  
-  for (const selector of contentSelectors) {
-    const element = doc.querySelector(selector);
-    if (element && hasSubstantialContent(element)) {
-      return element;
-    }
-  }
-  
-  // Strategy 3: Find largest container with paragraphs
-  const allDivs = Array.from(doc.querySelectorAll('div'));
-  let bestCandidate = null;
-  let maxScore = 0;
-  
-  for (const div of allDivs) {
-    if (isExcluded(div)) continue;
-    
-    const paragraphs = div.querySelectorAll('p');
-    const headings = div.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    const textLength = div.textContent.length;
-    
-    // Score based on content density
-    const score = paragraphs.length * 10 + headings.length * 5 + Math.min(textLength / 100, 50);
-    
-    if (score > maxScore && hasSubstantialContent(div)) {
-      maxScore = score;
-      bestCandidate = div;
-    }
-  }
-  
-  return bestCandidate;
-}
-
-/**
- * Check if element has substantial content
- * @param {Element} element - Element to check
- * @returns {boolean} True if element has substantial content
- */
-function hasSubstantialContent(element) {
-  const text = element.textContent.trim();
-  const paragraphs = element.querySelectorAll('p');
-  
-  // Must have at least 200 characters and 2 paragraphs
-  return text.length > 200 && paragraphs.length >= 2;
-}
-
-/**
- * Check if element should be excluded
- * @param {Element} element - Element to check
- * @returns {boolean} True if element should be excluded
- */
-function isExcluded(element) {
-  // Check if element is hidden
-  const style = window.getComputedStyle(element);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-    return true;
-  }
-  
-  // Check for excluded class names
-  const excludedClasses = [
-    'nav', 'navigation', 'menu', 'sidebar', 'footer', 'header',
-    'ad', 'advertisement', 'ads', 'sponsor', 'sponsored',
-    'comment', 'comments', 'discussion', 'thread',
-    'related', 'related-posts', 'related-articles',
-    'social', 'share', 'share-buttons',
-    'author-bio', 'author-info', 'about-author',
-    'translation-notice', 'translation-badge'
-  ];
-  
-  const className = String(element.className || '').toLowerCase();
-  const id = element.id.toLowerCase();
-  
-  for (const excluded of excludedClasses) {
-    if (className.includes(excluded) || id.includes(excluded)) {
-      return true;
-    }
-  }
-  
-  // Check parent elements
-  let parent = element.parentElement;
-  while (parent && parent !== document.body) {
-    const parentClass = String(parent.className || '').toLowerCase();
-    const parentId = parent.id.toLowerCase();
-    for (const excluded of excludedClasses) {
-      if (parentClass.includes(excluded) || parentId.includes(excluded)) {
-        return true;
-      }
-    }
-    parent = parent.parentElement;
-  }
-  
-  return false;
-}
-
-/**
- * Check if image is a tracking pixel
- * @param {HTMLImageElement} img - Image element
- * @returns {boolean} True if image is likely a tracking pixel
- */
-function isTrackingPixel(img) {
-  const width = img.naturalWidth || img.width || 0;
-  const height = img.naturalHeight || img.height || 0;
-  
-  // Very small images are likely tracking pixels
-  if (width <= 3 && height <= 3) return true;
-  
-  const src = img.src.toLowerCase();
-  const trackingPatterns = [
-    'pixel', 'tracking', 'beacon', 'analytics',
-    'facebook.com/tr', 'doubleclick', 'googleads'
-  ];
-  
-  return trackingPatterns.some(pattern => src.includes(pattern));
-}
-
-/**
- * Get image caption from nearby elements
- * @param {HTMLImageElement} img - Image element
- * @returns {string} Caption text or empty string
- */
-function getImageCaption(img) {
-  // Check for figcaption
-  const figure = img.closest('figure');
-  if (figure) {
-    const figcaption = figure.querySelector('figcaption');
-    if (figcaption) {
-      return figcaption.textContent.trim();
-    }
-  }
-  
-  // Check next sibling
-  const nextSibling = img.nextElementSibling;
-  if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
-    return nextSibling.textContent.trim();
-  }
-  
-  return '';
-}
-
-/**
- * Detect language from extracted content
- * @param {Array} content - Content items array
- * @returns {string} Language code
- */
-export function detectLanguageFromContent(content) {
-  // Extract text from content
-  let text = '';
-  for (const item of content) {
-    if (item.text) {
-      // Strip HTML tags for language detection
-      const textOnly = item.text.replace(/<[^>]+>/g, ' ').trim();
-      text += textOnly + ' ';
-      if (text.length > 5000) break; // Enough for detection
-    }
-  }
-  
-  if (!text.trim()) {
-    return 'en';
-  }
-  
-  return detectLanguageByCharacters(text);
 }
 

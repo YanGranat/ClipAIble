@@ -16,19 +16,90 @@ import { generatePdfWithDebugger } from '../generation/pdf.js';
  * @returns {boolean} - Always returns true for async handlers
  */
 export function handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive) {
-  startArticleProcessing(request.data)
-    .then(() => {
+  log('=== handleProcessArticle: ENTRY ===', {
+    hasData: !!request.data,
+    dataKeys: request.data ? Object.keys(request.data) : [],
+    mode: request.data?.mode,
+    url: request.data?.url,
+    hasTabId: !!request.data?.tabId,
+    tabId: request.data?.tabId,
+    hasHtml: !!request.data?.html,
+    htmlLength: request.data?.html?.length || 0,
+    outputFormat: request.data?.outputFormat,
+    timestamp: Date.now()
+  });
+  
+  log('=== handleProcessArticle: Checking startArticleProcessing ===', {
+    hasStartArticleProcessing: typeof startArticleProcessing === 'function',
+    functionName: startArticleProcessing?.name || 'unknown',
+    timestamp: Date.now()
+  });
+  
+  if (typeof startArticleProcessing !== 'function') {
+    logError('=== handleProcessArticle: startArticleProcessing is not a function ===', {
+      type: typeof startArticleProcessing,
+      timestamp: Date.now()
+    });
+    sendResponse({ error: 'startArticleProcessing is not a function' });
+    return true;
+  }
+  
+  log('=== handleProcessArticle: About to call startArticleProcessing ===', {
+    timestamp: Date.now()
+  });
+  
+  const processingPromise = startArticleProcessing(request.data);
+  
+  log('=== handleProcessArticle: startArticleProcessing called, got promise ===', {
+    isPromise: processingPromise instanceof Promise,
+    timestamp: Date.now()
+  });
+  
+  processingPromise
+    .then((result) => {
+      log('=== handleProcessArticle: startArticleProcessing SUCCESS ===', {
+        hasResult: !!result,
+        resultType: typeof result,
+        timestamp: Date.now()
+      });
+      
+      log('=== handleProcessArticle: Sending response ===', {
+        timestamp: Date.now()
+      });
+      
       sendResponse({ started: true });
+      
+      log('=== handleProcessArticle: Response sent ===', {
+        timestamp: Date.now()
+      });
     })
     .catch(async error => {
+      logError('=== handleProcessArticle: startArticleProcessing FAILED ===', {
+        error: error?.message || String(error),
+        errorStack: error?.stack,
+        errorName: error?.name,
+        timestamp: Date.now()
+      });
+      
       const normalized = await handleError(error, {
         source: 'messageHandler',
         errorType: 'contentExtractionFailed',
         logError: true,
         createUserMessage: false
       });
+      
+      logError('=== handleProcessArticle: Sending error response ===', {
+        errorMessage: normalized.message,
+        timestamp: Date.now()
+      });
+      
       sendResponse({ error: normalized.message || 'Processing failed' });
     });
+  
+  log('=== handleProcessArticle: Returning true ===', {
+    timestamp: Date.now()
+  });
+  
   return true;
 }
 
