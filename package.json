@@ -20,6 +20,10 @@
     "ai"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@mintplex-labs/piper-tts-web": "^1.0.4",
+    "js-tts-wrapper": "^0.1.63",
+    "onnxruntime-web": "^1.23.2"
+  }
 }
-

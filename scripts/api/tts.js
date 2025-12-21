@@ -1,42 +1,135 @@
 // Text-to-Speech API module for ClipAIble extension
-// Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, and Google Cloud TTS providers
+// Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Offline TTS providers
+
+console.log('[ClipAIble TTS] === MODULE LOADING ===', {
+  timestamp: Date.now(),
+  modulePath: 'scripts/api/tts.js'
+});
 
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+
+console.log('[ClipAIble TTS] Loading TTS provider modules...', {
+  timestamp: Date.now()
+});
+
 import { textToSpeech as elevenlabsTTS, ELEVENLABS_CONFIG } from './elevenlabs.js';
 import { textToSpeech as qwenTTS, QWEN_CONFIG } from './qwen.js';
 import { textToSpeech as respeecherTTS, RESPEECHER_CONFIG } from './respeecher.js';
 import { textToSpeech as googleTTS, GOOGLE_TTS_CONFIG } from './google-tts.js';
 
+console.log('[ClipAIble TTS] Loading offline TTS module...', {
+  timestamp: Date.now()
+});
+
+import { textToSpeech as offlineTTS, OFFLINE_TTS_CONFIG } from './offline-tts-offscreen.js';
+
+console.log('[ClipAIble TTS] === MODULE LOADED ===', {
+  timestamp: Date.now(),
+  hasOfflineTTS: typeof offlineTTS === 'function',
+  hasElevenlabsTTS: typeof elevenlabsTTS === 'function',
+  hasQwenTTS: typeof qwenTTS === 'function',
+  hasRespeecherTTS: typeof respeecherTTS === 'function',
+  hasGoogleTTS: typeof googleTTS === 'function',
+  hasLog: typeof log === 'function',
+  hasLogError: typeof logError === 'function'
+});
+
+log('[ClipAIble TTS] TTS module initialized with all providers', {
+  timestamp: Date.now(),
+  providers: ['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'offline']
+});
+
 /**
- * Convert text to speech using TTS API (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud TTS)
+ * Convert text to speech using TTS API (OpenAI, ElevenLabs, Qwen, Respeecher, Google Cloud TTS, or Offline)
  * @param {string} text - Text to convert
- * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud)
+ * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud) - not needed for 'offline'
  * @param {Object} options - TTS options
- * @param {string} options.provider - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', or 'google' (default: 'openai')
+ * @param {string} options.provider - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline' (default: 'openai')
  * @param {string} options.voice - Voice to use
- * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0)
- * @param {string} options.format - Output format (default: 'mp3')
+ * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0, offline: 0.1-10.0)
+ * @param {string} options.format - Output format (default: 'mp3', offline: always 'wav')
  * @param {string} options.instructions - Voice style instructions (OpenAI only)
- * @param {string} options.language - Language code for Qwen (auto-detected if not provided)
- * @param {number} options.pitch - Pitch -20.0 to 20.0 (Google Cloud TTS only, default: 0.0)
+ * @param {string} options.language - Language code for Qwen/Offline (auto-detected if not provided)
+ * @param {number} options.pitch - Pitch -20.0 to 20.0 (Google Cloud TTS only, default: 0.0) or 0-2.0 (Offline)
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
 export async function textToSpeech(text, apiKey, options = {}) {
+  const entryTime = Date.now();
   const { provider = 'openai' } = options;
   
-  if (provider === 'elevenlabs') {
+  console.log('[ClipAIble TTS] === textToSpeech ENTRY POINT ===', {
+    timestamp: entryTime,
+    provider,
+    textLength: text?.length,
+    hasApiKey: !!apiKey,
+    hasTabId: !!options.tabId,
+    optionsKeys: Object.keys(options),
+    options: JSON.stringify(options).substring(0, 200)
+  });
+  
+  log('[ClipAIble TTS] textToSpeech called', { 
+    provider, 
+    textLength: text?.length, 
+    hasApiKey: !!apiKey, 
+    hasTabId: !!options.tabId,
+    optionsKeys: Object.keys(options),
+    timestamp: entryTime
+  });
+  
+  if (provider === 'offline') {
+    console.log('[ClipAIble TTS] === ROUTING TO OFFLINE TTS ===', {
+      timestamp: Date.now(),
+      textLength: text?.length,
+      tabId: options.tabId,
+      voice: options.voice,
+      language: options.language,
+      speed: options.speed
+    });
+    
+    log('[ClipAIble TTS] Using offline TTS provider', { 
+      textLength: text?.length, 
+      tabId: options.tabId,
+      voice: options.voice,
+      language: options.language,
+      speed: options.speed
+    });
+    
+    const offlineStart = Date.now();
+    try {
+      const result = await textToSpeechOffline(text, null, options);
+      console.log('[ClipAIble TTS] === OFFLINE TTS COMPLETE ===', {
+        timestamp: Date.now(),
+        duration: Date.now() - offlineStart,
+        resultSize: result?.byteLength
+      });
+      return result;
+    } catch (error) {
+      console.error('[ClipAIble TTS] === OFFLINE TTS FAILED ===', {
+        timestamp: Date.now(),
+        duration: Date.now() - offlineStart,
+        error: error.message,
+        stack: error.stack
+      });
+      throw error;
+    }
+  } else if (provider === 'elevenlabs') {
+    console.log('[ClipAIble TTS] Routing to ElevenLabs TTS');
     return textToSpeechElevenLabs(text, apiKey, options);
   } else if (provider === 'qwen') {
+    console.log('[ClipAIble TTS] Routing to Qwen TTS');
     return textToSpeechQwen(text, apiKey, options);
   } else if (provider === 'respeecher') {
+    console.log('[ClipAIble TTS] Routing to Respeecher TTS');
     return textToSpeechRespeecher(text, apiKey, options);
   } else if (provider === 'google') {
+    console.log('[ClipAIble TTS] Routing to Google TTS');
     return textToSpeechGoogle(text, apiKey, options);
   } else {
+    console.log('[ClipAIble TTS] Routing to OpenAI TTS (default)');
     return textToSpeechOpenAI(text, apiKey, options);
   }
 }
@@ -347,6 +440,312 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
 }
 
 /**
+ * Convert text to speech using offline WASM TTS
+ * WASM TTS requires window object, so if called from service worker,
+ * it will execute in page context via executeScript
+ * @param {string} text - Text to convert (max 10000 characters)
+ * @param {string} apiKey - Not used for offline TTS
+ * @param {Object} options - TTS options
+ * @param {string} options.voice - Voice ID to use (optional, uses default)
+ * @param {number} options.speed - Speech speed 0.1-10.0 (default: 1.0)
+ * @param {number} options.pitch - Pitch 0-2.0 (default: 1.0, may not be supported)
+ * @param {number} options.volume - Volume 0-1.0 (default: 1.0, may not be supported)
+ * @param {string} options.language - Language code (e.g., 'en-US', 'ru-RU') (optional)
+ * @param {number} options.tabId - Tab ID for executeScript (required if window is not available)
+ * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
+ */
+async function textToSpeechOffline(text, apiKey, options = {}) {
+  const entryTime = Date.now();
+  console.log('[ClipAIble TTS] === textToSpeechOffline ENTRY ===', {
+    timestamp: entryTime,
+    textLength: text?.length,
+    hasApiKey: !!apiKey,
+    optionsKeys: Object.keys(options),
+    options: JSON.stringify(options).substring(0, 200)
+  });
+  
+  const {
+    voice = null,
+    speed = OFFLINE_TTS_CONFIG.DEFAULT_SPEED,
+    pitch = OFFLINE_TTS_CONFIG.DEFAULT_PITCH,
+    volume = OFFLINE_TTS_CONFIG.DEFAULT_VOLUME,
+    language = null,
+    tabId = null
+  } = options;
+
+  console.log('[ClipAIble TTS] textToSpeechOffline parameters extracted', {
+    timestamp: Date.now(),
+    voice,
+    speed,
+    pitch,
+    volume,
+    language,
+    tabId,
+    textLength: text?.length
+  });
+
+  log('[ClipAIble TTS] textToSpeechOffline (Offscreen Document) called', { 
+    textLength: text?.length, 
+    voice,
+    speed,
+    language,
+    pitch,
+    volume,
+    tabId,
+    timestamp: entryTime
+  });
+  
+  console.log('[ClipAIble TTS] Checking offlineTTS function availability', {
+    timestamp: Date.now(),
+    hasOfflineTTS: typeof offlineTTS === 'function',
+    offlineTTSType: typeof offlineTTS
+  });
+  
+  if (typeof offlineTTS !== 'function') {
+    const error = new Error('offlineTTS function is not available. Module may not be loaded correctly.');
+    console.error('[ClipAIble TTS] === CRITICAL ERROR ===', {
+      timestamp: Date.now(),
+      error: error.message,
+      offlineTTSType: typeof offlineTTS,
+      offlineTTSValue: offlineTTS
+    });
+    logError('[ClipAIble TTS] offlineTTS is not a function', {
+      type: typeof offlineTTS,
+      value: offlineTTS
+    });
+    throw error;
+  }
+  
+  console.log('[ClipAIble TTS] Calling offlineTTS function...', {
+    timestamp: Date.now(),
+    textLength: text.length,
+    voice,
+    speed,
+    language
+  });
+  
+  // Use offscreen document - works from any context (service worker, popup, content script)
+  // No need for tabId or window context
+  const callStart = Date.now();
+  try {
+    const result = await offlineTTS(text, { voice, speed, language });
+    const callDuration = Date.now() - callStart;
+    
+    console.log('[ClipAIble TTS] === offlineTTS call SUCCESS ===', {
+      timestamp: Date.now(),
+      duration: callDuration,
+      resultType: typeof result,
+      resultSize: result?.byteLength,
+      isArrayBuffer: result instanceof ArrayBuffer
+    });
+    
+    log('[ClipAIble TTS] offlineTTS call completed', {
+      duration: callDuration,
+      resultSize: result?.byteLength,
+      totalDuration: Date.now() - entryTime
+    });
+    
+    return result;
+  } catch (error) {
+    const callDuration = Date.now() - callStart;
+    console.error('[ClipAIble TTS] === offlineTTS call FAILED ===', {
+      timestamp: Date.now(),
+      duration: callDuration,
+      error: error.message,
+      errorName: error.name,
+      stack: error.stack,
+      totalDuration: Date.now() - entryTime
+    });
+    logError('[ClipAIble TTS] offlineTTS call failed', {
+      error: error.message,
+      duration: callDuration,
+      stack: error.stack
+    });
+    throw error;
+  }
+}
+
+/**
+ * Execute Piper TTS in page context via executeScript
+ * Piper TTS requires window object, so we inject a script that loads and uses it
+ * @param {string} text - Text to convert
+ * @param {number} tabId - Tab ID
+ * @param {Object} options - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
+ */
+async function executePiperTTSInPage(text, tabId, options = {}) {
+  log('Executing Piper TTS in page context', { tabId, textLength: text.length });
+  
+  // Check if tab is still available before executing
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab || tab.discarded) {
+      throw new Error(`Tab ${tabId} is not available (discarded or closed)`);
+    }
+  } catch (error) {
+    logError('Tab check failed before Piper TTS execution', error);
+    throw new Error(`Tab ${tabId} is not available: ${error.message}`);
+  }
+  
+  try {
+    // Inject the Piper TTS script file first
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        world: 'MAIN',
+        files: ['scripts/injected/piper-tts.js']
+      });
+      log('Piper TTS script file injected successfully', { tabId });
+    } catch (injectError) {
+      logError('Failed to inject Piper TTS script file', { error: injectError.message, tabId });
+      throw new Error(`Failed to inject Piper TTS script: ${injectError.message}`);
+    }
+    
+    // Wait a bit for script to initialize
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    // Verify function is available before calling
+    log('Checking if executePiperTTS is available', { tabId });
+    const checkResults = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      world: 'MAIN',
+      func: () => {
+        return {
+          hasWindow: typeof window !== 'undefined',
+          hasFunction: typeof window?.executePiperTTS === 'function',
+          functionType: typeof window?.executePiperTTS
+        };
+      }
+    });
+    
+    log('Function availability check', { 
+      checkResult: checkResults?.[0]?.result,
+      hasWindow: checkResults?.[0]?.result?.hasWindow,
+      hasFunction: checkResults?.[0]?.result?.hasFunction
+    });
+    
+    if (!checkResults?.[0]?.result?.hasFunction) {
+      throw new Error('executePiperTTS function is not available after script injection. Script may have failed to load.');
+    }
+    
+    // Get module URL from service worker (where chrome.runtime is available)
+    const moduleUrl = chrome.runtime.getURL('scripts/api/offline-tts-piper.js');
+    log('Piper TTS module URL', { moduleUrl });
+    
+    // Execute the function with arguments
+    log('Executing Piper TTS function', { tabId, textLength: text.length });
+    
+    // Use a timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Piper TTS execution timeout after 10 minutes'));
+      }, 10 * 60 * 1000); // 10 minutes timeout (voice download may take time)
+    });
+    
+    const scriptPromise = chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      world: 'MAIN',
+      func: (text, options, moduleUrl) => {
+        try {
+          console.log('[ClipAIble] executeScript func called', { textLength: text.length, hasWindow: typeof window !== 'undefined', moduleUrl });
+          
+          if (typeof window === 'undefined') {
+            throw new Error('window is undefined');
+          }
+          if (typeof window.executePiperTTS !== 'function') {
+            const availableKeys = Object.keys(window).filter(k => k.includes('execute') || k.includes('TTS') || k.includes('Piper'));
+            throw new Error(`executePiperTTS function not found. Available keys: ${availableKeys.join(', ')}`);
+          }
+          
+          // Add moduleUrl to options
+          const optionsWithUrl = { ...options, moduleUrl };
+          
+          console.log('[ClipAIble] Calling window.executePiperTTS...');
+          // Call the function and return the promise
+          // executeScript will wait for the promise to resolve
+          const promise = window.executePiperTTS(text, optionsWithUrl);
+          
+          if (!promise || typeof promise.then !== 'function') {
+            throw new Error(`executePiperTTS did not return a promise. Got: ${typeof promise}`);
+          }
+          
+          console.log('[ClipAIble] Promise returned from executePiperTTS, waiting for resolution...');
+          return promise;
+        } catch (error) {
+          console.error('[ClipAIble] Error in executeScript func', error);
+          console.error('[ClipAIble] Error stack', error.stack);
+          throw error;
+        }
+      },
+      args: [text, options, moduleUrl]
+    });
+    
+    const results = await Promise.race([scriptPromise, timeoutPromise]);
+    
+    log('Piper TTS execution completed', { 
+      hasResults: !!results, 
+      resultsLength: results?.length,
+      hasFirstResult: !!results?.[0],
+      hasError: !!results?.[0]?.error,
+      hasResult: !!results?.[0]?.result,
+      errorMessage: results?.[0]?.error?.message,
+      resultType: typeof results?.[0]?.result
+    });
+    
+    if (!results || !results[0]) {
+      // Check if tab was closed during execution
+      try {
+        await chrome.tabs.get(tabId);
+      } catch (tabError) {
+        throw new Error(`Tab ${tabId} was closed during Piper TTS execution`);
+      }
+      throw new Error('Piper TTS execution returned no result');
+    }
+    
+    if (results[0].error) {
+      logError('Piper TTS execution error', { 
+        error: results[0].error,
+        errorMessage: results[0].error?.message,
+        errorStack: results[0].error?.stack
+      });
+      throw new Error(`Piper TTS execution error: ${results[0].error.message || results[0].error}`);
+    }
+    
+    if (!results[0].result) {
+      logError('Piper TTS execution returned no result', { 
+        result: results[0].result,
+        resultType: typeof results[0].result
+      });
+      throw new Error('Piper TTS execution returned no result');
+    }
+    
+    const wavBase64 = results[0].result;
+    
+    // Convert base64 back to ArrayBuffer
+    const binaryString = atob(wavBase64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    return bytes.buffer;
+  } catch (error) {
+    logError('Failed to execute Piper TTS in page', { 
+      error: error.message, 
+      tabId,
+      textLength: text.length 
+    });
+    
+    // Check if error is due to tab being closed
+    if (error.message.includes('closed') || error.message.includes('discarded') || error.message.includes('not available')) {
+      throw new Error(`Tab was closed during Piper TTS. Please keep the page open while generating audio.`);
+    }
+    
+    throw new Error(`Piper TTS failed: ${error.message}`);
+  }
+}
+
+/**
  * Convert multiple text chunks to speech and concatenate
  * 
  * Note: Requests are processed sequentially (one at a time) to avoid hitting
@@ -361,10 +760,23 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
  * @returns {Promise<ArrayBuffer>} Concatenated audio data
  */
 export async function chunksToSpeech(chunks, apiKey, options = {}, updateState = null) {
-  log('=== chunksToSpeech START ===', {
+  const entryTime = Date.now();
+  console.log('[ClipAIble TTS] === chunksToSpeech ENTRY POINT ===', {
+    timestamp: entryTime,
+    chunksCount: chunks?.length || 0,
+    hasApiKey: !!apiKey,
+    optionsKeys: Object.keys(options),
+    provider: options.provider,
+    hasUpdateState: typeof updateState === 'function'
+  });
+  
+  log('[ClipAIble TTS] === chunksToSpeech START ===', {
+    timestamp: entryTime,
     chunksCount: chunks?.length,
     provider: options.provider,
-    voice: options.voice
+    voice: options.voice,
+    tabId: options.tabId,
+    hasApiKey: !!apiKey
   });
   
   if (!chunks || chunks.length === 0) {
@@ -381,6 +793,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     maxInput = RESPEECHER_CONFIG.MAX_INPUT;
   } else if (provider === 'google') {
     maxInput = GOOGLE_TTS_CONFIG.MAX_INPUT;
+  } else if (provider === 'offline') {
+    maxInput = OFFLINE_TTS_CONFIG.MAX_INPUT;
   } else {
     maxInput = AUDIO_CONFIG.TTS_MAX_INPUT;
   }
@@ -417,7 +831,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     });
     
     try {
-      // Pass all options including ElevenLabs advanced settings and OpenAI instructions
+      // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
       const audioBuffer = await textToSpeech(chunk.text, apiKey, options);
       audioBuffers.push(audioBuffer);
     } catch (error) {

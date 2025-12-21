@@ -16,6 +16,19 @@ import { generatePdfWithDebugger } from '../generation/pdf.js';
  * @returns {boolean} - Always returns true for async handlers
  */
 export function handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive) {
+  // DETAILED LOGGING: Voice in processArticle request
+  if (request.data?.audioVoice || request.data?.audioProvider) {
+    console.log('[ClipAIble Background] ===== VOICE IN processArticle REQUEST =====', {
+      timestamp: Date.now(),
+      audioProvider: request.data?.audioProvider,
+      audioVoice: request.data?.audioVoice,
+      audioVoiceType: typeof request.data?.audioVoice,
+      isNumeric: /^\d+$/.test(String(request.data?.audioVoice)),
+      googleTtsVoice: request.data?.googleTtsVoice,
+      outputFormat: request.data?.outputFormat
+    });
+  }
+  
   log('=== handleProcessArticle: ENTRY ===', {
     hasData: !!request.data,
     dataKeys: request.data ? Object.keys(request.data) : [],

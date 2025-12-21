@@ -41,29 +41,56 @@ export function contentToPlainText(content) {
   
   const textParts = [];
   let skippedItems = [];
+  let processedItems = [];
+  let itemIndex = 0;
   
   for (const item of content) {
+    itemIndex++;
+    const itemLog = {
+      index: itemIndex,
+      type: item.type,
+      originalLength: item.text?.length || item.html?.length || 0
+    };
+    
     switch (item.type) {
       case 'heading':
         // Add heading with newlines for natural pauses
         const headingText = stripHtml(item.text || '');
         if (headingText) {
           textParts.push(`\n\n${headingText}\n`);
+          itemLog.extractedLength = headingText.length;
+          itemLog.added = true;
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'Empty after stripHtml';
         }
+        processedItems.push(itemLog);
         break;
         
       case 'paragraph':
         const paraText = stripHtml(item.text || '');
         if (paraText) {
           textParts.push(paraText);
+          itemLog.extractedLength = paraText.length;
+          itemLog.added = true;
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'Empty after stripHtml';
         }
+        processedItems.push(itemLog);
         break;
         
       case 'quote':
         const quoteText = stripHtml(item.text || '');
         if (quoteText) {
           textParts.push(`Quote: ${quoteText}`);
+          itemLog.extractedLength = quoteText.length;
+          itemLog.added = true;
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'Empty after stripHtml';
         }
+        processedItems.push(itemLog);
         break;
         
       case 'list':
@@ -73,14 +100,28 @@ export function contentToPlainText(content) {
             return item.ordered ? `${index + 1}. ${text}` : `• ${text}`;
           }).filter(t => t);
           if (listItems.length > 0) {
-            textParts.push(listItems.join('\n'));
+            const listText = listItems.join('\n');
+            textParts.push(listText);
+            itemLog.extractedLength = listText.length;
+            itemLog.itemsCount = listItems.length;
+            itemLog.added = true;
+          } else {
+            itemLog.added = false;
+            itemLog.reason = 'No valid list items';
           }
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'No items array';
         }
+        processedItems.push(itemLog);
         break;
         
       case 'code':
         // Skip code blocks - not suitable for audio
         skippedItems.push({ type: 'code', length: item.text?.length || 0 });
+        itemLog.skipped = true;
+        itemLog.reason = 'Code blocks not suitable for audio';
+        processedItems.push(itemLog);
         break;
         
       case 'image':
@@ -89,30 +130,85 @@ export function contentToPlainText(content) {
           const captionText = stripHtml(item.caption);
           if (captionText) {
             textParts.push(`Image: ${captionText}`);
+            itemLog.extractedLength = captionText.length;
+            itemLog.added = true;
+            itemLog.hasCaption = true;
+          } else {
+            itemLog.added = false;
+            itemLog.reason = 'Empty caption after stripHtml';
           }
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'No caption';
         }
+        processedItems.push(itemLog);
         break;
         
       case 'table':
         // Skip tables - too complex for audio
         skippedItems.push({ type: 'table', rows: item.rows?.length || 0 });
+        itemLog.skipped = true;
+        itemLog.reason = 'Tables too complex for audio';
+        itemLog.rows = item.rows?.length || 0;
+        processedItems.push(itemLog);
         break;
         
       case 'separator':
         textParts.push('\n');
+        itemLog.added = true;
+        itemLog.extractedLength = 1;
+        processedItems.push(itemLog);
         break;
         
       case 'infobox_start':
         if (item.title) {
           textParts.push(`\n${item.title}:`);
+          itemLog.extractedLength = item.title.length;
+          itemLog.added = true;
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'No title';
         }
+        processedItems.push(itemLog);
         break;
         
       case 'infobox_end':
         textParts.push('\n');
+        itemLog.added = true;
+        itemLog.extractedLength = 1;
+        processedItems.push(itemLog);
         break;
+        
+      default:
+        itemLog.added = false;
+        itemLog.reason = `Unknown type: ${item.type}`;
+        processedItems.push(itemLog);
+        logWarn('Unknown content item type in contentToPlainText', itemLog);
     }
   }
+  
+  // Log detailed extraction summary
+  const addedCount = processedItems.filter(i => i.added).length;
+  const skippedCount = processedItems.filter(i => i.skipped).length;
+  const emptyCount = processedItems.filter(i => !i.added && !i.skipped).length;
+  
+  log('=== contentToPlainText EXTRACTION DETAILS ===', {
+    totalItems: content.length,
+    addedItems: addedCount,
+    skippedItems: skippedCount,
+    emptyItems: emptyCount,
+    itemsByType: processedItems.reduce((acc, item) => {
+      acc[item.type] = (acc[item.type] || 0) + 1;
+      return acc;
+    }, {}),
+    processedItemsPreview: processedItems.slice(0, 10).map(i => ({
+      index: i.index,
+      type: i.type,
+      added: i.added,
+      skipped: i.skipped,
+      length: i.extractedLength || i.originalLength
+    }))
+  });
   
   const result = textParts.join('\n\n').trim();
   
@@ -121,7 +217,11 @@ export function contentToPlainText(content) {
     outputParts: textParts.length,
     outputLength: result.length,
     skippedItems: skippedItems.length > 0 ? skippedItems : 'none',
-    preview: result.substring(0, 200) + '...'
+    preview: result.substring(0, 200) + '...',
+    endPreview: '...' + result.substring(Math.max(0, result.length - 100)),
+    nonAsciiCount: (result.match(/[^\x00-\x7F]/g) || []).length,
+    hasNewlines: result.includes('\n'),
+    newlineCount: (result.match(/\n/g) || []).length
   });
   
   return result;
@@ -341,14 +441,25 @@ const LANGUAGE_NAMES_FOR_PROMPT = {
  * @returns {Promise<string>} Cleaned text ready for TTS
  */
 export async function prepareChunkForAudio(chunkText, chunkIndex, totalChunks, apiKey, model, language = 'auto') {
-  log('=== prepareChunkForAudio START ===', { 
+  // Log all chunk preparation settings
+  const chunkSettings = {
+    timestamp: Date.now(),
     chunkIndex, 
     totalChunks, 
-    textLength: chunkText.length, 
+    textLength: chunkText.length,
     language,
+    model,
+    hasApiKey: !!apiKey,
     textPreview: chunkText.substring(0, 150) + '...',
-    textEnd: '...' + chunkText.substring(chunkText.length - 100)
-  });
+    textEnd: '...' + chunkText.substring(chunkText.length - 100),
+    // Language detection
+    langName: LANGUAGE_NAMES_FOR_PROMPT[language] || null,
+    languageInstruction: LANGUAGE_NAMES_FOR_PROMPT[language] 
+      ? `The text is in ${LANGUAGE_NAMES_FOR_PROMPT[language]}. Keep all text in ${LANGUAGE_NAMES_FOR_PROMPT[language]}.`
+      : 'Keep the original language of the text.'
+  };
+  
+  log('=== prepareChunkForAudio START with all settings ===', chunkSettings);
   
   const langName = LANGUAGE_NAMES_FOR_PROMPT[language] || null;
   const languageInstruction = langName 
@@ -395,9 +506,34 @@ OUTPUT: Return ONLY the cleaned text. No explanations, no prefixes, no quotes ar
 ${chunkText}`;
 
   try {
+    // Log before AI call
+    const beforeAICall = Date.now();
+    log('=== prepareChunkForAudio: Calling AI for cleanup ===', {
+      chunkIndex,
+      originalLength: chunkText.length,
+      language,
+      model,
+      originalPreview: chunkText.substring(0, 200),
+      originalEnd: '...' + chunkText.substring(Math.max(0, chunkText.length - 100)),
+      nonAsciiCount: (chunkText.match(/[^\x00-\x7F]/g) || []).length,
+      urlCount: (chunkText.match(/https?:\/\/\S+/g) || []).length,
+      markdownCount: (chunkText.match(/[*_`#\[\]]/g) || []).length
+    });
+    
     const cleaned = await callAI(systemPrompt, userPrompt, apiKey, model, false);
+    const aiCallDuration = Date.now() - beforeAICall;
+    
+    log('=== prepareChunkForAudio: AI cleanup complete ===', {
+      chunkIndex,
+      aiCallDuration,
+      aiCleanedLength: cleaned.length,
+      aiLengthChange: cleaned.length - chunkText.length,
+      aiCleanedPreview: cleaned.substring(0, 200),
+      aiCleanedEnd: '...' + cleaned.substring(Math.max(0, cleaned.length - 100))
+    });
     
     // Additional cleanup
+    const beforePostCleanup = cleaned;
     let result = cleaned
       .trim()
       // Remove any remaining markdown
@@ -414,16 +550,23 @@ ${chunkText}`;
       .replace(/\n\s*\n/g, '\n\n')
       .trim();
     
+    const postCleanupChange = result.length - beforePostCleanup.length;
     const lengthChange = result.length - chunkText.length;
     const changePercent = Math.round((lengthChange / chunkText.length) * 100);
     
     log('=== prepareChunkForAudio COMPLETE ===', { 
       chunkIndex, 
-      originalLength: chunkText.length, 
-      cleanedLength: result.length,
-      lengthChange: `${lengthChange > 0 ? '+' : ''}${lengthChange} (${changePercent}%)`,
+      originalLength: chunkText.length,
+      aiCleanedLength: cleaned.length,
+      finalLength: result.length,
+      aiLengthChange: cleaned.length - chunkText.length,
+      postCleanupChange,
+      totalLengthChange: `${lengthChange > 0 ? '+' : ''}${lengthChange} (${changePercent}%)`,
       cleanedPreview: result.substring(0, 150) + '...',
-      cleanedEnd: '...' + result.substring(result.length - 100)
+      cleanedEnd: '...' + result.substring(result.length - 100),
+      nonAsciiCount: (result.match(/[^\x00-\x7F]/g) || []).length,
+      hasUrls: /https?:\/\/\S+/.test(result),
+      hasMarkdown: /[*_`#\[\]]/.test(result)
     });
     
     // Warn if text was significantly shortened
@@ -449,20 +592,152 @@ ${chunkText}`;
  * @param {string} text - Text to clean
  * @returns {string} Cleaned text
  */
-function basicCleanup(text) {
-  return text
+/**
+ * Sanitize text for Piper TTS phonemizer
+ * Removes problematic Unicode characters that cause phoneme index errors
+ * This is the same sanitization used in offscreen.js for consistency
+ * @param {string} text - Text to sanitize
+ * @param {string} language - Language code (optional, for language-specific sanitization)
+ * @returns {string} Sanitized text safe for Piper TTS
+ */
+export function sanitizeForPiperTTS(text, language = 'auto') {
+  if (!text || typeof text !== 'string') return '';
+  
+  const langCode = language.split('-')[0].toLowerCase();
+  
+  let sanitized = text
+    // Remove zero-width characters
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    // Replace non-breaking spaces with regular spaces
+    .replace(/\u00A0/g, ' ')
+    // Normalize typographic quotes (smart quotes to regular quotes)
+    .replace(/[""]/g, '"')  // Left/right double quotes to regular quote
+    .replace(/['']/g, "'")  // Left/right single quotes to apostrophe
+    // Normalize typographic dashes
+    .replace(/—/g, ' - ')   // Em dash to hyphen with spaces
+    .replace(/–/g, '-')     // En dash to hyphen
+    // Remove control characters except newlines and tabs
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '')
+    // Remove other problematic Unicode characters that may cause phoneme errors
+    .replace(/[←→↑↓↔↕⇐⇒⇑⇓⇔⇕]/g, '')  // Arrows
+    .replace(/[•◦▪▫]/g, ' ')  // Bullets to space
+    .replace(/[©®™]/g, '')  // Copyright symbols
+    .replace(/[€£¥]/g, '')  // Currency symbols (keep $ as it's common)
+    .replace(/[°±×÷]/g, '')  // Math symbols
+    .replace(/[…]/g, '...')  // Ellipsis to three dots
+    // Normalize whitespace (but preserve paragraph breaks)
+    .replace(/[ \t]+/g, ' ')  // Multiple spaces/tabs to single space
+    .replace(/\n{3,}/g, '\n\n')  // Multiple newlines to double newline
+    .trim();
+  
+  // Additional aggressive sanitization for English text
+  // For English, be very strict - only allow ASCII printable + newlines
+  if (langCode === 'en') {
+    sanitized = sanitized
+      .split('')
+      .map(char => {
+        const code = char.charCodeAt(0);
+        // Allow: ASCII printable (32-126), newline (10), tab (9)
+        if ((code >= 32 && code <= 126) || code === 10 || code === 9) {
+          return char;
+        }
+        // Replace with space for other characters
+        return ' ';
+      })
+      .join('')
+      .replace(/[ \t]+/g, ' ')  // Normalize spaces again
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  } else {
+    // For non-English, remove only clearly problematic characters
+    // Keep most Unicode letters and common punctuation
+    sanitized = sanitized
+      .replace(/[^\p{L}\p{N}\p{P}\p{Z}\n\t]/gu, ' ')  // Keep letters, numbers, punctuation, whitespace
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+  
+  return sanitized;
+}
+
+/**
+ * Basic text cleanup without AI (for offline TTS or fallback)
+ * Removes URLs, markdown, footnotes, and other non-speech elements
+ * Also applies Piper TTS sanitization to prevent phoneme errors
+ * @param {string} text - Text to clean
+ * @param {string} language - Language code (optional, for language-specific sanitization)
+ * @returns {string} Cleaned text ready for TTS
+ */
+export function basicCleanup(text, language = 'auto') {
+  if (!text || typeof text !== 'string') return '';
+  
+  // Log before cleanup
+  const beforeCleanup = {
+    length: text.length,
+    language,
+    nonAsciiCount: (text.match(/[^\x00-\x7F]/g) || []).length,
+    urlCount: (text.match(/https?:\/\/\S+/g) || []).length,
+    markdownCount: (text.match(/[*_`#\[\]]/g) || []).length,
+    preview: text.substring(0, 200)
+  };
+  
+  log('=== basicCleanup START ===', beforeCleanup);
+  
+  // First, remove URLs, markdown, and other non-speech elements
+  let cleaned = text
+    // Remove URLs
     .replace(/https?:\/\/\S+/g, '')
     .replace(/www\.\S+/g, '')
+    // Remove footnotes and references
     .replace(/\[\d+\]/g, '')
     .replace(/\^\d+/g, '')
-    .replace(/`[^`]+`/g, '')
+    .replace(/\(see\s+[^)]+\)/gi, '') // Remove "see X" references
+    // Remove code blocks and inline code
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/_([^_]+)_/g, '$1')
-    .replace(/\s+/g, ' ')
+    .replace(/`[^`]+`/g, '')
+    // Remove markdown formatting
+    .replace(/\*\*([^*]+)\*\*/g, '$1') // Bold
+    .replace(/\*([^*]+)\*/g, '$1')     // Italic
+    .replace(/__([^_]+)__/g, '$1')     // Bold underscore
+    .replace(/_([^_]+)_/g, '$1')       // Italic underscore
+    .replace(/#{1,6}\s+/g, '')         // Headers
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Links [text](url) -> text
+    // Remove email addresses
+    .replace(/\S+@\S+\.\S+/g, '')
+    // Remove file paths (basic)
+    .replace(/[A-Z]:\\[^\s]+/gi, '')
+    .replace(/\/[^\s]+\.[a-z]{2,4}/gi, '')
+    // Normalize whitespace (preserve paragraph breaks)
+    .replace(/[ \t]+/g, ' ')           // Multiple spaces/tabs to single space
+    .replace(/\n{3,}/g, '\n\n')        // Multiple newlines to double newline
     .trim();
+  
+  // Then apply Piper TTS sanitization to prevent phoneme errors
+  const beforeSanitization = {
+    length: cleaned.length,
+    preview: cleaned.substring(0, 200)
+  };
+  
+  cleaned = sanitizeForPiperTTS(cleaned, language);
+  
+  const afterCleanup = {
+    originalLength: text.length,
+    cleanedLength: cleaned.length,
+    lengthChange: cleaned.length - text.length,
+    lengthChangePercent: Math.round(((cleaned.length - text.length) / text.length) * 100),
+    nonAsciiCount: (cleaned.match(/[^\x00-\x7F]/g) || []).length,
+    preview: cleaned.substring(0, 200),
+    end: '...' + cleaned.substring(Math.max(0, cleaned.length - 100))
+  };
+  
+  log('=== basicCleanup COMPLETE ===', {
+    ...afterCleanup,
+    beforeCleanup,
+    beforeSanitization
+  });
+  
+  return cleaned;
 }
 
 /**
@@ -476,8 +751,38 @@ function basicCleanup(text) {
  * @param {Function} updateState - State update callback
  * @returns {Promise<Array<{text: string, index: number}>>} Prepared chunks ready for TTS
  */
-export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState) {
-  log('Starting audio preparation', { contentItems: content?.length, title, language });
+export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState, provider = null) {
+  // Determine cleanup mode: use AI cleanup for online TTS, basic cleanup for offline
+  const useAICleanup = provider !== 'offline' && apiKey && model;
+  
+  // Log all preparation settings
+  const preparationSettings = {
+    timestamp: Date.now(),
+    // Content Settings
+    contentItems: content?.length,
+    title: title?.substring(0, 100),
+    titleLength: title?.length,
+    // Language Settings
+    language,
+    // Model Settings
+    model,
+    hasApiKey: !!apiKey,
+    // Provider and Cleanup Mode
+    provider: provider || 'unknown',
+    useAICleanup,
+    cleanupMode: useAICleanup ? 'AI-powered' : 'basic',
+    // Audio Config
+    audioConfig: {
+      minChunkSize: AUDIO_CONFIG.MIN_CHUNK_SIZE,
+      maxChunkSize: AUDIO_CONFIG.MAX_CHUNK_SIZE,
+      idealChunkSize: AUDIO_CONFIG.IDEAL_CHUNK_SIZE,
+      ttsMaxInput: AUDIO_CONFIG.TTS_MAX_INPUT
+    },
+    // Current State
+    currentProgress: getProcessingState()?.progress || 0
+  };
+  
+  log('Starting audio preparation with all settings', preparationSettings);
   
   // Get UI language for localization
   const uiLang = await getUILanguage();
@@ -521,17 +826,44 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const splittingStatus = tSync('stageSplittingIntoChunks', uiLang);
   const splitProgress = currentProgress >= 60 ? 60 : 15;
   updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus, progress: splitProgress });
+  
+  log('=== prepareContentForAudio: Splitting text into chunks ===', {
+    fullTextLength: fullText.length,
+    targetChunkSize: AUDIO_CONFIG.IDEAL_CHUNK_SIZE,
+    minChunkSize: AUDIO_CONFIG.MIN_CHUNK_SIZE,
+    maxChunkSize: AUDIO_CONFIG.MAX_CHUNK_SIZE,
+    estimatedChunks: Math.ceil(fullText.length / AUDIO_CONFIG.IDEAL_CHUNK_SIZE),
+    fullTextPreview: fullText.substring(0, 200),
+    fullTextEnd: '...' + fullText.substring(Math.max(0, fullText.length - 100))
+  });
+  
   const chunks = splitTextIntoChunks(fullText);
   
   if (chunks.length === 0) {
     throw new Error('Failed to split text into chunks');
   }
   
+  log('=== prepareContentForAudio: Text split into chunks ===', {
+    totalChunks: chunks.length,
+    chunkSizes: chunks.map(c => c.text.length),
+    totalChars: chunks.reduce((sum, c) => sum + c.text.length, 0),
+    avgChunkSize: Math.round(chunks.reduce((sum, c) => sum + c.text.length, 0) / chunks.length),
+    minChunkSize: Math.min(...chunks.map(c => c.text.length)),
+    maxChunkSize: Math.max(...chunks.map(c => c.text.length)),
+    chunksPreview: chunks.slice(0, 3).map((c, i) => ({
+      index: i,
+      length: c.text.length,
+      preview: c.text.substring(0, 100) + '...'
+    }))
+  });
+  
   // Prepare each chunk for audio
   const preparedChunks = [];
   
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
+    const chunkStartTime = Date.now();
+    
     // If already at 60%, keep it there (progress protection will prevent rollback)
     // Otherwise, progress from base to 60%
     const progress = currentProgress >= 60 ? 60 : (progressBase + Math.floor((i / chunks.length) * progressRange));
@@ -544,20 +876,68 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
       progress 
     });
     
-    const preparedText = await prepareChunkForAudio(
-      chunk.text, 
-      i, 
-      chunks.length, 
-      apiKey, 
-      model,
-      language
-    );
+    log('=== prepareContentForAudio: Processing chunk ===', {
+      chunkIndex: i,
+      totalChunks: chunks.length,
+      chunkLength: chunk.text.length,
+      progress,
+      chunkPreview: chunk.text.substring(0, 150) + '...'
+    });
+    
+    // Use AI cleanup for online TTS, basic cleanup for offline
+    let preparedText;
+    if (useAICleanup) {
+      preparedText = await prepareChunkForAudio(
+        chunk.text, 
+        i, 
+        chunks.length, 
+        apiKey, 
+        model,
+        language
+      );
+    } else {
+      // For offline TTS, use basic cleanup without AI
+      log('=== prepareContentForAudio: Using basic cleanup (offline TTS) ===', {
+        chunkIndex: i,
+        totalChunks: chunks.length,
+        originalLength: chunk.text.length,
+        originalPreview: chunk.text.substring(0, 150) + '...',
+        language
+      });
+      
+      preparedText = basicCleanup(chunk.text, language);
+      
+      log('=== prepareContentForAudio: Basic cleanup complete ===', {
+        chunkIndex: i,
+        originalLength: chunk.text.length,
+        cleanedLength: preparedText.length,
+        lengthChange: preparedText.length - chunk.text.length,
+        cleanedPreview: preparedText.substring(0, 150) + '...'
+      });
+    }
+    
+    const chunkDuration = Date.now() - chunkStartTime;
     
     if (preparedText && preparedText.length > 0) {
       preparedChunks.push({
         text: preparedText,
         index: i,
         originalIndex: chunk.index
+      });
+      
+      log('=== prepareContentForAudio: Chunk processed successfully ===', {
+        chunkIndex: i,
+        originalLength: chunk.text.length,
+        preparedLength: preparedText.length,
+        duration: chunkDuration,
+        lengthChange: preparedText.length - chunk.text.length,
+        lengthChangePercent: Math.round(((preparedText.length - chunk.text.length) / chunk.text.length) * 100)
+      });
+    } else {
+      logWarn('=== prepareContentForAudio: Chunk resulted in empty text ===', {
+        chunkIndex: i,
+        originalLength: chunk.text.length,
+        duration: chunkDuration
       });
     }
   }

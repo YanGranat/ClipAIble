@@ -37,7 +37,8 @@ export function initAudio(deps) {
     }
     audioVoiceMap.current[provider] = voice;
     debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, voice);
-    debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE_MAP, audioVoiceMap.current);
+    // CRITICAL: Save in correct format { current: { provider: voice } }
+    debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE_MAP, { current: { ...audioVoiceMap.current } });
   }
 
   /**
@@ -219,6 +220,96 @@ export function initAudio(deps) {
         elements.audioVoice.value = CONFIG.DEFAULT_RESPEECHER_VOICE;
       }
       saveAudioVoice(provider, elements.audioVoice.value);
+    } else if (provider === 'offline') {
+      // Piper TTS: use hardcoded voices list (same as other providers)
+      // All supported voices from PIPER_VOICES_MAPPING for supported languages
+      const offlineVoices = [
+        // English GB
+        { id: 'en_GB-alan-medium', name: 'en_GB-alan-medium' },
+        { id: 'en_GB-alba-medium', name: 'en_GB-alba-medium' },
+        { id: 'en_GB-aru-medium', name: 'en_GB-aru-medium' },
+        { id: 'en_GB-cori-medium', name: 'en_GB-cori-medium' },
+        { id: 'en_GB-cori-high', name: 'en_GB-cori-high' },
+        { id: 'en_GB-jenny_dioco-medium', name: 'en_GB-jenny_dioco-medium' },
+        { id: 'en_GB-northern_english_male-medium', name: 'en_GB-northern_english_male-medium' },
+        { id: 'en_GB-semaine-medium', name: 'en_GB-semaine-medium' },
+        { id: 'en_GB-vctk-medium', name: 'en_GB-vctk-medium' },
+        // English US
+        { id: 'en_US-amy-medium', name: 'en_US-amy-medium' },
+        { id: 'en_US-arctic-medium', name: 'en_US-arctic-medium' },
+        { id: 'en_US-bryce-medium', name: 'en_US-bryce-medium' },
+        { id: 'en_US-hfc_female-medium', name: 'en_US-hfc_female-medium' },
+        { id: 'en_US-hfc_male-medium', name: 'en_US-hfc_male-medium' },
+        { id: 'en_US-joe-medium', name: 'en_US-joe-medium' },
+        { id: 'en_US-john-medium', name: 'en_US-john-medium' },
+        { id: 'en_US-kristin-medium', name: 'en_US-kristin-medium' },
+        { id: 'en_US-kusal-medium', name: 'en_US-kusal-medium' },
+        { id: 'en_US-l2arctic-medium', name: 'en_US-l2arctic-medium' },
+        { id: 'en_US-lessac-medium', name: 'en_US-lessac-medium' },
+        { id: 'en_US-lessac-high', name: 'en_US-lessac-high' },
+        { id: 'en_US-libritts-high', name: 'en_US-libritts-high' },
+        { id: 'en_US-libritts_r-medium', name: 'en_US-libritts_r-medium' },
+        { id: 'en_US-ljspeech-medium', name: 'en_US-ljspeech-medium' },
+        { id: 'en_US-ljspeech-high', name: 'en_US-ljspeech-high' },
+        { id: 'en_US-norman-medium', name: 'en_US-norman-medium' },
+        { id: 'en_US-ryan-medium', name: 'en_US-ryan-medium' },
+        { id: 'en_US-ryan-high', name: 'en_US-ryan-high' },
+        // Russian
+        { id: 'ru_RU-denis-medium', name: 'ru_RU-denis-medium' },
+        { id: 'ru_RU-dmitri-medium', name: 'ru_RU-dmitri-medium' },
+        { id: 'ru_RU-irina-medium', name: 'ru_RU-irina-medium' },
+        { id: 'ru_RU-ruslan-medium', name: 'ru_RU-ruslan-medium' },
+        // Ukrainian
+        { id: 'uk_UA-ukrainian_tts-medium', name: 'uk_UA-ukrainian_tts-medium' },
+        // German
+        { id: 'de_DE-mls-medium', name: 'de_DE-mls-medium' },
+        { id: 'de_DE-thorsten-medium', name: 'de_DE-thorsten-medium' },
+        { id: 'de_DE-thorsten-high', name: 'de_DE-thorsten-high' },
+        { id: 'de_DE-thorsten_emotional-medium', name: 'de_DE-thorsten_emotional-medium' },
+        // French
+        { id: 'fr_FR-mls_fr-medium', name: 'fr_FR-mls_fr-medium' },
+        { id: 'fr_FR-siwis-medium', name: 'fr_FR-siwis-medium' },
+        { id: 'fr_FR-tom-medium', name: 'fr_FR-tom-medium' },
+        { id: 'fr_FR-upmc-medium', name: 'fr_FR-upmc-medium' },
+        // Spanish ES
+        { id: 'es_ES-davefx-medium', name: 'es_ES-davefx-medium' },
+        { id: 'es_ES-sharvard-medium', name: 'es_ES-sharvard-medium' },
+        // Spanish MX
+        { id: 'es_MX-ald-medium', name: 'es_MX-ald-medium' },
+        { id: 'es_MX-claude-high', name: 'es_MX-claude-high' },
+        // Italian
+        { id: 'it_IT-paola-medium', name: 'it_IT-paola-medium' },
+        // Portuguese BR
+        { id: 'pt_BR-faber-medium', name: 'pt_BR-faber-medium' },
+        // Portuguese PT
+        { id: 'pt_PT-tugão-medium', name: 'pt_PT-tugão-medium' },
+        // Chinese
+        { id: 'zh_CN-huayan-medium', name: 'zh_CN-huayan-medium' }
+      ];
+      
+      offlineVoices.forEach(voice => {
+        const option = document.createElement('option');
+        option.value = voice.id;
+        option.textContent = voice.id; // Display voice ID directly
+        elements.audioVoice.appendChild(option);
+      });
+      
+      // Set value: use saved value if valid, otherwise use default
+      // CRITICAL: Only save if value actually changed - don't overwrite saved voice unnecessarily
+      if (currentValue && offlineVoices.find(v => v.id === currentValue)) {
+        // Valid saved voice found - use it, don't save again
+        elements.audioVoice.value = currentValue;
+      } else if (currentValue) {
+        // Saved voice exists but not in list - use fallback for UI only, don't overwrite saved voice
+        // This preserves user's saved voice even if it's temporarily unavailable
+        elements.audioVoice.value = 'en_US-lessac-medium'; // Default for UI
+        // Don't save - preserve user's saved voice
+      } else {
+        // No saved voice - use default and save it
+        elements.audioVoice.value = 'en_US-lessac-medium';
+        saveAudioVoice(provider, 'en_US-lessac-medium');
+      }
+      // CRITICAL: Don't save here - only save if value actually changed or was missing
     } else {
       // OpenAI voices
       const openaiVoices = [

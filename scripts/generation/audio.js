@@ -42,6 +42,19 @@ const LANGUAGE_TTS_INSTRUCTIONS = {
  * @returns {Promise<void>} Triggers download when complete
  */
 export async function generateAudio(params, updateState) {
+  const entryTime = Date.now();
+  console.log('[ClipAIble Audio Generation] === generateAudio ENTRY POINT ===', {
+    timestamp: entryTime,
+    hasParams: !!params,
+    paramsKeys: params ? Object.keys(params) : [],
+    hasUpdateState: typeof updateState === 'function'
+  });
+  
+  log('[ClipAIble Audio Generation] === generateAudio START ===', {
+    timestamp: entryTime,
+    paramsKeys: params ? Object.keys(params) : []
+  });
+  
   const {
     content,
     title,
@@ -65,13 +78,84 @@ export async function generateAudio(params, updateState) {
     googleTtsPrompt = null,
     respeecherTemperature = 1.0,
     respeecherRepetitionPenalty = 1.0,
-    respeecherTopP = 1.0
+    respeecherTopP = 1.0,
+    tabId = null
   } = params;
+  
+  // Log all settings and configuration
+  const allSettings = {
+    timestamp: Date.now(),
+    // TTS Provider Settings
+    provider,
+    voice,
+    speed,
+    format,
+    language,
+    tabId,
+    // Content Settings
+    contentItems: content?.length,
+    title: title?.substring(0, 100),
+    // API Keys
+    hasApiKey: !!apiKey,
+    hasTtsApiKey: !!ttsApiKey,
+    // Model Settings
+    model,
+    // Provider-specific settings
+    ...(provider === 'elevenlabs' && {
+      elevenlabsModel,
+      elevenlabsFormat,
+      elevenlabsStability,
+      elevenlabsSimilarity,
+      elevenlabsStyle,
+      elevenlabsSpeakerBoost
+    }),
+    ...(provider === 'google' && {
+      googleTtsModel,
+      googleTtsVoice,
+      hasGoogleTtsPrompt: !!googleTtsPrompt
+    }),
+    ...(provider === 'respeecher' && {
+      respeecherTemperature,
+      respeecherRepetitionPenalty,
+      respeecherTopP
+    }),
+    ...(provider === 'openai' && {
+      hasOpenaiInstructions: !!openaiInstructions
+    }),
+    // Audio Config
+    audioConfig: {
+      minChunkSize: AUDIO_CONFIG.MIN_CHUNK_SIZE,
+      maxChunkSize: AUDIO_CONFIG.MAX_CHUNK_SIZE,
+      idealChunkSize: AUDIO_CONFIG.IDEAL_CHUNK_SIZE,
+      ttsMaxInput: AUDIO_CONFIG.TTS_MAX_INPUT,
+      minSpeed: AUDIO_CONFIG.MIN_SPEED,
+      maxSpeed: AUDIO_CONFIG.MAX_SPEED,
+      defaultSpeed: AUDIO_CONFIG.DEFAULT_SPEED,
+      defaultVoice: AUDIO_CONFIG.DEFAULT_VOICE,
+      availableVoices: AUDIO_CONFIG.VOICES
+    }
+  };
+  
+  console.log('[ClipAIble Audio Generation] Parameters extracted with all settings', allSettings);
   
   // Generate TTS instructions based on language
   const instructions = language !== 'auto' ? LANGUAGE_TTS_INSTRUCTIONS[language] : null;
   
-  log('Starting audio generation', { 
+  console.log('[ClipAIble Audio Generation] Starting audio generation', {
+    timestamp: Date.now(),
+    title,
+    contentItems: content?.length,
+    model,
+    provider,
+    voice,
+    speed,
+    format,
+    language,
+    tabId,
+    hasInstructions: !!instructions
+  });
+  
+  log('[ClipAIble Audio Generation] Starting audio generation', { 
     title, 
     contentItems: content?.length,
     model,
@@ -80,8 +164,10 @@ export async function generateAudio(params, updateState) {
     speed,
     format,
     language,
+    tabId,
     elevenlabsModel: provider === 'elevenlabs' ? elevenlabsModel : undefined,
-    hasInstructions: !!instructions
+    hasInstructions: !!instructions,
+    timestamp: entryTime
   });
   
   if (!content || content.length === 0) {
@@ -92,7 +178,7 @@ export async function generateAudio(params, updateState) {
     throw new Error('No API key provided for text preparation');
   }
   
-  if (!ttsApiKey) {
+  if (!ttsApiKey && provider !== 'offline') {
     throw new Error(`No ${provider} API key provided for TTS`);
   }
   
@@ -110,13 +196,26 @@ export async function generateAudio(params, updateState) {
     progress: startProgress 
   });
   
+  // For offline TTS, skip AI cleanup to avoid unnecessary API calls and costs
+  // Offline TTS will use basic cleanup instead
+  const useAICleanup = provider !== 'offline';
+  
+  log('[ClipAIble Audio Generation] Text preparation mode', {
+    provider,
+    useAICleanup,
+    reason: useAICleanup 
+      ? 'Using AI cleanup for better text quality' 
+      : 'Using basic cleanup for offline TTS (no API calls needed)'
+  });
+  
   const preparedChunks = await prepareContentForAudio(
     content,
     title,
-    apiKey,
-    model,
+    useAICleanup ? apiKey : null, // Pass null API key for offline to skip AI cleanup
+    useAICleanup ? model : null,  // Pass null model for offline to skip AI cleanup
     language,
-    updateState
+    updateState,
+    provider // Pass provider to control cleanup mode
   );
   
   if (!preparedChunks || preparedChunks.length === 0) {
@@ -129,10 +228,11 @@ export async function generateAudio(params, updateState) {
   });
   
   // Step 2: Convert chunks to speech (using selected TTS provider)
-  const providerName = provider === 'elevenlabs' ? 'ElevenLabs' : 
+  const providerName = provider === 'offline' ? 'Offline TTS' :
+                       (provider === 'elevenlabs' ? 'ElevenLabs' : 
                        (provider === 'qwen' ? 'Qwen' : 
                        (provider === 'google' ? 'Google Gemini TTS' : 
-                       (provider === 'respeecher' ? 'Respeecher' : 'OpenAI')));
+                       (provider === 'respeecher' ? 'Respeecher' : 'OpenAI'))));
   updateState?.({ 
     stage: PROCESSING_STAGES.GENERATING.id,
     status: `Converting to speech using ${providerName}...`, 
@@ -141,10 +241,49 @@ export async function generateAudio(params, updateState) {
   
   // Determine voice and format based on provider
   const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
-  // Google TTS always returns WAV format, format parameter is ignored
-  const ttsFormat = provider === 'google' ? 'wav' : format;
+  // Google TTS and Offline TTS always return WAV format, format parameter is ignored
+  const ttsFormat = (provider === 'google' || provider === 'offline') ? 'wav' : format;
   const ttsPrompt = provider === 'google' ? googleTtsPrompt : null;
   
+  console.log('[ClipAIble Audio Generation] CRITICAL: Voice parameter before chunksToSpeech', {
+    timestamp: Date.now(),
+    provider,
+    voice,
+    voiceType: typeof voice,
+    voiceValue: String(voice),
+    ttsVoice,
+    ttsVoiceType: typeof ttsVoice,
+    ttsVoiceValue: String(ttsVoice),
+    isNumeric: /^\d+$/.test(String(ttsVoice)),
+    hasUnderscore: ttsVoice && String(ttsVoice).includes('_'),
+    hasDash: ttsVoice && String(ttsVoice).includes('-'),
+    isFullVoiceId: ttsVoice && String(ttsVoice).includes('_') && String(ttsVoice).includes('-')
+  });
+  
+  console.log('[ClipAIble Audio Generation] === PREPARING TO CALL chunksToSpeech ===', {
+    timestamp: Date.now(),
+    provider,
+    voice: ttsVoice,
+    speed,
+    format: ttsFormat,
+    language,
+    tabId: params.tabId || null,
+    chunksCount: preparedChunks.length,
+    hasTtsApiKey: !!ttsApiKey
+  });
+  
+  log('[ClipAIble Audio Generation] Calling chunksToSpeech', {
+    provider,
+    voice: ttsVoice,
+    speed,
+    format: ttsFormat,
+    language,
+    tabId: params.tabId || null,
+    chunksCount: preparedChunks.length,
+    timestamp: Date.now()
+  });
+  
+  const chunksToSpeechStart = Date.now();
   const audioBuffer = await chunksToSpeech(
     preparedChunks,
     ttsApiKey,
@@ -167,10 +306,25 @@ export async function generateAudio(params, updateState) {
       respeecherTemperature,
       respeecherRepetitionPenalty,
       respeecherTopP,
-      language 
+      language,
+      tabId: params.tabId || null // Pass tabId for offline TTS
     },
     updateState
   );
+  
+  const chunksToSpeechDuration = Date.now() - chunksToSpeechStart;
+  console.log('[ClipAIble Audio Generation] === chunksToSpeech COMPLETE ===', {
+    timestamp: Date.now(),
+    duration: chunksToSpeechDuration,
+    hasAudioBuffer: !!audioBuffer,
+    audioBufferSize: audioBuffer?.byteLength
+  });
+  
+  log('[ClipAIble Audio Generation] chunksToSpeech completed', {
+    duration: chunksToSpeechDuration,
+    audioBufferSize: audioBuffer?.byteLength,
+    timestamp: Date.now()
+  });
   
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     throw new Error('Audio generation returned empty result');

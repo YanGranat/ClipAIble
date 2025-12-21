@@ -560,7 +560,31 @@ function debouncedSaveSettings(key, value, callback = null) {
     
     isSavingSettings = true;
     try {
+      // DETAILED LOGGING: Saving to storage
+      console.log('[ClipAIble Popup] ===== debouncedSaveSettings: ABOUT TO SAVE =====', {
+        timestamp: Date.now(),
+        key,
+        keyType: typeof key,
+        value,
+        valueType: typeof value,
+        isAudioVoice: key === 'audio_voice' || key === STORAGE_KEYS.AUDIO_VOICE,
+        isAudioVoiceMap: key === 'audio_voice_map' || key === STORAGE_KEYS.AUDIO_VOICE_MAP,
+        isNumeric: /^\d+$/.test(String(value)),
+        isObject: typeof value === 'object' && !Array.isArray(value),
+        objectKeys: typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : null
+      });
+      
       await chrome.storage.local.set({ [key]: value });
+      
+      // DETAILED LOGGING: Saved to storage
+      console.log('[ClipAIble Popup] ===== debouncedSaveSettings: SAVED TO STORAGE =====', {
+        timestamp: Date.now(),
+        key,
+        value,
+        saved: true,
+        storageKey: key
+      });
+      
       if (callback) await callback();
     } catch (error) {
       logError('Failed to save settings', error);
@@ -924,7 +948,9 @@ async function init() {
     setDisplayForIds,
     applyTheme,
     markdownToHtml,
-    audioVoiceMap: { current: audioVoiceMap }
+    audioVoiceMap: { current: audioVoiceMap },
+    t, // Add translation function for localization (async)
+    getUILanguage // Add getUILanguage for tSync
   });
   
   // Make modules available globally for use in other functions
@@ -2005,11 +2031,24 @@ async function updateOutputFormatUI() {
 }
 
 // Update voice list based on TTS provider
+// DEPRECATED: This function is kept for backward compatibility but should use settingsModule.updateVoiceList instead
+// This function uses old format audioVoiceMap[provider] instead of audioVoiceMap.current[provider]
 function updateVoiceList(provider) {
   if (!elements.audioVoice) return;
   
+  // CRITICAL: Use settingsModule.updateVoiceList if available (new implementation)
+  if (window.settingsModule && window.settingsModule.updateVoiceList) {
+    console.warn('[ClipAIble Popup] Using deprecated updateVoiceList, redirecting to settingsModule.updateVoiceList');
+    window.settingsModule.updateVoiceList(provider);
+    return;
+  }
+  
+  // Fallback to old implementation (should not be reached in normal flow)
   // IMPORTANT: restore per-provider saved voice if available
-  const savedProviderVoice = audioVoiceMap?.[provider] || '';
+  // CRITICAL: Check both old format and new format
+  const oldFormatVoice = audioVoiceMap?.[provider] || '';
+  const newFormatVoice = audioVoiceMap?.current?.[provider] || '';
+  const savedProviderVoice = newFormatVoice || oldFormatVoice;
   const currentValue = savedProviderVoice || elements.audioVoice.value || '';
   elements.audioVoice.innerHTML = '';
   
@@ -2272,7 +2311,14 @@ function updateAudioProviderUI() {
   
   // Update voice list when provider changes
   // This ensures that the correct voices are shown and invalid voices are replaced
-  updateVoiceList(provider);
+  // CRITICAL: Use settingsModule.updateVoiceList instead of deprecated updateVoiceList
+  if (window.settingsModule && window.settingsModule.updateVoiceList) {
+    window.settingsModule.updateVoiceList(provider);
+  } else {
+    // Fallback to old implementation (should not happen in normal flow)
+    console.warn('[ClipAIble Popup] settingsModule.updateVoiceList not available, using deprecated updateVoiceList');
+    updateVoiceList(provider);
+  }
 }
 
 // Show/hide translation-related UI based on language selection
@@ -2556,8 +2602,108 @@ function showToast(message, type = 'success') {
 }
 
 
-// Cleanup on popup close
-window.addEventListener('unload', () => {
+// CRITICAL: Function to save voice before popup closes
+async function saveVoiceBeforeClose() {
+  // Save any pending debounced settings first
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = null;
+  }
+  
+  // CRITICAL: Use saveAudioVoice from settings module to ensure consistency
+  if (!isSavingSettings && elements.audioVoice && elements.audioProvider && window.settingsModule && window.settingsModule.saveAudioVoice) {
+    isSavingSettings = true;
+    try {
+      const provider = elements.audioProvider.value || 'openai';
+      const selectedIndex = elements.audioVoice.selectedIndex;
+      const selectedOption = elements.audioVoice.options[selectedIndex];
+      
+      // CRITICAL: Use the same logic as saveAudioVoice - get voice ID from dataset.voiceId or option.value
+      let voiceToSave = null;
+      
+      if (selectedOption) {
+        // Priority 1: dataset.voiceId (most reliable)
+        if (selectedOption.dataset && selectedOption.dataset.voiceId) {
+          voiceToSave = selectedOption.dataset.voiceId;
+        }
+        // Priority 2: option.value (if not an index)
+        else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
+          voiceToSave = selectedOption.value;
+        }
+        // Priority 3: Use getVoiceIdByIndex if value is an index
+        else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && window.settingsModule.getVoiceIdByIndex) {
+          voiceToSave = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
+        }
+      }
+      
+      // If still no valid voice, try to get from current value
+      if (!voiceToSave && elements.audioVoice.value && !/^\d+$/.test(String(elements.audioVoice.value))) {
+        voiceToSave = elements.audioVoice.value;
+      }
+      
+      // Only save if we have a valid voice ID (not an index)
+      if (voiceToSave && voiceToSave !== '' && !/^\d+$/.test(String(voiceToSave))) {
+        // CRITICAL: Use saveAudioVoice from settings module - it handles audioVoiceMap correctly
+        window.settingsModule.saveAudioVoice(provider, voiceToSave);
+        
+        // CRITICAL: Also force immediate save (don't wait for debounce)
+        // Get current audioVoiceMap from storage to ensure we have latest
+        const storageResult = await chrome.storage.local.get([STORAGE_KEYS.AUDIO_VOICE_MAP]);
+        let currentMap = storageResult[STORAGE_KEYS.AUDIO_VOICE_MAP] || {};
+        
+        // CRITICAL: Ensure format is correct (with 'current' property)
+        if (!currentMap.current || typeof currentMap.current !== 'object' || Array.isArray(currentMap.current)) {
+          // Convert old format to new format
+          if (typeof currentMap === 'object' && !Array.isArray(currentMap) && !('current' in currentMap)) {
+            currentMap = { current: { ...currentMap } };
+          } else {
+            currentMap = { current: {} };
+          }
+        }
+        
+        // Update the voice for the provider
+        currentMap.current[provider] = voiceToSave;
+        
+        // Save synchronously before closing
+        await chrome.storage.local.set({ 
+          [STORAGE_KEYS.AUDIO_VOICE]: voiceToSave,
+          [STORAGE_KEYS.AUDIO_VOICE_MAP]: currentMap
+        });
+        
+        console.log('[ClipAIble Popup] CRITICAL: Saved voice before close', {
+          timestamp: Date.now(),
+          provider,
+          voiceToSave,
+          selectedIndex,
+          datasetVoiceId: selectedOption?.dataset?.voiceId,
+          optionValue: selectedOption?.value,
+          voiceMap: currentMap
+        });
+      } else {
+        console.warn('[ClipAIble Popup] CRITICAL: Cannot save voice before close - invalid voice ID', {
+          timestamp: Date.now(),
+          provider,
+          voiceToSave,
+          selectedIndex,
+          optionValue: selectedOption?.value,
+          datasetVoiceId: selectedOption?.dataset?.voiceId
+        });
+      }
+    } catch (error) {
+      console.error('[ClipAIble Popup] Failed to save settings before close', error);
+    } finally {
+      isSavingSettings = false;
+    }
+  }
+}
+
+// Cleanup on popup close - use multiple events for reliability
+window.addEventListener('beforeunload', saveVoiceBeforeClose);
+window.addEventListener('unload', saveVoiceBeforeClose);
+window.addEventListener('pagehide', saveVoiceBeforeClose);
+
+// Cleanup timers on popup close
+window.addEventListener('beforeunload', () => {
   if (statePollingTimeoutRef.current) {
     clearTimeout(statePollingTimeoutRef.current);
     statePollingTimeoutRef.current = null;
@@ -2565,10 +2711,6 @@ window.addEventListener('unload', () => {
   if (timerIntervalRef.current) {
     clearInterval(timerIntervalRef.current);
     timerIntervalRef.current = null;
-  }
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = null;
   }
 });
 

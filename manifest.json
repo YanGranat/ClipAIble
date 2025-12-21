@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "ClipAIble",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Article extractor with AI and automatic modes. Save any webpage as PDF, EPUB, FB2, Markdown, or Audio with translation.",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self';"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; base-uri 'self';"
   },
   "permissions": [
     "activeTab",
@@ -15,7 +15,9 @@
     "debugger",
     "alarms",
     "notifications",
-    "contextMenus"
+    "contextMenus",
+    "tabCapture",
+    "offscreen"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -50,7 +52,20 @@
       "resources": [
         "config/pdf-styles.css", 
         "print/print.html", 
-        "lib/*"
+        "lib/*",
+        "scripts/api/offline-tts-offscreen.js",
+        "scripts/api/offline-tts-piper.js",
+        "scripts/api/piper-voices-mapping.js",
+        "scripts/api/tts-queue.js",
+        "scripts/injected/piper-tts.js",
+        "offscreen.html",
+        "offscreen.js",
+        "scripts/utils/logging.js",
+        "scripts/utils/security.js",
+        "scripts/utils/config.js",
+        "node_modules/@mintplex-labs/piper-tts-web/dist/*",
+        "node_modules/onnxruntime-web/dist/*",
+        "lib/onnxruntime-web-wrapper.js"
       ],
       "matches": ["<all_urls>"]
     }

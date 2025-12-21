@@ -255,6 +255,7 @@
  * @property {number} [respeecherTemperature] - Respeecher temperature
  * @property {number} [respeecherRepetitionPenalty] - Respeecher repetition penalty
  * @property {number} [respeecherTopP] - Respeecher top_p
+ * @property {number|null} [tabId] - Tab ID for offline TTS (required when using offline TTS from service worker)
  */
 
 /**

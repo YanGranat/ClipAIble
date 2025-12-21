@@ -858,7 +858,65 @@ async function updateContextMenu() {
 
 // Initialize context menu on install
 try {
-  chrome.runtime.onInstalled.addListener(() => {
+  // Cleanup stale audio files from storage (protection against SW restart)
+async function cleanupStaleAudio() {
+  try {
+    log('[ClipAIble Cleanup] Starting stale audio cleanup...');
+    const data = await chrome.storage.local.get(null);
+    const now = Date.now();
+    const toRemove = [];
+    const CLEANUP_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+    
+    Object.keys(data).forEach(key => {
+      if (key.startsWith('clipaible_audio_') && key.endsWith('_meta')) {
+        // This is a metadata key, check if it's stale
+        const meta = data[key];
+        if (meta && typeof meta === 'object' && 'timestamp' in meta && typeof meta.timestamp === 'number') {
+          if ((now - meta.timestamp) > CLEANUP_THRESHOLD) {
+            // Extract base storage key (remove _meta suffix)
+            const baseKey = key.replace('_meta', '');
+            toRemove.push(key, baseKey);
+            log('[ClipAIble Cleanup] Found stale audio', {
+              baseKey,
+              age: now - meta.timestamp,
+              size: 'size' in meta && typeof meta.size === 'number' ? meta.size : undefined
+            });
+          }
+        }
+      } else if (key.startsWith('clipaible_audio_') && !key.endsWith('_meta')) {
+        // This is an audio key without metadata - check if metadata exists
+        const metaKey = `${key}_meta`;
+        if (!data[metaKey]) {
+          // No metadata - likely orphaned, remove it
+          toRemove.push(key);
+          log('[ClipAIble Cleanup] Found orphaned audio without metadata', { key });
+        }
+      }
+    });
+    
+    if (toRemove.length > 0) {
+      await chrome.storage.local.remove(toRemove);
+      log('[ClipAIble Cleanup] Cleanup completed', {
+        removedKeys: toRemove.length,
+        removedAudioFiles: toRemove.filter(k => !k.endsWith('_meta')).length
+      });
+    } else {
+      log('[ClipAIble Cleanup] No stale audio found');
+    }
+  } catch (error) {
+    logError('[ClipAIble Cleanup] Failed to cleanup stale audio', error);
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  log('[ClipAIble] Extension startup detected');
+  cleanupStaleAudio();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+    // Cleanup stale audio on install/update
+    cleanupStaleAudio();
+    
     updateContextMenu()
       .catch(async error => {
         const normalized = await handleError(error, {
@@ -894,7 +952,188 @@ setTimeout(() => {
 // Update context menu when UI language changes
 try {
   chrome.storage.onChanged.addListener((changes, areaName) => {
+    // DETAILED LOGGING: Storage changed event received
+    if (areaName === 'local' && (changes.audio_voice_map || changes.audio_voice)) {
+      const timestamp = Date.now();
+      console.log('[ClipAIble Background] ===== STORAGE CHANGED EVENT RECEIVED =====', {
+        timestamp,
+        hasAudioVoiceMap: !!changes.audio_voice_map,
+        hasAudioVoice: !!changes.audio_voice,
+        allChanges: Object.keys(changes),
+        stackTrace: new Error().stack?.split('\n').slice(0, 5).join('\n') // Show call stack to identify source
+      });
+      
+      // CRITICAL: Log full state of voice storage after change
+      chrome.storage.local.get(['audio_voice', 'audio_voice_map', 'audio_provider']).then((currentState) => {
+        console.log('[ClipAIble Background] ===== CURRENT VOICE STATE AFTER CHANGE =====', {
+          timestamp: Date.now(),
+          audio_provider: currentState.audio_provider,
+          audio_voice: currentState.audio_voice,
+          audio_voice_type: typeof currentState.audio_voice,
+          audio_voice_map: currentState.audio_voice_map,
+          audio_voice_map_type: typeof currentState.audio_voice_map,
+          audio_voice_map_keys: currentState.audio_voice_map ? Object.keys(currentState.audio_voice_map) : [],
+          audio_voice_map_has_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map,
+          audio_voice_map_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map ? currentState.audio_voice_map.current : null,
+          audio_voice_map_current_keys: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map && typeof currentState.audio_voice_map.current === 'object' ? Object.keys(currentState.audio_voice_map.current) : []
+        });
+      }).catch((error) => {
+        console.error('[ClipAIble Background] Failed to read current voice state after change', error);
+      });
+    }
+    
     if (areaName === 'local') {
+      
+      // DETAILED LOGGING: Voice selection changed in storage
+      if (changes.audio_voice_map) {
+        const oldValue = changes.audio_voice_map.oldValue;
+        const newValue = changes.audio_voice_map.newValue;
+        
+        // CRITICAL: Extract actual maps (handle both old and new format)
+        let oldMap = {};
+        let newMap = {};
+        
+        // Handle old format (direct map) vs new format (with 'current' property)
+        if (oldValue) {
+          if (typeof oldValue === 'object' && 'current' in oldValue && typeof oldValue.current === 'object') {
+            oldMap = oldValue.current || {};
+            console.log('[ClipAIble Background] Old value has "current" property (new format)');
+          } else if (typeof oldValue === 'object' && !Array.isArray(oldValue)) {
+            oldMap = oldValue;
+            console.log('[ClipAIble Background] Old value is direct map (old format)');
+          }
+        }
+        
+        if (newValue) {
+          if (typeof newValue === 'object' && 'current' in newValue && typeof newValue.current === 'object') {
+            newMap = newValue.current || {};
+            console.log('[ClipAIble Background] New value has "current" property (new format)');
+          } else if (typeof newValue === 'object' && !Array.isArray(newValue)) {
+            newMap = newValue;
+            console.log('[ClipAIble Background] New value is direct map (old format)');
+          }
+        }
+        
+        console.log('[ClipAIble Background] ===== VOICE MAP CHANGED IN STORAGE =====', {
+          timestamp: Date.now(),
+          oldValueRaw: oldValue,
+          newValueRaw: newValue,
+          oldValueType: typeof oldValue,
+          newValueType: typeof newValue,
+          oldValueHasCurrent: oldValue && typeof oldValue === 'object' && 'current' in oldValue,
+          newValueHasCurrent: newValue && typeof newValue === 'object' && 'current' in newValue,
+          oldMap,
+          newMap,
+          oldMapKeys: Object.keys(oldMap),
+          newMapKeys: Object.keys(newMap),
+          changedProviders: Object.keys(newMap).filter(provider => {
+            const oldVoice = oldMap[provider];
+            const newVoice = newMap[provider];
+            return oldVoice !== newVoice;
+          })
+        });
+        
+        // Log each provider change with detailed analysis
+        // CRITICAL: Filter out 'current' key - it's not a provider, it's a format property
+        for (const [provider, voice] of Object.entries(newMap)) {
+          // Skip 'current' - it's not a provider name
+          if (provider === 'current') {
+            continue;
+          }
+          
+          const oldVoice = oldMap[provider];
+          if (oldVoice !== voice) {
+            // CRITICAL: Ensure voice is a string before calling includes
+            const voiceStr = String(voice || '');
+            const oldVoiceStr = String(oldVoice || '');
+            
+            console.log('[ClipAIble Background] ===== VOICE CHANGED FOR PROVIDER =====', {
+              timestamp: Date.now(),
+              provider,
+              oldVoice,
+              oldVoiceType: typeof oldVoice,
+              oldVoiceStr,
+              newVoice: voice,
+              voiceType: typeof voice,
+              voiceStr,
+              isNumeric: /^\d+$/.test(voiceStr),
+              oldIsNumeric: /^\d+$/.test(oldVoiceStr),
+              isValidFormat: voiceStr && (voiceStr.includes('_') || voiceStr.includes('-') || provider !== 'offline'),
+              oldIsValidFormat: oldVoiceStr && (oldVoiceStr.includes('_') || oldVoiceStr.includes('-') || provider !== 'offline'),
+              changeReason: oldVoice ? 'voice_updated' : 'voice_set',
+              willCauseReset: provider === 'offline' && (/^\d+$/.test(voiceStr) || (!voiceStr.includes('_') && !voiceStr.includes('-')))
+            });
+            
+            // CRITICAL: Warn if voice format is invalid for offline provider
+            if (provider === 'offline') {
+              if (/^\d+$/.test(voiceStr)) {
+                console.error('[ClipAIble Background] CRITICAL ERROR: Voice is numeric index (will cause reset!)', {
+                  provider,
+                  invalidVoice: voiceStr,
+                  oldVoice: oldVoiceStr,
+                  timestamp: Date.now()
+                });
+              } else if (!voiceStr.includes('_') && !voiceStr.includes('-')) {
+                console.error('[ClipAIble Background] CRITICAL ERROR: Voice format invalid for offline (will cause reset!)', {
+                  provider,
+                  invalidVoice: voiceStr,
+                  oldVoice: oldVoiceStr,
+                  timestamp: Date.now()
+                });
+              }
+            }
+          }
+        }
+        
+        // CRITICAL: Check if any provider was removed
+        // CRITICAL: Filter out 'current' - it's not a provider, it's a format property
+        for (const [provider, oldVoice] of Object.entries(oldMap)) {
+          // Skip 'current' - it's not a provider name
+          if (provider === 'current') {
+            continue;
+          }
+          if (!(provider in newMap)) {
+            console.warn('[ClipAIble Background] CRITICAL: Provider voice was REMOVED from map', {
+              timestamp: Date.now(),
+              provider,
+              removedVoice: oldVoice,
+              willUseDefault: true
+            });
+          }
+        }
+      }
+      
+      // Handle legacy audio_voice key (backward compatibility)
+      if (changes.audio_voice) {
+        const oldVoice = changes.audio_voice.oldValue;
+        const newVoice = changes.audio_voice.newValue;
+        const oldVoiceStr = String(oldVoice || '');
+        const newVoiceStr = String(newVoice || '');
+        
+        console.log('[ClipAIble Background] ===== LEGACY VOICE CHANGED IN STORAGE =====', {
+          timestamp: Date.now(),
+          oldVoice,
+          oldVoiceType: typeof oldVoice,
+          oldVoiceStr,
+          newVoice,
+          newVoiceType: typeof newVoice,
+          newVoiceStr,
+          oldIsNumeric: /^\d+$/.test(oldVoiceStr),
+          isNumeric: /^\d+$/.test(newVoiceStr),
+          isValidFormat: newVoiceStr && (newVoiceStr.includes('_') || newVoiceStr.includes('-')),
+          changeReason: oldVoice ? 'voice_updated' : 'voice_set',
+          warning: /^\d+$/.test(newVoiceStr) ? 'CRITICAL: Voice is numeric index - will cause reset!' : null
+        });
+        
+        // CRITICAL: Warn if legacy voice is numeric (will cause issues)
+        if (/^\d+$/.test(newVoiceStr)) {
+          console.error('[ClipAIble Background] CRITICAL ERROR: Legacy voice is numeric index (will cause reset!)', {
+            timestamp: Date.now(),
+            invalidVoice: newVoiceStr,
+            oldVoice: oldVoiceStr
+          });
+        }
+      }
       
       // Handle UI language change
       if (changes.ui_language) {
@@ -1060,6 +1299,21 @@ async function handleQuickSave(outputFormat = 'pdf') {
       'translate_images', 'google_api_key'
     ]);
     
+    // CRITICAL: Log voice settings immediately after loading from storage
+    console.log('[ClipAIble Background] ===== SETTINGS LOADED FROM STORAGE (handleQuickSave) =====', {
+      timestamp: Date.now(),
+      audio_provider: settings.audio_provider,
+      audio_voice: settings.audio_voice,
+      audio_voice_type: typeof settings.audio_voice,
+      audio_voice_map: settings.audio_voice_map,
+      audio_voice_map_type: typeof settings.audio_voice_map,
+      audio_voice_map_keys: settings.audio_voice_map ? Object.keys(settings.audio_voice_map) : [],
+      audio_voice_map_has_current: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map,
+      audio_voice_map_current: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map ? settings.audio_voice_map.current : null,
+      audio_voice_map_current_keys: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map && typeof settings.audio_voice_map.current === 'object' ? Object.keys(settings.audio_voice_map.current) : [],
+      raw_audio_voice_map: JSON.stringify(settings.audio_voice_map).substring(0, 500)
+    });
+    
     /** @type {Record<string, any>} */
     const settingsObj = settings;
     
@@ -1174,12 +1428,87 @@ async function handleQuickSave(outputFormat = 'pdf') {
       // For Google TTS, use google_tts_voice if available, otherwise fallback to map/legacy
       audioVoice: (() => {
         const provider = String(settingsObj.audio_provider || 'openai');
+        
+        // CRITICAL: Log all voice-related settings for debugging
+        console.log('[ClipAIble Background] CRITICAL: Voice selection from settings', {
+          provider,
+          audio_provider: settingsObj.audio_provider,
+          audio_voice_map: settingsObj.audio_voice_map,
+          audio_voice_map_type: typeof settingsObj.audio_voice_map,
+          audio_voice_map_keys: settingsObj.audio_voice_map ? Object.keys(settingsObj.audio_voice_map) : [],
+          audio_voice: settingsObj.audio_voice,
+          audio_voice_type: typeof settingsObj.audio_voice,
+          google_tts_voice: settingsObj.google_tts_voice,
+          DEFAULT_AUDIO_VOICE: CONFIG.DEFAULT_AUDIO_VOICE
+        });
+        
         if (provider === 'google') {
           // Google TTS has its own voice setting
-          return String(settingsObj.google_tts_voice || 'Callirrhoe');
+          const googleVoice = String(settingsObj.google_tts_voice || 'Callirrhoe');
+          console.log('[ClipAIble Background] Using Google TTS voice', { googleVoice });
+          return googleVoice;
         }
-        const voiceMap = (settingsObj.audio_voice_map && typeof settingsObj.audio_voice_map === 'object') ? settingsObj.audio_voice_map : {};
-        return String(voiceMap[provider] || settingsObj.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE);
+        
+        // CRITICAL: Check if audio_voice_map has 'current' property (new format)
+        // or is a direct map (old format)
+        let voiceMap = {};
+        if (settingsObj.audio_voice_map && typeof settingsObj.audio_voice_map === 'object') {
+          // Check if it's the new format with 'current' property
+          if ('current' in settingsObj.audio_voice_map && typeof settingsObj.audio_voice_map.current === 'object') {
+            voiceMap = settingsObj.audio_voice_map.current;
+            console.log('[ClipAIble Background] Using audio_voice_map.current (new format)', {
+              voiceMap,
+              voiceMapKeys: Object.keys(voiceMap)
+            });
+          } else {
+            // Old format: direct map
+            voiceMap = settingsObj.audio_voice_map;
+            console.log('[ClipAIble Background] Using audio_voice_map directly (old format)', {
+              voiceMap,
+              voiceMapKeys: Object.keys(voiceMap)
+            });
+          }
+        }
+        
+        let selectedVoice = voiceMap[provider] || settingsObj.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE;
+        let finalVoice = String(selectedVoice);
+        
+        // CRITICAL: Validate voice for offline provider - if it's a number (index), it's invalid
+        // For offline provider, voice ID must contain _ and - (e.g., "ru_RU-irina-medium")
+        if (provider === 'offline' && finalVoice && /^\d+$/.test(finalVoice)) {
+          console.warn('[ClipAIble Background] CRITICAL: Invalid voice format detected (numeric index)', {
+            provider,
+            invalidVoice: finalVoice,
+            willUseDefault: true
+          });
+          // Use default voice for the detected language (will be determined later)
+          finalVoice = CONFIG.DEFAULT_AUDIO_VOICE;
+        }
+        
+        // CRITICAL: Additional validation - ensure voice ID format is valid for offline
+        if (provider === 'offline' && finalVoice && !finalVoice.includes('_') && !finalVoice.includes('-')) {
+          console.warn('[ClipAIble Background] CRITICAL: Invalid voice ID format for offline provider', {
+            provider,
+            invalidVoice: finalVoice,
+            willUseDefault: true
+          });
+          // Use default voice
+          finalVoice = CONFIG.DEFAULT_AUDIO_VOICE;
+        }
+        
+        console.log('[ClipAIble Background] CRITICAL: Final voice selected', {
+          provider,
+          voiceMap,
+          voiceMapProviderValue: voiceMap[provider],
+          audio_voice: settingsObj.audio_voice,
+          selectedVoice,
+          finalVoice,
+          finalVoiceType: typeof finalVoice,
+          isValidFormat: finalVoice && (finalVoice.includes('_') || finalVoice.includes('-')),
+          source: voiceMap[provider] ? 'voiceMap' : (settingsObj.audio_voice ? 'audio_voice' : 'DEFAULT')
+        });
+        
+        return finalVoice;
       })(),
       audioSpeed: (() => {
         const audioSpeed = settingsObj.audio_speed;
@@ -1229,11 +1558,26 @@ try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     log('=== chrome.runtime.onMessage: MESSAGE RECEIVED ===', {
       action: request?.action,
+      type: request?.type,
+      target: request?.target,
       hasData: !!request?.data,
       senderUrl: sender?.tab?.url || sender?.url || 'popup',
       senderTabId: sender?.tab?.id,
+      isOffscreen: sender?.id === chrome.runtime.id && !sender?.tab,
       timestamp: Date.now()
     });
+    
+    // CRITICAL: Messages with target: 'offscreen' are for offscreen document
+    // Service worker must NOT handle them - return false immediately to let them pass through
+    if (request.target === 'offscreen') {
+      log('[ClipAIble Background] Offscreen message detected, passing through', {
+        type: request.type,
+        hasData: !!request.data,
+        timestamp: Date.now()
+      });
+      // Return false to allow message to reach offscreen document's listener
+      return false;
+    }
     
     const result = routeMessage(request, sender, sendResponse, {
       startArticleProcessing,
@@ -1452,10 +1796,15 @@ async function startArticleProcessing(data) {
       
       log('Processing complete', { 
         title: result.title, 
-        contentItems: result.content?.length || 0 
+        contentItems: result.content?.length || 0,
+        outputFormat: data.outputFormat
       });
       
       // Continue with standard pipeline: translation, TOC/Abstract, generation
+      log('=== startArticleProcessing: About to call continueProcessingPipeline ===', {
+        outputFormat: data.outputFormat,
+        timestamp: Date.now()
+      });
       await continueProcessingPipeline(data, result, stopKeepAlive);
     })
       .then(async () => {
@@ -1834,6 +2183,16 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       language: effectiveLanguage
     }, updateState);
   } else if (outputFormat === 'audio') {
+    const audioStartTime = Date.now();
+    console.log('[ClipAIble Background] === AUDIO GENERATION ENTRY POINT ===', {
+      timestamp: audioStartTime,
+      audioProvider: data.audioProvider,
+      hasTabId: !!data.tabId,
+      tabId: data.tabId,
+      hasContent: !!result.content,
+      contentItems: result.content?.length || 0
+    });
+    
     // Don't set progress here - let generateAudio manage its own progress
     const uiLang = await getUILanguage();
     const status = tSync('statusGeneratingAudio', uiLang);
@@ -1841,6 +2200,19 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
     
     // Get TTS API key based on provider
     const ttsProvider = data.audioProvider || 'openai';
+    console.log('[ClipAIble Background] TTS provider determined', {
+      timestamp: Date.now(),
+      ttsProvider,
+      hasTabId: !!data.tabId,
+      tabId: data.tabId
+    });
+    
+    log('[ClipAIble Background] === Audio generation: TTS provider selected ===', { 
+      ttsProvider, 
+      hasTabId: !!data.tabId,
+      tabId: data.tabId,
+      audioProvider: data.audioProvider 
+    });
     let ttsApiKey = data.apiKey; // Default to main API key (OpenAI)
     
     // Helper function to decrypt TTS API key with localized error messages
@@ -1864,7 +2236,35 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       }
     }
     
-    if (ttsProvider === 'elevenlabs') {
+    if (ttsProvider === 'offline') {
+      console.log('[ClipAIble Background] === OFFLINE TTS DETECTED ===', {
+        timestamp: Date.now(),
+        tabId: data.tabId,
+        hasTabId: !!data.tabId,
+        audioVoice: data.audioVoice,
+        audioVoiceType: typeof data.audioVoice,
+        audioProvider: data.audioProvider
+      });
+      
+      // CRITICAL: Log voice received from popup for offline TTS
+      console.log(`[ClipAIble Background] ===== OFFLINE TTS VOICE FROM POPUP ===== VOICE="${String(data.audioVoice || '')}" =====`, {
+        timestamp: Date.now(),
+        audioVoice: data.audioVoice,
+        VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
+        audioVoiceType: typeof data.audioVoice,
+        audioVoiceStr: String(data.audioVoice || ''),
+        isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
+        isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
+        willCauseReset: /^\d+$/.test(String(data.audioVoice || '')) || (data.audioVoice && !String(data.audioVoice).includes('_') && !String(data.audioVoice).includes('-'))
+      });
+      
+      // Offline TTS doesn't need API key
+      ttsApiKey = null;
+      log('[ClipAIble Background] Offline TTS selected - no API key needed', {
+        tabId: data.tabId,
+        timestamp: Date.now()
+      });
+    } else if (ttsProvider === 'elevenlabs') {
       ttsApiKey = await decryptTtsApiKey(data.elevenlabsApiKey, 'elevenlabs', 'ElevenLabs');
     } else if (ttsProvider === 'qwen') {
       ttsApiKey = await decryptTtsApiKey(data.qwenApiKey, 'qwen', 'Qwen');
@@ -1877,6 +2277,17 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       ttsApiKey = data.apiKey;
     }
     
+    // DETAILED LOGGING: Voice received in continueProcessingPipeline
+    console.log('[ClipAIble Background] ===== VOICE IN continueProcessingPipeline =====', {
+      timestamp: Date.now(),
+      ttsProvider,
+      audioVoice: data.audioVoice,
+      audioVoiceType: typeof data.audioVoice,
+      isNumeric: /^\d+$/.test(String(data.audioVoice)),
+      googleTtsVoice: data.googleTtsVoice,
+      defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE
+    });
+    
     /** @type {AudioGenerationData} */
     const audioParams = {
       content: result.content,
@@ -1886,10 +2297,73 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       model: data.model,
       provider: ttsProvider,
       // For Google TTS, use googleTtsVoice; for others, use audioVoice
-      voice: ttsProvider === 'google' ? (data.googleTtsVoice || 'Callirrhoe') : (data.audioVoice || CONFIG.DEFAULT_AUDIO_VOICE),
+      // CRITICAL: Validate voice - if it's a number (index), it's invalid
+      voice: (() => {
+        // DETAILED LOGGING: Voice received from popup
+        console.log('[ClipAIble Background] ===== VOICE RECEIVED FROM POPUP =====', {
+          timestamp: Date.now(),
+          ttsProvider,
+          audioVoice: data.audioVoice,
+          googleTtsVoice: data.googleTtsVoice,
+          defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE
+        });
+        
+        if (ttsProvider === 'google') {
+          const googleVoice = data.googleTtsVoice || 'Callirrhoe';
+          console.log('[ClipAIble Background] ===== USING GOOGLE TTS VOICE =====', {
+            timestamp: Date.now(),
+            googleVoice
+          });
+          return googleVoice;
+        }
+        const voice = data.audioVoice || CONFIG.DEFAULT_AUDIO_VOICE;
+        
+        // DETAILED LOGGING: Voice validation
+        console.log('[ClipAIble Background] ===== VALIDATING VOICE =====', {
+          timestamp: Date.now(),
+          ttsProvider,
+          voice,
+          voiceType: typeof voice,
+          isNumeric: /^\d+$/.test(String(voice)),
+          hasUnderscore: voice && String(voice).includes('_'),
+          hasDash: voice && String(voice).includes('-')
+        });
+        
+        // If voice is a number (index), it's invalid - use default
+        if (/^\d+$/.test(String(voice))) {
+          console.warn('[ClipAIble Background] ===== INVALID VOICE (NUMERIC INDEX) =====', {
+            timestamp: Date.now(),
+            provider: ttsProvider,
+            invalidVoice: voice,
+            willUseDefault: CONFIG.DEFAULT_AUDIO_VOICE
+          });
+          return CONFIG.DEFAULT_AUDIO_VOICE;
+        }
+        // For offline provider, ensure voice ID format is valid (contains _ and -)
+        // CRITICAL: Ensure voice is a string before calling includes
+        const voiceStr = String(voice || '');
+        if (ttsProvider === 'offline' && voiceStr && !voiceStr.includes('_') && !voiceStr.includes('-')) {
+          console.warn('[ClipAIble Background] ===== INVALID VOICE FORMAT FOR OFFLINE =====', {
+            timestamp: Date.now(),
+            provider: ttsProvider,
+            invalidVoice: voice,
+            willUseDefault: CONFIG.DEFAULT_AUDIO_VOICE
+          });
+          return CONFIG.DEFAULT_AUDIO_VOICE;
+        }
+        
+        console.log('[ClipAIble Background] ===== VOICE VALIDATED AND READY =====', {
+          timestamp: Date.now(),
+          ttsProvider,
+          finalVoice: voice,
+          willSendToTTS: true
+        });
+        return voice;
+      })(),
       speed: data.audioSpeed || CONFIG.DEFAULT_AUDIO_SPEED,
       format: data.audioFormat || CONFIG.DEFAULT_AUDIO_FORMAT,
       language: effectiveLanguage,
+      tabId: data.tabId || null, // For offline TTS
       elevenlabsModel: data.elevenlabsModel || CONFIG.DEFAULT_ELEVENLABS_MODEL,
       elevenlabsFormat: data.elevenlabsFormat || 'mp3_44100_192',
       elevenlabsStability: data.elevenlabsStability !== undefined ? data.elevenlabsStability : 0.5,
@@ -1904,7 +2378,54 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       respeecherRepetitionPenalty: data.respeecherRepetitionPenalty !== undefined ? data.respeecherRepetitionPenalty : 1.0,
       respeecherTopP: data.respeecherTopP !== undefined ? data.respeecherTopP : 1.0
     };
-    return generateAudio(audioParams, updateState);
+    
+    console.log('[ClipAIble Background] === PREPARING TO CALL generateAudio ===', {
+      timestamp: Date.now(),
+      provider: audioParams.provider,
+      tabId: audioParams.tabId,
+      hasContent: !!audioParams.content,
+      contentItems: audioParams.content?.length || 0,
+      voice: audioParams.voice,
+      speed: audioParams.speed,
+      language: audioParams.language,
+      hasTtsApiKey: !!audioParams.ttsApiKey
+    });
+    
+    log('[ClipAIble Background] === Audio generation: Calling generateAudio ===', { 
+      provider: audioParams.provider,
+      tabId: audioParams.tabId,
+      hasContent: !!audioParams.content,
+      contentItems: audioParams.content?.length || 0,
+      voice: audioParams.voice,
+      speed: audioParams.speed,
+      language: audioParams.language,
+      timestamp: Date.now()
+    });
+    
+    const generateAudioStart = Date.now();
+    try {
+      const result = await generateAudio(audioParams, updateState);
+      console.log('[ClipAIble Background] === generateAudio COMPLETE ===', {
+        timestamp: Date.now(),
+        duration: Date.now() - generateAudioStart,
+        totalDuration: Date.now() - audioStartTime
+      });
+      return result;
+    } catch (error) {
+      console.error('[ClipAIble Background] === generateAudio FAILED ===', {
+        timestamp: Date.now(),
+        duration: Date.now() - generateAudioStart,
+        totalDuration: Date.now() - audioStartTime,
+        error: error.message,
+        stack: error.stack
+      });
+      logError('[ClipAIble Background] generateAudio failed', {
+        error: error.message,
+        duration: Date.now() - generateAudioStart,
+        stack: error.stack
+      });
+      throw error;
+    }
   } else {
     // PDF (default)
     const uiLang = await getUILanguage();

@@ -50,7 +50,9 @@ export function initSettings(deps) {
     setDisplayForIds,
     applyTheme,
     markdownToHtml,
-    audioVoiceMap
+    audioVoiceMap,
+    t, // Translation function for localization (async)
+    getUILanguage // Get UI language function for tSync
   } = deps;
 
   // Initialize submodules in correct order (respecting dependencies)
@@ -88,7 +90,9 @@ export function initSettings(deps) {
     debouncedSaveSettings,
     audioVoiceMap,
     getElement,
-    setElementGroupDisplay
+    setElementGroupDisplay,
+    t, // Add translation function for localization (async)
+    getUILanguage // Add getUILanguage for tSync
   });
 
   // Step 6: Initialize UI visibility module (needs audio functions)
@@ -503,7 +507,66 @@ export function initSettings(deps) {
         if (!audioVoiceMap || typeof audioVoiceMap !== 'object' || Array.isArray(audioVoiceMap)) {
           logWarn('audioVoiceMap is not properly initialized in loadSettings');
         } else {
-          audioVoiceMap.current = result[STORAGE_KEYS.AUDIO_VOICE_MAP];
+          // CRITICAL: Clean up invalid voice values (numeric indices) from storage
+          const loadedMap = result[STORAGE_KEYS.AUDIO_VOICE_MAP];
+          
+          // CRITICAL: Check format - new format has 'current' property, old format is direct map
+          const hasCurrent = loadedMap && typeof loadedMap === 'object' && !Array.isArray(loadedMap) && 'current' in loadedMap;
+          let voiceMapToLoad = null;
+          
+          if (hasCurrent && loadedMap.current && typeof loadedMap.current === 'object' && !Array.isArray(loadedMap.current)) {
+            // New format: { current: { provider: voice } }
+            voiceMapToLoad = loadedMap.current;
+            console.log('[ClipAIble Settings] ===== LOADING VOICE MAP FROM STORAGE (NEW FORMAT) =====', {
+              timestamp: Date.now(),
+              originalMap: loadedMap,
+              currentMap: voiceMapToLoad,
+              mapKeys: Object.keys(voiceMapToLoad || {})
+            });
+          } else {
+            // Old format: { provider: voice } (backward compatibility)
+            voiceMapToLoad = loadedMap;
+            console.log('[ClipAIble Settings] ===== LOADING VOICE MAP FROM STORAGE (OLD FORMAT) =====', {
+              timestamp: Date.now(),
+              originalMap: loadedMap,
+              mapKeys: Object.keys(loadedMap || {})
+            });
+          }
+          
+          const cleanedMap = {};
+          for (const [provider, voice] of Object.entries(voiceMapToLoad || {})) {
+            // If voice is a number (index), it's invalid - don't load it
+            if (voice && /^\d+$/.test(String(voice))) {
+              console.warn('[ClipAIble Settings] ===== INVALID VOICE IN STORAGE (SKIPPING) =====', {
+                timestamp: Date.now(),
+                provider,
+                invalidVoice: voice,
+                isNumeric: true,
+                willSkip: true
+              });
+              // Skip invalid voice - it will be replaced with default when user selects provider
+            } else {
+              cleanedMap[provider] = voice;
+              // CRITICAL: Ensure voice is a string before calling includes
+              const voiceStr = String(voice || '');
+              console.log('[ClipAIble Settings] ===== VALID VOICE LOADED FROM STORAGE =====', {
+                timestamp: Date.now(),
+                provider,
+                voice,
+                voiceType: typeof voice,
+                voiceStr,
+                isValidFormat: voiceStr && (voiceStr.includes('_') || voiceStr.includes('-') || provider !== 'offline')
+              });
+            }
+          }
+          audioVoiceMap.current = cleanedMap;
+          console.log('[ClipAIble Settings] ===== VOICE MAP LOADED FROM STORAGE =====', {
+            timestamp: Date.now(),
+            originalMap: loadedMap,
+            cleanedMap,
+            hasInvalidValues: Object.keys(loadedMap).length !== Object.keys(cleanedMap).length,
+            loadedProviders: Object.keys(cleanedMap)
+          });
         }
       } else {
         // Initialize empty map if not exists
@@ -714,12 +777,43 @@ export function initSettings(deps) {
         ? audioVoiceMap.current 
         : (audioVoiceMap || {});
       const mappedVoice = voiceMap[initialProvider];
-      const initialVoice = mappedVoice || legacyVoice;
+      
+      // CRITICAL: Validate legacy voice - if it's a number (index), it's invalid
+      let validLegacyVoice = legacyVoice;
+      if (legacyVoice && /^\d+$/.test(String(legacyVoice))) {
+        console.warn('[ClipAIble Settings] CRITICAL: Legacy voice is a number (index), treating as invalid', {
+          provider: initialProvider,
+          invalidLegacyVoice: legacyVoice,
+          willUseMappedVoice: !!mappedVoice
+        });
+        validLegacyVoice = null; // Treat as invalid
+      }
+      
+      const initialVoice = mappedVoice || validLegacyVoice;
       if (initialVoice) {
-        elements.audioVoice.value = initialVoice;
-        // Migrate legacy value into map for current provider
-        if (!mappedVoice && legacyVoice) {
-          audioModule.saveAudioVoice(initialProvider, legacyVoice);
+        // CRITICAL: Validate initial voice before setting
+        if (initialProvider === 'offline' && /^\d+$/.test(String(initialVoice))) {
+          console.warn('[ClipAIble Settings] CRITICAL: Initial voice for offline is a number (index), skipping', {
+            provider: initialProvider,
+            invalidVoice: initialVoice
+          });
+          // Don't set invalid voice - updateVoiceList will set default
+        } else {
+          elements.audioVoice.value = initialVoice;
+          const selectedOption = elements.audioVoice.options[elements.audioVoice.selectedIndex];
+          console.log('[ClipAIble Settings] ===== INITIAL VOICE SET IN UI =====', {
+            timestamp: Date.now(),
+            provider: initialProvider,
+            voice: initialVoice,
+            selectValue: elements.audioVoice.value,
+            selectIndex: elements.audioVoice.selectedIndex,
+            optionText: selectedOption?.textContent,
+            source: mappedVoice ? 'voiceMap' : 'legacyVoice'
+          });
+          // Migrate legacy value into map for current provider
+          if (!mappedVoice && validLegacyVoice) {
+            audioModule.saveAudioVoice(initialProvider, validLegacyVoice);
+          }
         }
       }
       
@@ -742,7 +836,21 @@ export function initSettings(deps) {
       // 3. It handles all format-specific visibility (PDF style, audio fields, TOC/abstract)
       
       // Step 1: Update voice list for current provider (populates dropdown)
-      audioModule.updateVoiceList(elements.audioProvider.value);
+      // CRITICAL: Save current value before updating to prevent loss
+      const currentVoiceValue = elements.audioVoice?.value;
+      const currentProvider = elements.audioProvider.value;
+      
+      // If we have a valid voice value, save it before updateVoiceList potentially overwrites it
+      if (currentVoiceValue && currentVoiceValue !== '' && !/^\d+$/.test(String(currentVoiceValue))) {
+        console.log('[ClipAIble Settings] Preserving current voice value before updateVoiceList', {
+          provider: currentProvider,
+          currentVoiceValue
+        });
+        // Save it to ensure it's not lost
+        audioModule.saveAudioVoice(currentProvider, currentVoiceValue);
+      }
+      
+      audioModule.updateVoiceList(currentProvider);
       
       // Step 2: Apply preset colors (if preset is selected) - already done in loadSettings()
       // This code is kept for backward compatibility but colors are now applied in loadSettings()
@@ -883,6 +991,7 @@ export function initSettings(deps) {
     hideAllAudioFields: audioModule.hideAllAudioFields,
     updateVoiceList: audioModule.updateVoiceList,
     updateAudioProviderUI: audioModule.updateAudioProviderUI,
+    getVoiceIdByIndex: audioModule.getVoiceIdByIndex,
     
     // From UI visibility module
     updateModeHint: uiVisibilityModule.updateModeHint,

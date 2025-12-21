@@ -5,10 +5,11 @@ import { setError, ERROR_CODES } from '../state/processing.js';
 /**
  * Validate API keys for audio generation
  * Checks if the required API key is present for the selected audio provider
+ * Note: 'offline' provider doesn't require API key
  * 
  * @param {Object} data - Processing data object
  * @param {string} data.outputFormat - Output format ('audio' or other)
- * @param {string} data.audioProvider - Audio provider ('openai', 'elevenlabs', 'qwen', 'respeecher', 'google')
+ * @param {string} data.audioProvider - Audio provider ('openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'offline')
  * @param {string} [data.apiKey] - OpenAI API key
  * @param {string} [data.elevenlabsApiKey] - ElevenLabs API key
  * @param {string} [data.qwenApiKey] - Qwen API key
@@ -24,6 +25,11 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
   }
   
   const provider = data.audioProvider || 'openai';
+  
+  // Offline TTS doesn't require API key
+  if (provider === 'offline') {
+    return true;
+  }
   
   // Map of provider names to their API key fields and display names
   const providerConfig = {

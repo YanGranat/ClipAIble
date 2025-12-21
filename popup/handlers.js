@@ -1085,10 +1085,206 @@ export function initHandlers(deps) {
     }
     
     if (elements.audioVoice) {
-      elements.audioVoice.addEventListener('change', () => {
-        const provider = elements.audioProvider?.value || 'openai';
-        if (window.settingsModule) {
-          window.settingsModule.saveAudioVoice(provider, elements.audioVoice.value);
+        elements.audioVoice.addEventListener('change', () => {
+          const provider = elements.audioProvider?.value || 'openai';
+          const selectedIndex = elements.audioVoice.selectedIndex;
+          const selectedOption = elements.audioVoice.options[selectedIndex];
+          const selectedValue = elements.audioVoice.value;
+          
+          console.log('[ClipAIble Handlers] ===== AUDIO VOICE CHANGE EVENT =====', {
+            timestamp: Date.now(),
+            provider,
+            selectedIndex,
+            selectedValue,
+            selectedValueType: typeof selectedValue,
+            isNumeric: /^\d+$/.test(String(selectedValue)),
+            optionText: selectedOption?.textContent,
+            optionValue: selectedOption?.value,
+            datasetVoiceId: selectedOption?.dataset?.voiceId,
+            allOptionsCount: elements.audioVoice.options.length
+          });
+        
+        // DETAILED LOGGING: User selected voice in UI
+        console.log('[ClipAIble Handlers] ===== USER SELECTED VOICE IN UI =====', {
+          timestamp: Date.now(),
+          provider,
+          selectedValue,
+          selectedValueType: typeof selectedValue,
+          selectedIndex,
+          selectedOptionValue: selectedOption?.value,
+          selectedOptionText: selectedOption?.textContent,
+          isNumericIndex: /^\d+$/.test(String(selectedValue)),
+          allOptions: Array.from(elements.audioVoice.options).map((opt, idx) => ({
+            index: idx,
+            value: opt.value,
+            text: opt.textContent,
+            isSelected: idx === selectedIndex
+          }))
+        });
+        
+        // CRITICAL: Get voice ID from dataset.voiceId (source of truth) or option.value
+        // Browser may override option.value with index, so dataset.voiceId is more reliable
+        let voiceToSave = null;
+        if (selectedOption) {
+          // DETAILED LOGGING: Check what's in dataset and option
+          console.log('[ClipAIble Handlers] ===== CHECKING VOICE ID SOURCES =====', {
+            timestamp: Date.now(),
+            provider,
+            selectedIndex,
+            hasDataset: !!selectedOption.dataset,
+            datasetVoiceId: selectedOption.dataset?.voiceId,
+            optionValue: selectedOption.value,
+            selectValue: selectedValue,
+            optionText: selectedOption.textContent,
+            allDatasetKeys: selectedOption.dataset ? Object.keys(selectedOption.dataset) : []
+          });
+          
+          // CRITICAL: Use dataset.voiceId first (most reliable), then option.value, then fallback
+          if (selectedOption.dataset && selectedOption.dataset.voiceId) {
+            voiceToSave = selectedOption.dataset.voiceId;
+            console.log('[ClipAIble Handlers] ===== USING DATASET.VOICEID (SOURCE OF TRUTH) =====', {
+              timestamp: Date.now(),
+              provider,
+              selectedIndex,
+              datasetVoiceId: voiceToSave,
+              datasetVoiceIdType: typeof voiceToSave,
+              isNumeric: /^\d+$/.test(String(voiceToSave)),
+              hasUnderscore: voiceToSave && String(voiceToSave).includes('_'),
+              hasDash: voiceToSave && String(voiceToSave).includes('-'),
+              optionValue: selectedOption.value,
+              selectValue: selectedValue
+            });
+            
+            // CRITICAL: If dataset.voiceId is still an index, get voice ID from cache by selectedIndex
+            if (/^\d+$/.test(String(voiceToSave))) {
+              console.warn('[ClipAIble Handlers] CRITICAL: dataset.voiceId is index, trying to fix with cache', {
+                index: voiceToSave,
+                selectedIndex: selectedIndex,
+                provider: provider,
+                hasSettingsModule: !!window.settingsModule,
+                hasGetVoiceIdByIndex: !!(window.settingsModule && window.settingsModule.getVoiceIdByIndex)
+              });
+              
+              if (window.settingsModule && window.settingsModule.getVoiceIdByIndex) {
+                const voiceIdFromCache = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
+                console.warn('[ClipAIble Handlers] CRITICAL: getVoiceIdByIndex returned', {
+                  provider,
+                  selectedIndex,
+                  voiceIdFromCache,
+                  voiceIdFromCacheType: typeof voiceIdFromCache,
+                  hasUnderscore: voiceIdFromCache && String(voiceIdFromCache).includes('_'),
+                  hasDash: voiceIdFromCache && String(voiceIdFromCache).includes('-'),
+                  willUse: !!(voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline'))
+                });
+                
+                if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
+                  console.warn('[ClipAIble Handlers] CRITICAL: dataset.voiceId is index, CORRECTED using cache', {
+                    originalIndex: voiceToSave,
+                    selectedIndex: selectedIndex,
+                    correctedVoiceId: voiceIdFromCache,
+                    isValidFormat: true
+                  });
+                  voiceToSave = voiceIdFromCache;
+                } else {
+                  console.error('[ClipAIble Handlers] CRITICAL: getVoiceIdByIndex returned invalid/null', {
+                    provider,
+                    selectedIndex,
+                    voiceIdFromCache: voiceIdFromCache,
+                    isValidFormat: voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-'))
+                  });
+                }
+              } else {
+                console.error('[ClipAIble Handlers] CRITICAL: Cannot access getVoiceIdByIndex', {
+                  hasSettingsModule: !!window.settingsModule,
+                  hasGetVoiceIdByIndex: !!(window.settingsModule && window.settingsModule.getVoiceIdByIndex)
+                });
+              }
+            }
+          } else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
+            // option.value is valid (not a number)
+            voiceToSave = selectedOption.value;
+            console.log('[ClipAIble Handlers] ===== USING OPTION.VALUE =====', {
+              timestamp: Date.now(),
+              provider,
+              selectedIndex,
+              optionValue: voiceToSave,
+              selectValue: selectedValue
+            });
+          } else {
+            // option.value is index or missing - need to find voice ID another way
+            console.warn('[ClipAIble Handlers] CRITICAL: option.value is index or missing, trying to find voice ID', {
+              optionValue: selectedOption.value,
+              selectedIndex,
+              optionText: selectedOption.textContent,
+              hasDataset: !!selectedOption.dataset,
+              datasetVoiceId: selectedOption.dataset?.voiceId
+            });
+            // Fall through to validation below
+          }
+        }
+        
+        if (!voiceToSave) {
+          // Fallback: if no option.value, try select.value but validate it
+          voiceToSave = selectedValue;
+          console.warn('[ClipAIble Handlers] CRITICAL: No option.value, using select.value as fallback', {
+            selectedValue,
+            selectedIndex,
+            willValidate: true
+          });
+          
+          // CRITICAL: If voiceToSave is a number (index), it's invalid - try to get from options
+          if (/^\d+$/.test(String(voiceToSave))) {
+            const indexNum = parseInt(voiceToSave, 10);
+            if (indexNum >= 0 && indexNum < elements.audioVoice.options.length) {
+              const optionByIndex = elements.audioVoice.options[indexNum];
+              if (optionByIndex && optionByIndex.value) {
+                console.warn('[ClipAIble Handlers] CRITICAL: select.value is index, using option.value', {
+                  index: voiceToSave,
+                  correctedValue: optionByIndex.value,
+                  optionText: optionByIndex.textContent
+                });
+                voiceToSave = optionByIndex.value;
+              } else {
+                console.error('[ClipAIble Handlers] CRITICAL: Cannot get voice ID from index', {
+                  index: voiceToSave,
+                  optionsLength: elements.audioVoice.options.length
+                });
+                return; // Cannot proceed without valid voice ID
+              }
+            } else {
+              console.error('[ClipAIble Handlers] CRITICAL: Index out of range', {
+                index: voiceToSave,
+                optionsLength: elements.audioVoice.options.length
+              });
+              return; // Cannot proceed without valid voice ID
+            }
+          }
+        }
+        
+        // CRITICAL: Don't validate here - let saveAudioVoice handle validation and correction
+        // saveAudioVoice has more sophisticated logic to fix invalid voice IDs
+        // For offline provider, it will try to get correct voice ID from cache or dataset
+        console.log('[ClipAIble Handlers] ===== SAVING VOICE TO STORAGE =====', {
+          timestamp: Date.now(),
+          provider,
+          voiceToSave,
+          voiceToSaveType: typeof voiceToSave,
+          isNumeric: /^\d+$/.test(String(voiceToSave)),
+          hasUnderscore: voiceToSave && String(voiceToSave).includes('_'),
+          hasDash: voiceToSave && String(voiceToSave).includes('-'),
+          isValidFormat: voiceToSave && (voiceToSave.includes('_') || voiceToSave.includes('-') || provider !== 'offline'),
+          willCallSaveAudioVoice: true
+        });
+        
+        // CRITICAL: Always call saveAudioVoice - it will handle validation and correction
+        // For offline provider, it will try to fix invalid voice IDs using cache or dataset
+        if (window.settingsModule && window.settingsModule.saveAudioVoice) {
+          window.settingsModule.saveAudioVoice(provider, voiceToSave);
+        } else {
+          console.error('[ClipAIble Handlers] CRITICAL: Cannot save voice - settingsModule.saveAudioVoice not available', {
+            hasSettingsModule: !!window.settingsModule,
+            hasSaveAudioVoice: !!(window.settingsModule && window.settingsModule.saveAudioVoice)
+          });
         }
       });
     }

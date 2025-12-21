@@ -3124,6 +3124,11 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
       
       // tagName already declared at the start of loop
       if (tagName.match(/^h[1-6]$/)) {
+        // Skip if this is the standfirst element (already added at the beginning)
+        if (standfirstElement && (element === standfirstElement || element.contains(standfirstElement) || standfirstElement.contains(element))) {
+          continue;
+        }
+        
         const level = parseInt(tagName.substring(1));
         const text = element.textContent.trim();
         if (text) {
@@ -3143,6 +3148,11 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
           
           // Skip headings that are just numbers (e.g., "1.", "2.", "3.")
           if (/^\d+\.?\s*$/.test(cleanedHeadingText)) {
+            continue;
+          }
+          
+          // Also skip if text matches standfirst (to avoid duplicates)
+          if (standfirst && cleanedHeadingText === standfirst) {
             continue;
           }
           

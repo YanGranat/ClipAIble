@@ -75,10 +75,22 @@ export function routeMessage(request, sender, sendResponse, deps) {
   
   log('=== MESSAGE RECEIVED IN SERVICE WORKER ===', { 
     action: request.action, 
-    sender: sender.tab?.url || 'popup',
+    sender: sender.tab?.url || sender.url || 'popup',
+    target: request.target,
     hasData: !!request.data,
     timestamp: Date.now()
   });
+  
+  // Messages with target: 'offscreen' are meant for offscreen document
+  // Don't handle them here - let them pass through to offscreen document's listener
+  if (request.target === 'offscreen') {
+    log('=== Message for offscreen document, passing through ===', {
+      type: request.type,
+      timestamp: Date.now()
+    });
+    // Return false to allow message to reach offscreen document
+    return false;
+  }
   
   // Route to appropriate handler based on action
   const handlers = {

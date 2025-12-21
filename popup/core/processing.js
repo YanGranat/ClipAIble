@@ -318,7 +318,113 @@ export function initProcessing(deps) {
           tabId: tab.id,
           // Audio settings
           audioProvider: elements.audioProvider?.value || 'openai',
-          audioVoice: elements.audioVoice?.value || 'nova',
+          // CRITICAL: Get actual voice ID, not index
+          // If audioVoice.value is a number (index), get the actual value from options
+          audioVoice: (() => {
+            const provider = elements.audioProvider?.value || 'openai';
+            if (!elements.audioVoice) {
+              console.warn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
+                timestamp: Date.now(),
+                provider,
+                willUseDefault: 'nova'
+              });
+              return 'nova';
+            }
+            const voiceValue = elements.audioVoice.value;
+            const selectedIndex = elements.audioVoice.selectedIndex;
+            const selectedOption = elements.audioVoice.options[selectedIndex];
+            
+            // DETAILED LOGGING: Voice value before processing
+            console.log('[ClipAIble Processing] ===== EXTRACTING VOICE FROM UI =====', {
+              timestamp: Date.now(),
+              provider,
+              voiceValue,
+              voiceValueType: typeof voiceValue,
+              selectedIndex,
+              selectedOptionValue: selectedOption?.value,
+              selectedOptionText: selectedOption?.textContent,
+              datasetVoiceId: selectedOption?.dataset?.voiceId,
+              isNumericIndex: /^\d+$/.test(String(voiceValue)),
+              optionsCount: elements.audioVoice.options.length
+            });
+            
+            // CRITICAL: Get voice ID from dataset.voiceId first (most reliable), then option.value
+            // This ensures we always get the actual voice ID, not an index
+            let finalVoice = null;
+            
+            if (selectedOption) {
+              // Priority 1: dataset.voiceId (most reliable - always contains actual voice ID)
+              if (selectedOption.dataset && selectedOption.dataset.voiceId) {
+                finalVoice = selectedOption.dataset.voiceId;
+                console.log('[ClipAIble Processing] ===== USING dataset.voiceId =====', {
+                  timestamp: Date.now(),
+                  provider,
+                  datasetVoiceId: finalVoice,
+                  VOICE_STRING: `VOICE="${finalVoice}"`,
+                  isValidFormat: finalVoice.includes('_') || finalVoice.includes('-') || provider !== 'offline'
+                });
+              }
+              // Priority 2: option.value (if not an index)
+              else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
+                finalVoice = selectedOption.value;
+                console.log('[ClipAIble Processing] ===== USING option.value =====', {
+                  timestamp: Date.now(),
+                  provider,
+                  optionValue: finalVoice,
+                  VOICE_STRING: `VOICE="${finalVoice}"`,
+                  isValidFormat: finalVoice.includes('_') || finalVoice.includes('-') || provider !== 'offline'
+                });
+              }
+              // Priority 3: Use getVoiceIdByIndex if value is an index
+              else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && window.settingsModule && window.settingsModule.getVoiceIdByIndex) {
+                const voiceIdFromCache = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
+                if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
+                  finalVoice = voiceIdFromCache;
+                  console.log('[ClipAIble Processing] ===== USING getVoiceIdByIndex =====', {
+                    timestamp: Date.now(),
+                    provider,
+                    selectedIndex,
+                    voiceIdFromCache: finalVoice,
+                    VOICE_STRING: `VOICE="${finalVoice}"`,
+                    isValidFormat: true
+                  });
+                }
+              }
+            }
+            
+            // Fallback: if still no valid voice, use voiceValue if it's valid
+            if (!finalVoice && voiceValue && !/^\d+$/.test(String(voiceValue))) {
+              finalVoice = voiceValue;
+              console.log('[ClipAIble Processing] ===== USING voiceValue as fallback =====', {
+                timestamp: Date.now(),
+                provider,
+                voiceValue: finalVoice,
+                VOICE_STRING: `VOICE="${finalVoice}"`
+              });
+            }
+            
+            // Final fallback: use default
+            if (!finalVoice) {
+              finalVoice = provider === 'offline' ? 'en_US-lessac-medium' : 'nova';
+              console.warn('[ClipAIble Processing] ===== USING DEFAULT VOICE =====', {
+                timestamp: Date.now(),
+                provider,
+                defaultVoice: finalVoice,
+                VOICE_STRING: `VOICE="${finalVoice}"`,
+                reason: 'No valid voice found in UI'
+              });
+            }
+            
+            console.log('[ClipAIble Processing] ===== VOICE EXTRACTED FROM UI =====', {
+              timestamp: Date.now(),
+              provider,
+              finalVoice,
+              VOICE_STRING: `VOICE="${finalVoice}"`, // Explicit string for visibility
+              isValidFormat: finalVoice.includes('_') || finalVoice.includes('-') || provider !== 'offline',
+              willSendToBackground: true
+            });
+            return finalVoice;
+          })(),
           audioSpeed: parseFloat(elements.audioSpeed?.value || 1.0),
           audioFormat: 'mp3',
           elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
