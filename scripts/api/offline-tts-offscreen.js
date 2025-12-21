@@ -691,6 +691,48 @@ export async function cleanupStoredAudio(storageKey) {
  * @param {Function} [options.onProgress] - Progress callback (optional)
  * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
  */
+/**
+ * Close offscreen document to force recreation (for voice switching)
+ * This ensures complete cache clearing when voice changes
+ */
+export async function closeOffscreenForVoiceSwitch() {
+  log('[ClipAIble Offscreen] === CLOSING OFFScreen DOCUMENT FOR VOICE SWITCH ===', {
+    timestamp: Date.now()
+  });
+  
+  try {
+    if (chrome.offscreen && typeof chrome.offscreen.closeDocument === 'function') {
+      const hasDocument = await chrome.offscreen.hasDocument();
+      if (hasDocument) {
+        await chrome.offscreen.closeDocument();
+        log('[ClipAIble Offscreen] Offscreen document closed successfully for voice switch', {
+          timestamp: Date.now()
+        });
+        offscreenReady = false; // Reset ready flag
+        creating = null; // Reset creating flag
+        return true;
+      } else {
+        log('[ClipAIble Offscreen] No offscreen document to close', {
+          timestamp: Date.now()
+        });
+        return false;
+      }
+    } else {
+      logError('[ClipAIble Offscreen] chrome.offscreen.closeDocument not available', {
+        timestamp: Date.now()
+      });
+      return false;
+    }
+  } catch (error) {
+    logError('[ClipAIble Offscreen] Failed to close offscreen document for voice switch', {
+      error: error.message,
+      stack: error.stack,
+      timestamp: Date.now()
+    });
+    return false;
+  }
+}
+
 export async function textToSpeech(text, options = {}) {
   // Log all TTS settings at entry point
   const entrySettings = {

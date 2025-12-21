@@ -55,6 +55,9 @@ import {
   handleLogModelDropdown
 } from './complex.js';
 
+// Offscreen handlers
+import { closeOffscreenForVoiceSwitch } from '../api/offline-tts-offscreen.js';
+
 /**
  * Route message to appropriate handler
  * @param {MessageRequest} request - Request object
@@ -135,7 +138,30 @@ export function routeMessage(request, sender, sendResponse, deps) {
       stopKeepAlive
     ),
     'generateSummary': () => handleGenerateSummary(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
-    'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse)
+    'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse),
+    
+    // Offscreen handlers
+    'closeOffscreenForVoiceSwitch': async () => {
+      log('[ClipAIble] === closeOffscreenForVoiceSwitch handler ===', {
+        previousVoice: request.data?.previousVoice,
+        newVoice: request.data?.newVoice,
+        messageId: request.data?.messageId,
+        timestamp: Date.now()
+      });
+      
+      try {
+        const closed = await closeOffscreenForVoiceSwitch();
+        sendResponse({ success: closed });
+        return true;
+      } catch (error) {
+        logError('[ClipAIble] Failed to close offscreen for voice switch', {
+          error: error.message,
+          timestamp: Date.now()
+        });
+        sendResponse({ success: false, error: error.message });
+        return true;
+      }
+    }
   };
   
   // Special case: youtubeSubtitlesResult can also come with type check

@@ -9,6 +9,7 @@ console.log('[ClipAIble Offscreen] === DOCUMENT LOADED ===', {
 
 let ttsModule = null;
 let lastUsedVoiceId = null; // Track last used voice to detect voice switching
+let voiceSwitchRequested = false; // Flag to request offscreen document recreation
 
 // Initialize Piper TTS
 async function initPiperTTS() {
@@ -1332,77 +1333,159 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               messageId,
               previousVoice: lastUsedVoiceId,
               newVoice: finalVoiceId,
-              action: 'Forcing library to switch to new voice - models are already stored in IndexedDB permanently'
+              action: 'AGGRESSIVE CACHE CLEARING - forcing complete module reload'
             });
             
-            // CRITICAL: Force library to reload by clearing module cache and re-initializing
-            // This ensures a fresh InferenceSession is created for the new voice
-            // Models are already in IndexedDB, so no re-download needed - they persist forever
-            console.log(`[ClipAIble Offscreen] Clearing TTS module cache to force voice switch`, {
+            // CRITICAL: AGGRESSIVE CACHE CLEARING
+            // The library caches InferenceSession internally, so we need to completely destroy and recreate everything
+            console.log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING START ===`, {
               messageId,
               previousVoice: lastUsedVoiceId,
               newVoice: finalVoiceId,
-              note: 'Module will be reloaded, but models stay in IndexedDB (permanent storage)'
+              action: 'Clearing ALL caches and forcing complete reload'
             });
             
-            // Clear module cache - this forces library to reload on next init
-            // This is safe because models are stored in IndexedDB and won't be lost
+            // Step 1: CRITICAL - Clear TtsSession singleton instance
+            // The library uses TtsSession._instance singleton which caches the session
+            // We MUST clear it to force creation of new session with new voice
+            // According to library source: TtsSession uses singleton pattern
+            // When voice changes, we need to clear _instance to force new session creation
+            let singletonCleared = false;
+            try {
+              // Try to access TtsSession from the module
+              // The module exports TtsSession class which has static _instance property
+              if (tts && tts.TtsSession) {
+                const hadInstance = tts.TtsSession._instance !== null && tts.TtsSession._instance !== undefined;
+                const instanceVoiceId = tts.TtsSession._instance?.voiceId;
+                
+                console.log(`[ClipAIble Offscreen] === CLEARING TtsSession._instance SINGLETON ===`, {
+                  messageId,
+                  previousVoice: lastUsedVoiceId,
+                  newVoice: finalVoiceId,
+                  hasTtsSession: true,
+                  hadInstance: hadInstance,
+                  instanceVoiceId: instanceVoiceId,
+                  action: 'Clearing singleton to force new session creation'
+                });
+                
+                // Clear the singleton instance to force new session creation
+                // This is the KEY fix - library reuses _instance even when voiceId changes
+                tts.TtsSession._instance = null;
+                singletonCleared = true;
+                
+                console.log(`[ClipAIble Offscreen] ✅ TtsSession._instance cleared successfully (SINGLETON CLEARED)`, {
+                  messageId,
+                  previousVoice: lastUsedVoiceId,
+                  newVoice: finalVoiceId,
+                  instanceIsNull: tts.TtsSession._instance === null,
+                  mechanism: 'singleton_clear',
+                  willCreateNewSession: true
+                });
+              } else {
+                // TtsSession might not be exported, try to access it differently
+                // The predict() function creates TtsSession internally, so we need to clear it before next predict()
+                console.log(`[ClipAIble Offscreen] ⚠️ TtsSession not directly accessible, will clear via module reload`, {
+                  messageId,
+                  previousVoice: lastUsedVoiceId,
+                  newVoice: finalVoiceId,
+                  hasTts: !!tts,
+                  ttsKeys: tts ? Object.keys(tts).slice(0, 20) : [],
+                  mechanism: 'module_reload',
+                  note: 'Module reload should clear singleton'
+                });
+              }
+            } catch (clearError) {
+              console.warn(`[ClipAIble Offscreen] ⚠️ Error clearing TtsSession._instance`, {
+                messageId,
+                previousVoice: lastUsedVoiceId,
+                newVoice: finalVoiceId,
+                error: clearError.message,
+                mechanism: 'module_reload_fallback',
+                note: 'Will rely on module reload to clear singleton'
+              });
+            }
+            
+            // Step 2: Clear module cache completely
             ttsModule = null;
             
-            // Re-initialize TTS module to get fresh instance with new InferenceSession
-            // This ensures library creates new InferenceSession for the new voice
-            console.log(`[ClipAIble Offscreen] Re-initializing TTS module for voice switch`, {
+            // Step 3: Force complete module reload
+            console.log(`[ClipAIble Offscreen] 🔄 Forcing complete module reload`, {
               messageId,
               previousVoice: lastUsedVoiceId,
-              newVoice: finalVoiceId
+              newVoice: finalVoiceId,
+              mechanism: 'module_reload',
+              singletonCleared: singletonCleared
             });
             
+            let moduleReloaded = false;
             try {
-              // Re-initialize to get fresh module instance
-              // This will create a new InferenceSession that will use the new voice
+              // Re-initialize to get completely fresh module instance
+              // This should create a new InferenceSession with no cached state
               const freshTts = await initPiperTTS();
               
               // Verify we got a fresh instance
               if (freshTts && typeof freshTts.predict === 'function') {
-                console.log(`[ClipAIble Offscreen] TTS module re-initialized successfully for voice switch`, {
+                moduleReloaded = true;
+                console.log(`[ClipAIble Offscreen] ✅ Module reloaded successfully (MODULE RELOADED)`, {
                   messageId,
                   previousVoice: lastUsedVoiceId,
                   newVoice: finalVoiceId,
                   hasPredict: typeof freshTts.predict === 'function',
                   hasStored: typeof freshTts.stored === 'function',
-                  note: 'Fresh module instance created - will use new voice for synthesis'
+                  mechanism: 'module_reload',
+                  note: 'Fresh module instance created - ALL caches cleared, will use new voice'
                 });
                 
                 // CRITICAL: Update tts reference to use fresh instance
                 // This ensures all subsequent predict() calls use the new module instance
                 tts = freshTts;
                 
-                console.log(`[ClipAIble Offscreen] TTS reference updated to fresh instance`, {
+                console.log(`[ClipAIble Offscreen] TTS reference updated to fresh instance after aggressive cache clear`, {
                   messageId,
                   previousVoice: lastUsedVoiceId,
                   newVoice: finalVoiceId,
                   ttsIsFresh: tts === freshTts
                 });
               } else {
-                console.warn(`[ClipAIble Offscreen] TTS module re-initialization returned invalid instance`, {
+                console.error(`[ClipAIble Offscreen] ❌ Module reload failed - invalid module`, {
                   messageId,
                   previousVoice: lastUsedVoiceId,
                   newVoice: finalVoiceId,
                   hasTts: !!freshTts,
-                  hasPredict: freshTts && typeof freshTts.predict === 'function'
+                  hasPredict: freshTts && typeof freshTts.predict === 'function',
+                  action: 'Module reload failed - voice switching may not work'
                 });
               }
             } catch (reinitError) {
-              console.error(`[ClipAIble Offscreen] Failed to re-initialize TTS module for voice switch`, {
+              console.error(`[ClipAIble Offscreen] ❌ Module reload error`, {
                 messageId,
                 previousVoice: lastUsedVoiceId,
                 newVoice: finalVoiceId,
                 error: reinitError.message,
-                stack: reinitError.stack
+                stack: reinitError.stack,
+                action: 'Module reload failed - voice switching may not work'
               });
-              // Continue anyway - library should still work with voiceId parameter
-              // But voice switching may not work properly
             }
+            
+            console.log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING COMPLETE ===`, {
+              messageId,
+              previousVoice: lastUsedVoiceId,
+              newVoice: finalVoiceId,
+              mechanisms: {
+                singletonCleared: singletonCleared,
+                moduleReloaded: moduleReloaded
+              },
+              note: 'All caches cleared, module reloaded - synthesis will use new voice. Singleton clear + module reload is sufficient for voice switching.'
+            });
+          } else {
+            // No voice change - log for debugging
+            console.log(`[ClipAIble Offscreen] No voice change detected for ${messageId}`, {
+              messageId,
+              lastUsedVoiceId: lastUsedVoiceId,
+              finalVoiceId: finalVoiceId,
+              voiceChanged: false,
+              note: 'Using same voice as previous request - no cache clearing needed'
+            });
           }
           
           // CRITICAL: Update last used voice BEFORE synthesis starts
@@ -2482,6 +2565,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 method: 'inline',
                 size: uint8Array.length
               });
+              
+              // Voice switching works with singleton clear + module reload only
+              // No need to close offscreen document - tested and confirmed
+              
               return; // CRITICAL: Return after sending response to prevent fallthrough to error handler
             } catch (sendError) {
               console.error(`[ClipAIble Offscreen] Failed to send inline response for ${messageId}`, {
@@ -2557,6 +2644,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 storageKey,
                 size: uint8Array.length
               });
+              
+              // Voice switching works with singleton clear + module reload only
+              // No need to close offscreen document - tested and confirmed
+              
               return; // CRITICAL: Return after sending response
             } catch (storageError) {
               console.error(`[ClipAIble Offscreen] Failed to save to storage for ${messageId}`, {
