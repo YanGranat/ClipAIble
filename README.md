@@ -414,7 +414,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 lines)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
-│   ├── message-handlers/ # Message handler modules (v3.1.0+)
+│   ├── message-handlers/ # Message handler modules (v3.2.0+)
 │   │   ├── index.js    # Message router
 │   │   ├── utils.js    # Handler utilities
 │   │   ├── simple.js   # Simple handlers

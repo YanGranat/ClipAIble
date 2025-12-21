@@ -1090,7 +1090,7 @@ async function init() {
   // Load and display version
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '3.1.0';
+    const version = manifest.version || '3.2.0';
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;

@@ -2,7 +2,7 @@
 
 > **Extrator de artigos com IA** — Salve qualquer artigo da web como PDF, EPUB, FB2, Markdown ou Áudio. Tradução para 11 idiomas. Funciona em qualquer site.
 
-![Versão](https://img.shields.io/badge/versão-3.1.0-blue)
+![Versão](https://img.shields.io/badge/versão-3.2.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensão-green)
 ![Licença](https://img.shields.io/badge/licença-MIT-brightgreen)
 
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 linhas)
 │   ├── content.js      # Content script para YouTube
 │   ├── locales.js      # Localização UI (11 idiomas)
-│   ├── message-handlers/ # Módulos de manipuladores de mensagens (v3.1.0+)
+│   ├── message-handlers/ # Módulos de manipuladores de mensagens (v3.2.0+)
 │   │   ├── index.js    # Roteador de mensagens
 │   │   ├── utils.js    # Utilitários de manipuladores
 │   │   ├── simple.js   # Manipuladores simples

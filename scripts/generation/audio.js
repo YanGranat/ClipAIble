@@ -228,7 +228,7 @@ export async function generateAudio(params, updateState) {
   });
   
   // Step 2: Convert chunks to speech (using selected TTS provider)
-  const providerName = provider === 'offline' ? 'Offline TTS' :
+  const providerName = provider === 'offline' ? 'Piper TTS (offline)' :
                        (provider === 'elevenlabs' ? 'ElevenLabs' : 
                        (provider === 'qwen' ? 'Qwen' : 
                        (provider === 'google' ? 'Google Gemini TTS' : 

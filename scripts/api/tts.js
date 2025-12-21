@@ -1,5 +1,5 @@
 // Text-to-Speech API module for ClipAIble extension
-// Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Offline TTS providers
+// Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
 
 console.log('[ClipAIble TTS] === MODULE LOADING ===', {
   timestamp: Date.now(),
