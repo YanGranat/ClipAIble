@@ -603,7 +603,11 @@ ${chunkText}`;
 export function sanitizeForPiperTTS(text, language = 'auto') {
   if (!text || typeof text !== 'string') return '';
   
-  const langCode = language.split('-')[0].toLowerCase();
+  let langCode = language.split('-')[0].toLowerCase();
+  // Normalize Ukrainian language code: 'ua' -> 'uk' (Piper TTS uses 'uk')
+  if (langCode === 'ua') {
+    langCode = 'uk';
+  }
   
   let sanitized = text
     // Remove zero-width characters
@@ -651,11 +655,43 @@ export function sanitizeForPiperTTS(text, language = 'auto') {
   } else {
     // For non-English, remove only clearly problematic characters
     // Keep most Unicode letters and common punctuation
+    // Special handling for Ukrainian: preserve all Cyrillic letters including і, ї, є, ґ
+    const beforeFinalSanitization = sanitized;
     sanitized = sanitized
       .replace(/[^\p{L}\p{N}\p{P}\p{Z}\n\t]/gu, ' ')  // Keep letters, numbers, punctuation, whitespace
       .replace(/[ \t]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+    
+    // Log detailed info for Ukrainian language to debug issues
+    if (langCode === 'uk') {
+      const ukrainianCharsBefore = (beforeFinalSanitization.match(/[іїєґІЇЄҐ]/g) || []).length;
+      const ukrainianCharsAfter = (sanitized.match(/[іїєґІЇЄҐ]/g) || []).length;
+      const ukrainianCharsLost = ukrainianCharsBefore - ukrainianCharsAfter;
+      const removedChars = beforeFinalSanitization.length - sanitized.length;
+      const ukrainianCharsSample = (beforeFinalSanitization.match(/[іїєґІЇЄҐ]/g) || []).slice(0, 10);
+      const ukrainianCharsAfterSample = (sanitized.match(/[іїєґІЇЄҐ]/g) || []).slice(0, 10);
+      
+      // Always log for Ukrainian text to help debug issues
+      log('=== sanitizeForPiperTTS: Ukrainian text sanitization ===', {
+        langCode,
+        originalLength: text.length,
+        beforeFinalSanitizationLength: beforeFinalSanitization.length,
+        afterSanitizationLength: sanitized.length,
+        ukrainianCharsBefore,
+        ukrainianCharsAfter,
+        ukrainianCharsLost,
+        removedChars,
+        ukrainianCharsSample,
+        ukrainianCharsAfterSample,
+        previewBefore: beforeFinalSanitization.substring(0, 200),
+        previewAfter: sanitized.substring(0, 200),
+        // Log first 50 chars with Unicode codes for debugging
+        firstCharsUnicode: Array.from(sanitized.substring(0, 50)).map(c => 
+          `${c} (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`
+        )
+      });
+    }
   }
   
   return sanitized;

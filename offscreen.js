@@ -97,8 +97,9 @@ function detectLanguage(text) {
   const total = sample.length;
   
   if (cyrillicCount > total * 0.1) {
-    const ukMarkers = (sample.match(/[іїєґ]/gi) || []).length;
-    const ruMarkers = (sample.match(/[ыэъ]/gi) || []).length;
+    // Ukrainian has specific letters: і, ї, є, ґ (both lowercase and uppercase)
+    const ukMarkers = (sample.match(/[іїєґІЇЄҐ]/gi) || []).length;
+    const ruMarkers = (sample.match(/[ыэъЫЭЪ]/gi) || []).length;
     return ukMarkers > ruMarkers && ukMarkers > 3 ? 'uk' : 'ru';
   }
   
@@ -156,7 +157,7 @@ function detectLanguage(text) {
 const DEFAULT_VOICES = {
   'en': 'en_US-lessac-medium',      // Medium quality for English (verified: exists in library)
   'ru': 'ru_RU-dmitri-medium',      // Medium quality for Russian (verified: exists in library)
-  'uk': 'uk_UA-ukrainian_tts-medium', // Medium quality for Ukrainian (verified: exists in library)
+  'uk': null,                        // Ukrainian not available - quality too poor, use Respeecher instead
   'de': 'de_DE-thorsten-medium',     // Medium quality for German (verified: exists in library)
   'fr': 'fr_FR-siwis-medium',        // Medium quality for French (verified: exists in library)
   'es': 'es_ES-sharvard-medium',      // Medium quality for Spanish (verified: exists in library)
@@ -173,7 +174,7 @@ const DEFAULT_VOICES = {
 const FALLBACK_VOICES = {
   'en': 'en_US-hfc_female-medium',   // Alternative English voice (verified: exists in library)
   'ru': 'ru_RU-denis-medium',        // Alternative Russian voice (verified: exists in library)
-  'uk': 'uk_UA-ukrainian_tts-medium', // Alternative Ukrainian voice (only medium available, same as default but used as fallback)
+  'uk': null,                         // Ukrainian not available - quality too poor, use Respeecher instead
   'de': 'de_DE-mls-medium',          // Alternative German voice (verified: exists in library)
   'fr': 'fr_FR-mls-medium',          // Alternative French voice (verified: exists in library)
   'es': 'es_MX-claude-high',          // Alternative Spanish voice (high quality, verified: exists in library)
@@ -326,8 +327,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
           }
           
+          // Normalize Ukrainian language code: 'ua' -> 'uk' (Piper TTS uses 'uk')
+          // This ensures consistency regardless of where the language code comes from
+          if (language && language !== 'auto') {
+            const langBase = language.split('-')[0].toLowerCase();
+            if (langBase === 'ua') {
+              language = language.replace(/^ua/i, 'uk');
+              console.log(`[ClipAIble Offscreen] Normalized language code for ${messageId}`, {
+                messageId,
+                originalLanguage: language,
+                normalizedLanguage: language
+              });
+            }
+          }
+          
           // Select voice
           let langCode = language.split('-')[0].toLowerCase();
+          // Normalize Ukrainian language code: 'ua' -> 'uk' (Piper TTS uses 'uk')
+          if (langCode === 'ua') {
+            langCode = 'uk';
+          }
           
           // CRITICAL: Validate langCode before using it
           console.log(`[ClipAIble Offscreen] === VOICE SELECTION START === for ${messageId}`, {
@@ -1586,11 +1605,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           } else {
             // For non-English, remove only clearly problematic characters
             // Keep most Unicode letters and common punctuation
+            // Special handling for Ukrainian: preserve all Cyrillic letters including і, ї, є, ґ
+            const beforeFinalSanitization = sanitizedText;
             sanitizedText = sanitizedText
               .replace(/[^\p{L}\p{N}\p{P}\p{Z}\n\t]/gu, ' ')  // Keep letters, numbers, punctuation, whitespace
               .replace(/[ \t]+/g, ' ')
               .replace(/\n{3,}/g, '\n\n')
               .trim();
+            
+            // Log detailed info for Ukrainian language to debug issues
+            if (langCode === 'uk') {
+              const ukrainianChars = (beforeFinalSanitization.match(/[іїєґІЇЄҐ]/g) || []).length;
+              const ukrainianCharsAfter = (sanitizedText.match(/[іїєґІЇЄҐ]/g) || []).length;
+              const removedChars = beforeFinalSanitization.length - sanitizedText.length;
+              if (ukrainianChars > 0 || removedChars > 0) {
+                // Use JSON.stringify to ensure all values are visible in logs
+                console.log(`[ClipAIble Offscreen] === UKRAINIAN TEXT SANITIZATION === for ${messageId}`, JSON.stringify({
+                  messageId,
+                  langCode,
+                  originalLength: text.length,
+                  beforeFinalSanitizationLength: beforeFinalSanitization.length,
+                  afterSanitizationLength: sanitizedText.length,
+                  ukrainianCharsBefore: ukrainianChars,
+                  ukrainianCharsAfter: ukrainianCharsAfter,
+                  removedChars: removedChars,
+                  ukrainianCharsLost: ukrainianChars - ukrainianCharsAfter,
+                  preview: sanitizedText.substring(0, 200),
+                  previewEnd: sanitizedText.substring(Math.max(0, sanitizedText.length - 100)),
+                  // Sample of Ukrainian chars before and after
+                  sampleUkrainianBefore: (beforeFinalSanitization.match(/[іїєґІЇЄҐ]/g) || []).slice(0, 20),
+                  sampleUkrainianAfter: (sanitizedText.match(/[іїєґІЇЄҐ]/g) || []).slice(0, 20)
+                }, null, 2));
+              }
+            }
           }
           
           // Log after sanitization
@@ -1675,7 +1722,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // Perplexity recommendation: process sentence by sentence to reduce memory pressure
           const splitIntoSentences = (text) => {
             // Split by sentence endings, but keep punctuation with sentence
-            const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
+            // For Ukrainian, also handle ellipsis (...) and other punctuation
+            const sentences = text.match(/[^.!?…]+[.!?…]+/g) || [text];
             // Filter out empty sentences
             return sentences.map(s => s.trim()).filter(s => s.length > 0);
           };
@@ -1683,13 +1731,30 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const sentences = splitIntoSentences(sanitizedText);
           let useStreaming = sentences.length > 1 && sanitizedText.length > 2000; // Use streaming for long texts
           
-          console.log(`[ClipAIble Offscreen] Text splitting for ${messageId}`, {
+          const splitLogData = {
             messageId,
             totalLength: sanitizedText.length,
             sentencesCount: sentences.length,
             useStreaming,
             avgSentenceLength: sentences.length > 0 ? Math.round(sanitizedText.length / sentences.length) : 0
-          });
+          };
+          
+          // For Ukrainian, log first few sentences to check if splitting is correct
+          if (langCode === 'uk') {
+            splitLogData.firstSentences = sentences.slice(0, 5).map((s, i) => ({
+              index: i + 1,
+              length: s.length,
+              text: s.substring(0, 100) + (s.length > 100 ? '...' : ''),
+              ukrainianChars: (s.match(/[іїєґІЇЄҐ]/g) || []).length
+            }));
+            splitLogData.allSentencesPreview = sentences.map((s, i) => ({
+              index: i + 1,
+              length: s.length,
+              preview: s.substring(0, 50) + '...'
+            }));
+          }
+          
+          console.log(`[ClipAIble Offscreen] Text splitting for ${messageId}`, splitLogData);
           
           const synthesisStart = Date.now();
           let lastPercent = -1;
@@ -1814,7 +1879,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                   
                   // CRITICAL: Explicitly pass voiceId to ensure library uses correct voice
                   // Log the exact parameters being passed
-                  console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS ===`, {
+                  // For Ukrainian, log detailed text analysis
+                  const isUkrainian = langCode === 'uk';
+                  const logData = {
                     messageId,
                     sentenceIndex: i + 1,
                     predictVoiceId,
@@ -1825,7 +1892,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     expectedVoice: expectedVoice,
                     voiceMatchesExpected: predictVoiceId === expectedVoice,
                     voiceMatchesLastUsed: lastUsedVoiceId === predictVoiceId
-                  });
+                  };
+                  
+                  // Detailed logging for Ukrainian text
+                  if (isUkrainian) {
+                    const ukrainianChars = (sentence.match(/[іїєґІЇЄҐ]/g) || []).length;
+                    const cyrillicChars = (sentence.match(/[А-Яа-яЁёІіЇїЄєҐґ]/g) || []).length;
+                    const nonAsciiChars = (sentence.match(/[^\x00-\x7F]/g) || []).length;
+                    const firstChars = Array.from(sentence.substring(0, 100)).map(c => 
+                      `${c} (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`
+                    );
+                    
+                    logData.ukrainianChars = ukrainianChars;
+                    logData.cyrillicChars = cyrillicChars;
+                    logData.nonAsciiChars = nonAsciiChars;
+                    logData.fullSentence = sentence; // Full sentence for debugging
+                    logData.firstChars = firstChars;
+                    logData.sentenceEnd = sentence.substring(Math.max(0, sentence.length - 50));
+                  }
+                  
+                  // Use JSON.stringify for Ukrainian to see full data in logs
+                  if (isUkrainian) {
+                    console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS (UKRAINIAN) ===`, JSON.stringify({
+                      messageId,
+                      sentenceIndex: i + 1,
+                      voiceId: predictVoiceId,
+                      textLength: sentence.length,
+                      ukrainianChars: logData.ukrainianChars,
+                      cyrillicChars: logData.cyrillicChars,
+                      nonAsciiChars: logData.nonAsciiChars,
+                      fullSentence: sentence,
+                      first50Chars: sentence.substring(0, 50),
+                      last50Chars: sentence.substring(Math.max(0, sentence.length - 50)),
+                      firstCharsUnicode: logData.firstChars?.slice(0, 20)
+                    }, null, 2));
+                  } else {
+                    console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS ===`, logData);
+                  }
                   
                   // CRITICAL: Double-check voiceId before predict()
                   // This is the final check to ensure correct voice is used
@@ -1838,6 +1941,57 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                       action: 'Forcing expected voice'
                     });
                     predictVoiceId = expectedVoice;
+                  }
+                  
+                  // Validate sentence before sending to TTS (especially for Ukrainian)
+                  if (isUkrainian) {
+                    // Check if sentence contains valid Ukrainian characters
+                    const hasValidChars = /[А-Яа-яЁёІіЇїЄєҐґ\s\p{P}\p{N}]/u.test(sentence);
+                    if (!hasValidChars && sentence.trim().length > 0) {
+                      console.warn(`[ClipAIble Offscreen] WARNING: Sentence ${i + 1} may contain invalid characters for Ukrainian TTS`, {
+                        messageId,
+                        sentenceIndex: i + 1,
+                        sentence,
+                        sentenceLength: sentence.length,
+                        firstChars: Array.from(sentence.substring(0, 20)).map(c => 
+                          `${c} (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`
+                        )
+                      });
+                    }
+                    
+                    // Check for common issues that could cause garbled output
+                    const hasControlChars = /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/.test(sentence);
+                    if (hasControlChars) {
+                      console.error(`[ClipAIble Offscreen] ERROR: Sentence ${i + 1} contains control characters!`, {
+                        messageId,
+                        sentenceIndex: i + 1,
+                        sentence
+                      });
+                    }
+                    
+                    // DETAILED LOGGING FOR UKRAINIAN TEXT (first 3 sentences or all if less than 3)
+                    if (i < 3 || sentences.length <= 3) {
+                      const ukrainianChars = (sentence.match(/[іїєґІЇЄҐ]/g) || []).length;
+                      const cyrillicChars = (sentence.match(/[А-Яа-яЁёІіЇїЄєҐґ]/g) || []).length;
+                      const nonAsciiChars = (sentence.match(/[^\x00-\x7F]/g) || []).length;
+                      const firstCharsUnicode = Array.from(sentence.substring(0, 50)).map(c => 
+                        `${c} (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`
+                      );
+                      
+                      console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS (UKRAINIAN) ===`, {
+                        messageId,
+                        sentenceIndex: i + 1,
+                        totalSentences: sentences.length,
+                        voiceId: predictVoiceId,
+                        sentenceLength: sentence.length,
+                        ukrainianChars,
+                        cyrillicChars,
+                        nonAsciiChars,
+                        fullSentence: sentence,
+                        firstCharsUnicode,
+                        sentenceEnd: sentence.substring(Math.max(0, sentence.length - 30))
+                      });
+                    }
                   }
                   
                   const sentenceBlob = await tts.predict({
@@ -2486,11 +2640,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // Use hasUnlimitedStorage passed from service worker (getManifest is not available in offscreen)
           const hasUnlimitedStorage = message.data.hasUnlimitedStorage || false;
           
-          // With unlimitedStorage: 50 MB threshold (practically unlimited)
-          // Without unlimitedStorage: 8 MB threshold (safe margin from 10 MB limit)
-          const STORAGE_THRESHOLD = hasUnlimitedStorage 
-            ? 50 * 1024 * 1024  // 50 MB
-            : 8 * 1024 * 1024;  // 8 MB (safe margin from 10 MB limit)
+          // Chrome has a hard 10 MB limit for chrome.runtime.sendMessage
+          // JSON serialization can increase size, so use conservative threshold
+          // Use storage for files >= 5 MB to stay safely under Chrome's 10 MB limit
+          const STORAGE_THRESHOLD = 5 * 1024 * 1024;  // 5 MB - safe for inline transfer
           
           // Maximum audio size validation (absolute limit)
           const MAX_AUDIO_SIZE = hasUnlimitedStorage 
@@ -2528,8 +2681,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             maxAudioSizeMB: (MAX_AUDIO_SIZE / 1024 / 1024).toFixed(2),
             audioSize: uint8Array.length,
             audioSizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
+            chromeMessageLimit: 10 * 1024 * 1024,
+            chromeMessageLimitMB: '10.00',
             willUseStorage: uint8Array.length >= STORAGE_THRESHOLD,
-            willUseInline: uint8Array.length < STORAGE_THRESHOLD
+            willUseInline: uint8Array.length < STORAGE_THRESHOLD,
+            note: 'Storage threshold is 5 MB to stay safely under Chrome 10 MB message limit'
           };
           
           console.log(`[ClipAIble Offscreen] Storage threshold determined with all settings for ${messageId}`, storageSettings);
@@ -2552,37 +2708,55 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               method: 'inline'
             };
             
+            // Check serialized size before sending (Chrome has 10 MB limit)
+            const serializedSize = JSON.stringify(responseData).length;
+            const CHROME_MESSAGE_LIMIT = 10 * 1024 * 1024; // 10 MB Chrome limit
+            
             console.log(`[ClipAIble Offscreen] Response prepared (inline) for ${messageId}`, {
               messageId,
-              responseSize: JSON.stringify(responseData).length,
-              audioDataLength: responseData.audioData.length
+              responseSize: serializedSize,
+              responseSizeMB: (serializedSize / 1024 / 1024).toFixed(2),
+              audioDataLength: responseData.audioData.length,
+              withinChromeLimit: serializedSize < CHROME_MESSAGE_LIMIT
             });
             
-            try {
-              sendResponse(responseData);
-              console.log(`[ClipAIble Offscreen] Response sent successfully (inline) for ${messageId}`, {
+            // If serialized size exceeds Chrome limit, use storage instead
+            if (serializedSize >= CHROME_MESSAGE_LIMIT) {
+              console.log(`[ClipAIble Offscreen] Serialized size exceeds Chrome limit, switching to storage for ${messageId}`, {
                 messageId,
-                method: 'inline',
-                size: uint8Array.length
+                serializedSize,
+                serializedSizeMB: (serializedSize / 1024 / 1024).toFixed(2),
+                chromeLimit: CHROME_MESSAGE_LIMIT,
+                chromeLimitMB: (CHROME_MESSAGE_LIMIT / 1024 / 1024).toFixed(2)
               });
-              
-              // Voice switching works with singleton clear + module reload only
-              // No need to close offscreen document - tested and confirmed
-              
-              return; // CRITICAL: Return after sending response to prevent fallthrough to error handler
-            } catch (sendError) {
-              console.error(`[ClipAIble Offscreen] Failed to send inline response for ${messageId}`, {
-                messageId,
-                error: sendError.message,
-                errorName: sendError.name,
-                errorStack: sendError.stack,
-                size: uint8Array.length,
-                sizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
-                responseDataSize: JSON.stringify(responseData).length,
-                responseDataSizeMB: (JSON.stringify(responseData).length / 1024 / 1024).toFixed(2)
-              });
-              // If inline send fails (e.g., message too large), try storage instead
               // Fall through to storage method
+            } else {
+              try {
+                sendResponse(responseData);
+                console.log(`[ClipAIble Offscreen] Response sent successfully (inline) for ${messageId}`, {
+                  messageId,
+                  method: 'inline',
+                  size: uint8Array.length
+                });
+                
+                // Voice switching works with singleton clear + module reload only
+                // No need to close offscreen document - tested and confirmed
+                
+                return; // CRITICAL: Return after sending response to prevent fallthrough to error handler
+              } catch (sendError) {
+                console.error(`[ClipAIble Offscreen] Failed to send inline response for ${messageId}`, {
+                  messageId,
+                  error: sendError.message,
+                  errorName: sendError.name,
+                  errorStack: sendError.stack,
+                  size: uint8Array.length,
+                  sizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
+                  responseDataSize: serializedSize,
+                  responseDataSizeMB: (serializedSize / 1024 / 1024).toFixed(2)
+                });
+                // If inline send fails (e.g., message too large), try storage instead
+                // Fall through to storage method
+              }
             }
           }
           
@@ -2601,6 +2775,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             });
             
             try {
+              // Check if chrome.storage is available in offscreen context
+              if (!chrome.storage || !chrome.storage.local) {
+                throw new Error('chrome.storage.local is not available in offscreen document context');
+              }
+              
               // CRITICAL: Save metadata with timestamp for cleanup protection
               const metadata = {
                 timestamp: Date.now(),
@@ -2650,6 +2829,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
               
               return; // CRITICAL: Return after sending response
             } catch (storageError) {
+              const hasChromeStorage = typeof chrome !== 'undefined' && chrome.storage;
+              const hasChromeStorageLocal = hasChromeStorage && chrome.storage.local;
+              
               console.error(`[ClipAIble Offscreen] Failed to save to storage for ${messageId}`, {
                 messageId,
                 error: storageError.message,
@@ -2659,8 +2841,86 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 audioSizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
                 threshold: STORAGE_THRESHOLD,
                 thresholdMB: (STORAGE_THRESHOLD / 1024 / 1024).toFixed(2),
-                hasUnlimitedStorage: hasUnlimitedStorage
+                hasUnlimitedStorage: hasUnlimitedStorage,
+                hasChromeStorage: hasChromeStorage,
+                hasChromeStorageLocal: hasChromeStorageLocal,
+                chromeAvailable: typeof chrome !== 'undefined',
+                storageErrorDetails: {
+                  message: storageError.message,
+                  name: storageError.name,
+                  stack: storageError.stack?.substring(0, 500)
+                }
               });
+              
+              // Check if error is due to chrome.storage being unavailable
+              const isStorageUnavailable = !hasChromeStorageLocal || 
+                storageError.message?.includes('undefined') ||
+                storageError.message?.includes('not available') ||
+                storageError.message?.includes('Cannot read properties');
+              
+              if (isStorageUnavailable) {
+                console.error(`[ClipAIble Offscreen] chrome.storage.local is not available in offscreen context for ${messageId}. Using IndexedDB fallback.`, {
+                  messageId,
+                  hasChromeStorage: hasChromeStorage,
+                  hasChromeStorageLocal: hasChromeStorageLocal
+                });
+                
+                // Use IndexedDB as fallback for large audio files
+                try {
+                  const dbName = 'ClipAIbleAudioStorage';
+                  const storeName = 'audioFiles';
+                  
+                  // Open IndexedDB
+                  const dbRequest = indexedDB.open(dbName, 1);
+                  
+                  await new Promise((resolve, reject) => {
+                    dbRequest.onerror = () => reject(new Error('Failed to open IndexedDB'));
+                    dbRequest.onsuccess = () => resolve(dbRequest.result);
+                    dbRequest.onupgradeneeded = (event) => {
+                      const db = event.target.result;
+                      if (!db.objectStoreNames.contains(storeName)) {
+                        db.createObjectStore(storeName);
+                      }
+                    };
+                  });
+                  
+                  const db = dbRequest.result;
+                  const transaction = db.transaction([storeName], 'readwrite');
+                  const store = transaction.objectStore(storeName);
+                  
+                  // Save audio data to IndexedDB
+                  await new Promise((resolve, reject) => {
+                    const putRequest = store.put(uint8Array.buffer, storageKey);
+                    putRequest.onsuccess = () => resolve();
+                    putRequest.onerror = () => reject(new Error('Failed to save to IndexedDB'));
+                  });
+                  
+                  db.close();
+                  
+                  console.log(`[ClipAIble Offscreen] Audio saved to IndexedDB for ${messageId}`, {
+                    messageId,
+                    storageKey,
+                    size: uint8Array.length,
+                    method: 'indexeddb'
+                  });
+                  
+                  // Return response with IndexedDB key (service worker will read from IndexedDB)
+                  sendResponse({
+                    success: true,
+                    storageKey: storageKey,
+                    size: uint8Array.length,
+                    method: 'indexeddb' // Different method to indicate IndexedDB storage
+                  });
+                  
+                  return;
+                } catch (indexedDBError) {
+                  console.error(`[ClipAIble Offscreen] Failed to save to IndexedDB for ${messageId}`, {
+                    messageId,
+                    error: indexedDBError.message
+                  });
+                  // Fall through to error response
+                }
+              }
               
               // CRITICAL: Do NOT fallback to inline for large data!
               // This would cause message timeout and performance issues

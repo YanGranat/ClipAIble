@@ -12,7 +12,7 @@ export const OFFLINE_TTS_CONFIG = {
   DEFAULT_VOICES: {
     'en': 'en_US-lessac-medium',      // Medium quality for English (verified: exists in library)
     'ru': 'ru_RU-dmitri-medium',      // Medium quality for Russian (verified: exists in library)
-    'uk': 'uk_UA-ukrainian_tts-medium', // Medium quality for Ukrainian (verified: exists in library)
+    'uk': null,                        // Ukrainian not available - quality too poor, use Respeecher instead
     'de': 'de_DE-thorsten-medium',     // Medium quality for German (verified: exists in library)
     'fr': 'fr_FR-siwis-medium',        // Medium quality for French (verified: exists in library)
     'es': 'es_ES-sharvard-medium',      // Medium quality for Spanish (verified: exists in library)
@@ -238,7 +238,20 @@ function detectLanguageFromText(text) {
 function getRecommendedVoice(language) {
   if (!language) return OFFLINE_TTS_CONFIG.DEFAULT_VOICES['en'];
   const langCode = language.split('-')[0].toLowerCase();
-  return OFFLINE_TTS_CONFIG.DEFAULT_VOICES[langCode] || OFFLINE_TTS_CONFIG.DEFAULT_VOICES['en'];
+  const voice = OFFLINE_TTS_CONFIG.DEFAULT_VOICES[langCode] || OFFLINE_TTS_CONFIG.DEFAULT_VOICES['en'];
+  
+  // Warn if Ukrainian language requested but not available
+  if (langCode === 'uk' && !OFFLINE_TTS_CONFIG.DEFAULT_VOICES['uk']) {
+    const useConsole = typeof log === 'undefined';
+    const logWarnFn = useConsole ? console.warn : log;
+    logWarnFn('[ClipAIble] Ukrainian voice not available in offline TTS - quality too poor. Use Respeecher for Ukrainian language.', {
+      language,
+      langCode,
+      fallbackVoice: voice
+    });
+  }
+  
+  return voice;
 }
 
 /**

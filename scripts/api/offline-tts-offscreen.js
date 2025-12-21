@@ -23,7 +23,7 @@ export const OFFLINE_TTS_CONFIG = {
   DEFAULT_VOICES: {
     'en': 'en_US-lessac-medium',      // Medium quality for English (verified: exists in library)
     'ru': 'ru_RU-dmitri-medium',      // Medium quality for Russian (verified: exists in library)
-    'uk': 'uk_UA-ukrainian_tts-medium', // Medium quality for Ukrainian (verified: exists in library)
+    'uk': null,                        // Ukrainian not available - quality too poor, use Respeecher instead
     'de': 'de_DE-thorsten-medium',     // Medium quality for German (verified: exists in library)
     'fr': 'fr_FR-siwis-medium',        // Medium quality for French (verified: exists in library)
     'es': 'es_ES-sharvard-medium',      // Medium quality for Spanish (verified: exists in library)
@@ -827,7 +827,7 @@ export async function textToSpeech(text, options = {}) {
       let arrayBuffer;
       
       if (response.method === 'storage') {
-        // Large audio - retrieve from storage
+        // Large audio - retrieve from chrome.storage.local
         log('[ClipAIble Offscreen TTS] Reading audio from storage...', {
           storageKey: response.storageKey,
           size: response.size
@@ -950,6 +950,113 @@ export async function textToSpeech(text, options = {}) {
           cleanupIn: '5 minutes'
         });
         
+      } else if (response.method === 'indexeddb') {
+        // Large audio - retrieve from IndexedDB (fallback when chrome.storage unavailable)
+        log('[ClipAIble Offscreen TTS] Reading audio from IndexedDB...', {
+          storageKey: response.storageKey,
+          size: response.size
+        });
+        
+        const indexedDBStart = Date.now();
+        
+        try {
+          const dbName = 'ClipAIbleAudioStorage';
+          const storeName = 'audioFiles';
+          
+          // Open IndexedDB
+          const dbRequest = indexedDB.open(dbName, 1);
+          
+          const db = await new Promise((resolve, reject) => {
+            dbRequest.onerror = () => reject(new Error('Failed to open IndexedDB'));
+            dbRequest.onsuccess = () => resolve(dbRequest.result);
+            dbRequest.onupgradeneeded = (event) => {
+              const db = event.target.result;
+              if (!db.objectStoreNames.contains(storeName)) {
+                db.createObjectStore(storeName);
+              }
+            };
+          });
+          
+          const transaction = db.transaction([storeName], 'readonly');
+          const store = transaction.objectStore(storeName);
+          
+          // Get audio data from IndexedDB
+          arrayBuffer = await new Promise((resolve, reject) => {
+            const getRequest = store.get(response.storageKey);
+            getRequest.onsuccess = () => {
+              if (!getRequest.result) {
+                reject(new Error('Audio data not found in IndexedDB'));
+              } else {
+                resolve(getRequest.result);
+              }
+            };
+            getRequest.onerror = () => reject(new Error('Failed to read from IndexedDB'));
+          });
+          
+          db.close();
+          
+          const indexedDBDuration = Date.now() - indexedDBStart;
+          
+          log('[ClipAIble Offscreen TTS] Audio retrieved from IndexedDB', {
+            storageKey: response.storageKey,
+            bufferSize: arrayBuffer.byteLength,
+            indexedDBDuration
+          });
+          
+          // Schedule cleanup
+          const cleanupId = setTimeout(async () => {
+            try {
+              const cleanupDbRequest = indexedDB.open(dbName, 1);
+              const cleanupDb = await new Promise((resolve, reject) => {
+                cleanupDbRequest.onerror = () => reject(new Error('Failed to open IndexedDB for cleanup'));
+                cleanupDbRequest.onsuccess = () => resolve(cleanupDbRequest.result);
+                cleanupDbRequest.onupgradeneeded = (event) => {
+                  const db = event.target.result;
+                  if (!db.objectStoreNames.contains(storeName)) {
+                    db.createObjectStore(storeName);
+                  }
+                };
+              });
+              
+              const cleanupTransaction = cleanupDb.transaction([storeName], 'readwrite');
+              const cleanupStore = cleanupTransaction.objectStore(storeName);
+              cleanupStore.delete(response.storageKey);
+              
+              await new Promise((resolve, reject) => {
+                cleanupTransaction.oncomplete = () => {
+                  cleanupDb.close();
+                  resolve();
+                };
+                cleanupTransaction.onerror = () => reject(new Error('Cleanup transaction failed'));
+              });
+              
+              pendingCleanup.delete(response.storageKey);
+              log('[ClipAIble Offscreen TTS] IndexedDB cleanup completed', {
+                storageKey: response.storageKey
+              });
+            } catch (cleanupError) {
+              logError('[ClipAIble Offscreen TTS] IndexedDB cleanup failed', {
+                storageKey: response.storageKey,
+                error: cleanupError.message
+              });
+            }
+          }, 5 * 60 * 1000); // 5 minutes
+          
+          pendingCleanup.set(response.storageKey, cleanupId);
+          
+          log('[ClipAIble Offscreen TTS] IndexedDB cleanup scheduled', {
+            storageKey: response.storageKey,
+            cleanupIn: '5 minutes'
+          });
+          
+        } catch (indexedDBError) {
+          logError('[ClipAIble Offscreen TTS] Failed to read from IndexedDB', {
+            storageKey: response.storageKey,
+            error: indexedDBError.message
+          });
+          throw new Error(`Failed to read audio from IndexedDB: ${indexedDBError.message}`);
+        }
+        
       } else if (response.method === 'inline') {
         // Small audio - data in message (inline)
         if (!response.audioData) {
@@ -977,13 +1084,14 @@ export async function textToSpeech(text, options = {}) {
         const audioDataLength = audioDataArray.length;
         
         if (audioDataLength > MAX_INLINE_SIZE) {
-          logError('[ClipAIble Offscreen TTS] Audio too large for inline transfer', {
+          logError('[ClipAIble Offscreen TTS] Audio too large for inline transfer (should not happen with new logic)', {
             size: audioDataLength,
             maxSize: MAX_INLINE_SIZE,
             method: response.method,
-            isArray: Array.isArray(response.audioData)
+            isArray: Array.isArray(response.audioData),
+            note: 'Offscreen should use storage method for files >= 5 MB or when serialized size >= 10 MB'
           });
-          throw new Error(`Audio too large for inline transfer: ${(audioDataLength / 1024 / 1024).toFixed(2)} MB exceeds inline limit of ${(MAX_INLINE_SIZE / 1024 / 1024).toFixed(2)} MB`);
+          throw new Error(`Audio too large for inline transfer: ${(audioDataLength / 1024 / 1024).toFixed(2)} MB exceeds inline limit of ${(MAX_INLINE_SIZE / 1024 / 1024).toFixed(2)} MB. This should not happen - offscreen should use storage method.`);
         }
         
         log('[ClipAIble Offscreen TTS] Converting inline audio data to ArrayBuffer...', {

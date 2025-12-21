@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.1.0-blue)
+![Version](https://img.shields.io/badge/version-3.2.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -43,18 +43,20 @@ All formats support **translation to 11 languages** — even translating text on
 - **Selector caching**: Independent settings for using and enabling cache
 
 ### 🎧 Audio Export
-- **5 TTS providers**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
-- **100+ voices**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher (English & Ukrainian)
-- **Speed adjustment**: 0.5x to 2.0x (OpenAI/ElevenLabs only; Google/Qwen/Respeecher use fixed speed)
-- **Format support**: MP3 (OpenAI/ElevenLabs) or WAV (Google/Qwen/Respeecher)
+- **6 TTS providers**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher, Piper TTS (offline)
+- **150+ voices**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher + 50+ Piper TTS (offline) (9 languages)
+- **Speed adjustment**: 0.5x to 2.0x (OpenAI/ElevenLabs only; Google/Qwen/Respeecher/Piper TTS (offline) use fixed speed)
+- **Format support**: MP3 (OpenAI/ElevenLabs) or WAV (Google/Qwen/Respeecher/Piper TTS (offline))
 - **Multi-language pronunciation**: Correct pronunciation for each language
-- **Ukrainian language support**: Dedicated Ukrainian voices via Respeecher (10 voices)
+- **Ukrainian language support**: Dedicated Ukrainian voices via Respeecher (10 voices) and Piper TTS (offline)
+- **Piper TTS (offline)**: Works completely offline, no API keys required, 50+ voices across 9 languages (English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese)
 - **Smart text cleanup**: AI removes URLs, code, and non-speech content
 - **Provider-specific features**:
   - **ElevenLabs**: Model selection (v2, v3, Turbo v2.5), format selection, advanced voice settings
   - **Google Gemini 2.5 TTS**: Model selection (pro/flash), 30 voices, 24k char limit
   - **Qwen**: 49 voices including Russian voice (Alek), 600 char limit
   - **Respeecher**: Advanced sampling parameters (temperature, repetition_penalty, top_p)
+  - **Piper TTS (offline)**: No API keys required, voice models cached locally, works completely offline
 
 ### 🌍 Translation
 - **11 languages**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
@@ -114,6 +116,7 @@ All formats support **translation to 11 languages** — even translating text on
   - Google Gemini 2.5 TTS: 24000 characters
   - Qwen TTS: 600 characters
   - Respeecher TTS: 450 characters
+  - Piper TTS (offline): 50000 characters
   - Text is automatically split intelligently at sentence/word boundaries
 
 ### Technical Constraints
@@ -153,6 +156,8 @@ All formats support **translation to 11 languages** — even translating text on
 ## 🔑 Getting API Keys
 
 > **💡 New in v3.1.0**: You can now use ClipAIble without any API keys! Automatic mode works instantly using local algorithms. API keys are only needed for AI-powered features (translation, abstract generation, AI Extract mode).
+> 
+> **💡 New in v3.2.0**: Piper TTS (offline) - Generate audio completely offline with 50+ voices across 9 languages, no API keys required!
 
 ### OpenAI (GPT models + Audio)
 
@@ -238,10 +243,11 @@ All formats support **translation to 11 languages** — even translating text on
 | **ElevenLabs** | Audio export (9 voices, high quality) | ✅ (9 voices) | ❌ |
 | **Qwen** | Audio export (49 voices, Russian support) | ✅ (49 voices) | ❌ |
 | **Respeecher** | Audio export (Ukrainian language) | ✅ (14 voices) | ❌ |
+| **Piper TTS (offline)** | Audio export (offline, no API keys) | ✅ (50+ voices) | ❌ |
 
 **Recommendation:** 
 - **For extraction**: Start with OpenAI or Gemini (fast and reliable)
-- **For audio**: OpenAI for general use, ElevenLabs for high quality, Google Gemini 2.5 TTS for 30 voices, Qwen for Russian, Respeecher for Ukrainian
+- **For audio**: OpenAI for general use, ElevenLabs for high quality, Google Gemini 2.5 TTS for 30 voices, Qwen for Russian, Respeecher for Ukrainian, Piper TTS (offline) for offline use (no API keys)
 - **For image translation**: Requires Gemini API key
 
 ---
@@ -303,6 +309,8 @@ All formats support **translation to 11 languages** — even translating text on
 **Qwen3-TTS-Flash (49 voices):** Including Elias (default), Alek (Russian), and voices for 10 languages
 
 **Respeecher (14 voices):** 4 English (Samantha, Neve, Gregory, Vincent) + 10 Ukrainian voices
+
+**Piper TTS (offline) (50+ voices):** English (GB/US), Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese
 
 ### Style Presets (PDF)
 

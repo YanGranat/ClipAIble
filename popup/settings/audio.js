@@ -259,8 +259,8 @@ export function initAudio(deps) {
         { id: 'ru_RU-dmitri-medium', name: 'ru_RU-dmitri-medium' },
         { id: 'ru_RU-irina-medium', name: 'ru_RU-irina-medium' },
         { id: 'ru_RU-ruslan-medium', name: 'ru_RU-ruslan-medium' },
-        // Ukrainian
-        { id: 'uk_UA-ukrainian_tts-medium', name: 'uk_UA-ukrainian_tts-medium' },
+        // Ukrainian - REMOVED: Quality too poor, use Respeecher instead
+        // { id: 'uk_UA-ukrainian_tts-medium', name: 'uk_UA-ukrainian_tts-medium' },
         // German
         { id: 'de_DE-mls-medium', name: 'de_DE-mls-medium' },
         { id: 'de_DE-thorsten-medium', name: 'de_DE-thorsten-medium' },

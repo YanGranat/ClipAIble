@@ -160,9 +160,9 @@ export const PIPER_VOICES_MAPPING = {
   'fahrettin': 'tr_TR-fahrettin-medium',
   'fettah': 'tr_TR-fettah-medium',
   
-  // Ukrainian (UK_UA) - SUPPORTED
-  'ukrainian_tts': 'uk_UA-ukrainian_tts-medium', // Default (medium quality)
-  'lada': 'uk_UA-lada-x_low', // Only x_low available (will be filtered)
+  // Ukrainian (UK_UA) - REMOVED: Quality too poor, use Respeecher instead
+  // 'ukrainian_tts': 'uk_UA-ukrainian_tts-medium', // Removed - quality too poor
+  // 'lada': 'uk_UA-lada-x_low', // Removed - only x_low available
   
   // Vietnamese (VI_VN) - not in supported languages
   'vais1000': 'vi_VN-vais1000-medium',
