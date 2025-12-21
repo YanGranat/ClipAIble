@@ -820,15 +820,30 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   const progressBase = 60; // Start at 60% (after preparation)
   const progressRange = 35; // Use 60-95% for TTS conversion
   
+  // Throttle progress updates to reduce UI lag
+  // Update progress only every 2% or every 5 chunks, whichever comes first
+  let lastProgressUpdate = progressBase - 1; // Force first update
+  const PROGRESS_UPDATE_THRESHOLD = 2; // Update every 2% progress
+  const CHUNK_UPDATE_THRESHOLD = 5; // Or every 5 chunks
+  
   for (let i = 0; i < expandedChunks.length; i++) {
     const chunk = expandedChunks[i];
     const progress = progressBase + Math.floor((i / expandedChunks.length) * progressRange);
     
-    updateState?.({
-      stage: PROCESSING_STAGES.GENERATING.id,
-      status: `Converting segment ${i + 1}/${expandedChunks.length} to speech...`, 
-      progress 
-    });
+    // Throttle progress updates to avoid UI lag
+    const shouldUpdate = (progress - lastProgressUpdate >= PROGRESS_UPDATE_THRESHOLD) || 
+                         ((i + 1) % CHUNK_UPDATE_THRESHOLD === 0) ||
+                         (i === 0) || // Always update first chunk
+                         (i === expandedChunks.length - 1); // Always update last chunk
+    
+    if (shouldUpdate && updateState) {
+      updateState({
+        stage: PROCESSING_STAGES.GENERATING.id,
+        status: `Converting segment ${i + 1}/${expandedChunks.length} to speech...`, 
+        progress 
+      });
+      lastProgressUpdate = progress;
+    }
     
     try {
       // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS

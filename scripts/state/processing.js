@@ -48,6 +48,27 @@ let processingState = {
 // Simple lock to prevent concurrent updates (JavaScript is single-threaded, but async operations can interleave)
 let isUpdatingState = false;
 
+// Debounce storage saves to reduce I/O load during frequent progress updates
+let storageSaveTimeout = null;
+let pendingStorageUpdate = null;
+const STORAGE_SAVE_DEBOUNCE = 500; // Save to storage max once per 500ms
+
+// Force immediate save (bypass debounce) for critical updates
+function forceSaveState() {
+  if (storageSaveTimeout) {
+    clearTimeout(storageSaveTimeout);
+    storageSaveTimeout = null;
+  }
+  if (pendingStorageUpdate) {
+    chrome.storage.local.set({ 
+      processingState: pendingStorageUpdate
+    }).catch(error => {
+      logWarn('Failed to force save processingState', error);
+    });
+    pendingStorageUpdate = null;
+  }
+}
+
 /**
  * Get current processing state (copy)
  * @returns {ProcessingState} Processing state
@@ -126,11 +147,25 @@ export function updateState(updates) {
         stage: updates.stage 
       });
       
-      // Save to storage
+      // Save to storage with debounce
       if (processingState.isProcessing) {
-        chrome.storage.local.set({ 
-          processingState: { ...processingState, lastUpdate: Date.now() }
-        });
+        pendingStorageUpdate = { ...processingState, lastUpdate: Date.now() };
+        
+        if (storageSaveTimeout) {
+          clearTimeout(storageSaveTimeout);
+        }
+        
+        storageSaveTimeout = setTimeout(() => {
+          if (pendingStorageUpdate) {
+            chrome.storage.local.set({ 
+              processingState: pendingStorageUpdate
+            }).catch(error => {
+              logWarn('Failed to save processingState in updateState', error);
+            });
+            pendingStorageUpdate = null;
+          }
+          storageSaveTimeout = null;
+        }, STORAGE_SAVE_DEBOUNCE);
       }
       return;
     }
@@ -144,14 +179,26 @@ export function updateState(updates) {
   // Popup reads from memory via getProcessingState(), not from storage.
   // See systemPatterns.md "Design Decisions" section.
   if (processingState.isProcessing) {
-    // CRITICAL: Always save processingState if isProcessing = true
-    // This ensures state persists across service worker restarts
-    chrome.storage.local.set({ 
-      processingState: { ...processingState, lastUpdate: Date.now() }
-    }).catch(error => {
-      // Log but don't throw - storage errors shouldn't break processing
-      logWarn('Failed to save processingState in updateState', error);
-    });
+    // CRITICAL: Debounce storage saves to reduce I/O load during frequent progress updates
+    // This is especially important for audio generation which has many progress updates
+    pendingStorageUpdate = { ...processingState, lastUpdate: Date.now() };
+    
+    if (storageSaveTimeout) {
+      clearTimeout(storageSaveTimeout);
+    }
+    
+    storageSaveTimeout = setTimeout(() => {
+      if (pendingStorageUpdate) {
+        chrome.storage.local.set({ 
+          processingState: pendingStorageUpdate
+        }).catch(error => {
+          // Log but don't throw - storage errors shouldn't break processing
+          logWarn('Failed to save processingState in updateState', error);
+        });
+        pendingStorageUpdate = null;
+      }
+      storageSaveTimeout = null;
+    }, STORAGE_SAVE_DEBOUNCE);
     
     // CRITICAL: Summary generation no longer uses processingState
     // It uses only summary_generating flag to avoid interfering with document generation UI
@@ -224,6 +271,9 @@ export async function cancelProcessing(stopKeepAlive) {
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  */
 export async function completeProcessing(stopKeepAlive) {
+  // Force save any pending state before clearing
+  forceSaveState();
+  
   processingState.isProcessing = false;
   processingState.progress = 100;
   const uiLang = await getUILanguage();
@@ -240,6 +290,9 @@ export async function completeProcessing(stopKeepAlive) {
  * @param {Function} stopKeepAlive - Function to stop keep-alive
  */
 export async function setError(error, stopKeepAlive) {
+  // Force save any pending state before clearing
+  forceSaveState();
+  
   processingState.isProcessing = false;
   
   // Support both string (backward compatibility) and object format

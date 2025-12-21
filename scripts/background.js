@@ -1657,6 +1657,17 @@ async function startArticleProcessing(data) {
     return false;
   }
   
+  // CRITICAL: Save outputFormat to state immediately so polling can use correct interval
+  // This is especially important for audio format which needs longer polling interval
+  if (data.outputFormat) {
+    // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
+    updateState({ outputFormat: data.outputFormat });
+    log('=== startArticleProcessing: outputFormat saved to state ===', {
+      outputFormat: data.outputFormat,
+      timestamp: Date.now()
+    });
+  }
+  
   // Clean up any old temporary data before starting new processing
   try {
     await removeLargeData('printHtml');

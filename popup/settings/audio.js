@@ -80,7 +80,19 @@ export function initAudio(deps) {
       ? audioVoiceMap.current 
       : (audioVoiceMap || {});
     const savedProviderVoice = voiceMap[provider] || '';
-    const currentValue = savedProviderVoice || elements.audioVoice.value || '';
+    let currentValue = savedProviderVoice || elements.audioVoice.value || '';
+    
+    // CRITICAL: For offline provider, reject numeric values (indices) - they are invalid
+    // Only voice IDs (strings with _ or -) are valid for offline
+    if (provider === 'offline' && currentValue && /^\d+$/.test(String(currentValue))) {
+      console.warn('[ClipAIble Audio] Invalid voice value (index) for offline provider, using saved voice or empty', {
+        provider,
+        invalidValue: currentValue,
+        savedVoice: savedProviderVoice
+      });
+      currentValue = savedProviderVoice || ''; // Use saved voice from map, or empty
+    }
+    
     elements.audioVoice.innerHTML = '';
     
     if (provider === 'elevenlabs') {
@@ -296,6 +308,7 @@ export function initAudio(deps) {
       
       // Set value: use saved value if valid, otherwise use default
       // CRITICAL: Only save if value actually changed - don't overwrite saved voice unnecessarily
+      // Note: currentValue is already validated at function start (numeric values rejected for offline)
       if (currentValue && offlineVoices.find(v => v.id === currentValue)) {
         // Valid saved voice found - use it, don't save again
         elements.audioVoice.value = currentValue;

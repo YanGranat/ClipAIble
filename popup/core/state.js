@@ -154,7 +154,8 @@ export function initState(deps) {
   async function checkProcessingState() {
     try {
       const state = await chrome.runtime.sendMessage({ action: 'getState' });
-      await updateUIFromState(state);
+      // Use scheduleUIUpdate for consistency with polling (debounce + RAF)
+      scheduleUIUpdate(state);
     } catch (error) {
       logError('Error getting state from background', error);
       // Fallback: try to load from storage
@@ -166,13 +167,80 @@ export function initState(deps) {
           
           // If state is recent (< 2 minutes), show it
           if (timeSinceUpdate < 2 * 60 * 1000 && savedState.isProcessing) {
-            updateUIFromState(savedState);
+            scheduleUIUpdate(savedState);
           }
         }
       } catch (storageError) {
         logError('Error loading from storage', storageError);
       }
     }
+  }
+
+  // Lightweight state comparison - only check key fields instead of full JSON.stringify
+  // This avoids blocking the main thread with expensive serialization
+  function stateChanged(newState, oldState) {
+    if (!oldState) return true;
+    
+    // Compare only critical fields that affect UI
+    return (
+      newState.isProcessing !== oldState.isProcessing ||
+      newState.progress !== oldState.progress ||
+      newState.status !== oldState.status ||
+      newState.currentStage !== oldState.currentStage ||
+      newState.error !== oldState.error ||
+      newState.errorCode !== oldState.errorCode ||
+      newState.isCancelled !== oldState.isCancelled ||
+      newState.outputFormat !== oldState.outputFormat ||
+      newState.startTime !== oldState.startTime
+    );
+  }
+
+  // Debounce and RAF-based UI update scheduler
+  let pendingUIUpdate = null;
+  let lastUIUpdateTime = 0;
+  // CRITICAL: Increase debounce interval for audio format to reduce lag during TTS
+  // Audio generation has many progress updates (one per chunk), so we need longer debounce
+  let MIN_UI_UPDATE_INTERVAL = 100; // Default: Max 10 updates per second (100ms debounce)
+  let lastScheduledState = null;
+
+  // Schedule UI update with debounce and requestAnimationFrame
+  function scheduleUIUpdate(state) {
+    // Store latest state
+    lastScheduledState = state;
+    
+    // CRITICAL: Use longer debounce interval for audio format to reduce lag during TTS
+    // Audio generation has many progress updates, so we need to throttle more aggressively
+    const isAudioFormat = state?.outputFormat === 'audio';
+    const currentMinInterval = isAudioFormat ? 250 : MIN_UI_UPDATE_INTERVAL; // 250ms for audio (4 updates/sec), 100ms for others
+    
+    // If update already scheduled, skip (will use latest state)
+    if (pendingUIUpdate) {
+      return;
+    }
+    
+    // Check debounce interval
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUIUpdateTime;
+    
+    if (timeSinceLastUpdate < currentMinInterval) {
+      // Too soon - schedule for later
+      const delay = currentMinInterval - timeSinceLastUpdate;
+      pendingUIUpdate = setTimeout(() => {
+        pendingUIUpdate = null;
+        scheduleUIUpdate(lastScheduledState);
+      }, delay);
+      return;
+    }
+    
+    // Schedule via requestAnimationFrame for smooth DOM updates
+    pendingUIUpdate = requestAnimationFrame(async () => {
+      pendingUIUpdate = null;
+      lastUIUpdateTime = Date.now();
+      
+      if (lastScheduledState) {
+        await updateUIFromState(lastScheduledState);
+      }
+    });
   }
 
   // Start polling for state updates
@@ -198,25 +266,45 @@ export function initState(deps) {
       try {
         const state = await chrome.runtime.sendMessage({ action: 'getState' });
         
-        // Check if state changed
-        const stateChanged = JSON.stringify(state) !== JSON.stringify(lastState);
+        // Use lightweight comparison instead of JSON.stringify
+        const changed = stateChanged(state, lastState);
         
-        if (stateChanged) {
+        if (changed) {
           // State changed - reset adaptive polling
           noChangeCount = 0;
-          await updateUIFromState(state);
+          
+          // Schedule UI update with debounce and RAF
+          scheduleUIUpdate(state);
           lastState = state;
           
-          // Use faster polling when processing (increased from 300ms to 500ms)
-          pollInterval = state.isProcessing ? 500 : 2000;
+          // Determine polling interval based on format and processing state
+          // Audio formats (especially offline TTS) are slower - use longer interval
+          // CRITICAL: Check outputFormat from state (saved at start of processing)
+          const isAudioFormat = state.outputFormat === 'audio';
+          const baseInterval = isAudioFormat ? 1000 : 500; // 1s for audio, 500ms for others
+          
+          pollInterval = state.isProcessing ? baseInterval : 2000;
+          
+          // Log polling interval for debugging
+          if (state.isProcessing) {
+            console.log('[ClipAIble State Polling] Polling interval set', {
+              outputFormat: state.outputFormat,
+              isAudioFormat,
+              baseInterval,
+              pollInterval,
+              isProcessing: state.isProcessing
+            });
+          }
         } else {
           // State didn't change - increase interval (adaptive polling)
           noChangeCount++;
           
-          // Exponential backoff: 500ms → 750ms → 1125ms → 1687ms → 2000ms (for processing)
+          // Exponential backoff: baseInterval → baseInterval*1.5 → baseInterval*2.25 → ... → 2000ms
           // For idle: 2000ms (no backoff needed)
           if (state.isProcessing) {
-            pollInterval = Math.min(500 * Math.pow(1.5, noChangeCount), 2000);
+            const isAudioFormat = state.outputFormat === 'audio';
+            const baseInterval = isAudioFormat ? 1000 : 500;
+            pollInterval = Math.min(baseInterval * Math.pow(1.5, noChangeCount), 2000);
           } else {
             pollInterval = 2000; // Keep 2s for idle state
           }
@@ -238,7 +326,7 @@ export function initState(deps) {
             if (stored.processingState && stored.processingState.isProcessing) {
               const timeSinceUpdate = Date.now() - (stored.processingState.lastUpdate || 0);
               if (timeSinceUpdate < 2 * 60 * 1000) {
-                await updateUIFromState(stored.processingState);
+                scheduleUIUpdate(stored.processingState);
               }
             }
           } catch (e) {
