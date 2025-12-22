@@ -376,7 +376,9 @@ export function initProcessing(deps) {
                 });
               }
               // Priority 3: Use getVoiceIdByIndex if value is an index
+              // @ts-ignore - window.settingsModule is added at runtime
               else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && window.settingsModule && window.settingsModule.getVoiceIdByIndex) {
+                // @ts-ignore - window.settingsModule is added at runtime
                 const voiceIdFromCache = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
                 if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
                   finalVoice = voiceIdFromCache;

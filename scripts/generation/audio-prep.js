@@ -520,8 +520,11 @@ ${chunkText}`;
       markdownCount: (chunkText.match(/[*_`#\[\]]/g) || []).length
     });
     
-    const cleaned = await callAI(systemPrompt, userPrompt, apiKey, model, false);
+    const cleanedResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false);
     const aiCallDuration = Date.now() - beforeAICall;
+    
+    // Extract string from response (callAI returns string when jsonResponse=false)
+    const cleaned = typeof cleanedResponse === 'string' ? cleanedResponse : String(cleanedResponse);
     
     log('=== prepareChunkForAudio: AI cleanup complete ===', {
       chunkIndex,
@@ -587,11 +590,6 @@ ${chunkText}`;
   }
 }
 
-/**
- * Basic text cleanup without AI (fallback)
- * @param {string} text - Text to clean
- * @returns {string} Cleaned text
- */
 /**
  * Sanitize text for Piper TTS phonemizer
  * Removes problematic Unicode characters that cause phoneme index errors
@@ -904,8 +902,8 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
     // Otherwise, progress from base to 60%
     const progress = currentProgress >= 60 ? 60 : (progressBase + Math.floor((i / chunks.length) * progressRange));
     const preparingStatus = tSync('stagePreparingSegment', uiLang)
-      .replace('{current}', i + 1)
-      .replace('{total}', chunks.length);
+      .replace('{current}', String(i + 1))
+      .replace('{total}', String(chunks.length));
     updateState?.({ 
       stage: PROCESSING_STAGES.GENERATING.id,
       status: preparingStatus, 

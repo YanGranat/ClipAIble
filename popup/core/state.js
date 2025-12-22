@@ -172,6 +172,7 @@ export function initState(deps) {
       try {
         const stored = await chrome.storage.local.get(['processingState']);
         if (stored.processingState) {
+          /** @type {{isProcessing?: boolean, lastUpdate?: number, [key: string]: any}} */
           const savedState = stored.processingState;
           const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
           
@@ -307,10 +308,14 @@ export function initState(deps) {
         if (failedAttempts >= 3) {
           try {
             const stored = await chrome.storage.local.get(['processingState']);
-            if (stored.processingState && stored.processingState.isProcessing) {
-              const timeSinceUpdate = Date.now() - (stored.processingState.lastUpdate || 0);
-              if (timeSinceUpdate < 2 * 60 * 1000) {
-                scheduleUIUpdate(stored.processingState);
+            if (stored.processingState) {
+              /** @type {{isProcessing?: boolean, lastUpdate?: number, [key: string]: any}} */
+              const savedState = stored.processingState;
+              if (savedState.isProcessing) {
+                const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
+                if (timeSinceUpdate < 2 * 60 * 1000) {
+                  scheduleUIUpdate(savedState);
+                }
               }
             }
           } catch (e) {

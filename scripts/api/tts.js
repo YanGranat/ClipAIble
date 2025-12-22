@@ -49,14 +49,15 @@ log('[ClipAIble TTS] TTS module initialized with all providers', {
  * Convert text to speech using TTS API (OpenAI, ElevenLabs, Qwen, Respeecher, Google Cloud TTS, or Offline)
  * @param {string} text - Text to convert
  * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud) - not needed for 'offline'
- * @param {Object} options - TTS options
- * @param {string} options.provider - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline' (default: 'openai')
- * @param {string} options.voice - Voice to use
- * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0, offline: 0.1-10.0)
- * @param {string} options.format - Output format (default: 'mp3', offline: always 'wav')
- * @param {string} options.instructions - Voice style instructions (OpenAI only)
- * @param {string} options.language - Language code for Qwen/Offline (auto-detected if not provided)
- * @param {number} options.pitch - Pitch -20.0 to 20.0 (Google Cloud TTS only, default: 0.0) or 0-2.0 (Offline)
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
+ * @param {string} [options.voice] - Voice to use
+ * @param {number} [options.speed] - Speech speed 0.25-4.0 (default: 1.0, offline: 0.1-10.0)
+ * @param {string} [options.format] - Output format (default: 'mp3', offline: always 'wav')
+ * @param {string} [options.instructions] - Voice style instructions (OpenAI only)
+ * @param {string} [options.language] - Language code for Qwen/Offline (auto-detected if not provided)
+ * @param {number} [options.pitch] - Pitch -20.0 to 20.0 (Google Cloud TTS only, default: 0.0) or 0-2.0 (Offline)
+ * @param {number} [options.tabId] - Tab ID for offline TTS
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
 export async function textToSpeech(text, apiKey, options = {}) {
@@ -140,11 +141,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
  * Convert text to speech using OpenAI TTS API
  * @param {string} text - Text to convert (max 4096 characters)
  * @param {string} apiKey - OpenAI API key
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice to use (default: 'nova')
- * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0)
- * @param {string} options.format - Output format: mp3, opus, aac, flac, wav, pcm (default: 'mp3')
- * @param {string} options.instructions - Voice style instructions (optional, only for gpt-4o-mini-tts)
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.voice='nova'] - Voice to use
+ * @param {number} [options.speed=1.0] - Speech speed 0.25-4.0
+ * @param {string} [options.format='mp3'] - Output format: mp3, opus, aac, flac, wav, pcm
+ * @param {string} [options.instructions] - Voice style instructions (optional, only for gpt-4o-mini-tts)
+ * @param {string} [options.openaiInstructions] - Alternative instructions property name
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
 async function textToSpeechOpenAI(text, apiKey, options = {}) {
@@ -218,7 +220,7 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
-              const error = new Error(`HTTP ${fetchResponse.status}`);
+              const error = /** @type {Error & {status?: number, response?: Response}} */ (new Error(`HTTP ${fetchResponse.status}`));
               error.status = fetchResponse.status;
               error.response = fetchResponse;
               clearTimeout(timeout);
@@ -232,7 +234,7 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
             } catch (e) {
               errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
             }
-            const error = new Error(errorData.error?.message || `TTS API error: ${fetchResponse.status}`);
+            const error = /** @type {Error & {status?: number}} */ (new Error(errorData.error?.message || `TTS API error: ${fetchResponse.status}`));
             error.status = fetchResponse.status;
             clearTimeout(timeout);
             throw error;
@@ -330,10 +332,16 @@ function splitIfTooLong(text, maxLength) {
  * Convert text to speech using ElevenLabs TTS API
  * @param {string} text - Text to convert (max 5000 characters)
  * @param {string} apiKey - ElevenLabs API key
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID to use (default: Rachel)
- * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0)
- * @param {string} options.format - Output format (default: 'mp3_44100_128')
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.voice] - Voice ID to use (default: Rachel)
+ * @param {number} [options.speed] - Speech speed 0.25-4.0 (default: 1.0)
+ * @param {string} [options.format] - Output format (default: 'mp3_44100_128')
+ * @param {string} [options.elevenlabsFormat] - Alternative format property name
+ * @param {string} [options.elevenlabsModel] - Model ID
+ * @param {number} [options.elevenlabsStability] - Stability setting
+ * @param {number} [options.elevenlabsSimilarity] - Similarity setting
+ * @param {number} [options.elevenlabsStyle] - Style setting
+ * @param {boolean} [options.elevenlabsSpeakerBoost] - Speaker boost setting
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
 async function textToSpeechElevenLabs(text, apiKey, options = {}) {
@@ -357,6 +365,7 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
     speed, 
     format: finalFormat, 
     modelId: elevenlabsModel,
+    // @ts-expect-error - elevenlabsTTS accepts additional voice settings (stability, similarityBoost, style, useSpeakerBoost)
     stability: elevenlabsStability,
     similarityBoost: elevenlabsSimilarity,
     style: elevenlabsStyle,
@@ -368,10 +377,10 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
  * Convert text to speech using Qwen3-TTS-Flash API
  * @param {string} text - Text to convert (max 600 characters - very strict!)
  * @param {string} apiKey - Alibaba Cloud DashScope API key
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice name to use (default: 'Cherry')
- * @param {number} options.speed - Speech speed 0.5-2.0 (default: 1.0, not directly supported)
- * @param {string} options.language - Language code (auto-detected if not provided)
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.voice] - Voice name to use (default: 'Cherry')
+ * @param {number} [options.speed] - Speech speed 0.5-2.0 (default: 1.0, not directly supported)
+ * @param {string} [options.language] - Language code (auto-detected if not provided)
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
 async function textToSpeechQwen(text, apiKey, options = {}) {
@@ -388,8 +397,12 @@ async function textToSpeechQwen(text, apiKey, options = {}) {
  * Convert text to speech using Respeecher API
  * @param {string} text - Text to convert (max 450 characters)
  * @param {string} apiKey - Respeecher API key
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID to use (default: 'samantha')
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.voice] - Voice ID to use (default: 'samantha')
+ * @param {string} [options.language] - Language code
+ * @param {number} [options.respeecherTemperature] - Temperature setting
+ * @param {number} [options.respeecherRepetitionPenalty] - Repetition penalty setting
+ * @param {number} [options.respeecherTopP] - Top P setting
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format)
  */
 async function textToSpeechRespeecher(text, apiKey, options = {}) {
@@ -403,6 +416,7 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
   
   return respeecherTTS(text, apiKey, { 
     voice, 
+    // @ts-expect-error - respeecherTTS accepts language and sampling parameters (temperature, repetition_penalty, top_p)
     language,
     temperature: respeecherTemperature,
     repetition_penalty: respeecherRepetitionPenalty,
@@ -414,11 +428,14 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
  * Convert text to speech using Google Gemini 2.5 Pro TTS API
  * @param {string} text - Text to convert (max 5000 characters)
  * @param {string} apiKey - Google API key (same as Gemini API key)
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice name to use (default: 'Callirrhoe')
- * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0, not supported by Google TTS)
- * @param {string} options.format - Audio format (not supported by Google TTS, always returns WAV)
- * @param {string} options.prompt - Optional style prompt for voice control (emotion, tone)
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.voice] - Voice name to use (default: 'Callirrhoe')
+ * @param {number} [options.speed] - Speech speed 0.25-4.0 (default: 1.0, not supported by Google TTS)
+ * @param {string} [options.format] - Audio format (not supported by Google TTS, always returns WAV)
+ * @param {string} [options.prompt] - Optional style prompt for voice control (emotion, tone)
+ * @param {string} [options.googleTtsPrompt] - Alternative prompt property name
+ * @param {string} [options.model] - Model name
+ * @param {string} [options.googleTtsModel] - Alternative model property name
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
  */
 async function textToSpeechGoogle(text, apiKey, options = {}) {
@@ -447,13 +464,13 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
  * it will execute in page context via executeScript
  * @param {string} text - Text to convert (max 10000 characters)
  * @param {string} apiKey - Not used for offline TTS
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID to use (optional, uses default)
- * @param {number} options.speed - Speech speed 0.1-10.0 (default: 1.0)
- * @param {number} options.pitch - Pitch 0-2.0 (default: 1.0, may not be supported)
- * @param {number} options.volume - Volume 0-1.0 (default: 1.0, may not be supported)
- * @param {string} options.language - Language code (e.g., 'en-US', 'ru-RU') (optional)
- * @param {number} options.tabId - Tab ID for executeScript (required if window is not available)
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.voice] - Voice ID to use (optional, uses default)
+ * @param {number} [options.speed] - Speech speed 0.1-10.0 (default: 1.0)
+ * @param {number} [options.pitch] - Pitch 0-2.0 (default: 1.0, may not be supported)
+ * @param {number} [options.volume] - Volume 0-1.0 (default: 1.0, may not be supported)
+ * @param {string} [options.language] - Language code (e.g., 'en-US', 'ru-RU') (optional)
+ * @param {number} [options.tabId] - Tab ID for executeScript (required if window is not available)
  * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
  */
 async function textToSpeechOffline(text, apiKey, options = {}) {
@@ -756,9 +773,16 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
  * 
  * @param {Array<{text: string, index: number}>} chunks - Prepared text chunks
  * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud)
- * @param {Object} options - TTS options
- * @param {string} options.provider - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', or 'google' (default: 'openai')
- * @param {Function} updateState - State update callback
+ * @param {Object} [options={}] - TTS options
+ * @param {string} [options.provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
+ * @param {string} [options.voice] - Voice to use
+ * @param {number} [options.speed] - Speech speed
+ * @param {string} [options.format] - Output format
+ * @param {string} [options.instructions] - Voice style instructions
+ * @param {string} [options.language] - Language code
+ * @param {number} [options.pitch] - Pitch setting
+ * @param {number} [options.tabId] - Tab ID for offline TTS
+ * @param {Function} [updateState] - State update callback
  * @returns {Promise<ArrayBuffer>} Concatenated audio data
  */
 export async function chunksToSpeech(chunks, apiKey, options = {}, updateState = null) {
