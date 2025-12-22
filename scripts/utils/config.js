@@ -38,7 +38,7 @@ export const CONFIG = {
   DEFAULT_RESPEECHER_VOICE: 'samantha',  // Default Respeecher English voice
   
   // Logging
-  LOG_LEVEL: 1,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: INFO)
+  LOG_LEVEL: 0,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: DEBUG for active development)
 };
 
 // Language names for translation

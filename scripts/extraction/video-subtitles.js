@@ -182,6 +182,8 @@ export async function extractYouTubeSubtitles(tabId) {
                       try {
                         data = JSON.parse(subtitleAttr);
                       } catch (e) {
+                        // CRITICAL: This runs in MAIN world where modules are not available
+                        // console.error is acceptable here as logging module cannot be imported
                         console.error('[ClipAIble:Video] Failed to parse subtitle data', e);
                         return null;
                       }
@@ -251,6 +253,8 @@ export async function extractYouTubeSubtitles(tabId) {
                       try {
                         data = JSON.parse(subtitleAttr);
                       } catch (e) {
+                        // CRITICAL: This runs in MAIN world where modules are not available
+                        // console.error is acceptable here as logging module cannot be imported
                         console.error('[ClipAIble:Video] Failed to parse subtitle data', e);
                         return null;
                       }
@@ -1384,6 +1388,8 @@ export async function extractVimeoSubtitles(tabId) {
 function extractVimeoSubtitlesInlined() {
   return (async () => {
     try {
+      // CRITICAL: This runs in MAIN world where modules are not available
+      // console.error is acceptable here as logging module cannot be imported
       const logError = console.error.bind(console, '[ClipAIble]');
       const subtitles = [];
       let metadata = {

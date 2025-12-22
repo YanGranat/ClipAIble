@@ -6,6 +6,7 @@
 // @typedef {import('../types.js').MessageResponse} MessageResponse
 
 import { log, logWarn, logError } from '../utils/logging.js';
+import { updateState } from '../state/processing.js';
 
 // Simple handlers
 import {
@@ -100,6 +101,22 @@ export function routeMessage(request, sender, sendResponse, deps) {
     // Simple handlers
     'log': () => handleLog(request, sender, sendResponse),
     'logError': () => handleLogError(request, sender, sendResponse),
+    'logSetting': () => {
+      const { key, value, valueType, timestamp } = request.data || {};
+      log('[ClipAIble Background] ===== SETTING CHANGED IN POPUP =====', {
+        timestamp: timestamp || Date.now(),
+        key,
+        value,
+        valueType: valueType || typeof value,
+        isAudioVoice: key === 'audio_voice' || key === 'audio_voice_map',
+        isNumeric: /^\d+$/.test(String(value)),
+        isObject: typeof value === 'object' && !Array.isArray(value),
+        objectKeys: typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : null,
+        source: 'popup'
+      });
+      sendResponse({ success: true });
+      return true;
+    },
     'ping': () => handlePing(request, sender, sendResponse),
     'getState': () => handleGetState(request, sender, sendResponse),
     'cancelProcessing': () => handleCancelProcessing(request, sender, sendResponse, stopKeepAlive),
@@ -139,6 +156,55 @@ export function routeMessage(request, sender, sendResponse, deps) {
     ),
     'generateSummary': () => handleGenerateSummary(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
     'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse),
+    
+    // TTS Progress handler (from offscreen.js)
+    'TTS_PROGRESS': () => {
+      try {
+        const { sentenceIndex, totalSentences, progressBase = 60, progressRange = 35 } = request.data || {};
+        
+        log('[ClipAIble] TTS_PROGRESS handler called', {
+          sentenceIndex,
+          totalSentences,
+          progressBase,
+          progressRange
+        });
+        
+        if (sentenceIndex && totalSentences && totalSentences > 1) {
+          // Calculate progress: 60-95% range for TTS conversion
+          const estimatedProgress = progressBase + Math.floor(
+            ((sentenceIndex - 1) / totalSentences) * progressRange
+          );
+          
+          log('[ClipAIble] Updating progress state', {
+            sentenceIndex,
+            totalSentences,
+            estimatedProgress,
+            cappedProgress: Math.min(estimatedProgress, 94)
+          });
+          
+          // Update state with progress (updateState is imported at top of file)
+          updateState({
+            status: `Generating audio... (${sentenceIndex}/${totalSentences} sentences)`,
+            progress: Math.min(estimatedProgress, 94) // Cap at 94% to leave room for final update
+          });
+        } else {
+          logWarn('[ClipAIble] TTS_PROGRESS handler: invalid data', {
+            sentenceIndex,
+            totalSentences,
+            hasSentenceIndex: !!sentenceIndex,
+            hasTotalSentences: !!totalSentences,
+            totalSentencesGreaterThanOne: totalSentences > 1
+          });
+        }
+        
+        sendResponse({ success: true });
+        return true;
+      } catch (error) {
+        logWarn('[ClipAIble] Error handling TTS_PROGRESS', error);
+        sendResponse({ success: false, error: error.message });
+        return true;
+      }
+    },
     
     // Offscreen handlers
     'closeOffscreenForVoiceSwitch': async () => {

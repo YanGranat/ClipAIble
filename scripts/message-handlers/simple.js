@@ -9,6 +9,10 @@ import { cancelProcessing } from '../state/processing.js';
  * Handle log messages from popup
  */
 export function handleLog(request, sender, sendResponse) {
+  const { message, data } = request.data || {};
+  if (message) {
+    log(`[Popup] ${message}`, data || null);
+  }
   sendResponse({ success: true });
   return true;
 }

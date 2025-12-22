@@ -33,7 +33,7 @@
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
-import { log, logError as originalLogError, logWarn } from '../scripts/utils/logging.js';
+import { log, logError as originalLogError, logWarn, logDebug } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { RESPEECHER_CONFIG } from '../scripts/api/respeecher.js';
 import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
@@ -561,7 +561,7 @@ function debouncedSaveSettings(key, value, callback = null) {
     isSavingSettings = true;
     try {
       // DETAILED LOGGING: Saving to storage
-      console.log('[ClipAIble Popup] ===== debouncedSaveSettings: ABOUT TO SAVE =====', {
+      log('[ClipAIble Popup] ===== debouncedSaveSettings: ABOUT TO SAVE =====', {
         timestamp: Date.now(),
         key,
         keyType: typeof key,
@@ -577,13 +577,30 @@ function debouncedSaveSettings(key, value, callback = null) {
       await chrome.storage.local.set({ [key]: value });
       
       // DETAILED LOGGING: Saved to storage
-      console.log('[ClipAIble Popup] ===== debouncedSaveSettings: SAVED TO STORAGE =====', {
+      log('[ClipAIble Popup] ===== debouncedSaveSettings: SAVED TO STORAGE =====', {
         timestamp: Date.now(),
         key,
         value,
         saved: true,
         storageKey: key
       });
+      
+      // CRITICAL: Send setting change to service worker for centralized logging
+      try {
+        chrome.runtime.sendMessage({
+          action: 'logSetting',
+          data: {
+            key,
+            value,
+            valueType: typeof value,
+            timestamp: Date.now()
+          }
+        }).catch(() => {
+          // Ignore errors when sending log (non-critical)
+        });
+      } catch (sendError) {
+        // Ignore errors when sending log (non-critical)
+      }
       
       if (callback) await callback();
     } catch (error) {
@@ -2053,7 +2070,7 @@ function updateVoiceList(provider) {
   
   // CRITICAL: Use settingsModule.updateVoiceList if available (new implementation)
   if (window.settingsModule && window.settingsModule.updateVoiceList) {
-    console.warn('[ClipAIble Popup] Using deprecated updateVoiceList, redirecting to settingsModule.updateVoiceList');
+    logWarn('[ClipAIble Popup] Using deprecated updateVoiceList, redirecting to settingsModule.updateVoiceList');
     window.settingsModule.updateVoiceList(provider);
     return;
   }
@@ -2331,7 +2348,7 @@ function updateAudioProviderUI() {
     window.settingsModule.updateVoiceList(provider);
   } else {
     // Fallback to old implementation (should not happen in normal flow)
-    console.warn('[ClipAIble Popup] settingsModule.updateVoiceList not available, using deprecated updateVoiceList');
+    logWarn('[ClipAIble Popup] settingsModule.updateVoiceList not available, using deprecated updateVoiceList');
     updateVoiceList(provider);
   }
 }
@@ -2685,7 +2702,7 @@ async function saveVoiceBeforeClose() {
           [STORAGE_KEYS.AUDIO_VOICE_MAP]: currentMap
         });
         
-        console.log('[ClipAIble Popup] CRITICAL: Saved voice before close', {
+        log('[ClipAIble Popup] CRITICAL: Saved voice before close', {
           timestamp: Date.now(),
           provider,
           voiceToSave,
@@ -2695,7 +2712,7 @@ async function saveVoiceBeforeClose() {
           voiceMap: currentMap
         });
       } else {
-        console.warn('[ClipAIble Popup] CRITICAL: Cannot save voice before close - invalid voice ID', {
+        logWarn('[ClipAIble Popup] CRITICAL: Cannot save voice before close - invalid voice ID', {
           timestamp: Date.now(),
           provider,
           voiceToSave,
@@ -2705,7 +2722,7 @@ async function saveVoiceBeforeClose() {
         });
       }
     } catch (error) {
-      console.error('[ClipAIble Popup] Failed to save settings before close', error);
+      logError('[ClipAIble Popup] Failed to save settings before close', error);
     } finally {
       isSavingSettings = false;
     }

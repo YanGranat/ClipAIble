@@ -14,6 +14,8 @@
  */
 export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
   // Log start (this will appear in page console, not service worker)
+  // CRITICAL: This runs in MAIN world where modules are not available
+  // console.log is acceptable here as logging module cannot be imported
   try {
     console.log('[ClipAIble] extractAutomaticallyInlined: START', { baseUrl, enableDebugInfo, timestamp: Date.now() });
   } catch (e) {}
@@ -4043,6 +4045,8 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
     };
     
     // Log completion (this will appear in page console, not service worker)
+    // CRITICAL: This runs in MAIN world where modules are not available
+    // console.log is acceptable here as logging module cannot be imported
     try {
       console.log('[ClipAIble] extractAutomaticallyInlined: SUCCESS', {
         contentLength: deduplicatedContent.length,
@@ -4054,6 +4058,8 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
     return result;
   } catch (error) {
     // Log error (this will appear in page console, not service worker)
+    // CRITICAL: This runs in MAIN world where modules are not available
+    // console.error is acceptable here as logging module cannot be imported
     try {
       console.error('[ClipAIble] extractAutomaticallyInlined: ERROR', {
         error: error.message,

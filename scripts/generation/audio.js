@@ -3,7 +3,7 @@
 
 // @typedef {import('../types.js').ContentItem} ContentItem
 
-import { log, logError } from '../utils/logging.js';
+import { log, logError, logDebug } from '../utils/logging.js';
 import { prepareContentForAudio, AUDIO_CONFIG } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
@@ -43,14 +43,14 @@ const LANGUAGE_TTS_INSTRUCTIONS = {
  */
 export async function generateAudio(params, updateState) {
   const entryTime = Date.now();
-  console.log('[ClipAIble Audio Generation] === generateAudio ENTRY POINT ===', {
+  log('[ClipAIble Audio Generation] === generateAudio ENTRY POINT ===', {
     timestamp: entryTime,
     hasParams: !!params,
     paramsKeys: params ? Object.keys(params) : [],
     hasUpdateState: typeof updateState === 'function'
   });
   
-  log('[ClipAIble Audio Generation] === generateAudio START ===', {
+  logDebug('[ClipAIble Audio Generation] === generateAudio START ===', {
     timestamp: entryTime,
     paramsKeys: params ? Object.keys(params) : []
   });
@@ -136,12 +136,12 @@ export async function generateAudio(params, updateState) {
     }
   };
   
-  console.log('[ClipAIble Audio Generation] Parameters extracted with all settings', allSettings);
+  log('[ClipAIble Audio Generation] Parameters extracted with all settings', allSettings);
   
   // Generate TTS instructions based on language
   const instructions = language !== 'auto' ? LANGUAGE_TTS_INSTRUCTIONS[language] : null;
   
-  console.log('[ClipAIble Audio Generation] Starting audio generation', {
+  log('[ClipAIble Audio Generation] Starting audio generation', {
     timestamp: Date.now(),
     title,
     contentItems: content?.length,
@@ -222,9 +222,50 @@ export async function generateAudio(params, updateState) {
     throw new Error('Failed to prepare content for audio');
   }
   
-  log('Content prepared', { 
+  // Determine voice and format based on provider (must be before logging)
+  const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
+  // Google TTS and Offline TTS always return WAV format, format parameter is ignored
+  const ttsFormat = (provider === 'google' || provider === 'offline') ? 'wav' : format;
+  const ttsPrompt = provider === 'google' ? googleTtsPrompt : null;
+  
+  log('[ClipAIble Audio Generation] === CONTENT PREPARED FOR TTS ===', { 
+    timestamp: Date.now(),
     chunkCount: preparedChunks.length,
-    totalCharacters: preparedChunks.reduce((sum, c) => sum + c.text.length, 0)
+    totalCharacters: preparedChunks.reduce((sum, c) => sum + c.text.length, 0),
+    avgChunkSize: Math.round(preparedChunks.reduce((sum, c) => sum + c.text.length, 0) / preparedChunks.length),
+    chunkSizes: preparedChunks.map(c => c.text.length),
+    chunksPreview: preparedChunks.slice(0, 3).map((c, i) => ({
+      index: i,
+      length: c.text.length,
+      preview: c.text.substring(0, 100) + '...'
+    })),
+    readyForTTS: true,
+    provider,
+    voice: ttsVoice,
+    speed,
+    format: ttsFormat,
+    language
+  });
+  
+  // Log full chunks that will be sent to TTS
+  log('[ClipAIble Audio Generation] === CHUNKS TO BE SENT TO TTS (FULL CONTENT) ===', {
+    timestamp: Date.now(),
+    provider,
+    voice: ttsVoice,
+    speed,
+    format: ttsFormat,
+    language,
+    totalChunks: preparedChunks.length,
+    chunks: preparedChunks.map((chunk, idx) => ({
+      index: idx,
+      originalIndex: chunk.originalIndex,
+      length: chunk.text.length,
+      textFull: chunk.text,
+      textPreview: chunk.text.substring(0, 300) + '...',
+      textEnd: '...' + chunk.text.substring(Math.max(0, chunk.text.length - 100)),
+      nonAsciiCount: (chunk.text.match(/[^\x00-\x7F]/g) || []).length,
+      newlineCount: (chunk.text.match(/\n/g) || []).length
+    }))
   });
   
   // Step 2: Convert chunks to speech (using selected TTS provider)
@@ -239,13 +280,7 @@ export async function generateAudio(params, updateState) {
     progress: 60 
   });
   
-  // Determine voice and format based on provider
-  const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
-  // Google TTS and Offline TTS always return WAV format, format parameter is ignored
-  const ttsFormat = (provider === 'google' || provider === 'offline') ? 'wav' : format;
-  const ttsPrompt = provider === 'google' ? googleTtsPrompt : null;
-  
-  console.log('[ClipAIble Audio Generation] CRITICAL: Voice parameter before chunksToSpeech', {
+  log('[ClipAIble Audio Generation] CRITICAL: Voice parameter before chunksToSpeech', {
     timestamp: Date.now(),
     provider,
     voice,
@@ -260,7 +295,7 @@ export async function generateAudio(params, updateState) {
     isFullVoiceId: ttsVoice && String(ttsVoice).includes('_') && String(ttsVoice).includes('-')
   });
   
-  console.log('[ClipAIble Audio Generation] === PREPARING TO CALL chunksToSpeech ===', {
+  log('[ClipAIble Audio Generation] === PREPARING TO CALL chunksToSpeech ===', {
     timestamp: Date.now(),
     provider,
     voice: ttsVoice,
@@ -313,7 +348,7 @@ export async function generateAudio(params, updateState) {
   );
   
   const chunksToSpeechDuration = Date.now() - chunksToSpeechStart;
-  console.log('[ClipAIble Audio Generation] === chunksToSpeech COMPLETE ===', {
+  log('[ClipAIble Audio Generation] === chunksToSpeech COMPLETE ===', {
     timestamp: Date.now(),
     duration: chunksToSpeechDuration,
     hasAudioBuffer: !!audioBuffer,

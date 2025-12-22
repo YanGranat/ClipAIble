@@ -831,10 +831,46 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const progressRange = currentProgress >= 60 ? 0 : 40; // No range if already at 60%
   const startProgress = currentProgress >= 60 ? 60 : 10;
   
+  // Log detailed content analysis before conversion
+  log('=== prepareContentForAudio: CONTENT ANALYSIS ===', {
+    timestamp: Date.now(),
+    contentItems: content?.length || 0,
+    contentTypes: content ? [...new Set(content.map(item => item?.type).filter(Boolean))] : [],
+    contentByType: content ? content.reduce((acc, item) => {
+      const type = item?.type || 'unknown';
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {}) : {},
+    contentPreview: content?.slice(0, 10).map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
+      textPreview: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 100),
+      hasHtml: !!(item.html && item.html !== item.text)
+    })) || [],
+    totalEstimatedLength: content ? content.reduce((sum, item) => {
+      const text = (item.text || '').replace(/<[^>]+>/g, '').trim();
+      return sum + text.length;
+    }, 0) : 0,
+    title: title?.substring(0, 100),
+    titleLength: title?.length
+  });
+  
   // Convert content to plain text
   const convertingStatus = tSync('stageConvertingToText', uiLang);
   updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus, progress: startProgress });
   const plainText = contentToPlainText(content);
+  
+  log('=== prepareContentForAudio: PLAIN TEXT CONVERSION COMPLETE ===', {
+    timestamp: Date.now(),
+    originalContentItems: content?.length || 0,
+    plainTextLength: plainText.length,
+    plainTextPreview: plainText.substring(0, 200) + '...',
+    plainTextEnd: '...' + plainText.substring(Math.max(0, plainText.length - 100)),
+    newlineCount: (plainText.match(/\n/g) || []).length,
+    paragraphCount: (plainText.match(/\n\n+/g) || []).length + 1,
+    nonAsciiCount: (plainText.match(/[^\x00-\x7F]/g) || []).length
+  });
   
   if (!plainText) {
     throw new Error('No text content to convert to audio');
@@ -982,12 +1018,41 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const overallPercent = Math.round((overallChange / totalOriginalChars) * 100);
   
   log('=== AUDIO PREPARATION COMPLETE ===', { 
+    timestamp: Date.now(),
     originalPlainTextLength: plainText.length,
     totalOriginalChars,
     totalPreparedChars,
     overallChange: `${overallChange > 0 ? '+' : ''}${overallChange} (${overallPercent}%)`,
     chunksCreated: preparedChunks.length,
-    chunkSizes: preparedChunks.map(c => c.text.length)
+    chunkSizes: preparedChunks.map(c => c.text.length),
+    avgChunkSize: Math.round(totalPreparedChars / preparedChunks.length),
+    minChunkSize: Math.min(...preparedChunks.map(c => c.text.length)),
+    maxChunkSize: Math.max(...preparedChunks.map(c => c.text.length)),
+    chunksPreview: preparedChunks.slice(0, 3).map((c, i) => ({
+      index: i,
+      length: c.text.length,
+      preview: c.text.substring(0, 100) + '...'
+    })),
+    readyForTTS: true,
+    provider: provider || 'unknown',
+    useAICleanup
+  });
+  
+  // Log full prepared chunks for debugging
+  log('=== PREPARED CHUNKS FULL CONTENT FOR TTS ===', {
+    timestamp: Date.now(),
+    totalChunks: preparedChunks.length,
+    chunks: preparedChunks.map((chunk, idx) => ({
+      index: idx,
+      originalIndex: chunk.originalIndex,
+      length: chunk.text.length,
+      textFull: chunk.text,
+      textPreview: chunk.text.substring(0, 300) + '...',
+      textEnd: '...' + chunk.text.substring(Math.max(0, chunk.text.length - 100)),
+      nonAsciiCount: (chunk.text.match(/[^\x00-\x7F]/g) || []).length,
+      newlineCount: (chunk.text.match(/\n/g) || []).length,
+      paragraphCount: (chunk.text.match(/\n\n+/g) || []).length + 1
+    }))
   });
   
   // Warn if overall text was significantly reduced

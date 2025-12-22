@@ -1,7 +1,10 @@
 // offscreen.js - Simplified version without import maps
 // Just use direct imports with proper paths
 
-console.log('[ClipAIble Offscreen] === DOCUMENT LOADED ===', {
+// Import logging utilities - will be bundled by esbuild
+import { log, logError, logWarn, logDebug } from './scripts/utils/logging.js';
+
+log('[ClipAIble Offscreen] === DOCUMENT LOADED ===', {
   timestamp: Date.now(),
   url: window.location.href,
   userAgent: navigator.userAgent.substring(0, 100)
@@ -13,6 +16,9 @@ let voiceSwitchRequested = false; // Flag to request offscreen document recreati
 let wasmPreloaded = false; // Track WASM preload status
 let voiceModelsPreloaded = false; // Track voice models preload status
 let ttsWorker = null; // Web Worker for TTS operations
+let ttsWorkerInitPromise = null; // Promise caching to prevent race conditions during simultaneous init calls
+let workerInactivityTimeout = null; // Timeout for automatic Worker termination after inactivity
+const WORKER_INACTIVITY_TIMEOUT = 5 * 60 * 1000; // 5 minutes of inactivity before terminating Worker
 // CRITICAL: Web Workers don't support import maps, but we can use importScripts() as workaround
 // tts-worker-bundle.js uses importScripts() instead of import maps to load modules
 // This allows WASM operations to run in separate thread, preventing main thread blocking
@@ -24,31 +30,31 @@ let useWorker = true; // Enabled: Using esbuild bundle (dist/tts-worker-bundle.j
 // Initialize Piper TTS
 async function initPiperTTS() {
   const initStartTime = Date.now();
-  console.log('[ClipAIble Offscreen] initPiperTTS() called', {
+  log('[ClipAIble Offscreen] initPiperTTS() called', {
     timestamp: initStartTime,
     ttsModuleExists: !!ttsModule
   });
   
   if (ttsModule) {
-    console.log('[ClipAIble Offscreen] TTS module already loaded, returning cached');
+    logDebug('[ClipAIble Offscreen] TTS module already loaded, returning cached');
     return ttsModule;
   }
   
   try {
-    console.log('[ClipAIble Offscreen] Loading Piper TTS module...');
+    log('[ClipAIble Offscreen] Loading Piper TTS module...');
     
     // Defer import to avoid blocking main thread during initialization
     await new Promise(resolve => setTimeout(resolve, 0));
     
     // Now import piper-tts-web - it should use the pre-configured ONNX Runtime
     const moduleUrl = chrome.runtime.getURL('node_modules/@mintplex-labs/piper-tts-web/dist/piper-tts-web.js');
-    console.log('[ClipAIble Offscreen] Module URL:', { moduleUrl });
+    logDebug('[ClipAIble Offscreen] Module URL:', { moduleUrl });
     
     const importStartTime = Date.now();
     const module = await import(moduleUrl);
     const importDuration = Date.now() - importStartTime;
     
-    console.log('[ClipAIble Offscreen] Module import completed', {
+    log('[ClipAIble Offscreen] Module import completed', {
       duration: importDuration,
       moduleKeys: Object.keys(module),
       moduleKeysCount: Object.keys(module).length
@@ -69,7 +75,7 @@ async function initPiperTTS() {
       storedType: typeof module.stored
     };
     
-    console.log('[ClipAIble Offscreen] Piper TTS module loaded successfully', {
+    log('[ClipAIble Offscreen] Piper TTS module loaded successfully', {
       ...moduleInfo,
       totalDuration: Date.now() - initStartTime
     });
@@ -79,12 +85,12 @@ async function initPiperTTS() {
     // CRITICAL: Preload WASM files and common voice models to avoid blocking during first use
     // This prevents Long Tasks when TTS is first called
     if (!wasmPreloaded) {
-      console.log('[ClipAIble Offscreen] Starting WASM preload...');
+      log('[ClipAIble Offscreen] Starting WASM preload...');
       wasmPreloaded = true;
       
       // Preload WASM files in background (don't await - let it happen asynchronously)
       preloadWASMFiles(module).catch(error => {
-        console.warn('[ClipAIble Offscreen] WASM preload failed (non-critical)', error);
+        logWarn('[ClipAIble Offscreen] WASM preload failed (non-critical)', error);
       });
     }
     
@@ -98,7 +104,7 @@ async function initPiperTTS() {
       error.stack?.includes('onnxruntime-web')
     );
     
-    console.error('[ClipAIble Offscreen] === FAILED TO LOAD PIPER TTS ===', {
+    logError('[ClipAIble Offscreen] === FAILED TO LOAD PIPER TTS ===', {
       error: error.message,
       stack: error.stack,
       name: error.name,
@@ -114,14 +120,26 @@ async function initPiperTTS() {
  * Web Workers execute WASM operations in separate thread, preventing main thread blocking
  */
 async function initTTSWorker() {
+  // If Worker already exists, return it immediately
   if (ttsWorker) {
     return ttsWorker;
   }
   
-  const initStartTime = Date.now();
+  // If initialization is already in progress, wait for it
+  // This prevents race conditions when multiple functions call initTTSWorker() simultaneously
+  if (ttsWorkerInitPromise) {
+    log('[ClipAIble Offscreen] Worker initialization already in progress, waiting...', {
+      timestamp: Date.now()
+    });
+    return await ttsWorkerInitPromise;
+  }
   
-  try {
-    console.log('[ClipAIble Offscreen] === initTTSWorker CALL START ===', {
+  // Start new initialization and cache the promise
+  ttsWorkerInitPromise = (async () => {
+    const initStartTime = Date.now();
+    
+    try {
+    log('[ClipAIble Offscreen] === initTTSWorker CALL START ===', {
       hasExistingWorker: !!ttsWorker,
       useWorker,
       timestamp: initStartTime
@@ -131,7 +149,7 @@ async function initTTSWorker() {
     // The bundle includes all dependencies (onnxruntime-web, piper-tts-web)
     // and resolves all imports at build time - no import maps needed
     const workerUrl = chrome.runtime.getURL('dist/tts-worker-bundle.js');
-    console.log('[ClipAIble Offscreen] Loading worker from URL', {
+    logDebug('[ClipAIble Offscreen] Loading worker from URL', {
       workerUrl,
       hasChromeRuntime: typeof chrome !== 'undefined' && !!chrome.runtime,
       timestamp: Date.now()
@@ -141,7 +159,7 @@ async function initTTSWorker() {
     try {
       ttsWorker = new Worker(workerUrl);
       const workerCreateDuration = Date.now() - workerCreateStart;
-      console.log('[ClipAIble Offscreen] Worker created successfully', {
+      log('[ClipAIble Offscreen] Worker created successfully', {
         workerUrl,
         workerCreateDuration,
         hasWorker: !!ttsWorker,
@@ -149,7 +167,7 @@ async function initTTSWorker() {
       });
     } catch (workerCreationError) {
       const workerCreateDuration = Date.now() - workerCreateStart;
-      console.error('[ClipAIble Offscreen] === Worker creation FAILED ===', {
+      logError('[ClipAIble Offscreen] === Worker creation FAILED ===', {
         error: workerCreationError.message,
         stack: workerCreationError.stack,
         workerUrl,
@@ -166,7 +184,7 @@ async function initTTSWorker() {
       const initPromiseStart = Date.now();
       const timeout = setTimeout(() => {
         const timeoutError = new Error('Worker initialization timeout (30s)');
-        console.error('[ClipAIble Offscreen] initTTSWorker timeout', {
+        logError('[ClipAIble Offscreen] initTTSWorker timeout', {
           duration: Date.now() - initStartTime,
           promiseDuration: Date.now() - initPromiseStart,
           timestamp: Date.now()
@@ -175,7 +193,7 @@ async function initTTSWorker() {
       }, 30000); // 30 second timeout
       
       const handler = (event) => {
-        console.log('[ClipAIble Offscreen] Worker message received during init', {
+        log('[ClipAIble Offscreen] Worker message received during init', {
           type: event.data?.type,
           id: event.data?.id,
           hasError: !!event.data?.error,
@@ -188,7 +206,7 @@ async function initTTSWorker() {
         if (event.data.type === 'WORKER_READY') {
           // Worker is ready, send INIT
           // NOTE: ONNX Runtime is loaded on top level in Worker, no need to pass ortUrl
-          console.log('[ClipAIble Offscreen] Worker sent WORKER_READY, sending INIT...', {
+          log('[ClipAIble Offscreen] Worker sent WORKER_READY, sending INIT...', {
             timestamp: Date.now(),
             elapsed: Date.now() - initStartTime
           });
@@ -198,7 +216,7 @@ async function initTTSWorker() {
             type: 'INIT',
             id: initId
           });
-          console.log('[ClipAIble Offscreen] INIT message sent to Worker', {
+          log('[ClipAIble Offscreen] INIT message sent to Worker', {
             initId,
             timestamp: Date.now()
           });
@@ -210,7 +228,7 @@ async function initTTSWorker() {
           ttsWorker.removeEventListener('message', handler);
           const initDuration = Date.now() - initStartTime;
           const promiseDuration = Date.now() - initPromiseStart;
-          console.log('[ClipAIble Offscreen] === initTTSWorker SUCCESS ===', {
+          log('[ClipAIble Offscreen] === initTTSWorker SUCCESS ===', {
             initDuration,
             promiseDuration,
             workerCreateDuration: workerCreateStart ? Date.now() - workerCreateStart : null,
@@ -222,7 +240,7 @@ async function initTTSWorker() {
           ttsWorker.removeEventListener('message', handler);
           const initDuration = Date.now() - initStartTime;
           const promiseDuration = Date.now() - initPromiseStart;
-          console.error('[ClipAIble Offscreen] === initTTSWorker ERROR ===', {
+          logError('[ClipAIble Offscreen] === initTTSWorker ERROR ===', {
             error: event.data.error,
             stack: event.data.stack,
             initDuration,
@@ -240,7 +258,7 @@ async function initTTSWorker() {
         clearTimeout(timeout);
         ttsWorker.removeEventListener('message', handler);
         const initDuration = Date.now() - initStartTime;
-        console.error('[ClipAIble Offscreen] === initTTSWorker WORKER ERROR ===', {
+        logError('[ClipAIble Offscreen] === initTTSWorker WORKER ERROR ===', {
           error: error.message,
           filename: error.filename,
           lineno: error.lineno,
@@ -254,31 +272,98 @@ async function initTTSWorker() {
     
     await initPromise;
     const totalDuration = Date.now() - initStartTime;
-    console.log('[ClipAIble Offscreen] === initTTSWorker COMPLETE ===', {
-      totalDuration,
-      hasWorker: !!ttsWorker,
-      useWorker,
-      timestamp: Date.now()
-    });
-    return ttsWorker;
+      log('[ClipAIble Offscreen] === initTTSWorker COMPLETE ===', {
+        totalDuration: Date.now() - initStartTime,
+        hasWorker: !!ttsWorker,
+        useWorker,
+        timestamp: Date.now()
+      });
+      return ttsWorker;
+    } catch (error) {
+      const initDuration = Date.now() - initStartTime;
+      logError('[ClipAIble Offscreen] === initTTSWorker FAILED ===', {
+        error: error.message,
+        stack: error.stack,
+        initDuration,
+        timestamp: Date.now()
+      });
+      
+      // Clean up on error
+      if (ttsWorker) {
+        log('[ClipAIble Offscreen] Terminating failed Worker', {
+          timestamp: Date.now()
+        });
+        ttsWorker.terminate();
+        ttsWorker = null;
+        useWorker = false;
+      }
+      
+      // Clear promise cache on error to allow retry
+      ttsWorkerInitPromise = null;
+      
+      throw error; // Re-throw error - no fallback
+    }
+  })();
+  
+  try {
+    return await ttsWorkerInitPromise;
   } catch (error) {
-    const initDuration = Date.now() - initStartTime;
-    console.error('[ClipAIble Offscreen] === initTTSWorker FAILED ===', {
-      error: error.message,
-      stack: error.stack,
-      initDuration,
-      timestamp: Date.now()
-    });
+    // Promise cache is already cleared in catch block above
+    throw error;
+  }
+}
+
+/**
+ * Reset Worker inactivity timer
+ * Automatically terminates Worker after 5 minutes of inactivity to free memory
+ */
+function resetWorkerInactivityTimer() {
+  clearTimeout(workerInactivityTimeout);
+  
+  if (!ttsWorker) {
+    return; // No Worker to manage
+  }
+  
+  workerInactivityTimeout = setTimeout(() => {
     if (ttsWorker) {
-      console.log('[ClipAIble Offscreen] Terminating failed Worker', {
+      log('[ClipAIble Offscreen] Terminating TTS Worker due to inactivity', {
+        timeout: WORKER_INACTIVITY_TIMEOUT,
         timestamp: Date.now()
       });
       ttsWorker.terminate();
       ttsWorker = null;
+      ttsWorkerInitPromise = null; // Clear promise cache for recreation
       useWorker = false;
+      workerInactivityTimeout = null;
     }
-    throw error; // Re-throw error - no fallback
+  }, WORKER_INACTIVITY_TIMEOUT);
+}
+
+/**
+ * Ensure TTS Worker is initialized and available
+ * Helper function to reduce code duplication across all Worker API functions
+ * @returns {Promise<Worker>} Initialized TTS Worker
+ * @throws {Error} If Worker cannot be initialized
+ */
+async function ensureTTSWorker() {
+  // If Worker already exists, return it immediately and reset inactivity timer
+  if (ttsWorker) {
+    resetWorkerInactivityTimer();
+    return ttsWorker;
   }
+  
+  // Initialize Worker if not already initialized
+  await initTTSWorker();
+  
+  // Verify Worker is available after initialization
+  if (!ttsWorker || !useWorker) {
+    throw new Error('TTS Worker is not available. Worker must be initialized before use.');
+  }
+  
+  // Reset inactivity timer after initialization
+  resetWorkerInactivityTimer();
+  
+  return ttsWorker;
 }
 
 /**
@@ -289,7 +374,7 @@ async function predictWithWorker(text, voiceId) {
   const callStartTime = Date.now();
   const callId = 'predict_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   
-  console.log('[ClipAIble Offscreen] === predictWithWorker CALL START ===', {
+  log('[ClipAIble Offscreen] === predictWithWorker CALL START ===', {
     callId,
     textLength: text?.length,
     voiceId,
@@ -298,30 +383,15 @@ async function predictWithWorker(text, voiceId) {
     timestamp: callStartTime
   });
   
-  if (!ttsWorker) {
-    console.log('[ClipAIble Offscreen] Worker not initialized, initializing...', {
-      callId
-    });
-    await initTTSWorker();
-  }
-  
-  if (!ttsWorker || !useWorker) {
-    const error = new Error('TTS Worker is not available. Worker must be initialized before use.');
-    console.error('[ClipAIble Offscreen] predictWithWorker failed - Worker not available', {
-      callId,
-      hasTTSWorker: !!ttsWorker,
-      useWorker,
-      error: error.message
-    });
-    throw error;
-  }
+  // Ensure Worker is initialized before use
+  await ensureTTSWorker();
   
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker predict timeout (60s)');
-      console.error('[ClipAIble Offscreen] predictWithWorker timeout', {
+      logError('[ClipAIble Offscreen] predictWithWorker timeout', {
         callId: id,
         textLength: text?.length,
         voiceId,
@@ -343,7 +413,7 @@ async function predictWithWorker(text, voiceId) {
           // Convert ArrayBuffer back to Blob
           const blob = new Blob([event.data.data], { type: 'audio/wav' });
           
-          console.log('[ClipAIble Offscreen] === predictWithWorker SUCCESS ===', {
+          log('[ClipAIble Offscreen] === predictWithWorker SUCCESS ===', {
             callId: id,
             textLength: text?.length,
             voiceId,
@@ -357,7 +427,7 @@ async function predictWithWorker(text, voiceId) {
           resolve(blob);
         } else if (event.data.type === 'ERROR') {
           const error = new Error(event.data.error || 'Worker predict failed');
-          console.error('[ClipAIble Offscreen] === predictWithWorker ERROR ===', {
+          logError('[ClipAIble Offscreen] === predictWithWorker ERROR ===', {
             callId: id,
             textLength: text?.length,
             voiceId,
@@ -380,7 +450,7 @@ async function predictWithWorker(text, voiceId) {
       ttsWorker.removeEventListener('message', handler);
       ttsWorker.removeEventListener('error', errorHandler);
       const workerError = new Error(`Worker error during predict: ${error.message}`);
-      console.error('[ClipAIble Offscreen] === predictWithWorker WORKER ERROR ===', {
+      logError('[ClipAIble Offscreen] === predictWithWorker WORKER ERROR ===', {
         callId: id,
         textLength: text?.length,
         voiceId,
@@ -394,7 +464,7 @@ async function predictWithWorker(text, voiceId) {
     };
     ttsWorker.addEventListener('error', errorHandler);
     
-    console.log('[ClipAIble Offscreen] Sending PREDICT message to Worker', {
+    log('[ClipAIble Offscreen] Sending PREDICT message to Worker', {
       callId: id,
       textLength: text?.length,
       voiceId,
@@ -418,37 +488,22 @@ async function getVoicesWithWorker() {
   const callStartTime = Date.now();
   const callId = 'voices_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   
-  console.log('[ClipAIble Offscreen] === getVoicesWithWorker CALL START ===', {
+  log('[ClipAIble Offscreen] === getVoicesWithWorker CALL START ===', {
     callId,
     hasTTSWorker: !!ttsWorker,
     useWorker,
     timestamp: callStartTime
   });
   
-  if (!ttsWorker) {
-    console.log('[ClipAIble Offscreen] Worker not initialized, initializing...', {
-      callId
-    });
-    await initTTSWorker();
-  }
-  
-  if (!ttsWorker || !useWorker) {
-    const error = new Error('TTS Worker is not available. Worker must be initialized before use.');
-    console.error('[ClipAIble Offscreen] getVoicesWithWorker failed - Worker not available', {
-      callId,
-      hasTTSWorker: !!ttsWorker,
-      useWorker,
-      error: error.message
-    });
-    throw error;
-  }
+  // Ensure Worker is initialized before use
+  await ensureTTSWorker();
   
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker voices timeout (10s)');
-      console.error('[ClipAIble Offscreen] getVoicesWithWorker timeout', {
+      logError('[ClipAIble Offscreen] getVoicesWithWorker timeout', {
         callId: id,
         duration: Date.now() - requestStartTime
       });
@@ -466,7 +521,7 @@ async function getVoicesWithWorker() {
         
         if (event.data.type === 'VOICES_SUCCESS') {
           const voices = event.data.data;
-          console.log('[ClipAIble Offscreen] === getVoicesWithWorker SUCCESS ===', {
+          log('[ClipAIble Offscreen] === getVoicesWithWorker SUCCESS ===', {
             callId: id,
             voicesCount: Array.isArray(voices) ? voices.length : 0,
             isArray: Array.isArray(voices),
@@ -481,7 +536,7 @@ async function getVoicesWithWorker() {
           resolve(voices);
         } else if (event.data.type === 'ERROR') {
           const error = new Error(event.data.error || 'Worker voices failed');
-          console.error('[ClipAIble Offscreen] === getVoicesWithWorker ERROR ===', {
+          logError('[ClipAIble Offscreen] === getVoicesWithWorker ERROR ===', {
             callId: id,
             error: error.message,
             errorStack: event.data.stack,
@@ -496,7 +551,7 @@ async function getVoicesWithWorker() {
     
     ttsWorker.addEventListener('message', handler);
     
-    console.log('[ClipAIble Offscreen] Sending VOICES message to Worker', {
+    log('[ClipAIble Offscreen] Sending VOICES message to Worker', {
       callId: id,
       timestamp: requestStartTime
     });
@@ -512,37 +567,22 @@ async function getStoredWithWorker() {
   const callStartTime = Date.now();
   const callId = 'stored_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   
-  console.log('[ClipAIble Offscreen] === getStoredWithWorker CALL START ===', {
+  log('[ClipAIble Offscreen] === getStoredWithWorker CALL START ===', {
     callId,
     hasTTSWorker: !!ttsWorker,
     useWorker,
     timestamp: callStartTime
   });
   
-  if (!ttsWorker) {
-    console.log('[ClipAIble Offscreen] Worker not initialized, initializing...', {
-      callId
-    });
-    await initTTSWorker();
-  }
-  
-  if (!ttsWorker || !useWorker) {
-    const error = new Error('TTS Worker is not available. Worker must be initialized before use.');
-    console.error('[ClipAIble Offscreen] getStoredWithWorker failed - Worker not available', {
-      callId,
-      hasTTSWorker: !!ttsWorker,
-      useWorker,
-      error: error.message
-    });
-    throw error;
-  }
+  // Ensure Worker is initialized before use
+  await ensureTTSWorker();
   
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker stored timeout (10s)');
-      console.error('[ClipAIble Offscreen] getStoredWithWorker timeout', {
+      logError('[ClipAIble Offscreen] getStoredWithWorker timeout', {
         callId: id,
         duration: Date.now() - requestStartTime
       });
@@ -560,7 +600,7 @@ async function getStoredWithWorker() {
         
         if (event.data.type === 'STORED_SUCCESS') {
           const stored = event.data.data;
-          console.log('[ClipAIble Offscreen] === getStoredWithWorker SUCCESS ===', {
+          log('[ClipAIble Offscreen] === getStoredWithWorker SUCCESS ===', {
             callId: id,
             storedCount: Array.isArray(stored) ? stored.length : 0,
             isArray: Array.isArray(stored),
@@ -572,7 +612,7 @@ async function getStoredWithWorker() {
           resolve(stored);
         } else if (event.data.type === 'ERROR') {
           const error = new Error(event.data.error || 'Worker stored failed');
-          console.error('[ClipAIble Offscreen] === getStoredWithWorker ERROR ===', {
+          logError('[ClipAIble Offscreen] === getStoredWithWorker ERROR ===', {
             callId: id,
             error: error.message,
             errorStack: event.data.stack,
@@ -587,7 +627,7 @@ async function getStoredWithWorker() {
     
     ttsWorker.addEventListener('message', handler);
     
-    console.log('[ClipAIble Offscreen] Sending STORED message to Worker', {
+    log('[ClipAIble Offscreen] Sending STORED message to Worker', {
       callId: id,
       timestamp: requestStartTime
     });
@@ -603,7 +643,7 @@ async function downloadWithWorker(voiceId, progressCallback) {
   const callStartTime = Date.now();
   const callId = 'download_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   
-  console.log('[ClipAIble Offscreen] === downloadWithWorker CALL START ===', {
+  log('[ClipAIble Offscreen] === downloadWithWorker CALL START ===', {
     callId,
     voiceId,
     hasProgressCallback: typeof progressCallback === 'function',
@@ -612,25 +652,8 @@ async function downloadWithWorker(voiceId, progressCallback) {
     timestamp: callStartTime
   });
   
-  if (!ttsWorker) {
-    console.log('[ClipAIble Offscreen] Worker not initialized, initializing...', {
-      callId,
-      voiceId
-    });
-    await initTTSWorker();
-  }
-  
-  if (!ttsWorker || !useWorker) {
-    const error = new Error('TTS Worker is not available. Worker must be initialized before use.');
-    console.error('[ClipAIble Offscreen] downloadWithWorker failed - Worker not available', {
-      callId,
-      voiceId,
-      hasTTSWorker: !!ttsWorker,
-      useWorker,
-      error: error.message
-    });
-    throw error;
-  }
+  // Ensure Worker is initialized before use
+  await ensureTTSWorker();
   
   return new Promise((resolve, reject) => {
     const id = callId;
@@ -638,7 +661,7 @@ async function downloadWithWorker(voiceId, progressCallback) {
     let lastProgressPercent = -1;
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker download timeout (300s)');
-      console.error('[ClipAIble Offscreen] downloadWithWorker timeout', {
+      logError('[ClipAIble Offscreen] downloadWithWorker timeout', {
         callId: id,
         voiceId,
         duration: Date.now() - requestStartTime
@@ -656,7 +679,7 @@ async function downloadWithWorker(voiceId, progressCallback) {
           
           // Log progress every 10% or on completion
           if (percent >= lastProgressPercent + 10 || percent === 100) {
-            console.log('[ClipAIble Offscreen] downloadWithWorker progress', {
+            log('[ClipAIble Offscreen] downloadWithWorker progress', {
               callId: id,
               voiceId,
               percent,
@@ -682,7 +705,7 @@ async function downloadWithWorker(voiceId, progressCallback) {
         const requestDuration = handlerTime - requestStartTime;
         
         if (event.data.type === 'DOWNLOAD_SUCCESS') {
-          console.log('[ClipAIble Offscreen] === downloadWithWorker SUCCESS ===', {
+          log('[ClipAIble Offscreen] === downloadWithWorker SUCCESS ===', {
             callId: id,
             voiceId,
             result: event.data.data,
@@ -694,7 +717,7 @@ async function downloadWithWorker(voiceId, progressCallback) {
           resolve(event.data.data);
         } else if (event.data.type === 'ERROR') {
           const error = new Error(event.data.error || 'Worker download failed');
-          console.error('[ClipAIble Offscreen] === downloadWithWorker ERROR ===', {
+          logError('[ClipAIble Offscreen] === downloadWithWorker ERROR ===', {
             callId: id,
             voiceId,
             error: error.message,
@@ -710,7 +733,7 @@ async function downloadWithWorker(voiceId, progressCallback) {
     
     ttsWorker.addEventListener('message', handler);
     
-    console.log('[ClipAIble Offscreen] Sending DOWNLOAD message to Worker', {
+    log('[ClipAIble Offscreen] Sending DOWNLOAD message to Worker', {
       callId: id,
       voiceId,
       timestamp: requestStartTime
@@ -731,7 +754,7 @@ async function removeWithWorker(voiceId) {
   const callStartTime = Date.now();
   const callId = 'remove_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
   
-  console.log('[ClipAIble Offscreen] === removeWithWorker CALL START ===', {
+  log('[ClipAIble Offscreen] === removeWithWorker CALL START ===', {
     callId,
     voiceId,
     hasTTSWorker: !!ttsWorker,
@@ -739,32 +762,15 @@ async function removeWithWorker(voiceId) {
     timestamp: callStartTime
   });
   
-  if (!ttsWorker) {
-    console.log('[ClipAIble Offscreen] Worker not initialized, initializing...', {
-      callId,
-      voiceId
-    });
-    await initTTSWorker();
-  }
-  
-  if (!ttsWorker || !useWorker) {
-    const error = new Error('TTS Worker is not available. Worker must be initialized before use.');
-    console.error('[ClipAIble Offscreen] removeWithWorker failed - Worker not available', {
-      callId,
-      voiceId,
-      hasTTSWorker: !!ttsWorker,
-      useWorker,
-      error: error.message
-    });
-    throw error;
-  }
+  // Ensure Worker is initialized before use
+  await ensureTTSWorker();
   
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker remove timeout (30s)');
-      console.error('[ClipAIble Offscreen] removeWithWorker timeout', {
+      logError('[ClipAIble Offscreen] removeWithWorker timeout', {
         callId: id,
         voiceId,
         duration: Date.now() - requestStartTime
@@ -782,7 +788,7 @@ async function removeWithWorker(voiceId) {
         const requestDuration = handlerTime - requestStartTime;
         
         if (event.data.type === 'REMOVE_SUCCESS') {
-          console.log('[ClipAIble Offscreen] === removeWithWorker SUCCESS ===', {
+          log('[ClipAIble Offscreen] === removeWithWorker SUCCESS ===', {
             callId: id,
             voiceId,
             result: event.data.data,
@@ -794,7 +800,7 @@ async function removeWithWorker(voiceId) {
           resolve(event.data.data);
         } else if (event.data.type === 'ERROR') {
           const error = new Error(event.data.error || 'Worker remove failed');
-          console.error('[ClipAIble Offscreen] === removeWithWorker ERROR ===', {
+          logError('[ClipAIble Offscreen] === removeWithWorker ERROR ===', {
             callId: id,
             voiceId,
             error: error.message,
@@ -810,7 +816,7 @@ async function removeWithWorker(voiceId) {
     
     ttsWorker.addEventListener('message', handler);
     
-    console.log('[ClipAIble Offscreen] Sending REMOVE message to Worker', {
+    log('[ClipAIble Offscreen] Sending REMOVE message to Worker', {
       callId: id,
       voiceId,
       timestamp: requestStartTime
@@ -830,7 +836,7 @@ async function removeWithWorker(voiceId) {
  */
 async function preloadWASMFiles(module) {
   const preloadStart = Date.now();
-  console.log('[ClipAIble Offscreen] === WASM PRELOAD START ===', {
+  log('[ClipAIble Offscreen] === WASM PRELOAD START ===', {
     timestamp: preloadStart
   });
   
@@ -838,9 +844,9 @@ async function preloadWASMFiles(module) {
     // Preload by calling a lightweight operation that triggers WASM initialization
     // We'll use the voices() function which is lightweight but triggers WASM load
     if (typeof module.voices === 'function') {
-      console.log('[ClipAIble Offscreen] Preloading WASM via voices() call...');
+      log('[ClipAIble Offscreen] Preloading WASM via voices() call...');
       await module.voices();
-      console.log('[ClipAIble Offscreen] WASM preload via voices() completed', {
+      log('[ClipAIble Offscreen] WASM preload via voices() completed', {
         duration: Date.now() - preloadStart
       });
     }
@@ -849,15 +855,15 @@ async function preloadWASMFiles(module) {
     if (!voiceModelsPreloaded && typeof module.download === 'function') {
       voiceModelsPreloaded = true;
       preloadCommonVoiceModels(module).catch(error => {
-        console.warn('[ClipAIble Offscreen] Voice models preload failed (non-critical)', error);
+        logWarn('[ClipAIble Offscreen] Voice models preload failed (non-critical)', error);
       });
     }
     
-    console.log('[ClipAIble Offscreen] === WASM PRELOAD COMPLETE ===', {
+    log('[ClipAIble Offscreen] === WASM PRELOAD COMPLETE ===', {
       duration: Date.now() - preloadStart
     });
   } catch (error) {
-    console.warn('[ClipAIble Offscreen] WASM preload error (non-critical)', {
+    logWarn('[ClipAIble Offscreen] WASM preload error (non-critical)', {
       error: error.message,
       duration: Date.now() - preloadStart
     });
@@ -871,7 +877,7 @@ async function preloadWASMFiles(module) {
  */
 async function preloadCommonVoiceModels(module) {
   const preloadStart = Date.now();
-  console.log('[ClipAIble Offscreen] === VOICE MODELS PRELOAD START ===', {
+  log('[ClipAIble Offscreen] === VOICE MODELS PRELOAD START ===', {
     timestamp: preloadStart
   });
   
@@ -885,7 +891,7 @@ async function preloadCommonVoiceModels(module) {
     // Check which voices are already stored
     if (typeof module.stored === 'function') {
       const storedVoices = await module.stored();
-      console.log('[ClipAIble Offscreen] Checking stored voices for preload', {
+      log('[ClipAIble Offscreen] Checking stored voices for preload', {
         storedCount: storedVoices.length,
         storedVoices: storedVoices
       });
@@ -894,7 +900,7 @@ async function preloadCommonVoiceModels(module) {
       const voicesToDownload = commonVoices.filter(voice => !storedVoices.includes(voice));
       
       if (voicesToDownload.length > 0) {
-        console.log('[ClipAIble Offscreen] Preloading voice models', {
+        log('[ClipAIble Offscreen] Preloading voice models', {
           voicesToDownload,
           count: voicesToDownload.length
         });
@@ -902,14 +908,14 @@ async function preloadCommonVoiceModels(module) {
         // Download voices one at a time to avoid overwhelming the system
         for (const voiceId of voicesToDownload) {
           try {
-            console.log('[ClipAIble Offscreen] Preloading voice model', { voiceId });
+            log('[ClipAIble Offscreen] Preloading voice model', { voiceId });
             await module.download(voiceId);
-            console.log('[ClipAIble Offscreen] Voice model preloaded', { voiceId });
+            log('[ClipAIble Offscreen] Voice model preloaded', { voiceId });
             
             // Yield between downloads to avoid blocking
             await new Promise(resolve => setTimeout(resolve, 100));
           } catch (error) {
-            console.warn('[ClipAIble Offscreen] Failed to preload voice model (non-critical)', {
+            logWarn('[ClipAIble Offscreen] Failed to preload voice model (non-critical)', {
               voiceId,
               error: error.message
             });
@@ -917,15 +923,15 @@ async function preloadCommonVoiceModels(module) {
           }
         }
       } else {
-        console.log('[ClipAIble Offscreen] All common voices already stored, skipping preload');
+        log('[ClipAIble Offscreen] All common voices already stored, skipping preload');
       }
     }
     
-    console.log('[ClipAIble Offscreen] === VOICE MODELS PRELOAD COMPLETE ===', {
+    log('[ClipAIble Offscreen] === VOICE MODELS PRELOAD COMPLETE ===', {
       duration: Date.now() - preloadStart
     });
   } catch (error) {
-    console.warn('[ClipAIble Offscreen] Voice models preload error (non-critical)', {
+    logWarn('[ClipAIble Offscreen] Voice models preload error (non-critical)', {
       error: error.message,
       duration: Date.now() - preloadStart
     });
@@ -992,7 +998,7 @@ function detectLanguage(text) {
   }
   
   // Log language detection for debugging
-  console.log('[ClipAIble Offscreen] Language detection result', {
+  log('[ClipAIble Offscreen] Language detection result', {
     detected: lang,
     maxMatches,
     minThreshold,
@@ -1040,18 +1046,18 @@ const FALLBACK_VOICES = {
 
 // CRITICAL: Preload TTS module and WASM files immediately when offscreen document loads
 // This prevents Long Tasks when TTS is first used
-console.log('[ClipAIble Offscreen] Starting TTS module preload...', {
+log('[ClipAIble Offscreen] Starting TTS module preload...', {
   timestamp: Date.now()
 });
 
 // Preload in background (don't block message listener registration)
 initPiperTTS().then(module => {
-  console.log('[ClipAIble Offscreen] TTS module preloaded successfully', {
+  log('[ClipAIble Offscreen] TTS module preloaded successfully', {
     timestamp: Date.now(),
     hasModule: !!module
   });
 }).catch(error => {
-  console.warn('[ClipAIble Offscreen] TTS module preload failed (non-critical)', {
+  logWarn('[ClipAIble Offscreen] TTS module preload failed (non-critical)', {
     error: error.message,
     timestamp: Date.now()
   });
@@ -1063,7 +1069,7 @@ initPiperTTS().then(module => {
 // Listener is registered synchronously, so it's ready immediately when document loads
 try {
   const listenerRegisteredTime = Date.now();
-  console.log('[ClipAIble Offscreen] Registering chrome.runtime.onMessage listener...', {
+  log('[ClipAIble Offscreen] Registering chrome.runtime.onMessage listener...', {
     timestamp: listenerRegisteredTime
   });
 
@@ -1071,7 +1077,7 @@ try {
     const messageReceivedTime = Date.now();
     const messageId = `${message.type}_${messageReceivedTime}_${Math.random().toString(36).substr(2, 9)}`;
     
-    console.log('[ClipAIble Offscreen] === MESSAGE RECEIVED ===', {
+    log('[ClipAIble Offscreen] === MESSAGE RECEIVED ===', {
       messageId,
       type: message.type,
       target: message.target,
@@ -1086,14 +1092,14 @@ try {
     
     // Only handle messages targeted to offscreen
     if (message.target !== 'offscreen') {
-      console.log('[ClipAIble Offscreen] Message not for offscreen, ignoring', {
+      log('[ClipAIble Offscreen] Message not for offscreen, ignoring', {
         messageId,
         target: message.target
       });
       return false;
     }
     
-    console.log('[ClipAIble Offscreen] Processing offscreen message', {
+    log('[ClipAIble Offscreen] Processing offscreen message', {
       messageId,
       type: message.type
     });
@@ -1102,7 +1108,7 @@ try {
   (async () => {
     const processingStartTime = Date.now();
     try {
-      console.log(`[ClipAIble Offscreen] Starting async processing for ${messageId}`, {
+      log(`[ClipAIble Offscreen] Starting async processing for ${messageId}`, {
         messageId,
         type: message.type
       });
@@ -1112,7 +1118,7 @@ try {
       let tts;
       try {
         // Initialize Web Worker - required, no fallback
-        console.log(`[ClipAIble Offscreen] === TTS INITIALIZATION START === for ${messageId}`, {
+        log(`[ClipAIble Offscreen] === TTS INITIALIZATION START === for ${messageId}`, {
           messageId,
           useWorker,
           hasTTSWorker: !!ttsWorker,
@@ -1120,13 +1126,13 @@ try {
         });
         
         if (useWorker) {
-          console.log(`[ClipAIble Offscreen] Attempting to initialize TTS Worker for ${messageId}...`, {
+          log(`[ClipAIble Offscreen] Attempting to initialize TTS Worker for ${messageId}...`, {
             messageId,
             timestamp: Date.now()
           });
           try {
             await initTTSWorker();
-            console.log(`[ClipAIble Offscreen] ✅ TTS Worker initialized successfully for ${messageId}`, {
+            log(`[ClipAIble Offscreen] ✅ TTS Worker initialized successfully for ${messageId}`, {
               messageId,
               duration: Date.now() - ttsInitStart,
               method: 'worker',
@@ -1135,7 +1141,7 @@ try {
             });
             // Worker is ready, tts will be null (we'll use worker)
           } catch (workerError) {
-            console.error(`[ClipAIble Offscreen] ❌ TTS Worker initialization FAILED for ${messageId}`, {
+            logError(`[ClipAIble Offscreen] ❌ TTS Worker initialization FAILED for ${messageId}`, {
               messageId,
               error: workerError.message,
               stack: workerError.stack,
@@ -1152,14 +1158,14 @@ try {
           throw new Error(`TTS Worker is not initialized for ${messageId}. Worker initialization must succeed.`);
         }
         
-        console.log(`[ClipAIble Offscreen] ✅ TTS Worker ready for ${messageId}`, {
+        log(`[ClipAIble Offscreen] ✅ TTS Worker ready for ${messageId}`, {
           messageId,
           useWorker,
           hasTTSWorker: !!ttsWorker,
           timestamp: Date.now()
         });
       } catch (initError) {
-        console.error(`[ClipAIble Offscreen] TTS initialization FAILED for ${messageId}`, {
+        logError(`[ClipAIble Offscreen] TTS initialization FAILED for ${messageId}`, {
           messageId,
           error: initError.message,
           stack: initError.stack,
@@ -1179,7 +1185,7 @@ try {
           // CRITICAL: Always initialize ttsModule for stored() and download() operations
           // Worker is used only for predict() operations
           if (!ttsModule) {
-            console.log(`[ClipAIble Offscreen] Initializing ttsModule for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Initializing ttsModule for ${messageId}`, {
               messageId,
               useWorker
             });
@@ -1191,7 +1197,7 @@ try {
           
           // CRITICAL: Log voice parameter in detail to debug issues
           // This is the FIRST place where we see the voice from the request
-          console.log(`[ClipAIble Offscreen] ===== NEW REQUEST START ===== VOICE="${String(voice || 'null')}" ===== for ${messageId}`, {
+          log(`[ClipAIble Offscreen] ===== NEW REQUEST START ===== VOICE="${String(voice || 'null')}" ===== for ${messageId}`, {
             messageId,
             timestamp: ttsRequestStart,
             requestVoice: voice,
@@ -1200,7 +1206,7 @@ try {
             textLength: text?.length || 0
           });
           
-          console.log(`[ClipAIble Offscreen] CRITICAL: Voice parameter received for ${messageId}`, {
+          log(`[ClipAIble Offscreen] CRITICAL: Voice parameter received for ${messageId}`, {
             messageId,
             voice,
             voiceType: typeof voice,
@@ -1242,13 +1248,13 @@ try {
             storageSettings: 'Will be determined after language detection'
           };
           
-          console.log(`[ClipAIble Offscreen] PIPER_TTS request with all settings for ${messageId}`, ttsSettings);
+          log(`[ClipAIble Offscreen] PIPER_TTS request with all settings for ${messageId}`, ttsSettings);
           
           // Auto-detect language
           if (language === 'auto') {
             const detectStart = Date.now();
             language = detectLanguage(text);
-            console.log(`[ClipAIble Offscreen] Language detected for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Language detected for ${messageId}`, {
               messageId,
               detectedLanguage: language,
               duration: Date.now() - detectStart
@@ -1261,7 +1267,7 @@ try {
             const langBase = language.split('-')[0].toLowerCase();
             if (langBase === 'ua') {
               language = language.replace(/^ua/i, 'uk');
-              console.log(`[ClipAIble Offscreen] Normalized language code for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Normalized language code for ${messageId}`, {
                 messageId,
                 originalLanguage: language,
                 normalizedLanguage: language
@@ -1277,7 +1283,7 @@ try {
           }
           
           // CRITICAL: Validate langCode before using it
-          console.log(`[ClipAIble Offscreen] === VOICE SELECTION START === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === VOICE SELECTION START === for ${messageId}`, {
             messageId,
             language,
             langCode,
@@ -1291,14 +1297,14 @@ try {
           });
           
           if (!langCode || langCode === 'undefined' || langCode.trim() === '') {
-            console.error(`[ClipAIble Offscreen] CRITICAL: Invalid langCode for ${messageId}`, {
+            logError(`[ClipAIble Offscreen] CRITICAL: Invalid langCode for ${messageId}`, {
               messageId,
               language,
               langCode,
               action: 'Falling back to English'
             });
             langCode = 'en';
-            console.log(`[ClipAIble Offscreen] Using fallback langCode for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Using fallback langCode for ${messageId}`, {
               messageId,
               originalLanguage: language,
               fallbackLangCode: 'en'
@@ -1309,7 +1315,7 @@ try {
           const defaultVoiceForLang = DEFAULT_VOICES[langCode];
           const defaultVoiceEn = DEFAULT_VOICES['en'];
           
-          console.log(`[ClipAIble Offscreen] Default voice lookup for ${messageId}`, {
+          log(`[ClipAIble Offscreen] Default voice lookup for ${messageId}`, {
             messageId,
             langCode,
             defaultVoiceForLang,
@@ -1329,7 +1335,7 @@ try {
             if (isValidVoiceFormat) {
               // Voice is already a valid ID format - use it directly
               voiceId = voice;
-              console.log(`[ClipAIble Offscreen] CRITICAL: Using voice directly as valid ID format for ${messageId}`, {
+              log(`[ClipAIble Offscreen] CRITICAL: Using voice directly as valid ID format for ${messageId}`, {
                 messageId,
                 voice,
                 voiceId,
@@ -1338,7 +1344,7 @@ try {
             } else {
               // Voice is not in valid format - will be processed by mapping later
               voiceId = voice;
-              console.log(`[ClipAIble Offscreen] CRITICAL: Voice is not in valid ID format, will try mapping for ${messageId}`, {
+              log(`[ClipAIble Offscreen] CRITICAL: Voice is not in valid ID format, will try mapping for ${messageId}`, {
                 messageId,
                 voice,
                 voiceId,
@@ -1350,7 +1356,7 @@ try {
           } else {
             // No voice specified, use default
             voiceId = defaultVoiceForLang || defaultVoiceEn || 'en_US-lessac-medium';
-            console.log(`[ClipAIble Offscreen] CRITICAL: No voice specified, using default for ${messageId}`, {
+            log(`[ClipAIble Offscreen] CRITICAL: No voice specified, using default for ${messageId}`, {
               messageId,
               voice,
               defaultVoiceForLang,
@@ -1362,7 +1368,7 @@ try {
           // If voiceId is still null (shouldn't happen, but safety check)
           if (!voiceId) {
             voiceId = 'en_US-lessac-medium';
-            console.warn(`[ClipAIble Offscreen] No default voice for language ${langCode}, using English fallback for ${messageId}`, {
+            logWarn(`[ClipAIble Offscreen] No default voice for language ${langCode}, using English fallback for ${messageId}`, {
               messageId,
               langCode,
               defaultVoiceForLang,
@@ -1371,7 +1377,7 @@ try {
           }
           let isFallbackVoice = false;
           
-          console.log(`[ClipAIble Offscreen] === INITIAL VOICE SELECTION === for ${messageId} === VOICE="${voiceId}" === REQUESTED="${String(voice || '')}" ===`, {
+          log(`[ClipAIble Offscreen] === INITIAL VOICE SELECTION === for ${messageId} === VOICE="${voiceId}" === REQUESTED="${String(voice || '')}" ===`, {
             messageId,
             voiceId,
             SELECTED_VOICE_STRING: `SELECTED_VOICE="${voiceId}"`, // Explicit string for visibility
@@ -1387,7 +1393,7 @@ try {
           
           // CRITICAL: Ensure voiceId is never undefined
           if (!voiceId || voiceId === 'undefined' || (typeof voiceId === 'string' && voiceId.trim() === '')) {
-            console.error(`[ClipAIble Offscreen] CRITICAL: voiceId is undefined or empty for ${messageId}`, {
+            logError(`[ClipAIble Offscreen] CRITICAL: voiceId is undefined or empty for ${messageId}`, {
               messageId,
               language,
               langCode,
@@ -1400,7 +1406,7 @@ try {
             });
             // Force fallback to English if no voice found
             voiceId = DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
-            console.log(`[ClipAIble Offscreen] Forced voiceId to English fallback for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Forced voiceId to English fallback for ${messageId}`, {
               messageId,
               forcedVoiceId: voiceId,
               reason: 'voiceId was undefined or empty'
@@ -1415,7 +1421,7 @@ try {
             voiceId.includes('-')     // Contains dash (e.g., "...-medium")
           );
           
-          console.log(`[ClipAIble Offscreen] CRITICAL: Voice format validation for ${messageId}`, {
+          log(`[ClipAIble Offscreen] CRITICAL: Voice format validation for ${messageId}`, {
             messageId,
             voice,
             voiceId,
@@ -1428,7 +1434,7 @@ try {
           // CRITICAL: Only try mapping if voiceId is NOT already in valid format
           // If voiceId is already valid (e.g., "ru_RU-denis-medium"), use it directly
           if (!isValidVoiceFormat && voice && voice !== '0' && voice !== '') {
-            console.log(`[ClipAIble Offscreen] Invalid voice format detected for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Invalid voice format detected for ${messageId}`, {
               messageId,
               requestedVoice: voice,
               voiceId,
@@ -1442,7 +1448,7 @@ try {
               // Import voice mapping
               const { findVoiceIdByName, PIPER_VOICES_MAPPING } = await import(chrome.runtime.getURL('scripts/api/piper-voices-mapping.js'));
               
-              console.log(`[ClipAIble Offscreen] CRITICAL: Attempting voice mapping for ${messageId}`, {
+              log(`[ClipAIble Offscreen] CRITICAL: Attempting voice mapping for ${messageId}`, {
                 messageId,
                 requestedVoice: voice,
                 requestedVoiceType: typeof voice,
@@ -1456,7 +1462,7 @@ try {
               
               const mappedVoiceId = findVoiceIdByName(voice, language || langCode);
               
-              console.log(`[ClipAIble Offscreen] CRITICAL: Voice mapping result for ${messageId}`, {
+              log(`[ClipAIble Offscreen] CRITICAL: Voice mapping result for ${messageId}`, {
                 messageId,
                 requestedVoice: voice,
                 mappedVoiceId,
@@ -1466,14 +1472,14 @@ try {
               });
               
               if (mappedVoiceId) {
-                console.log(`[ClipAIble Offscreen] Found voice by name mapping for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Found voice by name mapping for ${messageId}`, {
                   messageId,
                   requestedVoice: voice,
                   mappedVoiceId,
                   language,
                   langCode
                 });
-                console.log(`[ClipAIble Offscreen] CRITICAL: Setting voiceId from mapping for ${messageId}`, {
+                log(`[ClipAIble Offscreen] CRITICAL: Setting voiceId from mapping for ${messageId}`, {
                   messageId,
                   beforeVoiceId: voiceId,
                   mappedVoiceId,
@@ -1484,7 +1490,7 @@ try {
                   voiceId.includes('_') || voiceId.includes('-')
                 );
                 
-                console.log(`[ClipAIble Offscreen] CRITICAL: voiceId after mapping assignment for ${messageId}`, {
+                log(`[ClipAIble Offscreen] CRITICAL: voiceId after mapping assignment for ${messageId}`, {
                   messageId,
                   voiceId,
                   voiceIdType: typeof voiceId,
@@ -1492,7 +1498,7 @@ try {
                 });
                 
                 if (isValidVoiceFormat) {
-                  console.log(`[ClipAIble Offscreen] Voice mapped and format validated for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Voice mapped and format validated for ${messageId}`, {
                     messageId,
                     originalVoice: voice,
                     mappedVoiceId: voiceId
@@ -1503,18 +1509,21 @@ try {
                 // This handles voices that exist in library but not in types.d.ts
                 // (e.g., "bryce", "john", "norman", "paola", "gwryw_gogleddol")
                 // CRITICAL: Also handle numeric indices (e.g., "107") - don't try to construct ID from them
+                // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
                 let availableVoices = null;
-                if (useWorker && ttsWorker) {
-                  availableVoices = await getVoicesWithWorker();
-                } else if (tts && typeof tts.voices === 'function') {
-                  availableVoices = await tts.voices();
+                if (!ttsWorker) {
+                  await initTTSWorker();
                 }
+                if (!ttsWorker) {
+                  throw new Error('TTS Worker is not available. Cannot get available voices without Worker.');
+                }
+                availableVoices = await getVoicesWithWorker();
                 
                 if (availableVoices) {
                   // CRITICAL: tts.voices() returns Voice[] array, not an object!
                   // Each Voice has structure: { key: VoiceId, name: string, language: {...}, quality: Quality, ... }
                   
-                  console.log(`[ClipAIble Offscreen] Searching for voice by name in library for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Searching for voice by name in library for ${messageId}`, {
                     messageId,
                     requestedVoice: voice,
                     requestedVoiceType: typeof voice,
@@ -1527,7 +1536,7 @@ try {
                   // CRITICAL: If voice is a number (index), try to find voice by index in available voices
                   if (/^\d+$/.test(String(voice))) {
                     const voiceIndex = parseInt(voice, 10);
-                    console.log(`[ClipAIble Offscreen] Voice is numeric index, trying to find by index for ${messageId}`, {
+                    log(`[ClipAIble Offscreen] Voice is numeric index, trying to find by index for ${messageId}`, {
                       messageId,
                       requestedVoice: voice,
                       voiceIndex,
@@ -1606,7 +1615,7 @@ try {
                     
                     const filteredVoicesList = result;
                     
-                    console.log(`[ClipAIble Offscreen] Filtered voices for index lookup for ${messageId}`, {
+                    log(`[ClipAIble Offscreen] Filtered voices for index lookup for ${messageId}`, {
                       messageId,
                       voiceIndex,
                       filteredVoicesCount: filteredVoicesList.length,
@@ -1622,7 +1631,7 @@ try {
                         voiceId.includes('_') && voiceId.includes('-')
                       );
                       
-                      console.log(`[ClipAIble Offscreen] Found voice by index for ${messageId}`, {
+                      log(`[ClipAIble Offscreen] Found voice by index for ${messageId}`, {
                         messageId,
                         voiceIndex,
                         selectedVoiceId: voiceId,
@@ -1633,7 +1642,7 @@ try {
                         totalFilteredVoices: filteredVoicesList.length
                       });
                     } else {
-                      console.warn(`[ClipAIble Offscreen] Voice index ${voiceIndex} out of range for ${messageId}`, {
+                      logWarn(`[ClipAIble Offscreen] Voice index ${voiceIndex} out of range for ${messageId}`, {
                         messageId,
                         voiceIndex,
                         originalVoice: voice,
@@ -1650,7 +1659,7 @@ try {
                       // 3. Index was incorrectly saved instead of voice ID
                       // Solution: Use default voice for the detected language
                       // The user will need to re-select their voice in settings
-                      console.warn(`[ClipAIble Offscreen] Index ${voiceIndex} is invalid, using default voice for language ${langCode} for ${messageId}`, {
+                      logWarn(`[ClipAIble Offscreen] Index ${voiceIndex} is invalid, using default voice for language ${langCode} for ${messageId}`, {
                         messageId,
                         voiceIndex,
                         originalVoice: voice,
@@ -1689,7 +1698,7 @@ try {
                     }
                     
                     if (foundVoice && foundVoice.id) {
-                      console.log(`[ClipAIble Offscreen] Found voice by name in library for ${messageId}`, {
+                      log(`[ClipAIble Offscreen] Found voice by name in library for ${messageId}`, {
                         messageId,
                         requestedVoice: voice,
                         foundVoiceId: foundVoice.id,
@@ -1701,7 +1710,7 @@ try {
                         voiceId.includes('_') || voiceId.includes('-')
                       );
                     } else {
-                      console.log(`[ClipAIble Offscreen] Voice not found by name for ${messageId}`, {
+                      log(`[ClipAIble Offscreen] Voice not found by name for ${messageId}`, {
                         messageId,
                         requestedVoice: voice,
                         language,
@@ -1713,7 +1722,7 @@ try {
                 }
               }
             } catch (findError) {
-              console.error(`[ClipAIble Offscreen] Error finding voice by name for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] Error finding voice by name for ${messageId}`, {
                 messageId,
                 requestedVoice: voice,
                 language,
@@ -1726,7 +1735,7 @@ try {
             if (!isValidVoiceFormat) {
             // Switch to default voice for detected language
             const replacementVoice = DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'];
-            console.log(`[ClipAIble Offscreen] Attempting voice replacement for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Attempting voice replacement for ${messageId}`, {
               messageId,
               langCode,
               replacementVoice,
@@ -1738,7 +1747,7 @@ try {
             
             // CRITICAL: Double-check voiceId is not undefined after replacement
             if (!voiceId || voiceId === 'undefined' || (typeof voiceId === 'string' && voiceId.trim() === '')) {
-              console.error(`[ClipAIble Offscreen] CRITICAL: voiceId still undefined after replacement for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] CRITICAL: voiceId still undefined after replacement for ${messageId}`, {
                 messageId,
                 langCode,
                 replacementVoice,
@@ -1747,13 +1756,13 @@ try {
                 allDefaultVoices: DEFAULT_VOICES
               });
               voiceId = DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
-              console.log(`[ClipAIble Offscreen] Forced voiceId to English fallback after replacement for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Forced voiceId to English fallback after replacement for ${messageId}`, {
                 messageId,
                 forcedVoiceId: voiceId
               });
             }
             
-            console.log(`[ClipAIble Offscreen] Voice replaced with default for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Voice replaced with default for ${messageId}`, {
               messageId,
               originalVoice: voice,
               newVoice: voiceId,
@@ -1777,7 +1786,7 @@ try {
             
             // If voice language doesn't match detected language, only warn (do not replace)
             if (voiceLangCode !== langCode) {
-              console.warn(`[ClipAIble Offscreen] Voice-language mismatch detected for ${messageId} (NOT replacing - using user-selected voice)`, {
+              logWarn(`[ClipAIble Offscreen] Voice-language mismatch detected for ${messageId} (NOT replacing - using user-selected voice)`, {
                 messageId,
                 requestedVoice: voice,
                 voiceId,
@@ -1787,7 +1796,7 @@ try {
               });
               // DO NOT replace voiceId - user explicitly selected it
             } else {
-              console.log(`[ClipAIble Offscreen] Voice-language match confirmed for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Voice-language match confirmed for ${messageId}`, {
                 messageId,
                 voiceId,
                 voiceLanguage: voiceLangCode,
@@ -1798,7 +1807,7 @@ try {
           
           // CRITICAL: Final validation - ensure voiceId is never undefined before use
           if (!voiceId || !isValidVoiceFormat) {
-            console.error(`[ClipAIble Offscreen] CRITICAL: voiceId is invalid before download for ${messageId}`, {
+            logError(`[ClipAIble Offscreen] CRITICAL: voiceId is invalid before download for ${messageId}`, {
               messageId,
               voiceId,
               isValidVoiceFormat,
@@ -1810,7 +1819,7 @@ try {
             // Force fallback to English voice
             voiceId = DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
             isValidVoiceFormat = true;
-            console.log(`[ClipAIble Offscreen] Forced voiceId to English fallback for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Forced voiceId to English fallback for ${messageId}`, {
               messageId,
               forcedVoiceId: voiceId
             });
@@ -1818,7 +1827,7 @@ try {
           
           // SPECIAL LOGGING FOR RUSSIAN LANGUAGE
           if (langCode === 'ru') {
-            console.log(`[ClipAIble Offscreen] === RUSSIAN LANGUAGE DETECTED === for ${messageId}`, {
+            log(`[ClipAIble Offscreen] === RUSSIAN LANGUAGE DETECTED === for ${messageId}`, {
               messageId,
               language,
               langCode,
@@ -1856,10 +1865,10 @@ try {
             defaultVoices: DEFAULT_VOICES
           };
           
-          console.log(`[ClipAIble Offscreen] Voice selected with all settings for ${messageId}`, allTtsSettings);
+          log(`[ClipAIble Offscreen] Voice selected with all settings for ${messageId}`, allTtsSettings);
           
           // CRITICAL: Final validation - ensure voiceId is never undefined before use
-          console.log(`[ClipAIble Offscreen] === FINAL VOICE VALIDATION === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === FINAL VOICE VALIDATION === for ${messageId}`, {
             messageId,
             voiceId,
             voiceIdType: typeof voiceId,
@@ -1875,7 +1884,7 @@ try {
           
           // SPECIAL LOGGING FOR RUSSIAN LANGUAGE
           if (langCode === 'ru') {
-            console.log(`[ClipAIble Offscreen] === RUSSIAN LANGUAGE DETECTED === for ${messageId}`, {
+            log(`[ClipAIble Offscreen] === RUSSIAN LANGUAGE DETECTED === for ${messageId}`, {
               messageId,
               language,
               langCode,
@@ -1892,7 +1901,7 @@ try {
           
           if (!voiceId || typeof voiceId !== 'string' || voiceId === 'undefined' || voiceId.trim() === '') {
             const errorMsg = `Invalid voiceId before download: ${voiceId}`;
-            console.error(`[ClipAIble Offscreen] ${errorMsg} for ${messageId}`, {
+            logError(`[ClipAIble Offscreen] ${errorMsg} for ${messageId}`, {
               messageId,
               voiceId,
               voiceIdType: typeof voiceId,
@@ -1907,7 +1916,7 @@ try {
             throw new Error(errorMsg);
           }
           
-          console.log(`[ClipAIble Offscreen] === VOICE SELECTION COMPLETE === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === VOICE SELECTION COMPLETE === for ${messageId}`, {
             messageId,
             finalVoiceId: voiceId,
             langCode,
@@ -1922,9 +1931,16 @@ try {
           
           // Check if voice is downloaded
           const storedCheckStart = Date.now();
-          const stored = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+          // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+          if (!ttsWorker) {
+            await initTTSWorker();
+          }
+          if (!ttsWorker) {
+            throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+          }
+          const stored = await getStoredWithWorker();
           const storedCheckDuration = Date.now() - storedCheckStart;
-          console.log(`[ClipAIble Offscreen] Stored voices check for ${messageId}`, {
+          log(`[ClipAIble Offscreen] Stored voices check for ${messageId}`, {
             messageId,
             storedCount: stored.length,
             voiceId,
@@ -1937,7 +1953,7 @@ try {
             // CRITICAL: Final validation before download - ensure voiceId is valid
             if (!voiceId || typeof voiceId !== 'string' || voiceId === 'undefined' || voiceId.trim() === '') {
               const errorMsg = `Invalid voiceId before download: ${voiceId}`;
-              console.error(`[ClipAIble Offscreen] ${errorMsg} for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] ${errorMsg} for ${messageId}`, {
                 messageId,
                 voiceId,
                 voiceIdType: typeof voiceId,
@@ -1948,7 +1964,7 @@ try {
               });
               // Try to use fallback voice
               const fallbackVoiceId = DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
-              console.log(`[ClipAIble Offscreen] Using fallback voice for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Using fallback voice for ${messageId}`, {
                 messageId,
                 originalVoiceId: voiceId,
                 fallbackVoiceId
@@ -1962,7 +1978,7 @@ try {
             }
             
             // CRITICAL: Final check before download - log everything
-            console.log(`[ClipAIble Offscreen] Starting voice download for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Starting voice download for ${messageId}`, {
               messageId,
               voiceId,
               voiceIdType: typeof voiceId,
@@ -1976,7 +1992,7 @@ try {
             
             // CRITICAL: One more validation right before download
             if (!voiceId || typeof voiceId !== 'string' || voiceId === 'undefined' || voiceId.trim() === '') {
-              console.error(`[ClipAIble Offscreen] CRITICAL: voiceId is invalid right before download for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] CRITICAL: voiceId is invalid right before download for ${messageId}`, {
                 messageId,
                 voiceId,
                 voiceIdType: typeof voiceId,
@@ -1986,7 +2002,7 @@ try {
               });
               // Force fallback
               voiceId = DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
-              console.log(`[ClipAIble Offscreen] Forced voiceId to fallback right before download for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Forced voiceId to fallback right before download for ${messageId}`, {
                 messageId,
                 forcedVoiceId: voiceId
               });
@@ -1994,7 +2010,7 @@ try {
             
             // CRITICAL: Store voiceId in a const to prevent mutation
             // CRITICAL: Log voiceId before assignment to track any changes
-            console.log(`[ClipAIble Offscreen] CRITICAL: voiceId before downloadVoiceId assignment for ${messageId}`, {
+            log(`[ClipAIble Offscreen] CRITICAL: voiceId before downloadVoiceId assignment for ${messageId}`, {
               messageId,
               voiceId,
               voiceIdType: typeof voiceId,
@@ -2008,7 +2024,7 @@ try {
               throw new Error(`Cannot download voice: voiceId is invalid (${voiceId}). Language: ${langCode}`);
             }
             
-            console.log(`[ClipAIble Offscreen] Calling tts.download with voiceId: "${downloadVoiceId}" for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Calling tts.download with voiceId: "${downloadVoiceId}" for ${messageId}`, {
               messageId,
               downloadVoiceId,
               downloadVoiceIdType: typeof downloadVoiceId,
@@ -2019,7 +2035,7 @@ try {
             
             // CRITICAL: Check stored voices BEFORE download to compare after
             const storedCheckStart = Date.now();
-            console.log(`[ClipAIble Offscreen] === CHECKING STORED VOICES BEFORE DOWNLOAD ===`, {
+            log(`[ClipAIble Offscreen] === CHECKING STORED VOICES BEFORE DOWNLOAD ===`, {
               messageId,
               downloadVoiceId,
               useWorker,
@@ -2027,10 +2043,17 @@ try {
               timestamp: storedCheckStart
             });
             
-            const storedBeforeDownload = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+            // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+            if (!ttsWorker) {
+              await initTTSWorker();
+            }
+            if (!ttsWorker) {
+              throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+            }
+            const storedBeforeDownload = await getStoredWithWorker();
             const storedCheckDuration = Date.now() - storedCheckStart;
             
-            console.log(`[ClipAIble Offscreen] Stored voices BEFORE download for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Stored voices BEFORE download for ${messageId}`, {
               messageId,
               downloadVoiceId,
               storedBeforeDownload,
@@ -2043,7 +2066,7 @@ try {
             let lastPercent = -1;
             let finalProgress = null;
             
-            console.log(`[ClipAIble Offscreen] === ABOUT TO CALL downloadWithWorker ===`, {
+            log(`[ClipAIble Offscreen] === ABOUT TO CALL downloadWithWorker ===`, {
               messageId,
               downloadVoiceId,
               useWorker,
@@ -2054,45 +2077,35 @@ try {
             
             try {
               const downloadResult = useWorker && ttsWorker 
-                ? await downloadWithWorker(downloadVoiceId, (progress) => {
-                    finalProgress = progress;
-                    if (progress.total > 0) {
-                      const percent = Math.round((progress.loaded * 100) / progress.total);
-                      if (percent >= lastPercent + 10 || percent === 100) {
-                        console.log(`[ClipAIble Offscreen] Download progress for ${messageId}`, {
-                          messageId,
-                          voiceId: downloadVoiceId,
-                          percent,
-                          loaded: progress.loaded,
-                          total: progress.total
-                        });
-                        lastPercent = percent;
-                      }
-                      if (progress.loaded >= progress.total && progress.total > 0) {
-                        downloadComplete = true;
-                      }
-                    }
-                  })
-                : await tts.download(downloadVoiceId, (progress) => {
-                finalProgress = progress;
-                if (progress.total > 0) {
-                  const percent = Math.round((progress.loaded * 100) / progress.total);
-                  // Log only every 10%
-                  if (percent >= lastPercent + 10 || percent === 100) {
-                    console.log(`[ClipAIble Offscreen] Download progress for ${messageId}`, {
-                      messageId,
-                      voiceId: downloadVoiceId,
-                      percent,
-                      loaded: progress.loaded,
-                      total: progress.total
-                    });
-                    lastPercent = percent;
-                  }
+                // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                if (!ttsWorker) {
+                  await initTTSWorker();
                 }
-              });
+                if (!ttsWorker) {
+                  throw new Error('TTS Worker is not available. Cannot download voice without Worker.');
+                }
+                await downloadWithWorker(downloadVoiceId, (progress) => {
+                  finalProgress = progress;
+                  if (progress.total > 0) {
+                    const percent = Math.round((progress.loaded * 100) / progress.total);
+                    if (percent >= lastPercent + 10 || percent === 100) {
+                      log(`[ClipAIble Offscreen] Download progress for ${messageId}`, {
+                        messageId,
+                        voiceId: downloadVoiceId,
+                        percent,
+                        loaded: progress.loaded,
+                        total: progress.total
+                      });
+                      lastPercent = percent;
+                    }
+                    if (progress.loaded >= progress.total && progress.total > 0) {
+                      downloadComplete = true;
+                    }
+                  }
+                });
               
               const downloadDuration = Date.now() - downloadStart;
-              console.log(`[ClipAIble Offscreen] Voice download complete for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Voice download complete for ${messageId}`, {
                 messageId,
                 voiceId: downloadVoiceId,
                 duration: downloadDuration,
@@ -2104,8 +2117,15 @@ try {
               });
               
               // CRITICAL: Check stored voices IMMEDIATELY after download() resolves
-              const storedImmediatelyAfter = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
-              console.log(`[ClipAIble Offscreen] Stored voices IMMEDIATELY after download() resolved for ${messageId}`, {
+              // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+              if (!ttsWorker) {
+                await initTTSWorker();
+              }
+              if (!ttsWorker) {
+                throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+              }
+              const storedImmediatelyAfter = await getStoredWithWorker();
+              log(`[ClipAIble Offscreen] Stored voices IMMEDIATELY after download() resolved for ${messageId}`, {
                 messageId,
                 downloadVoiceId,
                 storedImmediatelyAfter,
@@ -2127,7 +2147,14 @@ try {
               const verificationDelay = 1000; // Increased to 1000ms between attempts
               
               for (let attempt = 1; attempt <= maxVerificationAttempts; attempt++) {
-                verifyStored = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                if (!ttsWorker) {
+                  await initTTSWorker();
+                }
+                if (!ttsWorker) {
+                  throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+                }
+                verifyStored = await getStoredWithWorker();
                 isActuallyStored = verifyStored.includes(downloadVoiceId);
                 
                 // CRITICAL: Check for partial matches (maybe voice is stored with different format)
@@ -2138,7 +2165,7 @@ try {
                   downloadVoiceId.includes(v.split('-')[1])
                 );
                 
-                console.log(`[ClipAIble Offscreen] Voice storage verification attempt ${attempt}/${maxVerificationAttempts} for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Voice storage verification attempt ${attempt}/${maxVerificationAttempts} for ${messageId}`, {
                   messageId,
                   downloadVoiceId,
                   isActuallyStored,
@@ -2155,7 +2182,7 @@ try {
                 });
                 
                 if (isActuallyStored) {
-                  console.log(`[ClipAIble Offscreen] Voice ${downloadVoiceId} found in storage after ${attempt} attempt(s) for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Voice ${downloadVoiceId} found in storage after ${attempt} attempt(s) for ${messageId}`, {
                     messageId,
                     downloadVoiceId,
                     attempt
@@ -2164,7 +2191,7 @@ try {
                 }
                 
                 if (attempt < maxVerificationAttempts) {
-                  console.log(`[ClipAIble Offscreen] Voice ${downloadVoiceId} not found yet, waiting ${verificationDelay}ms before retry for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Voice ${downloadVoiceId} not found yet, waiting ${verificationDelay}ms before retry for ${messageId}`, {
                     messageId,
                     downloadVoiceId,
                     attempt,
@@ -2190,7 +2217,7 @@ try {
                   downloadDuration: Date.now() - downloadStart
                 };
                 
-                console.error(`[ClipAIble Offscreen] CRITICAL: Voice ${downloadVoiceId} not found in stored voices after ${maxVerificationAttempts} attempts for ${messageId}`, errorDetails);
+                logError(`[ClipAIble Offscreen] CRITICAL: Voice ${downloadVoiceId} not found in stored voices after ${maxVerificationAttempts} attempts for ${messageId}`, errorDetails);
                 
                 // Throw detailed error without fallback - user needs to see what's wrong
                 throw new Error(
@@ -2204,7 +2231,7 @@ try {
               
               // CRITICAL: Wait for model to be fully loaded and indexed in IndexedDB
               // This prevents "No graph was found in the protobuf" errors
-              console.log(`[ClipAIble Offscreen] Waiting for model to be fully indexed after download for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Waiting for model to be fully indexed after download for ${messageId}`, {
                 messageId,
                 downloadVoiceId
               });
@@ -2213,7 +2240,7 @@ try {
               // CRITICAL: Test model integrity by attempting a minimal predict() call
               // This catches corrupted models before they cause errors during actual synthesis
               try {
-                console.log(`[ClipAIble Offscreen] Testing model integrity for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Testing model integrity for ${messageId}`, {
                   messageId,
                   downloadVoiceId
                 });
@@ -2226,13 +2253,13 @@ try {
                 if (!testBlob || testBlob.size === 0) {
                   throw new Error('Model integrity test failed: empty result');
                 }
-                console.log(`[ClipAIble Offscreen] Model integrity test passed for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Model integrity test passed for ${messageId}`, {
                   messageId,
                   downloadVoiceId,
                   testBlobSize: testBlob.size
                 });
               } catch (integrityError) {
-                console.error(`[ClipAIble Offscreen] CRITICAL: Model integrity test failed for ${messageId}`, {
+                logError(`[ClipAIble Offscreen] CRITICAL: Model integrity test failed for ${messageId}`, {
                   messageId,
                   downloadVoiceId,
                   error: integrityError.message,
@@ -2242,18 +2269,18 @@ try {
                 if (useWorker && ttsWorker) {
                   try {
                     await removeWithWorker(downloadVoiceId);
-                    console.log(`[ClipAIble Offscreen] Removed corrupted model ${downloadVoiceId} after integrity test failure`, {
+                    log(`[ClipAIble Offscreen] Removed corrupted model ${downloadVoiceId} after integrity test failure`, {
                       messageId,
                       downloadVoiceId
                     });
                     // Re-download the model
                     await downloadWithWorker(downloadVoiceId);
-                    console.log(`[ClipAIble Offscreen] Re-downloaded model ${downloadVoiceId} after integrity test failure`, {
+                    log(`[ClipAIble Offscreen] Re-downloaded model ${downloadVoiceId} after integrity test failure`, {
                       messageId,
                       downloadVoiceId
                     });
                   } catch (recoveryError) {
-                    console.error(`[ClipAIble Offscreen] Failed to recover from integrity test failure for ${messageId}`, {
+                    logError(`[ClipAIble Offscreen] Failed to recover from integrity test failure for ${messageId}`, {
                       messageId,
                       downloadVoiceId,
                       recoveryError: recoveryError.message
@@ -2265,7 +2292,7 @@ try {
                 }
               }
             } catch (downloadError) {
-              console.error(`[ClipAIble Offscreen] Voice download failed for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] Voice download failed for ${messageId}`, {
                 messageId,
                 voiceId: downloadVoiceId,
                 originalVoiceId: voiceId,
@@ -2290,7 +2317,7 @@ try {
               
               if (isJsonParseError || isEntryNotFound) {
                 const errorMsg = `Voice "${downloadVoiceId}" not found on HuggingFace. The voice ID may be invalid or the voice may have been removed. Please select a valid voice from the list.`;
-                console.error(`[ClipAIble Offscreen] Voice not found error for ${messageId}`, {
+                logError(`[ClipAIble Offscreen] Voice not found error for ${messageId}`, {
                   messageId,
                   downloadVoiceId,
                   originalVoiceId: voiceId,
@@ -2326,7 +2353,7 @@ try {
           const finalVoiceId = downloadVoiceId || voiceId;
           
           // CRITICAL: Log voice state BEFORE checking for voice change
-          console.log(`[ClipAIble Offscreen] === VOICE CHECK BEFORE SYNTHESIS === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === VOICE CHECK BEFORE SYNTHESIS === for ${messageId}`, {
             messageId,
             voiceId,
             downloadVoiceId,
@@ -2351,7 +2378,7 @@ try {
           lastUsedVoiceId = finalVoiceId;
           
           // Log voice change check result
-          console.log(`[ClipAIble Offscreen] === VOICE CHANGE CHECK RESULT === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === VOICE CHANGE CHECK RESULT === for ${messageId}`, {
             messageId,
             previousVoiceId,
             finalVoiceId,
@@ -2361,7 +2388,7 @@ try {
           });
           
           if (voiceChanged) {
-            console.log(`[ClipAIble Offscreen] ===== VOICE SWITCHING DETECTED ===== for ${messageId}`, {
+            log(`[ClipAIble Offscreen] ===== VOICE SWITCHING DETECTED ===== for ${messageId}`, {
               messageId,
               previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
@@ -2370,7 +2397,7 @@ try {
             
             // CRITICAL: AGGRESSIVE CACHE CLEARING
             // The library caches InferenceSession internally, so we need to completely destroy and recreate everything
-            console.log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING START ===`, {
+            log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING START ===`, {
               messageId,
               previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
@@ -2390,7 +2417,7 @@ try {
                 const hadInstance = tts.TtsSession._instance !== null && tts.TtsSession._instance !== undefined;
                 const instanceVoiceId = tts.TtsSession._instance?.voiceId;
                 
-                console.log(`[ClipAIble Offscreen] === CLEARING TtsSession._instance SINGLETON ===`, {
+                log(`[ClipAIble Offscreen] === CLEARING TtsSession._instance SINGLETON ===`, {
                   messageId,
                   previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
@@ -2405,7 +2432,7 @@ try {
                 tts.TtsSession._instance = null;
                 singletonCleared = true;
                 
-                console.log(`[ClipAIble Offscreen] ✅ TtsSession._instance cleared successfully (SINGLETON CLEARED)`, {
+                log(`[ClipAIble Offscreen] ✅ TtsSession._instance cleared successfully (SINGLETON CLEARED)`, {
                   messageId,
                   previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
@@ -2416,7 +2443,7 @@ try {
               } else {
                 // TtsSession might not be exported, try to access it differently
                 // The predict() function creates TtsSession internally, so we need to clear it before next predict()
-                console.log(`[ClipAIble Offscreen] ⚠️ TtsSession not directly accessible, will clear via module reload`, {
+                log(`[ClipAIble Offscreen] ⚠️ TtsSession not directly accessible, will clear via module reload`, {
                   messageId,
                   previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
@@ -2427,7 +2454,7 @@ try {
                 });
               }
             } catch (clearError) {
-              console.warn(`[ClipAIble Offscreen] ⚠️ Error clearing TtsSession._instance`, {
+              logWarn(`[ClipAIble Offscreen] ⚠️ Error clearing TtsSession._instance`, {
                 messageId,
                 previousVoice: previousVoiceId,
                 newVoice: finalVoiceId,
@@ -2441,7 +2468,7 @@ try {
             ttsModule = null;
             
             // Step 3: Force complete module reload
-            console.log(`[ClipAIble Offscreen] 🔄 Forcing complete module reload`, {
+            log(`[ClipAIble Offscreen] 🔄 Forcing complete module reload`, {
               messageId,
               previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
@@ -2458,7 +2485,7 @@ try {
               // Verify we got a fresh instance
               if (freshTts && typeof freshTts.predict === 'function') {
                 moduleReloaded = true;
-                console.log(`[ClipAIble Offscreen] ✅ Module reloaded successfully (MODULE RELOADED)`, {
+                log(`[ClipAIble Offscreen] ✅ Module reloaded successfully (MODULE RELOADED)`, {
                   messageId,
                   previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
@@ -2472,14 +2499,14 @@ try {
                 // This ensures all subsequent predict() calls use the new module instance
                 tts = freshTts;
                 
-                console.log(`[ClipAIble Offscreen] TTS reference updated to fresh instance after aggressive cache clear`, {
+                log(`[ClipAIble Offscreen] TTS reference updated to fresh instance after aggressive cache clear`, {
                   messageId,
                   previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   ttsIsFresh: tts === freshTts
                 });
               } else {
-                console.error(`[ClipAIble Offscreen] ❌ Module reload failed - invalid module`, {
+                logError(`[ClipAIble Offscreen] ❌ Module reload failed - invalid module`, {
                   messageId,
                   previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
@@ -2489,7 +2516,7 @@ try {
                 });
               }
             } catch (reinitError) {
-              console.error(`[ClipAIble Offscreen] ❌ Module reload error`, {
+              logError(`[ClipAIble Offscreen] ❌ Module reload error`, {
                 messageId,
                 previousVoice: previousVoiceId,
                 newVoice: finalVoiceId,
@@ -2499,7 +2526,7 @@ try {
               });
             }
             
-            console.log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING COMPLETE ===`, {
+            log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING COMPLETE ===`, {
               messageId,
               previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
@@ -2512,7 +2539,7 @@ try {
             
             // CRITICAL: Also clear Worker cache if using Worker
             // Must clear BEFORE first PREDICT with new voice to ensure new session is created
-            console.log(`[ClipAIble Offscreen] === CHECKING WORKER CACHE CLEAR === for ${messageId}`, {
+            log(`[ClipAIble Offscreen] === CHECKING WORKER CACHE CLEAR === for ${messageId}`, {
               messageId,
               previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
@@ -2528,7 +2555,7 @@ try {
                 // Send CLEAR_CACHE message to Worker and wait for confirmation
                 // This ensures Worker clears its TtsSession._instance before creating new session
                 const clearCacheId = `clear_${messageId}_${Date.now()}`;
-                console.log(`[ClipAIble Offscreen] === PREPARING CLEAR_CACHE MESSAGE === for ${messageId}`, {
+                log(`[ClipAIble Offscreen] === PREPARING CLEAR_CACHE MESSAGE === for ${messageId}`, {
                   messageId,
                   clearCacheId,
                   previousVoice: previousVoiceId,
@@ -2540,7 +2567,7 @@ try {
                 
                 const clearCachePromise = new Promise((resolve, reject) => {
                   const timeout = setTimeout(() => {
-                    console.error(`[ClipAIble Offscreen] ❌ CLEAR_CACHE timeout for ${messageId}`, {
+                    logError(`[ClipAIble Offscreen] ❌ CLEAR_CACHE timeout for ${messageId}`, {
                       messageId,
                       clearCacheId,
                       timeout: 5000,
@@ -2550,7 +2577,7 @@ try {
                   }, 5000);
                   
                   const handler = (event) => {
-                    console.log(`[ClipAIble Offscreen] === CLEAR_CACHE RESPONSE RECEIVED === for ${messageId}`, {
+                    log(`[ClipAIble Offscreen] === CLEAR_CACHE RESPONSE RECEIVED === for ${messageId}`, {
                       messageId,
                       clearCacheId,
                       eventType: event.data?.type,
@@ -2562,7 +2589,7 @@ try {
                     if (event.data && event.data.type === 'CLEAR_CACHE_SUCCESS' && event.data.id === clearCacheId) {
                       clearTimeout(timeout);
                       ttsWorker.removeEventListener('message', handler);
-                      console.log(`[ClipAIble Offscreen] ✅ CLEAR_CACHE_SUCCESS matched for ${messageId}`, {
+                      log(`[ClipAIble Offscreen] ✅ CLEAR_CACHE_SUCCESS matched for ${messageId}`, {
                         messageId,
                         clearCacheId,
                         action: 'Resolving Promise - Worker cache cleared'
@@ -2572,14 +2599,14 @@ try {
                   };
                   
                   ttsWorker.addEventListener('message', handler);
-                  console.log(`[ClipAIble Offscreen] === CLEAR_CACHE LISTENER ADDED === for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] === CLEAR_CACHE LISTENER ADDED === for ${messageId}`, {
                     messageId,
                     clearCacheId,
                     action: 'Added event listener for CLEAR_CACHE_SUCCESS'
                   });
                 });
                 
-                console.log(`[ClipAIble Offscreen] === SENDING CLEAR_CACHE TO WORKER === for ${messageId}`, {
+                log(`[ClipAIble Offscreen] === SENDING CLEAR_CACHE TO WORKER === for ${messageId}`, {
                   messageId,
                   clearCacheId,
                   previousVoice: previousVoiceId,
@@ -2591,7 +2618,7 @@ try {
                 });
                 
                 ttsWorker.postMessage({ type: 'CLEAR_CACHE', id: clearCacheId });
-                console.log(`[ClipAIble Offscreen] ✅ Sent CLEAR_CACHE to Worker for voice switch`, {
+                log(`[ClipAIble Offscreen] ✅ Sent CLEAR_CACHE to Worker for voice switch`, {
                   messageId,
                   clearCacheId,
                   previousVoice: previousVoiceId,
@@ -2601,7 +2628,7 @@ try {
                 
                 // Wait for Worker to confirm cache is cleared
                 await clearCachePromise;
-                console.log(`[ClipAIble Offscreen] ✅ Worker cache cleared confirmed`, {
+                log(`[ClipAIble Offscreen] ✅ Worker cache cleared confirmed`, {
                   messageId,
                   clearCacheId,
                   previousVoice: previousVoiceId,
@@ -2609,7 +2636,7 @@ try {
                   action: 'Worker confirmed cache cleared - safe to start synthesis with new voice'
                 });
               } catch (workerError) {
-                console.error(`[ClipAIble Offscreen] ❌ Failed to clear Worker cache`, {
+                logError(`[ClipAIble Offscreen] ❌ Failed to clear Worker cache`, {
                   messageId,
                   error: workerError.message,
                   stack: workerError.stack,
@@ -2620,7 +2647,7 @@ try {
                 });
               }
             } else {
-              console.warn(`[ClipAIble Offscreen] ⚠️ Cannot clear Worker cache - Worker not available`, {
+              logWarn(`[ClipAIble Offscreen] ⚠️ Cannot clear Worker cache - Worker not available`, {
                 messageId,
                 previousVoice: previousVoiceId,
                 newVoice: finalVoiceId,
@@ -2633,7 +2660,7 @@ try {
             }
           } else {
             // No voice change - log for debugging
-            console.log(`[ClipAIble Offscreen] No voice change detected for ${messageId}`, {
+            log(`[ClipAIble Offscreen] No voice change detected for ${messageId}`, {
               messageId,
               lastUsedVoiceId: previousVoiceId,
               currentVoice: finalVoiceId,
@@ -2644,7 +2671,7 @@ try {
           
           // Note: lastUsedVoiceId was already updated above, before voice change check
           
-          console.log(`[ClipAIble Offscreen] === VOICE TRACKING UPDATED === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === VOICE TRACKING UPDATED === for ${messageId}`, {
             messageId,
             currentVoice: finalVoiceId,
             VOICE_STRING: `VOICE="${finalVoiceId}"`, // Explicit string for visibility
@@ -2653,7 +2680,7 @@ try {
             note: 'Voice tracking updated - synthesis will use this voice. Models are stored permanently in IndexedDB.'
           });
           
-          console.log(`[ClipAIble Offscreen] === VOICE READY FOR SYNTHESIS === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === VOICE READY FOR SYNTHESIS === for ${messageId}`, {
             messageId,
             voiceId,
             downloadVoiceId,
@@ -2684,7 +2711,7 @@ try {
             end: '...' + text.substring(Math.max(0, text.length - 100))
           };
           
-          console.log(`[ClipAIble Offscreen] === TEXT SANITIZATION START === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === TEXT SANITIZATION START === for ${messageId}`, {
             messageId,
             beforeSanitization
           });
@@ -2753,7 +2780,7 @@ try {
               const removedChars = beforeFinalSanitization.length - sanitizedText.length;
               if (ukrainianChars > 0 || removedChars > 0) {
                 // Use JSON.stringify to ensure all values are visible in logs
-                console.log(`[ClipAIble Offscreen] === UKRAINIAN TEXT SANITIZATION === for ${messageId}`, JSON.stringify({
+                log(`[ClipAIble Offscreen] === UKRAINIAN TEXT SANITIZATION === for ${messageId}`, JSON.stringify({
                   messageId,
                   langCode,
                   originalLength: text.length,
@@ -2787,7 +2814,7 @@ try {
             lengthChangePercent: Math.round(((sanitizedText.length - text.length) / text.length) * 100)
           };
           
-          console.log(`[ClipAIble Offscreen] === TEXT SANITIZATION COMPLETE === for ${messageId}`, {
+          log(`[ClipAIble Offscreen] === TEXT SANITIZATION COMPLETE === for ${messageId}`, {
             messageId,
             afterSanitization,
             sanitizationChanges: {
@@ -2807,7 +2834,7 @@ try {
           const hasEmDash = /—/.test(sanitizedText);
           const hasEnDash = /–/.test(sanitizedText);
           
-          console.log(`[ClipAIble Offscreen] Starting speech generation for ${messageId}`, {
+          log(`[ClipAIble Offscreen] Starting speech generation for ${messageId}`, {
             messageId,
             voiceId,
             originalTextLength: text.length,
@@ -2833,7 +2860,7 @@ try {
               const limit = performance.memory.jsHeapSizeLimit / 1024 / 1024;
               const usage = used / limit;
               
-              console.log(`[ClipAIble Offscreen] Memory check for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Memory check for ${messageId}`, {
                 messageId,
                 usedMB: used.toFixed(2),
                 limitMB: limit.toFixed(2),
@@ -2841,7 +2868,7 @@ try {
               });
               
               if (usage > 0.9) {
-                console.warn(`[ClipAIble Offscreen] Memory usage critical (>90%) for ${messageId}`, {
+                logWarn(`[ClipAIble Offscreen] Memory usage critical (>90%) for ${messageId}`, {
                   messageId,
                   usagePercent: (usage * 100).toFixed(1)
                 });
@@ -2955,7 +2982,7 @@ try {
             }));
           }
           
-          console.log(`[ClipAIble Offscreen] Text splitting for ${messageId}`, splitLogData);
+          log(`[ClipAIble Offscreen] Text splitting for ${messageId}`, splitLogData);
           
           const synthesisStart = Date.now();
           let lastPercent = -1;
@@ -2970,7 +2997,7 @@ try {
             try {
               // Check memory before synthesis
               if (!checkMemory()) {
-                console.warn(`[ClipAIble Offscreen] Memory check failed, using streaming mode for ${messageId}`, {
+                logWarn(`[ClipAIble Offscreen] Memory check failed, using streaming mode for ${messageId}`, {
                   messageId
                 });
                 // Force streaming if memory is high
@@ -2979,7 +3006,7 @@ try {
               
               if (useStreaming && sentences.length > 1) {
                 // Streaming mode: process sentences one by one
-                console.log(`[ClipAIble Offscreen] Using streaming inference for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Using streaming inference for ${messageId}`, {
                   messageId,
                   sentencesCount: sentences.length
                 });
@@ -2988,18 +3015,46 @@ try {
                 
                 for (let i = 0; i < sentences.length; i++) {
                   const sentence = sentences[i];
+                  const sentenceIndex = i + 1;
                   
-                  console.log(`[ClipAIble Offscreen] Processing sentence ${i + 1}/${sentences.length} for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Processing sentence ${sentenceIndex}/${sentences.length} for ${messageId}`, {
                     messageId,
-                    sentenceIndex: i + 1,
+                    sentenceIndex,
                     totalSentences: sentences.length,
                     sentenceLength: sentence.length,
                     sentencePreview: sentence.substring(0, 100)
                   });
                   
+                  // Send progress update to service worker (debounced - every 2 sentences or on last sentence)
+                  if (sentenceIndex % 2 === 0 || sentenceIndex === sentences.length) {
+                    try {
+                      chrome.runtime.sendMessage({
+                        action: 'TTS_PROGRESS',
+                        data: {
+                          sentenceIndex,
+                          totalSentences: sentences.length,
+                          progressBase: 60,
+                          progressRange: 35
+                        }
+                      }).catch(error => {
+                        logWarn(`[ClipAIble Offscreen] Failed to send TTS_PROGRESS message for sentence ${sentenceIndex}`, {
+                          messageId,
+                          sentenceIndex,
+                          error: error.message
+                        });
+                      });
+                    } catch (error) {
+                      logWarn(`[ClipAIble Offscreen] Error sending TTS_PROGRESS message for sentence ${sentenceIndex}`, {
+                        messageId,
+                        sentenceIndex,
+                        error: error.message
+                      });
+                    }
+                  }
+                  
                   // Check memory before each sentence
                   if (!checkMemory()) {
-                    console.warn(`[ClipAIble Offscreen] Memory critical, skipping remaining sentences for ${messageId}`, {
+                    logWarn(`[ClipAIble Offscreen] Memory critical, skipping remaining sentences for ${messageId}`, {
                       messageId,
                       processedSentences: i,
                       totalSentences: sentences.length
@@ -3015,7 +3070,7 @@ try {
                   
                   // No yield - maintain original quality by processing continuously
                   
-                  console.log(`[ClipAIble Offscreen] === CALLING tts.predict FOR SENTENCE ${i + 1}/${sentences.length} === VOICE="${predictVoiceId}" ===`, {
+                  log(`[ClipAIble Offscreen] === CALLING tts.predict FOR SENTENCE ${i + 1}/${sentences.length} === VOICE="${predictVoiceId}" ===`, {
                     messageId,
                     sentenceIndex: i + 1,
                     totalSentences: sentences.length,
@@ -3031,7 +3086,7 @@ try {
                   
                   // CRITICAL: Log stored voices before predict to verify model availability
                   const storedCheckStart = Date.now();
-                  console.log(`[ClipAIble Offscreen] === CHECKING STORED VOICES BEFORE PREDICT === for sentence ${i + 1}/${sentences.length}`, {
+                  log(`[ClipAIble Offscreen] === CHECKING STORED VOICES BEFORE PREDICT === for sentence ${i + 1}/${sentences.length}`, {
                     messageId,
                     sentenceIndex: i + 1,
                     predictVoiceId,
@@ -3040,10 +3095,17 @@ try {
                     timestamp: storedCheckStart
                   });
                   
-                  const storedBeforePredict = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                  // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                  if (!ttsWorker) {
+                    await initTTSWorker();
+                  }
+                  if (!ttsWorker) {
+                    throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+                  }
+                  const storedBeforePredict = await getStoredWithWorker();
                   const storedCheckDuration = Date.now() - storedCheckStart;
                   
-                  console.log(`[ClipAIble Offscreen] Stored voices BEFORE predict() for sentence ${i + 1}/${sentences.length}`, {
+                  log(`[ClipAIble Offscreen] Stored voices BEFORE predict() for sentence ${i + 1}/${sentences.length}`, {
                     messageId,
                     sentenceIndex: i + 1,
                     predictVoiceId,
@@ -3060,7 +3122,7 @@ try {
                   const expectedVoice = voiceId || downloadVoiceId;
                   
                   if (lastUsedVoiceId !== null && lastUsedVoiceId !== predictVoiceId) {
-                    console.error(`[ClipAIble Offscreen] CRITICAL ERROR: Voice mismatch with tracked voice!`, {
+                    logError(`[ClipAIble Offscreen] CRITICAL ERROR: Voice mismatch with tracked voice!`, {
                       messageId,
                       sentenceIndex: i + 1,
                       expectedVoice: lastUsedVoiceId,
@@ -3070,7 +3132,7 @@ try {
                     });
                     // Use the tracked voice (from popup)
                     predictVoiceId = lastUsedVoiceId;
-                    console.log(`[ClipAIble Offscreen] Corrected voice to tracked voice`, {
+                    log(`[ClipAIble Offscreen] Corrected voice to tracked voice`, {
                       messageId,
                       sentenceIndex: i + 1,
                       correctedVoice: predictVoiceId
@@ -3080,7 +3142,7 @@ try {
                   // CRITICAL: Final verification before predict()
                   // Ensure we're using the voice from popup, not a cached one
                   if (predictVoiceId !== expectedVoice) {
-                    console.warn(`[ClipAIble Offscreen] Voice mismatch before predict() - correcting`, {
+                    logWarn(`[ClipAIble Offscreen] Voice mismatch before predict() - correcting`, {
                       messageId,
                       sentenceIndex: i + 1,
                       predictVoiceId,
@@ -3129,7 +3191,7 @@ try {
                   
                   // Use JSON.stringify for Ukrainian to see full data in logs
                   if (isUkrainian) {
-                    console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS (UKRAINIAN) ===`, JSON.stringify({
+                    log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS (UKRAINIAN) ===`, JSON.stringify({
                       messageId,
                       sentenceIndex: i + 1,
                       voiceId: predictVoiceId,
@@ -3143,13 +3205,13 @@ try {
                       firstCharsUnicode: logData.firstChars?.slice(0, 20)
                     }, null, 2));
                   } else {
-                    console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS ===`, logData);
+                    log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS ===`, logData);
                   }
                   
                   // CRITICAL: Double-check voiceId before predict()
                   // This is the final check to ensure correct voice is used
                   if (!predictVoiceId || predictVoiceId !== expectedVoice) {
-                    console.error(`[ClipAIble Offscreen] CRITICAL: Invalid voiceId before predict() - using expected voice`, {
+                    logError(`[ClipAIble Offscreen] CRITICAL: Invalid voiceId before predict() - using expected voice`, {
                       messageId,
                       sentenceIndex: i + 1,
                       predictVoiceId,
@@ -3164,7 +3226,7 @@ try {
                     // Check if sentence contains valid Ukrainian characters
                     const hasValidChars = /[А-Яа-яЁёІіЇїЄєҐґ\s\p{P}\p{N}]/u.test(sentence);
                     if (!hasValidChars && sentence.trim().length > 0) {
-                      console.warn(`[ClipAIble Offscreen] WARNING: Sentence ${i + 1} may contain invalid characters for Ukrainian TTS`, {
+                      logWarn(`[ClipAIble Offscreen] WARNING: Sentence ${i + 1} may contain invalid characters for Ukrainian TTS`, {
                         messageId,
                         sentenceIndex: i + 1,
                         sentence,
@@ -3178,7 +3240,7 @@ try {
                     // Check for common issues that could cause garbled output
                     const hasControlChars = /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/.test(sentence);
                     if (hasControlChars) {
-                      console.error(`[ClipAIble Offscreen] ERROR: Sentence ${i + 1} contains control characters!`, {
+                      logError(`[ClipAIble Offscreen] ERROR: Sentence ${i + 1} contains control characters!`, {
                         messageId,
                         sentenceIndex: i + 1,
                         sentence
@@ -3194,7 +3256,7 @@ try {
                         `${c} (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`
                       );
                       
-                      console.log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS (UKRAINIAN) ===`, {
+                      log(`[ClipAIble Offscreen] === CALLING tts.predict WITH PARAMETERS (UKRAINIAN) ===`, {
                         messageId,
                         sentenceIndex: i + 1,
                         totalSentences: sentences.length,
@@ -3213,17 +3275,48 @@ try {
                   // Use Web Worker - required, no fallback
                   // Web Worker executes WASM in separate thread, preventing main thread blocking
                   let sentenceBlob;
-                  console.log(`[ClipAIble Offscreen] Processing sentence ${i + 1}/${sentences.length} for ${messageId}`, {
+                  const currentSentenceIndex = i + 1;
+                  
+                  log(`[ClipAIble Offscreen] Processing sentence ${currentSentenceIndex}/${sentences.length} for ${messageId}`, {
                     messageId,
-                    sentenceIndex: i + 1,
+                    sentenceIndex: currentSentenceIndex,
                     totalSentences: sentences.length,
                     useWorker,
                     hasTTSWorker: !!ttsWorker,
                     sentenceLength: sentence.length
                   });
                   
+                  // Send progress update to service worker (debounced - every 2 sentences or on last sentence)
+                  const shouldSendProgress = currentSentenceIndex % 2 === 0 || currentSentenceIndex === sentences.length;
+                  
+                  if (shouldSendProgress) {
+                    try {
+                      chrome.runtime.sendMessage({
+                        action: 'TTS_PROGRESS',
+                        data: {
+                          sentenceIndex: currentSentenceIndex,
+                          totalSentences: sentences.length,
+                          progressBase: 60,
+                          progressRange: 35
+                        }
+                      }).catch(error => {
+                        logWarn(`[ClipAIble Offscreen] Failed to send TTS_PROGRESS message for sentence ${currentSentenceIndex}`, {
+                          messageId,
+                          sentenceIndex: currentSentenceIndex,
+                          error: error.message
+                        });
+                      });
+                    } catch (error) {
+                      logWarn(`[ClipAIble Offscreen] Error sending TTS_PROGRESS message for sentence ${currentSentenceIndex}`, {
+                        messageId,
+                        sentenceIndex: currentSentenceIndex,
+                        error: error.message
+                      });
+                    }
+                  }
+                  
                   if (useWorker && ttsWorker) {
-                    console.log(`[ClipAIble Offscreen] === ABOUT TO CALL predictWithWorker === for sentence ${i + 1} of ${messageId}`, {
+                    log(`[ClipAIble Offscreen] === ABOUT TO CALL predictWithWorker === for sentence ${i + 1} of ${messageId}`, {
                       messageId,
                       sentenceIndex: i + 1,
                       totalSentences: sentences.length,
@@ -3235,12 +3328,12 @@ try {
                       timestamp: Date.now()
                     });
                     
-                    console.log(`[ClipAIble Offscreen] Using Web Worker for sentence ${i + 1} of ${messageId}`, {
+                    log(`[ClipAIble Offscreen] Using Web Worker for sentence ${i + 1} of ${messageId}`, {
                       messageId,
                       sentenceIndex: i + 1
                     });
                     sentenceBlob = await predictWithWorker(sentence, predictVoiceId);
-                    console.log(`[ClipAIble Offscreen] ✅ Worker predict completed for sentence ${i + 1} of ${messageId}`, {
+                    log(`[ClipAIble Offscreen] ✅ Worker predict completed for sentence ${i + 1} of ${messageId}`, {
                       messageId,
                       sentenceIndex: i + 1,
                       blobSize: sentenceBlob?.size
@@ -3251,7 +3344,7 @@ try {
                   
                   const predictDuration = Date.now() - predictStartTime;
                   
-                  console.log(`[ClipAIble Offscreen] tts.predict COMPLETED for sentence ${i + 1}/${sentences.length}`, {
+                  log(`[ClipAIble Offscreen] tts.predict COMPLETED for sentence ${i + 1}/${sentences.length}`, {
                     messageId,
                     sentenceIndex: i + 1,
                     predictVoiceId,
@@ -3272,7 +3365,7 @@ try {
                   audioChunks.map(blob => blob.arrayBuffer())
                 );
                 
-                console.log(`[ClipAIble Offscreen] Concatenating ${audioBuffers.length} WAV buffers for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Concatenating ${audioBuffers.length} WAV buffers for ${messageId}`, {
                   messageId,
                   buffersCount: audioBuffers.length,
                   firstBufferSize: audioBuffers[0]?.byteLength || 0
@@ -3284,7 +3377,7 @@ try {
                 // Convert back to Blob
                 wavBlob = new Blob([combinedBuffer], { type: 'audio/wav' });
                 
-                console.log(`[ClipAIble Offscreen] Streaming synthesis complete for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Streaming synthesis complete for ${messageId}`, {
                   messageId,
                   sentencesProcessed: audioChunks.length,
                   totalSize: wavBlob.size,
@@ -3292,7 +3385,7 @@ try {
                 });
               } else {
                 // Single-pass mode: process entire text at once
-                console.log(`[ClipAIble Offscreen] Attempting synthesis with voice ${voiceId} for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Attempting synthesis with voice ${voiceId} for ${messageId}`, {
                   messageId,
                   voiceId,
                   retryCount,
@@ -3311,7 +3404,7 @@ try {
                 // This is the voice that was selected in popup and should be used
                 const expectedVoice = voiceId || downloadVoiceId;
                 if (predictVoiceId !== expectedVoice) {
-                  console.warn(`[ClipAIble Offscreen] Voice mismatch in single-pass mode - correcting`, {
+                  logWarn(`[ClipAIble Offscreen] Voice mismatch in single-pass mode - correcting`, {
                     messageId,
                     predictVoiceId,
                     expectedVoice,
@@ -3322,7 +3415,7 @@ try {
                 
                 // CRITICAL: Verify voice matches lastUsedVoiceId (the voice we're tracking)
                 if (lastUsedVoiceId !== null && predictVoiceId !== lastUsedVoiceId) {
-                  console.warn(`[ClipAIble Offscreen] Voice mismatch with tracked voice in single-pass mode - correcting`, {
+                  logWarn(`[ClipAIble Offscreen] Voice mismatch with tracked voice in single-pass mode - correcting`, {
                     messageId,
                     predictVoiceId,
                     lastUsedVoiceId,
@@ -3335,7 +3428,7 @@ try {
                   throw new Error(`Invalid voiceId before predict(): ${predictVoiceId}. Original voiceId: ${voiceId}, downloadVoiceId: ${downloadVoiceId}, finalVoiceId: ${typeof finalVoiceId !== 'undefined' ? finalVoiceId : 'undefined'}`);
                 }
                 
-                console.log(`[ClipAIble Offscreen] === CALLING tts.predict (SINGLE-PASS MODE) === VOICE="${predictVoiceId}" ===`, {
+                log(`[ClipAIble Offscreen] === CALLING tts.predict (SINGLE-PASS MODE) === VOICE="${predictVoiceId}" ===`, {
                   messageId,
                   predictVoiceId,
                   VOICE_PARAM: `voiceId="${predictVoiceId}"`, // Explicit string for visibility
@@ -3353,7 +3446,7 @@ try {
                 
                 // CRITICAL: Log stored voices before predict to verify model availability
                 const storedCheckStart = Date.now();
-                console.log(`[ClipAIble Offscreen] === CHECKING STORED VOICES BEFORE PREDICT (SINGLE-PASS) ===`, {
+                log(`[ClipAIble Offscreen] === CHECKING STORED VOICES BEFORE PREDICT (SINGLE-PASS) ===`, {
                   messageId,
                   predictVoiceId,
                   useWorker,
@@ -3361,10 +3454,17 @@ try {
                   timestamp: storedCheckStart
                 });
                 
-                const storedBeforePredict = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                if (!ttsWorker) {
+                  await initTTSWorker();
+                }
+                if (!ttsWorker) {
+                  throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+                }
+                const storedBeforePredict = await getStoredWithWorker();
                 const storedCheckDuration = Date.now() - storedCheckStart;
                 
-                console.log(`[ClipAIble Offscreen] Stored voices BEFORE predict() (single-pass mode)`, {
+                log(`[ClipAIble Offscreen] Stored voices BEFORE predict() (single-pass mode)`, {
                   messageId,
                   predictVoiceId,
                   storedVoices: storedBeforePredict,
@@ -3377,7 +3477,7 @@ try {
                 // CRITICAL: For single-pass mode, also split text if too long to prevent Long Tasks
                 // If text is very long, use streaming mode instead
                 if (sanitizedText.length > 2000) {
-                  console.log(`[ClipAIble Offscreen] Text too long for single-pass (${sanitizedText.length} chars), forcing streaming mode`, {
+                  log(`[ClipAIble Offscreen] Text too long for single-pass (${sanitizedText.length} chars), forcing streaming mode`, {
                     messageId,
                     textLength: sanitizedText.length
                   });
@@ -3386,7 +3486,7 @@ try {
                 } else {
                   // Use Web Worker if available for single-pass mode
                   // Note: Progress callback may not work with Worker, but quality is maintained
-                  console.log(`[ClipAIble Offscreen] Single-pass mode for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Single-pass mode for ${messageId}`, {
                     messageId,
                     useWorker,
                     hasTTSWorker: !!ttsWorker,
@@ -3394,7 +3494,7 @@ try {
                   });
                   
                   if (useWorker && ttsWorker) {
-                    console.log(`[ClipAIble Offscreen] === ABOUT TO CALL predictWithWorker (SINGLE-PASS) ===`, {
+                    log(`[ClipAIble Offscreen] === ABOUT TO CALL predictWithWorker (SINGLE-PASS) ===`, {
                       messageId,
                       predictVoiceId,
                       textLength: sanitizedText.length,
@@ -3404,11 +3504,11 @@ try {
                       timestamp: Date.now()
                     });
                     
-                    console.log(`[ClipAIble Offscreen] Using Web Worker for single-pass synthesis of ${messageId}`, {
+                    log(`[ClipAIble Offscreen] Using Web Worker for single-pass synthesis of ${messageId}`, {
                       messageId
                     });
                     wavBlob = await predictWithWorker(sanitizedText, predictVoiceId);
-                    console.log(`[ClipAIble Offscreen] ✅ Single-pass synthesis completed via Worker for ${messageId}`, {
+                    log(`[ClipAIble Offscreen] ✅ Single-pass synthesis completed via Worker for ${messageId}`, {
                       messageId,
                       blobSize: wavBlob?.size
                     });
@@ -3418,7 +3518,7 @@ try {
                 }
                 
                 const predictDuration = Date.now() - predictStartTime;
-                console.log(`[ClipAIble Offscreen] tts.predict COMPLETED (single-pass mode)`, {
+                log(`[ClipAIble Offscreen] tts.predict COMPLETED (single-pass mode)`, {
                   messageId,
                   predictVoiceId,
                   predictDuration,
@@ -3431,7 +3531,7 @@ try {
               break;
             } catch (predictError) {
               // CRITICAL: Log full error details for debugging
-              console.error(`[ClipAIble Offscreen] CRITICAL: predict() error for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] CRITICAL: predict() error for ${messageId}`, {
                 messageId,
                 voiceId,
                 downloadVoiceId,
@@ -3455,7 +3555,7 @@ try {
               
               // If it's a model error and we haven't exhausted retries, clear cache and retry
               if (isModelError && retryCount < maxRetries) {
-                console.log(`[ClipAIble Offscreen] Model corruption detected for ${voiceId}, clearing cache and retrying (attempt ${retryCount + 1}/${maxRetries})`, {
+                log(`[ClipAIble Offscreen] Model corruption detected for ${voiceId}, clearing cache and retrying (attempt ${retryCount + 1}/${maxRetries})`, {
                   messageId,
                   voiceId,
                   error: predictError.message,
@@ -3464,7 +3564,7 @@ try {
                 
                 try {
                   // CRITICAL: More aggressive cache clearing - try multiple methods
-                  console.log(`[ClipAIble Offscreen] Attempting aggressive cache clearing for ${voiceId}`, {
+                  log(`[ClipAIble Offscreen] Attempting aggressive cache clearing for ${voiceId}`, {
                     messageId,
                     voiceId,
                     retryCount: retryCount + 1
@@ -3474,12 +3574,12 @@ try {
                   if (useWorker && ttsWorker) {
                     try {
                       await removeWithWorker(voiceId);
-                      console.log(`[ClipAIble Offscreen] Removed corrupted model ${voiceId} from cache (method 1)`, {
+                      log(`[ClipAIble Offscreen] Removed corrupted model ${voiceId} from cache (method 1)`, {
                         messageId,
                         voiceId
                       });
                     } catch (removeError) {
-                      console.warn(`[ClipAIble Offscreen] Failed to remove model using tts.remove()`, {
+                      logWarn(`[ClipAIble Offscreen] Failed to remove model using tts.remove()`, {
                         messageId,
                         voiceId,
                         error: removeError.message
@@ -3491,10 +3591,17 @@ try {
                   await new Promise(resolve => setTimeout(resolve, 500));
                   
                   // Method 3: Verify it's actually removed
-                  const storedAfterRemove = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                  // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                  if (!ttsWorker) {
+                    await initTTSWorker();
+                  }
+                  if (!ttsWorker) {
+                    throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+                  }
+                  const storedAfterRemove = await getStoredWithWorker();
                   const stillStored = storedAfterRemove.includes(voiceId);
                   if (stillStored) {
-                    console.warn(`[ClipAIble Offscreen] Model ${voiceId} still in cache after removal attempt`, {
+                    logWarn(`[ClipAIble Offscreen] Model ${voiceId} still in cache after removal attempt`, {
                       messageId,
                       voiceId,
                       storedVoices: storedAfterRemove
@@ -3505,7 +3612,7 @@ try {
                         await removeWithWorker(voiceId);
                         await new Promise(resolve => setTimeout(resolve, 500));
                       } catch (retryRemoveError) {
-                        console.warn(`[ClipAIble Offscreen] Second removal attempt also failed`, {
+                        logWarn(`[ClipAIble Offscreen] Second removal attempt also failed`, {
                           messageId,
                           voiceId,
                           error: retryRemoveError.message
@@ -3513,7 +3620,7 @@ try {
                       }
                     }
                   } else {
-                    console.log(`[ClipAIble Offscreen] Model ${voiceId} successfully removed from cache`, {
+                    log(`[ClipAIble Offscreen] Model ${voiceId} successfully removed from cache`, {
                       messageId,
                       voiceId
                     });
@@ -3523,7 +3630,7 @@ try {
                   // CRITICAL: Validate voiceId before re-download
                   if (!voiceId || typeof voiceId !== 'string' || voiceId === 'undefined' || voiceId.trim() === '') {
                     const fallbackVoiceId = DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
-                    console.error(`[ClipAIble Offscreen] Invalid voiceId during re-download for ${messageId}, using fallback`, {
+                    logError(`[ClipAIble Offscreen] Invalid voiceId during re-download for ${messageId}, using fallback`, {
                       messageId,
                       originalVoiceId: voiceId,
                       fallbackVoiceId
@@ -3531,7 +3638,7 @@ try {
                     voiceId = fallbackVoiceId;
                   }
                   
-                  console.log(`[ClipAIble Offscreen] Re-downloading model ${voiceId} after corruption`, {
+                  log(`[ClipAIble Offscreen] Re-downloading model ${voiceId} after corruption`, {
                     messageId,
                     voiceId
                   });
@@ -3546,7 +3653,7 @@ try {
                     if (progress.total > 0) {
                       const percent = Math.round((progress.loaded * 100) / progress.total);
                       if (percent >= lastPercent + 10 || percent === 100) {
-                        console.log(`[ClipAIble Offscreen] Re-download progress for ${messageId}`, {
+                        log(`[ClipAIble Offscreen] Re-download progress for ${messageId}`, {
                             messageId,
                             voiceId,
                             percent,
@@ -3566,7 +3673,7 @@ try {
                     // CRITICAL: Verify download completed successfully
                     if (finalProgress && finalProgress.total > 0) {
                       const isComplete = finalProgress.loaded >= finalProgress.total;
-                      console.log(`[ClipAIble Offscreen] Re-download verification for ${messageId}`, {
+                      log(`[ClipAIble Offscreen] Re-download verification for ${messageId}`, {
                         messageId,
                         voiceId,
                         loaded: finalProgress.loaded,
@@ -3582,10 +3689,17 @@ try {
                     
                     // CRITICAL: Verify model is stored after re-download
                     await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for storage to complete
-                    const verifyAfterRedownload = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                    // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                    if (!ttsWorker) {
+                      await initTTSWorker();
+                    }
+                    if (!ttsWorker) {
+                      throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+                    }
+                    const verifyAfterRedownload = await getStoredWithWorker();
                     const isStoredAfterRedownload = verifyAfterRedownload.includes(voiceId);
                     
-                    console.log(`[ClipAIble Offscreen] Post-re-download verification for ${messageId}`, {
+                    log(`[ClipAIble Offscreen] Post-re-download verification for ${messageId}`, {
                       messageId,
                       voiceId,
                       isStoredAfterRedownload,
@@ -3596,13 +3710,19 @@ try {
                       throw new Error(`Model ${voiceId} not found in storage after re-download`);
                     }
                   } else {
-                    // Not using Worker - use direct download
-                    await tts.download(voiceId, (progress) => {
+                    // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                    if (!ttsWorker) {
+                      await initTTSWorker();
+                    }
+                    if (!ttsWorker) {
+                      throw new Error('TTS Worker is not available. Cannot download voice without Worker.');
+                    }
+                    await downloadWithWorker(voiceId, (progress) => {
                       finalProgress = progress;
                       if (progress.total > 0) {
                         const percent = Math.round((progress.loaded * 100) / progress.total);
                         if (percent >= lastPercent + 10 || percent === 100) {
-                          console.log(`[ClipAIble Offscreen] Re-download progress for ${messageId}`, {
+                          log(`[ClipAIble Offscreen] Re-download progress for ${messageId}`, {
                             messageId,
                             voiceId,
                             percent,
@@ -3628,7 +3748,7 @@ try {
                     
                     // CRITICAL: Verify model is stored after re-download
                     await new Promise(resolve => setTimeout(resolve, 1000));
-                    const verifyAfterRedownload = await tts.stored();
+                    const verifyAfterRedownload = await getStoredWithWorker();
                     const isStoredAfterRedownload = verifyAfterRedownload.includes(voiceId);
                     
                     if (!isStoredAfterRedownload) {
@@ -3651,7 +3771,7 @@ try {
                     );
                     
                     if (isJsonParseError || isEntryNotFound) {
-                      console.error(`[ClipAIble Offscreen] Voice ${voiceId} not found during re-download for ${messageId}`, {
+                      logError(`[ClipAIble Offscreen] Voice ${voiceId} not found during re-download for ${messageId}`, {
                         messageId,
                         voiceId,
                         errorType: isJsonParseError ? 'JSON parse error (likely 404)' : 'Entry not found',
@@ -3660,7 +3780,7 @@ try {
                       // Try fallback voice
                       const fallbackVoiceId = DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
                       if (fallbackVoiceId !== voiceId) {
-                        console.log(`[ClipAIble Offscreen] Trying fallback voice ${fallbackVoiceId} for ${messageId}`, {
+                        log(`[ClipAIble Offscreen] Trying fallback voice ${fallbackVoiceId} for ${messageId}`, {
                           messageId,
                           originalVoiceId: voiceId,
                           fallbackVoiceId
@@ -3672,7 +3792,7 @@ try {
                             if (progress.total > 0) {
                               const percent = Math.round((progress.loaded * 100) / progress.total);
                               if (percent >= lastPercent + 10 || percent === 100) {
-                                console.log(`[ClipAIble Offscreen] Fallback re-download progress for ${messageId}`, {
+                                log(`[ClipAIble Offscreen] Fallback re-download progress for ${messageId}`, {
                                   messageId,
                                   voiceId,
                                   percent,
@@ -3684,12 +3804,19 @@ try {
                             }
                           });
                         } else {
-                          await tts.download(voiceId, (progress) => {
+                          // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                          if (!ttsWorker) {
+                            await initTTSWorker();
+                          }
+                          if (!ttsWorker) {
+                            throw new Error('TTS Worker is not available. Cannot download voice without Worker.');
+                          }
+                          await downloadWithWorker(voiceId, (progress) => {
                             finalProgress = progress;
                             if (progress.total > 0) {
                               const percent = Math.round((progress.loaded * 100) / progress.total);
                               if (percent >= lastPercent + 10 || percent === 100) {
-                                console.log(`[ClipAIble Offscreen] Fallback re-download progress for ${messageId}`, {
+                                log(`[ClipAIble Offscreen] Fallback re-download progress for ${messageId}`, {
                                   messageId,
                                   voiceId,
                                   percent,
@@ -3711,7 +3838,7 @@ try {
                   
                   // CRITICAL: Try to verify model can be loaded before retrying synthesis
                   // This helps catch corruption early
-                  console.log(`[ClipAIble Offscreen] Model ${voiceId} re-downloaded, verifying integrity before retry`, {
+                  log(`[ClipAIble Offscreen] Model ${voiceId} re-downloaded, verifying integrity before retry`, {
                     messageId,
                     voiceId,
                     retryCount: retryCount + 1
@@ -3721,11 +3848,18 @@ try {
                   await new Promise(resolve => setTimeout(resolve, 2000));
                   
                   // Verify model is still stored
-                  const finalVerify = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                  // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                  if (!ttsWorker) {
+                    await initTTSWorker();
+                  }
+                  if (!ttsWorker) {
+                    throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+                  }
+                  const finalVerify = await getStoredWithWorker();
                   const isFinalStored = finalVerify.includes(voiceId);
                   
                   if (!isFinalStored) {
-                    console.error(`[ClipAIble Offscreen] Model ${voiceId} disappeared from storage after re-download`, {
+                    logError(`[ClipAIble Offscreen] Model ${voiceId} disappeared from storage after re-download`, {
                       messageId,
                       voiceId,
                       storedVoices: finalVerify
@@ -3733,7 +3867,7 @@ try {
                     throw new Error(`Model ${voiceId} not found in storage after re-download`);
                   }
                   
-                  console.log(`[ClipAIble Offscreen] Model ${voiceId} verified in storage, retrying synthesis`, {
+                  log(`[ClipAIble Offscreen] Model ${voiceId} verified in storage, retrying synthesis`, {
                     messageId,
                     voiceId,
                     retryCount: retryCount + 1
@@ -3743,7 +3877,7 @@ try {
                   lastPercent = -1; // Reset progress tracking
                   continue; // Retry synthesis
                 } catch (cleanupError) {
-                  console.error(`[ClipAIble Offscreen] Failed to clear cache and re-download model ${voiceId}`, {
+                  logError(`[ClipAIble Offscreen] Failed to clear cache and re-download model ${voiceId}`, {
                     messageId,
                     voiceId,
                     cleanupError: cleanupError.message,
@@ -3756,7 +3890,7 @@ try {
               
               // If model error persists after all retries, try fallback voice
               if (isModelError && retryCount >= maxRetries) {
-                console.error(`[ClipAIble Offscreen] Model corruption persists after ${maxRetries} retries for ${voiceId}, trying fallback voice for ${messageId}`, {
+                logError(`[ClipAIble Offscreen] Model corruption persists after ${maxRetries} retries for ${voiceId}, trying fallback voice for ${messageId}`, {
                   messageId,
                   voiceId,
                   langCode,
@@ -3766,7 +3900,7 @@ try {
                 // Try fallback voice if available
                 const fallbackVoiceId = FALLBACK_VOICES[langCode] || DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'];
                 if (fallbackVoiceId && fallbackVoiceId !== voiceId) {
-                  console.log(`[ClipAIble Offscreen] Switching to fallback voice ${fallbackVoiceId} for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Switching to fallback voice ${fallbackVoiceId} for ${messageId}`, {
                     messageId,
                     originalVoiceId: voiceId,
                     fallbackVoiceId
@@ -3777,7 +3911,7 @@ try {
                     try {
                       await removeWithWorker(voiceId);
                     } catch (removeError) {
-                      console.warn(`[ClipAIble Offscreen] Failed to remove corrupted voice`, {
+                      logWarn(`[ClipAIble Offscreen] Failed to remove corrupted voice`, {
                         messageId,
                         voiceId,
                         error: removeError.message
@@ -3790,17 +3924,31 @@ try {
                   downloadVoiceId = fallbackVoiceId;
                   
                   // Check if fallback is downloaded
-                  const stored = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                  // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+          if (!ttsWorker) {
+            await initTTSWorker();
+          }
+          if (!ttsWorker) {
+            throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+          }
+          const stored = await getStoredWithWorker();
                   if (!stored.includes(fallbackVoiceId)) {
-                    console.log(`[ClipAIble Offscreen] Downloading fallback voice ${fallbackVoiceId} for ${messageId}`);
+                    log(`[ClipAIble Offscreen] Downloading fallback voice ${fallbackVoiceId} for ${messageId}`);
                     try {
                       if (useWorker && ttsWorker) {
                         await downloadWithWorker(fallbackVoiceId);
                       } else {
-                        await tts.download(fallbackVoiceId);
+                        // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                        if (!ttsWorker) {
+                          await initTTSWorker();
+                        }
+                        if (!ttsWorker) {
+                          throw new Error('TTS Worker is not available. Cannot download voice without Worker.');
+                        }
+                        await downloadWithWorker(fallbackVoiceId);
                       }
                     } catch (fallbackDownloadError) {
-                      console.error(`[ClipAIble Offscreen] Failed to download fallback voice`, {
+                      logError(`[ClipAIble Offscreen] Failed to download fallback voice`, {
                         messageId,
                         fallbackVoiceId,
                         error: fallbackDownloadError.message
@@ -3838,7 +3986,7 @@ try {
               // If no fallback for current language or fallback is same, try English fallback
               if (!fallbackVoiceId && langCode !== 'en' && 'en' in FALLBACK_VOICES) {
                 fallbackVoiceId = FALLBACK_VOICES['en'];
-                console.log(`[ClipAIble Offscreen] No fallback for ${langCode}, trying English fallback voice ${fallbackVoiceId} for ${messageId}`, {
+                log(`[ClipAIble Offscreen] No fallback for ${langCode}, trying English fallback voice ${fallbackVoiceId} for ${messageId}`, {
                   messageId,
                   originalVoice: voiceId,
                   originalLang: langCode,
@@ -3846,7 +3994,7 @@ try {
                   error: predictError.message
                 });
               } else if (fallbackVoiceId) {
-                console.log(`[ClipAIble Offscreen] Phoneme error with ${voiceId}, trying fallback voice ${fallbackVoiceId} for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Phoneme error with ${voiceId}, trying fallback voice ${fallbackVoiceId} for ${messageId}`, {
                   messageId,
                   originalVoice: voiceId,
                   fallbackVoice: fallbackVoiceId,
@@ -3857,7 +4005,7 @@ try {
               if (fallbackVoiceId) {
                 // CRITICAL: Validate fallback voice ID
                 if (!fallbackVoiceId || typeof fallbackVoiceId !== 'string' || fallbackVoiceId === 'undefined' || fallbackVoiceId.trim() === '') {
-                  console.error(`[ClipAIble Offscreen] Invalid fallback voice ID for ${messageId}`, {
+                  logError(`[ClipAIble Offscreen] Invalid fallback voice ID for ${messageId}`, {
                     messageId,
                     fallbackVoiceId,
                     langCode,
@@ -3871,15 +4019,25 @@ try {
                 }
                 
                 // Check if fallback voice is downloaded
-                const stored = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+                // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+          if (!ttsWorker) {
+            await initTTSWorker();
+          }
+          if (!ttsWorker) {
+            throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+          }
+          const stored = await getStoredWithWorker();
                 if (!stored.includes(fallbackVoiceId)) {
-                  console.log(`[ClipAIble Offscreen] Downloading fallback voice ${fallbackVoiceId} for ${messageId}`);
+                  log(`[ClipAIble Offscreen] Downloading fallback voice ${fallbackVoiceId} for ${messageId}`);
                   try {
-                    if (useWorker && ttsWorker) {
-                      await downloadWithWorker(fallbackVoiceId);
-                    } else {
-                      await tts.download(fallbackVoiceId);
+                    // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                    if (!ttsWorker) {
+                      await initTTSWorker();
                     }
+                    if (!ttsWorker) {
+                      throw new Error('TTS Worker is not available. Cannot download voice without Worker.');
+                    }
+                    await downloadWithWorker(fallbackVoiceId);
                   } catch (fallbackDownloadError) {
                     // Handle JSON parsing errors from HuggingFace 404 responses
                     const isJsonParseError = fallbackDownloadError.message && (
@@ -3896,7 +4054,7 @@ try {
                     );
                     
                     if (isJsonParseError || isEntryNotFound) {
-                      console.error(`[ClipAIble Offscreen] Fallback voice ${fallbackVoiceId} not found for ${messageId}`, {
+                      logError(`[ClipAIble Offscreen] Fallback voice ${fallbackVoiceId} not found for ${messageId}`, {
                         messageId,
                         fallbackVoiceId,
                         errorType: isJsonParseError ? 'JSON parse error (likely 404)' : 'Entry not found',
@@ -3905,7 +4063,7 @@ try {
                       // Try English default as last resort
                       const englishFallback = DEFAULT_VOICES['en'] || 'en_US-lessac-medium';
                       if (englishFallback !== fallbackVoiceId) {
-                        console.log(`[ClipAIble Offscreen] Trying English default ${englishFallback} as last resort for ${messageId}`, {
+                        log(`[ClipAIble Offscreen] Trying English default ${englishFallback} as last resort for ${messageId}`, {
                           messageId,
                           originalFallback: fallbackVoiceId,
                           englishFallback
@@ -3915,7 +4073,14 @@ try {
                           if (useWorker && ttsWorker) {
                             await downloadWithWorker(fallbackVoiceId);
                           } else {
-                            await tts.download(fallbackVoiceId);
+                            // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+                            if (!ttsWorker) {
+                              await initTTSWorker();
+                            }
+                            if (!ttsWorker) {
+                              throw new Error('TTS Worker is not available. Cannot download voice without Worker.');
+                            }
+                            await downloadWithWorker(fallbackVoiceId);
                           }
                         } catch (englishDownloadError) {
                           throw new Error(`Cannot download any valid voice. Original: ${voiceId}, Fallback: ${fallbackVoiceId}, Error: ${englishDownloadError.message}`);
@@ -3935,7 +4100,7 @@ try {
                 lastPercent = -1;
                 
                 // Log before fallback synthesis attempt
-                console.log(`[ClipAIble Offscreen] Attempting fallback synthesis with voice ${fallbackVoiceId} for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Attempting fallback synthesis with voice ${fallbackVoiceId} for ${messageId}`, {
                   messageId,
                   fallbackVoiceId,
                   sanitizedTextLength: sanitizedText.length,
@@ -3962,7 +4127,7 @@ try {
           } // End of while loop
           
           const synthesisDuration = Date.now() - synthesisStart;
-          console.log(`[ClipAIble Offscreen] Speech generation complete for ${messageId}`, {
+          log(`[ClipAIble Offscreen] Speech generation complete for ${messageId}`, {
             messageId,
             duration: synthesisDuration,
             blobType: wavBlob.type,
@@ -3975,7 +4140,7 @@ try {
           const uint8Array = new Uint8Array(arrayBuffer);
           const convertDuration = Date.now() - convertStart;
           
-          console.log(`[ClipAIble Offscreen] Audio converted for ${messageId}`, {
+          log(`[ClipAIble Offscreen] Audio converted for ${messageId}`, {
             messageId,
             arrayBufferSize: arrayBuffer.byteLength,
             uint8ArrayLength: uint8Array.length,
@@ -3998,7 +4163,7 @@ try {
           
           // Validate maximum size before processing
           if (uint8Array.length > MAX_AUDIO_SIZE) {
-            console.error(`[ClipAIble Offscreen] Audio too large for ${messageId}`, {
+            logError(`[ClipAIble Offscreen] Audio too large for ${messageId}`, {
               messageId,
               size: uint8Array.length,
               maxSize: MAX_AUDIO_SIZE,
@@ -4034,13 +4199,13 @@ try {
             note: 'Storage threshold is 5 MB to stay safely under Chrome 10 MB message limit'
           };
           
-          console.log(`[ClipAIble Offscreen] Storage threshold determined with all settings for ${messageId}`, storageSettings);
+          log(`[ClipAIble Offscreen] Storage threshold determined with all settings for ${messageId}`, storageSettings);
           
           const responseStart = Date.now();
           
           if (uint8Array.length < STORAGE_THRESHOLD) {
             // Small audio - send inline (faster for small files)
-            console.log(`[ClipAIble Offscreen] Sending audio inline for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Sending audio inline for ${messageId}`, {
               messageId,
               size: uint8Array.length,
               method: 'inline',
@@ -4058,7 +4223,7 @@ try {
             const serializedSize = JSON.stringify(responseData).length;
             const CHROME_MESSAGE_LIMIT = 10 * 1024 * 1024; // 10 MB Chrome limit
             
-            console.log(`[ClipAIble Offscreen] Response prepared (inline) for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Response prepared (inline) for ${messageId}`, {
               messageId,
               responseSize: serializedSize,
               responseSizeMB: (serializedSize / 1024 / 1024).toFixed(2),
@@ -4068,7 +4233,7 @@ try {
             
             // If serialized size exceeds Chrome limit, use storage instead
             if (serializedSize >= CHROME_MESSAGE_LIMIT) {
-              console.log(`[ClipAIble Offscreen] Serialized size exceeds Chrome limit, switching to storage for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Serialized size exceeds Chrome limit, switching to storage for ${messageId}`, {
                 messageId,
                 serializedSize,
                 serializedSizeMB: (serializedSize / 1024 / 1024).toFixed(2),
@@ -4079,7 +4244,7 @@ try {
             } else {
               try {
                 sendResponse(responseData);
-                console.log(`[ClipAIble Offscreen] Response sent successfully (inline) for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Response sent successfully (inline) for ${messageId}`, {
                   messageId,
                   method: 'inline',
                   size: uint8Array.length
@@ -4090,7 +4255,7 @@ try {
                 
                 return; // CRITICAL: Return after sending response to prevent fallthrough to error handler
               } catch (sendError) {
-                console.error(`[ClipAIble Offscreen] Failed to send inline response for ${messageId}`, {
+                logError(`[ClipAIble Offscreen] Failed to send inline response for ${messageId}`, {
                   messageId,
                   error: sendError.message,
                   errorName: sendError.name,
@@ -4112,7 +4277,7 @@ try {
             // Large audio - use storage (faster for large files)
             const storageKey = `clipaible_audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             
-            console.log(`[ClipAIble Offscreen] Saving audio to storage for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Saving audio to storage for ${messageId}`, {
               messageId,
               storageKey,
               size: uint8Array.length,
@@ -4138,7 +4303,7 @@ try {
                 [`${storageKey}_meta`]: metadata
               });
               
-              console.log(`[ClipAIble Offscreen] Audio saved to storage for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Audio saved to storage for ${messageId}`, {
                 messageId,
                 storageKey,
                 size: uint8Array.length,
@@ -4156,14 +4321,14 @@ try {
                 method: 'storage'
               };
               
-              console.log(`[ClipAIble Offscreen] Response prepared (storage) for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Response prepared (storage) for ${messageId}`, {
                 messageId,
                 storageKey,
                 size: uint8Array.length
               });
               
               sendResponse(responseData);
-              console.log(`[ClipAIble Offscreen] Response sent successfully (storage) for ${messageId}`, {
+              log(`[ClipAIble Offscreen] Response sent successfully (storage) for ${messageId}`, {
                 messageId,
                 method: 'storage',
                 storageKey,
@@ -4178,7 +4343,7 @@ try {
               const hasChromeStorage = typeof chrome !== 'undefined' && chrome.storage;
               const hasChromeStorageLocal = hasChromeStorage && chrome.storage.local;
               
-              console.error(`[ClipAIble Offscreen] Failed to save to storage for ${messageId}`, {
+              logError(`[ClipAIble Offscreen] Failed to save to storage for ${messageId}`, {
                 messageId,
                 error: storageError.message,
                 errorName: storageError.name,
@@ -4205,7 +4370,7 @@ try {
                 storageError.message?.includes('Cannot read properties');
               
               if (isStorageUnavailable) {
-                console.error(`[ClipAIble Offscreen] chrome.storage.local is not available in offscreen context for ${messageId}. Using IndexedDB fallback.`, {
+                logError(`[ClipAIble Offscreen] chrome.storage.local is not available in offscreen context for ${messageId}. Using IndexedDB fallback.`, {
                   messageId,
                   hasChromeStorage: hasChromeStorage,
                   hasChromeStorageLocal: hasChromeStorageLocal
@@ -4243,7 +4408,7 @@ try {
                   
                   db.close();
                   
-                  console.log(`[ClipAIble Offscreen] Audio saved to IndexedDB for ${messageId}`, {
+                  log(`[ClipAIble Offscreen] Audio saved to IndexedDB for ${messageId}`, {
                     messageId,
                     storageKey,
                     size: uint8Array.length,
@@ -4260,7 +4425,7 @@ try {
                   
                   return;
                 } catch (indexedDBError) {
-                  console.error(`[ClipAIble Offscreen] Failed to save to IndexedDB for ${messageId}`, {
+                  logError(`[ClipAIble Offscreen] Failed to save to IndexedDB for ${messageId}`, {
                     messageId,
                     error: indexedDBError.message
                   });
@@ -4280,13 +4445,13 @@ try {
                   threshold: STORAGE_THRESHOLD,
                   hasUnlimitedStorage: hasUnlimitedStorage
                 });
-                console.log(`[ClipAIble Offscreen] Error response sent for ${messageId}`, {
+                log(`[ClipAIble Offscreen] Error response sent for ${messageId}`, {
                   messageId,
                   errorCode: 'STORAGE_QUOTA_EXCEEDED'
                 });
                 return; // CRITICAL: Return after sending error response
               } catch (responseError) {
-                console.error(`[ClipAIble Offscreen] CRITICAL: Failed to send error response for ${messageId}`, {
+                logError(`[ClipAIble Offscreen] CRITICAL: Failed to send error response for ${messageId}`, {
                   messageId,
                   responseError: responseError.message,
                   originalError: storageError.message
@@ -4299,7 +4464,7 @@ try {
           }
           
           const totalDuration = Date.now() - ttsRequestStart;
-          console.log(`[ClipAIble Offscreen] === PIPER_TTS COMPLETE ===`, {
+          log(`[ClipAIble Offscreen] === PIPER_TTS COMPLETE ===`, {
             messageId,
             totalDuration,
             breakdown: {
@@ -4314,11 +4479,18 @@ try {
         
         case 'GET_VOICES': {
           const voicesStart = Date.now();
-          console.log(`[ClipAIble Offscreen] GET_VOICES request for ${messageId}`, {
+          log(`[ClipAIble Offscreen] GET_VOICES request for ${messageId}`, {
             messageId
           });
           
-          const voices = useWorker && ttsWorker ? await getVoicesWithWorker() : await tts.voices();
+          // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+          if (!ttsWorker) {
+            await initTTSWorker();
+          }
+          if (!ttsWorker) {
+            throw new Error('TTS Worker is not available. Cannot get available voices without Worker.');
+          }
+          const voices = await getVoicesWithWorker();
           
           // CRITICAL: voices() returns Voice[] array, not an object!
           // Each Voice has structure: { key: VoiceId, name: string, language: {...}, quality: Quality, ... }
@@ -4400,7 +4572,7 @@ try {
           // CRITICAL: voices is Voice[] array, not an object!
           const totalVoices = Array.isArray(voices) ? voices.length : 0;
           const filteredOut = totalVoices - result.length;
-          console.log(`[ClipAIble Offscreen] GET_VOICES complete for ${messageId}`, {
+          log(`[ClipAIble Offscreen] GET_VOICES complete for ${messageId}`, {
             messageId,
             totalVoices,
             returnedVoices: result.length,
@@ -4413,7 +4585,7 @@ try {
           });
           
           // CRITICAL: Log the exact structure being sent
-          console.log(`[ClipAIble Offscreen] GET_VOICES: Sending response for ${messageId}`, {
+          log(`[ClipAIble Offscreen] GET_VOICES: Sending response for ${messageId}`, {
             messageId,
             resultCount: result.length,
             sampleResult: result.slice(0, 3).map(v => ({
@@ -4440,14 +4612,21 @@ try {
         
         case 'GET_STORED_VOICES': {
           const storedStart = Date.now();
-          console.log(`[ClipAIble Offscreen] GET_STORED_VOICES request for ${messageId}`, {
+          log(`[ClipAIble Offscreen] GET_STORED_VOICES request for ${messageId}`, {
             messageId
           });
           
-          const stored = useWorker && ttsWorker ? await getStoredWithWorker() : await tts.stored();
+          // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
+          if (!ttsWorker) {
+            await initTTSWorker();
+          }
+          if (!ttsWorker) {
+            throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
+          }
+          const stored = await getStoredWithWorker();
           const storedDuration = Date.now() - storedStart;
           
-          console.log(`[ClipAIble Offscreen] GET_STORED_VOICES complete for ${messageId}`, {
+          log(`[ClipAIble Offscreen] GET_STORED_VOICES complete for ${messageId}`, {
             messageId,
             storedCount: stored.length,
             stored: stored,
@@ -4462,7 +4641,7 @@ try {
         }
         
         case 'PING': {
-          console.log(`[ClipAIble Offscreen] PING request for ${messageId}`, {
+          log(`[ClipAIble Offscreen] PING request for ${messageId}`, {
             messageId
           });
           
@@ -4472,14 +4651,14 @@ try {
             ready: true
           });
           
-          console.log(`[ClipAIble Offscreen] PING response sent for ${messageId}`, {
+          log(`[ClipAIble Offscreen] PING response sent for ${messageId}`, {
             messageId
           });
           break;
         }
         
         default:
-          console.error(`[ClipAIble Offscreen] Unknown message type for ${messageId}`, {
+          logError(`[ClipAIble Offscreen] Unknown message type for ${messageId}`, {
             messageId,
             type: message.type
           });
@@ -4491,7 +4670,7 @@ try {
       }
       
       const totalProcessingDuration = Date.now() - processingStartTime;
-      console.log(`[ClipAIble Offscreen] === MESSAGE PROCESSING COMPLETE ===`, {
+      log(`[ClipAIble Offscreen] === MESSAGE PROCESSING COMPLETE ===`, {
         messageId,
         type: message.type,
         totalDuration: totalProcessingDuration,
@@ -4523,7 +4702,7 @@ try {
       // Try Web Speech API fallback for ONNX Runtime errors
       // Perplexity recommendation: Use Web Speech API as fallback when Piper TTS fails
       if (isOnnxError && message.type === 'PIPER_TTS' && message.data && message.data.text) {
-        console.warn(`[ClipAIble Offscreen] ONNX Runtime error detected, attempting Web Speech API fallback for ${messageId}`, {
+        logWarn(`[ClipAIble Offscreen] ONNX Runtime error detected, attempting Web Speech API fallback for ${messageId}`, {
           messageId,
           originalError: error.message,
           textLength: message.data.text.length
@@ -4538,7 +4717,7 @@ try {
           );
           
           if (webSpeechAudio) {
-            console.log(`[ClipAIble Offscreen] Web Speech API fallback succeeded for ${messageId}`, {
+            log(`[ClipAIble Offscreen] Web Speech API fallback succeeded for ${messageId}`, {
               messageId,
               audioSize: webSpeechAudio.byteLength
             });
@@ -4588,7 +4767,7 @@ try {
             return; // Success with fallback
           }
         } catch (fallbackError) {
-          console.error(`[ClipAIble Offscreen] Web Speech API fallback also failed for ${messageId}`, {
+          logError(`[ClipAIble Offscreen] Web Speech API fallback also failed for ${messageId}`, {
             messageId,
             fallbackError: fallbackError.message,
             originalError: error.message
@@ -4597,7 +4776,7 @@ try {
         }
       }
       
-      console.error(`[ClipAIble Offscreen] === ERROR PROCESSING MESSAGE ===`, {
+      logError(`[ClipAIble Offscreen] === ERROR PROCESSING MESSAGE ===`, {
         messageId,
         type: message.type,
         error: error.message,
@@ -4623,7 +4802,7 @@ try {
     }
   })();
   
-  console.log(`[ClipAIble Offscreen] Returning true to keep channel open for ${messageId}`, {
+  log(`[ClipAIble Offscreen] Returning true to keep channel open for ${messageId}`, {
     messageId,
     type: message.type
   });
@@ -4662,7 +4841,7 @@ function findWavDataChunk(view) {
  * @returns {ArrayBuffer} Combined WAV buffer with valid header
  */
 function concatenateWavBuffers(buffers) {
-  console.log(`[ClipAIble Offscreen] === WAV CONCATENATION START ===`, { 
+  log(`[ClipAIble Offscreen] === WAV CONCATENATION START ===`, { 
     buffersCount: buffers.length 
   });
   
@@ -4671,7 +4850,7 @@ function concatenateWavBuffers(buffers) {
   }
   
   if (buffers.length === 1) {
-    console.log(`[ClipAIble Offscreen] Single buffer, returning as-is`);
+    log(`[ClipAIble Offscreen] Single buffer, returning as-is`);
     return buffers[0];
   }
   
@@ -4688,7 +4867,7 @@ function concatenateWavBuffers(buffers) {
     // Validate WAV format (starts with "RIFF")
     if (view.length < 44 || 
         view[0] !== 0x52 || view[1] !== 0x49 || view[2] !== 0x46 || view[3] !== 0x46) {
-      console.warn(`[ClipAIble Offscreen] Buffer ${i} is not a valid WAV file, skipping`, {
+      logWarn(`[ClipAIble Offscreen] Buffer ${i} is not a valid WAV file, skipping`, {
         bufferIndex: i,
         bufferSize: view.length,
         firstBytes: Array.from(view.slice(0, 4))
@@ -4703,7 +4882,7 @@ function concatenateWavBuffers(buffers) {
       numChannels = view[22] | (view[23] << 8);
       sampleRate = view[24] | (view[25] << 8) | (view[26] << 16) | (view[27] << 24);
       bitsPerSample = view[34] | (view[35] << 8);
-      console.log(`[ClipAIble Offscreen] WAV format detected from first buffer`, { 
+      log(`[ClipAIble Offscreen] WAV format detected from first buffer`, { 
         numChannels, 
         sampleRate, 
         bitsPerSample,
@@ -4716,7 +4895,7 @@ function concatenateWavBuffers(buffers) {
     dataChunks.push(audioData);
     totalDataSize += audioData.length;
     
-    console.log(`[ClipAIble Offscreen] Extracted audio data from buffer ${i + 1}/${buffers.length}`, {
+    log(`[ClipAIble Offscreen] Extracted audio data from buffer ${i + 1}/${buffers.length}`, {
       bufferIndex: i,
       dataStart,
       dataSize,
@@ -4772,7 +4951,7 @@ function concatenateWavBuffers(buffers) {
     offset += chunk.length;
     
     if (i < 3 || i === dataChunks.length - 1) {
-      console.log(`[ClipAIble Offscreen] Copied chunk ${i + 1}/${dataChunks.length}`, {
+      log(`[ClipAIble Offscreen] Copied chunk ${i + 1}/${dataChunks.length}`, {
         chunkIndex: i,
         chunkSize: chunk.length,
         offsetBefore: offset - chunk.length,
@@ -4781,7 +4960,7 @@ function concatenateWavBuffers(buffers) {
     }
   }
   
-  console.log(`[ClipAIble Offscreen] === WAV CONCATENATION COMPLETE ===`, { 
+  log(`[ClipAIble Offscreen] === WAV CONCATENATION COMPLETE ===`, { 
     chunksCount: dataChunks.length, 
     totalDataSize,
     totalSize,
@@ -4797,7 +4976,7 @@ function concatenateWavBuffers(buffers) {
 
 // Signal ready
 const readyTime = Date.now();
-console.log('[ClipAIble Offscreen] === READY AND LISTENING FOR MESSAGES ===', {
+log('[ClipAIble Offscreen] === READY AND LISTENING FOR MESSAGES ===', {
   timestamp: readyTime,
   timeSinceLoad: readyTime - listenerRegisteredTime
 });
@@ -4806,19 +4985,19 @@ console.log('[ClipAIble Offscreen] === READY AND LISTENING FOR MESSAGES ===', {
 if (typeof window !== 'undefined') {
   window.offscreenReady = true;
   window.offscreenInitialized = true;
-  console.log('[ClipAIble Offscreen] Bundle loaded and ready', {
+  log('[ClipAIble Offscreen] Bundle loaded and ready', {
     timestamp: readyTime
   });
 }
 } catch (error) {
-  console.error('[ClipAIble Offscreen] ❌ CRITICAL ERROR during initialization', {
+  logError('[ClipAIble Offscreen] ❌ CRITICAL ERROR during initialization', {
     error: error.message,
     stack: error.stack,
     timestamp: Date.now()
   });
   // Still register listener even if there's an error, so we can see what's wrong
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.error('[ClipAIble Offscreen] Message received but initialization failed', {
+    logError('[ClipAIble Offscreen] Message received but initialization failed', {
       type: message.type,
       error: error.message
     });

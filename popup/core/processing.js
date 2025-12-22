@@ -12,6 +12,7 @@ export function initProcessing(deps) {
     t,
     logError,
     log,
+    logWarn,
     showToast,
     setStatus,
     setProgress,
@@ -323,7 +324,7 @@ export function initProcessing(deps) {
           audioVoice: (() => {
             const provider = elements.audioProvider?.value || 'openai';
             if (!elements.audioVoice) {
-              console.warn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
+              logWarn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
                 timestamp: Date.now(),
                 provider,
                 willUseDefault: 'nova'
@@ -335,7 +336,7 @@ export function initProcessing(deps) {
             const selectedOption = elements.audioVoice.options[selectedIndex];
             
             // DETAILED LOGGING: Voice value before processing
-            console.log('[ClipAIble Processing] ===== EXTRACTING VOICE FROM UI =====', {
+            log('[ClipAIble Processing] ===== EXTRACTING VOICE FROM UI =====', {
               timestamp: Date.now(),
               provider,
               voiceValue,
@@ -356,7 +357,7 @@ export function initProcessing(deps) {
               // Priority 1: dataset.voiceId (most reliable - always contains actual voice ID)
               if (selectedOption.dataset && selectedOption.dataset.voiceId) {
                 finalVoice = selectedOption.dataset.voiceId;
-                console.log('[ClipAIble Processing] ===== USING dataset.voiceId =====', {
+                log('[ClipAIble Processing] ===== USING dataset.voiceId =====', {
                   timestamp: Date.now(),
                   provider,
                   datasetVoiceId: finalVoice,
@@ -367,7 +368,7 @@ export function initProcessing(deps) {
               // Priority 2: option.value (if not an index)
               else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
                 finalVoice = selectedOption.value;
-                console.log('[ClipAIble Processing] ===== USING option.value =====', {
+                log('[ClipAIble Processing] ===== USING option.value =====', {
                   timestamp: Date.now(),
                   provider,
                   optionValue: finalVoice,
@@ -382,7 +383,7 @@ export function initProcessing(deps) {
                 const voiceIdFromCache = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
                 if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
                   finalVoice = voiceIdFromCache;
-                  console.log('[ClipAIble Processing] ===== USING getVoiceIdByIndex =====', {
+                  log('[ClipAIble Processing] ===== USING getVoiceIdByIndex =====', {
                     timestamp: Date.now(),
                     provider,
                     selectedIndex,
@@ -397,7 +398,7 @@ export function initProcessing(deps) {
             // Fallback: if still no valid voice, use voiceValue if it's valid
             if (!finalVoice && voiceValue && !/^\d+$/.test(String(voiceValue))) {
               finalVoice = voiceValue;
-              console.log('[ClipAIble Processing] ===== USING voiceValue as fallback =====', {
+              log('[ClipAIble Processing] ===== USING voiceValue as fallback =====', {
                 timestamp: Date.now(),
                 provider,
                 voiceValue: finalVoice,
@@ -408,7 +409,7 @@ export function initProcessing(deps) {
             // Final fallback: use default
             if (!finalVoice) {
               finalVoice = provider === 'offline' ? 'en_US-lessac-medium' : 'nova';
-              console.warn('[ClipAIble Processing] ===== USING DEFAULT VOICE =====', {
+              logWarn('[ClipAIble Processing] ===== USING DEFAULT VOICE =====', {
                 timestamp: Date.now(),
                 provider,
                 defaultVoice: finalVoice,
@@ -417,7 +418,7 @@ export function initProcessing(deps) {
               });
             }
             
-            console.log('[ClipAIble Processing] ===== VOICE EXTRACTED FROM UI =====', {
+            log('[ClipAIble Processing] ===== VOICE EXTRACTED FROM UI =====', {
               timestamp: Date.now(),
               provider,
               finalVoice,

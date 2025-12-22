@@ -2,15 +2,15 @@
 // This is the proper way to use WASM TTS in Manifest V3
 // Offscreen document has full DOM and WASM support
 
-console.log('[ClipAIble Offline TTS Offscreen] === MODULE LOADING ===', {
+import { log, logError, logDebug } from '../utils/logging.js';
+import { ttsQueue } from './tts-queue.js';
+
+logDebug('[ClipAIble Offline TTS Offscreen] === MODULE LOADING ===', {
   timestamp: Date.now(),
   modulePath: 'scripts/api/offline-tts-offscreen.js'
 });
 
-import { log, logError } from '../utils/logging.js';
-import { ttsQueue } from './tts-queue.js';
-
-console.log('[ClipAIble Offline TTS Offscreen] === MODULE LOADED ===', {
+logDebug('[ClipAIble Offline TTS Offscreen] === MODULE LOADED ===', {
   timestamp: Date.now(),
   hasLog: typeof log === 'function',
   hasLogError: typeof logError === 'function'
@@ -532,7 +532,7 @@ export async function getAvailableVoices() {
     const response = await sendToOffscreen('GET_VOICES');
     
     // CRITICAL: Log the exact structure received
-    console.log('[ClipAIble Offline TTS Offscreen] ===== getAvailableVoices: RESPONSE RECEIVED =====', {
+    log('[ClipAIble Offline TTS Offscreen] ===== getAvailableVoices: RESPONSE RECEIVED =====', {
       timestamp: Date.now(),
       hasResponse: !!response,
       hasVoices: !!(response && response.voices),
@@ -553,7 +553,7 @@ export async function getAvailableVoices() {
     
     // CRITICAL: Validate and log each voice structure
     if (Array.isArray(voices) && voices.length > 0) {
-      console.log('[ClipAIble Offline TTS Offscreen] ===== VALIDATING VOICES STRUCTURE =====', {
+      log('[ClipAIble Offline TTS Offscreen] ===== VALIDATING VOICES STRUCTURE =====', {
         timestamp: Date.now(),
         voicesCount: voices.length,
         voicesWithId: voices.filter(v => v && v.id).length,

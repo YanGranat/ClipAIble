@@ -1,18 +1,13 @@
 // Text-to-Speech API module for ClipAIble extension
 // Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
 
-console.log('[ClipAIble TTS] === MODULE LOADING ===', {
-  timestamp: Date.now(),
-  modulePath: 'scripts/api/tts.js'
-});
-
-import { log, logError } from '../utils/logging.js';
+import { log, logError, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 
-console.log('[ClipAIble TTS] Loading TTS provider modules...', {
+logDebug('[ClipAIble TTS] Loading TTS provider modules...', {
   timestamp: Date.now()
 });
 
@@ -21,7 +16,7 @@ import { textToSpeech as qwenTTS, QWEN_CONFIG } from './qwen.js';
 import { textToSpeech as respeecherTTS, RESPEECHER_CONFIG } from './respeecher.js';
 import { textToSpeech as googleTTS, GOOGLE_TTS_CONFIG } from './google-tts.js';
 
-console.log('[ClipAIble TTS] Loading offline TTS module...', {
+logDebug('[ClipAIble TTS] Loading offline TTS module...', {
   timestamp: Date.now()
 });
 
@@ -29,7 +24,7 @@ console.log('[ClipAIble TTS] Loading offline TTS module...', {
 // The actual WASM loading happens in offscreen.js when initPiperTTS() is called
 import { textToSpeech as offlineTTS, OFFLINE_TTS_CONFIG } from './offline-tts-offscreen.js';
 
-console.log('[ClipAIble TTS] === MODULE LOADED ===', {
+logDebug('[ClipAIble TTS] === MODULE LOADED ===', {
   timestamp: Date.now(),
   hasOfflineTTS: typeof offlineTTS === 'function',
   hasElevenlabsTTS: typeof elevenlabsTTS === 'function',
@@ -64,7 +59,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   const entryTime = Date.now();
   const { provider = 'openai' } = options;
   
-  console.log('[ClipAIble TTS] === textToSpeech ENTRY POINT ===', {
+  log('[ClipAIble TTS] === textToSpeech ENTRY POINT ===', {
     timestamp: entryTime,
     provider,
     textLength: text?.length,
@@ -74,7 +69,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     options: JSON.stringify(options).substring(0, 200)
   });
   
-  log('[ClipAIble TTS] textToSpeech called', { 
+  logDebug('[ClipAIble TTS] textToSpeech called', { 
     provider, 
     textLength: text?.length, 
     hasApiKey: !!apiKey, 
@@ -84,7 +79,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   });
   
   if (provider === 'offline') {
-    console.log('[ClipAIble TTS] === ROUTING TO OFFLINE TTS ===', {
+    log('[ClipAIble TTS] === ROUTING TO OFFLINE TTS ===', {
       timestamp: Date.now(),
       textLength: text?.length,
       tabId: options.tabId,
@@ -93,7 +88,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
       speed: options.speed
     });
     
-    log('[ClipAIble TTS] Using offline TTS provider', { 
+    logDebug('[ClipAIble TTS] Using offline TTS provider', { 
       textLength: text?.length, 
       tabId: options.tabId,
       voice: options.voice,
@@ -104,14 +99,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
     const offlineStart = Date.now();
     try {
       const result = await textToSpeechOffline(text, null, options);
-      console.log('[ClipAIble TTS] === OFFLINE TTS COMPLETE ===', {
+      log('[ClipAIble TTS] === OFFLINE TTS COMPLETE ===', {
         timestamp: Date.now(),
         duration: Date.now() - offlineStart,
         resultSize: result?.byteLength
       });
       return result;
     } catch (error) {
-      console.error('[ClipAIble TTS] === OFFLINE TTS FAILED ===', {
+      logError('[ClipAIble TTS] === OFFLINE TTS FAILED ===', {
         timestamp: Date.now(),
         duration: Date.now() - offlineStart,
         error: error.message,
@@ -120,19 +115,19 @@ export async function textToSpeech(text, apiKey, options = {}) {
       throw error;
     }
   } else if (provider === 'elevenlabs') {
-    console.log('[ClipAIble TTS] Routing to ElevenLabs TTS');
+    logDebug('[ClipAIble TTS] Routing to ElevenLabs TTS');
     return textToSpeechElevenLabs(text, apiKey, options);
   } else if (provider === 'qwen') {
-    console.log('[ClipAIble TTS] Routing to Qwen TTS');
+    logDebug('[ClipAIble TTS] Routing to Qwen TTS');
     return textToSpeechQwen(text, apiKey, options);
   } else if (provider === 'respeecher') {
-    console.log('[ClipAIble TTS] Routing to Respeecher TTS');
+    logDebug('[ClipAIble TTS] Routing to Respeecher TTS');
     return textToSpeechRespeecher(text, apiKey, options);
   } else if (provider === 'google') {
-    console.log('[ClipAIble TTS] Routing to Google TTS');
+    logDebug('[ClipAIble TTS] Routing to Google TTS');
     return textToSpeechGoogle(text, apiKey, options);
   } else {
-    console.log('[ClipAIble TTS] Routing to OpenAI TTS (default)');
+    logDebug('[ClipAIble TTS] Routing to OpenAI TTS (default)');
     return textToSpeechOpenAI(text, apiKey, options);
   }
 }
@@ -475,7 +470,7 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
  */
 async function textToSpeechOffline(text, apiKey, options = {}) {
   const entryTime = Date.now();
-  console.log('[ClipAIble TTS] === textToSpeechOffline ENTRY ===', {
+  log('[ClipAIble TTS] === textToSpeechOffline ENTRY ===', {
     timestamp: entryTime,
     textLength: text?.length,
     hasApiKey: !!apiKey,
@@ -492,7 +487,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
     tabId = null
   } = options;
 
-  console.log('[ClipAIble TTS] textToSpeechOffline parameters extracted', {
+  logDebug('[ClipAIble TTS] textToSpeechOffline parameters extracted', {
     timestamp: Date.now(),
     voice,
     speed,
@@ -514,7 +509,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
     timestamp: entryTime
   });
   
-  console.log('[ClipAIble TTS] Checking offlineTTS function availability', {
+  logDebug('[ClipAIble TTS] Checking offlineTTS function availability', {
     timestamp: Date.now(),
     hasOfflineTTS: typeof offlineTTS === 'function',
     offlineTTSType: typeof offlineTTS
@@ -522,7 +517,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
   
   if (typeof offlineTTS !== 'function') {
     const error = new Error('offlineTTS function is not available. Module may not be loaded correctly.');
-    console.error('[ClipAIble TTS] === CRITICAL ERROR ===', {
+    logError('[ClipAIble TTS] === CRITICAL ERROR ===', {
       timestamp: Date.now(),
       error: error.message,
       offlineTTSType: typeof offlineTTS,
@@ -535,7 +530,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
     throw error;
   }
   
-  console.log('[ClipAIble TTS] Calling offlineTTS function...', {
+  log('[ClipAIble TTS] Calling offlineTTS function...', {
     timestamp: Date.now(),
     textLength: text.length,
     voice,
@@ -550,7 +545,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
     const result = await offlineTTS(text, { voice, speed, language });
     const callDuration = Date.now() - callStart;
     
-    console.log('[ClipAIble TTS] === offlineTTS call SUCCESS ===', {
+    log('[ClipAIble TTS] === offlineTTS call SUCCESS ===', {
       timestamp: Date.now(),
       duration: callDuration,
       resultType: typeof result,
@@ -567,7 +562,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
     return result;
   } catch (error) {
     const callDuration = Date.now() - callStart;
-    console.error('[ClipAIble TTS] === offlineTTS call FAILED ===', {
+    logError('[ClipAIble TTS] === offlineTTS call FAILED ===', {
       timestamp: Date.now(),
       duration: callDuration,
       error: error.message,
@@ -666,6 +661,8 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
       world: 'MAIN',
       func: (text, options, moduleUrl) => {
         try {
+          // CRITICAL: This runs in MAIN world where modules are not available
+          // console.log is acceptable here as logging module cannot be imported
           console.log('[ClipAIble] executeScript func called', { textLength: text.length, hasWindow: typeof window !== 'undefined', moduleUrl });
           
           if (typeof window === 'undefined') {
@@ -679,6 +676,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
           // Add moduleUrl to options
           const optionsWithUrl = { ...options, moduleUrl };
           
+          // CRITICAL: This runs in MAIN world where modules are not available
           console.log('[ClipAIble] Calling window.executePiperTTS...');
           // Call the function and return the promise
           // executeScript will wait for the promise to resolve
@@ -688,9 +686,12 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
             throw new Error(`executePiperTTS did not return a promise. Got: ${typeof promise}`);
           }
           
+          // CRITICAL: This runs in MAIN world where modules are not available
           console.log('[ClipAIble] Promise returned from executePiperTTS, waiting for resolution...');
           return promise;
         } catch (error) {
+          // CRITICAL: This runs in MAIN world where modules are not available
+          // console.error is acceptable here as logging module cannot be imported
           console.error('[ClipAIble] Error in executeScript func', error);
           console.error('[ClipAIble] Error stack', error.stack);
           throw error;
@@ -787,7 +788,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
  */
 export async function chunksToSpeech(chunks, apiKey, options = {}, updateState = null) {
   const entryTime = Date.now();
-  console.log('[ClipAIble TTS] === chunksToSpeech ENTRY POINT ===', {
+  log('[ClipAIble TTS] === chunksToSpeech ENTRY POINT ===', {
     timestamp: entryTime,
     chunksCount: chunks?.length || 0,
     hasApiKey: !!apiKey,
@@ -796,7 +797,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     hasUpdateState: typeof updateState === 'function'
   });
   
-  log('[ClipAIble TTS] === chunksToSpeech START ===', {
+  logDebug('[ClipAIble TTS] === chunksToSpeech START ===', {
     timestamp: entryTime,
     chunksCount: chunks?.length,
     provider: options.provider,
@@ -846,14 +847,13 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   const progressBase = 60; // Start at 60% (after preparation)
   const progressRange = 35; // Use 60-95% for TTS conversion
   
-  // CRITICAL: Completely disable progress updates during audio generation to prevent INP issues
-  // Web Worker cannot be used due to import maps limitations
-  // Offscreen document runs in separate context but WASM operations still block its thread
-  // The only way to prevent INP issues is to avoid frequent state updates that block popup UI
-  // Solution: Only update at start and end, no intermediate progress updates
+  // NOTE: Progress updates during audio generation
+  // TTS operations run in Web Worker (isolated from main thread),
+  // so we can safely update progress without blocking Worker operations
+  // Using async tracker to update progress every 2 seconds without blocking
   const isAudioFormat = true; // This function is only called for audio
   
-  // Update only at start to show generation has begun
+  // Update at start to show generation has begun
   if (updateState && expandedChunks.length > 0) {
     updateState({
       stage: PROCESSING_STAGES.GENERATING.id,
@@ -862,26 +862,77 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     });
   }
   
-  for (let i = 0; i < expandedChunks.length; i++) {
-    const chunk = expandedChunks[i];
-    // NO progress updates during loop - this prevents blocking user interactions
-    // Progress updates cause state saves and UI updates that block the main thread
-    
-    try {
-      // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
-      const audioBuffer = await textToSpeech(chunk.text, apiKey, options);
-      audioBuffers.push(audioBuffer);
-    } catch (error) {
-      logError(`Failed to convert chunk ${i + 1}`, error);
-      throw new Error(`Failed to convert segment ${i + 1}: ${error.message}`);
+  // Async progress tracker - updates UI every 2 seconds without blocking Worker
+  let processedChunks = 0;
+  const totalChunks = expandedChunks.length;
+  let progressTrackerInterval = null;
+  
+  log('[ClipAIble TTS] Progress tracker setup', {
+    totalChunks,
+    hasUpdateState: typeof updateState === 'function',
+    willEnableTracker: updateState && totalChunks > 1
+  });
+  
+  if (updateState && totalChunks > 1) {
+    // Only enable tracker if there are multiple chunks (single chunk completes too fast)
+    log('[ClipAIble TTS] Enabling progress tracker', {
+      totalChunks,
+      updateInterval: 2000
+    });
+    progressTrackerInterval = setInterval(() => {
+      if (processedChunks < totalChunks) {
+        const estimatedProgress = progressBase + Math.floor(
+          (processedChunks / totalChunks) * progressRange
+        );
+        log('[ClipAIble TTS] Progress tracker update', {
+          processedChunks,
+          totalChunks,
+          estimatedProgress
+        });
+        updateState?.({
+          status: `Generating audio... (${processedChunks}/${totalChunks} chunks)`,
+          progress: Math.min(estimatedProgress, 94) // Cap at 94% to leave room for final update
+        });
+      }
+    }, 2000); // Update every 2 seconds
+  } else {
+    log('[ClipAIble TTS] Progress tracker NOT enabled', {
+      reason: !updateState ? 'no updateState callback' : 'single chunk (totalChunks <= 1)',
+      totalChunks,
+      hasUpdateState: typeof updateState === 'function'
+    });
+  }
+  
+  try {
+    for (let i = 0; i < expandedChunks.length; i++) {
+      const chunk = expandedChunks[i];
+      
+      try {
+        // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
+        const audioBuffer = await textToSpeech(chunk.text, apiKey, options);
+        audioBuffers.push(audioBuffer);
+        processedChunks = i + 1; // Update counter for progress tracker
+      } catch (error) {
+        logError(`Failed to convert chunk ${i + 1}`, error);
+        throw new Error(`Failed to convert segment ${i + 1}: ${error.message}`);
+      }
+    }
+  } finally {
+    // Clean up progress tracker
+    if (progressTrackerInterval) {
+      clearInterval(progressTrackerInterval);
+      progressTrackerInterval = null;
     }
   }
   
   // Log all buffers before concatenation
   log('=== CONCATENATION START ===', { buffersCount: audioBuffers.length });
   
-  // Concatenate all audio buffers
-  updateState?.({ status: 'Assembling audio file...', progress: 95 });
+  // Final progress update before concatenation
+  updateState?.({ 
+    status: 'Assembling audio file...', 
+    progress: 95 
+  });
   
   const concatenated = concatenateAudioBuffers(audioBuffers);
   

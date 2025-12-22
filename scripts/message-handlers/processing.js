@@ -18,7 +18,7 @@ import { generatePdfWithDebugger } from '../generation/pdf.js';
 export function handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive) {
   // DETAILED LOGGING: Voice in processArticle request
   // CRITICAL: Always log voice information, even if not present
-  console.log('[ClipAIble Background] ===== VOICE IN processArticle REQUEST =====', {
+  log('[ClipAIble Background] ===== VOICE IN processArticle REQUEST =====', {
     timestamp: Date.now(),
     audioProvider: request.data?.audioProvider,
     audioVoice: request.data?.audioVoice,

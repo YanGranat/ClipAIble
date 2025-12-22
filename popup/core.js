@@ -173,6 +173,7 @@ export function initCore(deps) {
     t,
     logError,
     log,
+    logWarn,
     showToast,
     setStatus,
     setProgress,

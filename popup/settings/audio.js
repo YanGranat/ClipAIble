@@ -85,7 +85,7 @@ export function initAudio(deps) {
     // CRITICAL: For offline provider, reject numeric values (indices) - they are invalid
     // Only voice IDs (strings with _ or -) are valid for offline
     if (provider === 'offline' && currentValue && /^\d+$/.test(String(currentValue))) {
-      console.warn('[ClipAIble Audio] Invalid voice value (index) for offline provider, using saved voice or empty', {
+      logWarn('[ClipAIble Audio] Invalid voice value (index) for offline provider, using saved voice or empty', {
         provider,
         invalidValue: currentValue,
         savedVoice: savedProviderVoice
