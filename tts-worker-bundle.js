@@ -10292,6 +10292,20 @@
           if (!text || !voiceId) {
             throw new Error("Text and voiceId are required for PREDICT");
           }
+          console.log(LOG_PREFIX, "===== VOICE RECEIVED IN WORKER (PREDICT) =====", {
+            id,
+            voiceId,
+            voiceIdType: typeof voiceId,
+            voiceIdString: String(voiceId || ""),
+            isNumeric: /^\d+$/.test(String(voiceId || "")),
+            hasUnderscore: voiceId && String(voiceId).includes("_"),
+            hasDash: voiceId && String(voiceId).includes("-"),
+            isValidFormat: voiceId && (String(voiceId).includes("_") || String(voiceId).includes("-")),
+            VOICE_STRING: `VOICE="${String(voiceId || "")}"`,
+            // Explicit string for visibility
+            textLength: text?.length,
+            timestamp: Date.now()
+          });
           if (self.ort && self.ort.env && self.ort.env.wasm) {
             if (self.ort.env.wasm.numThreads !== 1) {
               console.warn(LOG_PREFIX, "numThreads was changed, re-enforcing to 1", {
@@ -10318,6 +10332,43 @@
             throw new Error("onnxruntime is not available in Worker. ONNX Runtime should be loaded on top level.");
           }
           const startTime = Date.now();
+          if (piperTTS && piperTTS.TtsSession) {
+            const hasInstance = piperTTS.TtsSession._instance !== null && piperTTS.TtsSession._instance !== void 0;
+            const instanceVoiceId = piperTTS.TtsSession._instance?.voiceId;
+            console.log(LOG_PREFIX, "===== TtsSession state before predict() =====", {
+              id,
+              requestedVoiceId: voiceId,
+              requestedVoiceIdType: typeof voiceId,
+              requestedVoiceIdString: String(voiceId || ""),
+              hasInstance,
+              instanceVoiceId,
+              instanceVoiceIdType: typeof instanceVoiceId,
+              instanceVoiceIdString: String(instanceVoiceId || ""),
+              voiceMatches: instanceVoiceId === voiceId,
+              willReuseSession: hasInstance && instanceVoiceId === voiceId,
+              willCreateNewSession: !hasInstance || instanceVoiceId !== voiceId,
+              VOICE_REQUESTED: `VOICE="${String(voiceId || "")}"`,
+              VOICE_INSTANCE: `VOICE="${String(instanceVoiceId || "")}"`,
+              PROBLEM_DETECTED: hasInstance && instanceVoiceId !== voiceId ? "WILL REUSE WRONG VOICE!" : "OK",
+              timestamp: Date.now()
+            });
+            if (hasInstance && instanceVoiceId !== voiceId) {
+              console.error(LOG_PREFIX, "\u{1F6A8} CRITICAL: TtsSession._instance has DIFFERENT voice!", {
+                id,
+                requestedVoice: voiceId,
+                instanceVoice: instanceVoiceId,
+                PROBLEM: "Library will reuse session with wrong voice!",
+                ACTION_NEEDED: "CLEAR_CACHE should have been called before PREDICT",
+                timestamp: Date.now()
+              });
+            }
+          } else {
+            console.log(LOG_PREFIX, "TtsSession not available for checking", {
+              id,
+              hasPiperTTS: !!piperTTS,
+              hasTtsSession: !!(piperTTS && piperTTS.TtsSession)
+            });
+          }
           console.log(LOG_PREFIX, "Calling piperTTS.predict()", {
             id,
             textLength: text?.length,
@@ -10394,6 +10445,121 @@
             id,
             data: voicesList
           });
+          break;
+        }
+        case "CLEAR_CACHE": {
+          console.log(LOG_PREFIX, "===== CLEAR_CACHE REQUEST RECEIVED IN WORKER =====", {
+            id,
+            timestamp: Date.now(),
+            hasPiperTTS: !!piperTTS,
+            hasTtsSession: !!(piperTTS && piperTTS.TtsSession),
+            isInitialized,
+            CRITICAL: "Worker must clear TtsSession._instance to allow new voice"
+          });
+          if (piperTTS && piperTTS.TtsSession) {
+            try {
+              const hadInstance = piperTTS.TtsSession._instance !== null && piperTTS.TtsSession._instance !== void 0;
+              const instanceVoiceId = piperTTS.TtsSession._instance?.voiceId;
+              console.log(LOG_PREFIX, "===== TtsSession STATE BEFORE CLEAR =====", {
+                id,
+                hadInstance,
+                instanceVoiceId,
+                instanceVoiceIdType: typeof instanceVoiceId,
+                instanceVoiceIdString: String(instanceVoiceId || ""),
+                VOICE_IN_INSTANCE: `VOICE="${String(instanceVoiceId || "")}"`,
+                action: "About to clear _instance to force new session creation"
+              });
+              if (hadInstance && piperTTS.TtsSession._instance) {
+                console.log(LOG_PREFIX, "===== ATTEMPTING TO RELEASE ONNX SESSION =====", {
+                  id,
+                  instanceVoiceId,
+                  hadInstance,
+                  hasOrtSession: !!(piperTTS.TtsSession._instance && piperTTS.TtsSession._instance._ortSession),
+                  action: "Trying to release _ortSession if accessible"
+                });
+                if (piperTTS.TtsSession._instance && piperTTS.TtsSession._instance._ortSession && typeof piperTTS.TtsSession._instance._ortSession.release === "function") {
+                  console.log(LOG_PREFIX, "===== RELEASING _ortSession =====", {
+                    id,
+                    instanceVoiceId,
+                    action: "Calling _ortSession.release()"
+                  });
+                  piperTTS.TtsSession._instance._ortSession.release();
+                  console.log(LOG_PREFIX, "\u2705 _ortSession released successfully", {
+                    id,
+                    instanceVoiceId
+                  });
+                } else {
+                  console.log(LOG_PREFIX, "\u26A0\uFE0F _ortSession not accessible or no release() method", {
+                    id,
+                    instanceVoiceId,
+                    hasOrtSession: !!(piperTTS.TtsSession._instance && piperTTS.TtsSession._instance._ortSession),
+                    hasRelease: !!(piperTTS.TtsSession._instance && piperTTS.TtsSession._instance._ortSession && typeof piperTTS.TtsSession._instance._ortSession.release === "function"),
+                    action: "Will rely on GC to clean up old session"
+                  });
+                }
+              }
+              console.log(LOG_PREFIX, "===== CLEARING TtsSession._instance =====", {
+                id,
+                instanceVoiceId,
+                hadInstance,
+                action: "Setting _instance to null - next PREDICT will create new session"
+              });
+              piperTTS.TtsSession._instance = null;
+              console.log(LOG_PREFIX, "\u2705 Worker cache cleared successfully", {
+                id,
+                hadInstance,
+                instanceVoiceId,
+                instanceVoiceIdString: String(instanceVoiceId || ""),
+                VOICE_CLEARED: `VOICE="${String(instanceVoiceId || "")}"`,
+                instanceIsNull: piperTTS.TtsSession._instance === null,
+                timestamp: Date.now(),
+                note: "TtsSession._instance cleared - next PREDICT will create new session with new voice",
+                CRITICAL: "Cache cleared - ready for new voice"
+              });
+              console.log(LOG_PREFIX, "===== SENDING CLEAR_CACHE_SUCCESS =====", {
+                id,
+                timestamp: Date.now(),
+                action: 'postMessage({ type: "CLEAR_CACHE_SUCCESS", id })'
+              });
+              self.postMessage({
+                type: "CLEAR_CACHE_SUCCESS",
+                id
+              });
+              console.log(LOG_PREFIX, "\u2705 CLEAR_CACHE_SUCCESS sent to offscreen", {
+                id,
+                timestamp: Date.now(),
+                action: "Worker cache clear complete"
+              });
+            } catch (clearError) {
+              console.error(LOG_PREFIX, "\u274C Failed to clear Worker cache", {
+                id,
+                error: clearError.message,
+                stack: clearError.stack,
+                CRITICAL: "Cache clear failed - wrong voice may be used!"
+              });
+              self.postMessage({
+                type: "CLEAR_CACHE_ERROR",
+                id,
+                error: clearError.message
+              });
+            }
+          } else {
+            console.warn(LOG_PREFIX, "\u26A0\uFE0F No TtsSession to clear in Worker", {
+              id,
+              hasPiperTTS: !!piperTTS,
+              hasTtsSession: !!(piperTTS && piperTTS.TtsSession),
+              CRITICAL: "TtsSession not available - cache may not be cleared"
+            });
+            console.log(LOG_PREFIX, "===== SENDING CLEAR_CACHE_SUCCESS (no session to clear) =====", {
+              id,
+              timestamp: Date.now(),
+              action: 'postMessage({ type: "CLEAR_CACHE_SUCCESS", id })'
+            });
+            self.postMessage({
+              type: "CLEAR_CACHE_SUCCESS",
+              id
+            });
+          }
           break;
         }
         case "STORED": {

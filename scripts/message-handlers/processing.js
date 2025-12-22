@@ -17,17 +17,23 @@ import { generatePdfWithDebugger } from '../generation/pdf.js';
  */
 export function handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive) {
   // DETAILED LOGGING: Voice in processArticle request
-  if (request.data?.audioVoice || request.data?.audioProvider) {
-    console.log('[ClipAIble Background] ===== VOICE IN processArticle REQUEST =====', {
-      timestamp: Date.now(),
-      audioProvider: request.data?.audioProvider,
-      audioVoice: request.data?.audioVoice,
-      audioVoiceType: typeof request.data?.audioVoice,
-      isNumeric: /^\d+$/.test(String(request.data?.audioVoice)),
-      googleTtsVoice: request.data?.googleTtsVoice,
-      outputFormat: request.data?.outputFormat
-    });
-  }
+  // CRITICAL: Always log voice information, even if not present
+  console.log('[ClipAIble Background] ===== VOICE IN processArticle REQUEST =====', {
+    timestamp: Date.now(),
+    audioProvider: request.data?.audioProvider,
+    audioVoice: request.data?.audioVoice,
+    audioVoiceType: typeof request.data?.audioVoice,
+    audioVoiceString: String(request.data?.audioVoice || ''),
+    isNumeric: /^\d+$/.test(String(request.data?.audioVoice || '')),
+    hasUnderscore: request.data?.audioVoice && String(request.data?.audioVoice).includes('_'),
+    hasDash: request.data?.audioVoice && String(request.data?.audioVoice).includes('-'),
+    isValidFormat: request.data?.audioVoice && (String(request.data?.audioVoice).includes('_') || String(request.data?.audioVoice).includes('-')),
+    googleTtsVoice: request.data?.googleTtsVoice,
+    outputFormat: request.data?.outputFormat,
+    VOICE_STRING: `VOICE="${String(request.data?.audioVoice || '')}"`, // Explicit string for visibility
+    willBeUsed: request.data?.outputFormat === 'audio',
+    source: 'popup_request'
+  });
   
   log('=== handleProcessArticle: ENTRY ===', {
     hasData: !!request.data,

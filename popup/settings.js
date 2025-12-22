@@ -338,41 +338,53 @@ export function initSettings(deps) {
       }
       
       // Load enableStats setting with migration
+      // CRITICAL FIX: Preserve current checkbox state if storage value is undefined/null
+      // This prevents race conditions where loadSettings() might overwrite a value being saved
       if (elements.enableStats) {
         const enableStatsValue = result[STORAGE_KEYS.ENABLE_STATS];
+        
+        log('loadSettings: loading enableStats', {
+          enableStatsValue,
+          valueType: typeof enableStatsValue,
+          isFalse: enableStatsValue === false,
+          isTrue: enableStatsValue === true,
+          isUndefined: enableStatsValue === undefined,
+          isNull: enableStatsValue === null,
+          currentChecked: elements.enableStats.checked
+        });
         
         if (enableStatsValue === false) {
           // User explicitly disabled - respect their choice
           elements.enableStats.checked = false;
+          log('loadSettings: enableStats set to false (explicitly disabled)');
         } else if (enableStatsValue === true) {
           // Explicitly enabled
           elements.enableStats.checked = true;
+          log('loadSettings: enableStats set to true (explicitly enabled)');
         } else {
           // First time or undefined/null - check if stats exist for migration
-          try {
-            const statsResult = await chrome.storage.local.get(['extension_stats']);
-            const stats = statsResult.extension_stats;
-            
-            // If user has existing stats (totalSaved > 0), enable by default
-            // Otherwise, default to enabled (first time)
-            const shouldEnable = !stats || stats.totalSaved === 0 ? true : stats.totalSaved > 0;
+          // CRITICAL: If checkbox is already unchecked, user likely just unchecked it
+          // Don't override their choice - preserve the unchecked state
+          // Only set default if checkbox is in its default/checked state
+          if (elements.enableStats.checked === false) {
+            // Checkbox is unchecked - preserve user's choice, don't save default
+            // The change event handler will save the value when user changes it
+            // This prevents race conditions where loadSettings() overwrites a value being saved
+            log('loadSettings: enableStats checkbox is unchecked, preserving user choice (not overwriting)');
+          } else {
+            // Checkbox is checked or in default state - safe to set default
+            // This is first time or value was never explicitly set
+            // Default to enabled (true) for first-time users
+            const shouldEnable = true;
             
             elements.enableStats.checked = shouldEnable;
             
-            // Save default value
+            // Save default value immediately to prevent loss on popup reload
             try {
               await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: shouldEnable });
+              log('loadSettings: enableStats default value saved (first time)', { shouldEnable });
             } catch (error) {
               logError('Failed to save default enable_statistics setting', error);
-            }
-          } catch (error) {
-            logError('Failed to check stats for migration', error);
-            // On error, default to enabled
-            elements.enableStats.checked = true;
-            try {
-              await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: true });
-            } catch (saveError) {
-              logError('Failed to save default enable_statistics setting', saveError);
             }
           }
         }

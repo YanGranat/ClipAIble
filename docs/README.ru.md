@@ -2,7 +2,7 @@
 
 > **Извлечение статей с помощью ИИ** — Сохраняйте любые статьи из интернета в форматах PDF, EPUB, FB2, Markdown или Аудио. Перевод на 11 языков. Работает на любом сайте.
 
-![Версия](https://img.shields.io/badge/версия-3.2.0-blue)
+![Версия](https://img.shields.io/badge/версия-3.2.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Расширение-green)
 ![Лицензия](https://img.shields.io/badge/лицензия-MIT-brightgreen)
 
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 строк)
 │   ├── content.js      # Content script для YouTube
 │   ├── locales.js      # Локализация UI (11 языков)
-│   ├── message-handlers/ # Модули обработчиков сообщений (v3.2.0+)
+│   ├── message-handlers/ # Модули обработчиков сообщений (v3.2.1+)
 │   │   ├── index.js    # Роутер сообщений
 │   │   ├── utils.js    # Утилиты обработчиков
 │   │   ├── simple.js   # Простые обработчики

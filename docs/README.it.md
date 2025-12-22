@@ -2,7 +2,7 @@
 
 > **Estrattore di articoli alimentato da IA** — Salva qualsiasi articolo dal web come PDF, EPUB, FB2, Markdown o Audio. Traduzione in 11 lingue. Funziona su qualsiasi sito web.
 
-![Versione](https://img.shields.io/badge/versione-3.2.0-blue)
+![Versione](https://img.shields.io/badge/versione-3.2.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Estensione-green)
 ![Licenza](https://img.shields.io/badge/licenza-MIT-brightgreen)
 
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 righe)
 │   ├── content.js      # Content script per YouTube
 │   ├── locales.js      # Localizzazione UI (11 lingue)
-│   ├── message-handlers/ # Moduli gestori messaggi (v3.2.0+)
+│   ├── message-handlers/ # Moduli gestori messaggi (v3.2.1+)
 │   │   ├── index.js    # Router messaggi
 │   │   ├── utils.js    # Utilità gestori
 │   │   ├── simple.js   # Gestori semplici

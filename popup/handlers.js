@@ -787,22 +787,43 @@ export function initHandlers(deps) {
     
     // Handle enableStats checkbox in stats section
     if (elements.enableStats) {
-      elements.enableStats.addEventListener('change', (e) => {
-        // CRITICAL: Immediately return control to browser, defer ALL work
+      elements.enableStats.addEventListener('change', async (e) => {
+        // Save immediately to prevent value loss on popup reload
         const value = elements.enableStats.checked;
         
-        // Use requestAnimationFrame + setTimeout to ensure UI is responsive
-        requestAnimationFrame(() => {
-          setTimeout(async () => {
-            try {
-              await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: value });
-              // Don't reload stats immediately - let user continue interacting
-              // Stats will update on next panel open
-            } catch (error) {
-              logError('Failed to save enable_statistics setting', error);
-            }
-          }, 0);
+        log('enableStats changed', {
+          value,
+          valueType: typeof value,
+          timestamp: Date.now()
         });
+        
+        try {
+          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: value });
+          
+          // Verify value was saved
+          const verifyResult = await chrome.storage.local.get([STORAGE_KEYS.ENABLE_STATS]);
+          const savedValue = verifyResult[STORAGE_KEYS.ENABLE_STATS];
+          
+          log('enableStats saved', {
+            value,
+            savedValue,
+            savedValueType: typeof savedValue,
+            match: value === savedValue,
+            timestamp: Date.now()
+          });
+          
+          if (value !== savedValue) {
+            logError('enableStats value mismatch after save', {
+              expected: value,
+              actual: savedValue
+            });
+          }
+          
+          // Don't reload stats immediately - let user continue interacting
+          // Stats will update on next panel open
+        } catch (error) {
+          logError('Failed to save enable_statistics setting', error);
+        }
       }, { passive: true });
     }
     

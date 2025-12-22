@@ -2321,13 +2321,49 @@ try {
           // CRITICAL: Smart voice switching - ensure library uses correct voice
           // Models are stored in IndexedDB permanently (survive extension restarts)
           // But library may cache InferenceSession per voice, so we need to force switch
-          const finalVoiceId = voiceId || downloadVoiceId;
-          const voiceChanged = lastUsedVoiceId !== null && lastUsedVoiceId !== finalVoiceId;
+          // CRITICAL: Use downloadVoiceId as primary source (it's the actual voice that will be used)
+          // voiceId might be undefined or incorrect, so always prefer downloadVoiceId
+          const finalVoiceId = downloadVoiceId || voiceId;
+          
+          // CRITICAL: Log voice state BEFORE checking for voice change
+          console.log(`[ClipAIble Offscreen] === VOICE CHECK BEFORE SYNTHESIS === for ${messageId}`, {
+            messageId,
+            voiceId,
+            downloadVoiceId,
+            finalVoiceId,
+            lastUsedVoiceId,
+            lastUsedVoiceIdType: typeof lastUsedVoiceId,
+            finalVoiceIdType: typeof finalVoiceId,
+            areEqual: lastUsedVoiceId === finalVoiceId,
+            lastUsedVoiceIdIsNull: lastUsedVoiceId === null,
+            finalVoiceIdIsNull: finalVoiceId === null,
+            willDetectChange: lastUsedVoiceId !== null && lastUsedVoiceId !== finalVoiceId && finalVoiceId !== null
+          });
+          
+          // CRITICAL: Check voice change BEFORE synthesis starts
+          // Compare against lastUsedVoiceId BEFORE updating it
+          const voiceChanged = lastUsedVoiceId !== null && lastUsedVoiceId !== finalVoiceId && finalVoiceId !== null;
+          
+          // CRITICAL: Update lastUsedVoiceId IMMEDIATELY after determining finalVoiceId
+          // This ensures that if another request comes in with the same voice, it won't trigger cache clearing
+          // But we must do this AFTER checking voiceChanged, so the check uses the OLD value
+          const previousVoiceId = lastUsedVoiceId;
+          lastUsedVoiceId = finalVoiceId;
+          
+          // Log voice change check result
+          console.log(`[ClipAIble Offscreen] === VOICE CHANGE CHECK RESULT === for ${messageId}`, {
+            messageId,
+            previousVoiceId,
+            finalVoiceId,
+            voiceChanged,
+            lastUsedVoiceIdAfterUpdate: lastUsedVoiceId,
+            willClearCache: voiceChanged
+          });
           
           if (voiceChanged) {
             console.log(`[ClipAIble Offscreen] ===== VOICE SWITCHING DETECTED ===== for ${messageId}`, {
               messageId,
-              previousVoice: lastUsedVoiceId,
+              previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
               action: 'AGGRESSIVE CACHE CLEARING - forcing complete module reload'
             });
@@ -2336,7 +2372,7 @@ try {
             // The library caches InferenceSession internally, so we need to completely destroy and recreate everything
             console.log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING START ===`, {
               messageId,
-              previousVoice: lastUsedVoiceId,
+              previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
               action: 'Clearing ALL caches and forcing complete reload'
             });
@@ -2356,7 +2392,7 @@ try {
                 
                 console.log(`[ClipAIble Offscreen] === CLEARING TtsSession._instance SINGLETON ===`, {
                   messageId,
-                  previousVoice: lastUsedVoiceId,
+                  previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   hasTtsSession: true,
                   hadInstance: hadInstance,
@@ -2371,7 +2407,7 @@ try {
                 
                 console.log(`[ClipAIble Offscreen] ✅ TtsSession._instance cleared successfully (SINGLETON CLEARED)`, {
                   messageId,
-                  previousVoice: lastUsedVoiceId,
+                  previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   instanceIsNull: tts.TtsSession._instance === null,
                   mechanism: 'singleton_clear',
@@ -2382,7 +2418,7 @@ try {
                 // The predict() function creates TtsSession internally, so we need to clear it before next predict()
                 console.log(`[ClipAIble Offscreen] ⚠️ TtsSession not directly accessible, will clear via module reload`, {
                   messageId,
-                  previousVoice: lastUsedVoiceId,
+                  previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   hasTts: !!tts,
                   ttsKeys: tts ? Object.keys(tts).slice(0, 20) : [],
@@ -2393,7 +2429,7 @@ try {
             } catch (clearError) {
               console.warn(`[ClipAIble Offscreen] ⚠️ Error clearing TtsSession._instance`, {
                 messageId,
-                previousVoice: lastUsedVoiceId,
+                previousVoice: previousVoiceId,
                 newVoice: finalVoiceId,
                 error: clearError.message,
                 mechanism: 'module_reload_fallback',
@@ -2407,7 +2443,7 @@ try {
             // Step 3: Force complete module reload
             console.log(`[ClipAIble Offscreen] 🔄 Forcing complete module reload`, {
               messageId,
-              previousVoice: lastUsedVoiceId,
+              previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
               mechanism: 'module_reload',
               singletonCleared: singletonCleared
@@ -2424,7 +2460,7 @@ try {
                 moduleReloaded = true;
                 console.log(`[ClipAIble Offscreen] ✅ Module reloaded successfully (MODULE RELOADED)`, {
                   messageId,
-                  previousVoice: lastUsedVoiceId,
+                  previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   hasPredict: typeof freshTts.predict === 'function',
                   hasStored: typeof freshTts.stored === 'function',
@@ -2438,14 +2474,14 @@ try {
                 
                 console.log(`[ClipAIble Offscreen] TTS reference updated to fresh instance after aggressive cache clear`, {
                   messageId,
-                  previousVoice: lastUsedVoiceId,
+                  previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   ttsIsFresh: tts === freshTts
                 });
               } else {
                 console.error(`[ClipAIble Offscreen] ❌ Module reload failed - invalid module`, {
                   messageId,
-                  previousVoice: lastUsedVoiceId,
+                  previousVoice: previousVoiceId,
                   newVoice: finalVoiceId,
                   hasTts: !!freshTts,
                   hasPredict: freshTts && typeof freshTts.predict === 'function',
@@ -2455,7 +2491,7 @@ try {
             } catch (reinitError) {
               console.error(`[ClipAIble Offscreen] ❌ Module reload error`, {
                 messageId,
-                previousVoice: lastUsedVoiceId,
+                previousVoice: previousVoiceId,
                 newVoice: finalVoiceId,
                 error: reinitError.message,
                 stack: reinitError.stack,
@@ -2465,7 +2501,7 @@ try {
             
             console.log(`[ClipAIble Offscreen] === AGGRESSIVE CACHE CLEARING COMPLETE ===`, {
               messageId,
-              previousVoice: lastUsedVoiceId,
+              previousVoice: previousVoiceId,
               newVoice: finalVoiceId,
               mechanisms: {
                 singletonCleared: singletonCleared,
@@ -2473,27 +2509,147 @@ try {
               },
               note: 'All caches cleared, module reloaded - synthesis will use new voice. Singleton clear + module reload is sufficient for voice switching.'
             });
+            
+            // CRITICAL: Also clear Worker cache if using Worker
+            // Must clear BEFORE first PREDICT with new voice to ensure new session is created
+            console.log(`[ClipAIble Offscreen] === CHECKING WORKER CACHE CLEAR === for ${messageId}`, {
+              messageId,
+              previousVoice: previousVoiceId,
+              newVoice: finalVoiceId,
+              useWorker,
+              hasTtsWorker: !!ttsWorker,
+              ttsWorkerType: typeof ttsWorker,
+              willClearWorkerCache: useWorker && ttsWorker,
+              CRITICAL: 'Worker cache MUST be cleared before synthesis with new voice'
+            });
+            
+            if (useWorker && ttsWorker) {
+              try {
+                // Send CLEAR_CACHE message to Worker and wait for confirmation
+                // This ensures Worker clears its TtsSession._instance before creating new session
+                const clearCacheId = `clear_${messageId}_${Date.now()}`;
+                console.log(`[ClipAIble Offscreen] === PREPARING CLEAR_CACHE MESSAGE === for ${messageId}`, {
+                  messageId,
+                  clearCacheId,
+                  previousVoice: previousVoiceId,
+                  newVoice: finalVoiceId,
+                  useWorker,
+                  hasTtsWorker: !!ttsWorker,
+                  action: 'Creating Promise to wait for CLEAR_CACHE_SUCCESS'
+                });
+                
+                const clearCachePromise = new Promise((resolve, reject) => {
+                  const timeout = setTimeout(() => {
+                    console.error(`[ClipAIble Offscreen] ❌ CLEAR_CACHE timeout for ${messageId}`, {
+                      messageId,
+                      clearCacheId,
+                      timeout: 5000,
+                      action: 'Worker did not respond to CLEAR_CACHE within 5 seconds'
+                    });
+                    reject(new Error('CLEAR_CACHE timeout'));
+                  }, 5000);
+                  
+                  const handler = (event) => {
+                    console.log(`[ClipAIble Offscreen] === CLEAR_CACHE RESPONSE RECEIVED === for ${messageId}`, {
+                      messageId,
+                      clearCacheId,
+                      eventType: event.data?.type,
+                      eventId: event.data?.id,
+                      matches: event.data && event.data.type === 'CLEAR_CACHE_SUCCESS' && event.data.id === clearCacheId,
+                      fullEvent: event.data
+                    });
+                    
+                    if (event.data && event.data.type === 'CLEAR_CACHE_SUCCESS' && event.data.id === clearCacheId) {
+                      clearTimeout(timeout);
+                      ttsWorker.removeEventListener('message', handler);
+                      console.log(`[ClipAIble Offscreen] ✅ CLEAR_CACHE_SUCCESS matched for ${messageId}`, {
+                        messageId,
+                        clearCacheId,
+                        action: 'Resolving Promise - Worker cache cleared'
+                      });
+                      resolve();
+                    }
+                  };
+                  
+                  ttsWorker.addEventListener('message', handler);
+                  console.log(`[ClipAIble Offscreen] === CLEAR_CACHE LISTENER ADDED === for ${messageId}`, {
+                    messageId,
+                    clearCacheId,
+                    action: 'Added event listener for CLEAR_CACHE_SUCCESS'
+                  });
+                });
+                
+                console.log(`[ClipAIble Offscreen] === SENDING CLEAR_CACHE TO WORKER === for ${messageId}`, {
+                  messageId,
+                  clearCacheId,
+                  previousVoice: previousVoiceId,
+                  newVoice: finalVoiceId,
+                  useWorker,
+                  hasTtsWorker: !!ttsWorker,
+                  ttsWorkerType: typeof ttsWorker,
+                  action: 'postMessage({ type: "CLEAR_CACHE", id: clearCacheId })'
+                });
+                
+                ttsWorker.postMessage({ type: 'CLEAR_CACHE', id: clearCacheId });
+                console.log(`[ClipAIble Offscreen] ✅ Sent CLEAR_CACHE to Worker for voice switch`, {
+                  messageId,
+                  clearCacheId,
+                  previousVoice: previousVoiceId,
+                  newVoice: finalVoiceId,
+                  action: 'Waiting for Worker to clear cache before synthesis'
+                });
+                
+                // Wait for Worker to confirm cache is cleared
+                await clearCachePromise;
+                console.log(`[ClipAIble Offscreen] ✅ Worker cache cleared confirmed`, {
+                  messageId,
+                  clearCacheId,
+                  previousVoice: previousVoiceId,
+                  newVoice: finalVoiceId,
+                  action: 'Worker confirmed cache cleared - safe to start synthesis with new voice'
+                });
+              } catch (workerError) {
+                console.error(`[ClipAIble Offscreen] ❌ Failed to clear Worker cache`, {
+                  messageId,
+                  error: workerError.message,
+                  stack: workerError.stack,
+                  previousVoice: previousVoiceId,
+                  newVoice: finalVoiceId,
+                  action: 'Continuing anyway - Worker may still have old session cached',
+                  CRITICAL: 'This may cause wrong voice to be used!'
+                });
+              }
+            } else {
+              console.warn(`[ClipAIble Offscreen] ⚠️ Cannot clear Worker cache - Worker not available`, {
+                messageId,
+                previousVoice: previousVoiceId,
+                newVoice: finalVoiceId,
+                useWorker,
+                hasTtsWorker: !!ttsWorker,
+                ttsWorkerType: typeof ttsWorker,
+                CRITICAL: 'Worker cache will NOT be cleared - wrong voice may be used!',
+                action: 'Worker should be initialized before voice switching'
+              });
+            }
           } else {
             // No voice change - log for debugging
             console.log(`[ClipAIble Offscreen] No voice change detected for ${messageId}`, {
               messageId,
-              lastUsedVoiceId: lastUsedVoiceId,
-              finalVoiceId: finalVoiceId,
+              lastUsedVoiceId: previousVoiceId,
+              currentVoice: finalVoiceId,
               voiceChanged: false,
               note: 'Using same voice as previous request - no cache clearing needed'
             });
           }
           
-          // CRITICAL: Update last used voice BEFORE synthesis starts
-          // This ensures we track the voice that will be used
-          lastUsedVoiceId = finalVoiceId;
+          // Note: lastUsedVoiceId was already updated above, before voice change check
           
           console.log(`[ClipAIble Offscreen] === VOICE TRACKING UPDATED === for ${messageId}`, {
             messageId,
             currentVoice: finalVoiceId,
             VOICE_STRING: `VOICE="${finalVoiceId}"`, // Explicit string for visibility
             voiceChanged: voiceChanged,
-            previousVoice: voiceChanged ? (lastUsedVoiceId === finalVoiceId ? null : lastUsedVoiceId) : null,
+            previousVoice: voiceChanged ? previousVoiceId : null,
             note: 'Voice tracking updated - synthesis will use this voice. Models are stored permanently in IndexedDB.'
           });
           
@@ -2507,7 +2663,7 @@ try {
             finalVoiceId: finalVoiceId,
             voiceIdSource: voiceId ? 'voiceId' : (downloadVoiceId ? 'downloadVoiceId' : 'unknown'),
             voiceChanged: voiceChanged,
-            previousVoice: lastUsedVoiceId === finalVoiceId ? null : (voiceChanged ? lastUsedVoiceId : null)
+            previousVoice: voiceChanged ? previousVoiceId : null
           });
           
           // Sanitize text for Piper TTS
@@ -3439,6 +3595,46 @@ try {
                     if (!isStoredAfterRedownload) {
                       throw new Error(`Model ${voiceId} not found in storage after re-download`);
                     }
+                  } else {
+                    // Not using Worker - use direct download
+                    await tts.download(voiceId, (progress) => {
+                      finalProgress = progress;
+                      if (progress.total > 0) {
+                        const percent = Math.round((progress.loaded * 100) / progress.total);
+                        if (percent >= lastPercent + 10 || percent === 100) {
+                          console.log(`[ClipAIble Offscreen] Re-download progress for ${messageId}`, {
+                            messageId,
+                            voiceId,
+                            percent,
+                            loaded: progress.loaded,
+                            total: progress.total,
+                            isComplete: progress.loaded >= progress.total
+                          });
+                          lastPercent = percent;
+                        }
+                        if (progress.loaded >= progress.total && progress.total > 0) {
+                          downloadComplete = true;
+                        }
+                      }
+                    });
+                    
+                    // CRITICAL: Verify download completed successfully
+                    if (finalProgress && finalProgress.total > 0) {
+                      const isComplete = finalProgress.loaded >= finalProgress.total;
+                      if (!isComplete) {
+                        throw new Error(`Model download incomplete: ${finalProgress.loaded}/${finalProgress.total} bytes`);
+                      }
+                    }
+                    
+                    // CRITICAL: Verify model is stored after re-download
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const verifyAfterRedownload = await tts.stored();
+                    const isStoredAfterRedownload = verifyAfterRedownload.includes(voiceId);
+                    
+                    if (!isStoredAfterRedownload) {
+                      throw new Error(`Model ${voiceId} not found in storage after re-download`);
+                    }
+                  }
                   } catch (redownloadError) {
                     // Handle JSON parsing errors from HuggingFace 404 responses
                     const isJsonParseError = redownloadError.message && (
@@ -3487,45 +3683,24 @@ try {
                               }
                             }
                           });
-                  } else {
-                    await downloadWithWorker(voiceId, (progress) => {
-                      if (progress.total > 0) {
-                        const percent = Math.round((progress.loaded * 100) / progress.total);
-                        if (percent >= lastPercent + 10 || percent === 100) {
-                          console.log(`[ClipAIble Offscreen] Fallback re-download progress for ${messageId}`, {
-                            messageId,
-                            voiceId,
-                            percent,
-                            loaded: progress.loaded,
-                            total: progress.total
+                        } else {
+                          await tts.download(voiceId, (progress) => {
+                            finalProgress = progress;
+                            if (progress.total > 0) {
+                              const percent = Math.round((progress.loaded * 100) / progress.total);
+                              if (percent >= lastPercent + 10 || percent === 100) {
+                                console.log(`[ClipAIble Offscreen] Fallback re-download progress for ${messageId}`, {
+                                  messageId,
+                                  voiceId,
+                                  percent,
+                                  loaded: progress.loaded,
+                                  total: progress.total
+                                });
+                                lastPercent = percent;
+                              }
+                            }
                           });
-                          lastPercent = percent;
                         }
-                      }
-                    });
-                  }
-                } else {
-                  await tts.download(voiceId, (progress) => {
-                    finalProgress = progress;
-                    if (progress.total > 0) {
-                      const percent = Math.round((progress.loaded * 100) / progress.total);
-                      if (percent >= lastPercent + 10 || percent === 100) {
-                        console.log(`[ClipAIble Offscreen] Re-download progress for ${messageId}`, {
-                          messageId,
-                          voiceId,
-                          percent,
-                          loaded: progress.loaded,
-                          total: progress.total,
-                          isComplete: progress.loaded >= progress.total
-                        });
-                        lastPercent = percent;
-                      }
-                      if (progress.loaded >= progress.total && progress.total > 0) {
-                        downloadComplete = true;
-                      }
-                    }
-                  });
-                }
                       } else {
                         throw new Error(`Voice "${voiceId}" not found and no fallback available. Please select a valid voice from the list.`);
                       }

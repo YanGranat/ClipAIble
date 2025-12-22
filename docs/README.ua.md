@@ -2,7 +2,7 @@
 
 > **Витяг статей за допомогою ШІ** — Зберігайте будь-які статті з інтернету у форматах PDF, EPUB, FB2, Markdown або Аудіо. Переклад на 11 мов. Працює на будь-якому сайті.
 
-![Версія](https://img.shields.io/badge/версія-3.2.0-blue)
+![Версія](https://img.shields.io/badge/версія-3.2.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Розширення-green)
 ![Ліцензія](https://img.shields.io/badge/ліцензія-MIT-brightgreen)
 
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635 рядків)
 │   ├── content.js      # Content script для YouTube
 │   ├── locales.js      # Локалізація UI (11 мов)
-│   ├── message-handlers/ # Модулі обробників повідомлень (v3.2.0+)
+│   ├── message-handlers/ # Модулі обробників повідомлень (v3.2.1+)
 │   │   ├── index.js    # Роутер повідомлень
 │   │   ├── utils.js    # Утиліти обробників
 │   │   ├── simple.js   # Прості обробники

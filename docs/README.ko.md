@@ -2,7 +2,7 @@
 
 > **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
 
-![버전](https://img.shields.io/badge/버전-3.2.0-blue)
+![버전](https://img.shields.io/badge/버전-3.2.1-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-확장-프로그램-green)
 ![라이선스](https://img.shields.io/badge/라이선스-MIT-brightgreen)
 
@@ -401,7 +401,7 @@ clipaible/
 │   ├── background.js   # Service worker (2635줄)
 │   ├── content.js      # YouTube용 콘텐츠 스크립트
 │   ├── locales.js      # UI 현지화 (11개 언어)
-│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.2.0+)
+│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.2.1+)
 │   │   ├── index.js    # 메시지 라우터
 │   │   ├── utils.js    # 핸들러 유틸리티
 │   │   ├── simple.js   # 간단한 핸들러

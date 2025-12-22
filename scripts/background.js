@@ -1496,7 +1496,8 @@ async function handleQuickSave(outputFormat = 'pdf') {
           finalVoice = CONFIG.DEFAULT_AUDIO_VOICE;
         }
         
-        console.log('[ClipAIble Background] CRITICAL: Final voice selected', {
+        console.log('[ClipAIble Background] CRITICAL: Final voice selected from storage', {
+          timestamp: Date.now(),
           provider,
           voiceMap,
           voiceMapProviderValue: voiceMap[provider],
@@ -1504,8 +1505,12 @@ async function handleQuickSave(outputFormat = 'pdf') {
           selectedVoice,
           finalVoice,
           finalVoiceType: typeof finalVoice,
+          finalVoiceString: String(finalVoice),
           isValidFormat: finalVoice && (finalVoice.includes('_') || finalVoice.includes('-')),
-          source: voiceMap[provider] ? 'voiceMap' : (settingsObj.audio_voice ? 'audio_voice' : 'DEFAULT')
+          source: voiceMap[provider] ? 'voiceMap' : (settingsObj.audio_voice ? 'audio_voice' : 'DEFAULT'),
+          VOICE_STRING: `VOICE="${String(finalVoice)}"`, // Explicit string for visibility
+          willBePassedToTTS: true,
+          storageLocation: 'handleQuickSave'
         });
         
         return finalVoice;
@@ -1812,6 +1817,26 @@ async function startArticleProcessing(data) {
       });
       
       // Continue with standard pipeline: translation, TOC/Abstract, generation
+      // CRITICAL: Log voice before passing to continueProcessingPipeline
+      if (data.outputFormat === 'audio') {
+        console.log('[ClipAIble Background] ===== VOICE BEFORE continueProcessingPipeline =====', {
+          timestamp: Date.now(),
+          outputFormat: data.outputFormat,
+          audioProvider: data.audioProvider,
+          audioVoice: data.audioVoice,
+          audioVoiceType: typeof data.audioVoice,
+          audioVoiceString: String(data.audioVoice || ''),
+          isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
+          hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
+          hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
+          isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
+          googleTtsVoice: data.googleTtsVoice,
+          VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
+          source: 'startArticleProcessing',
+          willBePassedToContinueProcessingPipeline: true
+        });
+      }
+      
       log('=== startArticleProcessing: About to call continueProcessingPipeline ===', {
         outputFormat: data.outputFormat,
         timestamp: Date.now()
@@ -2294,9 +2319,16 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       ttsProvider,
       audioVoice: data.audioVoice,
       audioVoiceType: typeof data.audioVoice,
-      isNumeric: /^\d+$/.test(String(data.audioVoice)),
+      audioVoiceString: String(data.audioVoice || ''),
+      isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
+      hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
+      hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
+      isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
       googleTtsVoice: data.googleTtsVoice,
-      defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE
+      defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE,
+      VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
+      source: 'continueProcessingPipeline',
+      willBePassedToGenerateAudio: true
     });
     
     /** @type {AudioGenerationData} */
@@ -2310,13 +2342,22 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       // For Google TTS, use googleTtsVoice; for others, use audioVoice
       // CRITICAL: Validate voice - if it's a number (index), it's invalid
       voice: (() => {
-        // DETAILED LOGGING: Voice received from popup
-        console.log('[ClipAIble Background] ===== VOICE RECEIVED FROM POPUP =====', {
+        // DETAILED LOGGING: Voice received from popup (in voice selection logic)
+        console.log('[ClipAIble Background] ===== VOICE RECEIVED FROM POPUP (in voice selection) =====', {
           timestamp: Date.now(),
           ttsProvider,
           audioVoice: data.audioVoice,
+          audioVoiceType: typeof data.audioVoice,
+          audioVoiceString: String(data.audioVoice || ''),
+          isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
+          hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
+          hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
+          isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
           googleTtsVoice: data.googleTtsVoice,
-          defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE
+          defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE,
+          VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
+          source: 'voice_selection_logic',
+          willBeValidated: true
         });
         
         if (ttsProvider === 'google') {
@@ -2367,7 +2408,13 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
           timestamp: Date.now(),
           ttsProvider,
           finalVoice: voice,
-          willSendToTTS: true
+          finalVoiceType: typeof voice,
+          finalVoiceString: String(voice),
+          isValidFormat: voice && (String(voice).includes('_') || String(voice).includes('-')),
+          VOICE_STRING: `VOICE="${String(voice)}"`, // Explicit string for visibility
+          willSendToTTS: true,
+          willBePassedToGenerateAudio: true,
+          source: 'voice_validation'
         });
         return voice;
       })(),

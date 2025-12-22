@@ -291,9 +291,23 @@ export async function completeProcessing(stopKeepAlive) {
   const uiLang = await getUILanguage();
   processingState.status = tSync('statusDone', uiLang);
   if (stopKeepAlive) stopKeepAlive();
-  // Keep result in memory for summary generation, but remove from storage
-  // Result will be cleared on next processing start
-  chrome.storage.local.remove(['processingState']);
+  
+  // CRITICAL: Save final state to storage so popup can detect completion
+  // Don't remove immediately - let popup poll and detect completion first
+  // State will be cleared on next processing start
+  await chrome.storage.local.set({ 
+    processingState: { 
+      ...processingState, 
+      lastUpdate: Date.now() 
+    } 
+  });
+  
+  // Clear from storage after a delay to allow popup to detect completion
+  setTimeout(() => {
+    chrome.storage.local.remove(['processingState']).catch(() => {
+      // Ignore errors - storage may already be cleared
+    });
+  }, 5000); // 5 seconds should be enough for popup to poll
 }
 
 /**
