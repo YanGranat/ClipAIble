@@ -31,113 +31,148 @@ export function initUI(deps) {
     timerInterval
   } = deps;
 
-  // Apply UI localization
+  // Apply UI localization with batched DOM updates for better performance
   async function applyLocalization() {
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     
-    // Apply translations to elements with data-i18n attribute
-    document.querySelectorAll('[data-i18n]').forEach(element => {
-      const key = element.getAttribute('data-i18n');
-      const translation = locale[key] || UI_LOCALES.en[key] || key;
-      
-      if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'password')) {
-        // For inputs, check if they have a separate placeholder key
-        if (element.hasAttribute('data-i18n-placeholder')) {
-          const placeholderKey = element.getAttribute('data-i18n-placeholder');
-          element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
-        } else {
-          element.placeholder = translation;
-        }
-      } else if (element.tagName === 'OPTION') {
-        // Options are handled separately
-      } else {
-        element.textContent = translation;
-      }
-    });
-    
-    // Handle elements with only data-i18n-placeholder (no data-i18n)
-    document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
-      if (!element.hasAttribute('data-i18n')) {
-        const placeholderKey = element.getAttribute('data-i18n-placeholder');
-        element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
-      }
-    });
-    
-    // Handle select options with data-i18n
-    document.querySelectorAll('select option[data-i18n]').forEach(option => {
-      const key = option.getAttribute('data-i18n');
-      const translation = locale[key] || UI_LOCALES.en[key] || key;
-      option.textContent = translation;
-    });
-    
-    // Update custom select options after localization
-    document.querySelectorAll('.custom-select').forEach(container => {
-      const select = container.querySelector('select');
-      if (!select) return;
-      
-      const optionsDiv = container.querySelector('.custom-select-options');
-      const valueSpan = container.querySelector('.custom-select-value');
-      if (!optionsDiv || !valueSpan) return;
-      
-      // Update custom options from native select
-      const customOptions = optionsDiv.querySelectorAll('.custom-select-option');
-      Array.from(select.options).forEach((nativeOption, index) => {
-        const customOption = customOptions[index];
-        if (customOption) {
-          customOption.textContent = nativeOption.textContent;
-          if (nativeOption.selected || select.value === nativeOption.value) {
-            customOption.classList.add('selected');
-            valueSpan.textContent = nativeOption.textContent;
+    // Batch DOM updates using requestAnimationFrame for better performance
+    return new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        // Collect all updates first, then apply in batches
+        const updates = [];
+        
+        // Collect data-i18n updates
+        document.querySelectorAll('[data-i18n]').forEach(element => {
+          const key = element.getAttribute('data-i18n');
+          const translation = locale[key] || UI_LOCALES.en[key] || key;
+          
+          if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'password')) {
+            if (element.hasAttribute('data-i18n-placeholder')) {
+              const placeholderKey = element.getAttribute('data-i18n-placeholder');
+              updates.push(() => {
+                element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+              });
+            } else {
+              updates.push(() => {
+                element.placeholder = translation;
+              });
+            }
+          } else if (element.tagName !== 'OPTION') {
+            updates.push(() => {
+              element.textContent = translation;
+            });
+          }
+        });
+        
+        // Collect data-i18n-placeholder updates
+        document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
+          if (!element.hasAttribute('data-i18n')) {
+            const placeholderKey = element.getAttribute('data-i18n-placeholder');
+            updates.push(() => {
+              element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+            });
+          }
+        });
+        
+        // Collect select option updates
+        document.querySelectorAll('select option[data-i18n]').forEach(option => {
+          const key = option.getAttribute('data-i18n');
+          const translation = locale[key] || UI_LOCALES.en[key] || key;
+          updates.push(() => {
+            option.textContent = translation;
+          });
+        });
+        
+        // Collect custom select updates
+        document.querySelectorAll('.custom-select').forEach(container => {
+          const select = container.querySelector('select');
+          if (!select) return;
+          
+          const optionsDiv = container.querySelector('.custom-select-options');
+          const valueSpan = container.querySelector('.custom-select-value');
+          if (!optionsDiv || !valueSpan) return;
+          
+          const customOptions = optionsDiv.querySelectorAll('.custom-select-option');
+          Array.from(select.options).forEach((nativeOption, index) => {
+            const customOption = customOptions[index];
+            if (customOption) {
+              updates.push(() => {
+                customOption.textContent = nativeOption.textContent;
+                if (nativeOption.selected || select.value === nativeOption.value) {
+                  customOption.classList.add('selected');
+                  valueSpan.textContent = nativeOption.textContent;
+                } else {
+                  customOption.classList.remove('selected');
+                }
+              });
+            }
+          });
+        });
+        
+        // Collect title updates
+        document.querySelectorAll('[data-i18n-title]').forEach(element => {
+          const key = element.getAttribute('data-i18n-title');
+          updates.push(() => {
+            element.title = locale[key] || UI_LOCALES.en[key] || key;
+          });
+        });
+        
+        // Collect aria-label updates
+        document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
+          const key = element.getAttribute('data-i18n-aria-label');
+          updates.push(() => {
+            element.setAttribute('aria-label', locale[key] || UI_LOCALES.en[key] || key);
+          });
+        });
+        
+        // Apply updates in batches to avoid blocking main thread
+        const BATCH_SIZE = 50;
+        let index = 0;
+        
+        function processBatch() {
+          const end = Math.min(index + BATCH_SIZE, updates.length);
+          for (let i = index; i < end; i++) {
+            updates[i]();
+          }
+          index = end;
+          
+          if (index < updates.length) {
+            // Use setTimeout to yield to main thread between batches
+            setTimeout(processBatch, 0);
           } else {
-            customOption.classList.remove('selected');
+            // Final updates
+            if (elements.uiLanguageSelect) {
+              const currentValue = elements.uiLanguageSelect.value;
+              if (currentValue !== langCode) {
+                elements.uiLanguageSelect.value = langCode;
+              }
+            }
+            
+            if (elements.modeHint) {
+              const mode = elements.modeSelect?.value || 'selector';
+              if (mode === 'automatic') {
+                elements.modeHint.textContent = locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic;
+              } else if (mode === 'selector') {
+                elements.modeHint.textContent = locale.extractionModeHint || UI_LOCALES.en.extractionModeHint;
+              } else {
+                elements.modeHint.textContent = locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract;
+              }
+            }
+            
+            if (elements.saveText) {
+              elements.saveText.textContent = locale.save || UI_LOCALES.en.save || 'Save';
+            }
+            
+            document.documentElement.lang = langCode;
+            
+            resolve();
           }
         }
+        
+        processBatch();
       });
     });
-    
-    // Update select options for language selector (header version - short codes)
-    if (elements.uiLanguageSelect) {
-      // Keep short codes (EN, RU, etc.) for header selector
-      // Only update selected value if needed
-      const currentValue = elements.uiLanguageSelect.value;
-      if (currentValue !== langCode) {
-        elements.uiLanguageSelect.value = langCode;
-      }
-    }
-    
-    // Update title attributes
-    document.querySelectorAll('[data-i18n-title]').forEach(element => {
-      const key = element.getAttribute('data-i18n-title');
-      element.title = locale[key] || UI_LOCALES.en[key] || key;
-    });
-    
-    // Update aria-label attributes
-    document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
-      const key = element.getAttribute('data-i18n-aria-label');
-      element.setAttribute('aria-label', locale[key] || UI_LOCALES.en[key] || key);
-    });
-    
-    // Update specific dynamic elements
-    if (elements.modeHint) {
-      const mode = elements.modeSelect?.value || 'selector';
-      if (mode === 'automatic') {
-        elements.modeHint.textContent = locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic;
-      } else if (mode === 'selector') {
-        elements.modeHint.textContent = locale.extractionModeHint || UI_LOCALES.en.extractionModeHint;
-      } else {
-        elements.modeHint.textContent = locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract;
-      }
-    }
-    
-    // Update output format button text
-    if (elements.saveText) {
-      // Button text is always "Save" now, format is selected in dropdown
-      elements.saveText.textContent = locale.save || UI_LOCALES.en.save || 'Save';
-    }
-    
-    // Update document language
-    document.documentElement.lang = langCode;
   }
 
   // Apply theme based on user preference or system preference

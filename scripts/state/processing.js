@@ -52,6 +52,10 @@ let isUpdatingState = false;
 let storageSaveTimeout = null;
 let pendingStorageUpdate = null;
 const STORAGE_SAVE_DEBOUNCE = 500; // Save to storage max once per 500ms
+// CRITICAL: Increased to 3000ms (3s) for audio to minimize main thread blocking during WASM operations
+// Audio generation has long-running WASM operations (800-5000ms per sentence)
+// Less frequent storage saves reduce interference with WASM operations
+const STORAGE_SAVE_DEBOUNCE_AUDIO = 3000; // Save to storage max once per 3s for audio (very aggressive)
 
 // Force immediate save (bypass debounce) for critical updates
 function forceSaveState() {
@@ -149,6 +153,10 @@ export function updateState(updates) {
       
       // Save to storage with debounce
       if (processingState.isProcessing) {
+        // Use longer debounce for audio format to reduce main thread blocking
+        const isAudioFormat = processingState.outputFormat === 'audio';
+        const debounceInterval = isAudioFormat ? STORAGE_SAVE_DEBOUNCE_AUDIO : STORAGE_SAVE_DEBOUNCE;
+        
         pendingStorageUpdate = { ...processingState, lastUpdate: Date.now() };
         
         if (storageSaveTimeout) {
@@ -165,7 +173,7 @@ export function updateState(updates) {
             pendingStorageUpdate = null;
           }
           storageSaveTimeout = null;
-        }, STORAGE_SAVE_DEBOUNCE);
+        }, debounceInterval);
       }
       return;
     }
@@ -181,6 +189,10 @@ export function updateState(updates) {
   if (processingState.isProcessing) {
     // CRITICAL: Debounce storage saves to reduce I/O load during frequent progress updates
     // This is especially important for audio generation which has many progress updates
+    // Use longer debounce for audio format to reduce main thread blocking
+    const isAudioFormat = processingState.outputFormat === 'audio';
+    const debounceInterval = isAudioFormat ? STORAGE_SAVE_DEBOUNCE_AUDIO : STORAGE_SAVE_DEBOUNCE;
+    
     pendingStorageUpdate = { ...processingState, lastUpdate: Date.now() };
     
     if (storageSaveTimeout) {
@@ -198,7 +210,7 @@ export function updateState(updates) {
         pendingStorageUpdate = null;
       }
       storageSaveTimeout = null;
-    }, STORAGE_SAVE_DEBOUNCE);
+    }, debounceInterval);
     
     // CRITICAL: Summary generation no longer uses processingState
     // It uses only summary_generating flag to avoid interfering with document generation UI

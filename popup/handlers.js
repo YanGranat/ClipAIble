@@ -223,100 +223,113 @@ export function initHandlers(deps) {
       });
     }
 
-    // API provider selector change handler
+    // API provider selector change handler - optimize to avoid blocking
     if (elements.apiProviderSelect) {
       elements.apiProviderSelect.addEventListener('change', async () => {
-        // Close custom dropdown when provider changes
+        // Close custom dropdown immediately (lightweight operation)
         if (elements.customModelDropdown) {
-          elements.customModelDropdown.style.display = 'none';
+          requestAnimationFrame(() => {
+            elements.customModelDropdown.style.display = 'none';
+          });
         }
         const provider = elements.apiProviderSelect.value;
         
-        // Save selected provider
-        await chrome.storage.local.set({ [STORAGE_KEYS.API_PROVIDER]: provider });
-        
-        // Load API key for selected provider
-        const result = await chrome.storage.local.get([
-          STORAGE_KEYS.API_KEY,
-          STORAGE_KEYS.CLAUDE_API_KEY,
-          STORAGE_KEYS.GEMINI_API_KEY,
-          STORAGE_KEYS.GROK_API_KEY,
-          STORAGE_KEYS.OPENROUTER_API_KEY
-        ]);
-        
-        let apiKeyValue = '';
-        let apiKeyEncrypted = null;
-        
-        if (provider === 'openai' && result[STORAGE_KEYS.API_KEY]) {
-          try {
-            const decrypted = await decryptApiKey(result[STORAGE_KEYS.API_KEY]);
-            apiKeyValue = maskApiKey(decrypted);
-            apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
-          } catch (error) {
-            logError('Failed to decrypt OpenAI API key', error);
-            apiKeyValue = maskApiKey(result[STORAGE_KEYS.API_KEY]);
-            apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+        // Defer heavy async work to avoid blocking main thread
+        setTimeout(async () => {
+          // Save selected provider
+          await chrome.storage.local.set({ [STORAGE_KEYS.API_PROVIDER]: provider });
+          
+          // Load API key for selected provider
+          const result = await chrome.storage.local.get([
+            STORAGE_KEYS.API_KEY,
+            STORAGE_KEYS.CLAUDE_API_KEY,
+            STORAGE_KEYS.GEMINI_API_KEY,
+            STORAGE_KEYS.GROK_API_KEY,
+            STORAGE_KEYS.OPENROUTER_API_KEY
+          ]);
+          
+          let apiKeyValue = '';
+          let apiKeyEncrypted = null;
+          
+          if (provider === 'openai' && result[STORAGE_KEYS.API_KEY]) {
+            try {
+              const decrypted = await decryptApiKey(result[STORAGE_KEYS.API_KEY]);
+              apiKeyValue = maskApiKey(decrypted);
+              apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+            } catch (error) {
+              logError('Failed to decrypt OpenAI API key', error);
+              apiKeyValue = maskApiKey(result[STORAGE_KEYS.API_KEY]);
+              apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+            }
+          } else if (provider === 'claude' && result[STORAGE_KEYS.CLAUDE_API_KEY]) {
+            try {
+              const decrypted = await decryptApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
+              apiKeyValue = maskApiKey(decrypted);
+              apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+            } catch (error) {
+              logError('Failed to decrypt Claude API key', error);
+              apiKeyValue = maskApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
+              apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+            }
+          } else if (provider === 'gemini' && result[STORAGE_KEYS.GEMINI_API_KEY]) {
+            try {
+              const decrypted = await decryptApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+              apiKeyValue = maskApiKey(decrypted);
+              apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+            } catch (error) {
+              logError('Failed to decrypt Gemini API key', error);
+              apiKeyValue = maskApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+              apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+            }
+          } else if (provider === 'grok' && result[STORAGE_KEYS.GROK_API_KEY]) {
+            try {
+              const decrypted = await decryptApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+              apiKeyValue = maskApiKey(decrypted);
+              apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+            } catch (error) {
+              logError('Failed to decrypt Grok API key', error);
+              apiKeyValue = maskApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+              apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+            }
+          } else if (provider === 'openrouter' && result[STORAGE_KEYS.OPENROUTER_API_KEY]) {
+            try {
+              const decrypted = await decryptApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+              apiKeyValue = maskApiKey(decrypted);
+              apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+            } catch (error) {
+              logError('Failed to decrypt OpenRouter API key', error);
+              apiKeyValue = maskApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+              apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+            }
           }
-        } else if (provider === 'claude' && result[STORAGE_KEYS.CLAUDE_API_KEY]) {
-          try {
-            const decrypted = await decryptApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
-            apiKeyValue = maskApiKey(decrypted);
-            apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
-          } catch (error) {
-            logError('Failed to decrypt Claude API key', error);
-            apiKeyValue = maskApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
-            apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+          
+          // Defer DOM updates to requestAnimationFrame
+          requestAnimationFrame(() => {
+            if (elements.apiKey) {
+              elements.apiKey.value = apiKeyValue;
+              if (apiKeyEncrypted) {
+                elements.apiKey.dataset.encrypted = apiKeyEncrypted;
+              } else {
+                delete elements.apiKey.dataset.encrypted;
+              }
+              // Reset to password type when switching
+              elements.apiKey.type = 'password';
+              if (elements.toggleApiKey) {
+                const eyeIcon = elements.toggleApiKey.querySelector('.eye-icon');
+                if (eyeIcon) {
+                  eyeIcon.textContent = '👁';
+                }
+              }
+            }
+          });
+          
+          // Update UI (label, placeholder) - defer async work
+          if (window.settingsModule) {
+            window.settingsModule.updateApiProviderUI().catch(error => {
+              logError('Failed to update API provider UI', error);
+            });
           }
-        } else if (provider === 'gemini' && result[STORAGE_KEYS.GEMINI_API_KEY]) {
-          try {
-            const decrypted = await decryptApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
-            apiKeyValue = maskApiKey(decrypted);
-            apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
-          } catch (error) {
-            logError('Failed to decrypt Gemini API key', error);
-            apiKeyValue = maskApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
-            apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
-          }
-        } else if (provider === 'grok' && result[STORAGE_KEYS.GROK_API_KEY]) {
-          try {
-            const decrypted = await decryptApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
-            apiKeyValue = maskApiKey(decrypted);
-            apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
-          } catch (error) {
-            logError('Failed to decrypt Grok API key', error);
-            apiKeyValue = maskApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
-            apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
-          }
-        } else if (provider === 'openrouter' && result[STORAGE_KEYS.OPENROUTER_API_KEY]) {
-          try {
-            const decrypted = await decryptApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
-            apiKeyValue = maskApiKey(decrypted);
-            apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
-          } catch (error) {
-            logError('Failed to decrypt OpenRouter API key', error);
-            apiKeyValue = maskApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
-            apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
-          }
-        }
-        
-        if (elements.apiKey) {
-          elements.apiKey.value = apiKeyValue;
-          if (apiKeyEncrypted) {
-            elements.apiKey.dataset.encrypted = apiKeyEncrypted;
-          } else {
-            delete elements.apiKey.dataset.encrypted;
-          }
-          // Reset to password type when switching
-          elements.apiKey.type = 'password';
-          if (elements.toggleApiKey) {
-            elements.toggleApiKey.querySelector('.eye-icon').textContent = '👁';
-          }
-        }
-        
-        // Update UI (label, placeholder)
-        if (window.settingsModule) {
-          await window.settingsModule.updateApiProviderUI();
-        }
+        }, 0);
       });
     }
 
@@ -329,44 +342,89 @@ export function initHandlers(deps) {
     }
 
     if (elements.toggleSettings) {
-      elements.toggleSettings.addEventListener('click', () => {
+      elements.toggleSettings.addEventListener('click', (e) => {
+        // CRITICAL: Immediately return control to browser
+        e.stopPropagation();
+        e.preventDefault();
+        
+        // Get state immediately (synchronous, fast)
         const isOpen = elements.settingsPanel.classList.contains('open');
         
-        if (isOpen) {
-          elements.settingsPanel.classList.remove('open');
-        } else {
-          // Opening - close stats if open
-          if (elements.statsPanel && elements.statsPanel.classList.contains('open')) {
-            elements.statsPanel.classList.remove('open');
+        // CRITICAL: Use scheduler.postTask with user-blocking priority if available
+        // This ensures user interactions are processed before any background tasks
+        const scheduleUpdate = (fn) => {
+          if (typeof scheduler !== 'undefined' && scheduler.postTask) {
+            scheduler.postTask(fn, { priority: 'user-blocking' });
+          } else {
+            // Fallback to setTimeout for immediate yield
+            setTimeout(fn, 0);
           }
-          if (elements.settingsPanel) {
-            elements.settingsPanel.classList.add('open');
-          }
-        }
-      });
+        };
+        
+        // Defer ALL DOM updates to avoid blocking
+        scheduleUpdate(() => {
+          requestAnimationFrame(() => {
+            if (isOpen) {
+              // Closing - just remove class
+              requestAnimationFrame(() => {
+                elements.settingsPanel.classList.remove('open');
+              });
+            } else {
+              // Opening - close stats if open (defer)
+              requestAnimationFrame(() => {
+                if (elements.statsPanel && elements.statsPanel.classList.contains('open')) {
+                  elements.statsPanel.classList.remove('open');
+                }
+                // Open settings panel immediately for visual feedback
+                if (elements.settingsPanel) {
+                  elements.settingsPanel.classList.add('open');
+                }
+              });
+            }
+          });
+        });
+      }, { passive: true });
     }
 
     if (elements.toggleStats) {
-      elements.toggleStats.addEventListener('click', async () => {
-        const isOpen = elements.statsPanel.classList.contains('open');
+      elements.toggleStats.addEventListener('click', (e) => {
+        // CRITICAL: Immediately return control, defer ALL work
+        e.stopPropagation();
         
-        if (isOpen) {
-          elements.statsPanel.classList.remove('open');
-        } else {
-          // Opening - close settings if open
-          if (elements.settingsPanel.classList.contains('open')) {
-            elements.settingsPanel.classList.remove('open');
-          }
-          
-          // Load data BEFORE opening
-          await loadAndDisplayStats();
-          
-          // Then open
-          if (elements.statsPanel) {
-            elements.statsPanel.classList.add('open');
-          }
-        }
-      });
+        requestAnimationFrame(() => {
+          setTimeout(() => {
+            const isOpen = elements.statsPanel.classList.contains('open');
+            
+            if (isOpen) {
+              // Defer DOM update
+              requestAnimationFrame(() => {
+                elements.statsPanel.classList.remove('open');
+              });
+            } else {
+              // Opening - close settings if open (defer for consistency)
+              requestAnimationFrame(() => {
+                if (elements.settingsPanel.classList.contains('open')) {
+                  elements.settingsPanel.classList.remove('open');
+                }
+              });
+              
+              // Open panel FIRST for immediate visual feedback
+              requestAnimationFrame(() => {
+                if (elements.statsPanel) {
+                  elements.statsPanel.classList.add('open');
+                }
+              });
+              
+              // Load data AFTER opening (non-blocking)
+              setTimeout(() => {
+                loadAndDisplayStats().catch((error) => {
+                  logError('Failed to load stats', error);
+                });
+              }, 100); // Small delay to let panel animation start
+            }
+          }, 0);
+        });
+      }, { passive: true });
     }
 
     if (elements.clearStatsBtn) {
@@ -384,17 +442,27 @@ export function initHandlers(deps) {
     }
 
     if (elements.clearCacheBtn) {
-      elements.clearCacheBtn.addEventListener('click', async () => {
-        const langCode = await getUILanguage();
-        const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-        const clearCacheConfirm = locale.clearSelectorCacheConfirm || UI_LOCALES.en.clearSelectorCacheConfirm;
-        if (confirm(clearCacheConfirm)) {
-          await chrome.runtime.sendMessage({ action: 'clearSelectorCache' });
-          await loadAndDisplayStats();
-          const locale = await t('cacheCleared');
-          showToast(locale, 'success');
-        }
-      });
+      elements.clearCacheBtn.addEventListener('click', (e) => {
+        // CRITICAL: Defer all async work to avoid blocking
+        e.stopPropagation();
+        
+        requestAnimationFrame(() => {
+          setTimeout(async () => {
+            const langCode = await getUILanguage();
+            const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+            const clearCacheConfirm = locale.clearSelectorCacheConfirm || UI_LOCALES.en.clearSelectorCacheConfirm;
+            if (confirm(clearCacheConfirm)) {
+              // Defer heavy operations
+              setTimeout(async () => {
+                await chrome.runtime.sendMessage({ action: 'clearSelectorCache' });
+                await loadAndDisplayStats();
+                const locale = await t('cacheCleared');
+                showToast(locale, 'success');
+              }, 0);
+            }
+          }, 0);
+        });
+      }, { passive: true });
     }
 
     if (elements.exportSettingsBtn) {
@@ -624,7 +692,7 @@ export function initHandlers(deps) {
       });
     }
 
-    // Close custom dropdown when clicking outside
+    // Close custom dropdown when clicking outside - defer DOM updates
     document.addEventListener('click', (e) => {
       const dropdownDisplay = elements.customModelDropdown?.style.display;
       const now = Date.now();
@@ -646,57 +714,96 @@ export function initHandlers(deps) {
         return;
       }
       
-      // Close dropdown
-      elements.customModelDropdown.style.display = 'none';
+      // Defer DOM update to avoid blocking
+      requestAnimationFrame(() => {
+        if (elements.customModelDropdown) {
+          elements.customModelDropdown.style.display = 'none';
+        }
+      });
     });
 
     if (elements.modeSelect) {
       elements.modeSelect.addEventListener('change', () => {
         debouncedSaveSettings(STORAGE_KEYS.MODE, elements.modeSelect.value, async () => {
           if (window.settingsModule) {
-            await window.settingsModule.updateModeHint();
-            window.settingsModule.updateCacheVisibility();
+            // Defer async work to avoid blocking
+            setTimeout(async () => {
+              await window.settingsModule.updateModeHint();
+              window.settingsModule.updateCacheVisibility();
+            }, 0);
           }
         });
       });
     }
 
     if (elements.useCache) {
-      elements.useCache.addEventListener('change', async () => {
+      elements.useCache.addEventListener('change', (e) => {
+        // CRITICAL: Immediately return control, defer ALL work
         const value = elements.useCache.checked;
-        // Save immediately (not debounced) to ensure it's preserved
-        try {
-          await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: value });
-        } catch (error) {
-          logError('Failed to save use_selector_cache setting', error);
-        }
-      });
+        
+        // Use scheduler.postTask with user-blocking priority if available
+        const scheduleUpdate = (fn) => {
+          if (typeof scheduler !== 'undefined' && scheduler.postTask) {
+            scheduler.postTask(fn, { priority: 'user-blocking' });
+          } else {
+            setTimeout(fn, 0);
+          }
+        };
+        
+        scheduleUpdate(async () => {
+          try {
+            await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: value });
+          } catch (error) {
+            logError('Failed to save use_selector_cache setting', error);
+          }
+        });
+      }, { passive: true });
     }
     
     // Handle enableCache checkbox in stats section - INDEPENDENT setting, does NOT affect useCache
     if (elements.enableCache) {
-      elements.enableCache.addEventListener('change', async () => {
+      elements.enableCache.addEventListener('change', (e) => {
+        // CRITICAL: Immediately return control, defer ALL work
         const value = elements.enableCache.checked;
-        // Save immediately (not debounced) to ensure it's preserved
-        try {
-          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: value });
-        } catch (error) {
-          logError('Failed to save enable_selector_caching setting', error);
-        }
-      });
+        
+        // Use scheduler.postTask with user-blocking priority if available
+        const scheduleUpdate = (fn) => {
+          if (typeof scheduler !== 'undefined' && scheduler.postTask) {
+            scheduler.postTask(fn, { priority: 'user-blocking' });
+          } else {
+            setTimeout(fn, 0);
+          }
+        };
+        
+        scheduleUpdate(async () => {
+          try {
+            await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: value });
+          } catch (error) {
+            logError('Failed to save enable_selector_caching setting', error);
+          }
+        });
+      }, { passive: true });
     }
     
     // Handle enableStats checkbox in stats section
     if (elements.enableStats) {
-      elements.enableStats.addEventListener('change', async () => {
+      elements.enableStats.addEventListener('change', (e) => {
+        // CRITICAL: Immediately return control to browser, defer ALL work
         const value = elements.enableStats.checked;
-        // Save immediately (not debounced) to ensure it's preserved
-        try {
-          await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: value });
-        } catch (error) {
-          logError('Failed to save enable_statistics setting', error);
-        }
-      });
+        
+        // Use requestAnimationFrame + setTimeout to ensure UI is responsive
+        requestAnimationFrame(() => {
+          setTimeout(async () => {
+            try {
+              await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_STATS]: value });
+              // Don't reload stats immediately - let user continue interacting
+              // Stats will update on next panel open
+            } catch (error) {
+              logError('Failed to save enable_statistics setting', error);
+            }
+          }, 0);
+        });
+      }, { passive: true });
     }
     
     /**
@@ -705,15 +812,22 @@ export function initHandlers(deps) {
      */
     if (elements.outputFormat) {
       elements.outputFormat.addEventListener('change', () => {
-        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.outputFormat.value, async () => {
-          // Sync main format select
-          if (elements.mainFormatSelect) {
-            elements.mainFormatSelect.value = elements.outputFormat.value;
-          }
+        const value = elements.outputFormat.value;
+        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, async () => {
+          // Defer DOM updates to avoid blocking
+          requestAnimationFrame(() => {
+            // Sync main format select
+            if (elements.mainFormatSelect) {
+              elements.mainFormatSelect.value = value;
+            }
+          });
           // updateOutputFormatUI() handles all UI visibility updates based on format
           // It calls updateAudioProviderUI() and updateTranslationVisibility() internally
           if (window.settingsModule) {
-            await window.settingsModule.updateOutputFormatUI();
+            // Defer async work
+            setTimeout(async () => {
+              await window.settingsModule.updateOutputFormatUI();
+            }, 0);
           }
         });
       });
@@ -722,10 +836,17 @@ export function initHandlers(deps) {
     // Sync main format select with settings format
     if (elements.mainFormatSelect) {
       elements.mainFormatSelect.addEventListener('change', () => {
-        elements.outputFormat.value = elements.mainFormatSelect.value;
-        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, elements.mainFormatSelect.value, async () => {
+        const value = elements.mainFormatSelect.value;
+        // Defer DOM update
+        requestAnimationFrame(() => {
+          elements.outputFormat.value = value;
+        });
+        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, async () => {
           if (window.settingsModule) {
-            await window.settingsModule.updateOutputFormatUI();
+            // Defer async work
+            setTimeout(async () => {
+              await window.settingsModule.updateOutputFormatUI();
+            }, 0);
           }
         });
       });
@@ -753,7 +874,10 @@ export function initHandlers(deps) {
       elements.languageSelect.addEventListener('change', () => {
         debouncedSaveSettings(STORAGE_KEYS.LANGUAGE, elements.languageSelect.value, async () => {
           if (window.settingsModule) {
-            await window.settingsModule.updateTranslationVisibility();
+            // Defer async work to avoid blocking
+            setTimeout(async () => {
+              await window.settingsModule.updateTranslationVisibility();
+            }, 0);
           }
         });
       });
@@ -763,7 +887,10 @@ export function initHandlers(deps) {
       elements.translateImages.addEventListener('change', () => {
         debouncedSaveSettings(STORAGE_KEYS.TRANSLATE_IMAGES, elements.translateImages.checked, async () => {
           if (window.settingsModule) {
-            await window.settingsModule.updateTranslationVisibility();
+            // Defer async work to avoid blocking
+            setTimeout(async () => {
+              await window.settingsModule.updateTranslationVisibility();
+            }, 0);
           }
         });
       });
@@ -866,31 +993,34 @@ export function initHandlers(deps) {
       });
     }
 
-    // Close dropdown when clicking outside
+    // Close dropdown when clicking outside - defer DOM updates
     // Global click handler to close all custom selects when clicking outside
     // (This is added once, not per select)
     if (!window.customSelectClickHandlerAdded) {
       document.addEventListener('click', (e) => {
-        // Close all custom selects if click is outside
-        document.querySelectorAll('.custom-select.open').forEach(select => {
-          if (!select.contains(e.target)) {
-            select.classList.remove('open');
+        // Defer DOM updates to avoid blocking main thread
+        requestAnimationFrame(() => {
+          // Close all custom selects if click is outside
+          document.querySelectorAll('.custom-select.open').forEach(select => {
+            if (!select.contains(e.target)) {
+              select.classList.remove('open');
+            }
+          });
+          
+          // Also close font family dropdown if open
+          if (elements.fontFamilyContainer && !elements.fontFamilyContainer.contains(e.target)) {
+            elements.fontFamilyContainer.classList.remove('open');
+          }
+          
+          // Also close model dropdown if open and click is outside
+          if (elements.customModelDropdown && 
+              elements.customModelDropdown.style.display !== 'none' &&
+              !elements.customModelDropdown.contains(e.target) &&
+              !(elements.modelSelect && elements.modelSelect.contains(e.target)) &&
+              !(elements.addModelBtn && elements.addModelBtn.contains(e.target))) {
+            elements.customModelDropdown.style.display = 'none';
           }
         });
-        
-        // Also close font family dropdown if open
-        if (elements.fontFamilyContainer && !elements.fontFamilyContainer.contains(e.target)) {
-          elements.fontFamilyContainer.classList.remove('open');
-        }
-        
-        // Also close model dropdown if open and click is outside
-        if (elements.customModelDropdown && 
-            elements.customModelDropdown.style.display !== 'none' &&
-            !elements.customModelDropdown.contains(e.target) &&
-            !(elements.modelSelect && elements.modelSelect.contains(e.target)) &&
-            !(elements.addModelBtn && elements.addModelBtn.contains(e.target))) {
-          elements.customModelDropdown.style.display = 'none';
-        }
       });
       window.customSelectClickHandlerAdded = true;
     }
@@ -992,22 +1122,30 @@ export function initHandlers(deps) {
       });
     }
 
-    // Reset individual settings
+    // Reset individual settings - defer to avoid blocking
     document.querySelectorAll('.btn-reset-inline').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
         const resetType = btn.dataset.reset;
-        if (window.settingsModule) {
-          await window.settingsModule.resetStyleSetting(resetType);
-        }
+        // Defer async work to avoid blocking main thread
+        setTimeout(async () => {
+          if (window.settingsModule) {
+            await window.settingsModule.resetStyleSetting(resetType);
+          }
+        }, 0);
       });
     });
 
-    // Reset all styles
+    // Reset all styles - defer to avoid blocking
     if (elements.resetStylesBtn) {
-      elements.resetStylesBtn.addEventListener('click', async () => {
-        if (window.settingsModule) {
-          await window.settingsModule.resetAllStyles();
-        }
+      elements.resetStylesBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // Defer async work to avoid blocking main thread
+        setTimeout(async () => {
+          if (window.settingsModule) {
+            await window.settingsModule.resetAllStyles();
+          }
+        }, 0);
       });
     }
 

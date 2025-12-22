@@ -6,10 +6,18 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "build:worker": "node build-tts-worker.js",
+    "build:worker:watch": "nodemon --watch src/tts-worker-entry.js --exec 'npm run build:worker'",
+    "build:offscreen": "node build-offscreen.js",
+    "build:offscreen:watch": "nodemon --watch offscreen.js --exec 'npm run build:offscreen'",
+    "build": "npm run build:offscreen && npm run build:worker",
+    "dev": "npm run build:offscreen:watch"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^1.0.4",
+    "esbuild": "^0.19.0",
+    "nodemon": "^3.0.0",
     "vitest": "^1.0.4"
   },
   "keywords": [
@@ -22,8 +30,9 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@diffusionstudio/piper-wasm": "^1.0.0",
     "@mintplex-labs/piper-tts-web": "^1.0.4",
     "js-tts-wrapper": "^0.1.63",
-    "onnxruntime-web": "^1.23.2"
+    "onnxruntime-web": "1.19.0"
   }
 }

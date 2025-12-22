@@ -36,102 +36,183 @@ export function initStats(deps) {
   }
 
   async function displayStats(stats) {
-    // Update main counters
-    document.getElementById('statTotal').textContent = stats.totalSaved || 0;
-    document.getElementById('statMonth').textContent = stats.thisMonth || 0;
-    
-    // Update format counts
-    document.getElementById('formatPdf').textContent = stats.byFormat?.pdf || 0;
-    document.getElementById('formatEpub').textContent = stats.byFormat?.epub || 0;
-    document.getElementById('formatFb2').textContent = stats.byFormat?.fb2 || 0;
-    document.getElementById('formatMarkdown').textContent = stats.byFormat?.markdown || 0;
-    document.getElementById('formatAudio').textContent = stats.byFormat?.audio || 0;
-    
-    // Update history
-    const historyContainer = document.getElementById('statsHistory');
-    if (stats.history && stats.history.length > 0) {
-      historyContainer.innerHTML = stats.history.map((item, index) => {
-        const date = new Date(item.date);
-        const dateStr = formatRelativeDate(date);
-        const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
-        return `
-          <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
-            <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="Open original article">
-              <div class="history-title">${escapeHtml(item.title)}</div>
-              <div class="history-meta">
-                <span class="history-format">${item.format}</span>
-                <span class="history-domain">${escapeHtml(item.domain)}</span>
-                ${timeStr ? `<span class="history-time">${timeStr}</span>` : ''}
-                <span class="history-date">${dateStr}</span>
-              </div>
-            </a>
-            <button class="history-delete" data-index="${index}" title="Delete from history">✕</button>
-          </div>
-        `;
-      }).join('');
-      
-      // Add delete handlers
-      historyContainer.querySelectorAll('.history-delete').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const index = parseInt(btn.dataset.index);
-          await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', index });
-          await loadAndDisplayStats();
+    // Defer all DOM updates to avoid blocking main thread
+    return new Promise((resolve) => {
+      requestAnimationFrame(async () => {
+        // Update main counters - batch DOM updates
+        const updates = [];
+        updates.push(() => {
+          const el = document.getElementById('statTotal');
+          if (el) el.textContent = stats.totalSaved || 0;
         });
+        updates.push(() => {
+          const el = document.getElementById('statMonth');
+          if (el) el.textContent = stats.thisMonth || 0;
+        });
+        updates.push(() => {
+          const el = document.getElementById('formatPdf');
+          if (el) el.textContent = stats.byFormat?.pdf || 0;
+        });
+        updates.push(() => {
+          const el = document.getElementById('formatEpub');
+          if (el) el.textContent = stats.byFormat?.epub || 0;
+        });
+        updates.push(() => {
+          const el = document.getElementById('formatFb2');
+          if (el) el.textContent = stats.byFormat?.fb2 || 0;
+        });
+        updates.push(() => {
+          const el = document.getElementById('formatMarkdown');
+          if (el) el.textContent = stats.byFormat?.markdown || 0;
+        });
+        updates.push(() => {
+          const el = document.getElementById('formatAudio');
+          if (el) el.textContent = stats.byFormat?.audio || 0;
+        });
+        
+        // Apply counter updates
+        updates.forEach(update => update());
+        
+        // Update history - use DocumentFragment for better performance
+        const historyContainer = document.getElementById('statsHistory');
+        if (!historyContainer) {
+          resolve();
+          return;
+        }
+        
+        if (stats.history && stats.history.length > 0) {
+          // Use DocumentFragment to batch DOM operations
+          const fragment = document.createDocumentFragment();
+          const tempDiv = document.createElement('div');
+          
+          tempDiv.innerHTML = stats.history.map((item, index) => {
+            const date = new Date(item.date);
+            const dateStr = formatRelativeDate(date);
+            const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
+            return `
+              <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
+                <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="Open original article">
+                  <div class="history-title">${escapeHtml(item.title)}</div>
+                  <div class="history-meta">
+                    <span class="history-format">${item.format}</span>
+                    <span class="history-domain">${escapeHtml(item.domain)}</span>
+                    ${timeStr ? `<span class="history-time">${timeStr}</span>` : ''}
+                    <span class="history-date">${dateStr}</span>
+                  </div>
+                </a>
+                <button class="history-delete" data-index="${index}" title="Delete from history">✕</button>
+              </div>
+            `;
+          }).join('');
+          
+          // Move nodes to fragment
+          while (tempDiv.firstChild) {
+            fragment.appendChild(tempDiv.firstChild);
+          }
+          
+          // Clear and append in one operation
+          historyContainer.innerHTML = '';
+          historyContainer.appendChild(fragment);
+          
+          // Add delete handlers - defer to avoid blocking
+          setTimeout(() => {
+            historyContainer.querySelectorAll('.history-delete').forEach(btn => {
+              btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const index = parseInt(btn.dataset.index);
+                // Defer async work
+                setTimeout(async () => {
+                  await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', index });
+                  await loadAndDisplayStats();
+                }, 0);
+              });
+            });
+          }, 0);
+        } else {
+          const noDataText = await t('noDataYet');
+          historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
+        }
+        
+        resolve();
       });
-    } else {
-      const noDataText = await t('noDataYet');
-      historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
-    }
+    });
   }
 
   async function displayCacheStats(stats) {
-    const domainsEl = document.getElementById('cacheDomains');
-    if (domainsEl) {
-      domainsEl.textContent = stats.validDomains || 0;
-    }
-    
-    // Display cached domains list
-    const domainsListEl = document.getElementById('cacheDomainsList');
-    if (domainsListEl && stats.domains) {
-      if (stats.domains.length === 0) {
-        const noCachedDomainsText = await t('noCachedDomains');
-        domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
-      } else {
-        domainsListEl.innerHTML = stats.domains.map(item => {
-          if (item.invalidated) return ''; // Skip invalidated domains
-          
-          return `
-            <div class="cache-domain-item">
-              <span class="cache-domain-name" title="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</span>
-              <div class="cache-domain-meta">
-                <span>${item.age}</span>
-              </div>
-              <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" data-i18n-title="deleteFromCache">✕</button>
-            </div>
-          `;
-        }).filter(html => html).join('');
+    // Defer all DOM updates to avoid blocking main thread
+    return new Promise((resolve) => {
+      requestAnimationFrame(async () => {
+        const domainsEl = document.getElementById('cacheDomains');
+        if (domainsEl) {
+          domainsEl.textContent = stats.validDomains || 0;
+        }
         
-        // Add delete handlers
-        domainsListEl.querySelectorAll('.cache-domain-delete').forEach(btn => {
-          btn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const domain = btn.dataset.domain;
-            const langCode = await getUILanguage();
-            const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-            const deleteConfirm = (locale.deleteDomainFromCache || UI_LOCALES.en.deleteDomainFromCache).replace('{domain}', domain);
-            if (confirm(deleteConfirm)) {
-              await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
-              await loadAndDisplayStats();
-              const domainRemovedText = await t('domainRemovedFromCache');
-              showToast(domainRemovedText, 'success');
+        // Display cached domains list
+        const domainsListEl = document.getElementById('cacheDomainsList');
+        if (domainsListEl && stats.domains) {
+          if (stats.domains.length === 0) {
+            const noCachedDomainsText = await t('noCachedDomains');
+            domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
+            resolve();
+          } else {
+            // Use DocumentFragment for better performance
+            const fragment = document.createDocumentFragment();
+            const tempDiv = document.createElement('div');
+            
+            tempDiv.innerHTML = stats.domains.map(item => {
+              if (item.invalidated) return ''; // Skip invalidated domains
+              
+              return `
+                <div class="cache-domain-item">
+                  <span class="cache-domain-name" title="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</span>
+                  <div class="cache-domain-meta">
+                    <span>${item.age}</span>
+                  </div>
+                  <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" data-i18n-title="deleteFromCache">✕</button>
+                </div>
+              `;
+            }).filter(html => html).join('');
+            
+            // Move nodes to fragment
+            while (tempDiv.firstChild) {
+              fragment.appendChild(tempDiv.firstChild);
             }
-          });
-        });
-      }
-    }
+            
+            // Clear and append in one operation
+            domainsListEl.innerHTML = '';
+            domainsListEl.appendChild(fragment);
+            
+            // Add delete handlers - defer to avoid blocking
+            setTimeout(() => {
+              domainsListEl.querySelectorAll('.cache-domain-delete').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const domain = btn.dataset.domain;
+                  // Defer async work
+                  setTimeout(async () => {
+                    const langCode = await getUILanguage();
+                    const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+                    const deleteConfirm = (locale.deleteDomainFromCache || UI_LOCALES.en.deleteDomainFromCache).replace('{domain}', domain);
+                    if (confirm(deleteConfirm)) {
+                      await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
+                      await loadAndDisplayStats();
+                      const domainRemovedText = await t('domainRemovedFromCache');
+                      showToast(domainRemovedText, 'success');
+                    }
+                  }, 0);
+                });
+              });
+            }, 0);
+            
+            resolve();
+          }
+        } else {
+          resolve();
+        }
+      });
+    });
   }
 
   async function loadAndDisplayStats() {

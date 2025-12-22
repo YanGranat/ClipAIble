@@ -632,13 +632,16 @@ function stopTimerDisplay() {
 // Update timer display in status text
 function updateTimerDisplay() {
   if (!currentStartTimeRef.current) {
-    // Try to get startTime from state if currentStartTime is not set
-    chrome.runtime.sendMessage({ action: 'getState' }).then(state => {
-      if (state && state.isProcessing && state.startTime) {
-        currentStartTimeRef.current = state.startTime;
-        updateTimerDisplay(); // Retry after setting startTime
-      }
-    }).catch(() => {});
+    // CRITICAL: Defer getState call to avoid blocking user interactions
+    // Use setTimeout to yield to event loop before making the call
+    setTimeout(() => {
+      chrome.runtime.sendMessage({ action: 'getState' }).then(state => {
+        if (state && state.isProcessing && state.startTime) {
+          currentStartTimeRef.current = state.startTime;
+          updateTimerDisplay(); // Retry after setting startTime
+        }
+      }).catch(() => {});
+    }, 0);
     return;
   }
   const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
@@ -1357,12 +1360,18 @@ async function showCustomModelDropdown() {
       
       e.stopPropagation();
       e.stopImmediatePropagation();
-      // Update select value and close dropdown
-      elements.modelSelect.value = modelValue;
-      elements.customModelDropdown.style.display = 'none';
-      // Trigger change event to save settings
-      elements.modelSelect.dispatchEvent(new Event('change'));
-    });
+      
+      // Defer all work to avoid blocking main thread
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          // Update select value and close dropdown
+          elements.modelSelect.value = modelValue;
+          elements.customModelDropdown.style.display = 'none';
+          // Trigger change event to save settings
+          elements.modelSelect.dispatchEvent(new Event('change'));
+        });
+      }, 0);
+    }, { passive: true });
     
     elements.customModelOptions.appendChild(optionDiv);
   }
@@ -1790,37 +1799,43 @@ function initCustomSelect(selectId, options = {}) {
   });
   
   optionsDiv.addEventListener('click', (e) => {
-    const target = e.target;
-    if (!(target instanceof HTMLElement)) return;
-    const option = target.closest('.custom-select-option');
-    if (!(option instanceof HTMLElement)) return;
-    
-    const value = option.dataset.value;
-    if (!value) return;
-    
-    // Update native select
-    if (select instanceof HTMLSelectElement) {
-      select.value = value;
-    }
-    select.dispatchEvent(new Event('change', { bubbles: true }));
-    
-    // Update display
-    valueSpan.textContent = option.textContent;
-    
-    // Update selected state
-    optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
-      opt.classList.remove('selected');
-    });
-    option.classList.add('selected');
-    
-    // Close dropdown
-    container.classList.remove('open');
-    
-    // Call custom callback if provided
-    if (options.onChange) {
-      options.onChange(value);
-    }
-  });
+    // Defer all work to avoid blocking main thread
+    setTimeout(() => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      const option = target.closest('.custom-select-option');
+      if (!(option instanceof HTMLElement)) return;
+      
+      const value = option.dataset.value;
+      if (!value) return;
+      
+      // Defer DOM updates to requestAnimationFrame
+      requestAnimationFrame(() => {
+        // Update native select
+        if (select instanceof HTMLSelectElement) {
+          select.value = value;
+        }
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        // Update display
+        valueSpan.textContent = option.textContent;
+        
+        // Update selected state
+        optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
+          opt.classList.remove('selected');
+        });
+        option.classList.add('selected');
+        
+        // Close dropdown
+        container.classList.remove('open');
+        
+        // Call custom callback if provided
+        if (options.onChange) {
+          options.onChange(value);
+        }
+      });
+    }, 0);
+  }, { passive: true });
   
   // Close dropdown when clicking outside (handled globally for all selects)
   

@@ -25,6 +25,8 @@ console.log('[ClipAIble TTS] Loading offline TTS module...', {
   timestamp: Date.now()
 });
 
+// Import offline TTS module - it doesn't load WASM on import, only when used
+// The actual WASM loading happens in offscreen.js when initPiperTTS() is called
 import { textToSpeech as offlineTTS, OFFLINE_TTS_CONFIG } from './offline-tts-offscreen.js';
 
 console.log('[ClipAIble TTS] === MODULE LOADED ===', {
@@ -820,30 +822,26 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   const progressBase = 60; // Start at 60% (after preparation)
   const progressRange = 35; // Use 60-95% for TTS conversion
   
-  // Throttle progress updates to reduce UI lag
-  // Update progress only every 2% or every 5 chunks, whichever comes first
-  let lastProgressUpdate = progressBase - 1; // Force first update
-  const PROGRESS_UPDATE_THRESHOLD = 2; // Update every 2% progress
-  const CHUNK_UPDATE_THRESHOLD = 5; // Or every 5 chunks
+  // CRITICAL: Completely disable progress updates during audio generation to prevent INP issues
+  // Web Worker cannot be used due to import maps limitations
+  // Offscreen document runs in separate context but WASM operations still block its thread
+  // The only way to prevent INP issues is to avoid frequent state updates that block popup UI
+  // Solution: Only update at start and end, no intermediate progress updates
+  const isAudioFormat = true; // This function is only called for audio
+  
+  // Update only at start to show generation has begun
+  if (updateState && expandedChunks.length > 0) {
+    updateState({
+      stage: PROCESSING_STAGES.GENERATING.id,
+      status: 'Generating audio...', 
+      progress: progressBase
+    });
+  }
   
   for (let i = 0; i < expandedChunks.length; i++) {
     const chunk = expandedChunks[i];
-    const progress = progressBase + Math.floor((i / expandedChunks.length) * progressRange);
-    
-    // Throttle progress updates to avoid UI lag
-    const shouldUpdate = (progress - lastProgressUpdate >= PROGRESS_UPDATE_THRESHOLD) || 
-                         ((i + 1) % CHUNK_UPDATE_THRESHOLD === 0) ||
-                         (i === 0) || // Always update first chunk
-                         (i === expandedChunks.length - 1); // Always update last chunk
-    
-    if (shouldUpdate && updateState) {
-      updateState({
-        stage: PROCESSING_STAGES.GENERATING.id,
-        status: `Converting segment ${i + 1}/${expandedChunks.length} to speech...`, 
-        progress 
-      });
-      lastProgressUpdate = progress;
-    }
+    // NO progress updates during loop - this prevents blocking user interactions
+    // Progress updates cause state saves and UI updates that block the main thread
     
     try {
       // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS

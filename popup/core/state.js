@@ -36,8 +36,47 @@ export function initState(deps) {
   // Update UI based on processing state
   async function updateUIFromState(state) {
     if (!state) return;
-    const stageLabel = await mapStageLabel(state.currentStage);
-    const statusText = stageLabel || state.status;
+    
+    // For audio format, defer heavy operations to avoid blocking
+    const isAudioFormat = state?.outputFormat === 'audio';
+    
+    // CRITICAL: For audio, use multiple layers of deferral to prevent blocking user interactions
+    // Audio generation has long-running WASM operations (800-5000ms per sentence)
+    // We need to ensure UI updates don't interfere with user clicks
+    const updateFn = async () => {
+      // Defer async operations (mapStageLabel) to avoid blocking
+      if (isAudioFormat) {
+        // For audio, defer even async operations to avoid blocking
+        setTimeout(async () => {
+          const stageLabel = await mapStageLabel(state.currentStage);
+          const statusText = stageLabel || state.status;
+          
+          // Defer DOM updates to requestAnimationFrame for audio
+          requestAnimationFrame(() => {
+            // Double defer for audio to ensure user interactions are not blocked
+            setTimeout(() => {
+              performUIUpdate(state, statusText);
+            }, 0);
+          });
+        }, 0);
+      } else {
+        const stageLabel = await mapStageLabel(state.currentStage);
+        const statusText = stageLabel || state.status;
+        performUIUpdate(state, statusText);
+      }
+    };
+    
+    if (isAudioFormat) {
+      // For audio, defer to avoid blocking - use setTimeout to yield to event loop
+      setTimeout(updateFn, 0);
+    } else {
+      await updateFn();
+    }
+  }
+  
+  // Perform actual UI updates (extracted for clarity and performance)
+  async function performUIUpdate(state, statusText) {
+    const isAudioFormat = state?.outputFormat === 'audio';
     
     if (state.isProcessing) {
       // Use startTime from background (persists across popup reopens)
@@ -50,14 +89,38 @@ export function initState(deps) {
           startTimerDisplay(state.startTime);
         }
       }
-      elements.savePdfBtn.disabled = true;
-      elements.savePdfBtn.style.display = 'none';
-      if (elements.cancelBtn) {
-        elements.cancelBtn.style.display = 'block';
-        elements.cancelBtn.disabled = false;
+      
+      // CRITICAL: For audio, use multiple layers of deferral to prevent blocking user interactions
+      // Audio generation has long-running WASM operations (800-5000ms per sentence)
+      // We need to ensure DOM updates don't interfere with user clicks
+      if (isAudioFormat) {
+        // For audio, use setTimeout first to yield to event loop immediately
+        // This ensures user clicks are processed before DOM updates
+        setTimeout(() => {
+          requestAnimationFrame(() => {
+            // Double defer for audio to ensure user interactions are not blocked
+            setTimeout(() => {
+              elements.savePdfBtn.disabled = true;
+              elements.savePdfBtn.style.display = 'none';
+              if (elements.cancelBtn) {
+                elements.cancelBtn.style.display = 'block';
+                elements.cancelBtn.disabled = false;
+              }
+              setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime);
+              setProgress(state.progress);
+            }, 0);
+          });
+        }, 0);
+      } else {
+        elements.savePdfBtn.disabled = true;
+        elements.savePdfBtn.style.display = 'none';
+        if (elements.cancelBtn) {
+          elements.cancelBtn.style.display = 'block';
+          elements.cancelBtn.disabled = false;
+        }
+        setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime);
+        setProgress(state.progress);
       }
-      setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime);
-      setProgress(state.progress);
     } else if (state.error) {
       // Check if error is actually a cancellation - don't show as error
       const isCancelled = state.isCancelled || 
@@ -208,10 +271,11 @@ export function initState(deps) {
     // Store latest state
     lastScheduledState = state;
     
-    // CRITICAL: Use longer debounce interval for audio format to reduce lag during TTS
-    // Audio generation has many progress updates, so we need to throttle more aggressively
-    const isAudioFormat = state?.outputFormat === 'audio';
-    const currentMinInterval = isAudioFormat ? 250 : MIN_UI_UPDATE_INTERVAL; // 250ms for audio (4 updates/sec), 100ms for others
+    // CRITICAL: Use much longer debounce interval for audio format to reduce lag during TTS
+    // Audio generation has many progress updates (one per chunk), so we need to throttle aggressively
+    // Increased to 1000ms (1 update/sec) for audio to minimize main thread blocking during WASM operations
+    const isAudioFormat = lastScheduledState?.outputFormat === 'audio';
+    const currentMinInterval = isAudioFormat ? 1000 : MIN_UI_UPDATE_INTERVAL; // 1000ms for audio (1 update/sec), 100ms for others
     
     // If update already scheduled, skip (will use latest state)
     if (pendingUIUpdate) {
@@ -233,14 +297,39 @@ export function initState(deps) {
     }
     
     // Schedule via requestAnimationFrame for smooth DOM updates
-    pendingUIUpdate = requestAnimationFrame(async () => {
-      pendingUIUpdate = null;
-      lastUIUpdateTime = Date.now();
-      
-      if (lastScheduledState) {
-        await updateUIFromState(lastScheduledState);
-      }
-    });
+    // CRITICAL: For audio, use additional deferral to prevent blocking user interactions
+    
+    if (isAudioFormat) {
+      // For audio, use setTimeout first to yield to event loop immediately
+      // This ensures user clicks are processed before UI updates
+      pendingUIUpdate = setTimeout(() => {
+        pendingUIUpdate = null;
+        lastUIUpdateTime = Date.now();
+        
+        // Then use requestAnimationFrame for smooth DOM updates
+        requestAnimationFrame(() => {
+          // Defer async updateUIFromState to avoid blocking main thread
+          setTimeout(async () => {
+            if (lastScheduledState) {
+              await updateUIFromState(lastScheduledState);
+            }
+          }, 0);
+        });
+      }, 0);
+    } else {
+      // For non-audio, use standard requestAnimationFrame
+      pendingUIUpdate = requestAnimationFrame(() => {
+        pendingUIUpdate = null;
+        lastUIUpdateTime = Date.now();
+        
+        // Defer async updateUIFromState to avoid blocking main thread
+        setTimeout(async () => {
+          if (lastScheduledState) {
+            await updateUIFromState(lastScheduledState);
+          }
+        }, 0);
+      });
+    }
   }
 
   // Start polling for state updates
@@ -262,8 +351,21 @@ export function initState(deps) {
         return;
       }
       
+      // CRITICAL: Completely skip polling if last state was audio format
+      // Audio generation doesn't need polling since we disabled progress updates
+      // This prevents any getState calls that could block user interactions
+      const isAudioFormat = lastState?.outputFormat === 'audio';
+      if (isAudioFormat && lastState?.isProcessing) {
+        // For audio, skip polling entirely - just schedule next check much later
+        // User will see "Generating audio..." and then "Done!" when complete
+        pollInterval = 60000; // Check once per minute (effectively disabled)
+        stateRefs.statePollingTimeout = setTimeout(poll, pollInterval);
+        return;
+      }
+      
       isPolling = true;
       try {
+        // For non-audio, use normal polling
         const state = await chrome.runtime.sendMessage({ action: 'getState' });
         
         // Use lightweight comparison instead of JSON.stringify
@@ -281,7 +383,12 @@ export function initState(deps) {
           // Audio formats (especially offline TTS) are slower - use longer interval
           // CRITICAL: Check outputFormat from state (saved at start of processing)
           const isAudioFormat = state.outputFormat === 'audio';
-          const baseInterval = isAudioFormat ? 1000 : 500; // 1s for audio, 500ms for others
+          // CRITICAL: Completely disable polling for audio to prevent any blocking
+          // Audio generation has long-running WASM operations (800-5000ms per sentence)
+          // Since we disabled progress updates during audio generation, we don't need polling at all
+          // User will see "Generating audio..." and then "Done!" when complete
+          // This ensures zero interference with user interactions
+          const baseInterval = isAudioFormat ? 30000 : 500; // 30s for audio (effectively disabled), 500ms for others
           
           pollInterval = state.isProcessing ? baseInterval : 2000;
           
@@ -299,12 +406,13 @@ export function initState(deps) {
           // State didn't change - increase interval (adaptive polling)
           noChangeCount++;
           
-          // Exponential backoff: baseInterval → baseInterval*1.5 → baseInterval*2.25 → ... → 2000ms
+          // Exponential backoff: baseInterval → baseInterval*1.5 → baseInterval*2.25 → ... → 60000ms for audio
           // For idle: 2000ms (no backoff needed)
           if (state.isProcessing) {
             const isAudioFormat = state.outputFormat === 'audio';
-            const baseInterval = isAudioFormat ? 1000 : 500;
-            pollInterval = Math.min(baseInterval * Math.pow(1.5, noChangeCount), 2000);
+            const baseInterval = isAudioFormat ? 60000 : 500; // 60s for audio (effectively disabled), 500ms for others
+            const maxInterval = isAudioFormat ? 120000 : 2000; // Max 120s for audio, 2s for others
+            pollInterval = Math.min(baseInterval * Math.pow(1.5, noChangeCount), maxInterval);
           } else {
             pollInterval = 2000; // Keep 2s for idle state
           }
@@ -334,8 +442,15 @@ export function initState(deps) {
           }
         }
         
-        // Check summary status even on errors
-        await checkSummaryStatus();
+        // Check summary status even on errors (defer for audio)
+        const isAudioFormat = lastState?.outputFormat === 'audio';
+        if (isAudioFormat && lastState?.isProcessing) {
+          setTimeout(async () => {
+            await checkSummaryStatus();
+          }, 0);
+        } else {
+          await checkSummaryStatus();
+        }
         
         // Increase interval on errors
         pollInterval = Math.min(pollInterval * 2, 5000);

@@ -477,12 +477,30 @@ export function initProcessing(deps) {
       });
 
       // Processing started in background
-      // Ensure state polling is active to update UI
-      if (!stateRefs.statePollingTimeout) {
-        startStatePolling();
+      // CRITICAL: For audio, defer polling and state check to avoid blocking user interactions
+      // Audio generation has long-running WASM operations that should not be interrupted
+      const outputFormat = elements.outputFormat?.value || 'pdf';
+      const isAudioFormat = outputFormat === 'audio';
+      
+      if (isAudioFormat) {
+        // For audio, defer polling start to avoid blocking
+        setTimeout(() => {
+          if (!stateRefs.statePollingTimeout?.current) {
+            startStatePolling();
+          }
+          // Defer state check as well
+          setTimeout(async () => {
+            await checkProcessingState();
+          }, 0);
+        }, 0);
+      } else {
+        // For non-audio, start polling immediately
+        if (!stateRefs.statePollingTimeout?.current) {
+          startStatePolling();
+        }
+        // Immediately check state to update UI
+        await checkProcessingState();
       }
-      // Immediately check state to update UI
-      await checkProcessingState();
 
     } catch (error) {
       logError('=== handleSavePdf: EXCEPTION CAUGHT ===', {

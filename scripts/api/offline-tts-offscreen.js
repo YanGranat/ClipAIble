@@ -70,6 +70,9 @@ async function setupOffscreenDocument() {
   const startTime = Date.now();
   log('[ClipAIble Offscreen Setup] === START ===', { timestamp: startTime });
   
+  // Defer heavy operations to avoid blocking main thread
+  await new Promise(resolve => setTimeout(resolve, 0));
+  
   // Check if offscreen API is available
   if (!chrome.offscreen) {
     logError('[ClipAIble Offscreen Setup] Offscreen API not available');
@@ -80,7 +83,8 @@ async function setupOffscreenDocument() {
   const offscreenUrl = chrome.runtime.getURL('offscreen.html');
   log('[ClipAIble Offscreen Setup] Offscreen URL:', { offscreenUrl });
   
-  // Check if offscreen document already exists
+  // Check if offscreen document already exists - defer to avoid blocking
+  await new Promise(resolve => setTimeout(resolve, 0));
   log('[ClipAIble Offscreen Setup] Checking for existing offscreen document...');
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
@@ -240,6 +244,9 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
     timestamp: sendStartTime
   });
   
+  // Defer setup to avoid blocking main thread
+  // Use setTimeout to yield to main thread before heavy operations
+  await new Promise(resolve => setTimeout(resolve, 0));
   await setupOffscreenDocument();
   log('[ClipAIble SendToOffscreen] Setup complete, checking document existence...');
   
