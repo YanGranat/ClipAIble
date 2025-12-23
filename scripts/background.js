@@ -108,7 +108,7 @@ import {
 import { VoiceValidator } from './utils/voice-validator.js';
 import { TTSApiKeyManager } from './utils/api-key-manager.js';
 import { selectProcessingFunction } from './processing/mode-selector.js';
-import { processWithoutAI, processWithExtractMode, getSelectorsFromAI } from './processing/modes.js';
+import { processWithoutAI, processWithExtractMode, processWithSelectorMode, getSelectorsFromAI, extractContentWithSelectors } from './processing/modes.js';
 import { processVideoPage } from './processing/video.js';
 import { getQuickSaveSettingsKeys, prepareQuickSaveData } from './processing/quicksave.js';
 import { updateContextMenuWithLang } from './utils/context-menu.js';
@@ -1119,9 +1119,12 @@ try {
       return false;
     }
     
+    // Create wrapper for processWithSelectorMode that includes extractFromPageInlined
+    const processWithSelectorModeWrapper = (data) => processWithSelectorMode(data, extractFromPageInlined);
+    
     const result = routeMessage(request, sender, sendResponse, {
       startArticleProcessing,
-      processWithSelectorMode,
+      processWithSelectorMode: processWithSelectorModeWrapper,
       processWithExtractMode,
       processWithoutAI,
       stopKeepAlive,
@@ -1303,7 +1306,18 @@ async function startArticleProcessing(data) {
   
   const processingStartTimeRef = { processingStartTime };
   
-  processFunction(data)
+  // Call processFunction with appropriate arguments
+  // processWithSelectorMode requires extractFromPageInlined as second argument
+  let processPromise;
+  if (mode === 'selector') {
+    processPromise = processWithSelectorMode(data, extractFromPageInlined);
+  } else if (mode === 'automatic') {
+    processPromise = processWithoutAI(data);
+  } else {
+    processPromise = processWithExtractMode(data);
+  }
+  
+  processPromise
     .then(async result => {
       log('=== startArticleProcessing: processFunction completed ===', {
         hasResult: !!result,
@@ -1496,341 +1510,8 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
 // ============================================
 // MODE 1: SELECTOR MODE
 // ============================================
-
-async function processWithSelectorMode(data) {
-  const { html, url, title, apiKey, model, tabId } = data;
-  
-  log('=== SELECTOR MODE START ===');
-  log('Input data', { url, title, htmlLength: html?.length, tabId });
-  
-  if (!html) throw new Error('No HTML content provided');
-  if (!apiKey) throw new Error('No API key provided');
-  if (!tabId) throw new Error('No tab ID provided');
-  
-  // Check cache first (if enabled)
-  let selectors;
-  let fromCache = false;
-  // Explicit check: use cache if explicitly true, or if undefined/null (default: true)
-  // Only skip cache if explicitly false
-  const useCache = data.useCache !== false; // true if undefined/null/true, false only if explicitly false
-  
-  if (useCache) {
-    /** @type {ExtendedCacheEntry|null} */
-    const cached = await getCachedSelectors(url);
-    if (cached) {
-      selectors = cached.selectors;
-      fromCache = true;
-      await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
-      log('Using cached selectors', { url, successCount: cached.successCount || 0 });
-    }
-  }
-  
-  if (!fromCache) {
-    // Check if processing was cancelled before AI analysis
-    await checkCancellation('AI selector analysis');
-    
-    await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 3);
-    
-    // Trim HTML for analysis
-    log('Trimming HTML for analysis...');
-    const htmlForAnalysis = trimHtmlForAnalysis(html, CONFIG.MAX_HTML_FOR_ANALYSIS);
-    log('Trimmed HTML', { originalLength: html.length, trimmedLength: htmlForAnalysis.length });
-    
-    // Get selectors from AI (imported from processing/modes.js)
-    log('Requesting selectors from AI...');
-    try {
-      selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model);
-      log('Received selectors from AI', selectors);
-    } catch (error) {
-      logError('Failed to get selectors from AI', error);
-      throw new Error(`AI selector analysis failed: ${error.message}`);
-    }
-    
-    if (!selectors) {
-      throw new Error('AI returned empty selectors');
-    }
-  }
-  
-  // Check if processing was cancelled before content extraction
-  await checkCancellation('content extraction');
-  
-  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
-  
-  // Extract content using selectors
-  log('Extracting content using selectors...', { tabId, selectors });
-  let extractedContent;
-  try {
-    extractedContent = await extractContentWithSelectors(tabId, selectors, url);
-    log('Content extracted', { 
-      title: extractedContent?.title,
-      contentItems: extractedContent?.content?.length || 0
-    });
-  } catch (error) {
-    // Invalidate cache if extraction failed with cached selectors
-    if (fromCache) {
-      log('Extraction failed with cached selectors, invalidating cache');
-      await invalidateCache(url);
-    }
-    logError('Failed to extract content with selectors', error);
-    throw new Error(`Content extraction failed: ${error.message}`);
-  }
-  
-  if (!extractedContent || !extractedContent.content) {
-    if (fromCache) await invalidateCache(url);
-    throw new Error('No content extracted from page');
-  }
-  
-  if (extractedContent.content.length === 0) {
-    if (fromCache) await invalidateCache(url);
-    const selectorsStr = JSON.stringify(selectors);
-    const truncated = selectorsStr.length > 200 ? selectorsStr.substring(0, 200) + '...' : selectorsStr;
-    logError('Extracted content is empty', { selectors: truncated });
-    throw new Error('Extracted content is empty. Try switching to "AI Extract" mode.');
-  }
-  
-  // Cache selectors after successful extraction ONLY
-  // If extraction failed, cache is already invalidated above
-  try {
-    if (!fromCache) {
-      await cacheSelectors(url, selectors);
-    } else {
-      await markCacheSuccess(url);
-    }
-  } catch (error) {
-    logError('Failed to update cache (non-critical)', error);
-    // Don't throw - cache update failure shouldn't break extraction
-  }
-  
-  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingComplete', 8);
-  
-  const publishDate = selectors.publishDate || extractedContent.publishDate || '';
-  const finalTitle = extractedContent.title || title;
-  const finalAuthor = extractedContent.author || selectors.author || '';
-  
-  // NOTE: Title and author separation is now handled by AI in prompts
-  // AI is instructed to return clean title (without author) in "title" field
-  // and author name (without prefixes) in "author" field
-  // If AI returns title with author included, it's a prompt issue - improve prompts, don't add code-side fixes
-  // This approach is site-agnostic and works for all languages (not just "от/by" patterns)
-  
-  log('=== SELECTOR MODE END ===', { title: finalTitle, author: finalAuthor, items: extractedContent.content.length });
-  
-  return {
-    title: finalTitle,
-    author: finalAuthor,
-    content: extractedContent.content,
-    publishDate: publishDate
-  };
-}
-
-// getSelectorsFromAI moved to scripts/processing/modes.js
-
-async function extractContentWithSelectors(tabId, selectors, baseUrl) {
-  log('extractContentWithSelectors', { tabId, selectors, baseUrl });
-  
-  if (!tabId) {
-    throw new Error('Tab ID is required for content extraction');
-  }
-  
-  // SECURITY: Validate baseUrl before passing to executeScript
-  if (!baseUrl || typeof baseUrl !== 'string') {
-    throw new Error('Invalid baseUrl: must be a non-empty string');
-  }
-  
-  // SECURITY: Validate selectors structure
-  if (!selectors || typeof selectors !== 'object') {
-    throw new Error('Invalid selectors: must be an object');
-  }
-  
-  // Validate selectors.exclude is an array if present
-  if (selectors.exclude && !Array.isArray(selectors.exclude)) {
-    throw new Error('Invalid selectors.exclude: must be an array');
-  }
-  
-  let results;
-  try {
-    // Execute extraction function directly in the page context
-    // Using world: 'MAIN' to access page's DOM properly
-    // SECURITY: baseUrl and selectors are validated above
-    results = await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      world: 'MAIN',
-      func: extractFromPageInlined,
-      args: [selectors, baseUrl]
-    });
-    log('Script executed', { resultsLength: results?.length });
-  } catch (scriptError) {
-    logError('Script execution failed', scriptError);
-    throw new Error(`Failed to execute script on page: ${scriptError.message}`);
-  }
-
-  if (!results || !results[0]) {
-    throw new Error('Script execution returned empty results');
-  }
-  
-  /** @type {InjectionResult} */
-  const injectionResult = results[0].result;
-  
-  if (injectionResult && 'error' in injectionResult && injectionResult.error) {
-    const error = injectionResult.error;
-    logError('Script execution error', error);
-    let errorMsg = '';
-    if (typeof error === 'string') {
-      errorMsg = error;
-    } else if (error && typeof error === 'object') {
-      const errorObj = /** @type {Record<string, any>} */ (error);
-      if ('message' in errorObj && typeof errorObj.message === 'string') {
-        errorMsg = errorObj.message;
-      } else {
-        errorMsg = String(error);
-      }
-    } else {
-      errorMsg = String(error);
-    }
-    throw new Error(`Script error: ${errorMsg}`);
-  }
-  
-  if (!injectionResult) {
-    throw new Error('Script returned no result');
-  }
-
-  // Log detailed extraction result with full content preview
-  const extractionDetails = {
-    title: injectionResult.title,
-    author: injectionResult.author || 'N/A',
-    publishDate: injectionResult.publishDate || 'N/A',
-    contentItems: injectionResult.content?.length || 0,
-    contentTypes: injectionResult.content ? [...new Set(injectionResult.content.map(item => item?.type).filter(Boolean))] : [],
-    contentByType: injectionResult.content ? injectionResult.content.reduce((acc, item) => {
-      const type = item?.type || 'unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {}) : {},
-    contentPreview: injectionResult.content?.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      level: item.level || null,
-      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-      textPreview: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 200),
-      hasHtml: !!(item.html && item.html !== item.text),
-      htmlLength: item.html ? item.html.length : 0
-    })) || [],
-    totalTextLength: injectionResult.content ? injectionResult.content.reduce((sum, item) => {
-      const text = (item.text || '').replace(/<[^>]+>/g, '').trim();
-      return sum + text.length;
-    }, 0) : 0,
-    imageCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'image').length : 0,
-    headingCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'heading').length : 0,
-    paragraphCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'paragraph').length : 0,
-    listCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'list').length : 0,
-    quoteCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'quote').length : 0
-  };
-  
-  log('=== EXTRACTION RESULT (SELECTOR MODE) ===', extractionDetails);
-  
-  // Log full content structure for debugging
-  if (injectionResult.content && injectionResult.content.length > 0) {
-    log('=== EXTRACTED CONTENT FULL STRUCTURE ===', {
-      totalItems: injectionResult.content.length,
-      items: injectionResult.content.map((item, idx) => ({
-        index: idx,
-        type: item.type,
-        level: item.level || null,
-        textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-        textFull: (item.text || '').replace(/<[^>]+>/g, '').trim(),
-        htmlLength: item.html ? item.html.length : 0,
-        hasImage: item.type === 'image' ? {
-          url: item.url || item.src || 'N/A',
-          alt: item.alt || 'N/A'
-        } : null,
-        listItems: item.type === 'list' && item.items ? {
-          count: item.items.length,
-          ordered: item.ordered || false,
-          itemsPreview: item.items.slice(0, 3).map((li, liIdx) => {
-            let text = '';
-            if (typeof li === 'string') {
-              text = li.substring(0, 100);
-            } else if (typeof li === 'object' && li !== null && 'html' in li) {
-              // @ts-ignore - li is object with html property
-              text = (li.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
-            }
-            return { index: liIdx, text };
-          })
-        } : null
-      }))
-    });
-  }
-  
-  // Log subtitle debug info if available
-  if (injectionResult && injectionResult.debug && injectionResult.debug.subtitleDebug) {
-    const subDebug = injectionResult.debug.subtitleDebug;
-    log('=== SUBTITLE EXTRACTION DEBUG ===', {
-      subtitleFound: subDebug.subtitleFound,
-      subtitleText: subDebug.subtitleText,
-      firstHeadingFound: subDebug.firstHeadingFound,
-      firstHeadingIndex: subDebug.firstHeadingIndex,
-      firstHeadingText: subDebug.firstHeadingText,
-      titleInContent: subDebug.titleInContent,
-      titleAdded: subDebug.titleAdded,
-      subtitleInserted: subDebug.subtitleInserted,
-      subtitleInsertIndex: subDebug.subtitleInsertIndex,
-      elementsProcessedBeforeFirstHeading: subDebug.elementsProcessedBeforeFirstHeading,
-      totalContentItemsBeforeInsert: subDebug.totalContentItemsBeforeInsert,
-      articleTitle: injectionResult.title
-    });
-    
-    // Log content before insert with full details
-    if (subDebug.contentBeforeInsert && subDebug.contentBeforeInsert.length > 0) {
-      log('Content BEFORE subtitle insert (first 5 items):');
-      subDebug.contentBeforeInsert.forEach((item, idx) => {
-        log(`  [${item.index}] ${item.type}: "${item.text}"`);
-      });
-    } else {
-      log('Content BEFORE subtitle insert: EMPTY or not logged');
-    }
-    
-    // Log content after insert with full details
-    if (subDebug.contentAfterInsert && subDebug.contentAfterInsert.length > 0) {
-      log('Content AFTER subtitle insert (first 5 items):');
-      subDebug.contentAfterInsert.forEach((item, idx) => {
-        log(`  [${item.index}] ${item.type}: "${item.text}"`);
-      });
-    } else {
-      log('Content AFTER subtitle insert: EMPTY or not logged');
-    }
-    
-    // Log actual final content structure with FULL text (not truncated)
-    const firstItems = injectionResult.content?.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      level: ('level' in item ? item.level : null) || null,
-      text: (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim(),
-      textLength: (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim().length
-    }));
-    log('Final content structure (first 10 items with FULL text):');
-    firstItems?.forEach((item) => {
-      const levelStr = item.level ? ` (level ${item.level})` : '';
-      log(`  [${item.index}] ${item.type}${levelStr}: "${item.text.substring(0, 150)}${item.text.length > 150 ? '...' : ''}" (${item.textLength} chars)`);
-    });
-    
-    // Check if subtitle is actually in the right position
-    const subtitleIndex = injectionResult.content?.findIndex(item => item.type === 'subtitle');
-    const titleIndex = injectionResult.content?.findIndex(item => 
-      item.type === 'heading' && 
-      (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim() === injectionResult.title
-    );
-    log('Position check:', {
-      subtitleIndex: subtitleIndex !== undefined ? subtitleIndex : 'NOT FOUND',
-      titleIndex: titleIndex !== undefined ? titleIndex : 'NOT FOUND',
-      expectedSubtitleIndex: titleIndex !== undefined ? titleIndex + 1 : 'N/A',
-      isSubtitleRightAfterTitle: subtitleIndex === titleIndex + 1
-    });
-  } else {
-    log('No subtitle debug info available');
-  }
-  
-  return injectionResult;
-}
+// processWithSelectorMode and extractContentWithSelectors moved to scripts/processing/modes.js
+// extractFromPageInlined remains here (must be inline for chrome.scripting.executeScript)
 
 // Inlined extraction function for chrome.scripting.executeScript
 // This runs in the page's main world context
@@ -1838,7 +1519,11 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
 // NOTE: This function is 517 lines (2707-3223) - DO NOT SPLIT IT!
 // It's injected as a single block via executeScript. All helper functions
 // must be defined inside. See systemPatterns.md "Design Decisions".
-function extractFromPageInlined(selectors, baseUrl) {
+// 
+// CRITICAL: This function must remain in background.js because it's used directly
+// by chrome.scripting.executeScript. It cannot be moved to a separate module.
+// It's exported so that processWithSelectorMode in modes.js can use it.
+export function extractFromPageInlined(selectors, baseUrl) {
   const content = [];
   const debugInfo = {
     containerFound: false,

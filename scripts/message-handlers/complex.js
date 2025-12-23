@@ -12,7 +12,7 @@ import { startSummaryGeneration } from './summary.js';
  * @param {Object} request - Request object
  * @param {Object} sender - Sender object
  * @param {Function} sendResponse - Response function
- * @param {Function} processWithSelectorMode - Function to process with selector mode
+ * @param {Function} processWithSelectorMode - Function to process with selector mode (wrapped with extractFromPageInlined)
  * @param {Function} processWithExtractMode - Function to process with extract mode
  * @param {Function} processWithoutAI - Function to process without AI (automatic mode)
  * @param {Function} startKeepAlive - Function to start keep-alive
@@ -77,6 +77,8 @@ export function handleExtractContentOnly(
     timestamp: Date.now()
   });
   
+  // Select processing function based on mode
+  // processWithSelectorMode is already wrapped with extractFromPageInlined in background.js
   const processFunction = mode === 'automatic'
     ? processWithoutAI
     : mode === 'selector' 

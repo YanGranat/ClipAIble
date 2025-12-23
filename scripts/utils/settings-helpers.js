@@ -162,3 +162,4 @@ export function getAudioSpeedFromSettings(settings) {
   return isNaN(speed) ? CONFIG.DEFAULT_AUDIO_SPEED : speed;
 }
 
+
