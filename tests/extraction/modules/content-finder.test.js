@@ -12,7 +12,8 @@ function createMockElement(tagName, options = {}) {
     id = '',
     textContent = '',
     children = [],
-    querySelectorAll = () => []
+    querySelectorAll = () => [],
+    attributes = {}
   } = options;
 
   return {
@@ -21,6 +22,9 @@ function createMockElement(tagName, options = {}) {
     id,
     textContent,
     children,
+    hasAttribute: (attr) => {
+      return attr in (attributes || {});
+    },
     querySelectorAll: (selector) => {
       if (selector === 'p') return options.paragraphs || [];
       if (selector === 'h1, h2, h3, h4, h5, h6') return options.headings || [];
@@ -92,7 +96,11 @@ describe('content-finder', () => {
 
     it('should apply penalty for high link density', () => {
       const paragraphs = Array(2).fill({ textContent: 'text' });
-      const links = Array(5).fill({}); // High link density
+      // Links with textContent and closest method (returns null to indicate not in paragraph)
+      const links = Array(5).fill({ 
+        textContent: 'link text',
+        closest: () => null // Not inside paragraph, so it's a navigation link
+      });
       const element = createMockElement('div', {
         paragraphs,
         links,

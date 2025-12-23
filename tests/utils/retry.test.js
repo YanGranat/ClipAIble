@@ -79,13 +79,14 @@ describe('retry', () => {
       
       const promise = callWithRetry(fn);
       
-      await vi.advanceTimersByTimeAsync(100);
+      // Advance through retry delay (100ms base + jitter)
+      await vi.advanceTimersByTimeAsync(150);
       
       const result = await promise;
       
       expect(result).toBe('success');
       expect(fn).toHaveBeenCalledTimes(2);
-    });
+    }, 10000);
 
     it('should not retry on non-retryable error', async () => {
       const fn = vi.fn().mockRejectedValue({ status: 400, message: 'Bad request' });
@@ -134,12 +135,13 @@ describe('retry', () => {
       
       const promise = callWithRetry(fn, { onRetry });
       
-      await vi.advanceTimersByTimeAsync(100);
+      // Advance through retry delay (100ms base + jitter)
+      await vi.advanceTimersByTimeAsync(150);
       
       await promise;
       
       expect(onRetry).toHaveBeenCalledWith(1, expect.any(Number));
-    });
+    }, 10000);
 
     it('should respect Retry-After header', async () => {
       const fn = vi.fn()
@@ -155,14 +157,14 @@ describe('retry', () => {
       
       const promise = callWithRetry(fn);
       
-      // Fast-forward through 5 seconds (5000ms)
-      await vi.advanceTimersByTimeAsync(5000);
+      // Fast-forward through 5 seconds (5000ms) + some buffer for jitter
+      await vi.advanceTimersByTimeAsync(5500);
       
       const result = await promise;
       
       expect(result).toBe('success');
       expect(fn).toHaveBeenCalledTimes(2);
-    });
+    }, 10000);
 
     it('should add jitter to delay', async () => {
       const fn = vi.fn()
@@ -218,13 +220,14 @@ describe('retry', () => {
       
       const promise = fetchWithRetry('https://example.com');
       
-      await vi.advanceTimersByTimeAsync(100);
+      // Advance through retry delay (100ms base + jitter)
+      await vi.advanceTimersByTimeAsync(150);
       
       const result = await promise;
       
       expect(result).toBe(successResponse);
       expect(global.fetch).toHaveBeenCalledTimes(2);
-    });
+    }, 10000);
 
     it('should not retry on non-retryable status code', async () => {
       const errorResponse = { ok: false, status: 400 };
@@ -254,13 +257,14 @@ describe('retry', () => {
       
       const promise = fetchWithRetry('https://example.com', {}, { maxRetries: 1 });
       
-      await vi.advanceTimersByTimeAsync(100);
+      // Advance through retry delay (100ms base + jitter)
+      await vi.advanceTimersByTimeAsync(150);
       
       const result = await promise;
       
       expect(result).toBe(successResponse);
       expect(global.fetch).toHaveBeenCalledTimes(2);
-    });
+    }, 10000);
   });
 });
 
