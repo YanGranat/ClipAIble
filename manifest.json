@@ -62,8 +62,6 @@
         "offscreen.js",
         "dist/offscreen-bundle.js",
         "dist/offscreen-bundle.js.map",
-        "tts-worker.js",
-        "tts-worker-bundle.js",
         "dist/tts-worker-bundle.js",
         "scripts/utils/logging.js",
         "scripts/utils/security.js",

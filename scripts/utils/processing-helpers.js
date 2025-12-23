@@ -49,8 +49,8 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
   });
   
   // Validate output format
-  // Note: docx, html, txt formats removed from UI but kept in validation for backward compatibility with old settings
-  const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
+  // Note: docx, html, txt formats removed from UI and codebase (generators deleted)
+  const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio'];
   if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
     const uiLang = await getUILanguageCached();
     await setError({

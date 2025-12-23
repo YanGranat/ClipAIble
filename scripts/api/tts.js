@@ -595,10 +595,13 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab || tab.discarded) {
-      throw new Error(`Tab ${tabId} is not available (discarded or closed)`);
+      throw new Error('Вкладка была закрыта или выгружена. Пожалуйста, оставьте страницу открытой до завершения генерации аудио.');
     }
   } catch (error) {
     logError('Tab check failed before Piper TTS execution', error);
+    if (error.message.includes('No tab with id') || error.message.includes('tab was closed') || error.message.includes('Invalid tab ID')) {
+      throw new Error('Вкладка была закрыта во время генерации аудио. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+    }
     throw new Error(`Tab ${tabId} is not available: ${error.message}`);
   }
   

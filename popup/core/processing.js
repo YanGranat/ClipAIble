@@ -123,21 +123,24 @@ export function initProcessing(deps) {
     }
 
     try {
-      // Get current tab
+      // CRITICAL: Get current active tab at the moment of button click
+      // This ensures we process the page that is currently active, not the one where popup was opened
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (!tab) {
         throw new Error('No active tab found');
       }
       
-      log('=== handleSavePdf: Tab found ===', {
+      log('=== handleSavePdf: Tab found (at button click moment) ===', {
         tabId: tab.id,
         url: tab.url,
         status: tab.status,
+        title: tab.title,
         timestamp: Date.now()
       });
       
       // Check if we can inject scripts on this page
+      // Use tab.url for initial check, but we'll verify with actual pageData.url later
       if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
         throw new Error('Cannot extract content from browser internal pages');
       }
@@ -267,8 +270,33 @@ export function initProcessing(deps) {
         htmlLength: pageData?.html?.length || 0,
         url: pageData?.url,
         title: pageData?.title,
+        tabUrl: tab.url,
+        urlsMatch: pageData?.url === tab.url,
         timestamp: Date.now()
       });
+      
+      // CRITICAL: Always use URL from pageData (from executeScript result)
+      // This is the actual URL of the page at the moment of button click
+      // tab.url might be outdated or incorrect
+      const actualUrl = pageData.url;
+      if (!actualUrl) {
+        throw new Error('Failed to extract page URL');
+      }
+      
+      if (actualUrl.startsWith('chrome://') || actualUrl.startsWith('chrome-extension://') || actualUrl.startsWith('edge://') || actualUrl.startsWith('about:')) {
+        throw new Error('Cannot extract content from browser internal pages');
+      }
+      
+      // Log URL mismatch warning if URLs don't match
+      if (tab.url && actualUrl !== tab.url) {
+        log('=== handleSavePdf: URL mismatch detected ===', {
+          pageDataUrl: actualUrl,
+          tabUrl: tab.url,
+          message: 'Page URL differs from tab URL - using page URL from executeScript result',
+          willUsePageDataUrl: true,
+          timestamp: Date.now()
+        });
+      }
 
       // Get Google API key if needed
       let googleApiKey = elements.googleApiKey.value.trim();
@@ -294,11 +322,13 @@ export function initProcessing(deps) {
       });
 
       // Send to background script for processing
+      // CRITICAL: Use actualUrl (from pageData.url) which is the URL at the moment of button click
+      // This ensures we process the correct page even if user switched tabs after opening popup
       const response = await chrome.runtime.sendMessage({
         action: 'processArticle',
         data: {
           html: pageData.html,
-          url: pageData.url,  // Use actual page URL (with current anchor), not tab.url
+          url: actualUrl,  // Use actual page URL from executeScript result (at button click moment)
           title: pageData.title || tab.title,
           apiKey: apiKey,
           provider: provider,

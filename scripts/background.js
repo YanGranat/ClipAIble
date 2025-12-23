@@ -1121,6 +1121,24 @@ async function startArticleProcessing(data) {
     htmlLength: data.html?.length || 0
   });
   
+  // CRITICAL: Log audio parameters if output format is audio
+  if (data.outputFormat === 'audio') {
+    log('[ClipAIble Background] ===== AUDIO PARAMETERS IN startArticleProcessing =====', {
+      timestamp: Date.now(),
+      audioProvider: data.audioProvider,
+      audioVoice: data.audioVoice,
+      audioVoiceType: typeof data.audioVoice,
+      googleTtsVoice: data.googleTtsVoice,
+      googleTtsVoiceType: typeof data.googleTtsVoice,
+      googleTtsModel: data.googleTtsModel,
+      googleTtsPrompt: data.googleTtsPrompt,
+      audioSpeed: data.audioSpeed,
+      audioFormat: data.audioFormat,
+      url: data.url,
+      willBeUsedForAudio: true
+    });
+  }
+  
   const processingStartTimeRef = { processingStartTime };
   
   // Check if this is a video page (YouTube/Vimeo)

@@ -339,11 +339,6 @@ async function build() {
       console.warn('⚠️  Bundle is larger than 15MB - consider code splitting');
     }
     
-    // Copy bundle to root for easier access (optional)
-    const rootBundlePath = path.join(__dirname, 'tts-worker-bundle.js');
-    await fs.copyFile(bundlePath, rootBundlePath);
-    console.log('✅ Bundle copied to root:', rootBundlePath);
-    
     // Verify bundle does NOT contain onnxruntime (it's external)
     const bundleContent = await fs.readFile(bundlePath, 'utf8');
     

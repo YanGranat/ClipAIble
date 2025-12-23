@@ -267,7 +267,7 @@ export async function importSettings(jsonData, options = {}) {
     const VALID_ENUMS = {
       api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter'],
       audio_provider: ['openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
-      output_format: ['pdf', 'epub', 'fb2', 'markdown', 'txt', 'html', 'audio'],
+      output_format: ['pdf', 'epub', 'fb2', 'markdown', 'audio'],
       extraction_mode: ['auto', 'manual'],
       page_mode: ['single', 'multi'],
       pdf_style_preset: ['light', 'dark', 'sepia', 'custom'],

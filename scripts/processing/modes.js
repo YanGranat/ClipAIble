@@ -163,6 +163,22 @@ export async function processWithoutAI(data) {
       if (timeoutId) {
         clearTimeout(timeoutId);
       }
+      
+      // Check if error is due to tab being closed
+      if (chrome.runtime.lastError) {
+        const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+        if (lastError.includes('No tab with id') || lastError.includes('tab was closed') || lastError.includes('Invalid tab ID')) {
+          throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+        }
+      }
+      
+      // Check if tab is still available
+      try {
+        await chrome.tabs.get(tabId);
+      } catch (tabError) {
+        throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+      }
+      
       throw error;
     }
     
@@ -563,6 +579,28 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     throw new Error('Tab ID is required for content extraction');
   }
   
+  // CRITICAL: tabId is the ID of the tab where the button was clicked
+  // Even if user switched to another tab, this tabId still points to the original tab
+  // The script will execute on that tab, extracting content from the page that was active
+  // when the button was clicked. This ensures we process the correct page.
+  
+  // Verify that the tab still has the expected URL (user might have navigated away)
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.url !== baseUrl) {
+      log('Tab URL mismatch detected', { 
+        expectedUrl: baseUrl, 
+        actualUrl: tab.url,
+        message: 'Tab URL differs from expected URL - page may have navigated. Continuing anyway, but content may be from wrong page.'
+      });
+      // Note: We continue anyway because the user might have intentionally navigated,
+      // but we log the mismatch for debugging
+    }
+  } catch (tabError) {
+    log('Failed to verify tab URL', { error: tabError?.message, tabId });
+    // Continue anyway - tab might be closed, but we'll try to execute script
+  }
+  
   // SECURITY: Validate baseUrl before passing to executeScript
   if (!baseUrl || typeof baseUrl !== 'string') {
     throw new Error('Invalid baseUrl: must be a non-empty string');
@@ -592,6 +630,22 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     log('Script executed', { resultsLength: results?.length });
   } catch (scriptError) {
     logError('Script execution failed', scriptError);
+    
+    // Check if error is due to tab being closed
+    if (chrome.runtime.lastError) {
+      const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+      if (lastError.includes('No tab with id') || lastError.includes('tab was closed') || lastError.includes('Invalid tab ID')) {
+        throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+      }
+    }
+    
+    // Check if tab is still available
+    try {
+      await chrome.tabs.get(tabId);
+    } catch (tabError) {
+      throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+    }
+    
     throw new Error(`Failed to execute script on page: ${scriptError.message}`);
   }
 
