@@ -62,9 +62,15 @@ export async function startSummaryGeneration(data, startKeepAlive, stopKeepAlive
       });
     }, 30000); // Log every 30 seconds
     
-    const result = await generateSummary(data);
-    
-    clearInterval(summaryProgressInterval);
+    let result;
+    try {
+      result = await generateSummary(data);
+    } finally {
+      // CRITICAL: Always clear interval, even if generateSummary throws
+      if (summaryProgressInterval) {
+        clearInterval(summaryProgressInterval);
+      }
+    }
     
     log('=== SUMMARY GENERATION SUCCESS ===', { 
       hasSummary: !!result?.summary,

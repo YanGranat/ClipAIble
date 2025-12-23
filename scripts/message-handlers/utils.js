@@ -6,6 +6,42 @@ import { handleError } from '../utils/error-handler.js';
 import { logError, log } from '../utils/logging.js';
 
 /**
+ * Check for Chrome runtime errors and log if present
+ * @param {string} context - Context for logging (e.g., 'before sendResponse')
+ * @param {string} errorType - Error type for error handler
+ * @returns {boolean} True if error exists, false otherwise
+ */
+function checkChromeRuntimeError(context, errorType) {
+  if (chrome.runtime.lastError) {
+    logError(`withErrorHandling: chrome.runtime.lastError ${context}`, { 
+      errorType, 
+      lastError: chrome.runtime.lastError.message
+    });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Safely send response with error handling
+ * @param {Function} sendResponse - Response function
+ * @param {*} response - Response data
+ * @param {string} errorType - Error type for error handler
+ * @param {string} context - Context for logging
+ */
+function safeSendResponse(sendResponse, response, errorType, context) {
+  try {
+    sendResponse(response);
+  } catch (sendError) {
+    logError(`withErrorHandling: sendResponse failed ${context}`, { 
+      errorType, 
+      error: sendError.message,
+      lastError: chrome.runtime.lastError?.message
+    });
+  }
+}
+
+/**
  * Wrapper for promise-based handlers with consistent error handling
  * @param {Promise} promise - Promise to handle
  * @param {string} errorType - Error type for error handler
@@ -19,23 +55,11 @@ export function withErrorHandling(promise, errorType, sendResponse) {
     try {
       const result = await promise;
       // Check for Chrome runtime errors before sending response
-      if (chrome.runtime.lastError) {
-        logError('withErrorHandling: chrome.runtime.lastError before sendResponse', { 
-          errorType, 
-          lastError: chrome.runtime.lastError.message
-        });
+      if (checkChromeRuntimeError('before sendResponse', errorType)) {
         return;
       }
       
-      try {
-        sendResponse(result);
-      } catch (sendError) {
-        logError('withErrorHandling: sendResponse failed', { 
-          errorType, 
-          error: sendError.message,
-          lastError: chrome.runtime.lastError?.message
-        });
-      }
+      safeSendResponse(sendResponse, result, errorType, 'in success path');
     } catch (error) {
       logError('withErrorHandling: promise rejected', { errorType, error: error.message });
       const normalized = await handleError(error, {
@@ -46,23 +70,11 @@ export function withErrorHandling(promise, errorType, sendResponse) {
       });
       
       // Check for Chrome runtime errors before sending error response
-      if (chrome.runtime.lastError) {
-        logError('withErrorHandling: chrome.runtime.lastError before error sendResponse', { 
-          errorType, 
-          lastError: chrome.runtime.lastError.message
-        });
+      if (checkChromeRuntimeError('before error sendResponse', errorType)) {
         return;
       }
       
-      try {
-        sendResponse({ error: normalized.message });
-      } catch (sendError) {
-        logError('withErrorHandling: sendResponse failed in catch', { 
-          errorType, 
-          error: sendError.message,
-          lastError: chrome.runtime.lastError?.message
-        });
-      }
+      safeSendResponse(sendResponse, { error: normalized.message }, errorType, 'in error path');
     }
   })();
   

@@ -222,14 +222,24 @@ export function handleGenerateSummary(request, sender, sendResponse, startKeepAl
   
   // Set summary_generating flag and start generation
   // Use async IIFE to handle await properly
+  let responseSent = false;
+  const safeSendResponse = (response) => {
+    if (!responseSent) {
+      try {
+        sendResponse(response);
+        responseSent = true;
+      } catch (sendError) {
+        logError('Failed to send response in handleGenerateSummary', sendError);
+      }
+    }
+  };
+  
   (async () => {
     try {
-      await startSummaryGeneration(request.data, startKeepAlive, stopKeepAlive, sendResponse);
+      await startSummaryGeneration(request.data, startKeepAlive, stopKeepAlive, safeSendResponse);
     } catch (error) {
       logError('Failed to start summary generation', error);
-      if (!sendResponse.toString().includes('already sent')) {
-        sendResponse({ error: error.message || 'Failed to start summary generation' });
-      }
+      safeSendResponse({ error: error.message || 'Failed to start summary generation' });
     }
   })();
   

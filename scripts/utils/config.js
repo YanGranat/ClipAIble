@@ -29,6 +29,7 @@ export const CONFIG = {
   // State thresholds
   RESET_THRESHOLD_MS: 60 * 1000,        // 1 minute - threshold for resetting state on extension reload
   SUMMARY_STALE_THRESHOLD_MS: 15 * 60 * 1000, // 15 minutes - threshold for stale summary generation flag
+  MAX_UPDATE_QUEUE_SIZE: 100,           // Maximum number of queued state updates (prevents memory leaks)
   
   // Polling
   POLL_INTERVAL_IDLE: 1000,       // ms - polling interval when idle
@@ -67,7 +68,7 @@ export const CONFIG = {
   // Extraction
   EXTRACTION_AUTOMATIC_TIMEOUT: 30000,  // ms - timeout for automatic extraction (30 seconds)
   
-  // Translation (duplicated from translation/text.js - should use CONFIG)
+  // Translation
   TRANSLATION_RETRY_DELAYS: [2000, 5000, 10000, 20000, 30000], // ms - retry delays for translation
   
   // Default values

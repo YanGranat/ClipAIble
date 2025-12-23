@@ -35,8 +35,6 @@ log('[ClipAIble Offscreen] === DOCUMENT LOADED ===', {
   userAgent: navigator.userAgent.substring(0, 100)
 });
 
-// Use state.cleanupTTSResources() instead of local function
-
 // Register cleanup on page unload
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
@@ -52,30 +50,6 @@ if (typeof window !== 'undefined') {
     }
   });
 }
-// CRITICAL: Web Workers don't support import maps, but we can use importScripts() as workaround
-// tts-worker-bundle.js uses importScripts() instead of import maps to load modules
-// This allows WASM operations to run in separate thread, preventing main thread blocking
-// CRITICAL: Web Workers cannot use import maps, which piper-tts-web requires
-// Solution: Use esbuild bundle (tts-worker-bundle.js) that includes all dependencies
-// The bundle resolves all imports at build time, eliminating need for import maps
-// useWorker is now managed by state
-
-// All functions are now imported from their respective modules
-// Functions removed: initPiperTTS, initTTSWorker, resetWorkerInactivityTimer, ensureTTSWorker, predictWithWorker, getVoicesWithWorker, getStoredWithWorker, downloadWithWorker, removeWithWorker, preloadWASMFiles, preloadCommonVoiceModels, detectLanguage, findWavDataChunk, concatenateWavBuffers
-
-// Continue with message handler registration and preload
-// All Worker API functions (getVoicesWithWorker, getStoredWithWorker, downloadWithWorker, removeWithWorker) 
-// and preload functions (preloadWASMFiles, preloadCommonVoiceModels) are now imported from their respective modules
-
-// Preload TTS module in background
-// preloadWASMFiles and preloadCommonVoiceModels are now handled inside initPiperTTS
-
-// detectLanguage is now imported from scripts/offscreen/utils/language-detection.js
-
-// Default voices - using MEDIUM quality models for better quality
-// Based on actual available voices from piper-tts-web library
-// Note: ja (Japanese) and ko (Korean) are not available in the library
-// DEFAULT_VOICES and FALLBACK_VOICES are now imported from scripts/offscreen/utils/constants.js
 
 // CRITICAL: Preload TTS module and WASM files immediately when offscreen document loads
 // This prevents Long Tasks when TTS is first used

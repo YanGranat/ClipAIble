@@ -259,6 +259,14 @@ export function updateState(updates) {
   // Queue updates if another update is in progress
   // This prevents data loss from concurrent updates
   if (isUpdatingState) {
+    // Prevent memory leaks by limiting queue size
+    if (updateQueue.length >= CONFIG.MAX_UPDATE_QUEUE_SIZE) {
+      logWarn('Update queue full, dropping oldest update', { 
+        queueLength: updateQueue.length, 
+        maxSize: CONFIG.MAX_UPDATE_QUEUE_SIZE 
+      });
+      updateQueue.shift(); // Remove oldest update
+    }
     // Add to queue instead of skipping
     updateQueue.push(updates);
     log('State update queued', { queueLength: updateQueue.length, updates });

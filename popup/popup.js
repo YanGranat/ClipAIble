@@ -622,19 +622,6 @@ async function init() {
   }
 }
 
-// DEPRECATED: Model and API provider functions moved to popup/settings.js
-// These functions are kept for backward compatibility but redirect to window.settingsModule
-// Functions: formatModelLabel, updateModelList, showCustomModelDropdown, showAddModelDialog,
-// addCustomModel, hideDefaultModel, removeCustomModel, updateApiProviderUI
-// Use window.settingsModule.* instead
-
-// loadSettings() moved to settings.js module
-// Use window.settingsModule.loadSettings() instead
-
-// setupEventListeners() moved to handlers.js module
-// Use handlersModule() instead
-
-// DEPRECATED: applyTheme function removed - use uiModule.applyTheme() instead
 
 // Reset a single style setting to default
 async function resetStyleSetting(type) {
@@ -716,17 +703,6 @@ async function resetAllStyles() {
   showToast(allStylesResetText, 'success');
 }
 
-// handleCancel() moved to core.js module
-
-// handleGenerateSummary() moved to core.js module
-
-// toggleSummary() moved to core.js module
-
-// closeSummary() moved to core.js module
-
-// copySummary() moved to core.js module
-
-// downloadSummary() moved to core.js module
 
 // Set custom font select value programmatically
 function setCustomSelectValue(value) {
@@ -942,17 +918,6 @@ function initAllCustomSelects() {
   });
 }
 
-// DEPRECATED: UI visibility functions moved to popup/settings/ui-visibility.js
-// These functions are kept for backward compatibility but redirect to window.settingsModule
-// Functions: updateModeHint, updateCacheVisibility, hideAllAudioFields, updateOutputFormatUI
-// Use window.settingsModule.* instead
-
-// DEPRECATED: updateVoiceList function removed - use settingsModule.updateVoiceList() instead
-
-// DEPRECATED: Audio provider UI and translation visibility functions moved to popup/settings/
-// These functions are kept for backward compatibility but redirect to window.settingsModule
-// Functions: updateAudioProviderUI, updateTranslationVisibility
-// Use window.settingsModule.* instead
 
 // Save API keys to storage
 async function saveApiKey() {
@@ -1091,36 +1056,6 @@ async function saveApiKey() {
   showToast(apiKeysSavedText, 'success');
 }
 
-// Check current processing state from background or storage
-// checkProcessingState() moved to core.js module
-
-
-
-// Start polling for state updates
-// startStatePolling() moved to core.js module
-
-
-
-// Check summary generation status from storage AND processingState
-// checkSummaryStatus() moved to core.js module
-
-
-
-// Update UI based on processing state
-// updateUIFromState() moved to core.js module
-
-
-
-// mapStageLabel() moved to core.js module
-
-
-
-// Handle Save PDF button click
-// handleSavePdf() moved to core.js module
-
-
-
-// extractPageContent() moved to core.js module
 
 // Set status indicator (kept for backward compatibility, now uses uiModule)
 function setStatus(type, text, startTime = null) {

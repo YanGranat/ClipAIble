@@ -11,7 +11,7 @@ function getCurrentVersion() {
     return chrome.runtime.getManifest().version || '3.2.4';
   } catch (error) {
     logWarn('Failed to get version from manifest, using fallback', error);
-    return '3.2.0';
+    return '3.2.4';
   }
 }
 
