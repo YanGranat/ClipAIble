@@ -4,6 +4,8 @@
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 
 /**
  * Parse model string to extract actual model name and reasoning settings
@@ -172,7 +174,8 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       throw new Error(errorMessage);
     }
     logError('Network error', fetchError);
-    throw new Error(`Network error: ${fetchError.message}`);
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorNetwork', uiLang));
   }
 
   const responseTime = Date.now() - requestStartTime;

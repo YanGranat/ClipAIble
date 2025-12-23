@@ -7,9 +7,10 @@
 import { log } from '../utils/logging.js';
 import { prepareContentForAudio } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
-import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
+import { PROCESSING_STAGES, getProcessingState, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { cleanTitleForFilename } from '../utils/html.js';
+import { getUILanguage, tSync } from '../locales.js';
 import {
   buildAudioSettings,
   validateAudioParams,
@@ -101,7 +102,8 @@ export async function generateAudio(params, updateState) {
   );
   
   if (!preparedChunks || preparedChunks.length === 0) {
-    throw new Error('Failed to prepare content for audio');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorFailedToPrepareContent', uiLang));
   }
   
   // Determine voice and format based on provider
@@ -113,11 +115,14 @@ export async function generateAudio(params, updateState) {
 
   // Step 2: Convert chunks to speech (using selected TTS provider)
   const providerName = getProviderName(provider);
-  updateState?.({ 
-    stage: PROCESSING_STAGES.GENERATING.id,
-    status: `Converting to speech using ${providerName}...`, 
-    progress: 60 
-  });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    updateState({ 
+      stage: PROCESSING_STAGES.GENERATING.id,
+      status: tSync('statusConvertingToSpeech', uiLang).replace('{provider}', providerName), 
+      progress: 60 
+    });
+  }
 
   // Log TTS call preparation
   logTTSCallPreparation(provider, ttsVoice, speed, ttsFormat, language, tabId, preparedChunks.length, !!ttsApiKey);
@@ -134,7 +139,8 @@ export async function generateAudio(params, updateState) {
   logTTSCompletion(chunksToSpeechStart, audioBuffer);
   
   if (!audioBuffer || audioBuffer.byteLength === 0) {
-    throw new Error('Audio generation returned empty result');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorAudioEmptyResult', uiLang));
   }
   
   // Detect actual format from buffer (API may return different format than requested)
@@ -147,25 +153,37 @@ export async function generateAudio(params, updateState) {
   });
   
   // Step 3: Download the audio file
-  updateState?.({ 
-    stage: PROCESSING_STAGES.GENERATING.id,
-    status: 'Downloading audio file...', 
-    progress: 98 
-  });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    updateState({ 
+      stage: PROCESSING_STAGES.GENERATING.id,
+      status: tSync('statusDownloadingAudio', uiLang), 
+      progress: 98 
+    });
+  }
   
   const extension = getAudioExtension(actualFormat);
   // Title should already be cleaned in background.js, but do final cleanup just in case
   const cleanTitle = cleanTitleForFilename(title || 'article');
   const filename = sanitizeFilename(cleanTitle) + '.' + extension;
   
+  // Check if processing was cancelled before downloading
+  if (isCancelled()) {
+    log('Processing cancelled, skipping audio download');
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+  
   // Use actual format for MIME/extension to avoid corrupt files (e.g., WAV from Qwen/Respeecher)
   await downloadAudio(audioBuffer, filename, actualFormat);
   
-  updateState?.({ 
-    stage: PROCESSING_STAGES.COMPLETE.id,
-    status: 'Done!', 
-    progress: 100 
-  });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    updateState({ 
+      stage: PROCESSING_STAGES.COMPLETE.id,
+      status: tSync('statusDone', uiLang), 
+      progress: 100 
+    });
+  }
   
   log('Audio download complete', { filename });
 }
@@ -177,6 +195,12 @@ export async function generateAudio(params, updateState) {
  * @param {string} format - Audio format for MIME type
  */
 async function downloadAudio(buffer, filename, format) {
+  // Check if processing was cancelled before downloading
+  if (isCancelled()) {
+    log('Processing cancelled, skipping audio download');
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+  
   const mimeType = getMimeType(format);
   
   // Create blob from buffer
@@ -190,6 +214,12 @@ async function downloadAudio(buffer, filename, format) {
   if (urlApi && urlApi.createObjectURL) {
     const objectUrl = urlApi.createObjectURL(blob);
     try {
+      // Check again before actual download
+      if (isCancelled()) {
+        log('Processing cancelled, skipping audio download');
+        throw new Error(tSync('statusCancelled', await getUILanguage()));
+      }
+      
       await chrome.downloads.download({
         url: objectUrl,
         filename: filename,
@@ -207,6 +237,12 @@ async function downloadAudio(buffer, filename, format) {
       reader.onerror = reject;
       reader.readAsDataURL(blob);
     });
+
+    // Check again before actual download
+    if (isCancelled()) {
+      log('Processing cancelled, skipping audio download');
+      throw new Error(tSync('statusCancelled', await getUILanguage()));
+    }
 
     await chrome.downloads.download({
       url: dataUrl,

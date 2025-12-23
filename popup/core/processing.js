@@ -2,6 +2,8 @@
 // Processing module
 // Handles PDF saving, cancellation, and content extraction
 
+import { getUILanguage, tSync } from '../../scripts/locales.js';
+
 /**
  * Initialize processing module
  * @param {Object} deps - Dependencies
@@ -128,7 +130,8 @@ export function initProcessing(deps) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (!tab) {
-        throw new Error('No active tab found');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorNoActiveTab', uiLang));
       }
       
       log('=== handleSavePdf: Tab found (at button click moment) ===', {
@@ -261,7 +264,8 @@ export function initProcessing(deps) {
       }
       
       if (!pageData || !pageData.html) {
-        throw new Error('Failed to extract page content: no HTML data received');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorNoHtmlData', uiLang));
       }
 
       log('=== handleSavePdf: Page data extracted ===', {
@@ -280,11 +284,13 @@ export function initProcessing(deps) {
       // tab.url might be outdated or incorrect
       const actualUrl = pageData.url;
       if (!actualUrl) {
-        throw new Error('Failed to extract page URL');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorNoPageUrl', uiLang));
       }
       
       if (actualUrl.startsWith('chrome://') || actualUrl.startsWith('chrome-extension://') || actualUrl.startsWith('edge://') || actualUrl.startsWith('about:')) {
-        throw new Error('Cannot extract content from browser internal pages');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorBrowserInternalPage', uiLang));
       }
       
       // Log URL mismatch warning if URLs don't match
@@ -495,7 +501,9 @@ export function initProcessing(deps) {
           error: chrome.runtime.lastError.message,
           timestamp: Date.now()
         });
-        throw new Error(chrome.runtime.lastError.message || 'Failed to communicate with background script');
+        const uiLang = await getUILanguage();
+        const errorMsg = chrome.runtime.lastError?.message || tSync('errorCommunicationFailed', uiLang);
+        throw new Error(errorMsg);
       }
 
       if (response.error) {

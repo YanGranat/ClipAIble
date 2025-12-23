@@ -597,9 +597,11 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
 async function executePiperTTSInPage(text, tabId, options = {}) {
   log('Executing Piper TTS in page context', { tabId, textLength: text.length });
   
+  // Get UI language once at the start of the function
+  const uiLang = await getUILanguage();
+  
   // Check if tab is still available before executing
   try {
-    const uiLang = await getUILanguage();
     const tab = await chrome.tabs.get(tabId);
     if (!tab || tab.discarded) {
       throw new Error(tSync('errorTtsTabClosed', uiLang));
@@ -607,10 +609,8 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
   } catch (error) {
     logError('Tab check failed before Piper TTS execution', error);
     if (error.message.includes('No tab with id') || error.message.includes('tab was closed') || error.message.includes('Invalid tab ID')) {
-      const uiLang = await getUILanguage();
       throw new Error(tSync('errorTtsTabClosedDuring', uiLang));
     }
-    const uiLang = await getUILanguage();
     throw new Error(tSync('errorTtsTabNotAvailable', uiLang).replace('{tabId}', tabId).replace('{error}', error.message || 'unknown'));
   }
   

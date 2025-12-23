@@ -11,7 +11,7 @@ import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import JSZip from '../../lib/jszip-wrapper.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
-import { PROCESSING_STAGES } from '../state/processing.js';
+import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 
 /**
@@ -30,7 +30,8 @@ export async function generateEpub(data, updateState) {
   log('Input', { title, author, contentItems: content?.length, generateToc });
   
   if (!content || content.length === 0) {
-    throw new Error('No content to generate EPUB');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorNoContentToGenerateEpub', uiLang));
   }
   
   if (updateState) updateState({ status: 'Building EPUB structure...', progress: 82 });
@@ -114,6 +115,12 @@ export async function generateEpub(data, updateState) {
   const safeFilename = sanitizeFilename(safeTitle);
   const filename = `${safeFilename}.epub`;
   
+  // Check if processing was cancelled before downloading
+  if (isCancelled()) {
+    log('Processing cancelled, skipping EPUB download');
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+  
   log('Downloading EPUB...', { filename, size: epubBlob.size });
   
   // MV3 SW: createObjectURL may be unavailable; add safe fallback
@@ -124,6 +131,12 @@ export async function generateEpub(data, updateState) {
   if (urlApi && urlApi.createObjectURL) {
     const objectUrl = urlApi.createObjectURL(epubBlob);
     try {
+      // Check again before actual download
+      if (isCancelled()) {
+        log('Processing cancelled, skipping EPUB download');
+        throw new Error(tSync('statusCancelled', await getUILanguage()));
+      }
+      
       await chrome.downloads.download({
         url: objectUrl,
         filename: filename,
@@ -141,6 +154,12 @@ export async function generateEpub(data, updateState) {
       reader.readAsDataURL(epubBlob);
     });
 
+    // Check again before actual download
+    if (isCancelled()) {
+      log('Processing cancelled, skipping EPUB download');
+      throw new Error(tSync('statusCancelled', await getUILanguage()));
+    }
+
     await chrome.downloads.download({
       url: dataUrl,
       filename: filename,
@@ -150,7 +169,10 @@ export async function generateEpub(data, updateState) {
   }
   
   log('=== EPUB GENERATION END ===');
-  if (updateState) updateState({ status: 'Done!', progress: 100 });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    updateState({ status: tSync('statusDone', uiLang), progress: 100 });
+  }
   
   return { success: true };
 }

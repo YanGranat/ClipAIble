@@ -10,7 +10,7 @@ import { stripHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
-import { PROCESSING_STAGES } from '../state/processing.js';
+import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 
 /**
@@ -40,7 +40,8 @@ export async function generateFb2(data, updateState) {
   log('Input', { title, author, contentItems: content?.length, generateToc });
   
   if (!content || content.length === 0) {
-    throw new Error('No content to generate FB2');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorNoContentToGenerateFb2', uiLang));
   }
   
   if (updateState) updateState({ status: 'Building FB2 structure...', progress: 85 });
@@ -82,6 +83,12 @@ ${generateBinaries(images)}
   const safeFilename = sanitizeFilename(safeTitle);
   const filename = `${safeFilename}.fb2`;
   
+  // Check if processing was cancelled before downloading
+  if (isCancelled()) {
+    log('Processing cancelled, skipping FB2 download');
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+  
   // Create blob/object URL for download to avoid large base64 strings
   const blob = new Blob([fb2], { type: 'application/x-fictionbook+xml' });
   const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
@@ -93,6 +100,12 @@ ${generateBinaries(images)}
   if (urlApi && urlApi.createObjectURL) {
     const objectUrl = urlApi.createObjectURL(blob);
     try {
+      // Check again before actual download
+      if (isCancelled()) {
+        log('Processing cancelled, skipping FB2 download');
+        throw new Error(tSync('statusCancelled', await getUILanguage()));
+      }
+      
       await chrome.downloads.download({
         url: objectUrl,
         filename: filename,
@@ -110,6 +123,12 @@ ${generateBinaries(images)}
       reader.readAsDataURL(blob);
     });
 
+    // Check again before actual download
+    if (isCancelled()) {
+      log('Processing cancelled, skipping FB2 download');
+      throw new Error(tSync('statusCancelled', await getUILanguage()));
+    }
+
     await chrome.downloads.download({
       url: dataUrl,
       filename: filename,
@@ -119,7 +138,10 @@ ${generateBinaries(images)}
   }
   
   log('=== FB2 GENERATION END ===');
-  if (updateState) updateState({ status: 'Done!', progress: 100 });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    updateState({ status: tSync('statusDone', uiLang), progress: 100 });
+  }
   
   return { success: true };
 }

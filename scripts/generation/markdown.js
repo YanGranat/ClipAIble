@@ -9,6 +9,8 @@ import { stripHtml, htmlToMarkdown } from '../utils/html.js';
 import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
 import { sanitizeFilename } from '../utils/security.js';
+import { isCancelled } from '../state/processing.js';
+import { getUILanguage, tSync } from '../locales.js';
 
 // Simple cache for localization strings (performance optimization)
 const l10nCache = new Map();
@@ -41,7 +43,8 @@ export async function generateMarkdown(data, updateState) {
   log('Input', { title, author, contentItems: content?.length, generateToc });
   
   if (!content || content.length === 0) {
-    throw new Error('No content to generate Markdown');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorNoContentToGenerateMarkdown', uiLang));
   }
   
   if (updateState) updateState({ status: 'Building Markdown...', progress: 85 });
@@ -133,6 +136,12 @@ export async function generateMarkdown(data, updateState) {
   const safeTitle = sanitizeFilename(title || 'article');
   const filename = `${safeTitle}.md`;
   
+  // Check if processing was cancelled before downloading
+  if (isCancelled()) {
+    log('Processing cancelled, skipping Markdown download');
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+  
   // Download the file using object URL to avoid large base64 strings
   const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
   const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
@@ -142,6 +151,12 @@ export async function generateMarkdown(data, updateState) {
   if (urlApi && urlApi.createObjectURL) {
     const objectUrl = urlApi.createObjectURL(blob);
     try {
+      // Check again before actual download
+      if (isCancelled()) {
+        log('Processing cancelled, skipping Markdown download');
+        throw new Error(tSync('statusCancelled', await getUILanguage()));
+      }
+      
       await chrome.downloads.download({
         url: objectUrl,
         filename: filename,
@@ -159,6 +174,12 @@ export async function generateMarkdown(data, updateState) {
       reader.readAsDataURL(blob);
     });
     
+    // Check again before actual download
+    if (isCancelled()) {
+      log('Processing cancelled, skipping Markdown download');
+      throw new Error(tSync('statusCancelled', await getUILanguage()));
+    }
+    
     await chrome.downloads.download({
       url: dataUrl,
       filename: filename,
@@ -168,7 +189,10 @@ export async function generateMarkdown(data, updateState) {
   }
   
   log('=== MARKDOWN GENERATION END ===');
-  if (updateState) updateState({ status: 'Done!', progress: 100 });
+  if (updateState) {
+    const uiLang = await getUILanguage();
+    updateState({ status: tSync('statusDone', uiLang), progress: 100 });
+  }
 }
 
 /**

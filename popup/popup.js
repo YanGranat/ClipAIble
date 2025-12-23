@@ -1211,7 +1211,7 @@ async function displayStats(stats) {
               <span class="history-date">${dateStr}</span>
             </div>
           </a>
-          <button class="history-delete" data-index="${index}" title="Delete from history">✕</button>
+          <button class="history-delete" data-index="${index}" data-i18n-title="deleteFromHistory" title="Delete from history">✕</button>
         </div>
       `;
     }).join('');

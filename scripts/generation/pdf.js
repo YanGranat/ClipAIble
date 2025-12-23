@@ -13,7 +13,7 @@ import { saveLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { sanitizeFilename } from '../utils/security.js';
-import { PROCESSING_STAGES } from '../state/processing.js';
+import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 
 /**
  * Generate PDF from content
@@ -75,7 +75,10 @@ export async function generatePdf(data, updateState) {
   }
   
   try {
-    if (updateState) updateState({ status: 'Loading styles...', progress: 72 });
+    if (updateState) {
+      const uiLang = await getUILanguage();
+      updateState({ status: tSync('statusLoadingStyles', uiLang), progress: 72 });
+    }
     
     log('Loading CSS styles...');
     let styles;
@@ -448,6 +451,12 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     const pdfData = result.data;
     const filename = sanitizeFilename(title || 'article') + '.pdf';
     
+    // Check if processing was cancelled before downloading
+    if (isCancelled()) {
+      log('Processing cancelled, skipping PDF download');
+      throw new Error(tSync('statusCancelled', await getUILanguage()));
+    }
+    
     log('Downloading PDF...', { filename });
     
     // Convert base64 to blob and use object URL when available; fallback to data URL in SW
@@ -460,6 +469,12 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     if (urlApi && urlApi.createObjectURL) {
       const objectUrl = urlApi.createObjectURL(blob);
       try {
+        // Check again before actual download
+        if (isCancelled()) {
+          log('Processing cancelled, skipping PDF download');
+          throw new Error(tSync('statusCancelled', await getUILanguage()));
+        }
+        
         const downloadId = await chrome.downloads.download({
           url: objectUrl,
           filename: filename,
@@ -480,6 +495,12 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
+
+      // Check again before actual download
+      if (isCancelled()) {
+        log('Processing cancelled, skipping PDF download');
+        throw new Error(tSync('statusCancelled', await getUILanguage()));
+      }
 
       const downloadId = await chrome.downloads.download({
         url: dataUrl,

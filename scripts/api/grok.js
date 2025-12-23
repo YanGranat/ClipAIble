@@ -4,6 +4,8 @@
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 
 /**
  * Call Grok API
@@ -73,13 +75,14 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
             }
             
             // Provide more helpful error messages for common errors
-            let errorMessage = errorData.error?.message || `Grok API error: ${fetchResponse.status}`;
+            const uiLang = await getUILanguageCached();
+            let errorMessage = errorData.error?.message || tSync('errorApiError', uiLang).replace('{status}', fetchResponse.status);
             if (fetchResponse.status === 401) {
-              errorMessage = 'Grok API key is invalid or missing. Please check your API key in settings.';
+              errorMessage = tSync('errorApiKeyInvalid', uiLang);
             } else if (fetchResponse.status === 403) {
-              errorMessage = 'Grok API access forbidden. Please check your API key permissions.';
+              errorMessage = tSync('errorApiAccessForbidden', uiLang);
             } else if (fetchResponse.status === 429) {
-              errorMessage = 'Grok API rate limit exceeded. Please try again later.';
+              errorMessage = tSync('errorRateLimit', uiLang);
             }
             
             /** @type {Error & {status?: number}} */
@@ -105,7 +108,8 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
   } catch (fetchError) {
     if (fetchError.name === 'AbortError') {
       logError('Grok API request timed out');
-      throw new Error('Request timed out. Please try again.');
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorTimeout', uiLang));
     }
     if (fetchError.status) {
       // Error from retry logic - already has status
@@ -117,19 +121,21 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
       }
       
       // Provide more helpful error messages for common errors
-      let errorMessage = errorData?.error?.message || `Grok API error: ${fetchError.status}`;
+      const uiLang = await getUILanguageCached();
+      let errorMessage = errorData?.error?.message || tSync('errorApiError', uiLang).replace('{status}', fetchError.status);
       if (fetchError.status === 401) {
-        errorMessage = 'Grok API key is invalid or missing. Please check your API key in settings.';
+        errorMessage = tSync('errorApiKeyInvalid', uiLang);
       } else if (fetchError.status === 403) {
-        errorMessage = 'Grok API access forbidden. Please check your API key permissions.';
+        errorMessage = tSync('errorApiAccessForbidden', uiLang);
       } else if (fetchError.status === 429) {
-        errorMessage = 'Grok API rate limit exceeded. Please try again later.';
+        errorMessage = tSync('errorRateLimit', uiLang);
       }
       
       throw new Error(errorMessage);
     }
     logError('Network error calling Grok', fetchError);
-    throw new Error(`Network error: ${fetchError.message}`);
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorNetwork', uiLang));
   }
 
   log('Grok response', { status: response.status, ok: response.ok });

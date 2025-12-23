@@ -210,13 +210,22 @@ export function setupPanelHandlers(deps) {
         const text = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = (e) => resolve(e.target.result);
-          reader.onerror = (e) => reject(new Error('Failed to read file'));
+          reader.onerror = async (e) => {
+            const { t } = await import('../../scripts/locales.js');
+            const { getUILanguage } = await import('../../scripts/locales.js');
+            const uiLang = await getUILanguage();
+            const errorMsg = await t('errorImportJsonParseFailed');
+            reject(new Error(errorMsg));
+          };
           reader.readAsText(file);
         });
         
         const data = JSON.parse(text);
         if (!data.settings) {
-          throw new Error('Invalid export file');
+          const { t, getUILanguage } = await import('../../scripts/locales.js');
+          const uiLang = await getUILanguage();
+          const errorMsg = await t('errorImportMissingSettings');
+          throw new Error(errorMsg);
         }
         
         const importStatsText = await t('includeStatisticsInImport');
@@ -246,17 +255,21 @@ export function setupPanelHandlers(deps) {
         }
         
         const result = response.result;
-        let message = `Imported ${result.settingsImported} settings`;
+        const uiLang = await getUILanguage();
+        const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
+        
+        let message = locale.importSettingsCount.replace('{count}', result.settingsImported);
         if (result.settingsSkipped > 0) {
-          message += `, ${result.settingsSkipped} skipped`;
+          message += locale.importSettingsSkipped.replace('{count}', result.settingsSkipped);
         }
-        if (result.statsImported) message += ', statistics';
-        if (result.cacheImported) message += ', cache';
+        if (result.statsImported) message += locale.importWithStatistics;
+        if (result.cacheImported) message += locale.importWithCache;
         
         if (result.warnings && result.warnings.length > 0) {
           const warningsText = result.warnings.join('; ');
           logWarn('Import warnings', { warnings: result.warnings });
-          showToast(`${message}. Warnings: ${warningsText}`, 'warning');
+          const warningsMsg = locale.importWarnings.replace('{warnings}', warningsText);
+          showToast(`${message}. ${warningsMsg}`, 'warning');
         } else {
           showToast(message, 'success');
         }
@@ -264,7 +277,8 @@ export function setupPanelHandlers(deps) {
         if (result.errors && result.errors.length > 0) {
           const errorsText = result.errors.join('; ');
           logError('Import errors', { errors: result.errors });
-          showToast(`Import completed with errors: ${errorsText}`, 'error');
+          const errorMsg = locale.importCompletedWithErrors.replace('{errors}', errorsText);
+          showToast(errorMsg, 'error');
         }
         
         if (settingsModule && settingsModule.loadSettings) {

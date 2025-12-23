@@ -486,11 +486,12 @@ export function restoreStateFromStorage() {
               stage: savedState.currentStage
             });
             // PDF generation - mark as error since we can't truly resume
+            const uiLang = await getUILanguage();
             processingState = {
               isProcessing: false,
               progress: savedState.progress || 0,
-              status: 'Error',
-              error: 'Processing was interrupted. Please try again.',
+              status: tSync('statusError', uiLang),
+              error: tSync('statusProcessingInterrupted', uiLang),
               result: null,
               currentStage: savedState.currentStage || null,
               completedStages: savedState.completedStages || []

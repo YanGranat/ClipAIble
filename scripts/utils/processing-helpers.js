@@ -258,7 +258,7 @@ export async function showQuickSaveNotification(outputFormat, createNotification
  */
 export async function extractPageContent() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const uiLang = await getUILanguage();
+  const uiLang = await getUILanguageCached();
   if (!tab || !tab.id) {
     throw new Error(tSync('errorNoActiveTab', uiLang));
   }

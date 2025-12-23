@@ -2,6 +2,8 @@
 // Summary management module
 // Handles summary generation, display, and user interactions
 
+import { tSync } from '../../scripts/locales.js';
+
 /**
  * Initialize summary module
  * @param {Object} deps - Dependencies
@@ -539,7 +541,8 @@ export function initSummary(deps) {
               }
               
               if (!response?.started) {
-                throw new Error('Summary generation failed to start');
+                const uiLang = await getUILanguage();
+                throw new Error(tSync('errorSummaryGenerationFailed', uiLang));
               }
               
               // CRITICAL: Generation started in background - exit and let checkSummaryStatus handle completion
@@ -738,7 +741,8 @@ export function initSummary(deps) {
               lastError: chrome.runtime.lastError?.message,
               responseType: typeof extractResponse
             });
-            throw new Error('No response from background script. Service worker may have died.');
+            const uiLang = await getUILanguage();
+            throw new Error(tSync('errorNoResponseFromBackground', uiLang));
           }
           
           if (extractResponse.error) {

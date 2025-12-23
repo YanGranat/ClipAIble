@@ -5,6 +5,8 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { decryptApiKey } from '../utils/encryption.js';
+import { tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 
 /**
  * Call Gemini API
@@ -104,7 +106,8 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
   } catch (fetchError) {
     if (fetchError.name === 'AbortError') {
       logError('Gemini API request timed out');
-      throw new Error('Request timed out. Please try again.');
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorTimeout', uiLang));
     }
     if (fetchError.status) {
       // Error from retry logic - already has status
@@ -117,7 +120,8 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
       throw new Error(errorData?.error?.message || `Gemini API error: ${fetchError.status}`);
     }
     logError('Network error calling Gemini', fetchError);
-    throw new Error(`Network error: ${fetchError.message}`);
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorNetwork', uiLang));
   }
   
   log('Gemini response', { status: response.status, ok: response.ok });
