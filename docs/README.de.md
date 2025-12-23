@@ -2,7 +2,7 @@
 
 > **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
 
-![Version](https://img.shields.io/badge/version-3.2.1-blue)
+![Version](https://img.shields.io/badge/version-3.2.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Erweiterung-green)
 ![Lizenz](https://img.shields.io/badge/lizenz-MIT-brightgreen)
 
@@ -41,18 +41,20 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 - **Selector-Caching**: Unabhängige Einstellungen für Verwendung und Aktivierung des Caches
 
 ### 🎧 Audio-Export
-- **5 TTS-Anbieter**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
-- **100+ Stimmen**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher (Englisch & Ukrainisch)
-- **Geschwindigkeitsregelung**: 0.5x bis 2.0x (nur OpenAI/ElevenLabs; Google/Qwen/Respeecher verwenden feste Geschwindigkeit)
-- **Format-Unterstützung**: MP3 (OpenAI/ElevenLabs) oder WAV (Google/Qwen/Respeecher)
+- **6 TTS-Anbieter**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher, Piper TTS (offline)
+- **150+ Stimmen**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher + 50+ Piper TTS (offline) (9 Sprachen)
+- **Geschwindigkeitsregelung**: 0.5x bis 2.0x (nur OpenAI/ElevenLabs; Google/Qwen/Respeecher/Piper TTS (offline) verwenden feste Geschwindigkeit)
+- **Format-Unterstützung**: MP3 (OpenAI/ElevenLabs) oder WAV (Google/Qwen/Respeecher/Piper TTS (offline))
 - **Mehrsprachige Aussprache**: Korrekte Aussprache für jede Sprache
-- **Ukrainische Sprachunterstützung**: Dedizierte ukrainische Stimmen via Respeecher (10 Stimmen)
+- **Ukrainische Sprachunterstützung**: Dedizierte ukrainische Stimmen via Respeecher (10 Stimmen) und Piper TTS (offline)
+- **Piper TTS (offline)**: Funktioniert vollständig offline, keine API-Schlüssel erforderlich, 50+ Stimmen in 9 Sprachen (Englisch, Russisch, Ukrainisch, Deutsch, Französisch, Spanisch, Italienisch, Portugiesisch, Chinesisch)
 - **Intelligente Textbereinigung**: KI entfernt URLs, Code und nicht-sprachlichen Inhalt
 - **Anbieter-spezifische Funktionen**:
   - **ElevenLabs**: Modellauswahl (v2, v3, Turbo v2.5), Formatauswahl, erweiterte Stimmeinstellungen
   - **Google Gemini 2.5 TTS**: Modellauswahl (pro/flash), 30 Stimmen, 24k Zeichenlimit
   - **Qwen**: 49 Stimmen einschließlich russischer Stimme (Alek), 600 Zeichenlimit
   - **Respeecher**: Erweiterte Sampling-Parameter (temperature, repetition_penalty, top_p)
+  - **Piper TTS (offline)**: Keine API-Schlüssel erforderlich, Stimmenmodelle lokal gecacht, funktioniert vollständig offline
 
 ### 🌍 Übersetzung
 - **11 Sprachen**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
@@ -391,14 +393,14 @@ ClipAIble cached KI-generierte Selektoren nach Domain:
 clipaible/
 ├── manifest.json       # Erweiterungskonfiguration
 ├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # Hauptorchestrierung (2670 Zeilen)
-│   ├── core.js        # Geschäftslogik (1459 Zeilen)
-│   ├── handlers.js    # Event-Handler (1567 Zeilen)
+│   ├── popup.js       # Hauptorchestrierung (2841 Zeilen)
+│   ├── core.js        # Geschäftslogik (203 Zeilen)
+│   ├── handlers.js    # Event-Handler (1991 Zeilen)
 │   ├── ui.js          # UI-Verwaltung
 │   ├── stats.js       # Statistikanzeige
 │   └── settings.js    # Einstellungsverwaltung
 ├── scripts/
-│   ├── background.js   # Service Worker (2635 Zeilen)
+│   ├── background.js   # Service Worker (2525 Zeilen, reduziert von 3705)
 │   ├── content.js      # Content Script für YouTube
 │   ├── locales.js      # UI-Lokalisierung (11 Sprachen)
 │   ├── message-handlers/ # Nachrichtenhandler-Module (v3.2.1+)

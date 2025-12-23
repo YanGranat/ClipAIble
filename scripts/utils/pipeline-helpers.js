@@ -9,7 +9,8 @@ import { updateState, getProcessingState } from '../state/processing.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { log, logError } from './logging.js';
 import { recordSave } from '../stats/index.js';
-import { completeProcessing } from '../state/processing.js';
+import { completeProcessing, setError } from '../state/processing.js';
+import { handleError } from './error-handler.js';
 
 // Cache for UI language to avoid repeated async calls
 let cachedUILang = null;
@@ -104,5 +105,95 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     processingStartTimeRef.processingStartTime = null;
   }
   await completeProcessing(stopKeepAlive);
+}
+
+/**
+ * Handle processing result: continue pipeline and finalize
+ * @param {Object} data - Processing data
+ * @param {Object} result - Extracted content result
+ * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {Object} processingStartTimeRef - Reference object with processingStartTime property
+ * @param {Function} continuePipeline - Function to continue processing pipeline
+ */
+export async function handleProcessingResult(data, result, stopKeepAlive, processingStartTimeRef, continuePipeline) {
+  log('Processing complete', { 
+    title: result.title, 
+    contentItems: result.content?.length || 0,
+    outputFormat: data.outputFormat
+  });
+  
+  // Continue with standard pipeline: translation, TOC/Abstract, generation
+  // CRITICAL: Log voice before passing to continueProcessingPipeline
+  if (data.outputFormat === 'audio') {
+    log('[ClipAIble Background] ===== VOICE BEFORE continueProcessingPipeline =====', {
+      timestamp: Date.now(),
+      outputFormat: data.outputFormat,
+      audioProvider: data.audioProvider,
+      audioVoice: data.audioVoice,
+      audioVoiceType: typeof data.audioVoice,
+      audioVoiceString: String(data.audioVoice || ''),
+      isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
+      hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
+      hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
+      isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
+      googleTtsVoice: data.googleTtsVoice,
+      VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
+      source: 'handleProcessingResult',
+      willBePassedToContinueProcessingPipeline: true
+    });
+  }
+  
+  log('About to call continueProcessingPipeline', {
+    outputFormat: data.outputFormat,
+    timestamp: Date.now()
+  });
+  
+  await continuePipeline(data, result, stopKeepAlive);
+  
+  // After generation, finalize processing
+  await finalizeProcessing(data, stopKeepAlive, processingStartTimeRef);
+}
+
+/**
+ * Handle processing error: normalize and set error state
+ * @param {Error} error - Error object
+ * @param {Object} data - Processing data
+ * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {Object} errorContext - Additional error context (source, errorType, context)
+ * @returns {Promise<void>}
+ */
+export async function handleProcessingError(error, data, stopKeepAlive, errorContext = {}) {
+  logError('Processing failed', {
+    error: error?.message || String(error),
+    errorStack: error?.stack,
+    errorName: error?.name,
+    timestamp: Date.now(),
+    ...errorContext
+  });
+  
+  // Check if processing was cancelled - don't set error if cancelled
+  if (isCancelled()) {
+    log('Processing was cancelled, not setting error');
+    return;
+  }
+  
+  const normalized = await handleError(error, {
+    source: errorContext.source || 'articleProcessing',
+    errorType: errorContext.errorType || 'contentExtractionFailed',
+    logError: true,
+    createUserMessage: true,
+    context: {
+      url: data.url,
+      format: data.outputFormat,
+      mode: data.mode || data.extractionMode,
+      ...errorContext.context
+    }
+  });
+  
+  // Set error with normalized message and code
+  await setError({
+    message: normalized.userMessage || normalized.message || 'Processing failed',
+    code: normalized.userCode || normalized.code
+  }, stopKeepAlive);
 }
 

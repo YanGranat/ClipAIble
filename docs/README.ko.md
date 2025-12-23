@@ -2,7 +2,7 @@
 
 > **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
 
-![버전](https://img.shields.io/badge/버전-3.2.1-blue)
+![버전](https://img.shields.io/badge/버전-3.2.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-확장-프로그램-green)
 ![라이선스](https://img.shields.io/badge/라이선스-MIT-brightgreen)
 
@@ -391,14 +391,14 @@ ClipAIble은 도메인별로 AI 생성 선택자를 캐시합니다:
 clipaible/
 ├── manifest.json       # 확장 프로그램 구성
 ├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # 메인 오케스트레이션 (2670줄)
-│   ├── core.js        # 비즈니스 로직 (1459줄)
-│   ├── handlers.js    # 이벤트 핸들러 (1567줄)
+│   ├── popup.js       # 메인 오케스트레이션 (2841줄)
+│   ├── core.js        # 비즈니스 로직 (203줄)
+│   ├── handlers.js    # 이벤트 핸들러 (1991줄)
 │   ├── ui.js          # UI 관리
 │   ├── stats.js       # 통계 표시
 │   └── settings.js    # 설정 관리
 ├── scripts/
-│   ├── background.js   # Service worker (2635줄)
+│   ├── background.js   # Service worker (2525줄, 3705에서 감소)
 │   ├── content.js      # YouTube용 콘텐츠 스크립트
 │   ├── locales.js      # UI 현지화 (11개 언어)
 │   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.2.1+)

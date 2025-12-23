@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.2.1-blue)
+![Version](https://img.shields.io/badge/version-3.2.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -160,6 +160,8 @@ All formats support **translation to 11 languages** — even translating text on
 > **💡 New in v3.2.0**: Piper TTS (offline) - Generate audio completely offline with 50+ voices across 9 languages, no API keys required!
 > 
 > **💡 Fixed in v3.2.1**: Popup UI updates correctly after audio generation, voice switching works properly for offline TTS.
+> 
+> **💡 New in v3.2.2**: Background.js refactoring - reduced from 3705 to 2525 lines, improved modularity and maintainability.
 
 ### OpenAI (GPT models + Audio)
 
@@ -406,14 +408,14 @@ ClipAIble caches AI-generated selectors by domain:
 clipaible/
 ├── manifest.json       # Extension config
 ├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # Main orchestration (2670 lines)
-│   ├── core.js        # Business logic (1459 lines)
-│   ├── handlers.js    # Event handlers (1567 lines)
+│   ├── popup.js       # Main orchestration (2841 lines)
+│   ├── core.js        # Business logic (203 lines)
+│   ├── handlers.js    # Event handlers (1991 lines)
 │   ├── ui.js          # UI management
 │   ├── stats.js       # Statistics display
 │   └── settings.js    # Settings management
 ├── scripts/
-│   ├── background.js   # Service worker (2635 lines)
+│   ├── background.js   # Service worker (2525 lines, reduced from 3705)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
 │   ├── message-handlers/ # Message handler modules (v3.2.1+)
@@ -427,6 +429,12 @@ clipaible/
 │   │   ├── video.js    # Video/subtitle handlers
 │   │   ├── summary.js  # Summary generation helper
 │   │   └── complex.js  # Complex handlers
+│   ├── processing/     # Processing modules (v3.2.2+)
+│   │   ├── modes.js    # Processing modes (processWithoutAI, processWithExtractMode, getSelectorsFromAI)
+│   │   ├── video.js    # Video processing (processVideoPage)
+│   │   └── quicksave.js # Quick save processing (prepareQuickSaveData)
+│   ├── initialization/ # Initialization module (v3.2.2+)
+│   │   └── index.js    # API key migration, default settings initialization
 │   ├── api/            # AI & TTS providers
 │   │   ├── openai.js   # OpenAI (GPT models)
 │   │   ├── claude.js   # Anthropic Claude
@@ -454,7 +462,18 @@ clipaible/
 │   │       ├── content-cleaner.js # Content cleaning
 │   │       └── builder.js # Build-time inlining
 │   ├── translation/    # Translation & language detection
+│   │   ├── index.js    # Module facade (re-exports)
+│   │   ├── text.js     # Text translation
+│   │   ├── images.js   # Image translation
+│   │   ├── detection.js # Language detection
+│   │   └── generation.js # Abstract/summary generation
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
+│   │   ├── factory.js  # Document generator factory
+│   │   ├── pdf.js      # PDF generation
+│   │   ├── epub.js     # EPUB generation
+│   │   ├── fb2.js      # FB2 generation
+│   │   ├── markdown.js # Markdown generation
+│   │   └── audio.js    # Audio generation
 │   ├── cache/          # Selector caching
 │   ├── stats/          # Usage statistics
 │   ├── settings/       # Settings import/export
@@ -463,7 +482,12 @@ clipaible/
 │       ├── html.js     # HTML utilities (title cleaning, sanitization)
 │       ├── video.js    # Video platform detection
 │       ├── validation.js # Validation utilities
-│       └── api-error-handler.js # Common API error handling
+│       ├── api-error-handler.js # Common API error handling
+│       ├── pipeline-helpers.js # Pipeline utilities (v3.2.2+) - handleProcessingResult, handleProcessingError
+│       ├── settings-helpers.js # Settings utilities (v3.2.2+) - determineProviderAndModel, getVoiceFromSettings
+│       ├── context-menu.js # Context menu utilities (v3.2.2+)
+│       ├── voice-validator.js # Voice validation utilities
+│       └── api-key-manager.js # API key management utilities
 ├── print/              # PDF rendering
 ├── config/             # Styles
 ├── lib/                # JSZip

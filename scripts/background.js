@@ -101,13 +101,18 @@ import {
   checkCancellation, 
   updateProgress, 
   getUILanguageCached,
-  finalizeProcessing 
+  finalizeProcessing,
+  handleProcessingResult,
+  handleProcessingError
 } from './utils/pipeline-helpers.js';
 import { VoiceValidator } from './utils/voice-validator.js';
 import { TTSApiKeyManager } from './utils/api-key-manager.js';
 import { selectProcessingFunction } from './processing/mode-selector.js';
 import { processWithoutAI, processWithExtractMode, getSelectorsFromAI } from './processing/modes.js';
 import { processVideoPage } from './processing/video.js';
+import { getQuickSaveSettingsKeys, prepareQuickSaveData } from './processing/quicksave.js';
+import { updateContextMenuWithLang } from './utils/context-menu.js';
+import { runInitialization } from './initialization/index.js';
 import { routeMessage } from './message-handlers/index.js';
 
 // ============================================
@@ -148,127 +153,9 @@ async function createNotification(message, title = 'ClipAIble') {
 }
 
 // ============================================
-// API KEY MIGRATION
+// API KEY MIGRATION AND INITIALIZATION
 // ============================================
-
-/**
- * Migrate existing plain text API keys to encrypted format
- * Runs once on extension startup
- */
-async function migrateApiKeys() {
-  try {
-    const result = await chrome.storage.local.get([
-      'openai_api_key',
-      'claude_api_key',
-      'gemini_api_key',
-      'grok_api_key',
-      'openrouter_api_key',
-      'google_api_key',
-      'elevenlabs_api_key',
-      'qwen_api_key',
-      'respeecher_api_key',
-      'google_tts_api_key',
-      'api_keys_migrated' // Flag to prevent repeated migration
-    ]);
-
-    const keysToEncrypt = {};
-    let hasChanges = false;
-
-    // Check and encrypt each key if needed (always check, not just on first migration)
-    const keyNames = [
-      'openai_api_key',
-      'claude_api_key',
-      'gemini_api_key',
-      'grok_api_key',
-      'openrouter_api_key',
-      'google_api_key',
-      'elevenlabs_api_key',
-      'qwen_api_key',
-      'respeecher_api_key',
-      'google_tts_api_key'
-    ];
-    
-    for (const keyName of keyNames) {
-      const value = result[keyName];
-      if (value && typeof value === 'string' && !isEncrypted(value)) {
-        // Key exists and is not encrypted, encrypt it
-        try {
-          keysToEncrypt[keyName] = await encryptApiKey(value);
-          hasChanges = true;
-          log(`Migrating ${keyName} to encrypted format`);
-        } catch (error) {
-          logError(`Failed to encrypt ${keyName}`, error);
-          // Continue with other keys
-        }
-      }
-    }
-
-    if (hasChanges) {
-      keysToEncrypt.api_keys_migrated = true;
-      await chrome.storage.local.set(keysToEncrypt);
-      log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
-    } else if (!result.api_keys_migrated) {
-      // Mark as migrated only if no keys to encrypt and not already migrated
-      await chrome.storage.local.set({ api_keys_migrated: true });
-      log('API keys migration check completed (no keys to migrate)');
-    } else {
-      log('API keys already migrated, checking for unencrypted keys');
-    }
-  } catch (error) {
-    logError('API keys migration failed', error);
-    // Don't throw - migration failure shouldn't break extension
-  }
-}
-
-/**
- * Initialize default settings on first run
- * Ensures use_selector_cache and enable_selector_caching are set to true by default
- * Also cleans up deprecated transcription settings
- */
-async function initializeDefaultSettings() {
-  try {
-    const result = await chrome.storage.local.get([
-      'use_selector_cache',
-      'enable_selector_caching',
-      'transcribe_if_no_subtitles',
-      'cobalt_api_url',
-      'transcription_settings_cleaned'
-    ]);
-    
-    // If use_selector_cache is undefined or null, set it to true (default: enabled)
-    // Only set if it's truly undefined/null, not if it's explicitly false
-    if (result.use_selector_cache === undefined || result.use_selector_cache === null) {
-      await chrome.storage.local.set({ use_selector_cache: true });
-    }
-    
-    // If enable_selector_caching is undefined or null, set it to true (default: enabled)
-    if (result.enable_selector_caching === undefined || result.enable_selector_caching === null) {
-      await chrome.storage.local.set({ enable_selector_caching: true });
-    }
-    
-    // Clean up deprecated transcription settings (one-time cleanup)
-    if (!result.transcription_settings_cleaned) {
-      const keysToRemove = [];
-      if (result.transcribe_if_no_subtitles !== undefined) {
-        keysToRemove.push('transcribe_if_no_subtitles');
-      }
-      if (result.cobalt_api_url !== undefined) {
-        keysToRemove.push('cobalt_api_url');
-      }
-      
-      if (keysToRemove.length > 0) {
-        await chrome.storage.local.remove(keysToRemove);
-        log('Cleaned up deprecated transcription settings', { keys: keysToRemove });
-      }
-      
-      // Mark as cleaned to avoid repeated cleanup
-      await chrome.storage.local.set({ transcription_settings_cleaned: true });
-    }
-  } catch (error) {
-    logError('Failed to initialize default settings', error);
-    // Don't throw - initialization failure shouldn't break extension
-  }
-}
+// Moved to scripts/initialization/index.js
 
 // ============================================
 // INITIALIZATION
@@ -486,51 +373,8 @@ setTimeout(() => {
       logWarn('Failed to check state on extension load', normalized);
     });
 
-  // Migrate existing API keys to encrypted format (fire and forget)
-  try {
-    migrateApiKeys()
-      .catch(async error => {
-        const normalized = await handleError(error, {
-          source: 'initialization',
-          errorType: 'apiKeyMigrationFailed',
-          logError: true,
-          createUserMessage: false
-        });
-        logError('API keys migration failed', normalized);
-      });
-  } catch (error) {
-    handleError(error, {
-      source: 'initialization',
-      errorType: 'apiKeyMigrationStartFailed',
-      logError: true,
-      createUserMessage: false
-    }).then(normalized => {
-      logError('Failed to start migration', normalized);
-    });
-  }
-
-  // Initialize default settings (fire and forget)
-  try {
-    initializeDefaultSettings()
-      .catch(async error => {
-        const normalized = await handleError(error, {
-          source: 'initialization',
-          errorType: 'settingsInitializationFailed',
-          logError: true,
-          createUserMessage: false
-        });
-        logError('Default settings initialization failed', normalized);
-      });
-  } catch (error) {
-    handleError(error, {
-      source: 'initialization',
-      errorType: 'settingsInitializationStartFailed',
-      logError: true,
-      createUserMessage: false
-    }).then(normalized => {
-      logError('Failed to initialize default settings', normalized);
-    });
-  }
+  // Run initialization tasks (migration and default settings)
+  runInitialization();
 }, 0);
 
 // ============================================
@@ -724,135 +568,9 @@ async function updateContextMenu() {
   try {
     // Get current UI language
     const lang = await getUILanguage();
-    
-    // Remove existing menu items and wait for completion
-    await chrome.contextMenus.removeAll();
-    // Small delay to ensure removeAll() completes
-    await new Promise(resolve => setTimeout(resolve, 50));
-    
-    // Get localized strings
-    const parentTitle = tSync('contextMenuSaveAs', lang);
-    const pdfTitle = tSync('saveAsPdf', lang);
-    const epubTitle = tSync('saveAsEpub', lang);
-    const fb2Title = tSync('saveAsFb2', lang);
-    const markdownTitle = tSync('saveAsMarkdown', lang);
-    const audioTitle = tSync('saveAsAudio', lang);
-    
-    // Helper function to create menu item with error handling
-    const createMenuItem = (options) => {
-      try {
-        chrome.contextMenus.create(options);
-      } catch (error) {
-        // Ignore duplicate ID errors (can happen if removeAll() didn't complete yet)
-        if (error.message && error.message.includes('duplicate id')) {
-          logWarn(`Context menu item ${options.id} already exists, skipping`);
-        } else {
-          throw error;
-        }
-      }
-    };
-    
-    // Create parent menu item
-    createMenuItem({
-      id: 'clipaible-save-as',
-      title: parentTitle,
-      contexts: ['page']
-    });
-    
-    // Create child menu items
-    createMenuItem({
-      id: 'save-as-pdf',
-      parentId: 'clipaible-save-as',
-      title: pdfTitle,
-      contexts: ['page']
-    });
-    
-    createMenuItem({
-      id: 'save-as-epub',
-      parentId: 'clipaible-save-as',
-      title: epubTitle,
-      contexts: ['page']
-    });
-    
-    createMenuItem({
-      id: 'save-as-fb2',
-      parentId: 'clipaible-save-as',
-      title: fb2Title,
-      contexts: ['page']
-    });
-    
-    createMenuItem({
-      id: 'save-as-markdown',
-      parentId: 'clipaible-save-as',
-      title: markdownTitle,
-      contexts: ['page']
-    });
-    
-    createMenuItem({
-      id: 'save-as-audio',
-      parentId: 'clipaible-save-as',
-      title: audioTitle,
-      contexts: ['page']
-    });
-    
-    log('Context menu created with localization', { lang });
+    await updateContextMenuWithLang(lang);
   } catch (error) {
-    logError('Failed to create context menu', error);
-    // Fallback to English if localization fails
-    try {
-      await chrome.contextMenus.removeAll();
-      await new Promise(resolve => setTimeout(resolve, 50));
-      
-      const createMenuItem = (options) => {
-        try {
-          chrome.contextMenus.create(options);
-        } catch (err) {
-          if (err.message && err.message.includes('duplicate id')) {
-            logWarn(`Context menu item ${options.id} already exists, skipping`);
-          } else {
-            throw err;
-          }
-        }
-      };
-      
-      createMenuItem({
-        id: 'clipaible-save-as',
-        title: 'Save as',
-        contexts: ['page']
-      });
-      createMenuItem({
-        id: 'save-as-pdf',
-        parentId: 'clipaible-save-as',
-        title: 'Save as PDF',
-        contexts: ['page']
-      });
-      createMenuItem({
-        id: 'save-as-epub',
-        parentId: 'clipaible-save-as',
-        title: 'Save as EPUB',
-        contexts: ['page']
-      });
-      createMenuItem({
-        id: 'save-as-fb2',
-        parentId: 'clipaible-save-as',
-        title: 'Save as FB2',
-        contexts: ['page']
-      });
-      createMenuItem({
-        id: 'save-as-markdown',
-        parentId: 'clipaible-save-as',
-        title: 'Save as Markdown',
-        contexts: ['page']
-      });
-      createMenuItem({
-        id: 'save-as-audio',
-        parentId: 'clipaible-save-as',
-        title: 'Save as Audio',
-        contexts: ['page']
-      });
-    } catch (fallbackError) {
-      logError('Failed to create fallback context menu', fallbackError);
-    }
+    logError('Failed to update context menu', error);
   } finally {
     isUpdatingContextMenu = false;
   }
@@ -1287,19 +1005,8 @@ async function handleQuickSave(outputFormat = 'pdf') {
       return;
     }
     
-    const settings = await chrome.storage.local.get([
-      'openai_api_key', 'claude_api_key', 'gemini_api_key', 'grok_api_key', 'openrouter_api_key',
-      'openai_model', 'api_provider', 'model_by_provider',
-      'extraction_mode', 'use_selector_cache', 'output_format', 'generate_toc', 'generate_abstract', 'page_mode', 'pdf_language',
-      'pdf_style_preset', 'pdf_font_family', 'pdf_font_size', 'pdf_bg_color', 'pdf_text_color',
-      'pdf_heading_color', 'pdf_link_color',
-      'audio_provider', 'elevenlabs_api_key', 'qwen_api_key', 'respeecher_api_key',
-      'audio_voice', 'audio_voice_map', 'audio_speed', 'elevenlabs_model', 'elevenlabs_format',
-      'elevenlabs_stability', 'elevenlabs_similarity', 'elevenlabs_style', 'elevenlabs_speaker_boost',
-      'openai_instructions', 'google_tts_api_key', 'google_tts_model', 'google_tts_voice', 'google_tts_prompt',
-      'respeecher_temperature', 'respeecher_repetition_penalty', 'respeecher_top_p',
-      'translate_images', 'google_api_key'
-    ]);
+    // Load settings
+    const settings = await chrome.storage.local.get(getQuickSaveSettingsKeys());
     
     // CRITICAL: Log voice settings immediately after loading from storage
     log('[ClipAIble Background] ===== SETTINGS LOADED FROM STORAGE (handleQuickSave) =====', {
@@ -1316,62 +1023,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
       raw_audio_voice_map: JSON.stringify(settings.audio_voice_map).substring(0, 500)
     });
     
-    /** @type {Record<string, any>} */
-    const settingsObj = settings;
-    
-    // Determine provider: use api_provider from settings, fallback to getProviderFromModel
-    let provider = settingsObj.api_provider || 'openai';
-    
-    // Determine model: use model_by_provider for selected provider, fallback to openai_model
-    let model = 'gpt-5.1'; // Default fallback
-    if (settingsObj.model_by_provider && typeof settingsObj.model_by_provider === 'object' && settingsObj.model_by_provider[provider]) {
-      model = String(settingsObj.model_by_provider[provider]);
-    } else if (settingsObj.openai_model) {
-      model = String(settingsObj.openai_model);
-      // If using openai_model, verify provider matches
-      const modelProvider = getProviderFromModel(model);
-      if (modelProvider !== provider) {
-        // Provider mismatch - use model's provider
-        provider = modelProvider;
-      }
-    }
-    
-    let apiKey = '';
-    
-    // Get API key based on provider
-    let encryptedKey = null;
-    if (provider === 'openai') {
-      encryptedKey = settings.openai_api_key;
-    } else if (provider === 'claude') {
-      encryptedKey = settings.claude_api_key;
-    } else if (provider === 'gemini') {
-      encryptedKey = settings.gemini_api_key;
-    } else if (provider === 'grok') {
-      encryptedKey = settings.grok_api_key;
-    } else if (provider === 'openrouter') {
-      encryptedKey = settings.openrouter_api_key;
-    }
-    
-    if (encryptedKey && typeof encryptedKey === 'string') {
-      try {
-        apiKey = await decryptApiKey(encryptedKey);
-      } catch (error) {
-        logError(`Failed to decrypt ${provider} API key for quick save`, error);
-        const uiLang = await getUILanguageCached();
-        const errorMsg = tSync('errorQuickSaveDecryptFailed', uiLang);
-        await createNotification(errorMsg);
-        return;
-      }
-    }
-    
-    if (!apiKey) {
-      logError('No API key configured for quick save');
-      const uiLang = await getUILanguageCached();
-      const errorMsg = tSync('errorQuickSaveNoKey', uiLang);
-      await createNotification(errorMsg);
-      return;
-    }
-    
+    // Extract page content
     const htmlResult = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => ({
@@ -1388,158 +1040,39 @@ async function handleQuickSave(outputFormat = 'pdf') {
     
     const pageData = htmlResult[0].result;
     
-    log('Starting quick save processing', { url: pageData.url, model });
+    // Prepare processing data from settings
+    let processingData;
+    try {
+      processingData = await prepareQuickSaveData(
+        settings,
+        outputFormat,
+        tab.id,
+        pageData.html,
+        pageData.url,
+        pageData.title
+      );
+    } catch (error) {
+      logError('Failed to prepare quick save data', error);
+      const uiLang = await getUILanguageCached();
+      let errorMsg;
+      if (error.message && error.message.includes('decrypt')) {
+        errorMsg = tSync('errorQuickSaveDecryptFailed', uiLang);
+      } else if (error.message && error.message.includes('No API key')) {
+        errorMsg = tSync('errorQuickSaveNoKey', uiLang);
+      } else {
+        errorMsg = error.message || tSync('errorValidation', uiLang);
+      }
+      await createNotification(errorMsg);
+      return;
+    }
+    
+    log('Starting quick save processing', { url: pageData.url, model: processingData.model });
     
     // NOTE: No await here - this is intentional "fire and forget" pattern.
     // startArticleProcessing returns true/false synchronously, processing
     // runs async via .then()/.catch() chain with proper error handling.
     // See systemPatterns.md "Design Decisions" section.
-    const translateImages = Boolean(settings.translate_images) && (settings.pdf_language || 'auto') !== 'auto';
-    const googleApiKey = settings.google_api_key || null;
-
-    startArticleProcessing({
-      html: pageData.html,
-      url: pageData.url,
-      title: pageData.title,
-      apiKey: apiKey,
-      provider: provider,
-      model: model,
-      mode: settings.extraction_mode || 'selector',
-      useCache: settings.use_selector_cache !== false, // Default: true
-      outputFormat: outputFormat, // Use format from context menu
-      generateToc: settings.generate_toc || false,
-      generateAbstract: settings.generate_abstract || false,
-      pageMode: settings.page_mode || 'single',
-      language: settings.pdf_language || 'auto',
-      translateImages,
-      googleApiKey,
-      stylePreset: settings.pdf_style_preset || 'dark',
-      fontFamily: settings.pdf_font_family || '',
-      fontSize: settings.pdf_font_size || '31',
-      bgColor: settings.pdf_bg_color || '#303030',
-      textColor: settings.pdf_text_color || '#b9b9b9',
-      headingColor: settings.pdf_heading_color || '#cfcfcf',
-      linkColor: settings.pdf_link_color || '#6cacff',
-      tabId: tab.id,
-      // Audio settings (if format is audio)
-      audioProvider: String(settingsObj.audio_provider || 'openai'),
-      elevenlabsApiKey: settingsObj.elevenlabs_api_key || null,
-      qwenApiKey: settingsObj.qwen_api_key || null,
-      respeecherApiKey: settingsObj.respeecher_api_key || null,
-      // Determine voice: use per-provider map if available, otherwise use legacy audio_voice
-      // For Google TTS, use google_tts_voice if available, otherwise fallback to map/legacy
-      audioVoice: (() => {
-        const provider = String(settingsObj.audio_provider || 'openai');
-        
-        // CRITICAL: Log all voice-related settings for debugging
-        log('[ClipAIble Background] CRITICAL: Voice selection from settings', {
-          provider,
-          audio_provider: settingsObj.audio_provider,
-          audio_voice_map: settingsObj.audio_voice_map,
-          audio_voice_map_type: typeof settingsObj.audio_voice_map,
-          audio_voice_map_keys: settingsObj.audio_voice_map ? Object.keys(settingsObj.audio_voice_map) : [],
-          audio_voice: settingsObj.audio_voice,
-          audio_voice_type: typeof settingsObj.audio_voice,
-          google_tts_voice: settingsObj.google_tts_voice,
-          DEFAULT_AUDIO_VOICE: CONFIG.DEFAULT_AUDIO_VOICE
-        });
-        
-        if (provider === 'google') {
-          // Google TTS has its own voice setting
-          const googleVoice = String(settingsObj.google_tts_voice || 'Callirrhoe');
-          logDebug('[ClipAIble Background] Using Google TTS voice', { googleVoice });
-          return googleVoice;
-        }
-        
-        // CRITICAL: Check if audio_voice_map has 'current' property (new format)
-        // or is a direct map (old format)
-        let voiceMap = {};
-        if (settingsObj.audio_voice_map && typeof settingsObj.audio_voice_map === 'object') {
-          // Check if it's the new format with 'current' property
-          if ('current' in settingsObj.audio_voice_map && typeof settingsObj.audio_voice_map.current === 'object') {
-            voiceMap = settingsObj.audio_voice_map.current;
-            logDebug('[ClipAIble Background] Using audio_voice_map.current (new format)', {
-              voiceMap,
-              voiceMapKeys: Object.keys(voiceMap)
-            });
-          } else {
-            // Old format: direct map
-            voiceMap = settingsObj.audio_voice_map;
-            logDebug('[ClipAIble Background] Using audio_voice_map directly (old format)', {
-              voiceMap,
-              voiceMapKeys: Object.keys(voiceMap)
-            });
-          }
-        }
-        
-        let selectedVoice = voiceMap[provider] || settingsObj.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE;
-        let finalVoice = String(selectedVoice);
-        
-        // CRITICAL: Validate voice for offline provider - if it's a number (index), it's invalid
-        // For offline provider, voice ID must contain _ and - (e.g., "ru_RU-irina-medium")
-        if (provider === 'offline' && finalVoice && /^\d+$/.test(finalVoice)) {
-          logWarn('[ClipAIble Background] CRITICAL: Invalid voice format detected (numeric index)', {
-            provider,
-            invalidVoice: finalVoice,
-            willUseDefault: true
-          });
-          // Use default voice for the detected language (will be determined later)
-          finalVoice = CONFIG.DEFAULT_AUDIO_VOICE;
-        }
-        
-        // CRITICAL: Additional validation - ensure voice ID format is valid for offline
-        if (provider === 'offline' && finalVoice && !finalVoice.includes('_') && !finalVoice.includes('-')) {
-          logWarn('[ClipAIble Background] CRITICAL: Invalid voice ID format for offline provider', {
-            provider,
-            invalidVoice: finalVoice,
-            willUseDefault: true
-          });
-          // Use default voice
-          finalVoice = CONFIG.DEFAULT_AUDIO_VOICE;
-        }
-        
-        log('[ClipAIble Background] CRITICAL: Final voice selected from storage', {
-          timestamp: Date.now(),
-          provider,
-          voiceMap,
-          voiceMapProviderValue: voiceMap[provider],
-          audio_voice: settingsObj.audio_voice,
-          selectedVoice,
-          finalVoice,
-          finalVoiceType: typeof finalVoice,
-          finalVoiceString: String(finalVoice),
-          isValidFormat: finalVoice && (finalVoice.includes('_') || finalVoice.includes('-')),
-          source: voiceMap[provider] ? 'voiceMap' : (settingsObj.audio_voice ? 'audio_voice' : 'DEFAULT'),
-          VOICE_STRING: `VOICE="${String(finalVoice)}"`, // Explicit string for visibility
-          willBePassedToTTS: true,
-          storageLocation: 'handleQuickSave'
-        });
-        
-        return finalVoice;
-      })(),
-      audioSpeed: (() => {
-        const audioSpeed = settingsObj.audio_speed;
-        const speedStr = audioSpeed && typeof audioSpeed === 'string' ? audioSpeed : String(CONFIG.DEFAULT_AUDIO_SPEED);
-        const speed = parseFloat(speedStr);
-        return isNaN(speed) ? CONFIG.DEFAULT_AUDIO_SPEED : speed;
-      })(),
-      audioFormat: CONFIG.DEFAULT_AUDIO_FORMAT, // Default format for quick save (matches popup behavior)
-      elevenlabsModel: settings.elevenlabs_model || CONFIG.DEFAULT_ELEVENLABS_MODEL,
-      elevenlabsFormat: settings.elevenlabs_format || 'mp3_44100_192',
-      elevenlabsStability: settings.elevenlabs_stability !== undefined ? settings.elevenlabs_stability : 0.5,
-      elevenlabsSimilarity: settings.elevenlabs_similarity !== undefined ? settings.elevenlabs_similarity : 0.75,
-      elevenlabsStyle: settings.elevenlabs_style !== undefined ? settings.elevenlabs_style : 0.0,
-      elevenlabsSpeakerBoost: settings.elevenlabs_speaker_boost !== undefined ? settings.elevenlabs_speaker_boost : true,
-      openaiInstructions: settings.openai_instructions || null,
-      googleTtsApiKey: settings.google_tts_api_key || null,
-      geminiApiKey: settings.gemini_api_key || null,
-      googleTtsModel: settings.google_tts_model || 'gemini-2.5-pro-preview-tts',
-      googleTtsVoice: settings.google_tts_voice || 'Callirrhoe',
-      googleTtsPrompt: settings.google_tts_prompt || null,
-      respeecherTemperature: settings.respeecher_temperature !== undefined ? settings.respeecher_temperature : 1.0,
-      respeecherRepetitionPenalty: settings.respeecher_repetition_penalty !== undefined ? settings.respeecher_repetition_penalty : 1.0,
-      respeecherTopP: settings.respeecher_top_p !== undefined ? settings.respeecher_top_p : 1.0
-    });
+    startArticleProcessing(processingData);
     
   } catch (error) {
     logError('Quick save failed', error);
@@ -1707,6 +1240,9 @@ async function startArticleProcessing(data) {
   if (videoInfo) {
     // Process as video page - skip selector/extract modes
     log('Detected video page', { platform: videoInfo.platform, videoId: videoInfo.videoId });
+    
+    const processingStartTimeRef = { processingStartTime };
+    
     processVideoPage(data, videoInfo)
       .then(async result => {
         log('Video processing complete', { 
@@ -1714,62 +1250,23 @@ async function startArticleProcessing(data) {
           contentItems: result.content?.length || 0 
         });
         
-        // Continue with standard pipeline: translation, TOC/Abstract, generation
-        await continueProcessingPipeline(data, result, stopKeepAlive);
-      })
-      .then(async () => {
-        // After generation, record stats and complete
-        log('File generation complete');
-        
-        // Record stats (non-blocking - errors are handled inside recordSave)
-        try {
-          const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
-          const state = getProcessingState();
-          const savedTitle = state.result?.title || data.title || 'Untitled';
-          const savedFormat = data.outputFormat || 'pdf';
-          
-          await recordSave({
-            title: savedTitle,
-            url: data.url,
-            format: savedFormat,
-            processingTime
-          });
-        } catch (error) {
-          logError('Failed to record stats (non-critical)', error);
-          // Continue even if stats recording fails
-        }
-        
-        // Store format in state for success message
-        const state = getProcessingState();
-        const savedFormat = data.outputFormat || 'pdf';
-        // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
-        updateState({ outputFormat: savedFormat });
-        
-        processingStartTime = null;
-        await completeProcessing(stopKeepAlive);
+        await handleProcessingResult(
+          data, 
+          result, 
+          stopKeepAlive, 
+          processingStartTimeRef,
+          continueProcessingPipeline
+        );
       })
       .catch(async error => {
-        // Check if processing was cancelled - don't set error if cancelled
-        if (isCancelled()) {
-          log('Video processing was cancelled, not setting error');
-          return;
-        }
-        
-        const normalized = await handleError(error, {
+        await handleProcessingError(error, data, stopKeepAlive, {
           source: 'videoProcessing',
           errorType: 'videoProcessingFailed',
-          logError: true,
-          createUserMessage: true,
           context: {
             platform: videoInfo.platform,
             videoId: videoInfo.videoId
           }
         });
-        
-        await setError({
-          message: normalized.userMessage || normalized.message || 'Video processing failed',
-          code: normalized.userCode || normalized.code
-        }, stopKeepAlive);
       });
     return true;
   }
@@ -1804,6 +1301,8 @@ async function startArticleProcessing(data) {
     timestamp: Date.now()
   });
   
+  const processingStartTimeRef = { processingStartTime };
+  
   processFunction(data)
     .then(async result => {
       log('=== startArticleProcessing: processFunction completed ===', {
@@ -1812,101 +1311,24 @@ async function startArticleProcessing(data) {
         timestamp: Date.now()
       });
       
-      log('Processing complete', { 
-        title: result.title, 
-        contentItems: result.content?.length || 0,
-        outputFormat: data.outputFormat
-      });
-      
-      // Continue with standard pipeline: translation, TOC/Abstract, generation
-      // CRITICAL: Log voice before passing to continueProcessingPipeline
-      if (data.outputFormat === 'audio') {
-        log('[ClipAIble Background] ===== VOICE BEFORE continueProcessingPipeline =====', {
-          timestamp: Date.now(),
-          outputFormat: data.outputFormat,
-          audioProvider: data.audioProvider,
-          audioVoice: data.audioVoice,
-          audioVoiceType: typeof data.audioVoice,
-          audioVoiceString: String(data.audioVoice || ''),
-          isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
-          hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
-          hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
-          isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
-          googleTtsVoice: data.googleTtsVoice,
-          VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
-          source: 'startArticleProcessing',
-          willBePassedToContinueProcessingPipeline: true
-        });
-      }
-      
-      log('=== startArticleProcessing: About to call continueProcessingPipeline ===', {
-        outputFormat: data.outputFormat,
-        timestamp: Date.now()
-      });
-      await continueProcessingPipeline(data, result, stopKeepAlive);
+      await handleProcessingResult(
+        data, 
+        result, 
+        stopKeepAlive, 
+        processingStartTimeRef,
+        continueProcessingPipeline
+      );
     })
-      .then(async () => {
-        // After generation, record stats and complete
-        log('File generation complete');
-        
-        // Record stats (non-blocking - errors are handled inside recordSave)
-        try {
-          const processingTime = processingStartTime ? Date.now() - processingStartTime : 0;
-          const state = getProcessingState();
-          const savedTitle = state.result?.title || data.title || 'Untitled';
-          const savedFormat = data.outputFormat || 'pdf';
-          
-          await recordSave({
-            title: savedTitle,
-            url: data.url,
-            format: savedFormat,
-            processingTime
-          });
-        } catch (error) {
-          logError('Failed to record stats (non-critical)', error);
-          // Continue even if stats recording fails
-        }
-        
-        // Store format in state for success message
-        const state = getProcessingState();
-        const savedFormat = data.outputFormat || 'pdf';
-        // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
-        updateState({ outputFormat: savedFormat });
-        
-        processingStartTime = null;
-        await completeProcessing(stopKeepAlive);
-      })
     .catch(async error => {
-      logError('=== startArticleProcessing: processFunction FAILED ===', {
-        error: error?.message || String(error),
-        errorStack: error?.stack,
-        errorName: error?.name,
-        timestamp: Date.now()
-      });
-      
-      // Check if processing was cancelled - don't set error if cancelled
-      if (isCancelled()) {
-        log('Processing was cancelled, not setting error');
-        return;
-      }
-      
-      const normalized = await handleError(error, {
+      await handleProcessingError(error, data, stopKeepAlive, {
         source: 'articleProcessing',
         errorType: 'contentExtractionFailed',
-        logError: true,
-        createUserMessage: true,
         context: {
           url: data.url,
           format: data.outputFormat,
-          mode: data.extractionMode
+          mode: data.mode || data.extractionMode
         }
       });
-      
-      // Set error with normalized message and code
-      await setError({
-        message: normalized.userMessage || normalized.message || 'Processing failed',
-        code: normalized.userCode || normalized.code
-      }, stopKeepAlive);
     });
   
   return true;

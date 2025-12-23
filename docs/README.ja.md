@@ -2,7 +2,7 @@
 
 > **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
-![バージョン](https://img.shields.io/badge/バージョン-3.2.1-blue)
+![バージョン](https://img.shields.io/badge/バージョン-3.2.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
 ![ライセンス](https://img.shields.io/badge/ライセンス-MIT-brightgreen)
 
@@ -391,14 +391,14 @@ ClipAIbleはドメインごとにAI生成セレクターをキャッシュ：
 clipaible/
 ├── manifest.json       # 拡張機能設定
 ├── popup/              # UI（HTML、CSS、JS）
-│   ├── popup.js       # メインオーケストレーション（2670行）
-│   ├── core.js        # ビジネスロジック（1459行）
-│   ├── handlers.js    # イベントハンドラー（1567行）
+│   ├── popup.js       # メインオーケストレーション（2841行）
+│   ├── core.js        # ビジネスロジック（203行）
+│   ├── handlers.js    # イベントハンドラー（1991行）
 │   ├── ui.js          # UI管理
 │   ├── stats.js       # 統計表示
 │   └── settings.js    # 設定管理
 ├── scripts/
-│   ├── background.js   # Service worker (2635行)
+│   ├── background.js   # Service worker (2525行、3705から削減)
 │   ├── content.js      # YouTube用コンテンツスクリプト
 │   ├── locales.js      # UIローカライゼーション（11言語）
 │   ├── message-handlers/ # メッセージハンドラーモジュール（v3.2.1+）

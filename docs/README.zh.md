@@ -2,7 +2,7 @@
 
 > **AI驱动的文章提取器** — 将网页上的任何文章保存为PDF、EPUB、FB2、Markdown或音频。支持11种语言翻译。适用于任何网站。
 
-![版本](https://img.shields.io/badge/版本-3.2.1-blue)
+![版本](https://img.shields.io/badge/版本-3.2.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-扩展-green)
 ![许可证](https://img.shields.io/badge/许可证-MIT-brightgreen)
 
@@ -391,14 +391,14 @@ ClipAIble按域名缓存AI生成的选择器：
 clipaible/
 ├── manifest.json       # 扩展配置
 ├── popup/              # 界面（HTML、CSS、JS）
-│   ├── popup.js       # 主要编排（2670行）
-│   ├── core.js        # 业务逻辑（1459行）
-│   ├── handlers.js    # 事件处理器（1567行）
+│   ├── popup.js       # 主要编排（2841行）
+│   ├── core.js        # 业务逻辑（203行）
+│   ├── handlers.js    # 事件处理器（1991行）
 │   ├── ui.js          # 界面管理
 │   ├── stats.js       # 统计显示
 │   └── settings.js    # 设置管理
 ├── scripts/
-│   ├── background.js   # Service worker (2635行)
+│   ├── background.js   # Service worker (2525行，从3705减少)
 │   ├── content.js      # YouTube内容脚本
 │   ├── locales.js      # UI本地化（11种语言）
 │   ├── message-handlers/ # 消息处理器模块（v3.2.1+）

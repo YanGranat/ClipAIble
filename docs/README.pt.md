@@ -2,7 +2,7 @@
 
 > **Extrator de artigos com IA** — Salve qualquer artigo da web como PDF, EPUB, FB2, Markdown ou Áudio. Tradução para 11 idiomas. Funciona em qualquer site.
 
-![Versão](https://img.shields.io/badge/versão-3.2.1-blue)
+![Versão](https://img.shields.io/badge/versão-3.2.2-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensão-green)
 ![Licença](https://img.shields.io/badge/licença-MIT-brightgreen)
 
@@ -391,14 +391,14 @@ ClipAIble armazena em cache os seletores gerados por IA por domínio:
 clipaible/
 ├── manifest.json       # Configuração da extensão
 ├── popup/              # Interface (HTML, CSS, JS)
-│   ├── popup.js       # Orquestração principal (2670 linhas)
-│   ├── core.js        # Lógica de negócios (1459 linhas)
-│   ├── handlers.js    # Manipuladores de eventos (1567 linhas)
+│   ├── popup.js       # Orquestração principal (2841 linhas)
+│   ├── core.js        # Lógica de negócios (203 linhas)
+│   ├── handlers.js    # Manipuladores de eventos (1991 linhas)
 │   ├── ui.js          # Gerenciamento de interface
 │   ├── stats.js       # Visualização de estatísticas
 │   └── settings.js    # Gerenciamento de configurações
 ├── scripts/
-│   ├── background.js   # Service worker (2635 linhas)
+│   ├── background.js   # Service worker (2525 linhas, reduzido de 3705)
 │   ├── content.js      # Content script para YouTube
 │   ├── locales.js      # Localização UI (11 idiomas)
 │   ├── message-handlers/ # Módulos de manipuladores de mensagens (v3.2.1+)
