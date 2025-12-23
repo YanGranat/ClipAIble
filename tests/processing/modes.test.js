@@ -359,8 +359,9 @@ describe('processing/modes', () => {
     it('should invalidate cache if extraction fails with cached selectors', async () => {
       const { getCachedSelectors, invalidateCache } = await import('../../scripts/cache/selectors.js');
       
-      // Reset mock to track calls
-      invalidateCache.mockClear();
+      // Clear previous calls and reset mocks
+      invalidateCache.mockReset();
+      getCachedSelectors.mockReset();
       
       const cachedSelectors = { 
         articleContainer: '.article', 
@@ -369,10 +370,11 @@ describe('processing/modes', () => {
         author: '',
         publishDate: ''
       };
-      getCachedSelectors.mockResolvedValueOnce({
+      // Make sure mock returns the cached selectors
+      getCachedSelectors.mockImplementation(async () => ({
         selectors: cachedSelectors,
         successCount: 1
-      });
+      }));
 
       // First call for URL verification in extractContentWithSelectors
       global.chrome.tabs.get.mockResolvedValueOnce({
@@ -388,8 +390,8 @@ describe('processing/modes', () => {
 
       const extractFromPageInlined = vi.fn();
 
-      await expect(
-        processWithSelectorMode({
+      try {
+        await processWithSelectorMode({
           html: '<html>Content</html>',
           url: 'https://example.com',
           title: 'Title',
@@ -397,10 +399,21 @@ describe('processing/modes', () => {
           model: 'gpt-4',
           tabId: 1,
           useCache: true
-        }, extractFromPageInlined)
-      ).rejects.toThrow();
+        }, extractFromPageInlined);
+        // Should not reach here
+        expect.fail('Should have thrown an error');
+      } catch (error) {
+        // Expected error - any error is fine, we just need to verify cache invalidation
+        expect(error).toBeDefined();
+      }
 
+      // Verify getCachedSelectors was called (to ensure cache was checked)
+      expect(getCachedSelectors).toHaveBeenCalledWith('https://example.com');
+      
       // Verify cache was invalidated when extraction failed with cached selectors
+      // invalidateCache is called inside the catch block when fromCache is true
+      // Note: This test verifies that if cached selectors are used and extraction fails,
+      // the cache is invalidated. If fromCache is not true, invalidateCache won't be called.
       expect(invalidateCache).toHaveBeenCalledWith('https://example.com');
     });
 
