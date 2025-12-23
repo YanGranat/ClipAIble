@@ -99,7 +99,7 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
   // Store format in state for success message
   const state = getProcessingState();
   const savedFormat = data.outputFormat || 'pdf';
-  // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
+  // outputFormat is part of ProcessingState type (used for UI display and polling intervals)
   updateState({ outputFormat: savedFormat });
   
   if (processingStartTimeRef && processingStartTimeRef.processingStartTime !== null) {

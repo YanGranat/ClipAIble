@@ -14,10 +14,10 @@ export const MAX_MESSAGE_SIZE = 10 * 1024 * 1024;
 export const MAX_HTML_SIZE = 50 * 1024 * 1024;
 
 /**
- * Validate URL to prevent SSRF attacks
+ * Validate URL to prevent SSRF (Server-Side Request Forgery) attacks
  * Blocks internal addresses and non-HTTP(S) protocols
  * @param {string} url - URL to validate
- * @returns {boolean} True if URL is safe
+ * @returns {boolean} True if URL is safe for external requests
  */
 export function isValidExternalUrl(url) {
   if (!url || typeof url !== 'string') {
@@ -83,9 +83,10 @@ export function isValidExternalUrl(url) {
 }
 
 /**
- * Validate message size to prevent DoS attacks
+ * Validate message size to prevent DoS (Denial of Service) attacks
+ * Checks if serialized JSON size exceeds maximum allowed size
  * @param {any} data - Data to validate
- * @returns {boolean} True if data size is acceptable
+ * @returns {boolean} True if data size is acceptable (within MAX_MESSAGE_SIZE limit)
  */
 export function isValidMessageSize(data) {
   try {
@@ -103,9 +104,9 @@ export function isValidMessageSize(data) {
 
 /**
  * Sanitize text to prevent prompt injection attacks
- * Removes common injection patterns from user content
+ * Removes common injection patterns from user content that could override AI instructions
  * @param {string} text - Text to sanitize
- * @returns {string} Sanitized text
+ * @returns {string} Sanitized text with injection patterns removed
  */
 export function sanitizePromptInput(text) {
   if (!text || typeof text !== 'string') {
@@ -138,8 +139,9 @@ export function sanitizePromptInput(text) {
 
 /**
  * Safe JSON parse with error handling
+ * Parses JSON string and returns default value if parsing fails
  * @param {string} str - JSON string to parse
- * @param {any} defaultValue - Default value if parsing fails
+ * @param {any} [defaultValue=null] - Default value if parsing fails
  * @returns {any} Parsed object or default value
  */
 export function safeJsonParse(str, defaultValue = null) {
@@ -159,6 +161,31 @@ export function safeJsonParse(str, defaultValue = null) {
 }
 
 /**
+ * Sanitize stack trace to remove sensitive information (file paths, line numbers with tokens)
+ * @param {string} stack - Stack trace string
+ * @returns {string} Sanitized stack trace
+ */
+function sanitizeStackTrace(stack) {
+  if (!stack || typeof stack !== 'string') {
+    return stack;
+  }
+  
+  // Remove file paths that might contain sensitive information
+  // Keep function names and line numbers but remove full paths
+  let sanitized = stack
+    // Remove chrome-extension:// URLs (keep only filename)
+    .replace(/chrome-extension:\/\/[^/]+\/([^:]+):(\d+):(\d+)/g, '$1:$2:$3')
+    // Remove file:// URLs (keep only filename)
+    .replace(/file:\/\/\/[^:]+:(\d+):(\d+)/g, '$1:$2')
+    // Remove absolute paths (keep only filename)
+    .replace(/\/[^:]+:(\d+):(\d+)/g, '$1:$2')
+    // Remove query parameters from URLs in stack traces
+    .replace(/[?&](key|api_key|apikey|token|access_token)=[^&\s]*/gi, '$1=***');
+  
+  return sanitized;
+}
+
+/**
  * Sanitize error data for logging (remove sensitive information)
  * @param {any} error - Error object or data
  * @returns {any} Sanitized error data
@@ -169,6 +196,11 @@ export function sanitizeErrorForLogging(error) {
   }
   
   const sanitized = { ...error };
+  
+  // Sanitize stack trace if present
+  if (sanitized.stack && typeof sanitized.stack === 'string') {
+    sanitized.stack = sanitizeStackTrace(sanitized.stack);
+  }
   
   // Remove API keys from URL
   if (sanitized.url && typeof sanitized.url === 'string') {
@@ -198,8 +230,9 @@ export function sanitizeErrorForLogging(error) {
 
 /**
  * Sanitize filename to prevent path traversal and invalid characters
+ * Removes path traversal attempts (../), invalid characters, and limits length
  * @param {string} name - Raw filename (without extension)
- * @returns {string} Sanitized filename safe for download
+ * @returns {string} Sanitized filename safe for download (max 200 characters)
  */
 export function sanitizeFilename(name) {
   if (!name || typeof name !== 'string') {

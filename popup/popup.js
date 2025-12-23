@@ -56,13 +56,19 @@ import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils
 // Function to send error to service worker for centralized logging
 async function sendErrorToServiceWorker(message, error, context = {}) {
   try {
+    // Import sanitizeErrorForLogging for stack trace sanitization
+    const { sanitizeErrorForLogging } = await import('../scripts/utils/security.js');
+    
+    // Sanitize error before sending (removes sensitive information from stack traces)
+    const sanitizedError = error ? sanitizeErrorForLogging(error) : null;
+    
     const errorData = {
       message: message,
-      error: error ? {
-        name: error.name,
-        message: error.message,
-        stack: error.stack,
-        ...(error.code && { code: error.code })
+      error: sanitizedError ? {
+        name: sanitizedError.name,
+        message: sanitizedError.message,
+        stack: sanitizedError.stack,
+        ...(sanitizedError.code && { code: sanitizedError.code })
       } : null,
       context: context,
       source: 'popup',

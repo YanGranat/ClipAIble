@@ -2006,13 +2006,15 @@ export function extractFromPageInlined(selectors, baseUrl) {
     
     // Insert subtitle right after first heading (or at beginning if no heading)
     if (firstHeadingIndex >= 0 && subtitleToInsert) {
-      // @ts-ignore - subtitleToInsert is a ContentItem but TypeScript infers union type
+      // Type assertion: subtitleToInsert is guaranteed to be ContentItem with type 'subtitle'
+      // splice accepts ContentItem[] which includes subtitle items (subtitle is a valid ContentItem type)
+      // @ts-expect-error - TypeScript cannot infer that subtitleToInsert matches ContentItem union type
       content.splice(firstHeadingIndex + 1, 0, subtitleToInsert);
       subtitleDebug.subtitleInserted = true;
       subtitleDebug.subtitleInsertIndex = firstHeadingIndex + 1;
     } else if (subtitleToInsert) {
       // No heading found, insert at the beginning
-      // @ts-ignore - subtitleToInsert is a ContentItem but TypeScript infers union type
+      // unshift accepts ContentItem[] which includes subtitle items (subtitle is a valid ContentItem type)
       content.unshift(subtitleToInsert);
       subtitleDebug.subtitleInserted = true;
       subtitleDebug.subtitleInsertIndex = 0;
@@ -2059,7 +2061,8 @@ export function extractFromPageInlined(selectors, baseUrl) {
           
           /** @type {ContentItem} */
           const imageItem = { type: 'image', url: heroSrc, src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) };
-          // @ts-ignore - imageItem is a ContentItem but TypeScript infers union type
+          // splice accepts ContentItem[] which includes image items (image is a valid ContentItem type)
+          // @ts-expect-error - TypeScript cannot infer that imageItem matches ContentItem union type
           content.splice(insertIndex, 0, imageItem);
           addedImageUrls.add(ns);
         }

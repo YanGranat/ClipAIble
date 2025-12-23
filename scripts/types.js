@@ -31,6 +31,7 @@
  * @property {string|null} currentStage - Current processing stage ID
  * @property {Array<string>} completedStages - List of completed stage IDs
  * @property {number} [lastUpdate] - Last update timestamp (for state management)
+ * @property {string} [outputFormat] - Output format (pdf, epub, fb2, markdown, audio) - used for UI display and polling intervals
  */
 
 /**

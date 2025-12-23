@@ -490,8 +490,9 @@ export async function processWithoutAI(data) {
             if (typeof li === 'string') {
               text = li.substring(0, 100);
             } else if (typeof li === 'object' && li !== null && 'html' in li) {
-              // @ts-ignore - li is object with html property
-              text = (li.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
+              // Type guard: li is object with html property
+              const liWithHtml = /** @type {{html?: string}} */ (li);
+              text = (liWithHtml.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
             }
             return { index: liIdx, text };
           })
@@ -909,8 +910,9 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
             if (typeof li === 'string') {
               text = li.substring(0, 100);
             } else if (typeof li === 'object' && li !== null && 'html' in li) {
-              // @ts-ignore - li is object with html property
-              text = (li.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
+              // Type guard: li is object with html property
+              const liWithHtml = /** @type {{html?: string}} */ (li);
+              text = (liWithHtml.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
             }
             return { index: liIdx, text };
           })

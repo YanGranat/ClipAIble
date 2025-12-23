@@ -63,7 +63,7 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
   // CRITICAL: Save outputFormat to state immediately so polling can use correct interval
   // This is especially important for audio format which needs longer polling interval
   if (data.outputFormat) {
-    // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
+    // outputFormat is part of ProcessingState type (used for UI display and polling intervals)
     updateState({ outputFormat: data.outputFormat });
     log('=== startArticleProcessing: outputFormat saved to state ===', {
       outputFormat: data.outputFormat,

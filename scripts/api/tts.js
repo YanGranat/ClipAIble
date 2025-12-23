@@ -664,8 +664,9 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
     
     // Use a timeout to prevent hanging
     // Increased to 5 hours for very long operations (2-5 hour articles)
+    let timeoutId = null;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         reject(new Error('Piper TTS execution timeout after 5 hours'));
       }, CONFIG.MAX_OPERATION_TIMEOUT_MS); // 5 hours timeout for very long operations
     });
@@ -714,7 +715,22 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
       args: [text, options, moduleUrl]
     });
     
-    const results = await Promise.race([scriptPromise, timeoutPromise]);
+    let results;
+    try {
+      results = await Promise.race([scriptPromise, timeoutPromise]);
+      // Clear timeout if script completed successfully
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    } catch (error) {
+      // Clear timeout on error too
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      throw error;
+    }
     
     log('Piper TTS execution completed', { 
       hasResults: !!results, 

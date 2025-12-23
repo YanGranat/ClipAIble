@@ -5,6 +5,24 @@ import { log, logWarn } from '../utils/logging.js';
 import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle } from '../utils/html.js';
 import { PDF_LOCALIZATION } from '../utils/config.js';
 
+// Simple cache for localization strings (performance optimization)
+const l10nCache = new Map();
+
+/**
+ * Get localization strings with caching
+ * @param {string} language - Language code
+ * @returns {Object} Localization strings object
+ */
+function getLocalization(language) {
+  const cacheKey = language || 'auto';
+  if (l10nCache.has(cacheKey)) {
+    return l10nCache.get(cacheKey);
+  }
+  const l10n = PDF_LOCALIZATION[cacheKey] || PDF_LOCALIZATION['auto'];
+  l10nCache.set(cacheKey, l10n);
+  return l10n;
+}
+
 /**
  * Build HTML document for PDF
  * @param {Array} content - Content array
@@ -16,6 +34,8 @@ import { PDF_LOCALIZATION } from '../utils/config.js';
  * @param {string} language - Language code
  * @param {boolean} generateToc - Whether to generate TOC
  * @param {Array} headings - Collected headings for TOC
+ * @param {boolean} generateAbstract - Whether to generate abstract
+ * @param {string} abstract - Abstract text
  * @returns {string} HTML document
  */
 export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', publishDate = '', language = 'auto', generateToc = false, headings = [], generateAbstract = false, abstract = '') {
@@ -29,8 +49,8 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     h2Count: h2InContent.length
   });
   
-  // Get localization strings
-  const l10n = PDF_LOCALIZATION[language] || PDF_LOCALIZATION['auto'];
+  // Get localization strings (cached for performance)
+  const l10n = getLocalization(language);
   
   // Clean title from soft hyphens and special characters
   const cleanedTitle = cleanTitle(title || '');

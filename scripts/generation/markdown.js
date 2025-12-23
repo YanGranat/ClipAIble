@@ -10,6 +10,24 @@ import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
 import { sanitizeFilename } from '../utils/security.js';
 
+// Simple cache for localization strings (performance optimization)
+const l10nCache = new Map();
+
+/**
+ * Get localization strings with caching
+ * @param {string} language - Language code
+ * @returns {Object} Localization strings object
+ */
+function getLocalization(language) {
+  const cacheKey = language || 'auto';
+  if (l10nCache.has(cacheKey)) {
+    return l10nCache.get(cacheKey);
+  }
+  const l10n = PDF_LOCALIZATION[cacheKey] || PDF_LOCALIZATION['en'];
+  l10nCache.set(cacheKey, l10n);
+  return l10n;
+}
+
 /**
  * Generate Markdown file from content
  * @param {GenerationData} data - Generation data
@@ -50,7 +68,8 @@ export async function generateMarkdown(data, updateState) {
   
   // Add metadata block
   const langCode = language === 'auto' ? 'en' : language;
-  const l10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
+  // Get localization strings (cached for performance)
+  const l10n = getLocalization(langCode);
   const dateLabel = l10n.date || 'Date';
   const sourceLabel = l10n.source || 'Source';
   const authorLabel = l10n.author || 'Author';

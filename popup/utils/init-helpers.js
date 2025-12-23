@@ -271,11 +271,12 @@ export function initializeModules(deps) {
   // These are kept only for backward compatibility and debugging
   /** @type {WindowWithModules} */
   const windowWithModules = window;
-  // @ts-ignore - modules are added to window for debugging/backward compatibility
+  // Type assertion: window is extended with modules at runtime for debugging/backward compatibility
+  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
   windowWithModules.uiModule = uiModule;
-  // @ts-ignore
+  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
   windowWithModules.statsModule = statsModule;
-  // @ts-ignore
+  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
   windowWithModules.settingsModule = settingsModule;
   
   // Initialize core module (business logic)
@@ -302,7 +303,7 @@ export function initializeModules(deps) {
     stateRefs,
     settingsModule
   });
-  // @ts-ignore
+  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
   windowWithModules.coreModule = coreModule;
   
   // Initialize handlers module (event listeners)
@@ -336,7 +337,7 @@ export function initializeModules(deps) {
     closeSummary: coreModule.closeSummary,
     settingsModule
   });
-  // @ts-ignore
+  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
   windowWithModules.handlersModule = handlersModule;
   
   return {
@@ -394,7 +395,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   }
   
   try {
-    // @ts-ignore - handlersModule is returned from initHandlers which has setupEventListeners method
+    // Type assertion: handlersModule is returned from initHandlers which has setupEventListeners method
     const handlersModuleTyped = /** @type {{setupEventListeners: () => void}} */ (handlersModule);
     if (handlersModuleTyped && typeof handlersModuleTyped.setupEventListeners === 'function') {
       handlersModuleTyped.setupEventListeners();

@@ -204,6 +204,7 @@ export function initHandlers(deps) {
     // STYLE HANDLERS (Presets, Fonts, Colors, Reset)
     // ============================================
     setupStyleHandlers({
+      logError,
       elements,
       STORAGE_KEYS,
       STYLE_PRESETS,

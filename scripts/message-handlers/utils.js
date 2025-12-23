@@ -18,6 +18,15 @@ export function withErrorHandling(promise, errorType, sendResponse) {
   (async () => {
     try {
       const result = await promise;
+      // Check for Chrome runtime errors before sending response
+      if (chrome.runtime.lastError) {
+        logError('withErrorHandling: chrome.runtime.lastError before sendResponse', { 
+          errorType, 
+          lastError: chrome.runtime.lastError.message
+        });
+        return;
+      }
+      
       try {
         sendResponse(result);
       } catch (sendError) {
@@ -35,6 +44,15 @@ export function withErrorHandling(promise, errorType, sendResponse) {
         logError: true,
         createUserMessage: false
       });
+      
+      // Check for Chrome runtime errors before sending error response
+      if (chrome.runtime.lastError) {
+        logError('withErrorHandling: chrome.runtime.lastError before error sendResponse', { 
+          errorType, 
+          lastError: chrome.runtime.lastError.message
+        });
+        return;
+      }
       
       try {
         sendResponse({ error: normalized.message });

@@ -9,6 +9,7 @@
  * @param {Object} deps.STYLE_PRESETS - Style presets object
  * @param {Function} deps.debouncedSaveSettings - Debounced save settings function
  * @param {Function} deps.deferAsyncWork - Defer async work function
+ * @param {Function} deps.logError - Error logging function
  * @param {Object} [deps.settingsModule] - Settings module
  */
 export function setupStyleHandlers(deps) {
@@ -18,6 +19,7 @@ export function setupStyleHandlers(deps) {
     STYLE_PRESETS,
     debouncedSaveSettings,
     deferAsyncWork,
+    logError,
     settingsModule
   } = deps;
 
@@ -26,12 +28,10 @@ export function setupStyleHandlers(deps) {
     elements.stylePreset.addEventListener('change', async () => {
       const preset = elements.stylePreset.value;
       
-      // Note: logError is not available in this module, errors are handled silently
       try {
         await chrome.storage.local.set({ [STORAGE_KEYS.STYLE_PRESET]: preset });
       } catch (error) {
-        // Error handling - could pass logError as dependency if needed
-        console.error('Failed to save style preset', error);
+        logError('Failed to save style preset', error);
       }
       
       if (preset !== 'custom' && STYLE_PRESETS[preset]) {
@@ -54,8 +54,7 @@ export function setupStyleHandlers(deps) {
             [STORAGE_KEYS.LINK_COLOR]: colors.linkColor
           });
         } catch (error) {
-          // Error handling - could pass logError as dependency if needed
-          console.error('Failed to save preset colors', error);
+          logError('Failed to save preset colors', error);
         }
       }
     });

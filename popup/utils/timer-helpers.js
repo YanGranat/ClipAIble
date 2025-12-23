@@ -17,13 +17,29 @@ export function startTimerDisplay(startTime, currentStartTimeRef, timerIntervalR
     logWarn('startTimerDisplay called without startTime');
     return;
   }
+  
+  // CRITICAL: Always clear existing interval before creating new one to prevent memory leaks
+  if (timerIntervalRef.current) {
+    clearInterval(timerIntervalRef.current);
+    timerIntervalRef.current = null;
+  }
+  
   currentStartTimeRef.current = startTime;
-  if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
   // Update immediately, then set interval
   updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements);
+  
   timerIntervalRef.current = setInterval(() => {
+    // Safety check: clear interval if elements are no longer available
+    if (!elements || !elements.statusText) {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+        timerIntervalRef.current = null;
+      }
+      return;
+    }
     updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements);
   }, 1000);
+  
   log('Timer started', { startTime, currentStartTime: currentStartTimeRef.current });
 }
 

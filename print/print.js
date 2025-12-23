@@ -5,11 +5,18 @@ import { cleanTitleForFilename } from '../scripts/utils/html.js';
 
 const LOG_PREFIX = '[ClipAIble:Print]';
 
+/**
+ * Log message to service worker with console fallback
+ * Note: console.log is used as fallback when service worker is unavailable (acceptable in print page context)
+ * @param {string} message - Log message
+ * @param {*} data - Optional data to log
+ */
 function log(message, data = null) {
   const logMessage = `${LOG_PREFIX} ${message}`;
   
   // CRITICAL: ALL logs MUST go to service worker - this is the primary logging destination
-  // Console.log is secondary, service worker logs are primary
+  // Console.log is secondary fallback, service worker logs are primary
+  // Note: console.log is acceptable here as fallback when service worker is unavailable
   try {
     chrome.runtime.sendMessage({
       action: 'logFromPrintPage',
@@ -18,11 +25,11 @@ function log(message, data = null) {
         data: data
       }
     }).catch(() => {
-      // Fallback to console if service worker is not available
+      // Fallback to console if service worker is not available (acceptable in print page context)
       console.log(logMessage, data || '');
     });
   } catch (e) {
-    // Fallback to console if sendMessage fails
+    // Fallback to console if sendMessage fails (acceptable in print page context)
     console.log(logMessage, data || '');
   }
 }
