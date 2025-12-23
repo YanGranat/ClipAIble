@@ -435,7 +435,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   // Load and display version
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '3.2.3';
+    const version = manifest.version || '3.2.4';
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;

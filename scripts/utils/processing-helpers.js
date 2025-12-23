@@ -258,8 +258,9 @@ export async function showQuickSaveNotification(outputFormat, createNotification
  */
 export async function extractPageContent() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const uiLang = await getUILanguage();
   if (!tab || !tab.id) {
-    throw new Error('No active tab found');
+    throw new Error(tSync('errorNoActiveTab', uiLang));
   }
   
   const htmlResult = await chrome.scripting.executeScript({
@@ -272,7 +273,7 @@ export async function extractPageContent() {
   });
   
   if (!htmlResult || !htmlResult[0]?.result) {
-    throw new Error('Failed to extract page content');
+    throw new Error(tSync('errorExtractPageContentFailed', uiLang));
   }
   
   return { ...htmlResult[0].result, tabId: tab.id };

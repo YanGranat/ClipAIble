@@ -1111,6 +1111,53 @@ async function startArticleProcessing(data) {
   
   processingStartTime = Date.now();
   
+  // DETAILED LOGGING: All processing settings at start
+  log('=== START ARTICLE PROCESSING: ALL SETTINGS ===', {
+    // Basic data
+    url: data.url,
+    title: data.title,
+    tabId: data.tabId,
+    htmlLength: data.html?.length || 0,
+    htmlFull: data.html || null, // FULL HTML - NO TRUNCATION
+    
+    // Processing settings
+    mode: data.mode,
+    outputFormat: data.outputFormat,
+    generateToc: data.generateToc,
+    generateAbstract: data.generateAbstract,
+    
+    // AI settings
+    model: data.model,
+    apiKey: data.apiKey ? `${data.apiKey.substring(0, 10)}...` : null,
+    apiProvider: data.apiProvider,
+    
+    // Translation settings
+    targetLanguage: data.targetLanguage,
+    translateImages: data.translateImages,
+    
+    // PDF settings
+    pageMode: data.pageMode,
+    fontFamily: data.fontFamily,
+    fontSize: data.fontSize,
+    bgColor: data.bgColor,
+    textColor: data.textColor,
+    headingColor: data.headingColor,
+    linkColor: data.linkColor,
+    
+    // Audio settings
+    audioProvider: data.audioProvider,
+    audioVoice: data.audioVoice,
+    audioSpeed: data.audioSpeed,
+    audioFormat: data.audioFormat,
+    
+    // Cache settings
+    useCache: data.useCache,
+    
+    // Processing state
+    processingStartTime: processingStartTime,
+    timestamp: Date.now()
+  });
+  
   log('Starting article processing', {
     mode: data.mode,
     model: data.model,
@@ -1216,6 +1263,39 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   
   // Check if processing was cancelled before document generation
   await checkCancellation('document generation');
+  
+  // DETAILED LOGGING: Log content before PDF generation
+  log('=== CONTENT BEFORE PDF GENERATION ===', {
+    title: result.title,
+    author: result.author,
+    publishDate: result.publishDate,
+    contentItemsCount: result.content?.length || 0,
+    outputFormat,
+    effectiveLanguage,
+    timestamp: Date.now()
+  });
+  
+  // Log ALL content items with FULL text - NO TRUNCATION
+  // Log each item separately to ensure full visibility in console
+  if (result.content && Array.isArray(result.content)) {
+    log('=== CONTENT ITEMS BEFORE PDF (ALL - FULL TEXT) ===', {
+      totalItems: result.content.length
+    });
+    
+    // Log each item separately for full visibility
+    result.content.forEach((item, idx) => {
+      log(`=== CONTENT ITEM BEFORE PDF [${idx}] ===`, {
+        index: idx,
+        type: item.type,
+        text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
+        textLength: (item.text || item.html || '').length,
+        html: item.html || null, // FULL HTML - NO TRUNCATION
+        htmlLength: item.html ? item.html.length : 0,
+        wasTranslated: item._wasTranslated || false,
+        hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
+      });
+    });
+  }
   
   // Prepare data for factory (add effectiveLanguage for audio generation)
   const factoryData = {

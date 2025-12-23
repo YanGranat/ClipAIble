@@ -32,8 +32,9 @@ export async function generatePdf(data, updateState) {
   log('=== PDF GENERATION START ===');
   log('Input', { title, author, contentItems: content?.length, pageMode, generateToc });
   
+  const uiLang = await getUILanguage();
   if (!content || content.length === 0) {
-    throw new Error('No content to generate PDF');
+    throw new Error(tSync('errorPdfNoContent', uiLang));
   }
   
   // Translate metadata if language is set
@@ -100,6 +101,35 @@ export async function generatePdf(data, updateState) {
     
     log('Building HTML document...');
     
+    // DETAILED LOGGING: Log content before building HTML
+    log('=== CONTENT BEFORE BUILDING HTML ===', {
+      contentItemsCount: content?.length || 0,
+      title,
+      author: translatedAuthor,
+      date: formattedDate,
+      timestamp: Date.now()
+    });
+    
+    // Log ALL content items with FULL text - NO TRUNCATION
+    // Log each item separately to ensure full visibility in console
+    if (content && Array.isArray(content)) {
+      log('=== CONTENT ITEMS FOR HTML (ALL - FULL TEXT) ===', {
+        totalItems: content.length
+      });
+      
+      // Log each item separately for full visibility
+      content.forEach((item, idx) => {
+        log(`=== CONTENT ITEM FOR HTML [${idx}] ===`, {
+          index: idx,
+          type: item.type,
+          text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
+          textLength: (item.text || item.html || '').length,
+          html: item.html || null, // FULL HTML - NO TRUNCATION
+          hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
+        });
+      });
+    }
+    
     // Collect headings and assign IDs for TOC
     const headings = [];
     const contentWithIds = content.map((item, index) => {
@@ -129,6 +159,37 @@ export async function generatePdf(data, updateState) {
       abstract
     );
     log('HTML built', { length: htmlContent.length, tocEnabled: generateToc, headingsCount: headings.length });
+    
+    // DETAILED LOGGING: Log FULL HTML content - NO TRUNCATION
+    log('=== HTML CONTENT (FULL - NO TRUNCATION) ===', {
+      htmlFull: htmlContent, // FULL HTML - NO TRUNCATION
+      totalLength: htmlContent.length,
+      hasGoogleTranslateWidget: htmlContent.includes('Исходный текст') || htmlContent.includes('Оцените этот перевод') || htmlContent.includes('Google Переводчик')
+    });
+    
+    // Check for Google Translate widget text in final HTML
+    const googleTranslateWidgetText = "Исходный текст Оцените этот перевод Ваш отзыв поможет нам улучшить Google Переводчик";
+    if (htmlContent.includes(googleTranslateWidgetText)) {
+      logWarn('!!! Google Translate widget text DETECTED in final HTML !!!', {
+        widgetText: googleTranslateWidgetText,
+        htmlContainsWidget: true
+      });
+    }
+    
+    // Check for Google Translate widget text in HTML
+    const hasGoogleTranslateText = htmlContent.includes('Исходный текст') || 
+                                   htmlContent.includes('Оцените этот перевод') ||
+                                   htmlContent.includes('Ваш отзыв поможет нам улучшить Google') ||
+                                   htmlContent.includes('Original text') ||
+                                   htmlContent.includes('Rate this translation');
+    
+    if (hasGoogleTranslateText) {
+      logWarn('=== GOOGLE TRANSLATE WIDGET TEXT DETECTED IN HTML ===', {
+        hasRussianText: htmlContent.includes('Исходный текст'),
+        hasEnglishText: htmlContent.includes('Original text'),
+        htmlLength: htmlContent.length
+      });
+    }
     
     if (updateState) {
       // Get localized status
@@ -183,7 +244,8 @@ export async function generatePdf(data, updateState) {
       log('Print tab created', { tabId: tab.id });
     } catch (tabError) {
       logError('Failed to create tab', tabError);
-      throw new Error(`Failed to create tab: ${tabError.message}`);
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorPdfCreateTabFailed', uiLang).replace('{error}', tabError.message || 'unknown'));
     }
 
     log('Print page opened, it will handle the rest');
@@ -230,6 +292,131 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     } else {
       paperHeight = a4Height;
       log(`A4 mode: ${paperWidth}x${paperHeight} inches`);
+    }
+    
+    // CRITICAL: Before generating PDF, check what's actually in the DOM using Chrome DevTools Protocol
+    // chrome.scripting.executeScript doesn't work on extension pages, so use Runtime.evaluate
+    try {
+      // Enable Runtime domain first
+      await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+      
+      log('=== ATTEMPTING DOM CHECK VIA DEVTOOLS PROTOCOL ===', { tabId, timestamp: Date.now() });
+      
+      const domCheckResult = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+        expression: `
+          (function() {
+            const firstParagraph = document.querySelector('.article-content p, article p, .article p');
+            if (firstParagraph) {
+              return {
+                textContent: firstParagraph.textContent || '',
+                innerHTML: firstParagraph.innerHTML || '',
+                hasDataOriginalText: firstParagraph.hasAttribute('data-original-text'),
+                dataOriginalText: firstParagraph.getAttribute('data-original-text') || null,
+                hasGtOrig: firstParagraph.hasAttribute('data-gt-orig-display'),
+                gtOrig: firstParagraph.getAttribute('data-gt-orig-display') || null,
+                allAttributes: Array.from(firstParagraph.attributes).map(attr => ({ name: attr.name, value: attr.value }))
+              };
+            }
+            return null;
+          })()
+        `,
+        returnByValue: true
+      });
+      
+      log('=== DOM CHECK RESULT (RAW) ===', { 
+        hasResult: !!domCheckResult,
+        resultKeys: domCheckResult ? Object.keys(domCheckResult) : [],
+        resultType: domCheckResult?.result?.type,
+        hasValue: !!domCheckResult?.result?.value,
+        valueType: typeof domCheckResult?.result?.value,
+        fullResult: domCheckResult
+      });
+      
+      if (domCheckResult && domCheckResult.result) {
+        if (domCheckResult.result.type === 'object' && domCheckResult.result.value) {
+          const paraInfo = domCheckResult.result.value;
+          log('=== DOM CHECK BEFORE Page.printToPDF (via DevTools Protocol) ===', {
+            textContent: paraInfo.textContent,
+            innerHTML: paraInfo.innerHTML,
+            hasDataOriginalText: paraInfo.hasDataOriginalText,
+            dataOriginalText: paraInfo.dataOriginalText,
+            hasGtOrig: paraInfo.hasGtOrig,
+            gtOrig: paraInfo.gtOrig,
+            allAttributes: paraInfo.allAttributes
+          });
+        } else {
+          logWarn('DOM check returned unexpected result type', { 
+            resultType: domCheckResult.result.type,
+            result: domCheckResult.result
+          });
+        }
+      } else {
+        logWarn('DOM check returned no result', { domCheckResult });
+      }
+    } catch (domCheckError) {
+      logWarn('Failed to check DOM before PDF generation via DevTools Protocol', { 
+        error: domCheckError.message,
+        errorStack: domCheckError.stack,
+        errorName: domCheckError.name
+      });
+    }
+    
+    // CRITICAL: Try to disable Google Translate before PDF generation
+    // This might help prevent Google Translate from interfering during PDF rendering
+    try {
+      log('=== ATTEMPTING TO DISABLE GOOGLE TRANSLATE VIA DEVTOOLS PROTOCOL ===', { tabId, timestamp: Date.now() });
+      
+      // Try to remove Google Translate widget if it exists
+      await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+        expression: `
+          (function() {
+            // Remove Google Translate widget
+            const gtWidget = document.querySelector('[id*="google_translate"], [class*="goog-te"], [class*="skiptranslate"]');
+            if (gtWidget) {
+              gtWidget.remove();
+            }
+            
+            // Remove all Google Translate scripts
+            const gtScripts = document.querySelectorAll('script[src*="translate.googleapis.com"], script[src*="translate.google.com"]');
+            gtScripts.forEach(script => script.remove());
+            
+            // Set document.documentElement attributes to prevent translation
+            document.documentElement.setAttribute('translate', 'no');
+            document.documentElement.setAttribute('class', 'notranslate');
+            document.documentElement.setAttribute('data-translate', 'no');
+            
+            // Set body attributes
+            if (document.body) {
+              document.body.setAttribute('translate', 'no');
+              document.body.setAttribute('class', 'notranslate');
+              document.body.setAttribute('data-translate', 'no');
+            }
+            
+            // Add notranslate class to all paragraphs
+            const paragraphs = document.querySelectorAll('p');
+            paragraphs.forEach(p => {
+              p.setAttribute('translate', 'no');
+              p.classList.add('notranslate');
+              p.setAttribute('data-translate', 'no');
+            });
+            
+            return {
+              removedWidget: !!gtWidget,
+              removedScripts: gtScripts.length,
+              paragraphsModified: paragraphs.length
+            };
+          })()
+        `,
+        returnByValue: true
+      });
+      
+      log('=== GOOGLE TRANSLATE DISABLED VIA DEVTOOLS PROTOCOL ===', { timestamp: Date.now() });
+    } catch (disableGtError) {
+      logWarn('Failed to disable Google Translate via DevTools Protocol', { 
+        error: disableGtError.message,
+        errorStack: disableGtError.stack,
+        errorName: disableGtError.name
+      });
     }
     
     // Generate PDF

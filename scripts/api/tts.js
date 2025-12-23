@@ -7,6 +7,7 @@ import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+import { getUILanguage, tSync } from '../locales.js';
 
 logDebug('[ClipAIble TTS] Loading TTS provider modules...', {
   timestamp: Date.now()
@@ -159,16 +160,18 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
   
   log('TTS request', { textLength: text?.length, voice, speed, format, hasInstructions: !!finalInstructions });
   
+  const uiLang = await getUILanguage();
+  
   if (!text || text.length === 0) {
-    throw new Error('No text provided for TTS');
+    throw new Error(tSync('errorTtsNoText', uiLang));
   }
   
   if (text.length > AUDIO_CONFIG.TTS_MAX_INPUT) {
-    throw new Error(`Text exceeds TTS limit: ${text.length} > ${AUDIO_CONFIG.TTS_MAX_INPUT} characters`);
+    throw new Error(tSync('errorTtsTextTooLong', uiLang).replace('{length}', text.length).replace('{max}', AUDIO_CONFIG.TTS_MAX_INPUT));
   }
   
   if (!apiKey) {
-    throw new Error('No API key provided');
+    throw new Error(tSync('errorTtsNoApiKey', uiLang));
   }
   
   // Validate voice
@@ -230,7 +233,8 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
             } catch (e) {
               errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
             }
-            const error = /** @type {Error & {status?: number}} */ (new Error(errorData.error?.message || `TTS API error: ${fetchResponse.status}`));
+            const errorMsg = errorData.error?.message || tSync('errorTtsApiError', uiLang).replace('{status}', fetchResponse.status);
+            const error = /** @type {Error & {status?: number}} */ (new Error(errorMsg));
             error.status = fetchResponse.status;
             clearTimeout(timeout);
             throw error;
@@ -252,13 +256,14 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
   } catch (fetchError) {
     if (fetchError.name === 'AbortError') {
       logError('TTS API request timed out');
-      throw new Error('TTS request timed out. Please try again.');
+      throw new Error(tSync('errorTtsTimeout', uiLang));
     }
     if (fetchError.status) {
-      throw new Error(fetchError.message || `TTS API error: ${fetchError.status}`);
+      const apiErrorMsg = fetchError.message || tSync('errorTtsApiError', uiLang).replace('{status}', fetchError.status || 'unknown');
+      throw new Error(apiErrorMsg);
     }
     logError('TTS network error', fetchError);
-    throw new Error(`TTS network error: ${fetchError.message}`);
+    throw new Error(tSync('errorTtsNetworkError', uiLang).replace('{error}', fetchError.message || 'unknown'));
   }
   
   // Get audio data as ArrayBuffer
@@ -517,7 +522,8 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
   });
   
   if (typeof offlineTTS !== 'function') {
-    const error = new Error('offlineTTS function is not available. Module may not be loaded correctly.');
+    const uiLang = await getUILanguage();
+    const error = new Error(tSync('errorTtsOfflineNotAvailable', uiLang));
     logError('[ClipAIble TTS] === CRITICAL ERROR ===', {
       timestamp: Date.now(),
       error: error.message,
@@ -593,16 +599,19 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
   
   // Check if tab is still available before executing
   try {
+    const uiLang = await getUILanguage();
     const tab = await chrome.tabs.get(tabId);
     if (!tab || tab.discarded) {
-      throw new Error('Вкладка была закрыта или выгружена. Пожалуйста, оставьте страницу открытой до завершения генерации аудио.');
+      throw new Error(tSync('errorTtsTabClosed', uiLang));
     }
   } catch (error) {
     logError('Tab check failed before Piper TTS execution', error);
     if (error.message.includes('No tab with id') || error.message.includes('tab was closed') || error.message.includes('Invalid tab ID')) {
-      throw new Error('Вкладка была закрыта во время генерации аудио. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorTtsTabClosedDuring', uiLang));
     }
-    throw new Error(`Tab ${tabId} is not available: ${error.message}`);
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorTtsTabNotAvailable', uiLang).replace('{tabId}', tabId).replace('{error}', error.message || 'unknown'));
   }
   
   try {
@@ -616,7 +625,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
       log('Piper TTS script file injected successfully', { tabId });
     } catch (injectError) {
       logError('Failed to inject Piper TTS script file', { error: injectError.message, tabId });
-      throw new Error(`Failed to inject Piper TTS script: ${injectError.message}`);
+      throw new Error(tSync('errorTtsInjectionFailed', uiLang).replace('{error}', injectError.message || 'unknown'));
     }
     
     // Wait a bit for script to initialize
@@ -643,7 +652,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
     });
     
     if (!checkResults?.[0]?.result?.hasFunction) {
-      throw new Error('executePiperTTS function is not available after script injection. Script may have failed to load.');
+      throw new Error(tSync('errorTtsFunctionNotAvailable', uiLang));
     }
     
     // Get module URL from service worker (where chrome.runtime is available)
@@ -721,9 +730,9 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
       try {
         await chrome.tabs.get(tabId);
       } catch (tabError) {
-        throw new Error(`Tab ${tabId} was closed during Piper TTS execution`);
+        throw new Error(tSync('errorTtsTabClosedDuringExecution', uiLang).replace('{tabId}', tabId));
       }
-      throw new Error('Piper TTS execution returned no result');
+      throw new Error(tSync('errorTtsNoResult', uiLang));
     }
     
     if (results[0].error) {
@@ -732,7 +741,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
         errorMessage: results[0].error?.message,
         errorStack: results[0].error?.stack
       });
-      throw new Error(`Piper TTS execution error: ${results[0].error.message || results[0].error}`);
+      throw new Error(tSync('errorTtsExecutionError', uiLang).replace('{error}', results[0].error.message || String(results[0].error)));
     }
     
     if (!results[0].result) {
@@ -740,7 +749,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
         result: results[0].result,
         resultType: typeof results[0].result
       });
-      throw new Error('Piper TTS execution returned no result');
+      throw new Error(tSync('errorTtsNoResult', uiLang));
     }
     
     const wavBase64 = results[0].result;
@@ -762,7 +771,8 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
     
     // Check if error is due to tab being closed
     if (error.message.includes('closed') || error.message.includes('discarded') || error.message.includes('not available')) {
-      throw new Error(`Tab was closed during Piper TTS. Please keep the page open while generating audio.`);
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorTtsTabClosedDuring', uiLang));
     }
     
     throw new Error(`Piper TTS failed: ${error.message}`);
@@ -811,7 +821,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   });
   
   if (!chunks || chunks.length === 0) {
-    throw new Error('No chunks provided for TTS');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorTtsNoChunks', uiLang));
   }
   
   const provider = options.provider || 'openai';

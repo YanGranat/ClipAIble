@@ -47,7 +47,8 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
   const MAX_HTML_SIZE = 50 * 1024 * 1024; // 50MB
   if (html && html.length > MAX_HTML_SIZE) {
     logError('HTML too large for selector extraction', { size: html.length, maxSize: MAX_HTML_SIZE });
-    throw new Error('HTML content is too large to process');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorHtmlTooLarge', uiLang));
   }
   
   const systemPrompt = SELECTOR_SYSTEM_PROMPT;
@@ -87,13 +88,61 @@ export async function processWithoutAI(data) {
     timestamp: Date.now()
   });
   
+  // DETAILED LOGGING: All initial conditions and settings
+  log('=== ALL INITIAL CONDITIONS AND SETTINGS ===', {
+    // Basic data
+    url: data.url,
+    title: data.title,
+    tabId: data.tabId,
+    htmlLength: data.html?.length || 0,
+    htmlFull: data.html || null, // FULL HTML - NO TRUNCATION
+    
+    // Processing settings
+    mode: data.mode,
+    outputFormat: data.outputFormat,
+    generateToc: data.generateToc,
+    generateAbstract: data.generateAbstract,
+    
+    // AI settings
+    model: data.model,
+    apiKey: data.apiKey ? `${data.apiKey.substring(0, 10)}...` : null,
+    apiProvider: data.apiProvider,
+    
+    // Translation settings
+    targetLanguage: data.targetLanguage,
+    translateImages: data.translateImages,
+    
+    // PDF settings
+    pageMode: data.pageMode,
+    fontFamily: data.fontFamily,
+    fontSize: data.fontSize,
+    bgColor: data.bgColor,
+    textColor: data.textColor,
+    headingColor: data.headingColor,
+    linkColor: data.linkColor,
+    
+    // Audio settings (if applicable)
+    audioProvider: data.audioProvider,
+    audioVoice: data.audioVoice,
+    audioSpeed: data.audioSpeed,
+    audioFormat: data.audioFormat,
+    
+    // Cache settings
+    useCache: data.useCache,
+    
+    // All other settings
+    allDataKeys: Object.keys(data || {}),
+    timestamp: Date.now()
+  });
+  
   const { html, url, title, tabId } = data;
 
   log('=== AUTOMATIC MODE START (NO AI) ===');
   log('Input data', { url, title, htmlLength: html?.length, tabId: tabId });
 
-  if (!html) throw new Error('No HTML content provided');
-  if (!tabId) throw new Error('Tab ID is required for automatic extraction');
+  const uiLang = await getUILanguage();
+  if (!html) throw new Error(tSync('errorNoHtmlContent', uiLang));
+  if (!tabId) throw new Error(tSync('errorTabIdRequired', uiLang));
 
   // Check if processing was cancelled
   await checkCancellation('automatic extraction');
@@ -125,12 +174,13 @@ export async function processWithoutAI(data) {
     // Add timeout to prevent hanging
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
+      timeoutId = setTimeout(async () => {
         logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
           timeout: CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT,
           timestamp: Date.now()
         });
-        reject(new Error(`Automatic extraction timeout after ${CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT / 1000} seconds`));
+        const uiLang = await getUILanguage();
+        reject(new Error(tSync('errorExtractionTimeout', uiLang).replace('{seconds}', String(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT / 1000))));
       }, CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT);
     });
     
@@ -168,7 +218,8 @@ export async function processWithoutAI(data) {
       if (chrome.runtime.lastError) {
         const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
         if (lastError.includes('No tab with id') || lastError.includes('tab was closed') || lastError.includes('Invalid tab ID')) {
-          throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+          const uiLang = await getUILanguage();
+          throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
         }
       }
       
@@ -176,7 +227,8 @@ export async function processWithoutAI(data) {
       try {
         await chrome.tabs.get(tabId);
       } catch (tabError) {
-        throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
       }
       
       throw error;
@@ -189,6 +241,115 @@ export async function processWithoutAI(data) {
     });
     
     log('Automatic extraction executed', { resultsLength: results?.length });
+    
+    // DETAILED LOGGING: Log page information from debugInfo
+    if (results && results[0] && results[0].result && results[0].result.debugInfo) {
+      const debugInfo = results[0].result.debugInfo;
+      
+      if (debugInfo.pageInfo) {
+        log('=== PAGE INFORMATION (FROM EXTRACTION) ===', debugInfo.pageInfo);
+      }
+      
+      if (debugInfo.metaTags) {
+        log('=== META TAGS (FROM EXTRACTION) ===', debugInfo.metaTags);
+      }
+      
+      if (debugInfo.documentStructure) {
+        log('=== DOCUMENT STRUCTURE (FROM EXTRACTION) ===', debugInfo.documentStructure);
+      }
+      
+      if (debugInfo.mainContentPreview) {
+        log('=== MAIN CONTENT PREVIEW (FROM EXTRACTION) ===', debugInfo.mainContentPreview);
+      }
+      
+      if (debugInfo.documentHTMLFull) {
+        log('=== DOCUMENT HTML FULL (FROM EXTRACTION) ===', {
+          documentHTMLFull: debugInfo.documentHTMLFull, // FULL HTML - NO TRUNCATION
+          documentHTMLLength: debugInfo.documentHTMLFull?.length || 0
+        });
+      }
+      
+      if (debugInfo.bodyHTMLFull) {
+        log('=== BODY HTML FULL (FROM EXTRACTION) ===', {
+          bodyHTMLFull: debugInfo.bodyHTMLFull, // FULL HTML - NO TRUNCATION
+          bodyHTMLLength: debugInfo.bodyHTMLFull?.length || 0
+        });
+      }
+      
+      if (debugInfo.googleTranslateState) {
+        log('=== GOOGLE TRANSLATE STATE (FROM EXTRACTION) ===', debugInfo.googleTranslateState);
+      }
+      
+      if (debugInfo.firstParagraphCheck) {
+        log('=== FIRST PARAGRAPH CHECK (FROM EXTRACTION) ===', debugInfo.firstParagraphCheck);
+      }
+      
+      if (debugInfo.firstParagraphAsSeen) {
+        log('=== FIRST PARAGRAPH AS SEEN BY EXTRACTION SCRIPT ===', debugInfo.firstParagraphAsSeen);
+      }
+      
+      // CRITICAL: Compare HTML from popup vs HTML seen by extraction script
+      // This will show if Google Translate modified DOM before extraction
+      if (data.html && debugInfo.documentHTMLFull) {
+        log('=== HTML COMPARISON: POPUP vs EXTRACTION SCRIPT ===', {
+          popupHTMLLength: data.html.length,
+          extractionHTMLLength: debugInfo.documentHTMLFull.length,
+          lengthsMatch: data.html.length === debugInfo.documentHTMLFull.length,
+          popupHTMLFull: data.html, // FULL HTML - NO TRUNCATION
+          extractionHTMLFull: debugInfo.documentHTMLFull, // FULL HTML - NO TRUNCATION
+          htmlsMatch: data.html === debugInfo.documentHTMLFull,
+          timestamp: Date.now()
+        });
+      }
+      
+      // CRITICAL: Log ALL extraction logs from page console - they're now in debugInfo
+      if (debugInfo.extractionLogs && Array.isArray(debugInfo.extractionLogs)) {
+        log('=== ALL EXTRACTION LOGS FROM PAGE (NOW IN SERVICE WORKER) ===', {
+          totalLogs: debugInfo.extractionLogs.length,
+          logs: debugInfo.extractionLogs // ALL LOGS - NO TRUNCATION
+        });
+        
+        // Also log each log separately for better visibility
+        debugInfo.extractionLogs.forEach((logEntry, idx) => {
+          log(`=== EXTRACTION LOG [${idx}]: ${logEntry.type} ===`, logEntry.data);
+        });
+      }
+    }
+    
+    // DETAILED LOGGING: Log full extraction result
+    if (results && results[0] && results[0].result) {
+      const extractionResult = results[0].result;
+      log('=== EXTRACTION RESULT DETAILED LOG ===', {
+        title: extractionResult.title,
+        author: extractionResult.author,
+        publishDate: extractionResult.publishDate,
+        detectedLanguage: extractionResult.detectedLanguage,
+        contentItemsCount: extractionResult.content?.length || 0,
+        timestamp: Date.now()
+      });
+      
+      // Log ALL content items with FULL text - NO TRUNCATION
+      // Log each item separately to ensure full visibility in console
+      if (extractionResult.content && Array.isArray(extractionResult.content)) {
+        log('=== EXTRACTED CONTENT ITEMS (ALL - FULL TEXT) ===', {
+          totalItems: extractionResult.content.length
+        });
+        
+        // Log each item separately for full visibility
+        extractionResult.content.forEach((item, idx) => {
+          log(`=== CONTENT ITEM [${idx}] ===`, {
+            index: idx,
+            type: item.type,
+            text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
+            textLength: (item.text || item.html || '').length,
+            html: item.html || null, // FULL HTML - NO TRUNCATION
+            htmlLength: item.html ? item.html.length : 0,
+            wasTranslated: item._wasTranslated || false,
+            hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
+          });
+        });
+      }
+    }
   } catch (scriptError) {
     logError('=== processWithoutAI: Script execution FAILED ===', {
       error: scriptError?.message || String(scriptError),
@@ -213,7 +374,8 @@ export async function processWithoutAI(data) {
       results: results,
       timestamp: Date.now()
     });
-    throw new Error('Automatic extraction returned empty results');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorExtractionEmptyResults', uiLang));
   }
 
   if (results[0].error) {
@@ -223,7 +385,9 @@ export async function processWithoutAI(data) {
       timestamp: Date.now()
     });
     logError('Automatic extraction error', error);
-    throw new Error(`Automatic extraction error: ${error && typeof error === 'object' && 'message' in error ? error.message : String(error)}`);
+    const uiLang = await getUILanguage();
+    const errorMsg = error && typeof error === 'object' && 'message' in error ? error.message : String(error);
+    throw new Error(tSync('errorExtractionError', uiLang).replace('{error}', errorMsg));
   }
 
   /** @type {InjectionResult} */
@@ -234,7 +398,8 @@ export async function processWithoutAI(data) {
       results0Keys: Object.keys(results[0]),
       timestamp: Date.now()
     });
-    throw new Error('Automatic extraction returned no result');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorExtractionNoResult', uiLang));
   }
   
   log('=== processWithoutAI: Results validated successfully ===', {
@@ -400,8 +565,9 @@ export async function processWithExtractMode(data) {
   log('=== EXTRACT MODE START ===');
   log('Input data', { url, title, htmlLength: html?.length, model });
 
-  if (!html) throw new Error('No HTML content provided');
-  if (!apiKey) throw new Error('No API key provided');
+  const uiLang = await getUILanguage();
+  if (!html) throw new Error(tSync('errorNoHtmlContent', uiLang));
+  if (!apiKey) throw new Error(tSync('errorTtsNoApiKey', uiLang));
 
   // Check if processing was cancelled before extract mode processing
   await checkCancellation('extract mode processing');
@@ -433,7 +599,8 @@ export async function processWithExtractMode(data) {
   log('=== EXTRACT MODE END ===', { title: result.title, items: result.content?.length });
 
   if (!result.content || result.content.length === 0) {
-    throw new Error('AI Extract mode returned no content. The page may use dynamic loading. Try scrolling to load all content before saving.');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorExtractModeNoContent', uiLang));
   }
 
   return result;
@@ -575,8 +742,9 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
 export async function extractContentWithSelectors(tabId, selectors, baseUrl, extractFromPageInlined) {
   log('extractContentWithSelectors', { tabId, selectors, baseUrl });
   
+  const uiLang = await getUILanguage();
   if (!tabId) {
-    throw new Error('Tab ID is required for content extraction');
+    throw new Error(tSync('errorTabIdRequired', uiLang));
   }
   
   // CRITICAL: tabId is the ID of the tab where the button was clicked
@@ -603,17 +771,17 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   
   // SECURITY: Validate baseUrl before passing to executeScript
   if (!baseUrl || typeof baseUrl !== 'string') {
-    throw new Error('Invalid baseUrl: must be a non-empty string');
+    throw new Error(tSync('errorInvalidBaseUrl', uiLang));
   }
   
   // SECURITY: Validate selectors structure
   if (!selectors || typeof selectors !== 'object') {
-    throw new Error('Invalid selectors: must be an object');
+    throw new Error(tSync('errorInvalidSelectors', uiLang));
   }
   
   // Validate selectors.exclude is an array if present
   if (selectors.exclude && !Array.isArray(selectors.exclude)) {
-    throw new Error('Invalid selectors.exclude: must be an array');
+    throw new Error(tSync('errorInvalidSelectorsExclude', uiLang));
   }
   
   let results;
@@ -635,7 +803,8 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     if (chrome.runtime.lastError) {
       const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
       if (lastError.includes('No tab with id') || lastError.includes('tab was closed') || lastError.includes('Invalid tab ID')) {
-        throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+        const uiLang = await getUILanguage();
+        throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
       }
     }
     
@@ -643,14 +812,17 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     try {
       await chrome.tabs.get(tabId);
     } catch (tabError) {
-      throw new Error('Вкладка была закрыта во время обработки. Пожалуйста, оставьте страницу открытой до завершения обработки.');
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
     }
     
-    throw new Error(`Failed to execute script on page: ${scriptError.message}`);
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorScriptExecutionFailed', uiLang).replace('{error}', scriptError.message || 'unknown'));
   }
 
   if (!results || !results[0]) {
-    throw new Error('Script execution returned empty results');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorScriptEmptyResults', uiLang));
   }
   
   /** @type {InjectionResult} */
@@ -676,7 +848,8 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   }
   
   if (!injectionResult) {
-    throw new Error('Script returned no result');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorScriptNoResult', uiLang));
   }
 
   // Log detailed extraction result with full content preview
@@ -836,9 +1009,10 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   log('=== SELECTOR MODE START ===');
   log('Input data', { url, title, htmlLength: html?.length, tabId });
   
-  if (!html) throw new Error('No HTML content provided');
-  if (!apiKey) throw new Error('No API key provided');
-  if (!tabId) throw new Error('No tab ID provided');
+  const uiLang = await getUILanguage();
+  if (!html) throw new Error(tSync('errorNoHtmlContent', uiLang));
+  if (!apiKey) throw new Error(tSync('errorTtsNoApiKey', uiLang));
+  if (!tabId) throw new Error(tSync('errorNoTabId', uiLang));
   
   // Check cache first (if enabled)
   let selectors;
@@ -876,11 +1050,13 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       log('Received selectors from AI', selectors);
     } catch (error) {
       logError('Failed to get selectors from AI', error);
-      throw new Error(`AI selector analysis failed: ${error.message}`);
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorSelectorAnalysisFailed', uiLang).replace('{error}', error.message || 'unknown'));
     }
     
     if (!selectors) {
-      throw new Error('AI returned empty selectors');
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorAiEmptySelectors', uiLang));
     }
   }
   
@@ -905,12 +1081,14 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       await invalidateCache(url);
     }
     logError('Failed to extract content with selectors', error);
-    throw new Error(`Content extraction failed: ${error.message}`);
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorContentExtractionFailed', uiLang).replace('{error}', error.message || 'unknown'));
   }
   
   if (!extractedContent || !extractedContent.content) {
     if (fromCache) await invalidateCache(url);
-    throw new Error('No content extracted from page');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorNoContentExtracted', uiLang));
   }
   
   if (extractedContent.content.length === 0) {
@@ -918,7 +1096,8 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     const selectorsStr = JSON.stringify(selectors);
     const truncated = selectorsStr.length > 200 ? selectorsStr.substring(0, 200) + '...' : selectorsStr;
     logError('Extracted content is empty', { selectors: truncated });
-    throw new Error('Extracted content is empty. Try switching to "AI Extract" mode.');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorContentEmpty', uiLang));
   }
   
   // Cache selectors after successful extraction ONLY

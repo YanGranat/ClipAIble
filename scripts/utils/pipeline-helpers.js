@@ -346,25 +346,72 @@ export async function detectEffectiveLanguage(
   result,
   detectContentLanguage
 ) {
+  log('=== detectEffectiveLanguage: ENTRY ===', {
+    requestedLanguage: data.language || 'auto',
+    hasDetectedLanguage: !!result.detectedLanguage,
+    detectedLanguage: result.detectedLanguage,
+    contentItemsCount: result.content?.length || 0,
+    hasApiKey: !!data.apiKey,
+    model: data.model,
+    timestamp: Date.now()
+  });
+  
   let effectiveLanguage = data.language || 'auto';
   if (effectiveLanguage === 'auto') {
     // Use detected language from automatic extraction if available
     if (result.detectedLanguage) {
       effectiveLanguage = result.detectedLanguage;
-      log('Using detected language from automatic extraction for localization', { detectedLang: effectiveLanguage });
+      log('=== detectEffectiveLanguage: USING EXTRACTION LANGUAGE ===', { 
+        detectedLanguage: effectiveLanguage,
+        source: 'automatic extraction'
+      });
     } else if (result.content && result.content.length > 0 && data.apiKey) {
       // Fallback to AI detection if API key available
+      log('=== detectEffectiveLanguage: CALLING AI DETECTION ===', {
+        contentItemsCount: result.content.length,
+        model: data.model
+      });
       try {
         const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
+        log('=== detectEffectiveLanguage: AI DETECTION RESULT ===', {
+          detectedLang,
+          willUse: detectedLang && detectedLang !== 'en'
+        });
         if (detectedLang && detectedLang !== 'en') {
           effectiveLanguage = detectedLang;
-          log('Using detected language for localization', { detectedLang });
+          log('=== detectEffectiveLanguage: USING AI DETECTED LANGUAGE ===', { 
+            detectedLanguage: effectiveLanguage,
+            source: 'AI detection'
+          });
+        } else {
+          log('=== detectEffectiveLanguage: AI DETECTED EN OR INVALID, KEEPING AUTO ===', {
+            detectedLang,
+            effectiveLanguage: 'auto'
+          });
         }
       } catch (error) {
-        logWarn('Language detection failed, using auto', error);
+        logWarn('=== detectEffectiveLanguage: AI DETECTION FAILED ===', { error: error.message, errorStack: error.stack });
       }
+    } else {
+      log('=== detectEffectiveLanguage: NO DETECTION POSSIBLE ===', {
+        hasContent: !!result.content,
+        contentLength: result.content?.length || 0,
+        hasApiKey: !!data.apiKey,
+        effectiveLanguage: 'auto'
+      });
     }
+  } else {
+    log('=== detectEffectiveLanguage: USING USER-SELECTED LANGUAGE ===', {
+      effectiveLanguage,
+      source: 'user selection'
+    });
   }
+  
+  log('=== detectEffectiveLanguage: RESULT ===', {
+    effectiveLanguage,
+    timestamp: Date.now()
+  });
+  
   return effectiveLanguage;
 }
 

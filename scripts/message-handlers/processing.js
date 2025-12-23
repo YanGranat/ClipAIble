@@ -49,6 +49,53 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
     timestamp: Date.now()
   });
   
+  // DETAILED LOGGING: All request data and settings
+  log('=== ALL REQUEST DATA AND SETTINGS ===', {
+    // Basic data
+    url: request.data?.url,
+    title: request.data?.title,
+    tabId: request.data?.tabId,
+    htmlLength: request.data?.html?.length || 0,
+    htmlFull: request.data?.html || null, // FULL HTML - NO TRUNCATION
+    
+    // Processing settings
+    mode: request.data?.mode,
+    outputFormat: request.data?.outputFormat,
+    generateToc: request.data?.generateToc,
+    generateAbstract: request.data?.generateAbstract,
+    
+    // AI settings
+    model: request.data?.model,
+    apiKey: request.data?.apiKey ? `${request.data.apiKey.substring(0, 10)}...` : null,
+    apiProvider: request.data?.apiProvider,
+    
+    // Translation settings
+    targetLanguage: request.data?.targetLanguage,
+    translateImages: request.data?.translateImages,
+    
+    // PDF settings
+    pageMode: request.data?.pageMode,
+    fontFamily: request.data?.fontFamily,
+    fontSize: request.data?.fontSize,
+    bgColor: request.data?.bgColor,
+    textColor: request.data?.textColor,
+    headingColor: request.data?.headingColor,
+    linkColor: request.data?.linkColor,
+    
+    // Audio settings
+    audioProvider: request.data?.audioProvider,
+    audioVoice: request.data?.audioVoice,
+    audioSpeed: request.data?.audioSpeed,
+    audioFormat: request.data?.audioFormat,
+    
+    // Cache settings
+    useCache: request.data?.useCache,
+    
+    // All keys
+    allKeys: Object.keys(request.data || {}),
+    timestamp: Date.now()
+  });
+  
   log('=== handleProcessArticle: Checking startArticleProcessing ===', {
     hasStartArticleProcessing: typeof startArticleProcessing === 'function',
     functionName: startArticleProcessing?.name || 'unknown',

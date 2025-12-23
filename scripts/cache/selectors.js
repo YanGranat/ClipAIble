@@ -5,10 +5,9 @@
 // @typedef {import('../types.js').SelectorResult} SelectorResult
 // @typedef {import('../types.js').CacheEntry} CacheEntry
 
-import { log, logWarn } from '../utils/logging.js';
+import { log, logWarn, logError } from '../utils/logging.js';
 
 const STORAGE_KEY = 'selector_cache';
-const MAX_CACHED_DOMAINS = 100;
 const MIN_SUCCESS_FOR_TRUST = 2; // Need at least 2 successes before fully trusting cache
 
 // NOTE: Cache has NO TTL (time-to-live) - this is intentional!
@@ -186,18 +185,6 @@ export async function cacheSelectors(url, selectors) {
     }
     
     const cache = await loadCache();
-    
-    // Check if we need to evict old entries
-    const domains = Object.keys(cache);
-    if (domains.length >= MAX_CACHED_DOMAINS) {
-      // Remove least recently used
-      const sorted = domains.sort((a, b) => 
-        (cache[a].lastUsed || 0) - (cache[b].lastUsed || 0)
-      );
-      const toRemove = sorted.slice(0, Math.floor(MAX_CACHED_DOMAINS / 4));
-      toRemove.forEach(d => delete cache[d]);
-      log('Evicted old cache entries', { count: toRemove.length });
-    }
     
     const existing = cache[domain];
     

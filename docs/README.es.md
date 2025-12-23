@@ -2,7 +2,7 @@
 
 > **Extractor de artículos con IA** — Guarda cualquier artículo de la web como PDF, EPUB, FB2, Markdown o Audio. Traducción a 11 idiomas. Funciona en cualquier sitio web.
 
-![Versión](https://img.shields.io/badge/versión-3.2.3-blue)
+![Versión](https://img.shields.io/badge/versión-3.2.4-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensión-green)
 ![Licencia](https://img.shields.io/badge/licencia-MIT-brightgreen)
 

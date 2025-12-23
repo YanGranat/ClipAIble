@@ -165,8 +165,25 @@ export function isExcludedModule(element, constants, helpers) {
   }
   
   // Exclude elements containing email input fields (newsletter signup)
+  // But be careful - contact forms in articles should not be excluded
+  // Only exclude if it's clearly a newsletter/subscription form
   if (element.querySelector && element.querySelector('input[type="email"]')) {
-    return true;
+    // Check if it's a newsletter signup (not a contact form in article)
+    const hasNewsletterText = textLower.includes('newsletter') || 
+                             textLower.includes('subscribe') ||
+                             textLower.includes('signup') || textLower.includes('sign-up') ||
+                             textLower.includes('get the latest') || textLower.includes('inbox') ||
+                             textLower.includes('marketing cloud');
+    // Only exclude if it's clearly a newsletter, not a contact form
+    if (hasNewsletterText) {
+      return true;
+    }
+    // Also exclude if element is in navigation/sidebar area (not in main content)
+    const isInNavArea = element.closest('nav, aside, .sidebar, .navigation, footer, header') !== null;
+    if (isInNavArea) {
+      return true;
+    }
+    // For elements in main content, be lenient - don't exclude (might be contact form)
   }
   
   // Exclude elements with specific ad-related classes
@@ -188,6 +205,15 @@ export function isExcludedModule(element, constants, helpers) {
   const text = element.textContent || '';
   const textLower = text.toLowerCase();
   const textTrimmed = text.trim();
+  
+  // Common navigation tab words (multilingual) - defined early for use throughout function
+  const navigationTabWords = [
+    'читать', 'read', 'править', 'edit', 'обсуждение', 'discussion', 'редакции', 'revisions',
+    'view', 'просмотр', 'history', 'история', 'source', 'исходник', 'talk', 'обсуждение',
+    'watch', 'смотреть', 'contribute', 'вклад', 'watchlist', 'список', 'preferences', 'настройки',
+    'watchlist', 'список', 'user', 'пользователь', 'log', 'вход', 'create', 'создать',
+    'account', 'аккаунт', 'sign', 'войти', 'register', 'регистрация', 'login', 'вход'
+  ];
   
   // For paragraphs/headings, only exclude if text is very short and clearly metadata
   if (isParagraphOrHeading) {
@@ -343,6 +369,91 @@ export function isExcludedModule(element, constants, helpers) {
     return true;
   }
   
+  // Smart detection of navigation tabs and UI controls
+  // Check for tab navigation elements (role="tab", tablist, etc.)
+  const role = element.getAttribute('role') || '';
+  const ariaLabel = (element.getAttribute('aria-label') || '').toLowerCase();
+  const ariaLabelledBy = element.getAttribute('aria-labelledby');
+  
+  // Exclude elements with tab role or in tablist
+  if (role === 'tab' || role === 'tabpanel' || 
+      element.closest('[role="tablist"]') !== null ||
+      element.closest('[role="tabpanel"]') !== null) {
+    return true;
+  }
+  
+  // Exclude navigation tabs by structural analysis
+  // Tabs are typically: short text (1-3 words), in lists/groups, with navigation words
+  const textWords = textTrimmed.split(/\s+/).filter(w => w.length > 0);
+  const isShortText = textTrimmed.length < 50 && textWords.length <= 4;
+  
+  const hasNavigationWord = navigationTabWords.some(word => 
+    textLower.includes(word) || ariaLabel.includes(word)
+  );
+  
+  // Check if element is in a navigation structure
+  const isInNav = element.closest('nav') !== null || 
+                   element.closest('[role="navigation"]') !== null ||
+                   element.closest('.nav, .navigation, .menu, .tabs, .tab-list') !== null;
+  
+  // Check if element is in a list with other short navigation-like items
+  const parent = element.parentElement;
+  let isInNavigationGroup = false;
+  if (parent && (parent.tagName === 'UL' || parent.tagName === 'OL' || 
+                 parent.tagName === 'DIV' || parent.tagName === 'NAV')) {
+    const siblings = Array.from(parent.children);
+    const shortNavigationSiblings = siblings.filter(sibling => {
+      const siblingText = (sibling.textContent || '').trim();
+      const siblingWords = siblingText.split(/\s+/).filter(w => w.length > 0);
+      return siblingText.length < 50 && siblingWords.length <= 4 &&
+             navigationTabWords.some(word => siblingText.toLowerCase().includes(word));
+    });
+    // If 2+ siblings are short navigation items, this is likely a tab group
+    if (shortNavigationSiblings.length >= 2) {
+      isInNavigationGroup = true;
+    }
+  }
+  
+  // Exclude if: short text + navigation word + in nav structure or navigation group
+  if (isShortText && hasNavigationWord && (isInNav || isInNavigationGroup || role === 'tab')) {
+    return true;
+  }
+  
+  // Exclude metadata links (short text with URL pattern)
+  // Pattern: "Короткая ссылка сюда: lesswrong.ru/16" or similar
+  if (tagName === 'a' || tagName === 'p' || tagName === 'span') {
+    // Check for metadata patterns: short text + URL or domain
+    const urlPattern = /(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(\/[^\s]*)?/i;
+    const hasUrl = urlPattern.test(textTrimmed);
+    const isVeryShort = textTrimmed.length < 100;
+    
+    // Metadata indicators
+    const metadataKeywords = [
+      'ссылка', 'link', 'url', 'адрес', 'address', 'короткая', 'short',
+      'сюда', 'here', 'permalink', 'постоянная', 'permanent'
+    ];
+    const hasMetadataKeyword = metadataKeywords.some(keyword => 
+      textLower.includes(keyword)
+    );
+    
+    // Exclude if: very short + has URL + has metadata keyword
+    if (isVeryShort && hasUrl && hasMetadataKeyword) {
+      return true;
+    }
+    
+    // Exclude standalone short URLs at end of content (metadata)
+    if (isVeryShort && hasUrl && textWords.length <= 3 && 
+        (textTrimmed.match(urlPattern) || []).length === 1) {
+      // Check if it's likely metadata (not part of article text)
+      const isLikelyMetadata = !textTrimmed.match(/[.!?]$/) && // No sentence ending
+                               !textLower.includes('http') || // Just domain
+                               textTrimmed.split(/[:\/]/).length >= 2; // Has path structure
+      if (isLikelyMetadata) {
+        return true;
+      }
+    }
+  }
+  
   // Exclude control elements (Adjust, Share buttons, Email, Save, Post)
   if (className.includes('share-buttons') || className.includes('component-share-buttons') ||
       className.includes('aria-font-adjusts') || className.includes('font-adjust') ||
@@ -353,8 +464,43 @@ export function isExcludedModule(element, constants, helpers) {
   // Exclude control buttons by text content
   if (tagName === 'button') {
     const buttonText = text.trim().toLowerCase();
-    if (buttonText === 'email' || buttonText === 'save' || buttonText === 'post' || 
-        buttonText === 'share' || buttonText.includes('syndicate')) {
+    // Extended list of control button texts (multilingual)
+    const controlButtonTexts = [
+      'email', 'save', 'post', 'share', 'syndicate',
+      'читать', 'read', 'править', 'edit', 'обсуждение', 'discussion',
+      'редакции', 'revisions', 'view', 'просмотр', 'history', 'история'
+    ];
+    if (controlButtonTexts.some(ctrlText => 
+        buttonText === ctrlText || buttonText.includes(ctrlText))) {
+      return true;
+    }
+  }
+  
+  // Exclude links that are navigation tabs (short text, navigation words, in nav structure)
+  if (tagName === 'a') {
+    const linkText = text.trim();
+    const linkTextLower = linkText.toLowerCase();
+    const linkWords = linkText.split(/\s+/).filter(w => w.length > 0);
+    const isShortLink = linkText.length < 50 && linkWords.length <= 4;
+    
+    // Check if link is in navigation structure
+    const linkInNav = element.closest('nav') !== null ||
+                      element.closest('[role="navigation"]') !== null ||
+                      element.closest('.nav, .navigation, .menu, .tabs, .tab-list, [role="tablist"]') !== null;
+    
+    // Check if link text matches navigation tab patterns
+    const isNavigationTabText = navigationTabWords.some(word => 
+      linkTextLower === word || linkTextLower.startsWith(word + ' ') || 
+      linkTextLower.endsWith(' ' + word) || linkTextLower.includes(' ' + word + ' ')
+    );
+    
+    // Exclude if: short link + navigation word + in nav structure
+    if (isShortLink && isNavigationTabText && linkInNav) {
+      return true;
+    }
+    
+    // Also exclude if link is in a group with other navigation links
+    if (isShortLink && isNavigationTabText && isInNavigationGroup) {
       return true;
     }
   }
@@ -499,9 +645,15 @@ export function isExcludedModule(element, constants, helpers) {
       return true;
     }
   } else {
-    // For non-image elements, use normal exclusion logic
+    // For non-image elements, use word boundaries to avoid false positives
+    // Example: 'related' should not match 'related-concepts' in article content
+    // But should match 'related-articles' in navigation
     for (const excluded of EXCLUDED_CLASSES) {
-      if (className.includes(excluded) || id.includes(excluded)) {
+      // Use word boundaries for more precise matching (same as for images)
+      const pattern = new RegExp(`\\b${excluded}\\b`);
+      if (pattern.test(className) || pattern.test(id) ||
+          className === excluded || className.startsWith(excluded + '-') || className.endsWith('-' + excluded) ||
+          id === excluded || id.startsWith(excluded + '-') || id.endsWith('-' + excluded)) {
         return true;
       }
     }

@@ -101,6 +101,14 @@ export function routeMessage(request, sender, sendResponse, deps) {
     // Simple handlers
     'log': () => handleLog(request, sender, sendResponse),
     'logError': () => handleLogError(request, sender, sendResponse),
+    'logFromPrintPage': () => {
+      const { message, data } = request.data || {};
+      if (message) {
+        log(`[Print Page] ${message}`, data || null);
+      }
+      sendResponse({ success: true });
+      return true;
+    },
     'logSetting': () => {
       const { key, value, valueType, timestamp } = request.data || {};
       log('[ClipAIble Background] ===== SETTING CHANGED IN POPUP =====', {

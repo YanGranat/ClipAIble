@@ -5,8 +5,26 @@ import { cleanTitleForFilename } from '../scripts/utils/html.js';
 
 const LOG_PREFIX = '[ClipAIble:Print]';
 
-function log(message) {
-  console.log(`${LOG_PREFIX} ${message}`);
+function log(message, data = null) {
+  const logMessage = `${LOG_PREFIX} ${message}`;
+  
+  // CRITICAL: ALL logs MUST go to service worker - this is the primary logging destination
+  // Console.log is secondary, service worker logs are primary
+  try {
+    chrome.runtime.sendMessage({
+      action: 'logFromPrintPage',
+      data: {
+        message: logMessage,
+        data: data
+      }
+    }).catch(() => {
+      // Fallback to console if service worker is not available
+      console.log(logMessage, data || '');
+    });
+  } catch (e) {
+    // Fallback to console if sendMessage fails
+    console.log(logMessage, data || '');
+  }
 }
 
 async function init() {
@@ -26,10 +44,16 @@ async function init() {
     const result = await chrome.storage.local.get(['printTitle', 'pageMode']);
     
     // Use cleanTitleForFilename to remove invalid filename chars (print page title is used for PDF filename)
-    const title = cleanTitleForFilename(result.printTitle, 'Untitled');
-    const pageMode = result.pageMode || 'single';
+    const title = cleanTitleForFilename(typeof result.printTitle === 'string' ? result.printTitle : undefined, 'Untitled');
+    const pageMode = (typeof result.pageMode === 'string' ? result.pageMode : undefined) || 'single';
     
     log(`Content loaded: ${printHtml.length} chars, pageMode=${pageMode}`);
+    
+    // CRITICAL: Log first paragraph from HTML before writing to document
+    const firstParagraphMatch = printHtml.match(/<p[^>]*>([^<]+)/);
+    if (firstParagraphMatch) {
+      log(`=== FIRST PARAGRAPH IN HTML (BEFORE document.write) === ${firstParagraphMatch[1]}`);
+    }
     
     // Write HTML to document
     document.open();
@@ -41,6 +65,38 @@ async function init() {
     
     // Wait for render
     await new Promise(r => setTimeout(r, 300));
+    
+    // CRITICAL: Check first paragraph in DOM after document.write
+    const firstParagraph = document.querySelector('.article-content p, article p, .article p');
+    if (firstParagraph) {
+      const firstParagraphText = firstParagraph.textContent || '';
+      const firstParagraphHTML = firstParagraph.innerHTML || '';
+      const hasDataOriginalText = firstParagraph.hasAttribute('data-original-text');
+      const dataOriginalText = firstParagraph.getAttribute('data-original-text') || null;
+      const hasGtOrig = firstParagraph.hasAttribute('data-gt-orig-display');
+      const gtOrig = firstParagraph.getAttribute('data-gt-orig-display') || null;
+      
+      log(`=== FIRST PARAGRAPH IN DOM (AFTER document.write) ===`);
+      log(`  textContent: ${firstParagraphText}`);
+      log(`  innerHTML: ${firstParagraphHTML}`);
+      log(`  hasDataOriginalText: ${hasDataOriginalText}`);
+      log(`  dataOriginalText: ${dataOriginalText}`);
+      log(`  hasGtOrig: ${hasGtOrig}`);
+      log(`  gtOrig: ${gtOrig}`);
+      
+      // Check if Google Translate modified the text
+      if (hasDataOriginalText && dataOriginalText && dataOriginalText !== firstParagraphText) {
+        log(`!!! WARNING: Google Translate modified first paragraph !!!`);
+        log(`  Original: ${dataOriginalText}`);
+        log(`  Translated: ${firstParagraphText}`);
+      }
+    }
+    
+    // Check for Google Translate widget
+    const googleTranslateWidget = document.querySelector('[class*="goog-te"], [id*="google_translate"]');
+    if (googleTranslateWidget) {
+      log(`!!! WARNING: Google Translate widget detected in DOM !!!`);
+    }
     
     // Wait for images
     const images = document.querySelectorAll('img');
@@ -60,7 +116,8 @@ async function init() {
     await new Promise(r => setTimeout(r, 200));
     
     // Get article element
-    const article = document.querySelector('.article') || document.body;
+    const articleElement = document.querySelector('.article') || document.body;
+    const article = articleElement instanceof HTMLElement ? articleElement : document.body;
     
     // For single page mode, fix width to match print layout
     // @media print has padding: 5mm on body = 19px on each side
@@ -96,6 +153,40 @@ async function init() {
     
     log(`Content dimensions: ${contentWidth}x${contentHeight}px`);
     
+    // CRITICAL: Check first paragraph again before PDF generation
+    const firstParagraphBeforePdf = document.querySelector('.article-content p, article p, .article p');
+    if (firstParagraphBeforePdf) {
+      const firstParagraphTextBeforePdf = firstParagraphBeforePdf.textContent || '';
+      const firstParagraphHTMLBeforePdf = firstParagraphBeforePdf.innerHTML || '';
+      const hasDataOriginalTextBeforePdf = firstParagraphBeforePdf.hasAttribute('data-original-text');
+      const dataOriginalTextBeforePdf = firstParagraphBeforePdf.getAttribute('data-original-text') || null;
+      
+      log(`=== FIRST PARAGRAPH IN DOM (BEFORE PDF GENERATION) ===`);
+      log(`  textContent: ${firstParagraphTextBeforePdf}`);
+      log(`  innerHTML: ${firstParagraphHTMLBeforePdf}`);
+      log(`  hasDataOriginalText: ${hasDataOriginalTextBeforePdf}`);
+      log(`  dataOriginalText: ${dataOriginalTextBeforePdf}`);
+      
+      // Check all paragraphs for Google Translate modifications
+      const allParagraphs = document.querySelectorAll('.article-content p, article p, .article p');
+      let modifiedCount = 0;
+      allParagraphs.forEach((p, idx) => {
+        const hasDataOriginalText = p.hasAttribute('data-original-text');
+        const dataOriginalText = p.getAttribute('data-original-text');
+        if (hasDataOriginalText && dataOriginalText && dataOriginalText !== p.textContent) {
+          modifiedCount++;
+          if (idx === 0) {
+            log(`!!! PARAGRAPH [${idx}] MODIFIED BY GOOGLE TRANSLATE !!!`);
+            log(`  Original: ${dataOriginalText}`);
+            log(`  Translated: ${p.textContent}`);
+          }
+        }
+      });
+      if (modifiedCount > 0) {
+        log(`!!! WARNING: ${modifiedCount} paragraphs modified by Google Translate !!!`);
+      }
+    }
+    
     // Send message to background to generate PDF via debugger
     log('Requesting PDF generation from background...');
     
@@ -119,7 +210,8 @@ async function init() {
     log('=== DONE ===');
     
   } catch (error) {
-    console.error(`${LOG_PREFIX} ERROR:`, error);
+    // CRITICAL: Error logs MUST also go to service worker
+    log(`ERROR: ${error.message}`, { error: error.toString(), stack: error.stack });
     // Error message - no localization needed as this is a fallback error page
     document.body.innerHTML = `<div style="padding:40px;color:red;font-family:sans-serif;">
       <h2>Error</h2>

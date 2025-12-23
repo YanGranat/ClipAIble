@@ -3,6 +3,7 @@
 // Handles HTTP errors consistently across all TTS providers
 
 import { logError, logWarn } from './logging.js';
+import { getUILanguage, tSync } from '../locales.js';
 
 /**
  * @typedef {Error & {
@@ -88,20 +89,22 @@ export async function handleApiError(response, providerName, options = {}) {
 /**
  * Handle timeout error
  * @param {string} providerName - Provider name
- * @returns {Error} Error object
+ * @returns {Promise<Error>} Error object
  */
-export function handleTimeoutError(providerName) {
-  return new Error(`${providerName} request timed out. Please try again.`);
+export async function handleTimeoutError(providerName) {
+  const uiLang = await getUILanguage();
+  return new Error(tSync('errorProviderTimeout', uiLang).replace('{provider}', providerName));
 }
 
 /**
  * Handle network error
  * @param {Error} networkError - Network error
  * @param {string} providerName - Provider name
- * @returns {Error} Error object
+ * @returns {Promise<Error>} Error object
  */
-export function handleNetworkError(networkError, providerName) {
+export async function handleNetworkError(networkError, providerName) {
   logError(`${providerName} network error`, networkError);
-  return new Error(`${providerName} network error: ${networkError.message}`);
+  const uiLang = await getUILanguage();
+  return new Error(tSync('errorProviderNetworkError', uiLang).replace('{provider}', providerName).replace('{error}', networkError.message || 'unknown'));
 }
 

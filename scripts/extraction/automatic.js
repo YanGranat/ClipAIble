@@ -33,18 +33,107 @@
  * @param {boolean} enableDebugInfo - Whether to collect debug information (default: false)
  * @returns {Object} Extraction result with content, title, author, publishDate, debugInfo
  */
-export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
+export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
   // Log start (this will appear in page console, not service worker)
   // CRITICAL: This runs in MAIN world where modules are not available
   // console.log is acceptable here as logging module cannot be imported
   try {
     console.log('[ClipAIble] extractAutomaticallyInlined: START', { baseUrl, enableDebugInfo, timestamp: Date.now() });
-  } catch (e) {}
-  
-  const content = [];
+    
+    // CRITICAL: Log the ACTUAL HTML that the extraction script sees on the page
+    // This is what we're working with - may be different from what user sees!
+    const actualDocumentHTML = document.documentElement.outerHTML;
+    const actualBodyHTML = document.body.innerHTML;
+    const actualMainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
+    const actualFirstParagraph = document.querySelector('main p, article p, [role="main"] p, #content p');
+    
+    console.log('[ClipAIble] === ACTUAL HTML ON PAGE (WHAT EXTRACTION SCRIPT SEES) ===', {
+      documentHTMLLength: actualDocumentHTML.length,
+      documentHTMLFull: actualDocumentHTML, // FULL HTML - NO TRUNCATION
+      bodyHTMLLength: actualBodyHTML.length,
+      bodyHTMLFull: actualBodyHTML, // FULL HTML - NO TRUNCATION
+      hasMainContent: !!actualMainContent,
+      mainContentHTMLFull: actualMainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
+      hasFirstParagraph: !!actualFirstParagraph,
+      firstParagraphTextContent: actualFirstParagraph?.textContent || null, // FULL TEXT - NO TRUNCATION
+      firstParagraphInnerHTML: actualFirstParagraph?.innerHTML || null, // FULL HTML - NO TRUNCATION
+      firstParagraphHasDataOriginalText: actualFirstParagraph?.hasAttribute('data-original-text') || false,
+      firstParagraphDataOriginalText: actualFirstParagraph?.getAttribute('data-original-text') || null, // FULL TEXT - NO TRUNCATION
+      timestamp: Date.now()
+    });
+    
+    // DETAILED LOGGING: Page information
+    const pageInfoLog = {
+      url: window.location.href,
+      title: document.title,
+      baseUrl: baseUrl,
+      documentLang: document.documentElement.lang,
+      documentXmlLang: document.documentElement.getAttribute('xml:lang'),
+      bodyClasses: document.body.className,
+      bodyLang: document.body.lang,
+      hasGoogleTranslate: !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element'),
+      isTranslated: document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl'),
+      timestamp: Date.now()
+    };
+    
+    console.log('[ClipAIble] === PAGE INFORMATION ===', pageInfoLog);
+    
+    // Store in debugInfo for service worker
+    if (debugInfo) {
+      debugInfo.extractionLogs.push({ type: 'PAGE_INFORMATION', data: pageInfoLog });
+    }
+    
+    // Log meta tags
+    const metaTags = {};
+    document.querySelectorAll('meta').forEach(meta => {
+      const name = meta.getAttribute('name') || meta.getAttribute('property') || meta.getAttribute('http-equiv');
+      if (name) {
+        metaTags[name] = meta.getAttribute('content');
+      }
+    });
+    console.log('[ClipAIble] === META TAGS ===', metaTags);
+    
+    // Log HTML structure with FULL content - NO TRUNCATION
+    const mainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
+    console.log('[ClipAIble] === MAIN CONTENT (FULL - NO TRUNCATION) ===', {
+      hasMain: !!mainContent,
+      mainTagName: mainContent?.tagName,
+      mainClassName: mainContent?.className,
+      mainId: mainContent?.id,
+      mainTextLength: mainContent?.textContent?.length || 0,
+      mainTextFull: mainContent?.textContent || null, // FULL TEXT - NO TRUNCATION
+      mainHTMLFull: mainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
+      childCount: mainContent?.children?.length || 0
+    });
+    
+    // Log FULL document HTML - NO TRUNCATION
+    console.log('[ClipAIble] === DOCUMENT HTML (FULL - NO TRUNCATION) ===', {
+      documentHTMLFull: document.documentElement.outerHTML || null, // FULL HTML - NO TRUNCATION
+      documentHTMLLength: document.documentElement.outerHTML?.length || 0,
+      bodyHTMLFull: document.body?.innerHTML || null, // FULL HTML - NO TRUNCATION
+      bodyHTMLLength: document.body?.innerHTML?.length || 0
+    });
+    
+    // Log document structure
+    console.log('[ClipAIble] === DOCUMENT STRUCTURE ===', {
+      hasArticle: !!document.querySelector('article'),
+      hasMain: !!document.querySelector('main'),
+      hasHeader: !!document.querySelector('header'),
+      hasFooter: !!document.querySelector('footer'),
+      hasNav: !!document.querySelector('nav'),
+      hasAside: !!document.querySelector('aside'),
+      allParagraphsCount: document.querySelectorAll('p').length,
+      allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+      allImagesCount: document.querySelectorAll('img').length
+    });
+  } catch (e) {
+    console.error('[ClipAIble] Failed to log page information', e);
+  }
   
   // Collect debug info to return to service worker (only if enabled)
   // Performance optimization: skip debug info collection when LOG_LEVEL > DEBUG
+  // CRITICAL: ALL logs must be in debugInfo to be visible in service worker
+  // Initialize debugInfo FIRST so we can add logs to it
   const debugInfo = enableDebugInfo ? {
     foundElements: 0,
     filteredElements: 0,
@@ -52,8 +141,249 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
     excludedImageCount: 0,
     processedCount: 0,
     skippedCount: 0,
-    contentTypes: {}
+    contentTypes: {},
+    // Store all console.log data here so it's visible in service worker
+    extractionLogs: [],
+    // Page information for service worker logging
+    pageInfo: {
+      url: window.location.href,
+      title: document.title,
+      baseUrl: baseUrl,
+      documentLang: document.documentElement.lang,
+      documentXmlLang: document.documentElement.getAttribute('xml:lang'),
+      bodyClasses: document.body.className,
+      bodyLang: document.body.lang,
+      hasGoogleTranslate: !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element'),
+      isTranslated: document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl'),
+      timestamp: Date.now()
+    },
+    // Meta tags
+    metaTags: (() => {
+      const metaTags = {};
+      document.querySelectorAll('meta').forEach(meta => {
+        const name = meta.getAttribute('name') || meta.getAttribute('property') || meta.getAttribute('http-equiv');
+        if (name) {
+          metaTags[name] = meta.getAttribute('content');
+        }
+      });
+      return metaTags;
+    })(),
+    // Document structure
+    documentStructure: {
+      hasArticle: !!document.querySelector('article'),
+      hasMain: !!document.querySelector('main'),
+      hasHeader: !!document.querySelector('header'),
+      hasFooter: !!document.querySelector('footer'),
+      hasNav: !!document.querySelector('nav'),
+      hasAside: !!document.querySelector('aside'),
+      allParagraphsCount: document.querySelectorAll('p').length,
+      allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+      allImagesCount: document.querySelectorAll('img').length
+    },
+    // Main content - FULL TEXT AND HTML - NO TRUNCATION
+    mainContentPreview: (() => {
+      const mainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
+      return {
+        hasMain: !!mainContent,
+        mainTagName: mainContent?.tagName,
+        mainClassName: mainContent?.className,
+        mainId: mainContent?.id,
+        mainTextLength: mainContent?.textContent?.length || 0,
+        mainTextFull: mainContent?.textContent || null, // FULL TEXT - NO TRUNCATION
+        mainHTMLFull: mainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
+        childCount: mainContent?.children?.length || 0
+      };
+    })(),
+    // FULL document HTML - NO TRUNCATION
+    documentHTMLFull: document.documentElement.outerHTML || null, // FULL HTML - NO TRUNCATION
+    bodyHTMLFull: document.body?.innerHTML || null, // FULL HTML - NO TRUNCATION
+    // Google Translate state - will be populated after check
+    googleTranslateState: null,
+    firstParagraphCheck: null
   } : null;
+  
+  // CRITICAL: Initialize content array - must be declared before use
+  const content = [];
+  
+  // Helper function to wait for content to load (for SPAs)
+  // This makes automatic mode work with dynamically loaded content
+  async function waitForContentLoad() {
+    const MAX_WAIT_TIME = 5000; // 5 seconds max wait
+    const CHECK_INTERVAL = 200; // Check every 200ms
+    const MIN_CONTENT_LENGTH = 500; // Minimum content length to consider loaded
+    
+    // Check if content is already loaded
+    function hasContent() {
+      const article = document.querySelector('article');
+      const main = document.querySelector('main');
+      const contentSelectors = [
+        '[role="main"]',
+        '.article-content', '.post-content', '.entry-content',
+        '#content', '#main-content', '#article-content',
+        // SPA-specific selectors
+        '#root', '#app', '#__next', '[data-reactroot]', '[ng-app]', '[data-vue-app]',
+        '.notion-page-content', '.notion-page', // Notion
+        '[class*="article"]', '[class*="content"]'
+      ];
+      
+      // Check semantic HTML
+      if (article && article.textContent.trim().length >= MIN_CONTENT_LENGTH) {
+        return true;
+      }
+      if (main && main.textContent.trim().length >= MIN_CONTENT_LENGTH) {
+        return true;
+      }
+      
+      // Check common content selectors
+      for (const selector of contentSelectors) {
+        try {
+          const el = document.querySelector(selector);
+          if (el && el.textContent.trim().length >= MIN_CONTENT_LENGTH) {
+            return true;
+          }
+        } catch (e) {
+          // Invalid selector, continue
+        }
+      }
+      
+      // Check for substantial paragraphs (indicator of loaded content)
+      const paragraphs = document.querySelectorAll('p');
+      let totalTextLength = 0;
+      for (const p of Array.from(paragraphs).slice(0, 10)) {
+        totalTextLength += (p.textContent || '').trim().length;
+      }
+      if (totalTextLength >= MIN_CONTENT_LENGTH) {
+        return true;
+      }
+      
+      return false;
+    }
+    
+    // If content is already loaded, return immediately
+    if (hasContent()) {
+      return;
+    }
+    
+    // Wait for content to load using polling
+    const startTime = Date.now();
+    while (Date.now() - startTime < MAX_WAIT_TIME) {
+      await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL));
+      if (hasContent()) {
+        // Additional short wait to ensure content is fully rendered
+        await new Promise(resolve => setTimeout(resolve, 300));
+        return;
+      }
+    }
+    
+    // Timeout reached, continue anyway (page might have minimal content)
+  }
+  
+  // CRITICAL: Check if Google Translate has modified the page
+  // Log information about Google Translate state for debugging
+  // Store in debugInfo so it's visible in service worker logs
+  let googleTranslateState = null;
+  let firstParagraphCheck = null;
+  
+  try {
+    const hasGoogleTranslateWidget = !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element');
+    const isTranslated = document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl');
+    const hasOriginalTextAttrs = document.querySelectorAll('[data-original-text]').length > 0;
+    const hasGtOrigAttrs = document.querySelectorAll('[data-gt-orig-display]').length > 0;
+    
+    googleTranslateState = {
+      hasGoogleTranslateWidget,
+      isTranslated,
+      hasOriginalTextAttrs,
+      hasGtOrigAttrs,
+      originalTextAttrsCount: document.querySelectorAll('[data-original-text]').length,
+      gtOrigAttrsCount: document.querySelectorAll('[data-gt-orig-display]').length,
+      bodyClasses: document.body.className,
+      timestamp: Date.now()
+    };
+    
+    console.log('[ClipAIble] === GOOGLE TRANSLATE STATE CHECK ===', googleTranslateState);
+    
+    // Store in debugInfo for service worker
+    if (debugInfo) {
+      debugInfo.extractionLogs.push({ type: 'GOOGLE_TRANSLATE_STATE', data: googleTranslateState });
+    }
+    
+    // Check first paragraph for Google Translate attributes
+    const firstP = document.querySelector('main p, article p, [role="main"] p, #content p');
+    if (firstP) {
+      const hasOriginalText = firstP.hasAttribute('data-original-text');
+      const hasGtOrig = firstP.hasAttribute('data-gt-orig-display');
+      const originalText = firstP.getAttribute('data-original-text');
+      const currentText = firstP.textContent;
+      
+      firstParagraphCheck = {
+        hasOriginalTextAttr: hasOriginalText,
+        hasGtOrigAttr: hasGtOrig,
+        originalTextFull: originalText || null, // FULL TEXT - NO TRUNCATION
+        currentTextFull: currentText || null, // FULL TEXT - NO TRUNCATION
+        elementHTMLFull: firstP.innerHTML || null, // FULL HTML - NO TRUNCATION
+        textsMatch: originalText === currentText,
+        timestamp: Date.now()
+      };
+      
+      console.log('[ClipAIble] === FIRST PARAGRAPH CHECK (FULL TEXT) ===', firstParagraphCheck);
+      
+      // Store in debugInfo for service worker
+      if (debugInfo) {
+        debugInfo.extractionLogs.push({ type: 'FIRST_PARAGRAPH_CHECK', data: firstParagraphCheck });
+      }
+    }
+    
+    // Store in debugInfo so it's visible in service worker logs
+    if (debugInfo) {
+      debugInfo.googleTranslateState = googleTranslateState;
+      debugInfo.firstParagraphCheck = firstParagraphCheck;
+    }
+  } catch (e) {
+    console.error('[ClipAIble] Failed to check Google Translate state', e);
+    googleTranslateState = { error: String(e) };
+    if (debugInfo) {
+      debugInfo.googleTranslateState = googleTranslateState;
+    }
+  }
+  
+  // Helper function to get original text from Google Translate attributes
+  // Google Translate stores original text in data-original-text attribute
+  function getOriginalTextIfTranslated(element) {
+    if (!element) return null;
+    
+    // Check if element has data-original-text attribute (Google Translate stores original text here)
+    const originalText = element.getAttribute('data-original-text');
+    if (originalText && originalText.trim()) {
+      const currentText = element.textContent || element.innerText || '';
+      // If original text differs from current text, element was translated
+      if (originalText.trim() !== currentText.trim()) {
+        return originalText.trim();
+      }
+    }
+    
+    // Check child elements for data-original-text
+    const childWithOriginal = element.querySelector('[data-original-text]');
+    if (childWithOriginal) {
+      const childOriginal = childWithOriginal.getAttribute('data-original-text');
+      if (childOriginal && childOriginal.trim()) {
+        return childOriginal.trim();
+      }
+    }
+    
+    return null;
+  }
+  
+  // Wait for dynamic content to load (SPAs, React, Vue, Angular apps)
+  // This makes automatic mode work with dynamically loaded content
+  try {
+    await waitForContentLoad();
+  } catch (e) {
+    // Continue even if waiting fails - page might already be loaded
+    try {
+      console.log('[ClipAIble] waitForContentLoad completed or skipped', { error: e?.message });
+    } catch (logErr) {}
+  }
   
   try {
     // ============================================
@@ -2685,10 +3015,94 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
             } else if (tagName === 'p') {
               const text = element.textContent.trim();
               if (text && text.length > 10) {
+                // CRITICAL: Check ALL possible Google Translate attributes
+                const hasDataOriginalText = element.hasAttribute('data-original-text');
+                const hasDataGtOrig = element.hasAttribute('data-gt-orig-display');
+                const dataOriginalText = element.getAttribute('data-original-text');
+                const dataGtOrig = element.getAttribute('data-gt-orig-display');
+                const innerHTML = element.innerHTML;
+                
+                // Log EVERY paragraph for debugging - FULL TEXT - NO TRUNCATION
+                if (enableDebugInfo) {
+                  const paragraphDebugLog = {
+                    elementIndex: content.length,
+                    textContentFull: text, // FULL TEXT - NO TRUNCATION
+                    innerHTMLFull: innerHTML, // FULL HTML - NO TRUNCATION
+                    hasDataOriginalText: hasDataOriginalText,
+                    hasDataGtOrig: hasDataGtOrig,
+                    dataOriginalTextFull: dataOriginalText || null, // FULL TEXT - NO TRUNCATION
+                    dataGtOrigFull: dataGtOrig || null, // FULL TEXT - NO TRUNCATION
+                    allAttributes: Array.from(element.attributes).map(attr => ({ name: attr.name, value: attr.value })),
+                    timestamp: Date.now()
+                  };
+                  
+                  console.log(`[ClipAIble] === PARAGRAPH [${content.length}] EXTRACTION DEBUG ===`, paragraphDebugLog);
+                  
+                  // Store in debugInfo for service worker
+                  if (debugInfo) {
+                    debugInfo.extractionLogs.push({ type: 'PARAGRAPH_EXTRACTION_DEBUG', data: paragraphDebugLog });
+                  }
+                }
+                
+                // CRITICAL: Check if Google Translate modified this element
+                const originalText = getOriginalTextIfTranslated(element);
+                const isTranslated = !!originalText;
+                
+                // Log if we detect translation - FULL TEXT - NO TRUNCATION
+                if (isTranslated && enableDebugInfo) {
+                  const translatedLog = {
+                    elementIndex: content.length,
+                    currentTextFull: text, // FULL TEXT - NO TRUNCATION
+                    originalTextFull: originalText, // FULL TEXT - NO TRUNCATION
+                    elementHTMLFull: innerHTML, // FULL HTML - NO TRUNCATION
+                    timestamp: Date.now()
+                  };
+                  
+                  console.log('[ClipAIble] === PARAGRAPH TRANSLATED BY GOOGLE TRANSLATE (FULL TEXT) ===', translatedLog);
+                  
+                  // Store in debugInfo for service worker
+                  if (debugInfo) {
+                    debugInfo.extractionLogs.push({ type: 'PARAGRAPH_TRANSLATED', data: translatedLog });
+                  }
+                }
+                
+                // CRITICAL: Use original text if available, otherwise use current HTML
+                // If originalText exists, it means Google Translate modified the element
+                // We MUST use originalText to get the original Russian text, not the translated one
+                const finalText = originalText || innerHTML;
+                const finalHtml = originalText ? originalText : innerHTML;
+                
+                // Log what we're using for debugging - FULL TEXT - NO TRUNCATION
+                if (enableDebugInfo) {
+                  const finalDecisionLog = {
+                    elementIndex: content.length,
+                    usingOriginalText: !!originalText,
+                    originalTextFull: originalText || null, // FULL TEXT - NO TRUNCATION
+                    currentTextFull: text, // FULL TEXT - NO TRUNCATION
+                    finalTextFull: finalText, // FULL TEXT - NO TRUNCATION
+                    originalTextLength: originalText?.length || 0,
+                    currentTextLength: text.length,
+                    finalTextLength: finalText.length,
+                    textsMatch: originalText === text,
+                    timestamp: Date.now()
+                  };
+                  
+                  console.log('[ClipAIble] === PARAGRAPH FINAL TEXT DECISION ===', finalDecisionLog);
+                  
+                  // Store in debugInfo for service worker
+                  if (debugInfo) {
+                    debugInfo.extractionLogs.push({ type: 'PARAGRAPH_FINAL_DECISION', data: finalDecisionLog });
+                  }
+                }
+                
                 content.push({
                   type: 'paragraph',
-                  text: element.innerHTML,
-                  html: element.innerHTML
+                  text: finalText,
+                  html: finalHtml,
+                  _wasTranslated: isTranslated, // Debug flag
+                  _originalTextUsed: !!originalText, // Debug flag - did we use original text?
+                  _textContent: text, // Store original textContent for debugging
+                  _dataOriginalText: dataOriginalText || null // Store data-original-text for debugging
                 });
               }
             } else if (tagName === 'img' || tagName === 'figure') {
@@ -2984,6 +3398,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
     
     // Safety check: ensure elements is defined
     if (!elements || !Array.isArray(elements)) {
+      // This is an internal error, not user-facing, so we can keep it in English for debugging
       throw new Error(`elements is not defined or not an array. filteredElements: ${typeof filteredElements}, mainContent: ${!!mainContent}`);
     }
     
@@ -4017,10 +4432,29 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
               id: el.id || null
             });
           } else if (tagName === 'p') {
+            // CRITICAL: Check if Google Translate modified this element
+            const originalText = getOriginalTextIfTranslated(el);
+            const isTranslated = !!originalText;
+            
+            // Log if we detect translation - FULL TEXT - NO TRUNCATION
+            if (isTranslated && enableDebugInfo) {
+              console.log('[ClipAIble] === EMERGENCY PARAGRAPH TRANSLATED BY GOOGLE TRANSLATE (FULL TEXT) ===', {
+                currentTextFull: el.textContent, // FULL TEXT - NO TRUNCATION
+                originalTextFull: originalText, // FULL TEXT - NO TRUNCATION
+                elementHTMLFull: el.innerHTML, // FULL HTML - NO TRUNCATION
+                timestamp: Date.now()
+              });
+            }
+            
+            // Use original text if available, otherwise use current HTML
+            const finalText = originalText || el.innerHTML;
+            const finalHtml = originalText ? originalText : el.innerHTML;
+            
             content.push({
               type: 'paragraph',
-              text: el.innerHTML,
-              html: el.innerHTML
+              text: finalText,
+              html: finalHtml,
+              _wasTranslated: isTranslated // Debug flag
             });
           }
         }
@@ -4065,7 +4499,7 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
       debugInfo: debugInfo
     };
     
-    // Log completion (this will appear in page console, not service worker)
+    // DETAILED LOGGING: Log extracted content (this will appear in page console)
     // CRITICAL: This runs in MAIN world where modules are not available
     // console.log is acceptable here as logging module cannot be imported
     try {
@@ -4074,6 +4508,30 @@ export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
         title: metadata.title,
         timestamp: Date.now()
       });
+      
+      // Log first 10 content items with FULL text
+      if (deduplicatedContent && deduplicatedContent.length > 0) {
+        console.log('[ClipAIble] EXTRACTED CONTENT (FIRST 10):', 
+          deduplicatedContent.slice(0, 10).map((item, idx) => ({
+            index: idx,
+            type: item.type,
+            text: (item.text || item.html || '').substring(0, 200), // First 200 chars
+            fullTextLength: (item.text || item.html || '').length
+          }))
+        );
+        
+        // Log last 5 items to check for Google Translate widget
+        if (deduplicatedContent.length > 10) {
+          console.log('[ClipAIble] EXTRACTED CONTENT (LAST 5):', 
+            deduplicatedContent.slice(-5).map((item, idx) => ({
+              index: deduplicatedContent.length - 5 + idx,
+              type: item.type,
+              text: (item.text || item.html || '').substring(0, 200), // First 200 chars
+              fullTextLength: (item.text || item.html || '').length
+            }))
+          );
+        }
+      }
     } catch (e) {}
     
     return result;

@@ -2,7 +2,7 @@
 
 > **Estrattore di articoli alimentato da IA** — Salva qualsiasi articolo dal web come PDF, EPUB, FB2, Markdown o Audio. Traduzione in 11 lingue. Funziona su qualsiasi sito web.
 
-![Versione](https://img.shields.io/badge/versione-3.2.3-blue)
+![Versione](https://img.shields.io/badge/versione-3.2.4-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Estensione-green)
 ![Licenza](https://img.shields.io/badge/licenza-MIT-brightgreen)
 

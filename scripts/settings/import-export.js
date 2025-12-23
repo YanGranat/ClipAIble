@@ -8,7 +8,7 @@ import { getCacheStats } from '../cache/selectors.js';
 // Get current extension version from manifest
 function getCurrentVersion() {
   try {
-    return chrome.runtime.getManifest().version || '3.2.3';
+    return chrome.runtime.getManifest().version || '3.2.4';
   } catch (error) {
     logWarn('Failed to get version from manifest, using fallback', error);
     return '3.2.0';

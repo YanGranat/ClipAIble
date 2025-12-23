@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.2.3-blue) ![Refactoring](https://img.shields.io/badge/refactoring-completed-green)
+![Version](https://img.shields.io/badge/version-3.2.4-blue) ![Refactoring](https://img.shields.io/badge/refactoring-completed-green)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -159,6 +159,8 @@ All formats support **translation to 11 languages** — even translating text on
 > 
 > **💡 Fixed in v3.2.1**: Popup UI updates correctly after audio generation, voice switching works properly for offline TTS.
 > 
+> **💡 New in v3.2.4**: Google Translate interference fix - fixed issue where Google Translate was corrupting text in generated PDFs. Added comprehensive prevention measures (HTML attributes, meta tags, Chrome DevTools Protocol) to ensure PDFs contain correct original text.
+
 > **💡 New in v3.2.3**: Code duplication & magic numbers refactoring - centralized all timeouts/delays in CONFIG, extracted common handler patterns, eliminated ~30% handler code duplication. Improved maintainability and consistency.
 
 > **💡 New in v3.2.2**: Long functions refactoring - refactored 6 major functions, eliminated ~500+ lines of duplicate code, improved modularity and maintainability. Background.js refactoring - reduced from 3705 to 1932 lines.

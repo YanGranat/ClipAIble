@@ -78,7 +78,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           return `${anchorTag}<h${level}${idAttr}>${sanitizeHtml(item.text, sourceUrl)}</h${level}>`;
         
         case 'paragraph':
-          return `${anchorTag}<p${idAttr}>${sanitizeHtml(item.text, sourceUrl)}</p>`;
+          return `${anchorTag}<p${idAttr} translate="no" class="notranslate" data-translate="no">${sanitizeHtml(item.text, sourceUrl)}</p>`;
         
         case 'image':
           if (!item.src || item.src.startsWith('data:image/svg') || item.src.includes('placeholder')) {
@@ -196,13 +196,16 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   const docLang = language || 'en';
 
   return `<!DOCTYPE html>
-<html lang="${docLang}">
+<html lang="${docLang}" translate="no" class="notranslate" data-translate="no">
 <head>
   <meta charset="UTF-8">
+  <meta name="google" content="notranslate">
+  <meta name="google-translate-customization" content="disabled">
+  <meta http-equiv="Content-Language" content="${docLang}">
   <title>${escapeHtml(cleanedTitle)}</title>
   <style>${styles}</style>
 </head>
-<body>
+<body translate="no" class="notranslate" data-translate="no">
   <article class="article">
     <header class="article-header">
       <h1 class="article-title">${escapeHtml(cleanedTitle)}</h1>

@@ -2,7 +2,7 @@
 
 > **Extracteur d'articles alimenté par l'IA** — Enregistrez n'importe quel article du web au format PDF, EPUB, FB2, Markdown ou Audio. Traduction en 11 langues. Fonctionne sur n'importe quel site.
 
-![Version](https://img.shields.io/badge/version-3.2.3-blue)
+![Version](https://img.shields.io/badge/version-3.2.4-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![Licence](https://img.shields.io/badge/licence-MIT-brightgreen)
 
