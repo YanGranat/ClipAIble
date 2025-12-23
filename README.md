@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.2.2-blue)
+![Version](https://img.shields.io/badge/version-3.2.2-blue) ![Refactoring](https://img.shields.io/badge/refactoring-completed-green)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -161,7 +161,7 @@ All formats support **translation to 11 languages** — even translating text on
 > 
 > **💡 Fixed in v3.2.1**: Popup UI updates correctly after audio generation, voice switching works properly for offline TTS.
 > 
-> **💡 New in v3.2.2**: Background.js refactoring - reduced from 3705 to 2525 lines, improved modularity and maintainability.
+> **💡 New in v3.2.2**: Long functions refactoring - refactored 6 major functions, eliminated ~500+ lines of duplicate code, improved modularity and maintainability. Background.js refactoring - reduced from 3705 to 2525 lines.
 
 ### OpenAI (GPT models + Audio)
 
@@ -408,9 +408,13 @@ ClipAIble caches AI-generated selectors by domain:
 clipaible/
 ├── manifest.json       # Extension config
 ├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # Main orchestration (2841 lines)
-│   ├── core.js        # Business logic (203 lines)
-│   ├── handlers.js    # Event handlers (1991 lines)
+│   ├── popup.js       # Main orchestration (reduced from 2841 to 1880 lines, -961 lines)
+│   ├── core.js        # Business logic facade (150 lines)
+│   ├── handlers.js    # Event handlers (reduced from 1935+ to 1703 lines, -232+ lines)
+│   ├── handlers/      # Handler sub-modules (v3.2.2+)
+│   │   └── api-keys.js # API key toggle handlers
+│   ├── utils/         # Popup utilities (v3.2.2+)
+│   │   └── init-helpers.js # Initialization helpers
 │   ├── ui.js          # UI management
 │   ├── stats.js       # Statistics display
 │   └── settings.js    # Settings management
@@ -483,7 +487,8 @@ clipaible/
 │       ├── video.js    # Video platform detection
 │       ├── validation.js # Validation utilities
 │       ├── api-error-handler.js # Common API error handling
-│       ├── pipeline-helpers.js # Pipeline utilities (v3.2.2+) - handleProcessingResult, handleProcessingError
+│       ├── pipeline-helpers.js # Pipeline utilities (v3.2.2+) - handleProcessingResult, handleProcessingError, handleTranslation, handleAbstractGeneration
+│       ├── processing-helpers.js # Processing utilities (v3.2.2+) - validateAndInitializeProcessing, handleVideoPageProcessing, handleQuickSave helpers
 │       ├── settings-helpers.js # Settings utilities (v3.2.2+) - determineProviderAndModel, getVoiceFromSettings
 │       ├── context-menu.js # Context menu utilities (v3.2.2+)
 │       ├── voice-validator.js # Voice validation utilities
@@ -492,6 +497,7 @@ clipaible/
 ├── config/             # Styles
 ├── lib/                # JSZip
 ├── docs/               # Localized README files
+├── offscreen.js        # Offscreen document for offline TTS (reduced from 3760+ to ~3650 lines)
 └── memory-bank/        # Project documentation
 ```
 

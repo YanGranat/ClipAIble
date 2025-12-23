@@ -103,7 +103,10 @@ import {
   getUILanguageCached,
   finalizeProcessing,
   handleProcessingResult,
-  handleProcessingError
+  handleProcessingError,
+  handleTranslation,
+  handleAbstractGeneration,
+  detectEffectiveLanguage
 } from './utils/pipeline-helpers.js';
 import { VoiceValidator } from './utils/voice-validator.js';
 import { TTSApiKeyManager } from './utils/api-key-manager.js';
@@ -114,6 +117,15 @@ import { getQuickSaveSettingsKeys, prepareQuickSaveData } from './processing/qui
 import { updateContextMenuWithLang } from './utils/context-menu.js';
 import { runInitialization } from './initialization/index.js';
 import { routeMessage } from './message-handlers/index.js';
+import { 
+  validateAndInitializeProcessing,
+  handleVideoPageProcessing,
+  handleStandardArticleProcessing,
+  showQuickSaveNotification,
+  extractPageContent,
+  prepareQuickSaveProcessingData,
+  handleQuickSaveError
+} from './utils/processing-helpers.js';
 
 // ============================================
 // NOTIFICATION HELPER
@@ -988,92 +1000,18 @@ async function handleQuickSave(outputFormat = 'pdf') {
   }
   
   // Show notification about starting save
-  try {
-    const uiLang = await getUILanguageCached();
-    const formatNames = {
-      'pdf': tSync('saveAsPdf', uiLang),
-      'epub': tSync('saveAsEpub', uiLang),
-      'fb2': tSync('saveAsFb2', uiLang),
-      'markdown': tSync('saveAsMarkdown', uiLang),
-      'audio': tSync('saveAsAudio', uiLang),
-      'docx': tSync('saveAsDocx', uiLang),
-      'html': tSync('saveAsHtml', uiLang),
-      'txt': tSync('saveAsTxt', uiLang)
-    };
-    const formatName = formatNames[outputFormat] || outputFormat.toUpperCase();
-    const notificationMsg = tSync('quickSaveStarted', uiLang).replace('{format}', formatName);
-    
-    log('Showing quick save notification', { format: outputFormat, message: notificationMsg });
-    await createNotification(notificationMsg);
-  } catch (error) {
-    logError('Failed to show quick save notification', error);
-  }
+  await showQuickSaveNotification(outputFormat, createNotification);
   
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) {
-      logError('No active tab found');
-      return;
-    }
-    
-    // Load settings
-    const settings = await chrome.storage.local.get(getQuickSaveSettingsKeys());
-    
-    // CRITICAL: Log voice settings immediately after loading from storage
-    log('[ClipAIble Background] ===== SETTINGS LOADED FROM STORAGE (handleQuickSave) =====', {
-      timestamp: Date.now(),
-      audio_provider: settings.audio_provider,
-      audio_voice: settings.audio_voice,
-      audio_voice_type: typeof settings.audio_voice,
-      audio_voice_map: settings.audio_voice_map,
-      audio_voice_map_type: typeof settings.audio_voice_map,
-      audio_voice_map_keys: settings.audio_voice_map ? Object.keys(settings.audio_voice_map) : [],
-      audio_voice_map_has_current: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map,
-      audio_voice_map_current: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map ? settings.audio_voice_map.current : null,
-      audio_voice_map_current_keys: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map && typeof settings.audio_voice_map.current === 'object' ? Object.keys(settings.audio_voice_map.current) : [],
-      raw_audio_voice_map: JSON.stringify(settings.audio_voice_map).substring(0, 500)
-    });
-    
     // Extract page content
-    const htmlResult = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => ({
-        html: document.documentElement.outerHTML,
-        url: window.location.href,
-        title: document.title
-      })
-    });
-    
-    if (!htmlResult || !htmlResult[0]?.result) {
-      logError('Failed to extract page content');
-      return;
-    }
-    
-    const pageData = htmlResult[0].result;
+    const pageData = await extractPageContent();
     
     // Prepare processing data from settings
     let processingData;
     try {
-      processingData = await prepareQuickSaveData(
-        settings,
-        outputFormat,
-        tab.id,
-        pageData.html,
-        pageData.url,
-        pageData.title
-      );
+      processingData = await prepareQuickSaveProcessingData(outputFormat, pageData);
     } catch (error) {
-      logError('Failed to prepare quick save data', error);
-      const uiLang = await getUILanguageCached();
-      let errorMsg;
-      if (error.message && error.message.includes('decrypt')) {
-        errorMsg = tSync('errorQuickSaveDecryptFailed', uiLang);
-      } else if (error.message && error.message.includes('No API key')) {
-        errorMsg = tSync('errorQuickSaveNoKey', uiLang);
-      } else {
-        errorMsg = error.message || tSync('errorValidation', uiLang);
-      }
-      await createNotification(errorMsg);
+      await handleQuickSaveError(error, createNotification);
       return;
     }
     
@@ -1086,14 +1024,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
     startArticleProcessing(processingData);
     
   } catch (error) {
-    logError('Quick save failed', error);
-    try {
-      const uiLang = await getUILanguageCached();
-      const errorMsg = error.message || tSync('errorValidation', uiLang);
-      await createNotification(errorMsg);
-    } catch (notifError) {
-      logError('Failed to show error notification', notifError);
-    }
+    await handleQuickSaveError(error, createNotification);
   }
 }
 
@@ -1173,63 +1104,9 @@ try {
 let processingStartTime = null;
 
 async function startArticleProcessing(data) {
-  log('=== startArticleProcessing: ENTRY ===', {
-    hasData: !!data,
-    dataKeys: data ? Object.keys(data) : [],
-    mode: data?.mode,
-    url: data?.url,
-    hasTabId: !!data?.tabId,
-    tabId: data?.tabId,
-    outputFormat: data?.outputFormat,
-    timestamp: Date.now()
-  });
-  
-  log('=== startArticleProcessing: Calling startProcessing ===', {
-    timestamp: Date.now()
-  });
-  
-  if (!(await startProcessing(startKeepAlive))) {
-    logError('=== startArticleProcessing: startProcessing returned false ===', {
-      timestamp: Date.now()
-    });
+  // Validate and initialize processing
+  if (!(await validateAndInitializeProcessing(data, stopKeepAlive, startKeepAlive))) {
     return false;
-  }
-  
-  log('=== startArticleProcessing: startProcessing returned true ===', {
-    timestamp: Date.now()
-  });
-  
-  // Validate output format
-  // Note: docx, html, txt formats removed from UI but kept in validation for backward compatibility with old settings
-  const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
-  if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
-    const uiLang = await getUILanguageCached();
-    await setError({
-      message: tSync('errorValidation', uiLang) + `: Invalid output format '${data.outputFormat}'`,
-      code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive);
-    return false;
-  }
-  
-  // CRITICAL: Save outputFormat to state immediately so polling can use correct interval
-  // This is especially important for audio format which needs longer polling interval
-  if (data.outputFormat) {
-    // @ts-ignore - outputFormat is stored in state but not in ProcessingState type (used for UI display)
-    updateState({ outputFormat: data.outputFormat });
-    log('=== startArticleProcessing: outputFormat saved to state ===', {
-      outputFormat: data.outputFormat,
-      timestamp: Date.now()
-    });
-  }
-  
-  // Clean up any old temporary data before starting new processing
-  try {
-    await removeLargeData('printHtml');
-    await chrome.storage.local.remove(['printTitle', 'pageMode']);
-    log('Cleaned up old temporary data');
-  } catch (cleanupError) {
-    logWarn('Failed to clean up old temporary data', cleanupError);
-    // Continue anyway - not critical
   }
   
   processingStartTime = Date.now();
@@ -1244,121 +1121,29 @@ async function startArticleProcessing(data) {
     htmlLength: data.html?.length || 0
   });
   
-  // Pre-flight key checks for audio to avoid long work before failing
-  if (!(await validateAudioApiKeys(data, stopKeepAlive))) {
-    return false;
-  }
+  const processingStartTimeRef = { processingStartTime };
   
   // Check if this is a video page (YouTube/Vimeo)
   const videoInfo = detectVideoPlatform(data.url);
   if (videoInfo) {
     // Process as video page - skip selector/extract modes
-    log('Detected video page', { platform: videoInfo.platform, videoId: videoInfo.videoId });
-    
-    const processingStartTimeRef = { processingStartTime };
-    
-    (async () => {
-      try {
-        const result = await processVideoPage(data, videoInfo);
-        log('Video processing complete', { 
-          title: result.title, 
-          contentItems: result.content?.length || 0 
-        });
-        
-        await handleProcessingResult(
-          data, 
-          result, 
-          stopKeepAlive, 
-          processingStartTimeRef,
-          continueProcessingPipeline
-        );
-      } catch (error) {
-        await handleProcessingError(error, data, stopKeepAlive, {
-          source: 'videoProcessing',
-          errorType: 'videoProcessingFailed',
-          context: {
-            platform: videoInfo.platform,
-            videoId: videoInfo.videoId
-          }
-        });
-      }
-    })();
-    return true;
+    return await handleVideoPageProcessing(
+      data,
+      videoInfo,
+      stopKeepAlive,
+      continueProcessingPipeline,
+      processingStartTimeRef
+    );
   }
-  
-  // Standard article processing continues below
   
   // Standard article processing
-  const { mode } = data;
-  
-  log('=== startArticleProcessing: Selecting process function ===', {
-    mode: mode,
-    hasProcessWithoutAI: typeof processWithoutAI === 'function',
-    hasProcessWithSelectorMode: typeof processWithSelectorMode === 'function',
-    hasProcessWithExtractMode: typeof processWithExtractMode === 'function',
-    timestamp: Date.now()
-  });
-  
-  const processFunction = mode === 'automatic'
-    ? processWithoutAI
-    : mode === 'selector' 
-    ? processWithSelectorMode 
-    : processWithExtractMode;
-  
-  log('=== startArticleProcessing: Process function selected ===', {
-    mode: mode,
-    functionName: processFunction?.name || 'unknown',
-    timestamp: Date.now()
-  });
-  
-  log('=== startArticleProcessing: About to call processFunction ===', {
-    functionName: processFunction?.name || 'unknown',
-    timestamp: Date.now()
-  });
-  
-  const processingStartTimeRef = { processingStartTime };
-  
-  // Call processFunction with appropriate arguments
-  // processWithSelectorMode requires extractFromPageInlined as second argument
-  let processPromise;
-  if (mode === 'selector') {
-    processPromise = processWithSelectorMode(data, extractFromPageInlined);
-  } else if (mode === 'automatic') {
-    processPromise = processWithoutAI(data);
-  } else {
-    processPromise = processWithExtractMode(data);
-  }
-  
-  (async () => {
-    try {
-      const result = await processPromise;
-      log('=== startArticleProcessing: processFunction completed ===', {
-        hasResult: !!result,
-        resultKeys: result ? Object.keys(result) : [],
-        timestamp: Date.now()
-      });
-      
-      await handleProcessingResult(
-        data, 
-        result, 
-        stopKeepAlive, 
-        processingStartTimeRef,
-        continueProcessingPipeline
-      );
-    } catch (error) {
-      await handleProcessingError(error, data, stopKeepAlive, {
-        source: 'articleProcessing',
-        errorType: 'contentExtractionFailed',
-        context: {
-          url: data.url,
-          format: data.outputFormat,
-          mode: data.mode || data.extractionMode
-        }
-      });
-    }
-  })();
-  
-  return true;
+  return await handleStandardArticleProcessing(
+    data,
+    stopKeepAlive,
+    continueProcessingPipeline,
+    extractFromPageInlined,
+    processingStartTimeRef
+  );
 }
 
 
@@ -1380,127 +1165,34 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   // Check if processing was cancelled
   await checkCancellation('start of pipeline');
   
-  // Translate if language is not auto
-  const language = data.language || 'auto';
-  const hasImageTranslation = data.translateImages && data.googleApiKey;
+  // Handle translation step
+  result = await handleTranslation(
+    data,
+    result,
+    translateContent,
+    translateImages,
+    detectSourceLanguage,
+    updateState
+  );
   
-  // Only translate if user explicitly selected a target language (not 'auto')
-  if (language !== 'auto' && result.content && result.content.length > 0) {
-    await updateProgress(
-      PROCESSING_STAGES.TRANSLATING, 
-      'statusTranslatingContent', 
-      hasImageTranslation ? 40 : 42
-    );
-    
-    // Translate images first if enabled
-    if (hasImageTranslation) {
-      // Check if processing was cancelled
-      await checkCancellation('image translation');
-      
-      log('Starting image translation', { targetLanguage: language });
-      await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusAnalyzingImages', 40);
-      
-      // Use detected language from automatic extraction if available, otherwise detect from content
-      const sourceLang = result.detectedLanguage || detectSourceLanguage(result.content);
-      result.content = await translateImages(
-        result.content, sourceLang, language, 
-        data.apiKey, data.googleApiKey, data.model, updateState
-      );
-      log('Image translation complete');
-    }
-    
-    // Check if processing was cancelled before text translation
-    await checkCancellation('text translation');
-    
-    log('Starting text translation', { targetLanguage: language });
-    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusTranslatingText', 45);
-    try {
-      result = await translateContent(result, language, data.apiKey, data.model, updateState);
-      log('Translation complete', { title: result.title });
-    } catch (error) {
-      // Use constant pattern matching instead of string includes
-      const isAuthError = ['authentication', '401', '403', 'unauthorized', 'forbidden']
-        .some(pattern => (error.message || '').toLowerCase().includes(pattern));
-      if (isAuthError) {
-        logError('Translation failed: authentication error', error);
-        const uiLang = await getUILanguageCached();
-        const errorMsg = tSync('errorAuthFailed', uiLang);
-        updateState({ 
-          stage: PROCESSING_STAGES.TRANSLATING.id,
-          status: errorMsg, 
-          progress: 0,
-          error: 'AUTH_ERROR'
-        });
-        throw new Error(errorMsg);
-      }
-      // For other errors, log but continue without translation
-      logError('Translation failed, continuing without translation', error);
-      await updateProgress(PROCESSING_STAGES.TRANSLATING, 'errorTranslationFailed', 60);
-    }
-  } else {
-    // No translation needed - skip to generation progress
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 60 });
-  }
-  
-  // Check if processing was cancelled before abstract generation
-  await checkCancellation('abstract generation');
-  
-  // Generate abstract if enabled (but skip for audio format)
-  let abstract = '';
-  const shouldGenerateAbstract = data.generateAbstract && 
-                                 data.outputFormat !== 'audio' && 
-                                 result.content && 
-                                 result.content.length > 0 && 
-                                 data.apiKey;
-  if (shouldGenerateAbstract) {
-    // Use detected source language for abstract (not target translation language)
-    // For automatic mode, result.detectedLanguage contains the source language
-    // For AI modes, if result.detectedLanguage is not available, use 'auto'
-    // to let generateAbstract detect the language from content
-    const abstractLang = result.detectedLanguage || 'auto';
-    try {
-      await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62);
-      abstract = await generateAbstract(
-        result.content, 
-        result.title || data.title || 'Untitled',
-        data.apiKey,
-        data.model,
-        abstractLang,
-        updateState
-      );
-      if (abstract) {
-        log('Abstract generated', { length: abstract.length });
-        result.abstract = abstract;
-      }
-    } catch (error) {
-      logWarn('Abstract generation failed, continuing without abstract', error);
-    }
-  }
+  // Handle abstract generation step
+  await handleAbstractGeneration(
+    data,
+    result,
+    generateAbstract,
+    updateState
+  );
   
   setResult(result);
   
   const outputFormat = data.outputFormat || 'pdf';
   
-  // Detect content language for 'auto' mode
-  let effectiveLanguage = data.language || 'auto';
-  if (effectiveLanguage === 'auto') {
-    // Use detected language from automatic extraction if available
-    if (result.detectedLanguage) {
-      effectiveLanguage = result.detectedLanguage;
-      log('Using detected language from automatic extraction for localization', { detectedLang: effectiveLanguage });
-    } else if (result.content && result.content.length > 0 && data.apiKey) {
-      // Fallback to AI detection if API key available
-      try {
-        const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
-        if (detectedLang && detectedLang !== 'en') {
-          effectiveLanguage = detectedLang;
-          log('Using detected language for localization', { detectedLang });
-        }
-      } catch (error) {
-        logWarn('Language detection failed, using auto', error);
-      }
-    }
-  }
+  // Detect effective language for document generation
+  const effectiveLanguage = await detectEffectiveLanguage(
+    data,
+    result,
+    detectContentLanguage
+  );
   
   updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
   
@@ -1526,16 +1218,28 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
 // processWithSelectorMode and extractContentWithSelectors moved to scripts/processing/modes.js
 // extractFromPageInlined remains here (must be inline for chrome.scripting.executeScript)
 
-// Inlined extraction function for chrome.scripting.executeScript
-// This runs in the page's main world context
-// 
-// NOTE: This function is 517 lines (2707-3223) - DO NOT SPLIT IT!
-// It's injected as a single block via executeScript. All helper functions
-// must be defined inside. See systemPatterns.md "Design Decisions".
-// 
-// CRITICAL: This function must remain in background.js because it's used directly
-// by chrome.scripting.executeScript. It cannot be moved to a separate module.
-// It's exported so that processWithSelectorMode in modes.js can use it.
+/**
+ * Inlined extraction function for chrome.scripting.executeScript
+ * This runs in the page's main world context
+ * 
+ * CRITICAL: DO NOT REFACTOR OR SPLIT THIS FUNCTION!
+ * 
+ * This function is ~724 lines long and MUST remain as a single, monolithic function.
+ * It is injected as a complete code block via chrome.scripting.executeScript into
+ * the page's main world context where ES modules and imports are NOT available.
+ * 
+ * Reasons why this function cannot be split:
+ * 1. It runs in page context (not service worker) where imports don't work
+ * 2. chrome.scripting.executeScript requires a single function reference
+ * 3. All helper functions must be defined inside this function (no external dependencies)
+ * 4. Breaking it into smaller functions would require complex code generation/inlining
+ * 
+ * See systemPatterns.md "Design Decisions" section for more details.
+ * 
+ * @param {Object} selectors - Selectors object from AI (content, title, author, exclude, etc.)
+ * @param {string} baseUrl - Base URL for resolving relative URLs
+ * @returns {Object} Extraction result with content, title, author, publishDate, debugInfo
+ */
 export function extractFromPageInlined(selectors, baseUrl) {
   const content = [];
   const debugInfo = {

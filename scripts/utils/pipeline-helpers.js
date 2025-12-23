@@ -7,10 +7,11 @@ import { isCancelled } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { updateState, getProcessingState } from '../state/processing.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
-import { log, logError } from './logging.js';
+import { log, logError, logWarn } from './logging.js';
 import { recordSave } from '../stats/index.js';
 import { completeProcessing, setError } from '../state/processing.js';
 import { handleError } from './error-handler.js';
+import { detectContentLanguage } from '../translation/index.js';
 
 // Cache for UI language to avoid repeated async calls
 let cachedUILang = null;
@@ -195,5 +196,175 @@ export async function handleProcessingError(error, data, stopKeepAlive, errorCon
     message: normalized.userMessage || normalized.message || 'Processing failed',
     code: normalized.userCode || normalized.code
   }, stopKeepAlive);
+}
+
+/**
+ * Handle translation step in processing pipeline
+ * @param {Object} data - Processing data
+ * @param {Object} result - Extracted content result
+ * @param {Function} translateContent - Function to translate content
+ * @param {Function} translateImages - Function to translate images
+ * @param {Function} detectSourceLanguage - Function to detect source language
+ * @param {Function} updateState - Function to update state
+ * @returns {Promise<Object>} Updated result with translated content
+ */
+export async function handleTranslation(
+  data,
+  result,
+  translateContent,
+  translateImages,
+  detectSourceLanguage,
+  updateState
+) {
+  const language = data.language || 'auto';
+  const hasImageTranslation = data.translateImages && data.googleApiKey;
+  
+  // Only translate if user explicitly selected a target language (not 'auto')
+  if (language === 'auto' || !result.content || result.content.length === 0) {
+    // No translation needed - skip to generation progress
+    updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 60 });
+    return result;
+  }
+  
+  await updateProgress(
+    PROCESSING_STAGES.TRANSLATING, 
+    'statusTranslatingContent', 
+    hasImageTranslation ? 40 : 42
+  );
+  
+  // Translate images first if enabled
+  if (hasImageTranslation) {
+    await checkCancellation('image translation');
+    
+    log('Starting image translation', { targetLanguage: language });
+    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusAnalyzingImages', 40);
+    
+    // Use detected language from automatic extraction if available, otherwise detect from content
+    const sourceLang = result.detectedLanguage || detectSourceLanguage(result.content);
+    result.content = await translateImages(
+      result.content, sourceLang, language, 
+      data.apiKey, data.googleApiKey, data.model, updateState
+    );
+    log('Image translation complete');
+  }
+  
+  // Check if processing was cancelled before text translation
+  await checkCancellation('text translation');
+  
+  log('Starting text translation', { targetLanguage: language });
+  await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusTranslatingText', 45);
+  try {
+    result = await translateContent(result, language, data.apiKey, data.model, updateState);
+    log('Translation complete', { title: result.title });
+  } catch (error) {
+    // Use constant pattern matching instead of string includes
+    const isAuthError = ['authentication', '401', '403', 'unauthorized', 'forbidden']
+      .some(pattern => (error.message || '').toLowerCase().includes(pattern));
+    if (isAuthError) {
+      logError('Translation failed: authentication error', error);
+      const uiLang = await getUILanguageCached();
+      const errorMsg = tSync('errorAuthFailed', uiLang);
+      updateState({ 
+        stage: PROCESSING_STAGES.TRANSLATING.id,
+        status: errorMsg, 
+        progress: 0,
+        error: 'AUTH_ERROR'
+      });
+      throw new Error(errorMsg);
+    }
+    // For other errors, log but continue without translation
+    logError('Translation failed, continuing without translation', error);
+    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'errorTranslationFailed', 60);
+  }
+  
+  return result;
+}
+
+/**
+ * Handle abstract generation step in processing pipeline
+ * @param {Object} data - Processing data
+ * @param {Object} result - Extracted content result
+ * @param {Function} generateAbstract - Function to generate abstract
+ * @param {Function} updateState - Function to update state
+ * @returns {Promise<string>} Generated abstract (empty string if not generated)
+ */
+export async function handleAbstractGeneration(
+  data,
+  result,
+  generateAbstract,
+  updateState
+) {
+  // Check if processing was cancelled before abstract generation
+  await checkCancellation('abstract generation');
+  
+  // Generate abstract if enabled (but skip for audio format)
+  const shouldGenerateAbstract = data.generateAbstract && 
+                                 data.outputFormat !== 'audio' && 
+                                 result.content && 
+                                 result.content.length > 0 && 
+                                 data.apiKey;
+  if (!shouldGenerateAbstract) {
+    return '';
+  }
+  
+  // Use detected source language for abstract (not target translation language)
+  // For automatic mode, result.detectedLanguage contains the source language
+  // For AI modes, if result.detectedLanguage is not available, use 'auto'
+  // to let generateAbstract detect the language from content
+  const abstractLang = result.detectedLanguage || 'auto';
+  try {
+    await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62);
+    const abstract = await generateAbstract(
+      result.content, 
+      result.title || data.title || 'Untitled',
+      data.apiKey,
+      data.model,
+      abstractLang,
+      updateState
+    );
+    if (abstract) {
+      log('Abstract generated', { length: abstract.length });
+      result.abstract = abstract;
+      return abstract;
+    }
+  } catch (error) {
+    logWarn('Abstract generation failed, continuing without abstract', error);
+  }
+  
+  return '';
+}
+
+/**
+ * Detect effective language for document generation
+ * @param {Object} data - Processing data
+ * @param {Object} result - Extracted content result
+ * @param {Function} detectContentLanguage - Function to detect content language
+ * @returns {Promise<string>} Effective language code
+ */
+export async function detectEffectiveLanguage(
+  data,
+  result,
+  detectContentLanguage
+) {
+  let effectiveLanguage = data.language || 'auto';
+  if (effectiveLanguage === 'auto') {
+    // Use detected language from automatic extraction if available
+    if (result.detectedLanguage) {
+      effectiveLanguage = result.detectedLanguage;
+      log('Using detected language from automatic extraction for localization', { detectedLang: effectiveLanguage });
+    } else if (result.content && result.content.length > 0 && data.apiKey) {
+      // Fallback to AI detection if API key available
+      try {
+        const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
+        if (detectedLang && detectedLang !== 'en') {
+          effectiveLanguage = detectedLang;
+          log('Using detected language for localization', { detectedLang });
+        }
+      } catch (error) {
+        logWarn('Language detection failed, using auto', error);
+      }
+    }
+  }
+  return effectiveLanguage;
 }
 

@@ -1,6 +1,8 @@
 // Event handlers for popup
 // This module contains all event listeners setup
 
+import { setupAllApiKeyToggles } from './handlers/api-keys.js';
+
 /**
  * @typedef {Object} WindowWithModules
  * @property {Object} [settingsModule]
@@ -91,160 +93,12 @@ export function initHandlers(deps) {
   function setupEventListeners() {
     log('setupEventListeners: starting');
     
-    if (elements.toggleApiKey && elements.apiKey) {
-      elements.toggleApiKey.addEventListener('click', async () => {
-        const input = elements.apiKey;
-        if (!input) return;
-        const isPassword = input.type === 'password';
-      
-        if (isPassword) {
-          // Show full key
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted; // Store decrypted for quick hide
-            } catch (error) {
-              logError('Failed to decrypt API key', error);
-              // If decryption fails, try to use current value if it's not masked
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            // Key is already visible or not masked
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          if (elements.toggleApiKey) {
-            elements.toggleApiKey.querySelector('.eye-icon').textContent = '🔒';
-          }
-        } else {
-          // Hide key
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          if (elements.toggleApiKey) {
-            elements.toggleApiKey.querySelector('.eye-icon').textContent = '👁';
-          }
-        }
-      });
-    }
-
-    if (elements.toggleClaudeApiKey && elements.claudeApiKey) {
-      elements.toggleClaudeApiKey.addEventListener('click', async () => {
-        const input = elements.claudeApiKey;
-        const isPassword = input.type === 'password';
-        
-        if (isPassword) {
-          // Show full key
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt API key', error);
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          elements.toggleClaudeApiKey.querySelector('.eye-icon').textContent = '🔒';
-        } else {
-          // Hide key
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          elements.toggleClaudeApiKey.querySelector('.eye-icon').textContent = '👁';
-        }
-      });
-    }
-
-    if (elements.toggleGeminiApiKey && elements.geminiApiKey) {
-      elements.toggleGeminiApiKey.addEventListener('click', async () => {
-        const input = elements.geminiApiKey;
-        const isPassword = input.type === 'password';
-        
-        if (isPassword) {
-          // Show full key
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt API key', error);
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          elements.toggleGeminiApiKey.querySelector('.eye-icon').textContent = '🔒';
-        } else {
-          // Hide key
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          elements.toggleGeminiApiKey.querySelector('.eye-icon').textContent = '👁';
-        }
-      });
-    }
-
-    if (elements.toggleGoogleApiKey) {
-      elements.toggleGoogleApiKey.addEventListener('click', async () => {
-        const input = elements.googleApiKey;
-        const isPassword = input.type === 'password';
-        
-        if (isPassword) {
-          // Show full key
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt API key', error);
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          elements.toggleGoogleApiKey.querySelector('.eye-icon').textContent = '🔒';
-        } else {
-          // Hide key
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          elements.toggleGoogleApiKey.querySelector('.eye-icon').textContent = '👁';
-        }
-      });
-    }
+    // ============================================
+    // API KEY TOGGLE HANDLERS
+    // ============================================
+    // Setup all API key toggle handlers (show/hide functionality)
+    // Note: Some handlers (ElevenLabs, Qwen, Respeecher, Google TTS) show toast on error
+    setupAllApiKeyToggles(elements, decryptApiKey, maskApiKey, logError, showToast, t);
 
     // API provider selector change handler - optimize to avoid blocking
     if (elements.apiProviderSelect) {
@@ -1628,43 +1482,7 @@ export function initHandlers(deps) {
       });
     }
     
-    // ElevenLabs API key handlers
-    if (elements.toggleElevenlabsApiKey) {
-      elements.toggleElevenlabsApiKey.addEventListener('click', async () => {
-        const input = elements.elevenlabsApiKey;
-        const isPassword = input.type === 'password';
-        const eyeIcon = elements.toggleElevenlabsApiKey.querySelector('.eye-icon');
-        
-        if (isPassword) {
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt ElevenLabs API key', error);
-              const errorMsg = await t('errorDecryptFailed');
-              showToast(errorMsg, 'error');
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          if (eyeIcon) eyeIcon.textContent = '🔒';
-        } else {
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else {
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          if (eyeIcon) eyeIcon.textContent = '👁';
-        }
-      });
-    }
+    // ElevenLabs API key toggle handler is now handled by setupAllApiKeyToggles above
     
     if (elements.saveElevenlabsApiKey) {
       elements.saveElevenlabsApiKey.addEventListener('click', async () => {
@@ -1761,43 +1579,7 @@ export function initHandlers(deps) {
       });
     }
     
-    // Qwen API key handlers
-    if (elements.toggleQwenApiKey) {
-      elements.toggleQwenApiKey.addEventListener('click', async () => {
-        const input = elements.qwenApiKey;
-        const isPassword = input.type === 'password';
-        const eyeIcon = elements.toggleQwenApiKey.querySelector('.eye-icon');
-        
-        if (isPassword) {
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt Qwen API key', error);
-              const errorMsg = await t('errorDecryptFailed');
-              showToast(errorMsg, 'error');
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          if (eyeIcon) eyeIcon.textContent = '🔒';
-        } else {
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else {
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          if (eyeIcon) eyeIcon.textContent = '👁';
-        }
-      });
-    }
+    // Qwen API key toggle handler is now handled by setupAllApiKeyToggles above
     
     if (elements.saveQwenApiKey) {
       elements.saveQwenApiKey.addEventListener('click', async () => {
@@ -1846,43 +1628,7 @@ export function initHandlers(deps) {
       });
     }
     
-    // Respeecher API key handlers
-    if (elements.toggleRespeecherApiKey) {
-      elements.toggleRespeecherApiKey.addEventListener('click', async () => {
-        const input = elements.respeecherApiKey;
-        const isPassword = input.type === 'password';
-        const eyeIcon = elements.toggleRespeecherApiKey.querySelector('.eye-icon');
-        
-        if (isPassword) {
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt Respeecher API key', error);
-              const errorMsg = await t('errorDecryptFailed');
-              showToast(errorMsg, 'error');
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          if (eyeIcon) eyeIcon.textContent = '🔒';
-        } else {
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else {
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          if (eyeIcon) eyeIcon.textContent = '👁';
-        }
-      });
-    }
+    // Respeecher API key toggle handler is now handled by setupAllApiKeyToggles above
     
     if (elements.saveRespeecherApiKey) {
       elements.saveRespeecherApiKey.addEventListener('click', async () => {
@@ -1931,43 +1677,7 @@ export function initHandlers(deps) {
       });
     }
     
-    // Google TTS API key handlers
-    if (elements.toggleGoogleTtsApiKey) {
-      elements.toggleGoogleTtsApiKey.addEventListener('click', async () => {
-        const input = elements.googleTtsApiKey;
-        const isPassword = input.type === 'password';
-        const eyeIcon = elements.toggleGoogleTtsApiKey.querySelector('.eye-icon');
-        
-        if (isPassword) {
-          if (input.dataset.encrypted) {
-            try {
-              const decrypted = await decryptApiKey(input.dataset.encrypted);
-              input.value = decrypted;
-              input.dataset.decrypted = decrypted;
-            } catch (error) {
-              logError('Failed to decrypt Google TTS API key', error);
-              const errorMsg = await t('errorDecryptFailed');
-              showToast(errorMsg, 'error');
-              if (!input.value.startsWith('****')) {
-                input.dataset.decrypted = input.value;
-              }
-            }
-          } else if (input.value && !input.value.startsWith('****')) {
-            input.dataset.decrypted = input.value;
-          }
-          input.type = 'text';
-          if (eyeIcon) eyeIcon.textContent = '🔒';
-        } else {
-          if (input.dataset.decrypted) {
-            input.value = maskApiKey(input.dataset.decrypted);
-          } else {
-            input.value = maskApiKey(input.value);
-          }
-          input.type = 'password';
-          if (eyeIcon) eyeIcon.textContent = '👁';
-        }
-      });
-    }
+    // Google TTS API key toggle handler is now handled by setupAllApiKeyToggles above
     
     if (elements.saveGoogleTtsApiKey) {
       elements.saveGoogleTtsApiKey.addEventListener('click', async () => {

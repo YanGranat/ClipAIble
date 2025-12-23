@@ -8,9 +8,29 @@
 /**
  * Inlined automatic extraction function for chrome.scripting.executeScript
  * This runs in the page's main world context
- * Helper functions are inlined from modules (see scripts/extraction/modules/)
+ * 
+ * CRITICAL: DO NOT REFACTOR OR SPLIT THIS FUNCTION!
+ * 
+ * This function is ~4084 lines long and MUST remain as a single, monolithic function.
+ * It is injected as a complete code block via chrome.scripting.executeScript into
+ * the page's main world context where ES modules and imports are NOT available.
+ * 
+ * Reasons why this function cannot be split:
+ * 1. It runs in page context (not service worker) where imports don't work
+ * 2. chrome.scripting.executeScript requires a single function reference
+ * 3. Helper functions are inlined at build time from modules (see scripts/extraction/modules/)
+ * 4. The inlining process (builder.js) assembles all modules into this single function
+ * 5. Breaking it into smaller functions would break the build process
+ * 
+ * The function uses modular helper functions that are inlined at build time.
+ * All modules are in scripts/extraction/modules/ and are assembled by builder.js.
+ * The function runs in page context via executeScript where imports are not available.
+ * 
+ * See systemPatterns.md "Design Decisions" section for more details.
+ * 
  * @param {string} baseUrl - Base URL for resolving relative URLs
  * @param {boolean} enableDebugInfo - Whether to collect debug information (default: false)
+ * @returns {Object} Extraction result with content, title, author, publishDate, debugInfo
  */
 export function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
   // Log start (this will appear in page console, not service worker)
