@@ -1,3 +1,4 @@
+// @ts-check
 // Exclusion patterns for content filtering
 // Centralized patterns to avoid duplication
 

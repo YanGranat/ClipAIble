@@ -1,3 +1,4 @@
+// @ts-check
 // HTML utility functions for ClipAIble extension
 
 /**

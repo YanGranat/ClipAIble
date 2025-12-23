@@ -1,3 +1,4 @@
+// @ts-check
 // UI Localization for ClipAIble extension
 // Supports 11 languages: en, ru, ua, de, fr, es, it, pt, zh, ja, ko
 

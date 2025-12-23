@@ -1,3 +1,4 @@
+// @ts-check
 // TXT generation module for ClipAIble extension
 // Plain text format without formatting
 

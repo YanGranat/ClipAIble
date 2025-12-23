@@ -1,3 +1,4 @@
+// @ts-check
 // Audio settings management module
 // Handles TTS provider settings, voice selection, audio UI visibility
 

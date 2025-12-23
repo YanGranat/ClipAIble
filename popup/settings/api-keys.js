@@ -1,3 +1,4 @@
+// @ts-check
 // API Keys and Provider management module
 // Handles API key encryption, validation, and provider UI updates
 

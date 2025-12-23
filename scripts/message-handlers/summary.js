@@ -1,3 +1,4 @@
+// @ts-check
 // Summary generation helper functions
 // Shared logic for extractContentOnly and generateSummary handlers
 

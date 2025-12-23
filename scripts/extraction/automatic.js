@@ -1,3 +1,4 @@
+// @ts-check
 // Automatic content extraction without AI
 // Uses heuristics and DOM analysis to extract article content
 

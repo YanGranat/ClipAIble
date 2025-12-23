@@ -1,3 +1,4 @@
+// @ts-check
 // HTML builder for PDF generation
 
 import { log, logWarn } from '../utils/logging.js';

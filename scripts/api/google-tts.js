@@ -1,3 +1,4 @@
+// @ts-check
 // Google Gemini 2.5 TTS API module for ClipAIble extension
 // 
 // Uses Generative Language API (generativelanguage.googleapis.com)

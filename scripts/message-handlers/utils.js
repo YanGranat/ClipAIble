@@ -1,3 +1,4 @@
+// @ts-check
 // Utility functions for message handlers
 // Provides common error handling patterns
 

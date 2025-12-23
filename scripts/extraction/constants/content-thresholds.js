@@ -1,3 +1,4 @@
+// @ts-check
 // Content size thresholds and constants
 // Centralized constants to avoid magic numbers
 

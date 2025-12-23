@@ -1,3 +1,4 @@
+// @ts-check
 // Selector cache module for offline mode
 // Caches AI-generated selectors by domain for faster subsequent extractions
 

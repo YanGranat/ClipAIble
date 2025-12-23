@@ -1,8 +1,10 @@
+// @ts-check
 // UI management module for popup
 // Handles localization, themes, visibility, status, progress, toast notifications
 
 import { getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { logWarn } from '../scripts/utils/logging.js';
+import { escapeHtml } from '../scripts/utils/html.js';
 
 /**
  * Initialize UI module with dependencies
@@ -219,7 +221,9 @@ export function initUI(deps) {
       // Add timer display for processing status (use startTime from background or currentStartTime)
       const effectiveStartTime = startTime || currentStartTime.current;
       const elapsed = effectiveStartTime ? Math.floor((Date.now() - effectiveStartTime) / 1000) : 0;
-      elements.statusText.innerHTML = `${text} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+      // SECURITY: Escape status text to prevent XSS attacks
+      const escapedText = escapeHtml(text);
+      elements.statusText.innerHTML = `${escapedText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
       // Ensure timer is running if we have a startTime
       if (effectiveStartTime && !timerInterval.current) {
         startTimerDisplay(effectiveStartTime);

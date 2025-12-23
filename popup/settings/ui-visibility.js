@@ -1,3 +1,4 @@
+// @ts-check
 // UI Visibility management module
 // Handles showing/hiding UI elements based on format, mode, language selection
 

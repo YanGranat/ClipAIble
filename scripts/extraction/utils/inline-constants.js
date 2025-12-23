@@ -1,3 +1,4 @@
+// @ts-check
 // Utility to inline constants and patterns into extraction function
 // Since extractAutomaticallyInlined runs in page context via executeScript,
 // it cannot use imports - constants must be inlined

@@ -1,3 +1,4 @@
+// @ts-check
 // Respeecher Text-to-Speech API module for ClipAIble extension
 // Ukrainian company - supports English and Ukrainian TTS
 //

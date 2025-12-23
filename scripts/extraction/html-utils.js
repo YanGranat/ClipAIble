@@ -1,3 +1,4 @@
+// @ts-check
 // HTML utilities for extraction
 
 import { log } from '../utils/logging.js';

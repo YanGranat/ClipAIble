@@ -1,3 +1,4 @@
+// @ts-check
 // Audio preparation module for ClipAIble extension
 // Handles text chunking and cleanup for TTS conversion
 

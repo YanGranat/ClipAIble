@@ -1,3 +1,4 @@
+// @ts-check
 // AI prompts for content extraction
 
 // @typedef {import('../types.js').SelectorResult} SelectorResult

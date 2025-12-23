@@ -40,7 +40,7 @@ import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
 import { getProviderFromModel, callAI } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
-import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
+import { sanitizeMarkdownHtml, escapeHtml as escapeHtmlUtil } from '../scripts/utils/html.js';
 import { initUI } from './ui.js';
 import { initStats } from './stats.js';
 import { initSettings } from './settings.js';
@@ -673,7 +673,9 @@ function updateTimerDisplay() {
       const textContent = elements.statusText.textContent || elements.statusText.innerText || '';
       const statusText = textContent.replace(/\s*\(\d{2}:\d{2}\)\s*$/, '').trim();
       const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
-      elements.statusText.innerHTML = `${statusText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+      // SECURITY: Escape status text to prevent XSS attacks
+      const escapedStatusText = escapeHtmlUtil(statusText);
+      elements.statusText.innerHTML = `${escapedStatusText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
     }
   }
 }
@@ -1610,7 +1612,9 @@ function setStatus(type, text, startTime = null) {
     // Add timer display for processing status (use startTime from background or currentStartTime)
     const effectiveStartTime = startTime || currentStartTimeRef.current;
     const elapsed = effectiveStartTime ? Math.floor((Date.now() - effectiveStartTime) / 1000) : 0;
-    elements.statusText.innerHTML = `${text} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+    // SECURITY: Escape status text to prevent XSS attacks
+    const escapedText = escapeHtmlUtil(text);
+    elements.statusText.innerHTML = `${escapedText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
     // Ensure timer is running if we have a startTime
     if (effectiveStartTime && !timerIntervalRef.current) {
       startTimerDisplay(effectiveStartTime);
@@ -1854,10 +1858,11 @@ async function displayStats(stats) {
   // Footer removed - replaced with statistics collection checkbox
 }
 
+// DEPRECATED: Use escapeHtmlUtil from scripts/utils/html.js instead
+// Kept for backward compatibility with existing code
 function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  // Use the imported utility function for consistency
+  return escapeHtmlUtil(text);
 }
 
 function formatRelativeDate(date) {

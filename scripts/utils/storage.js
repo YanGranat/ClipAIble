@@ -1,3 +1,4 @@
+// @ts-check
 // Storage utility with size checking and IndexedDB fallback
 
 import { log, logWarn, logError } from './logging.js';

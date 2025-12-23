@@ -1,3 +1,4 @@
+// @ts-check
 // HTML generation module for ClipAIble extension
 // Clean HTML file with preserved styles
 

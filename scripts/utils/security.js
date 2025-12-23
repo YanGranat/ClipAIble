@@ -1,3 +1,4 @@
+// @ts-check
 // Security utilities for ClipAIble extension
 
 import { logError, logWarn } from './logging.js';

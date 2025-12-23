@@ -1,3 +1,4 @@
+// @ts-check
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
 

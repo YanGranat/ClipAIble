@@ -1,3 +1,4 @@
+// @ts-check
 // Video platform detection utilities
 
 /**

@@ -1,3 +1,4 @@
+// @ts-check
 // Core business logic for popup
 // Facade module that imports and combines all core submodules
 // This module contains all business logic functions that handle

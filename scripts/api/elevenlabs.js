@@ -1,3 +1,4 @@
+// @ts-check
 // ElevenLabs Text-to-Speech API module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';

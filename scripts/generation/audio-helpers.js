@@ -1,3 +1,4 @@
+// @ts-check
 // Helper functions for audio generation module
 // Extracted to reduce complexity and improve maintainability
 

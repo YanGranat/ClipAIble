@@ -1,3 +1,4 @@
+// @ts-check
 // Helper functions for audio preparation module
 // Extracted to reduce complexity and improve maintainability
 

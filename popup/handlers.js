@@ -1,3 +1,4 @@
+// @ts-check
 // Event handlers for popup
 // This module contains all event listeners setup
 

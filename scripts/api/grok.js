@@ -1,3 +1,4 @@
+// @ts-check
 // Grok (xAI) API module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';

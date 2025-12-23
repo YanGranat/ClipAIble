@@ -1,3 +1,4 @@
+// @ts-check
 // Content script for ClipAIble extension
 // This script is injected into web pages to extract content
 
@@ -449,7 +450,7 @@
     const meta = document.querySelector(
       `meta[name="${name}"], meta[property="${name}"], meta[itemprop="${name}"]`
     );
-    return meta ? meta.content : null;
+    return meta && meta instanceof HTMLMetaElement ? meta.content : null;
   }
 
   // Check if image is likely a tracking pixel
@@ -700,33 +701,36 @@
       // Если Extension context invalidated, используем DOM fallback сразу
       if (isContextInvalidated && subtitleData) {
         saveToDOMFallback(subtitleData);
-      } else if (subtitleData && !storageSaved) {
+      } else if (subtitleData) {
         // Другие ошибки - пробуем storage, потом DOM fallback
-        storageSaved = true;
-        try {
-          if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-            chrome.storage.local.set({
-              pendingSubtitles: {
-                subtitles: subtitleData.subtitles,
-                metadata: subtitleData.metadata,
-                timestamp: Date.now()
-              }
-            }).catch(storageError => {
-              sendErrorToBackground('Failed to save to storage (CustomEvent catch)', storageError, {
-                action: 'saveSubtitlesToStorage',
-                context: 'customEventCatch'
+        let storageSaved = false;
+        if (!storageSaved) {
+          storageSaved = true;
+          try {
+            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+              chrome.storage.local.set({
+                pendingSubtitles: {
+                  subtitles: subtitleData.subtitles,
+                  metadata: subtitleData.metadata,
+                  timestamp: Date.now()
+                }
+              }).catch(storageError => {
+                sendErrorToBackground('Failed to save to storage (CustomEvent catch)', storageError, {
+                  action: 'saveSubtitlesToStorage',
+                  context: 'customEventCatch'
+                });
+                saveToDOMFallback(subtitleData);
               });
+            } else {
               saveToDOMFallback(subtitleData);
+            }
+          } catch (storageException) {
+            sendErrorToBackground('Exception accessing chrome.storage (CustomEvent catch)', storageException, {
+              action: 'accessStorage',
+              context: 'customEventCatch'
             });
-          } else {
             saveToDOMFallback(subtitleData);
           }
-        } catch (storageException) {
-          sendErrorToBackground('Exception accessing chrome.storage (CustomEvent catch)', storageException, {
-            action: 'accessStorage',
-            context: 'customEventCatch'
-          });
-          saveToDOMFallback(subtitleData);
         }
       }
     }
@@ -741,9 +745,10 @@
 
   // Also listen for CustomEvent from MAIN world (for subtitle fetch requests)
   document.addEventListener('ClipAIbleSubtitleFetchRequest', (event) => {
-    if (event.detail && event.detail.type === 'ClipAIbleSubtitleFetchRequest') {
+    const customEvent = /** @type {CustomEvent} */ (event);
+    if (customEvent.detail && customEvent.detail.type === 'ClipAIbleSubtitleFetchRequest') {
       // SECURITY: Validate URL to prevent SSRF attacks
-      const url = event.detail.url;
+      const url = customEvent.detail.url;
       if (!url || typeof url !== 'string') {
         sendErrorToBackground('Invalid URL in CustomEvent fetch request', null, {
           action: 'validateSubtitleUrl',
@@ -820,7 +825,7 @@
         const responseEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
           detail: {
             type: 'ClipAIbleSubtitleFetchResponse',
-            requestId: event.detail.requestId,
+            requestId: customEvent.detail.requestId,
             responseText: responseText
           },
           bubbles: true,
@@ -831,7 +836,7 @@
         // SECURITY: Use specific origin instead of '*' to prevent XSS
         window.postMessage({
           type: 'ClipAIbleSubtitleFetchResponse',
-          requestId: event.detail.requestId,
+          requestId: customEvent.detail.requestId,
           responseText: responseText
         }, window.location.origin);
       })
@@ -845,7 +850,7 @@
         const errorEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
           detail: {
             type: 'ClipAIbleSubtitleFetchResponse',
-            requestId: event.detail.requestId,
+            requestId: customEvent.detail.requestId,
             error: error.message || String(error)
           },
           bubbles: true,
@@ -856,7 +861,7 @@
         // SECURITY: Use specific origin instead of '*' to prevent XSS
         window.postMessage({
           type: 'ClipAIbleSubtitleFetchResponse',
-          requestId: event.detail.requestId,
+          requestId: customEvent.detail.requestId,
           error: error.message || String(error)
         }, window.location.origin);
       });
@@ -864,6 +869,7 @@
   });
 
   // Make function available for direct injection
+  // @ts-ignore - External library may use this
   window.__webpageToPdf_extractContent = extractPageContent;
 })();
 

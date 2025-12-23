@@ -1,3 +1,4 @@
+// @ts-check
 // Gemini API module for ClipAIble extension
 
 import { log, logError, logWarn } from '../utils/logging.js';

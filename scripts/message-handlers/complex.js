@@ -1,3 +1,4 @@
+// @ts-check
 // Complex message handlers with complex logic
 // Handlers: extractContentOnly, generateSummary, logModelDropdown
 

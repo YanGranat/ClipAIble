@@ -225,12 +225,8 @@ async function initPiperTTS() {
 self.addEventListener('message', async (event) => {
   const { type, id, data } = event.data || {};
   
-  console.log(LOG_PREFIX, 'Message received', {
-    type,
-    id,
-    timestamp: Date.now(),
-    hasData: !!data
-  });
+  // Removed excessive "Message received" logging - too noisy for production
+  // Only critical errors and important state changes are logged now
   
   try {
     switch (type) {

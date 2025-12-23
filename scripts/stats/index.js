@@ -1,3 +1,4 @@
+// @ts-check
 // Statistics module for ClipAIble extension
 
 // @typedef {import('../types.js').StatsData} StatsData

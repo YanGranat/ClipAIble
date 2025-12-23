@@ -1,3 +1,4 @@
+// @ts-check
 // Settings module for popup
 // Facade module that imports and combines all settings submodules
 // Handles settings loading, saving, API keys, models, UI updates, etc.

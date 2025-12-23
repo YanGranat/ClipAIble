@@ -1,3 +1,4 @@
+// @ts-check
 // Encryption utilities for API keys
 // Uses Web Crypto API for secure encryption
 

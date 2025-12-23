@@ -1,3 +1,4 @@
+// @ts-check
 // Validation utilities for ClipAIble extension
 
 import { setError, ERROR_CODES } from '../state/processing.js';

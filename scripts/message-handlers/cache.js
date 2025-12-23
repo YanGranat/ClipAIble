@@ -1,3 +1,4 @@
+// @ts-check
 // Cache-related message handlers
 // Handlers: getCacheStats, clearSelectorCache, deleteDomainFromCache
 

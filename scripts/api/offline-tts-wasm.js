@@ -1,3 +1,4 @@
+// @ts-check
 // Offline TTS module using WASM TTS library (Sherpa-ONNX)
 // Works without API keys, uses WebAssembly TTS engine
 // No microphone permissions required, generates audio directly

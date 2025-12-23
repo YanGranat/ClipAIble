@@ -1,3 +1,4 @@
+// @ts-check
 // PDF generation module for ClipAIble extension
 
 // @typedef {import('../types.js').ContentItem} ContentItem

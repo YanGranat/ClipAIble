@@ -4491,26 +4491,6 @@ try {
               const hasChromeStorage = typeof chrome !== 'undefined' && chrome.storage;
               const hasChromeStorageLocal = hasChromeStorage && chrome.storage.local;
               
-              logError(`[ClipAIble Offscreen] Failed to save to storage for ${messageId}`, {
-                messageId,
-                error: storageError.message,
-                errorName: storageError.name,
-                stack: storageError.stack,
-                audioSize: uint8Array.length,
-                audioSizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
-                threshold: STORAGE_THRESHOLD,
-                thresholdMB: (STORAGE_THRESHOLD / 1024 / 1024).toFixed(2),
-                hasUnlimitedStorage: hasUnlimitedStorage,
-                hasChromeStorage: hasChromeStorage,
-                hasChromeStorageLocal: hasChromeStorageLocal,
-                chromeAvailable: typeof chrome !== 'undefined',
-                storageErrorDetails: {
-                  message: storageError.message,
-                  name: storageError.name,
-                  stack: storageError.stack?.substring(0, 500)
-                }
-              });
-              
               // Check if error is due to chrome.storage being unavailable
               const isStorageUnavailable = !hasChromeStorageLocal || 
                 storageError.message?.includes('undefined') ||
@@ -4518,11 +4498,36 @@ try {
                 storageError.message?.includes('Cannot read properties');
               
               if (isStorageUnavailable) {
-                logError(`[ClipAIble Offscreen] chrome.storage.local is not available in offscreen context for ${messageId}. Using IndexedDB fallback.`, {
+                // This is expected behavior - offscreen documents don't have chrome.storage.local
+                // Fallback to IndexedDB is working correctly, so log as warning, not error
+                logWarn(`[ClipAIble Offscreen] chrome.storage.local is not available in offscreen context for ${messageId}. Using IndexedDB fallback (expected behavior).`, {
                   messageId,
                   hasChromeStorage: hasChromeStorage,
-                  hasChromeStorageLocal: hasChromeStorageLocal
+                  hasChromeStorageLocal: hasChromeStorageLocal,
+                  note: 'This is normal - offscreen documents use IndexedDB instead'
                 });
+              } else {
+                // Real error - log as error
+                logError(`[ClipAIble Offscreen] Failed to save to storage for ${messageId}`, {
+                  messageId,
+                  error: storageError.message,
+                  errorName: storageError.name,
+                  stack: storageError.stack,
+                  audioSize: uint8Array.length,
+                  audioSizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
+                  threshold: STORAGE_THRESHOLD,
+                  thresholdMB: (STORAGE_THRESHOLD / 1024 / 1024).toFixed(2),
+                  hasUnlimitedStorage: hasUnlimitedStorage,
+                  hasChromeStorage: hasChromeStorage,
+                  hasChromeStorageLocal: hasChromeStorageLocal,
+                  chromeAvailable: typeof chrome !== 'undefined',
+                  storageErrorDetails: {
+                    message: storageError.message,
+                    name: storageError.name,
+                    stack: storageError.stack?.substring(0, 500)
+                  }
+                });
+              }
                 
                 // Use IndexedDB as fallback for large audio files
                 try {

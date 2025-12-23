@@ -1,3 +1,4 @@
+// @ts-check
 // Builder function to inline all modules into extractAutomaticallyInlined
 // This generates a single string of code that can be embedded in the function
 

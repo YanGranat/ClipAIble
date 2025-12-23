@@ -1,3 +1,4 @@
+// @ts-check
 // Models management module
 // Handles model list updates, custom models, hidden models
 

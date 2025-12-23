@@ -1,3 +1,4 @@
+// @ts-check
 // Summary management module
 // Handles summary generation, display, and user interactions
 

@@ -1,3 +1,4 @@
+// @ts-check
 // Configuration constants for ClipAIble extension
 
 export const CONFIG = {

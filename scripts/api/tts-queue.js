@@ -1,3 +1,4 @@
+// @ts-check
 // TTS Request Queue for safe parallel request handling
 // Ensures TTS requests are processed sequentially to avoid memory pressure
 

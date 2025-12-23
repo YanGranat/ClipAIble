@@ -1,3 +1,4 @@
+// @ts-check
 // User-friendly error message generator with actionable advice
 // Provides localized, helpful error messages instead of technical ones
 

@@ -1,3 +1,4 @@
+// @ts-check
 // Claude API module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';

@@ -1,3 +1,4 @@
+// @ts-check
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
 

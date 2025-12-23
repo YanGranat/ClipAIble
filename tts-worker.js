@@ -1,3 +1,5 @@
+// @ts-check
+// @ts-nocheck - Worker.postMessage has different signature than Window.postMessage
 // TTS Web Worker - Executes TTS operations in separate thread to avoid blocking main thread
 // This worker runs in offscreen document to handle WASM operations without blocking popup
 
@@ -54,7 +56,7 @@ async function initTTS(moduleUrl, onnxRuntimeUrl) {
       // Since piper-tts-web uses dynamic import('onnxruntime-web'), we need to intercept it
       
       // Try to set up a global import map resolver for the worker
-      if (onnxRuntimeUrl && typeof import.meta !== 'undefined' && import.meta.resolve) {
+      if (onnxRuntimeUrl && typeof import.meta !== 'undefined' && typeof import.meta.resolve === 'function') {
         // Use import.meta.resolve if available (Chrome 126+)
         try {
           // This won't work directly, but we can try to patch the module
@@ -202,6 +204,8 @@ self.addEventListener('message', async (event) => {
           // Convert Blob to ArrayBuffer for transfer
           const arrayBuffer = await blob.arrayBuffer();
           
+          // Worker.postMessage accepts transfer array as second parameter
+          // @ts-expect-error - TypeScript doesn't recognize Worker postMessage signature
           self.postMessage({
             type: 'PREDICT_RESPONSE',
             id,

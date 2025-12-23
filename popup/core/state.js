@@ -1,3 +1,4 @@
+// @ts-check
 // State management module
 // Handles processing state polling, UI updates, and stage mapping
 

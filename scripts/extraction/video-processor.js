@@ -1,3 +1,4 @@
+// @ts-check
 // AI processing of video subtitles - converts subtitles to structured article text
 
 import { callAI } from '../api/index.js';

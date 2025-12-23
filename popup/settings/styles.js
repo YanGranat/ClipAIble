@@ -1,3 +1,4 @@
+// @ts-check
 // PDF Styles management module
 // Handles style presets, colors, fonts reset
 

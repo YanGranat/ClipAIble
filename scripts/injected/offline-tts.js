@@ -1,3 +1,4 @@
+// @ts-check
 // Injected script for offline TTS execution in page context
 // This script runs in MAIN world and has access to window.speechSynthesis
 

@@ -1,3 +1,4 @@
+// @ts-check
 // Audio generation module for ClipAIble extension
 // Orchestrates text preparation and TTS conversion
 

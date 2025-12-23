@@ -1,3 +1,4 @@
+// @ts-check
 // Common API error handler for TTS providers
 // Handles HTTP errors consistently across all TTS providers
 

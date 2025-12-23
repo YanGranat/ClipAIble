@@ -1,3 +1,4 @@
+// @ts-check
 // Processing state management for ClipAIble extension
 
 // @typedef {import('../types.js').ProcessingState} ProcessingState

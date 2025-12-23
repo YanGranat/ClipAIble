@@ -1,3 +1,4 @@
+// @ts-check
 // Processing module
 // Handles PDF saving, cancellation, and content extraction
 

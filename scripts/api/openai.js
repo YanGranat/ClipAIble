@@ -1,3 +1,4 @@
+// @ts-check
 // OpenAI API module for ClipAIble extension
 
 import { log, logError } from '../utils/logging.js';

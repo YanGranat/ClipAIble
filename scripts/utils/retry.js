@@ -1,3 +1,4 @@
+// @ts-check
 // Retry utility for API calls with exponential backoff
 
 import { log, logWarn, logError } from './logging.js';

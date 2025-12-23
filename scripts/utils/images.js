@@ -1,3 +1,4 @@
+// @ts-check
 // Image utility functions for ClipAIble extension
 
 import { log, logWarn, logError } from './logging.js';

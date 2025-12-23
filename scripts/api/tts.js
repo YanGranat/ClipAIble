@@ -1,3 +1,4 @@
+// @ts-check
 // Text-to-Speech API module for ClipAIble extension
 // Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
 

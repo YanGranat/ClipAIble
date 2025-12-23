@@ -1,3 +1,4 @@
+// @ts-check
 // DOCX generation module for ClipAIble extension
 // DOCX is a ZIP archive with Office Open XML structure
 

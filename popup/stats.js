@@ -1,3 +1,4 @@
+// @ts-check
 // Statistics module for popup
 // Handles statistics display, cache stats, history
 

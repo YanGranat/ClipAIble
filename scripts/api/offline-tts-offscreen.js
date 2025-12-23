@@ -1,3 +1,4 @@
+// @ts-check
 // Offline TTS using Offscreen Document API
 // This is the proper way to use WASM TTS in Manifest V3
 // Offscreen document has full DOM and WASM support

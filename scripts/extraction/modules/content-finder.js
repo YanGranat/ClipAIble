@@ -1,3 +1,4 @@
+// @ts-check
 // Content finding functions for automatic extraction
 // These functions will be inlined into extractAutomaticallyInlined
 

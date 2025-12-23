@@ -1,3 +1,4 @@
+// @ts-check
 // Video subtitle extraction for YouTube and Vimeo
 
 import { log, logError, logWarn } from '../utils/logging.js';

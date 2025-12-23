@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Complete mapping of all available Piper TTS voices
  * Based on actual voices from @mintplex-labs/piper-tts-web library

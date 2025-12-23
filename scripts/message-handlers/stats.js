@@ -1,3 +1,4 @@
+// @ts-check
 // Statistics-related message handlers
 // Handlers: getStats, clearStats, deleteHistoryItem
 

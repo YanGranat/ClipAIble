@@ -1,3 +1,4 @@
+// @ts-check
 // Metadata extraction functions for automatic extraction
 // These functions will be inlined into extractAutomaticallyInlined
 

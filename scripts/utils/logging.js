@@ -1,3 +1,4 @@
+// @ts-check
 // Logging utility for ClipAIble extension
 // Supports log levels: DEBUG, INFO, WARN, ERROR
 // Log level can be controlled via CONFIG.LOG_LEVEL

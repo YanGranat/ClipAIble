@@ -1,3 +1,4 @@
+// @ts-check
 // Settings-related message handlers
 // Handlers: exportSettings, importSettings
 

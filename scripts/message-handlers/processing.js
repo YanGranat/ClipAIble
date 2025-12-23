@@ -1,3 +1,4 @@
+// @ts-check
 // Processing-related message handlers
 // Handlers: processArticle, generatePdfDebugger
 

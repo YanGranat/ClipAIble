@@ -1,3 +1,4 @@
+// @ts-check
 // Video and subtitle-related message handlers
 // Handlers: youtubeSubtitlesResult, extractYouTubeSubtitlesForSummary
 

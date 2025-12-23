@@ -1,3 +1,4 @@
+// @ts-check
 // Settings import/export module
 
 import { log, logError, logWarn } from '../utils/logging.js';

@@ -1,3 +1,4 @@
+// @ts-check
 // Qwen3-TTS-Flash Text-to-Speech API module for ClipAIble extension
 // Uses DashScope multimodal-generation API
 

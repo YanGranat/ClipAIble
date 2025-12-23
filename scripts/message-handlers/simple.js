@@ -1,3 +1,4 @@
+// @ts-check
 // Simple message handlers (synchronous or very simple async)
 // Handlers: log, logError, ping, getState, cancelProcessing
 
