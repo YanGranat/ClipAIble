@@ -3,27 +3,24 @@
 
 // @typedef {import('../types.js').ContentItem} ContentItem
 
-import { log, logError, logDebug } from '../utils/logging.js';
-import { prepareContentForAudio, AUDIO_CONFIG } from './audio-prep.js';
+import { log } from '../utils/logging.js';
+import { prepareContentForAudio } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { cleanTitleForFilename } from '../utils/html.js';
-
-// Language to TTS instruction mapping
-const LANGUAGE_TTS_INSTRUCTIONS = {
-  'en': 'Read in clear English with natural pronunciation.',
-  'ru': 'Читай на русском языке с естественным произношением.',
-  'ua': 'Читай українською мовою з природною вимовою.',
-  'de': 'Lies auf Deutsch mit natürlicher Aussprache vor.',
-  'fr': 'Lis en français avec une prononciation naturelle.',
-  'es': 'Lee en español con pronunciación natural.',
-  'it': 'Leggi in italiano con pronuncia naturale.',
-  'pt': 'Leia em português com pronúncia natural.',
-  'zh': '用自然的中文发音朗读。',
-  'ja': '自然な日本語の発音で読んでください。',
-  'ko': '자연스러운 한국어 발음으로 읽어주세요.'
-};
+import {
+  buildAudioSettings,
+  validateAudioParams,
+  getTTSInstructions,
+  getTTSVoiceAndFormat,
+  getProviderName,
+  buildTTSOptions,
+  logAudioGenerationStart,
+  logPreparedChunks,
+  logTTSCallPreparation,
+  logTTSCompletion
+} from './audio-helpers.js';
 
 /**
  * Generate audio file from article content
@@ -43,18 +40,6 @@ const LANGUAGE_TTS_INSTRUCTIONS = {
  */
 export async function generateAudio(params, updateState) {
   const entryTime = Date.now();
-  log('[ClipAIble Audio Generation] === generateAudio ENTRY POINT ===', {
-    timestamp: entryTime,
-    hasParams: !!params,
-    paramsKeys: params ? Object.keys(params) : [],
-    hasUpdateState: typeof updateState === 'function'
-  });
-  
-  logDebug('[ClipAIble Audio Generation] === generateAudio START ===', {
-    timestamp: entryTime,
-    paramsKeys: params ? Object.keys(params) : []
-  });
-  
   const {
     content,
     title,
@@ -62,125 +47,21 @@ export async function generateAudio(params, updateState) {
     ttsApiKey,
     model,
     provider = 'openai',
-    voice = AUDIO_CONFIG.DEFAULT_VOICE,
-    speed = AUDIO_CONFIG.DEFAULT_SPEED,
+    voice,
+    speed,
     format = 'mp3',
     language = 'auto',
-    elevenlabsModel = 'eleven_v3',
-    elevenlabsFormat = 'mp3_44100_192',
-    elevenlabsStability = 0.5,
-    elevenlabsSimilarity = 0.75,
-    elevenlabsStyle = 0.0,
-    elevenlabsSpeakerBoost = true,
-    openaiInstructions = null,
-    googleTtsModel = 'gemini-2.5-pro-preview-tts',
-    googleTtsVoice = 'Callirrhoe',
-    googleTtsPrompt = null,
-    respeecherTemperature = 1.0,
-    respeecherRepetitionPenalty = 1.0,
-    respeecherTopP = 1.0,
+    googleTtsVoice,
+    googleTtsPrompt,
     tabId = null
   } = params;
-  
-  // Log all settings and configuration
-  const allSettings = {
-    timestamp: Date.now(),
-    // TTS Provider Settings
-    provider,
-    voice,
-    speed,
-    format,
-    language,
-    tabId,
-    // Content Settings
-    contentItems: content?.length,
-    title: title?.substring(0, 100),
-    // API Keys
-    hasApiKey: !!apiKey,
-    hasTtsApiKey: !!ttsApiKey,
-    // Model Settings
-    model,
-    // Provider-specific settings
-    ...(provider === 'elevenlabs' && {
-      elevenlabsModel,
-      elevenlabsFormat,
-      elevenlabsStability,
-      elevenlabsSimilarity,
-      elevenlabsStyle,
-      elevenlabsSpeakerBoost
-    }),
-    ...(provider === 'google' && {
-      googleTtsModel,
-      googleTtsVoice,
-      hasGoogleTtsPrompt: !!googleTtsPrompt
-    }),
-    ...(provider === 'respeecher' && {
-      respeecherTemperature,
-      respeecherRepetitionPenalty,
-      respeecherTopP
-    }),
-    ...(provider === 'openai' && {
-      hasOpenaiInstructions: !!openaiInstructions
-    }),
-    // Audio Config
-    audioConfig: {
-      minChunkSize: AUDIO_CONFIG.MIN_CHUNK_SIZE,
-      maxChunkSize: AUDIO_CONFIG.MAX_CHUNK_SIZE,
-      idealChunkSize: AUDIO_CONFIG.IDEAL_CHUNK_SIZE,
-      ttsMaxInput: AUDIO_CONFIG.TTS_MAX_INPUT,
-      minSpeed: AUDIO_CONFIG.MIN_SPEED,
-      maxSpeed: AUDIO_CONFIG.MAX_SPEED,
-      defaultSpeed: AUDIO_CONFIG.DEFAULT_SPEED,
-      defaultVoice: AUDIO_CONFIG.DEFAULT_VOICE,
-      availableVoices: AUDIO_CONFIG.VOICES
-    }
-  };
-  
-  log('[ClipAIble Audio Generation] Parameters extracted with all settings', allSettings);
-  
-  // Generate TTS instructions based on language
-  const instructions = language !== 'auto' ? LANGUAGE_TTS_INSTRUCTIONS[language] : null;
-  
-  log('[ClipAIble Audio Generation] Starting audio generation', {
-    timestamp: Date.now(),
-    title,
-    contentItems: content?.length,
-    model,
-    provider,
-    voice,
-    speed,
-    format,
-    language,
-    tabId,
-    hasInstructions: !!instructions
-  });
-  
-  log('[ClipAIble Audio Generation] Starting audio generation', { 
-    title, 
-    contentItems: content?.length,
-    model,
-    provider,
-    voice,
-    speed,
-    format,
-    language,
-    tabId,
-    elevenlabsModel: provider === 'elevenlabs' ? elevenlabsModel : undefined,
-    hasInstructions: !!instructions,
-    timestamp: entryTime
-  });
-  
-  if (!content || content.length === 0) {
-    throw new Error('No content to convert to audio');
-  }
-  
-  if (!apiKey) {
-    throw new Error('No API key provided for text preparation');
-  }
-  
-  if (!ttsApiKey && provider !== 'offline') {
-    throw new Error(`No ${provider} API key provided for TTS`);
-  }
+
+  // Build settings and log start
+  const allSettings = buildAudioSettings(params);
+  logAudioGenerationStart(entryTime, { ...params, updateState }, allSettings);
+
+  // Validate parameters
+  validateAudioParams(params, provider);
   
   // Step 1: Prepare content for audio (using main model like GPT-5.1)
   // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
@@ -222,144 +103,34 @@ export async function generateAudio(params, updateState) {
     throw new Error('Failed to prepare content for audio');
   }
   
-  // Determine voice and format based on provider (must be before logging)
-  const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
-  // Google TTS and Offline TTS always return WAV format, format parameter is ignored
-  const ttsFormat = (provider === 'google' || provider === 'offline') ? 'wav' : format;
+  // Determine voice and format based on provider
+  const { ttsVoice, ttsFormat } = getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice);
   const ttsPrompt = provider === 'google' ? googleTtsPrompt : null;
-  
-  log('[ClipAIble Audio Generation] === CONTENT PREPARED FOR TTS ===', { 
-    timestamp: Date.now(),
-    chunkCount: preparedChunks.length,
-    totalCharacters: preparedChunks.reduce((sum, c) => sum + c.text.length, 0),
-    avgChunkSize: Math.round(preparedChunks.reduce((sum, c) => sum + c.text.length, 0) / preparedChunks.length),
-    chunkSizes: preparedChunks.map(c => c.text.length),
-    chunksPreview: preparedChunks.slice(0, 3).map((c, i) => ({
-      index: i,
-      length: c.text.length,
-      preview: c.text.substring(0, 100) + '...'
-    })),
-    readyForTTS: true,
-    provider,
-    voice: ttsVoice,
-    speed,
-    format: ttsFormat,
-    language
-  });
-  
-  // Log full chunks that will be sent to TTS
-  log('[ClipAIble Audio Generation] === CHUNKS TO BE SENT TO TTS (FULL CONTENT) ===', {
-    timestamp: Date.now(),
-    provider,
-    voice: ttsVoice,
-    speed,
-    format: ttsFormat,
-    language,
-    totalChunks: preparedChunks.length,
-    chunks: preparedChunks.map((chunk, idx) => ({
-      index: idx,
-      originalIndex: chunk.originalIndex,
-      length: chunk.text.length,
-      textFull: chunk.text,
-      textPreview: chunk.text.substring(0, 300) + '...',
-      textEnd: '...' + chunk.text.substring(Math.max(0, chunk.text.length - 100)),
-      nonAsciiCount: (chunk.text.match(/[^\x00-\x7F]/g) || []).length,
-      newlineCount: (chunk.text.match(/\n/g) || []).length
-    }))
-  });
-  
+
+  // Log prepared chunks
+  logPreparedChunks(preparedChunks, provider, ttsVoice, speed, ttsFormat, language);
+
   // Step 2: Convert chunks to speech (using selected TTS provider)
-  const providerName = provider === 'offline' ? 'Piper TTS (offline)' :
-                       (provider === 'elevenlabs' ? 'ElevenLabs' : 
-                       (provider === 'qwen' ? 'Qwen' : 
-                       (provider === 'google' ? 'Google Gemini TTS' : 
-                       (provider === 'respeecher' ? 'Respeecher' : 'OpenAI'))));
+  const providerName = getProviderName(provider);
   updateState?.({ 
     stage: PROCESSING_STAGES.GENERATING.id,
     status: `Converting to speech using ${providerName}...`, 
     progress: 60 
   });
-  
-  log('[ClipAIble Audio Generation] CRITICAL: Voice parameter before chunksToSpeech', {
-    timestamp: Date.now(),
-    provider,
-    voice,
-    voiceType: typeof voice,
-    voiceValue: String(voice),
-    ttsVoice,
-    ttsVoiceType: typeof ttsVoice,
-    ttsVoiceValue: String(ttsVoice),
-    isNumeric: /^\d+$/.test(String(ttsVoice)),
-    hasUnderscore: ttsVoice && String(ttsVoice).includes('_'),
-    hasDash: ttsVoice && String(ttsVoice).includes('-'),
-    isFullVoiceId: ttsVoice && String(ttsVoice).includes('_') && String(ttsVoice).includes('-')
-  });
-  
-  log('[ClipAIble Audio Generation] === PREPARING TO CALL chunksToSpeech ===', {
-    timestamp: Date.now(),
-    provider,
-    voice: ttsVoice,
-    speed,
-    format: ttsFormat,
-    language,
-    tabId: params.tabId || null,
-    chunksCount: preparedChunks.length,
-    hasTtsApiKey: !!ttsApiKey
-  });
-  
-  log('[ClipAIble Audio Generation] Calling chunksToSpeech', {
-    provider,
-    voice: ttsVoice,
-    speed,
-    format: ttsFormat,
-    language,
-    tabId: params.tabId || null,
-    chunksCount: preparedChunks.length,
-    timestamp: Date.now()
-  });
-  
+
+  // Log TTS call preparation
+  logTTSCallPreparation(provider, ttsVoice, speed, ttsFormat, language, tabId, preparedChunks.length, !!ttsApiKey);
+
+  // Generate TTS instructions
+  const instructions = getTTSInstructions(language);
+  const ttsOptions = buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instructions);
+
+  // Convert chunks to speech
   const chunksToSpeechStart = Date.now();
-  const audioBuffer = await chunksToSpeech(
-    preparedChunks,
-    ttsApiKey,
-    { 
-      provider, 
-      voice: ttsVoice, 
-      speed, 
-      format: ttsFormat, 
-      instructions: openaiInstructions || instructions, 
-      openaiInstructions: openaiInstructions,
-      prompt: ttsPrompt,
-      googleTtsPrompt: ttsPrompt,
-      elevenlabsModel,
-      elevenlabsFormat,
-      elevenlabsStability,
-      elevenlabsSimilarity,
-      elevenlabsStyle,
-      elevenlabsSpeakerBoost,
-      googleTtsModel,
-      respeecherTemperature,
-      respeecherRepetitionPenalty,
-      respeecherTopP,
-      language,
-      tabId: params.tabId || null // Pass tabId for offline TTS
-    },
-    updateState
-  );
+  const audioBuffer = await chunksToSpeech(preparedChunks, ttsApiKey, ttsOptions, updateState);
   
-  const chunksToSpeechDuration = Date.now() - chunksToSpeechStart;
-  log('[ClipAIble Audio Generation] === chunksToSpeech COMPLETE ===', {
-    timestamp: Date.now(),
-    duration: chunksToSpeechDuration,
-    hasAudioBuffer: !!audioBuffer,
-    audioBufferSize: audioBuffer?.byteLength
-  });
-  
-  log('[ClipAIble Audio Generation] chunksToSpeech completed', {
-    duration: chunksToSpeechDuration,
-    audioBufferSize: audioBuffer?.byteLength,
-    timestamp: Date.now()
-  });
+  // Log completion
+  logTTSCompletion(chunksToSpeechStart, audioBuffer);
   
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     throw new Error('Audio generation returned empty result');

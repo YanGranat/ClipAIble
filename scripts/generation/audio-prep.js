@@ -5,6 +5,15 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { callAI } from '../api/index.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
+import {
+  buildPreparationSettings,
+  logContentAnalysis,
+  logPlainTextConversion,
+  logChunkSplitting,
+  logChunkSplittingResults,
+  processChunkForAudio,
+  logAudioPreparationComplete
+} from './audio-prep-helpers.js';
 
 // Configuration for audio preparation
 export const AUDIO_CONFIG = {
@@ -790,32 +799,10 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const useAICleanup = provider !== 'offline' && apiKey && model;
   
   // Log all preparation settings
-  const preparationSettings = {
-    timestamp: Date.now(),
-    // Content Settings
-    contentItems: content?.length,
-    title: title?.substring(0, 100),
-    titleLength: title?.length,
-    // Language Settings
-    language,
-    // Model Settings
-    model,
-    hasApiKey: !!apiKey,
-    // Provider and Cleanup Mode
-    provider: provider || 'unknown',
-    useAICleanup,
-    cleanupMode: useAICleanup ? 'AI-powered' : 'basic',
-    // Audio Config
-    audioConfig: {
-      minChunkSize: AUDIO_CONFIG.MIN_CHUNK_SIZE,
-      maxChunkSize: AUDIO_CONFIG.MAX_CHUNK_SIZE,
-      idealChunkSize: AUDIO_CONFIG.IDEAL_CHUNK_SIZE,
-      ttsMaxInput: AUDIO_CONFIG.TTS_MAX_INPUT
-    },
-    // Current State
-    currentProgress: getProcessingState()?.progress || 0
-  };
-  
+  const preparationSettings = buildPreparationSettings(
+    { content, title, language, model, apiKey, provider },
+    useAICleanup
+  );
   log('Starting audio preparation with all settings', preparationSettings);
   
   // Get UI language for localization
@@ -832,45 +819,15 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const startProgress = currentProgress >= 60 ? 60 : 10;
   
   // Log detailed content analysis before conversion
-  log('=== prepareContentForAudio: CONTENT ANALYSIS ===', {
-    timestamp: Date.now(),
-    contentItems: content?.length || 0,
-    contentTypes: content ? [...new Set(content.map(item => item?.type).filter(Boolean))] : [],
-    contentByType: content ? content.reduce((acc, item) => {
-      const type = item?.type || 'unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {}) : {},
-    contentPreview: content?.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-      textPreview: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 100),
-      hasHtml: !!(item.html && item.html !== item.text)
-    })) || [],
-    totalEstimatedLength: content ? content.reduce((sum, item) => {
-      const text = (item.text || '').replace(/<[^>]+>/g, '').trim();
-      return sum + text.length;
-    }, 0) : 0,
-    title: title?.substring(0, 100),
-    titleLength: title?.length
-  });
+  logContentAnalysis(content, title);
   
   // Convert content to plain text
   const convertingStatus = tSync('stageConvertingToText', uiLang);
   updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus, progress: startProgress });
   const plainText = contentToPlainText(content);
   
-  log('=== prepareContentForAudio: PLAIN TEXT CONVERSION COMPLETE ===', {
-    timestamp: Date.now(),
-    originalContentItems: content?.length || 0,
-    plainTextLength: plainText.length,
-    plainTextPreview: plainText.substring(0, 200) + '...',
-    plainTextEnd: '...' + plainText.substring(Math.max(0, plainText.length - 100)),
-    newlineCount: (plainText.match(/\n/g) || []).length,
-    paragraphCount: (plainText.match(/\n\n+/g) || []).length + 1,
-    nonAsciiCount: (plainText.match(/[^\x00-\x7F]/g) || []).length
-  });
+  // Log plain text conversion
+  logPlainTextConversion(content, plainText);
   
   if (!plainText) {
     throw new Error('No text content to convert to audio');
@@ -897,15 +854,7 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const splitProgress = currentProgress >= 60 ? 60 : 15;
   updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus, progress: splitProgress });
   
-  log('=== prepareContentForAudio: Splitting text into chunks ===', {
-    fullTextLength: fullText.length,
-    targetChunkSize: AUDIO_CONFIG.IDEAL_CHUNK_SIZE,
-    minChunkSize: AUDIO_CONFIG.MIN_CHUNK_SIZE,
-    maxChunkSize: AUDIO_CONFIG.MAX_CHUNK_SIZE,
-    estimatedChunks: Math.ceil(fullText.length / AUDIO_CONFIG.IDEAL_CHUNK_SIZE),
-    fullTextPreview: fullText.substring(0, 200),
-    fullTextEnd: '...' + fullText.substring(Math.max(0, fullText.length - 100))
-  });
+  logChunkSplitting(fullText);
   
   const chunks = splitTextIntoChunks(fullText);
   
@@ -913,26 +862,13 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
     throw new Error('Failed to split text into chunks');
   }
   
-  log('=== prepareContentForAudio: Text split into chunks ===', {
-    totalChunks: chunks.length,
-    chunkSizes: chunks.map(c => c.text.length),
-    totalChars: chunks.reduce((sum, c) => sum + c.text.length, 0),
-    avgChunkSize: Math.round(chunks.reduce((sum, c) => sum + c.text.length, 0) / chunks.length),
-    minChunkSize: Math.min(...chunks.map(c => c.text.length)),
-    maxChunkSize: Math.max(...chunks.map(c => c.text.length)),
-    chunksPreview: chunks.slice(0, 3).map((c, i) => ({
-      index: i,
-      length: c.text.length,
-      preview: c.text.substring(0, 100) + '...'
-    }))
-  });
+  logChunkSplittingResults(chunks);
   
   // Prepare each chunk for audio
   const preparedChunks = [];
   
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    const chunkStartTime = Date.now();
     
     // If already at 60%, keep it there (progress protection will prevent rollback)
     // Otherwise, progress from base to 60%
@@ -946,123 +882,26 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
       progress 
     });
     
-    log('=== prepareContentForAudio: Processing chunk ===', {
-      chunkIndex: i,
-      totalChunks: chunks.length,
-      chunkLength: chunk.text.length,
-      progress,
-      chunkPreview: chunk.text.substring(0, 150) + '...'
-    });
+    // Process chunk using helper function
+    const preparedChunk = await processChunkForAudio(
+      chunk,
+      i,
+      chunks.length,
+      useAICleanup,
+      apiKey,
+      model,
+      language,
+      prepareChunkForAudio,
+      basicCleanup
+    );
     
-    // Use AI cleanup for online TTS, basic cleanup for offline
-    let preparedText;
-    if (useAICleanup) {
-      preparedText = await prepareChunkForAudio(
-        chunk.text, 
-        i, 
-        chunks.length, 
-        apiKey, 
-        model,
-        language
-      );
-    } else {
-      // For offline TTS, use basic cleanup without AI
-      log('=== prepareContentForAudio: Using basic cleanup (offline TTS) ===', {
-        chunkIndex: i,
-        totalChunks: chunks.length,
-        originalLength: chunk.text.length,
-        originalPreview: chunk.text.substring(0, 150) + '...',
-        language
-      });
-      
-      preparedText = basicCleanup(chunk.text, language);
-      
-      log('=== prepareContentForAudio: Basic cleanup complete ===', {
-        chunkIndex: i,
-        originalLength: chunk.text.length,
-        cleanedLength: preparedText.length,
-        lengthChange: preparedText.length - chunk.text.length,
-        cleanedPreview: preparedText.substring(0, 150) + '...'
-      });
-    }
-    
-    const chunkDuration = Date.now() - chunkStartTime;
-    
-    if (preparedText && preparedText.length > 0) {
-      preparedChunks.push({
-        text: preparedText,
-        index: i,
-        originalIndex: chunk.index
-      });
-      
-      log('=== prepareContentForAudio: Chunk processed successfully ===', {
-        chunkIndex: i,
-        originalLength: chunk.text.length,
-        preparedLength: preparedText.length,
-        duration: chunkDuration,
-        lengthChange: preparedText.length - chunk.text.length,
-        lengthChangePercent: Math.round(((preparedText.length - chunk.text.length) / chunk.text.length) * 100)
-      });
-    } else {
-      logWarn('=== prepareContentForAudio: Chunk resulted in empty text ===', {
-        chunkIndex: i,
-        originalLength: chunk.text.length,
-        duration: chunkDuration
-      });
+    if (preparedChunk) {
+      preparedChunks.push(preparedChunk);
     }
   }
   
-  const totalOriginalChars = chunks.reduce((sum, c) => sum + c.text.length, 0);
-  const totalPreparedChars = preparedChunks.reduce((sum, c) => sum + c.text.length, 0);
-  const overallChange = totalPreparedChars - totalOriginalChars;
-  const overallPercent = Math.round((overallChange / totalOriginalChars) * 100);
-  
-  log('=== AUDIO PREPARATION COMPLETE ===', { 
-    timestamp: Date.now(),
-    originalPlainTextLength: plainText.length,
-    totalOriginalChars,
-    totalPreparedChars,
-    overallChange: `${overallChange > 0 ? '+' : ''}${overallChange} (${overallPercent}%)`,
-    chunksCreated: preparedChunks.length,
-    chunkSizes: preparedChunks.map(c => c.text.length),
-    avgChunkSize: Math.round(totalPreparedChars / preparedChunks.length),
-    minChunkSize: Math.min(...preparedChunks.map(c => c.text.length)),
-    maxChunkSize: Math.max(...preparedChunks.map(c => c.text.length)),
-    chunksPreview: preparedChunks.slice(0, 3).map((c, i) => ({
-      index: i,
-      length: c.text.length,
-      preview: c.text.substring(0, 100) + '...'
-    })),
-    readyForTTS: true,
-    provider: provider || 'unknown',
-    useAICleanup
-  });
-  
-  // Log full prepared chunks for debugging
-  log('=== PREPARED CHUNKS FULL CONTENT FOR TTS ===', {
-    timestamp: Date.now(),
-    totalChunks: preparedChunks.length,
-    chunks: preparedChunks.map((chunk, idx) => ({
-      index: idx,
-      originalIndex: chunk.originalIndex,
-      length: chunk.text.length,
-      textFull: chunk.text,
-      textPreview: chunk.text.substring(0, 300) + '...',
-      textEnd: '...' + chunk.text.substring(Math.max(0, chunk.text.length - 100)),
-      nonAsciiCount: (chunk.text.match(/[^\x00-\x7F]/g) || []).length,
-      newlineCount: (chunk.text.match(/\n/g) || []).length,
-      paragraphCount: (chunk.text.match(/\n\n+/g) || []).length + 1
-    }))
-  });
-  
-  // Warn if overall text was significantly reduced
-  if (overallPercent < -15) {
-    logWarn('=== WARNING: Text significantly reduced during preparation ===', {
-      originalLength: totalOriginalChars,
-      preparedLength: totalPreparedChars,
-      reduction: `${Math.abs(overallPercent)}%`
-    });
-  }
+  // Log completion
+  logAudioPreparationComplete(plainText, chunks, preparedChunks, provider, useAICleanup);
   
   return preparedChunks;
 }
