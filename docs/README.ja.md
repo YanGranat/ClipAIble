@@ -2,7 +2,7 @@
 
 > **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
-![バージョン](https://img.shields.io/badge/バージョン-3.2.2-blue)
+![バージョン](https://img.shields.io/badge/バージョン-3.2.3-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
 ![ライセンス](https://img.shields.io/badge/ライセンス-MIT-brightgreen)
 

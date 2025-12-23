@@ -265,14 +265,21 @@ export function initializeModules(deps) {
     getUILanguage
   });
   
-  // Make modules available globally for use in other functions
+  // Make modules available globally for debugging purposes only
+  // NOTE: This is an anti-pattern and should be avoided in new code
+  // Use dependency injection instead of accessing modules through window object
+  // These are kept only for backward compatibility and debugging
   /** @type {WindowWithModules} */
   const windowWithModules = window;
+  // @ts-ignore - modules are added to window for debugging/backward compatibility
   windowWithModules.uiModule = uiModule;
+  // @ts-ignore
   windowWithModules.statsModule = statsModule;
+  // @ts-ignore
   windowWithModules.settingsModule = settingsModule;
   
   // Initialize core module (business logic)
+  // Pass settingsModule to coreModule so it can be passed to processingModule for getVoiceIdByIndex
   const coreModule = initCore({
     elements,
     STORAGE_KEYS,
@@ -292,11 +299,14 @@ export function initializeModules(deps) {
     markdownToHtml,
     sanitizeMarkdownHtml,
     CONFIG,
-    stateRefs
+    stateRefs,
+    settingsModule
   });
+  // @ts-ignore
   windowWithModules.coreModule = coreModule;
   
   // Initialize handlers module (event listeners)
+  // Pass settingsModule to handlers so it doesn't need to use window.settingsModule
   const handlersModule = initHandlers({
     elements,
     STORAGE_KEYS,
@@ -323,8 +333,10 @@ export function initializeModules(deps) {
     toggleSummary: coreModule.toggleSummary,
     copySummary: coreModule.copySummary,
     downloadSummary: coreModule.downloadSummary,
-    closeSummary: coreModule.closeSummary
+    closeSummary: coreModule.closeSummary,
+    settingsModule
   });
+  // @ts-ignore
   windowWithModules.handlersModule = handlersModule;
   
   return {
@@ -351,8 +363,8 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   // Load settings after modules are initialized
   try {
     log('init: calling loadSettings()');
-    if (windowWithModules.settingsModule && windowWithModules.settingsModule.loadSettings) {
-      await windowWithModules.settingsModule.loadSettings();
+    if (settingsModule && settingsModule.loadSettings) {
+      await settingsModule.loadSettings();
     } else {
       logError('CRITICAL: settingsModule.loadSettings not available');
       throw new Error('settingsModule.loadSettings not available');
@@ -423,7 +435,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   // Load and display version
   try {
     const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '3.2.2';
+    const version = manifest.version || '3.2.3';
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;

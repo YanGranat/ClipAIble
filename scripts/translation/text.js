@@ -175,7 +175,8 @@ export async function translateBatch(texts, targetLang, apiKey, model, retryCoun
   }
   
   const MAX_RETRIES = 5; // Increased for better reliability
-  const RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000]; // Longer delays for network issues
+  // Use centralized retry delays from CONFIG instead of duplicating
+  const RETRY_DELAYS = CONFIG.TRANSLATION_RETRY_DELAYS; // Longer delays for network issues
   
   // If only one text, use simple translation
   if (texts.length === 1) {
@@ -227,7 +228,7 @@ Rules:
       } catch (fetchError) {
         // Network error (connection failed, timeout, etc.) - retry
         if (retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
           const errorMsg = fetchError.message || 'Network error';
           logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -257,7 +258,7 @@ Rules:
         // Retry on retryable status codes
         const retryableStatuses = [503, 429, 500, 502, 504];
         if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
           logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
@@ -291,7 +292,7 @@ Rules:
       } catch (fetchError) {
         // Network error - retry
         if (retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
           const errorMsg = fetchError.message || 'Network error';
           logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -303,7 +304,7 @@ Rules:
       if (!response.ok) {
         const retryableStatuses = [503, 429, 500, 502, 504];
         if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
           logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
@@ -332,7 +333,7 @@ Rules:
       } catch (fetchError) {
         // Network error - retry
         if (retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
           const errorMsg = fetchError.message || 'Network error';
           logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
@@ -344,7 +345,7 @@ Rules:
       if (!response.ok) {
         const retryableStatuses = [503, 429, 500, 502, 504];
         if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || 30000;
+          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
           logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);

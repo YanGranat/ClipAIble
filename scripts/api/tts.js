@@ -617,7 +617,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
     }
     
     // Wait a bit for script to initialize
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, CONFIG.TTS_DELAY));
     
     // Verify function is available before calling
     log('Checking if executePiperTTS is available', { tabId });

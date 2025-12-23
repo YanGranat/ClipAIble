@@ -31,6 +31,7 @@ import { initState } from './core/state.js';
  * @param {Function} deps.sanitizeMarkdownHtml - Sanitize markdown HTML function
  * @param {Object} deps.CONFIG - Configuration object
  * @param {Object} deps.stateRefs - State references object (for statePollingTimeout, timerInterval, currentStartTime)
+ * @param {Object} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
  * @returns {Object} Core functions
  */
 export function initCore(deps) {
@@ -53,7 +54,8 @@ export function initCore(deps) {
     markdownToHtml,
     sanitizeMarkdownHtml,
     CONFIG,
-    stateRefs
+    stateRefs,
+    settingsModule
   } = deps;
 
   // Format seconds to MM:SS
@@ -168,7 +170,7 @@ export function initCore(deps) {
     stateRefs
   });
 
-  // Step 3: Initialize processing module (needs state functions)
+  // Step 3: Initialize processing module (needs state functions and settingsModule for getVoiceIdByIndex)
   const processingModule = initProcessing({
     elements,
     t,
@@ -183,7 +185,8 @@ export function initCore(deps) {
     getProviderFromModel,
     startStatePolling: stateModule.startStatePolling,
     checkProcessingState: stateModule.checkProcessingState,
-    stateRefs
+    stateRefs,
+    settingsModule
   });
 
   // Return all core functions from all modules

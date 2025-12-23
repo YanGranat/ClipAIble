@@ -449,11 +449,45 @@ export function initAudio(deps) {
     updateVoiceList(provider);
   }
 
+  /**
+   * Get voice ID by index from audio voice select element
+   * This function retrieves the actual voice ID from the option element at the given index
+   * It checks dataset.voiceId first (most reliable), then option.value if it's not an index
+   * @param {string} provider - TTS provider
+   * @param {number} index - Selected index in audioVoice select
+   * @returns {string|null} Voice ID or null if not found
+   */
+  function getVoiceIdByIndex(provider, index) {
+    if (!elements.audioVoice || !elements.audioVoice.options || index < 0 || index >= elements.audioVoice.options.length) {
+      return null;
+    }
+    
+    const option = elements.audioVoice.options[index];
+    if (!option) {
+      return null;
+    }
+    
+    // Priority 1: dataset.voiceId (most reliable - always contains actual voice ID)
+    if (option.dataset && option.dataset.voiceId) {
+      return option.dataset.voiceId;
+    }
+    
+    // Priority 2: option.value (if not an index)
+    if (option.value && !/^\d+$/.test(String(option.value))) {
+      return option.value;
+    }
+    
+    // If value is an index, we can't determine the voice ID from this function alone
+    // This should not happen if updateVoiceList was called correctly
+    return null;
+  }
+
   return {
     saveAudioVoice,
     hideAllAudioFields,
     updateVoiceList,
-    updateAudioProviderUI
+    updateAudioProviderUI,
+    getVoiceIdByIndex
   };
 }
 

@@ -4,6 +4,7 @@
 // @ts-check
 
 import { log, logWarn, logError } from './logging.js';
+import { CONFIG } from './config.js';
 import { tSync } from '../locales.js';
 
 /**
@@ -60,6 +61,7 @@ export function createContextMenuItems(lang, useFallback = false) {
       ? FALLBACK_TITLES[item.id]
       : tSync(item.translationKey, lang);
     
+    /** @type {chrome.contextMenus.CreateProperties} */
     const options = {
       id: item.id,
       title: title,
@@ -81,7 +83,7 @@ export function createContextMenuItems(lang, useFallback = false) {
 export async function removeAllContextMenuItems() {
   await chrome.contextMenus.removeAll();
   // Small delay to ensure removeAll() completes
-  await new Promise(resolve => setTimeout(resolve, 50));
+  await new Promise(resolve => setTimeout(resolve, CONFIG.UI_CONTEXT_MENU_DELAY));
 }
 
 /**

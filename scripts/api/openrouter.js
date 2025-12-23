@@ -59,6 +59,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
+              /** @type {Error & {status?: number, response?: Response}} */
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
               error.response = fetchResponse;
@@ -83,6 +84,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
               errorMessage = 'OpenRouter API rate limit exceeded. Please try again later.';
             }
             
+            /** @type {Error & {status?: number}} */
             const error = new Error(errorMessage);
             error.status = fetchResponse.status;
             clearTimeout(timeout);

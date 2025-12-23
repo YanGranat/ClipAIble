@@ -5,6 +5,16 @@
 import { logError, logWarn } from './logging.js';
 
 /**
+ * @typedef {Error & {
+ *   status?: number;
+ *   statusCode?: number;
+ *   response?: Response;
+ *   retryable?: boolean;
+ *   data?: any;
+ * }} ApiError
+ */
+
+/**
  * HTTP status codes that should trigger retry
  */
 export const RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504];
@@ -13,16 +23,17 @@ export const RETRYABLE_STATUS_CODES = [429, 500, 502, 503, 504];
  * Handle API error response
  * @param {Response} response - Fetch response object
  * @param {string} providerName - Provider name for error messages (e.g., 'Qwen3-TTS-Flash', 'Respeecher', 'ElevenLabs')
- * @param {Object} options - Additional options
- * @param {Function} options.parseErrorData - Custom function to parse error data from response
- * @param {Function} options.customErrorHandler - Custom function to handle specific status codes (receives errorData, errorText, response, returns error message or null)
- * @returns {Error} Error object with status and message
+ * @param {Object} [options] - Additional options
+ * @param {Function} [options.parseErrorData] - Custom function to parse error data from response
+ * @param {Function} [options.customErrorHandler] - Custom function to handle specific status codes (receives errorData, errorText, response, returns error message or null)
+ * @returns {Promise<ApiError>} Error object with status and message
  */
 export async function handleApiError(response, providerName, options = {}) {
   const { parseErrorData, customErrorHandler } = options;
   
   // Check if error is retryable
   if (RETRYABLE_STATUS_CODES.includes(response.status)) {
+    /** @type {ApiError} */
     const error = new Error(`HTTP ${response.status}`);
     error.status = response.status;
     error.response = response;
@@ -66,6 +77,7 @@ export async function handleApiError(response, providerName, options = {}) {
                `${providerName} API error: ${response.status}`;
   }
   
+  /** @type {ApiError} */
   const error = new Error(errorMsg);
   error.status = response.status;
   error.data = errorData;

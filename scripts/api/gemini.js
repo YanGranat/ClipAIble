@@ -67,6 +67,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
+              /** @type {Error & {status?: number, response?: Response}} */
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
               error.response = fetchResponse;
@@ -80,6 +81,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
             } catch (e) {
               errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
             }
+            /** @type {Error & {status?: number}} */
             const error = new Error(errorData.error?.message || `Gemini API error: ${fetchResponse.status}`);
             error.status = fetchResponse.status;
             clearTimeout(timeout);
@@ -210,6 +212,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
         if (!fetchResponse.ok) {
           const retryableCodes = [429, 500, 502, 503, 504];
           if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
             const error = new Error(`HTTP ${fetchResponse.status}`);
             error.status = fetchResponse.status;
             error.response = fetchResponse;
@@ -224,6 +227,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
             errorText = 'Unknown error';
           }
           logWarn('Gemini API error', { status: fetchResponse.status, error: errorText });
+          /** @type {Error & {status?: number}} */
           const error = new Error(`HTTP ${fetchResponse.status}`);
           error.status = fetchResponse.status;
           throw error;

@@ -108,6 +108,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
+              /** @type {Error & {status?: number, response?: Response}} */
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
               error.response = fetchResponse;
@@ -121,6 +122,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
             } catch (e) {
               errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
             }
+            /** @type {Error & {status?: number}} */
             const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
             error.status = fetchResponse.status;
             clearTimeout(timeout);

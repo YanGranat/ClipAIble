@@ -5,6 +5,7 @@
 /**
  * Initialize processing module
  * @param {Object} deps - Dependencies
+ * @param {Object} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
  * @returns {Object} Processing functions
  */
 export function initProcessing(deps) {
@@ -22,7 +23,8 @@ export function initProcessing(deps) {
     getProviderFromModel,
     startStatePolling,
     checkProcessingState,
-    stateRefs
+    stateRefs,
+    settingsModule
   } = deps;
 
   // Handle Cancel button click
@@ -378,10 +380,8 @@ export function initProcessing(deps) {
                 });
               }
               // Priority 3: Use getVoiceIdByIndex if value is an index
-              // @ts-ignore - window.settingsModule is added at runtime
-              else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && window.settingsModule && window.settingsModule.getVoiceIdByIndex) {
-                // @ts-ignore - window.settingsModule is added at runtime
-                const voiceIdFromCache = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
+              else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModule && settingsModule.getVoiceIdByIndex) {
+                const voiceIdFromCache = settingsModule.getVoiceIdByIndex(provider, selectedIndex);
                 if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
                   finalVoice = voiceIdFromCache;
                   log('[ClipAIble Processing] ===== USING getVoiceIdByIndex =====', {

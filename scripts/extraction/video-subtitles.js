@@ -2,6 +2,7 @@
 // Video subtitle extraction for YouTube and Vimeo
 
 import { log, logError, logWarn } from '../utils/logging.js';
+import { CONFIG } from '../utils/config.js';
 
 /**
  * Extract subtitles from YouTube page
@@ -555,12 +556,12 @@ export async function extractYouTubeSubtitles(tabId) {
     // Check storage every 200ms (more frequent check for direct storage fallback)
     // Более частая проверка, так как injected script может использовать storage напрямую
     // если content script не загружен
-    storageCheckInterval = setInterval(checkStorage, 200);
+    storageCheckInterval = setInterval(checkStorage, CONFIG.VIDEO_SUBTITLES_CHECK_INTERVAL);
     
     // Also check immediately
     checkStorage();
     
-    // Timeout after 60 seconds
+    // Timeout after configured duration
     timeoutId = setTimeout(async () => {
       if (!resolved) {
         // Final check of storage before timeout
@@ -620,7 +621,7 @@ export async function extractYouTubeSubtitles(tabId) {
           reject(new Error('Subtitle extraction timeout. The page may be taking too long to load subtitles.'));
         }
       }
-    }, 60000); // Increased from 30 to 60 seconds for subtitle extraction timeout
+    }, CONFIG.VIDEO_SUBTITLES_TIMEOUT); // Timeout for subtitle extraction
   });
 }
 
@@ -812,7 +813,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         // Wait for ytInitialPlayerResponse to be available (YouTube may load it asynchronously)
       let attempts = 0;
         const maxAttempts = 5; // Уменьшено с 10 до 5, т.к. это fallback
-        const waitInterval = 500;
+        const waitInterval = CONFIG.VIDEO_SUBTITLES_WAIT_INTERVAL;
         let method2Failed = false; // Track if METHOD 2 fetch failed (empty response)
       
         while (!subtitleData && !method2Failed && attempts < maxAttempts) {
@@ -1043,7 +1044,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
               
               if (activeTrack) {
                 activeTrack.mode = 'showing';
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_1));
               }
             }
             
@@ -1556,7 +1557,7 @@ function extractVimeoSubtitlesInlined() {
               
               // Try multiple wait times and check for cues
               for (let attempt = 0; attempt < 5; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                await new Promise(resolve => setTimeout(resolve, CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2));
                 
                 // Force cue loading by accessing cues property
                 try {

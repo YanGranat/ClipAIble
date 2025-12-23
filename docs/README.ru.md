@@ -2,7 +2,7 @@
 
 > **Извлечение статей с помощью ИИ** — Сохраняйте любые статьи из интернета в форматах PDF, EPUB, FB2, Markdown или Аудио. Перевод на 11 языков. Работает на любом сайте.
 
-![Версия](https://img.shields.io/badge/версия-3.2.2-blue)
+![Версия](https://img.shields.io/badge/версия-3.2.3-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Расширение-green)
 ![Лицензия](https://img.shields.io/badge/лицензия-MIT-brightgreen)
 
@@ -414,11 +414,11 @@ clipaible/
 │   │   ├── video.js    # Обработчики видео/субтитров
 │   │   ├── summary.js  # Помощник генерации саммари
 │   │   └── complex.js  # Сложные обработчики
-│   ├── processing/     # Модули обработки (v3.2.2+)
+│   ├── processing/     # Модули обработки (v3.2.3+)
 │   │   ├── modes.js    # Режимы обработки (processWithoutAI, processWithExtractMode, getSelectorsFromAI)
 │   │   ├── video.js    # Обработка видео (processVideoPage)
 │   │   └── quicksave.js # Быстрое сохранение (prepareQuickSaveData)
-│   ├── initialization/ # Модуль инициализации (v3.2.2+)
+│   ├── initialization/ # Модуль инициализации (v3.2.3+)
 │   │   └── index.js    # Миграция API ключей, инициализация настроек по умолчанию
 │   ├── api/            # AI & TTS провайдеры
 │   │   ├── openai.js   # OpenAI (GPT модели)
@@ -458,9 +458,9 @@ clipaible/
 │       ├── video.js    # Определение платформы видео
 │       ├── validation.js # Утилиты валидации
 │       ├── api-error-handler.js # Общая обработка ошибок API
-│       ├── pipeline-helpers.js # Утилиты пайплайна (v3.2.2+) - handleProcessingResult, handleProcessingError
-│       ├── settings-helpers.js # Утилиты настроек (v3.2.2+) - determineProviderAndModel, getVoiceFromSettings
-│       ├── context-menu.js # Утилиты контекстного меню (v3.2.2+)
+│       ├── pipeline-helpers.js # Утилиты пайплайна (v3.2.3+) - handleProcessingResult, handleProcessingError
+│       ├── settings-helpers.js # Утилиты настроек (v3.2.3+) - determineProviderAndModel, getVoiceFromSettings
+│       ├── context-menu.js # Утилиты контекстного меню (v3.2.3+)
 │       ├── voice-validator.js # Утилиты валидации голоса
 │       └── api-key-manager.js # Утилиты управления API ключами
 ├── print/              # Рендеринг PDF

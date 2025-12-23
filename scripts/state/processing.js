@@ -55,11 +55,12 @@ let updateQueue = [];
 // Debounce storage saves to reduce I/O load during frequent progress updates
 let storageSaveTimeout = null;
 let pendingStorageUpdate = null;
-const STORAGE_SAVE_DEBOUNCE = 500; // Save to storage max once per 500ms
+// Use centralized constants from CONFIG
+const STORAGE_SAVE_DEBOUNCE = CONFIG.STORAGE_SAVE_DEBOUNCE; // Save to storage max once per 500ms
 // CRITICAL: Increased to 3000ms (3s) for audio to minimize main thread blocking during WASM operations
 // Audio generation has long-running WASM operations (800-5000ms per sentence)
 // Less frequent storage saves reduce interference with WASM operations
-const STORAGE_SAVE_DEBOUNCE_AUDIO = 3000; // Save to storage max once per 3s for audio (very aggressive)
+const STORAGE_SAVE_DEBOUNCE_AUDIO = CONFIG.STORAGE_SAVE_DEBOUNCE_AUDIO; // Save to storage max once per 3s for audio (very aggressive)
 
 // Track last saved state timestamp to detect stale data
 let lastSavedTimestamp = 0;

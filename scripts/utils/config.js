@@ -31,6 +31,36 @@ export const CONFIG = {
   RETRYABLE_STATUS_CODES: [429, 500, 502, 503, 504], // HTTP status codes that trigger retry
   RETRY_NETWORK_ERRORS: true,     // Retry on network errors (timeout, connection failed, etc.)
   
+  // UI and Event Handling
+  UI_DEBOUNCE_DELAY: 500,         // ms - debounce delay for UI settings saves (popup)
+  UI_ASYNC_DEFER_DELAY: 0,        // ms - delay for deferring async work (0 = next tick)
+  UI_RETRY_DELAY: 100,            // ms - retry delay for failed saves
+  UI_CONTEXT_MENU_DELAY: 50,      // ms - delay for context menu operations
+  
+  // Storage
+  STORAGE_SAVE_DEBOUNCE: 500,     // ms - debounce for storage saves (background)
+  STORAGE_SAVE_DEBOUNCE_AUDIO: 3000, // ms - debounce for audio storage saves (longer to avoid blocking WASM)
+  
+  // TTS and Audio
+  TTS_DELAY: 200,                 // ms - delay for TTS operations
+  TTS_VOICES_LOAD_DELAY: 1000,   // ms - delay for loading TTS voices
+  OFFLINE_TTS_SETUP_DELAY: 300,   // ms - delay for offline TTS setup
+  OFFLINE_TTS_RETRY_DELAY: 100,   // ms - retry delay for offline TTS verification
+  OFFLINE_TTS_NEXT_TICK_DELAY: 0, // ms - delay for next tick operations
+  
+  // Video Processing
+  VIDEO_SUBTITLES_CHECK_INTERVAL: 200,  // ms - interval for checking subtitle storage
+  VIDEO_SUBTITLES_TIMEOUT: 60000,       // ms - timeout for subtitle extraction (60 seconds)
+  VIDEO_SUBTITLES_RETRY_DELAY_1: 2000,  // ms - first retry delay for video subtitles
+  VIDEO_SUBTITLES_RETRY_DELAY_2: 1000,  // ms - second retry delay for video subtitles
+  VIDEO_SUBTITLES_WAIT_INTERVAL: 500,   // ms - wait interval for video subtitles
+  
+  // Extraction
+  EXTRACTION_AUTOMATIC_TIMEOUT: 30000,  // ms - timeout for automatic extraction (30 seconds)
+  
+  // Translation (duplicated from translation/text.js - should use CONFIG)
+  TRANSLATION_RETRY_DELAYS: [2000, 5000, 10000, 20000, 30000], // ms - retry delays for translation
+  
   // Default values
   DEFAULT_AUDIO_VOICE: 'nova',    // Default OpenAI TTS voice
   DEFAULT_AUDIO_SPEED: 1.0,       // Default audio playback speed

@@ -2,7 +2,7 @@
 
 > **Витяг статей за допомогою ШІ** — Зберігайте будь-які статті з інтернету у форматах PDF, EPUB, FB2, Markdown або Аудіо. Переклад на 11 мов. Працює на будь-якому сайті.
 
-![Версія](https://img.shields.io/badge/версія-3.2.2-blue)
+![Версія](https://img.shields.io/badge/версія-3.2.3-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Розширення-green)
 ![Ліцензія](https://img.shields.io/badge/ліцензія-MIT-brightgreen)
 

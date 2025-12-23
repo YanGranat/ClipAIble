@@ -3,6 +3,7 @@
 // This module contains all event listeners setup
 
 import { setupAllApiKeyToggles } from './handlers/api-keys.js';
+import { CONFIG } from '../../scripts/utils/config.js';
 
 /**
  * @typedef {Object} WindowWithModules
@@ -56,6 +57,7 @@ const scheduler = typeof self !== 'undefined' && 'scheduler' in self ? self.sche
  * @param {Function} deps.copySummary - Copy summary function (from core)
  * @param {Function} deps.downloadSummary - Download summary function (from core)
  * @param {Function} deps.closeSummary - Close summary function (from core)
+ * @param {Object} [deps.settingsModule] - Settings module (optional, for accessing settings functions)
  * @returns {Function} setupEventListeners function
  */
 export function initHandlers(deps) {
@@ -85,8 +87,69 @@ export function initHandlers(deps) {
     toggleSummary,
     copySummary,
     downloadSummary,
-    closeSummary
+    closeSummary,
+    settingsModule
   } = deps;
+
+  /**
+   * Helper: Defer async work to avoid blocking UI
+   * Uses scheduler.postTask if available, otherwise setTimeout
+   * @param {Function} fn - Async function to execute
+   */
+  function deferAsyncWork(fn) {
+    if (scheduler && scheduler.postTask) {
+      scheduler.postTask(fn, { priority: 'user-blocking' });
+    } else {
+      setTimeout(fn, CONFIG.UI_ASYNC_DEFER_DELAY);
+    }
+  }
+
+  /**
+   * Helper: Create a change handler that saves setting and optionally updates UI
+   * @param {string} storageKey - Storage key to save
+   * @param {Function} getValue - Function to get value from element
+   * @param {Function} [updateUI] - Optional async function to update UI after save
+   * @returns {Function} Event handler function
+   */
+  function createSettingChangeHandler(storageKey, getValue, updateUI = null) {
+    return () => {
+      const value = getValue();
+      if (updateUI) {
+        debouncedSaveSettings(storageKey, value, () => {
+          deferAsyncWork(async () => {
+            await updateUI();
+          });
+        });
+      } else {
+        debouncedSaveSettings(storageKey, value);
+      }
+    };
+  }
+
+  /**
+   * Helper: Create a checkbox change handler that saves setting immediately
+   * Uses scheduler.postTask for better performance
+   * @param {string} storageKey - Storage key to save
+   * @param {Function} getValue - Function to get value from checkbox
+   * @param {Function} [onError] - Optional error handler
+   * @returns {Function} Event handler function
+   */
+  function createCheckboxChangeHandler(storageKey, getValue, onError = null) {
+    return (e) => {
+      const value = getValue();
+      deferAsyncWork(async () => {
+        try {
+          await chrome.storage.local.set({ [storageKey]: value });
+        } catch (error) {
+          if (onError) {
+            onError(error);
+          } else {
+            logError(`Failed to save ${storageKey}`, error);
+          }
+        }
+      });
+    };
+  }
 
   /**
    * Setup all event listeners for popup
@@ -113,7 +176,7 @@ export function initHandlers(deps) {
         const provider = elements.apiProviderSelect.value;
         
         // Defer heavy async work to avoid blocking main thread
-        setTimeout(async () => {
+        deferAsyncWork(async () => {
           // Save selected provider
           await chrome.storage.local.set({ [STORAGE_KEYS.API_PROVIDER]: provider });
           
@@ -202,8 +265,8 @@ export function initHandlers(deps) {
           });
           
           // Update UI (label, placeholder) - defer async work
-          if (windowWithModules.settingsModule) {
-            windowWithModules.settingsModule.updateApiProviderUI().catch(error => {
+          if (settingsModule) {
+            settingsModule.updateApiProviderUI().catch(error => {
               logError('Failed to update API provider UI', error);
             });
           }
@@ -213,8 +276,8 @@ export function initHandlers(deps) {
 
     if (elements.saveApiKey) {
       elements.saveApiKey.addEventListener('click', () => {
-        if (windowWithModules.settingsModule) {
-          windowWithModules.settingsModule.saveApiKey();
+        if (settingsModule) {
+          settingsModule.saveApiKey();
         }
       });
     }
@@ -270,7 +333,7 @@ export function initHandlers(deps) {
         e.stopPropagation();
         
         requestAnimationFrame(() => {
-          setTimeout(() => {
+          deferAsyncWork(() => {
             const isOpen = elements.statsPanel.classList.contains('open');
             
             if (isOpen) {
@@ -294,11 +357,12 @@ export function initHandlers(deps) {
               });
               
               // Load data AFTER opening (non-blocking)
+              // Small delay to let panel animation start
               setTimeout(() => {
                 loadAndDisplayStats().catch((error) => {
                   logError('Failed to load stats', error);
                 });
-              }, 100); // Small delay to let panel animation start
+              }, 100); // TODO: Move to CONFIG.UI_PANEL_ANIMATION_DELAY
             }
           }, 0);
         });
@@ -325,20 +389,20 @@ export function initHandlers(deps) {
         e.stopPropagation();
         
         requestAnimationFrame(() => {
-          setTimeout(async () => {
+          deferAsyncWork(async () => {
             const langCode = await getUILanguage();
             const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
             const clearCacheConfirm = locale.clearSelectorCacheConfirm || UI_LOCALES.en.clearSelectorCacheConfirm;
             if (confirm(clearCacheConfirm)) {
               // Defer heavy operations
-              setTimeout(async () => {
+              deferAsyncWork(async () => {
                 await chrome.runtime.sendMessage({ action: 'clearSelectorCache' });
                 await loadAndDisplayStats();
                 const locale = await t('cacheCleared');
                 showToast(locale, 'success');
-              }, 0);
+              });
             }
-          }, 0);
+          });
         });
       }, { passive: true });
     }
@@ -470,15 +534,15 @@ export function initHandlers(deps) {
           }
           
           // Reload settings and stats
-          if (windowWithModules.settingsModule && windowWithModules.settingsModule.loadSettings) {
-            await windowWithModules.settingsModule.loadSettings();
+          if (settingsModule && settingsModule.loadSettings) {
+            await settingsModule.loadSettings();
           }
           await loadAndDisplayStats();
           
           // Update model list if custom_models or hidden_models were imported
           if (result.settingsImported > 0) {
-            if (windowWithModules.settingsModule) {
-              await windowWithModules.settingsModule.updateModelList();
+            if (settingsModule) {
+              await settingsModule.updateModelList();
             }
           }
           
@@ -528,8 +592,8 @@ export function initHandlers(deps) {
     if (elements.addModelBtn) {
       elements.addModelBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (windowWithModules.settingsModule) {
-          await windowWithModules.settingsModule.showAddModelDialog();
+        if (settingsModule) {
+          await settingsModule.showAddModelDialog();
         }
       });
     }
@@ -555,8 +619,8 @@ export function initHandlers(deps) {
           e.stopPropagation();
           e.stopImmediatePropagation();
           dropdownOpenTime = Date.now();
-          if (windowWithModules.settingsModule) {
-            await windowWithModules.settingsModule.showCustomModelDropdown();
+          if (settingsModule) {
+            await settingsModule.showCustomModelDropdown();
           }
         }
       }, true); // Use capture phase
@@ -565,8 +629,8 @@ export function initHandlers(deps) {
       elements.modelSelect.addEventListener('change', async () => {
         // Update custom dropdown if it's visible (for when user uses keyboard navigation)
         if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
-          if (windowWithModules.settingsModule) {
-            await windowWithModules.settingsModule.showCustomModelDropdown();
+          if (settingsModule) {
+            await settingsModule.showCustomModelDropdown();
           }
         }
       });
@@ -603,66 +667,33 @@ export function initHandlers(deps) {
     });
 
     if (elements.modeSelect) {
-      elements.modeSelect.addEventListener('change', () => {
-        debouncedSaveSettings(STORAGE_KEYS.MODE, elements.modeSelect.value, async () => {
-          if (windowWithModules.settingsModule) {
-            // Defer async work to avoid blocking
-            setTimeout(async () => {
-              await windowWithModules.settingsModule.updateModeHint();
-              windowWithModules.settingsModule.updateCacheVisibility();
-            }, 0);
+      elements.modeSelect.addEventListener('change', createSettingChangeHandler(
+        STORAGE_KEYS.MODE,
+        () => elements.modeSelect.value,
+        async () => {
+          if (settingsModule) {
+            await settingsModule.updateModeHint();
+            settingsModule.updateCacheVisibility();
           }
-        });
-      });
+        }
+      ));
     }
 
     if (elements.useCache) {
-      elements.useCache.addEventListener('change', (e) => {
-        // CRITICAL: Immediately return control, defer ALL work
-        const value = elements.useCache.checked;
-        
-        // Use scheduler.postTask with user-blocking priority if available
-        const scheduleUpdate = (fn) => {
-          if (scheduler && scheduler.postTask) {
-            scheduler.postTask(fn, { priority: 'user-blocking' });
-          } else {
-            setTimeout(fn, 0);
-          }
-        };
-        
-        scheduleUpdate(async () => {
-          try {
-            await chrome.storage.local.set({ [STORAGE_KEYS.USE_CACHE]: value });
-          } catch (error) {
-            logError('Failed to save use_selector_cache setting', error);
-          }
-        });
-      }, { passive: true });
+      elements.useCache.addEventListener('change', createCheckboxChangeHandler(
+        STORAGE_KEYS.USE_CACHE,
+        () => elements.useCache.checked,
+        (error) => logError('Failed to save use_selector_cache setting', error)
+      ), { passive: true });
     }
     
     // Handle enableCache checkbox in stats section - INDEPENDENT setting, does NOT affect useCache
     if (elements.enableCache) {
-      elements.enableCache.addEventListener('change', (e) => {
-        // CRITICAL: Immediately return control, defer ALL work
-        const value = elements.enableCache.checked;
-        
-        // Use scheduler.postTask with user-blocking priority if available
-        const scheduleUpdate = (fn) => {
-          if (scheduler && scheduler.postTask) {
-            scheduler.postTask(fn, { priority: 'user-blocking' });
-          } else {
-            setTimeout(fn, 0);
-          }
-        };
-        
-        scheduleUpdate(async () => {
-          try {
-            await chrome.storage.local.set({ [STORAGE_KEYS.ENABLE_CACHE]: value });
-          } catch (error) {
-            logError('Failed to save enable_selector_caching setting', error);
-          }
-        });
-      }, { passive: true });
+      elements.enableCache.addEventListener('change', createCheckboxChangeHandler(
+        STORAGE_KEYS.ENABLE_CACHE,
+        () => elements.enableCache.checked,
+        (error) => logError('Failed to save enable_selector_caching setting', error)
+      ), { passive: true });
     }
     
     // Handle enableStats checkbox in stats section
@@ -714,7 +745,7 @@ export function initHandlers(deps) {
     if (elements.outputFormat) {
       elements.outputFormat.addEventListener('change', () => {
         const value = elements.outputFormat.value;
-        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, async () => {
+        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, () => {
           // Defer DOM updates to avoid blocking
           requestAnimationFrame(() => {
             // Sync main format select
@@ -724,11 +755,10 @@ export function initHandlers(deps) {
           });
           // updateOutputFormatUI() handles all UI visibility updates based on format
           // It calls updateAudioProviderUI() and updateTranslationVisibility() internally
-          if (windowWithModules.settingsModule) {
-            // Defer async work
-            setTimeout(async () => {
-              await windowWithModules.settingsModule.updateOutputFormatUI();
-            }, 0);
+          if (settingsModule) {
+            deferAsyncWork(async () => {
+              await settingsModule.updateOutputFormatUI();
+            });
           }
         });
       });
@@ -742,12 +772,11 @@ export function initHandlers(deps) {
         requestAnimationFrame(() => {
           elements.outputFormat.value = value;
         });
-        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, async () => {
-          if (windowWithModules.settingsModule) {
-            // Defer async work
-            setTimeout(async () => {
-              await windowWithModules.settingsModule.updateOutputFormatUI();
-            }, 0);
+        debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, () => {
+          if (settingsModule) {
+            deferAsyncWork(async () => {
+              await settingsModule.updateOutputFormatUI();
+            });
           }
         });
       });
@@ -772,29 +801,27 @@ export function initHandlers(deps) {
     }
 
     if (elements.languageSelect) {
-      elements.languageSelect.addEventListener('change', () => {
-        debouncedSaveSettings(STORAGE_KEYS.LANGUAGE, elements.languageSelect.value, async () => {
-          if (windowWithModules.settingsModule) {
-            // Defer async work to avoid blocking
-            setTimeout(async () => {
-              await windowWithModules.settingsModule.updateTranslationVisibility();
-            }, 0);
+      elements.languageSelect.addEventListener('change', createSettingChangeHandler(
+        STORAGE_KEYS.LANGUAGE,
+        () => elements.languageSelect.value,
+        async () => {
+          if (settingsModule) {
+            await settingsModule.updateTranslationVisibility();
           }
-        });
-      });
+        }
+      ));
     }
 
     if (elements.translateImages) {
-      elements.translateImages.addEventListener('change', () => {
-        debouncedSaveSettings(STORAGE_KEYS.TRANSLATE_IMAGES, elements.translateImages.checked, async () => {
-          if (windowWithModules.settingsModule) {
-            // Defer async work to avoid blocking
-            setTimeout(async () => {
-              await windowWithModules.settingsModule.updateTranslationVisibility();
-            }, 0);
+      elements.translateImages.addEventListener('change', createSettingChangeHandler(
+        STORAGE_KEYS.TRANSLATE_IMAGES,
+        () => elements.translateImages.checked,
+        async () => {
+          if (settingsModule) {
+            await settingsModule.updateTranslationVisibility();
           }
-        });
-      });
+        }
+      ));
     }
     
     // Style preset handler
@@ -1035,11 +1062,11 @@ export function initHandlers(deps) {
         // @ts-ignore - btn is an Element, dataset is available on HTMLElement
         const resetType = btn.dataset.reset;
         // Defer async work to avoid blocking main thread
-        setTimeout(async () => {
-          if (windowWithModules.settingsModule) {
-            await windowWithModules.settingsModule.resetStyleSetting(resetType);
+        deferAsyncWork(async () => {
+          if (settingsModule) {
+            await settingsModule.resetStyleSetting(resetType);
           }
-        }, 0);
+        });
       });
     });
 
@@ -1048,9 +1075,9 @@ export function initHandlers(deps) {
       elements.resetStylesBtn.addEventListener('click', async (e) => {
         e.preventDefault();
         // Defer async work to avoid blocking main thread
-        setTimeout(async () => {
-          if (windowWithModules.settingsModule) {
-            await windowWithModules.settingsModule.resetAllStyles();
+        deferAsyncWork(async () => {
+          if (settingsModule) {
+            await settingsModule.resetAllStyles();
           }
         }, 0);
       });
@@ -1108,8 +1135,8 @@ export function initHandlers(deps) {
         await setUILanguage(langCode);
         await applyLocalization();
         // Reload settings to update all UI text
-        if (windowWithModules.settingsModule && windowWithModules.settingsModule.loadSettings) {
-          await windowWithModules.settingsModule.loadSettings();
+        if (settingsModule && settingsModule.loadSettings) {
+          await settingsModule.loadSettings();
         }
         // Update custom selects after localization
         initAllCustomSelects();
@@ -1206,12 +1233,12 @@ export function initHandlers(deps) {
                 index: voiceToSave,
                 selectedIndex: selectedIndex,
                 provider: provider,
-                hasSettingsModule: !!windowWithModules.settingsModule,
-                hasGetVoiceIdByIndex: !!(windowWithModules.settingsModule && windowWithModules.settingsModule.getVoiceIdByIndex)
+                hasSettingsModule: !!settingsModule,
+                hasGetVoiceIdByIndex: !!(settingsModule && settingsModule.getVoiceIdByIndex)
               });
               
-              if (windowWithModules.settingsModule && windowWithModules.settingsModule.getVoiceIdByIndex) {
-                const voiceIdFromCache = windowWithModules.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
+              if (settingsModule && settingsModule.getVoiceIdByIndex) {
+                const voiceIdFromCache = settingsModule.getVoiceIdByIndex(provider, selectedIndex);
                 logWarn('[ClipAIble Handlers] CRITICAL: getVoiceIdByIndex returned', {
                   provider,
                   selectedIndex,
@@ -1240,8 +1267,8 @@ export function initHandlers(deps) {
                 }
               } else {
                 logError('[ClipAIble Handlers] CRITICAL: Cannot access getVoiceIdByIndex', {
-                  hasSettingsModule: !!windowWithModules.settingsModule,
-                  hasGetVoiceIdByIndex: !!(windowWithModules.settingsModule && windowWithModules.settingsModule.getVoiceIdByIndex)
+                  hasSettingsModule: !!settingsModule,
+                  hasGetVoiceIdByIndex: !!(settingsModule && settingsModule.getVoiceIdByIndex)
                 });
               }
             }
@@ -1323,12 +1350,12 @@ export function initHandlers(deps) {
         
         // CRITICAL: Always call saveAudioVoice - it will handle validation and correction
         // For offline provider, it will try to fix invalid voice IDs using cache or dataset
-        if (windowWithModules.settingsModule && windowWithModules.settingsModule.saveAudioVoice) {
-          windowWithModules.settingsModule.saveAudioVoice(provider, voiceToSave);
+        if (settingsModule && settingsModule.saveAudioVoice) {
+          settingsModule.saveAudioVoice(provider, voiceToSave);
         } else {
           logError('[ClipAIble Handlers] CRITICAL: Cannot save voice - settingsModule.saveAudioVoice not available', {
-            hasSettingsModule: !!windowWithModules.settingsModule,
-            hasSaveAudioVoice: !!(windowWithModules.settingsModule && windowWithModules.settingsModule.saveAudioVoice)
+            hasSettingsModule: !!settingsModule,
+            hasSaveAudioVoice: !!(settingsModule && settingsModule.saveAudioVoice)
           });
         }
       });
@@ -1412,11 +1439,11 @@ export function initHandlers(deps) {
        */
       elements.audioProvider.addEventListener('change', () => {
         debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value, () => {
-          if (windowWithModules.settingsModule) {
+          if (settingsModule) {
             // Update voice list first (populates dropdown with provider-specific voices)
-            windowWithModules.settingsModule.updateVoiceList(elements.audioProvider.value);
+            settingsModule.updateVoiceList(elements.audioProvider.value);
             // Then update UI visibility (shows/hides provider-specific fields)
-            windowWithModules.settingsModule.updateAudioProviderUI();
+            settingsModule.updateAudioProviderUI();
           }
         });
       });

@@ -57,6 +57,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
             if (retryableCodes.includes(fetchResponse.status)) {
+              /** @type {Error & {status?: number, response?: Response}} */
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
               error.response = fetchResponse;
@@ -81,6 +82,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
               errorMessage = 'Grok API rate limit exceeded. Please try again later.';
             }
             
+            /** @type {Error & {status?: number}} */
             const error = new Error(errorMessage);
             error.status = fetchResponse.status;
             clearTimeout(timeout);

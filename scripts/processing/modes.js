@@ -122,16 +122,16 @@ export async function processWithoutAI(data) {
       timestamp: Date.now()
     });
     
-    // Add timeout to prevent hanging (30 seconds should be enough for most pages)
+    // Add timeout to prevent hanging
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
         logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
-          timeout: 30000,
+          timeout: CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT,
           timestamp: Date.now()
         });
-        reject(new Error('Automatic extraction timeout after 30 seconds'));
-      }, 30000);
+        reject(new Error(`Automatic extraction timeout after ${CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT / 1000} seconds`));
+      }, CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT);
     });
     
     log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {

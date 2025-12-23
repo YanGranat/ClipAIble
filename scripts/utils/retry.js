@@ -170,12 +170,14 @@ export async function fetchWithRetry(url, init = {}, retryOptions = {}) {
       if (!response.ok) {
         const retryableCodes = retryOptions.retryableStatusCodes || DEFAULT_RETRY_CONFIG.retryableStatusCodes;
         if (isRetryableError(response.status, retryableCodes)) {
+          /** @type {Error & {status?: number, response?: Response}} */
           const error = new Error(`HTTP ${response.status}`);
           error.status = response.status;
           error.response = response;
           throw error;
         }
         // Non-retryable error - throw immediately
+        /** @type {Error & {status?: number, response?: Response}} */
         const error = new Error(`HTTP ${response.status}`);
         error.status = response.status;
         error.response = response;

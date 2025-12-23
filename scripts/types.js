@@ -42,6 +42,16 @@
  */
 
 /**
+ * @typedef {Error & {
+ *   status?: number;
+ *   statusCode?: number;
+ *   response?: Response;
+ *   retryable?: boolean;
+ *   data?: any;
+ * }} ApiError
+ */
+
+/**
  * @typedef {Object} AIResponse
  * @property {string|Object} content - Response content (text or parsed JSON)
  * @property {boolean} isJson - Whether response is JSON

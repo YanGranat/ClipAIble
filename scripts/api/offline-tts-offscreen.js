@@ -4,6 +4,7 @@
 // Offscreen document has full DOM and WASM support
 
 import { log, logError, logDebug } from '../utils/logging.js';
+import { CONFIG } from '../utils/config.js';
 import { ttsQueue } from './tts-queue.js';
 
 logDebug('[ClipAIble Offline TTS Offscreen] === MODULE LOADING ===', {
@@ -72,7 +73,7 @@ async function setupOffscreenDocument() {
   log('[ClipAIble Offscreen Setup] === START ===', { timestamp: startTime });
   
   // Defer heavy operations to avoid blocking main thread
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_NEXT_TICK_DELAY));
   
   // Check if offscreen API is available
   if (!chrome.offscreen) {
@@ -85,7 +86,7 @@ async function setupOffscreenDocument() {
   log('[ClipAIble Offscreen Setup] Offscreen URL:', { offscreenUrl });
   
   // Check if offscreen document already exists - defer to avoid blocking
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_NEXT_TICK_DELAY));
   log('[ClipAIble Offscreen Setup] Checking for existing offscreen document...');
   const existingContexts = await chrome.runtime.getContexts({
     contextTypes: ['OFFSCREEN_DOCUMENT'],
@@ -139,8 +140,8 @@ async function setupOffscreenDocument() {
         });
         
         // Wait for offscreen document to initialize
-        log('[ClipAIble Offscreen Setup] Waiting 300ms for document initialization...');
-        await new Promise(resolve => setTimeout(resolve, 300));
+        log('[ClipAIble Offscreen Setup] Waiting for document initialization...');
+        await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_SETUP_DELAY));
         
         // Verify document is actually ready by checking if it exists
         log('[ClipAIble Offscreen Setup] Starting verification loop...');
@@ -235,7 +236,7 @@ async function setupOffscreenDocument() {
  */
 async function sendToOffscreen(type, data = {}, retryCount = 0) {
   const MAX_RETRIES = 2;
-  const RETRY_DELAY = 300;
+  const RETRY_DELAY = CONFIG.OFFLINE_TTS_SETUP_DELAY; // Use centralized constant
   const sendStartTime = Date.now();
   
   log('[ClipAIble SendToOffscreen] === START ===', {
@@ -247,7 +248,7 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
   
   // Defer setup to avoid blocking main thread
   // Use setTimeout to yield to main thread before heavy operations
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_NEXT_TICK_DELAY));
   await setupOffscreenDocument();
   log('[ClipAIble SendToOffscreen] Setup complete, checking document existence...');
   

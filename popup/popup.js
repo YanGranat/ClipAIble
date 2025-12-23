@@ -550,11 +550,11 @@ function debouncedSaveSettings(key, value, callback = null) {
         callback = async () => {
           await originalCallback();
           // Retry save after current one completes
-          setTimeout(() => debouncedSaveSettings(key, value, null), 100);
+          setTimeout(() => debouncedSaveSettings(key, value, null), CONFIG.UI_RETRY_DELAY);
         };
       } else {
         // Retry save after current one completes
-        setTimeout(() => debouncedSaveSettings(key, value, callback), 100);
+        setTimeout(() => debouncedSaveSettings(key, value, callback), CONFIG.UI_RETRY_DELAY);
       }
       return;
     }
@@ -610,7 +610,7 @@ function debouncedSaveSettings(key, value, callback = null) {
       isSavingSettings = false;
       settingsSaveTimer = null;
     }
-  }, 500);
+  }, CONFIG.UI_DEBOUNCE_DELAY);
 }
 
 // Save audio voice per provider with backward-compatible flat key
@@ -793,6 +793,30 @@ async function applyLocalization() {
   document.documentElement.lang = langCode;
 }
 
+// DEPRECATED: applyTheme function removed - use uiModule.applyTheme() instead
+// This is a temporary stub for backward compatibility during initialization
+// It will be replaced by uiModule.applyTheme() after modules are initialized
+function applyTheme() {
+  // This function is a stub - actual implementation is in uiModule
+  // It's only used during module initialization, after which uiModule.applyTheme() is used
+  const windowWithModules = window;
+  if (windowWithModules.uiModule && windowWithModules.uiModule.applyTheme) {
+    return windowWithModules.uiModule.applyTheme();
+  }
+  // Fallback: basic theme application if uiModule not yet available
+  if (!elements.themeSelect) {
+    return;
+  }
+  const theme = elements.themeSelect.value;
+  let actualTheme = theme;
+  if (theme === 'auto') {
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    actualTheme = prefersDark ? 'dark' : 'light';
+  }
+  document.body.setAttribute('data-theme', actualTheme);
+  document.documentElement.setAttribute('data-theme', actualTheme);
+}
+
 // Initialize popup
 async function init() {
   log('popup.js: init() started');
@@ -852,6 +876,78 @@ async function init() {
     // Finalize initialization: load settings, apply localization, setup event listeners
     await finalizeInitialization(modules, initAllCustomSelects);
     
+    // Store settingsModule reference for saveVoiceBeforeClose function
+    // This allows saveVoiceBeforeClose to access settingsModule without using window object
+    const settingsModuleRef = modules.settingsModule;
+    
+    // Override saveVoiceBeforeClose to use settingsModule from modules
+    const originalSaveVoiceBeforeClose = saveVoiceBeforeClose;
+    window.saveVoiceBeforeClose = async function() {
+      // Use settingsModule from modules instead of window
+      if (!isSavingSettings && elements.audioVoice && elements.audioProvider && settingsModuleRef && settingsModuleRef.saveAudioVoice) {
+        isSavingSettings = true;
+        try {
+          const provider = elements.audioProvider.value || 'openai';
+          const selectedIndex = elements.audioVoice.selectedIndex;
+          const selectedOption = elements.audioVoice.options[selectedIndex];
+          
+          // CRITICAL: Use the same logic as saveAudioVoice - get voice ID from dataset.voiceId or option.value
+          let voiceToSave = null;
+          
+          if (selectedOption) {
+            // Priority 1: dataset.voiceId (most reliable)
+            if (selectedOption.dataset && selectedOption.dataset.voiceId) {
+              voiceToSave = selectedOption.dataset.voiceId;
+            }
+            // Priority 2: option.value (if not an index)
+            else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
+              voiceToSave = selectedOption.value;
+            }
+            // Priority 3: Use getVoiceIdByIndex if value is an index
+            else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModuleRef.getVoiceIdByIndex) {
+              voiceToSave = settingsModuleRef.getVoiceIdByIndex(provider, selectedIndex);
+            }
+          }
+          
+          // If still no valid voice, try to get from current value
+          if (!voiceToSave && elements.audioVoice.value && !/^\d+$/.test(String(elements.audioVoice.value))) {
+            voiceToSave = elements.audioVoice.value;
+          }
+          
+          // Only save if we have a valid voice ID (not an index)
+          if (voiceToSave && voiceToSave !== '' && !/^\d+$/.test(String(voiceToSave))) {
+            // CRITICAL: Use saveAudioVoice from settings module - it handles audioVoiceMap correctly
+            settingsModuleRef.saveAudioVoice(provider, voiceToSave);
+            
+            // CRITICAL: Also force immediate save (don't wait for debounce)
+            // Get current audioVoiceMap from storage to ensure we have latest
+            const storageResult = await chrome.storage.local.get([STORAGE_KEYS.AUDIO_VOICE_MAP]);
+            let currentMap = storageResult[STORAGE_KEYS.AUDIO_VOICE_MAP] || {};
+            
+            // CRITICAL: Ensure format is correct (with 'current' property)
+            if (!currentMap.current || typeof currentMap.current !== 'object' || Array.isArray(currentMap.current)) {
+              // Convert old format to new format
+              if (typeof currentMap === 'object' && !Array.isArray(currentMap) && !('current' in currentMap)) {
+                currentMap = { current: { ...currentMap } };
+              } else {
+                currentMap = { current: {} };
+              }
+            }
+            
+            // Update the voice for the provider
+            currentMap.current[provider] = voiceToSave;
+            
+            // Save immediately
+            await chrome.storage.local.set({ [STORAGE_KEYS.AUDIO_VOICE_MAP]: currentMap });
+          }
+        } catch (error) {
+          logError('Error saving voice before close', error);
+        } finally {
+          isSavingSettings = false;
+        }
+      }
+    };
+    
     log('popup.js: init() completed successfully');
   } catch (error) {
     // Use logError for centralized logging (console.error is redundant here)
@@ -877,48 +973,7 @@ async function init() {
 // setupEventListeners() moved to handlers.js module
 // Use handlersModule() instead
 
-// Apply theme based on user preference or system preference (kept for backward compatibility, now uses uiModule)
-function applyTheme() {
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  if (windowWithModules.uiModule) {
-    return windowWithModules.uiModule.applyTheme();
-  }
-  if (!elements.themeSelect) {
-    return; // Theme select not available, skip
-  }
-  const theme = elements.themeSelect.value;
-  let actualTheme = theme;
-  
-  if (theme === 'auto') {
-    // Detect system theme
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    actualTheme = prefersDark ? 'dark' : 'light';
-  }
-  
-  document.body.setAttribute('data-theme', actualTheme);
-  document.documentElement.setAttribute('data-theme', actualTheme);
-  
-  // Listen for system theme changes if auto is selected
-  if (theme === 'auto') {
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleThemeChange = (e) => {
-      const newTheme = e.matches ? 'dark' : 'light';
-      document.body.setAttribute('data-theme', newTheme);
-      document.documentElement.setAttribute('data-theme', newTheme);
-    };
-    
-    // Remove old listener if exists
-    /** @type {WindowWithModules} */
-    const windowWithModules = window;
-    if (windowWithModules.themeChangeListener) {
-      mediaQuery.removeListener(windowWithModules.themeChangeListener);
-    }
-    
-    windowWithModules.themeChangeListener = handleThemeChange;
-    mediaQuery.addListener(handleThemeChange);
-  }
-}
+// DEPRECATED: applyTheme function removed - use uiModule.applyTheme() instead
 
 // Reset a single style setting to default
 async function resetStyleSetting(type) {
@@ -1231,200 +1286,7 @@ function initAllCustomSelects() {
 // Functions: updateModeHint, updateCacheVisibility, hideAllAudioFields, updateOutputFormatUI
 // Use window.settingsModule.* instead
 
-// Update voice list based on TTS provider
-// DEPRECATED: This function is kept for backward compatibility but should use settingsModule.updateVoiceList instead
-// This function uses old format audioVoiceMap[provider] instead of audioVoiceMap.current[provider]
-function updateVoiceList(provider) {
-  if (!elements.audioVoice) return;
-  
-  // CRITICAL: Use settingsModule.updateVoiceList if available (new implementation)
-  if (window.settingsModule && window.settingsModule.updateVoiceList) {
-    logWarn('[ClipAIble Popup] Using deprecated updateVoiceList, redirecting to settingsModule.updateVoiceList');
-    window.settingsModule.updateVoiceList(provider);
-    return;
-  }
-  
-  // Fallback to old implementation (should not be reached in normal flow)
-  // IMPORTANT: restore per-provider saved voice if available
-  // CRITICAL: Check both old format and new format
-  const oldFormatVoice = audioVoiceMap?.[provider] || '';
-  const newFormatVoice = audioVoiceMap?.current?.[provider] || '';
-  const savedProviderVoice = newFormatVoice || oldFormatVoice;
-  const currentValue = savedProviderVoice || elements.audioVoice.value || '';
-  elements.audioVoice.innerHTML = '';
-  
-  if (provider === 'elevenlabs') {
-    // ElevenLabs voices (popular voices)
-    const elevenlabsVoices = [
-      { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (female, clear)' },
-      { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi (female, strong)' },
-      { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (female, warm)' },
-      { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (male, deep)' },
-      { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli (female, young)' },
-      { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh (male, calm)' },
-      { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold (male, authoritative)' },
-      { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (male, expressive)' },
-      { id: 'yoZ06aMxZJJ28mfd3POQ', name: 'Sam (male, friendly)' }
-    ];
-    
-    elevenlabsVoices.forEach(voice => {
-      const option = document.createElement('option');
-      option.value = voice.id;
-      option.textContent = voice.name;
-      elements.audioVoice.appendChild(option);
-    });
-    
-    // Set value: use saved value if valid, otherwise use default
-    if (currentValue && elevenlabsVoices.find(v => v.id === currentValue)) {
-      elements.audioVoice.value = currentValue;
-    } else if (currentValue) {
-      elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM'; // Rachel
-      saveAudioVoice(provider, '21m00Tcm4TlvDq8ikWAM');
-    } else {
-      elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM';
-    }
-    saveAudioVoice(provider, elements.audioVoice.value);
-  } else if (provider === 'qwen') {
-    // Qwen3-TTS-Flash-2025-11-27 voices (49 voices)
-    const qwenVoices = [
-      // Best for articles/education
-      { id: 'Elias', name: '📚 Elias (academic, storytelling)' },
-      { id: 'Neil', name: '📰 Neil (news anchor, professional)' },
-      { id: 'Katerina', name: '🎭 Katerina (mature, rhythmic)' },
-      { id: 'Ryan', name: '🎬 Ryan (dramatic, realistic)' },
-      
-      // Language-specific
-      { id: 'Alek', name: '🇷🇺 Alek (Russian voice)' },
-      { id: 'Jennifer', name: '🇺🇸 Jennifer (American English)' },
-      { id: 'Emilien', name: '🇫🇷 Emilien (French)' },
-      { id: 'Lenn', name: '🇩🇪 Lenn (German)' },
-      { id: 'Dolce', name: '🇮🇹 Dolce (Italian)' },
-      { id: 'Bodega', name: '🇪🇸 Bodega (Spanish)' },
-      { id: 'Sonrisa', name: '🌎 Sonrisa (Latin American Spanish)' },
-      { id: 'Andre', name: '🇵🇹 Andre (Portuguese European)' },
-      { id: 'Radio Gol', name: '🇧🇷 Radio Gol (Portuguese Brazilian)' },
-      { id: 'Sohee', name: '🇰🇷 Sohee (Korean)' },
-      { id: 'Ono Anna', name: '🇯🇵 Ono Anna (Japanese)' },
-      
-      // General purpose
-      { id: 'Cherry', name: 'Cherry (sunny, friendly)' },
-      { id: 'Ethan', name: 'Ethan (warm, energetic)' },
-      { id: 'Serena', name: 'Serena (gentle)' },
-      { id: 'Chelsie', name: 'Chelsie (anime style)' },
-      { id: 'Aiden', name: 'Aiden (American young man)' },
-      { id: 'Maia', name: 'Maia (intelligent, gentle)' },
-      { id: 'Kai', name: 'Kai (relaxing)' },
-      { id: 'Nofish', name: 'Nofish (designer)' },
-      
-      // Character voices
-      { id: 'Eldric Sage', name: '🧙 Eldric Sage (old wise man)' },
-      { id: 'Arthur', name: '📖 Arthur (old storyteller)' },
-      { id: 'Bellona', name: '⚔️ Bellona (powerful, epic)' },
-      { id: 'Vincent', name: '🦸 Vincent (raspy, heroic)' },
-      { id: 'Mia', name: 'Mia (gentle as snow)' },
-      { id: 'Seren', name: '😴 Seren (soothing, ASMR)' }
-    ];
-    
-    qwenVoices.forEach(voice => {
-      const option = document.createElement('option');
-      option.value = voice.id;
-      option.textContent = voice.name;
-      elements.audioVoice.appendChild(option);
-    });
-    
-    // Set value: use saved value if valid, otherwise use default
-    if (currentValue && qwenVoices.find(v => v.id === currentValue)) {
-      elements.audioVoice.value = currentValue;
-    } else if (currentValue) {
-      elements.audioVoice.value = 'Elias'; // Default - best for articles
-      saveAudioVoice(provider, 'Elias');
-    } else {
-      elements.audioVoice.value = 'Elias';
-    }
-    saveAudioVoice(provider, elements.audioVoice.value);
-  } else if (provider === 'respeecher') {
-    // Respeecher voices
-    // Note: volodymyr is available on en-rt endpoint only, not on ua-rt
-    // Ukrainian voices are available on ua-rt endpoint only
-    const respeecherVoices = [
-      // English voices (en-rt endpoint)
-      { id: 'samantha', name: '🇺🇸 Samantha (female, American)' },
-      { id: 'neve', name: '🇺🇸 Neve (female, emotional)' },
-      { id: 'gregory', name: '🇺🇸 Gregory (male, emotional)' },
-      { id: 'vincent', name: '🇺🇸 Vincent (male, deep)' },
-      { id: 'volodymyr', name: '🇺🇦 Volodymyr (male, Ukrainian) - EN endpoint only' },
-      // Ukrainian voices (ua-rt endpoint)
-      { id: 'olesia-rozmova', name: '🇺🇦 Олеся: розмова (female, conversation)' },
-      { id: 'olesia-media', name: '🇺🇦 Олеся: медіа (female, media)' },
-      { id: 'olesia-ogoloshennia', name: '🇺🇦 Олеся: оголошення (female, announcement)' },
-      { id: 'mariia-audioknyha', name: '🇺🇦 Марія: аудіокнига (female, audiobook)' },
-      { id: 'oleksandr-radio', name: '🇺🇦 Олександр: радіо (male, radio)' },
-      { id: 'oleksandr-reklama', name: '🇺🇦 Олександр: реклама (male, advertisement)' },
-      { id: 'yevhen-reklama', name: '🇺🇦 Євген: реклама (male, advertisement)' },
-      { id: 'yevhen-audioknyha', name: '🇺🇦 Євген: аудіокнига (male, audiobook)' },
-      { id: 'dmitro-rozmova', name: '🇺🇦 Дмитро: розмова (male, conversation)' },
-      { id: 'ihoreo-rozmova', name: '🇺🇦 Ігорео: розмова (male, conversation)' }
-    ];
-    
-    respeecherVoices.forEach(voice => {
-      const option = document.createElement('option');
-      option.value = voice.id;
-      option.textContent = voice.name;
-      elements.audioVoice.appendChild(option);
-    });
-    
-    // Set value: use saved value if valid, otherwise use default
-    // IMPORTANT: Only change value if currentValue is invalid for this provider
-    // This preserves user's selection across page reloads
-    if (currentValue && respeecherVoices.find(v => v.id === currentValue)) {
-      // Valid saved value - restore it
-      elements.audioVoice.value = currentValue;
-    } else if (currentValue) {
-      // Invalid value (e.g., 'nova' from OpenAI or 'volodymyr' for Ukrainian text)
-      // Use default for this provider
-      elements.audioVoice.value = CONFIG.DEFAULT_RESPEECHER_VOICE; // Default English voice
-      // Save the new default value
-      saveAudioVoice(provider, CONFIG.DEFAULT_RESPEECHER_VOICE);
-    } else {
-      // No saved value - use default
-      elements.audioVoice.value = CONFIG.DEFAULT_RESPEECHER_VOICE;
-    }
-    saveAudioVoice(provider, elements.audioVoice.value);
-  } else {
-    // OpenAI voices
-    const openaiVoices = [
-      { value: 'nova', name: 'Nova (female, warm)' },
-      { value: 'alloy', name: 'Alloy (neutral)' },
-      { value: 'echo', name: 'Echo (male)' },
-      { value: 'fable', name: 'Fable (expressive)' },
-      { value: 'onyx', name: 'Onyx (male, deep)' },
-      { value: 'shimmer', name: 'Shimmer (female, clear)' },
-      { value: 'coral', name: 'Coral (female, friendly)' },
-      { value: 'sage', name: 'Sage (neutral, calm)' },
-      { value: 'ash', name: 'Ash (male, authoritative)' },
-      { value: 'ballad', name: 'Ballad (expressive, dramatic)' },
-      { value: 'verse', name: 'Verse (rhythmic)' }
-    ];
-    
-    openaiVoices.forEach(voice => {
-      const option = document.createElement('option');
-      option.value = voice.value;
-      option.textContent = voice.name;
-      elements.audioVoice.appendChild(option);
-    });
-    
-    // Set value: use saved value if valid, otherwise use default
-    if (currentValue && openaiVoices.find(v => v.value === currentValue)) {
-      elements.audioVoice.value = currentValue;
-    } else if (currentValue) {
-      elements.audioVoice.value = CONFIG.DEFAULT_AUDIO_VOICE;
-      saveAudioVoice(provider, CONFIG.DEFAULT_AUDIO_VOICE);
-    } else {
-      elements.audioVoice.value = CONFIG.DEFAULT_AUDIO_VOICE;
-    }
-    saveAudioVoice(provider, elements.audioVoice.value);
-  }
-}
+// DEPRECATED: updateVoiceList function removed - use settingsModule.updateVoiceList() instead
 
 // DEPRECATED: Audio provider UI and translation visibility functions moved to popup/settings/
 // These functions are kept for backward compatibility but redirect to window.settingsModule
@@ -1663,6 +1525,8 @@ function showToast(message, type = 'success') {
 
 
 // CRITICAL: Function to save voice before popup closes
+// This function is overridden in init() to use settingsModule from modules instead of window
+// The override is set up after modules are initialized
 async function saveVoiceBeforeClose() {
   // Save any pending debounced settings first
   if (settingsSaveTimer) {
@@ -1670,91 +1534,9 @@ async function saveVoiceBeforeClose() {
     settingsSaveTimer = null;
   }
   
-  // CRITICAL: Use saveAudioVoice from settings module to ensure consistency
-  if (!isSavingSettings && elements.audioVoice && elements.audioProvider && window.settingsModule && window.settingsModule.saveAudioVoice) {
-    isSavingSettings = true;
-    try {
-      const provider = elements.audioProvider.value || 'openai';
-      const selectedIndex = elements.audioVoice.selectedIndex;
-      const selectedOption = elements.audioVoice.options[selectedIndex];
-      
-      // CRITICAL: Use the same logic as saveAudioVoice - get voice ID from dataset.voiceId or option.value
-      let voiceToSave = null;
-      
-      if (selectedOption) {
-        // Priority 1: dataset.voiceId (most reliable)
-        if (selectedOption.dataset && selectedOption.dataset.voiceId) {
-          voiceToSave = selectedOption.dataset.voiceId;
-        }
-        // Priority 2: option.value (if not an index)
-        else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
-          voiceToSave = selectedOption.value;
-        }
-        // Priority 3: Use getVoiceIdByIndex if value is an index
-        else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && window.settingsModule.getVoiceIdByIndex) {
-          voiceToSave = window.settingsModule.getVoiceIdByIndex(provider, selectedIndex);
-        }
-      }
-      
-      // If still no valid voice, try to get from current value
-      if (!voiceToSave && elements.audioVoice.value && !/^\d+$/.test(String(elements.audioVoice.value))) {
-        voiceToSave = elements.audioVoice.value;
-      }
-      
-      // Only save if we have a valid voice ID (not an index)
-      if (voiceToSave && voiceToSave !== '' && !/^\d+$/.test(String(voiceToSave))) {
-        // CRITICAL: Use saveAudioVoice from settings module - it handles audioVoiceMap correctly
-        window.settingsModule.saveAudioVoice(provider, voiceToSave);
-        
-        // CRITICAL: Also force immediate save (don't wait for debounce)
-        // Get current audioVoiceMap from storage to ensure we have latest
-        const storageResult = await chrome.storage.local.get([STORAGE_KEYS.AUDIO_VOICE_MAP]);
-        let currentMap = storageResult[STORAGE_KEYS.AUDIO_VOICE_MAP] || {};
-        
-        // CRITICAL: Ensure format is correct (with 'current' property)
-        if (!currentMap.current || typeof currentMap.current !== 'object' || Array.isArray(currentMap.current)) {
-          // Convert old format to new format
-          if (typeof currentMap === 'object' && !Array.isArray(currentMap) && !('current' in currentMap)) {
-            currentMap = { current: { ...currentMap } };
-          } else {
-            currentMap = { current: {} };
-          }
-        }
-        
-        // Update the voice for the provider
-        currentMap.current[provider] = voiceToSave;
-        
-        // Save synchronously before closing
-        await chrome.storage.local.set({ 
-          [STORAGE_KEYS.AUDIO_VOICE]: voiceToSave,
-          [STORAGE_KEYS.AUDIO_VOICE_MAP]: currentMap
-        });
-        
-        log('[ClipAIble Popup] CRITICAL: Saved voice before close', {
-          timestamp: Date.now(),
-          provider,
-          voiceToSave,
-          selectedIndex,
-          datasetVoiceId: selectedOption?.dataset?.voiceId,
-          optionValue: selectedOption?.value,
-          voiceMap: currentMap
-        });
-      } else {
-        logWarn('[ClipAIble Popup] CRITICAL: Cannot save voice before close - invalid voice ID', {
-          timestamp: Date.now(),
-          provider,
-          voiceToSave,
-          selectedIndex,
-          optionValue: selectedOption?.value,
-          datasetVoiceId: selectedOption?.dataset?.voiceId
-        });
-      }
-    } catch (error) {
-      logError('[ClipAIble Popup] Failed to save settings before close', error);
-    } finally {
-      isSavingSettings = false;
-    }
-  }
+  // This function is overridden in init() with the actual implementation
+  // that uses settingsModule from modules instead of window.settingsModule
+  logWarn('saveVoiceBeforeClose called but not yet initialized - this should not happen');
 }
 
 // Cleanup on popup close - use multiple events for reliability
