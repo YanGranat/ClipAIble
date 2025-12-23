@@ -421,7 +421,7 @@ clipaible/
 │   ├── stats.js       # Statistics display
 │   └── settings.js    # Settings management
 ├── scripts/
-│   ├── background.js   # Service worker (2525 lines, reduced from 3705)
+│   ├── background.js   # Service worker (1932 lines, reduced from 3705)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
 │   ├── message-handlers/ # Message handler modules (v3.2.1+)
@@ -499,7 +499,7 @@ clipaible/
 ├── config/             # Styles
 ├── lib/                # JSZip
 ├── docs/               # Localized README files
-├── offscreen.js        # Offscreen document for offline TTS (reduced from 3760+ to ~3650 lines)
+├── offscreen.js        # Offscreen document for offline TTS (3752 lines, refactored from 4967)
 └── memory-bank/        # Project documentation
 ```
 
