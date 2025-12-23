@@ -3245,6 +3245,10 @@ try {
           // Use storage for files >= 5 MB to stay safely under Chrome's 10 MB limit
           const STORAGE_THRESHOLD = 5 * 1024 * 1024;  // 5 MB - safe for inline transfer
           
+          // IndexedDB threshold for very large files (>50MB)
+          // IndexedDB is more efficient for large binary data than chrome.storage
+          const INDEXEDDB_THRESHOLD = 50 * 1024 * 1024;  // 50 MB - use IndexedDB for very large files
+          
           // Maximum audio size validation (absolute limit)
           const MAX_AUDIO_SIZE = hasUnlimitedStorage 
             ? 100 * 1024 * 1024  // 100 MB absolute max with unlimitedStorage
@@ -3363,17 +3367,90 @@ try {
           // If inline failed or audio is too large, use storage
           // This block executes if inline send failed OR if audio was already >= threshold
           {
-            // Large audio - use storage (faster for large files)
+            // Large audio - choose storage method based on size
+            // For very large files (>50MB), use IndexedDB directly (more efficient)
             const storageKey = `clipaible_audio_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const useIndexedDB = uint8Array.length >= INDEXEDDB_THRESHOLD;
             
             log(`[ClipAIble Offscreen] Saving audio to storage for ${messageId}`, {
               messageId,
               storageKey,
               size: uint8Array.length,
-              method: 'storage',
-              threshold: STORAGE_THRESHOLD
+              sizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
+              method: useIndexedDB ? 'indexeddb' : 'storage',
+              threshold: STORAGE_THRESHOLD,
+              indexeddbThreshold: INDEXEDDB_THRESHOLD,
+              useIndexedDB
             });
             
+            // For very large files (>50MB), use IndexedDB directly
+            if (useIndexedDB) {
+              try {
+                const dbName = 'ClipAIbleAudioStorage';
+                const storeName = 'audioFiles';
+                
+                // Open IndexedDB
+                const dbRequest = indexedDB.open(dbName, 1);
+                
+                const db = await new Promise((resolve, reject) => {
+                  dbRequest.onerror = () => reject(new Error('Failed to open IndexedDB'));
+                  dbRequest.onsuccess = () => resolve(dbRequest.result);
+                  dbRequest.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(storeName)) {
+                      db.createObjectStore(storeName);
+                    }
+                  };
+                });
+                
+                // Save audio data to IndexedDB (store as ArrayBuffer for efficiency)
+                const transaction = db.transaction([storeName], 'readwrite');
+                const store = transaction.objectStore(storeName);
+                
+                await new Promise((resolve, reject) => {
+                  const putRequest = store.put(uint8Array.buffer, storageKey);
+                  putRequest.onsuccess = () => resolve();
+                  putRequest.onerror = () => reject(new Error('Failed to save to IndexedDB'));
+                });
+                
+                db.close();
+                
+                log(`[ClipAIble Offscreen] Audio saved to IndexedDB for ${messageId}`, {
+                  messageId,
+                  storageKey,
+                  size: uint8Array.length,
+                  sizeMB: (uint8Array.length / 1024 / 1024).toFixed(2),
+                  method: 'indexeddb'
+                });
+                
+                const responseData = {
+                  success: true,
+                  storageKey: storageKey,
+                  size: uint8Array.length,
+                  method: 'indexeddb'
+                };
+                
+                sendResponse(responseData);
+                log(`[ClipAIble Offscreen] Response sent successfully (indexeddb) for ${messageId}`, {
+                  messageId,
+                  method: 'indexeddb',
+                  storageKey,
+                  size: uint8Array.length
+                });
+                
+                return; // CRITICAL: Return after sending response
+              } catch (indexedDBError) {
+                logError(`[ClipAIble Offscreen] Failed to save to IndexedDB for ${messageId}`, {
+                  messageId,
+                  error: indexedDBError.message,
+                  size: uint8Array.length,
+                  sizeMB: (uint8Array.length / 1024 / 1024).toFixed(2)
+                });
+                // Fall through to chrome.storage fallback
+              }
+            }
+            
+            // For files <50MB, try chrome.storage first (faster for smaller files)
             try {
               // Check if chrome.storage is available in offscreen context
               if (!chrome.storage || !chrome.storage.local) {

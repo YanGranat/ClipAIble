@@ -13,6 +13,15 @@ export const CONFIG = {
   STATE_EXPIRY_MS: 2 * 60 * 60 * 1000, // 2 hours - stale state threshold (increased for very long operations)
   STATE_SAVE_INTERVAL: 2000,      // Save state every 2 seconds during processing (ULTRA FREQUENT to keep SW alive)
   
+  // Long-running operations timeouts (for very large articles/audio files)
+  MAX_OPERATION_TIMEOUT_MS: 5 * 60 * 60 * 1000, // 5 hours - initial maximum timeout estimate
+  ABSOLUTE_MAX_OPERATION_TIMEOUT_MS: 24 * 60 * 60 * 1000, // 24 hours - absolute maximum (safety limit for stuck operations)
+  OFFScreen_TTS_TIMEOUT_BASE: 60 * 1000, // 60 seconds base timeout
+  OFFScreen_TTS_TIMEOUT_PER_CHAR: 100, // 100ms per character
+  OFFScreen_TTS_TIMEOUT_MAX: 5 * 60 * 60 * 1000, // 5 hours - initial estimate maximum
+  OFFScreen_TTS_HEARTBEAT_INTERVAL: 30 * 1000, // 30 seconds - heartbeat interval for timeout extension
+  OFFScreen_TTS_HEARTBEAT_EXTENSION: 30 * 60 * 1000, // 30 minutes - how much to extend timeout on each heartbeat
+  
   // Keep-alive
   KEEP_ALIVE_INTERVAL: 1,         // Minutes (>=1 min per MV3 requirement)
   // NOTE: KEEP_ALIVE_PING_INTERVAL removed - unified keep-alive uses STATE_SAVE_INTERVAL (2 seconds) instead

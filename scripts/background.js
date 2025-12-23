@@ -408,8 +408,14 @@ let isKeepAliveStarting = false; // Flag to prevent concurrent startKeepAlive() 
 /**
  * Perform keep-alive ping: check state and save to storage to keep service worker alive
  * This is the unified logic used by both alarm and interval
+ * 
+ * CRITICAL: Includes forced event loop wake-up to prevent SW death during blocking operations
  */
 async function performKeepAlivePing() {
+  // CRITICAL: Force event loop wake-up before any async operations
+  // This ensures SW stays alive even if main thread is blocked by WASM/CPU-intensive operations
+  await new Promise(resolve => setTimeout(resolve, 0));
+  
   const state = getProcessingState();
   
   try {
@@ -449,6 +455,10 @@ async function performKeepAlivePing() {
       await Promise.all(savePromises);
     }
     
+    // CRITICAL: Additional event loop wake-up after storage operations
+    // This ensures SW remains active even after async storage operations complete
+    await new Promise(resolve => setTimeout(resolve, 0));
+    
     return true; // Signal to continue
   } catch (error) {
     // On error, still try to save processingState if active (fallback)
@@ -457,6 +467,8 @@ async function performKeepAlivePing() {
         await chrome.storage.local.set({
           processingState: { ...state, lastUpdate: Date.now() }
         });
+        // Force wake-up even on error path
+        await new Promise(resolve => setTimeout(resolve, 0));
       } catch (fallbackError) {
         logWarn('Keep-alive ping failed (including fallback)', { 
           error: error.message, 

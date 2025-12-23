@@ -342,10 +342,16 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
     
     // Dynamic timeout based on text length
     // Estimate: ~1-2 seconds per sentence for low quality models
-    // For 41 sentences: ~60-120 seconds minimum
-    // Formula: textLength * 100ms per character + base 60 seconds, max 10 minutes
+    // Formula: textLength * 100ms per character + base 60 seconds
+    // Maximum: 5 hours (18000000ms) for very long operations (2-5 hour articles)
     const textLength = data.text?.length || 0;
-    const estimatedDuration = Math.max(120000, Math.min(600000, 60000 + (textLength * 100)));
+    const estimatedDuration = Math.max(
+      CONFIG.OFFScreen_TTS_TIMEOUT_BASE * 2, // Minimum 2 minutes
+      Math.min(
+        CONFIG.OFFScreen_TTS_TIMEOUT_MAX, // Maximum 5 hours
+        CONFIG.OFFScreen_TTS_TIMEOUT_BASE + (textLength * CONFIG.OFFScreen_TTS_TIMEOUT_PER_CHAR)
+      )
+    );
     const timeoutDuration = type === 'PIPER_TTS' ? estimatedDuration : 30000;
     
     log(`[ClipAIble SendToOffscreen] Setting timeout for ${messageId}`, {
@@ -353,21 +359,142 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
       type,
       timeoutDuration,
       timeoutSeconds: Math.round(timeoutDuration / 1000),
+      timeoutMinutes: Math.round(timeoutDuration / 60000),
+      timeoutHours: Math.round(timeoutDuration / 3600000 * 10) / 10,
       textLength: data.text?.length || 0,
       estimatedDuration
     });
     
-    const timeout = setTimeout(() => {
-      logError(`[ClipAIble SendToOffscreen] === TIMEOUT ===`, {
-        messageId,
-        type,
-        retryCount,
-        duration: Date.now() - sendStartTime,
-        timeoutDuration,
-        timeoutSeconds: Math.round(timeoutDuration / 1000)
-      });
-      reject(new Error(`Offscreen message timeout (${Math.round(timeoutDuration / 1000)}s)`));
-    }, timeoutDuration);
+    // Heartbeat mechanism: extend timeout indefinitely as long as operation is active
+    // No hard limit - timeout extends automatically while operation progresses
+    let lastHeartbeat = Date.now();
+    let timeoutId = null;
+    let heartbeatInterval = null;
+    let currentTimeoutDuration = timeoutDuration; // Track current timeout (can be extended)
+    
+    const resetTimeout = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      
+      const elapsed = Date.now() - sendStartTime;
+      const remainingTime = currentTimeoutDuration - elapsed;
+      
+      // Check absolute maximum limit (24 hours) - safety limit for stuck operations
+      if (elapsed >= CONFIG.ABSOLUTE_MAX_OPERATION_TIMEOUT_MS) {
+        logError(`[ClipAIble SendToOffscreen] === ABSOLUTE TIMEOUT (24 hours) ===`, {
+          messageId,
+          type,
+          retryCount,
+          duration: elapsed,
+          durationHours: Math.round(elapsed / 3600000 * 10) / 10,
+          absoluteMax: CONFIG.ABSOLUTE_MAX_OPERATION_TIMEOUT_MS
+        });
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
+        reject(new Error(`Offscreen message timeout after absolute maximum (24 hours)`));
+        return;
+      }
+      
+      // Only set timeout if we have time remaining
+      if (remainingTime > 0) {
+        timeoutId = setTimeout(() => {
+          logError(`[ClipAIble SendToOffscreen] === TIMEOUT ===`, {
+            messageId,
+            type,
+            retryCount,
+            duration: Date.now() - sendStartTime,
+            currentTimeoutDuration,
+            timeoutSeconds: Math.round(currentTimeoutDuration / 1000),
+            timeoutMinutes: Math.round(currentTimeoutDuration / 60000),
+            timeoutHours: Math.round(currentTimeoutDuration / 3600000 * 10) / 10,
+            lastHeartbeat: Date.now() - lastHeartbeat
+          });
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+          reject(new Error(`Offscreen message timeout (${Math.round(currentTimeoutDuration / 1000)}s)`));
+        }, remainingTime);
+      } else {
+        // Timeout already exceeded - this shouldn't happen if heartbeat is working
+        logError(`[ClipAIble SendToOffscreen] === TIMEOUT EXCEEDED ===`, {
+          messageId,
+          elapsed,
+          currentTimeoutDuration,
+          remainingTime
+        });
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+          heartbeatInterval = null;
+        }
+        reject(new Error(`Offscreen message timeout exceeded`));
+      }
+    };
+    
+    // Initial timeout
+    resetTimeout();
+    
+    // Heartbeat: extend timeout indefinitely as long as operation is active
+    // This allows operations to continue beyond initial 5-hour estimate
+    // Only absolute maximum (24 hours) limits operation duration
+    if (type === 'PIPER_TTS') {
+      heartbeatInterval = setInterval(() => {
+        const elapsed = Date.now() - sendStartTime;
+        const timeSinceLastHeartbeat = Date.now() - lastHeartbeat;
+        
+        // Check absolute maximum first (24 hours safety limit)
+        if (elapsed >= CONFIG.ABSOLUTE_MAX_OPERATION_TIMEOUT_MS) {
+          log(`[ClipAIble SendToOffscreen] Heartbeat: absolute maximum reached (24 hours), stopping`, {
+            messageId,
+            elapsed,
+            elapsedHours: Math.round(elapsed / 3600000 * 10) / 10,
+            absoluteMax: CONFIG.ABSOLUTE_MAX_OPERATION_TIMEOUT_MS
+          });
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
+          return;
+        }
+        
+        // If operation is still running (elapsed time is increasing), extend timeout
+        // Extend when we're within 30 minutes of current timeout
+        const extensionThreshold = currentTimeoutDuration - CONFIG.OFFScreen_TTS_HEARTBEAT_EXTENSION;
+        const shouldExtend = elapsed >= extensionThreshold;
+        
+        if (shouldExtend) {
+          // Extend timeout by 30 minutes (or until absolute max)
+          const newTimeoutDuration = Math.min(
+            elapsed + CONFIG.OFFScreen_TTS_HEARTBEAT_EXTENSION,
+            CONFIG.ABSOLUTE_MAX_OPERATION_TIMEOUT_MS
+          );
+          
+          log(`[ClipAIble SendToOffscreen] Heartbeat: extending timeout (operation still active)`, {
+            messageId,
+            elapsed,
+            elapsedMinutes: Math.round(elapsed / 60000),
+            elapsedHours: Math.round(elapsed / 3600000 * 10) / 10,
+            oldTimeoutDuration: currentTimeoutDuration,
+            oldTimeoutHours: Math.round(currentTimeoutDuration / 3600000 * 10) / 10,
+            newTimeoutDuration,
+            newTimeoutHours: Math.round(newTimeoutDuration / 3600000 * 10) / 10,
+            extension: CONFIG.OFFScreen_TTS_HEARTBEAT_EXTENSION,
+            extensionMinutes: Math.round(CONFIG.OFFScreen_TTS_HEARTBEAT_EXTENSION / 60000),
+            timeSinceLastHeartbeat,
+            remainingTime: newTimeoutDuration - elapsed,
+            remainingMinutes: Math.round((newTimeoutDuration - elapsed) / 60000),
+            remainingHours: Math.round((newTimeoutDuration - elapsed) / 3600000 * 10) / 10
+          });
+          
+          currentTimeoutDuration = newTimeoutDuration;
+          lastHeartbeat = Date.now();
+          resetTimeout();
+        }
+      }, CONFIG.OFFScreen_TTS_HEARTBEAT_INTERVAL);
+    }
     
     try {
       log(`[ClipAIble SendToOffscreen] Calling chrome.runtime.sendMessage...`, {
@@ -388,7 +515,15 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
           const responseTime = Date.now();
           const responseDuration = responseTime - sendStartTime;
           
-          clearTimeout(timeout);
+          // Clear timeout and heartbeat
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+            heartbeatInterval = null;
+          }
           
           log(`[ClipAIble SendToOffscreen] Response received`, {
             messageId,
@@ -514,7 +649,15 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
         type
       });
     } catch (error) {
-      clearTimeout(timeout);
+      // Clear timeout and heartbeat on error
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
       logError(`[ClipAIble SendToOffscreen] === EXCEPTION ===`, {
         messageId,
         error: error.message,

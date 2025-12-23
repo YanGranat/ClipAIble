@@ -663,10 +663,11 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
     log('Executing Piper TTS function', { tabId, textLength: text.length });
     
     // Use a timeout to prevent hanging
+    // Increased to 5 hours for very long operations (2-5 hour articles)
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => {
-        reject(new Error('Piper TTS execution timeout after 10 minutes'));
-      }, 10 * 60 * 1000); // 10 minutes timeout (voice download may take time)
+        reject(new Error('Piper TTS execution timeout after 5 hours'));
+      }, CONFIG.MAX_OPERATION_TIMEOUT_MS); // 5 hours timeout for very long operations
     });
     
     const scriptPromise = chrome.scripting.executeScript({
