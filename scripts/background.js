@@ -76,21 +76,11 @@ import {
 import { handleError, createErrorHandler, normalizeError } from './utils/error-handler.js';
 import { callAI, getProviderFromModel } from './api/index.js';
 import { callWithRetry } from './utils/retry.js';
-import { 
-  SELECTOR_SYSTEM_PROMPT, 
-  buildSelectorUserPrompt, 
-  EXTRACT_SYSTEM_PROMPT,
-  buildChunkSystemPrompt,
-  buildChunkUserPrompt
-} from './extraction/prompts.js';
-import { trimHtmlForAnalysis, splitHtmlIntoChunks, deduplicateContent } from './extraction/html-utils.js';
+import { trimHtmlForAnalysis } from './extraction/html-utils.js';
 import { cleanTitleFromServiceTokens } from './utils/html.js';
 import { translateContent, translateImages, detectSourceLanguage, generateAbstract, detectContentLanguage, generateSummary, detectLanguageByCharacters } from './translation/index.js';
-import { generateMarkdown } from './generation/markdown.js';
-import { generatePdf, generatePdfWithDebugger } from './generation/pdf.js';
-import { generateEpub } from './generation/epub.js';
-import { generateFb2 } from './generation/fb2.js';
-import { generateAudio } from './generation/audio.js';
+import { DocumentGeneratorFactory } from './generation/factory.js';
+import { generatePdfWithDebugger } from './generation/pdf.js';
 import { recordSave, getFormattedStats, clearStats, deleteHistoryItem } from './stats/index.js';
 import { 
   getCachedSelectors, 
@@ -107,9 +97,17 @@ import { encryptApiKey, isEncrypted, decryptApiKey, clearDecryptedKeyCache } fro
 import { validateAudioApiKeys } from './utils/validation.js';
 import { getUILanguage, tSync } from './locales.js';
 import { detectVideoPlatform } from './utils/video.js';
-import { extractYouTubeSubtitles, extractVimeoSubtitles } from './extraction/video-subtitles.js';
-import { processSubtitlesWithAI } from './extraction/video-processor.js';
-import { extractAutomaticallyInlined } from './extraction/automatic.js';
+import { 
+  checkCancellation, 
+  updateProgress, 
+  getUILanguageCached,
+  finalizeProcessing 
+} from './utils/pipeline-helpers.js';
+import { VoiceValidator } from './utils/voice-validator.js';
+import { TTSApiKeyManager } from './utils/api-key-manager.js';
+import { selectProcessingFunction } from './processing/mode-selector.js';
+import { processWithoutAI, processWithExtractMode, getSelectorsFromAI } from './processing/modes.js';
+import { processVideoPage } from './processing/video.js';
 import { routeMessage } from './message-handlers/index.js';
 
 // ============================================
@@ -1262,7 +1260,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
   
   // Show notification about starting save
   try {
-    const uiLang = await getUILanguage();
+    const uiLang = await getUILanguageCached();
     const formatNames = {
       'pdf': tSync('saveAsPdf', uiLang),
       'epub': tSync('saveAsEpub', uiLang),
@@ -1359,7 +1357,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
         apiKey = await decryptApiKey(encryptedKey);
       } catch (error) {
         logError(`Failed to decrypt ${provider} API key for quick save`, error);
-        const uiLang = await getUILanguage();
+        const uiLang = await getUILanguageCached();
         const errorMsg = tSync('errorQuickSaveDecryptFailed', uiLang);
         await createNotification(errorMsg);
         return;
@@ -1368,7 +1366,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
     
     if (!apiKey) {
       logError('No API key configured for quick save');
-      const uiLang = await getUILanguage();
+      const uiLang = await getUILanguageCached();
       const errorMsg = tSync('errorQuickSaveNoKey', uiLang);
       await createNotification(errorMsg);
       return;
@@ -1546,7 +1544,7 @@ async function handleQuickSave(outputFormat = 'pdf') {
   } catch (error) {
     logError('Quick save failed', error);
     try {
-      const uiLang = await getUILanguage();
+      const uiLang = await getUILanguageCached();
       const errorMsg = error.message || tSync('errorValidation', uiLang);
       await createNotification(errorMsg);
     } catch (notifError) {
@@ -1658,7 +1656,7 @@ async function startArticleProcessing(data) {
   // Note: docx, html, txt formats removed from UI but kept in validation for backward compatibility with old settings
   const VALID_FORMATS = ['pdf', 'epub', 'fb2', 'markdown', 'audio', 'docx', 'html', 'txt'];
   if (data.outputFormat && !VALID_FORMATS.includes(data.outputFormat)) {
-    const uiLang = await getUILanguage();
+    const uiLang = await getUILanguageCached();
     await setError({
       message: tSync('errorValidation', uiLang) + `: Invalid output format '${data.outputFormat}'`,
       code: ERROR_CODES.VALIDATION_ERROR
@@ -1919,97 +1917,7 @@ async function startArticleProcessing(data) {
 // VIDEO PAGE PROCESSING
 // ============================================
 
-/**
- * Process video page (YouTube/Vimeo) - extract subtitles, process with AI
- * @param {Object} data - Processing data
- * @param {Object} videoInfo - {platform: 'youtube'|'vimeo', videoId: string}
- * @returns {Promise<Object>} {title, author, content, publishDate}
- */
-async function processVideoPage(data, videoInfo) {
-  const { platform, videoId } = videoInfo;
-  const { url, tabId, apiKey, model } = data;
-  
-  log('Processing video page', { platform, videoId, url });
-  
-  // Check if processing was cancelled before video processing
-  if (isCancelled()) {
-    log('Processing cancelled before video processing');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
-  
-  // Stage 1: Extract subtitles (5-15%)
-  const uiLang = await getUILanguage();
-  const extractingStatus = tSync('statusExtractingSubtitles', uiLang);
-  updateState({
-    stage: PROCESSING_STAGES.EXTRACTING.id,
-    status: extractingStatus,
-    progress: 5
-  });
-  
-  let subtitles, metadata;
-  
-  // Try to extract subtitles
-  try {
-    const subtitlesData = platform === 'youtube' 
-      ? await extractYouTubeSubtitles(tabId)
-      : await extractVimeoSubtitles(tabId);
-    
-    subtitles = subtitlesData.subtitles;
-    metadata = subtitlesData.metadata;
-    
-    log('Subtitles extracted', { count: subtitles.length, title: metadata.title });
-  } catch (error) {
-    logError('Failed to extract subtitles', error);
-    const errorMsg = tSync('errorNoSubtitles', uiLang);
-    throw new Error(errorMsg);
-  }
-  
-  if (!subtitles || subtitles.length === 0) {
-    const errorMsg = tSync('errorNoSubtitles', uiLang);
-    throw new Error(errorMsg);
-  }
-  
-  updateState({
-    progress: 15,
-    status: tSync('statusProcessingSubtitles', uiLang)
-  });
-  
-  // Check if processing was cancelled before subtitle processing
-  if (isCancelled()) {
-    log('Processing cancelled before subtitle processing');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
-  
-  // Stage 2: Process subtitles with AI (15-40%)
-  let content;
-  try {
-    // Progress callback for chunking progress
-    const progressCallback = (current, total) => {
-      if (total > 1) {
-        const chunkProgress = (current / total) * 25; // 25% range (15-40%)
-        updateState({ progress: 15 + chunkProgress });
-      }
-    };
-    
-    content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback);
-    log('Subtitles processed', { contentItems: content.length });
-  } catch (error) {
-    logError('Failed to process subtitles', error);
-    throw new Error(`Failed to process subtitles: ${error.message}`);
-  }
-  
-  updateState({ progress: 40 });
-  
-  // Return result in standard format for continueProcessingPipeline
-  return {
-    title: metadata.title || data.title || 'Untitled',
-    author: metadata.author || '',
-    content: content,
-    publishDate: metadata.publishDate || ''
-  };
-}
+// processVideoPage moved to scripts/processing/video.js
 
 /**
  * Continue processing pipeline after content extraction
@@ -2021,11 +1929,7 @@ async function processVideoPage(data, videoInfo) {
  */
 async function continueProcessingPipeline(data, result, stopKeepAlive) {
   // Check if processing was cancelled
-  if (isCancelled()) {
-    log('Processing cancelled at start of pipeline');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
+  await checkCancellation('start of pipeline');
   
   // Translate if language is not auto
   const language = data.language || 'auto';
@@ -2033,22 +1937,19 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   
   // Only translate if user explicitly selected a target language (not 'auto')
   if (language !== 'auto' && result.content && result.content.length > 0) {
-    const uiLang = await getUILanguage();
-    const translatingStatus = tSync('statusTranslatingContent', uiLang);
-    updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: translatingStatus, progress: hasImageTranslation ? 40 : 42 });
+    await updateProgress(
+      PROCESSING_STAGES.TRANSLATING, 
+      'statusTranslatingContent', 
+      hasImageTranslation ? 40 : 42
+    );
     
     // Translate images first if enabled
     if (hasImageTranslation) {
       // Check if processing was cancelled
-      if (isCancelled()) {
-        log('Processing cancelled before image translation');
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('statusCancelled', uiLang));
-      }
+      await checkCancellation('image translation');
       
       log('Starting image translation', { targetLanguage: language });
-      const analyzingImagesStatus = tSync('statusAnalyzingImages', uiLang);
-      updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: analyzingImagesStatus, progress: 40 });
+      await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusAnalyzingImages', 40);
       
       // Use detected language from automatic extraction if available, otherwise detect from content
       const sourceLang = result.detectedLanguage || detectSourceLanguage(result.content);
@@ -2060,15 +1961,10 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
     }
     
     // Check if processing was cancelled before text translation
-    if (isCancelled()) {
-      log('Processing cancelled before text translation');
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('statusCancelled', uiLang));
-    }
+    await checkCancellation('text translation');
     
     log('Starting text translation', { targetLanguage: language });
-    const translatingTextStatus = tSync('statusTranslatingText', uiLang);
-    updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: translatingTextStatus, progress: 45 });
+    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusTranslatingText', 45);
     try {
       result = await translateContent(result, language, data.apiKey, data.model, updateState);
       log('Translation complete', { title: result.title });
@@ -2078,7 +1974,7 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
         .some(pattern => (error.message || '').toLowerCase().includes(pattern));
       if (isAuthError) {
         logError('Translation failed: authentication error', error);
-        const uiLang = await getUILanguage();
+        const uiLang = await getUILanguageCached();
         const errorMsg = tSync('errorAuthFailed', uiLang);
         updateState({ 
           stage: PROCESSING_STAGES.TRANSLATING.id,
@@ -2090,9 +1986,7 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
       }
       // For other errors, log but continue without translation
       logError('Translation failed, continuing without translation', error);
-      const uiLang = await getUILanguage();
-      const errorMsg = tSync('errorTranslationFailed', uiLang);
-      updateState({ stage: PROCESSING_STAGES.TRANSLATING.id, status: errorMsg, progress: 60 });
+      await updateProgress(PROCESSING_STAGES.TRANSLATING, 'errorTranslationFailed', 60);
     }
   } else {
     // No translation needed - skip to generation progress
@@ -2100,11 +1994,7 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   }
   
   // Check if processing was cancelled before abstract generation
-  if (isCancelled()) {
-    log('Processing cancelled before abstract generation');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
+  await checkCancellation('abstract generation');
   
   // Generate abstract if enabled (but skip for audio format)
   let abstract = '';
@@ -2120,9 +2010,7 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
     // to let generateAbstract detect the language from content
     const abstractLang = result.detectedLanguage || 'auto';
     try {
-      const uiLang = await getUILanguage();
-      const abstractStatus = tSync('stageGeneratingAbstract', uiLang);
-      updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: abstractStatus, progress: 62 });
+      await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62);
       abstract = await generateAbstract(
         result.content, 
         result.title || data.title || 'Untitled',
@@ -2168,363 +2056,16 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
   updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
   
   // Check if processing was cancelled before document generation
-  if (isCancelled()) {
-    log('Processing cancelled before document generation');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
+  await checkCancellation('document generation');
   
-  // Generate document based on format
-  if (outputFormat === 'markdown') {
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingMarkdown', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    return generateMarkdown({
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage,
-      apiKey: data.apiKey,
-      model: data.model
-    }, updateState);
-  } else if (outputFormat === 'epub') {
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingEpub', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    return generateEpub({
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage
-    }, updateState);
-  } else if (outputFormat === 'fb2') {
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingFb2', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    return generateFb2({
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage
-    }, updateState);
-  } else if (outputFormat === 'audio') {
-    const audioStartTime = Date.now();
-    log('[ClipAIble Background] === AUDIO GENERATION ENTRY POINT ===', {
-      timestamp: audioStartTime,
-      audioProvider: data.audioProvider,
-      hasTabId: !!data.tabId,
-      tabId: data.tabId,
-      hasContent: !!result.content,
-      contentItems: result.content?.length || 0
-    });
-    
-    // Don't set progress here - let generateAudio manage its own progress
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingAudio', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status });
-    
-    // Get TTS API key based on provider
-    const ttsProvider = data.audioProvider || 'openai';
-    logDebug('[ClipAIble Background] TTS provider determined', {
-      timestamp: Date.now(),
-      ttsProvider,
-      hasTabId: !!data.tabId,
-      tabId: data.tabId
-    });
-    
-    log('[ClipAIble Background] === Audio generation: TTS provider selected ===', { 
-      ttsProvider, 
-      hasTabId: !!data.tabId,
-      tabId: data.tabId,
-      audioProvider: data.audioProvider 
-    });
-    let ttsApiKey = data.apiKey; // Default to main API key (OpenAI)
-    
-    // Helper function to decrypt TTS API key with localized error messages
-    async function decryptTtsApiKey(encryptedKey, provider, providerName) {
-      if (!encryptedKey) {
-        const uiLang = await getUILanguage();
-        throw new Error(tSync(`error${providerName}KeyRequired`, uiLang));
-      }
-      try {
-        const decrypted = await decryptApiKey(encryptedKey);
-        // Security: Log only metadata, never the actual key or prefix
-        log(`${providerName} API key decrypted`, { 
-          keyLength: decrypted?.length || 0,
-          isAscii: /^[\x00-\x7F]*$/.test(decrypted || '')
-        });
-        return decrypted;
-      } catch (error) {
-        logError(`Failed to decrypt ${providerName} API key`, error);
-        const uiLang = await getUILanguage();
-        throw new Error(tSync(`error${providerName}KeyInvalid`, uiLang));
-      }
-    }
-    
-    if (ttsProvider === 'offline') {
-      log('[ClipAIble Background] === OFFLINE TTS DETECTED ===', {
-        timestamp: Date.now(),
-        tabId: data.tabId,
-        hasTabId: !!data.tabId,
-        audioVoice: data.audioVoice,
-        audioVoiceType: typeof data.audioVoice,
-        audioProvider: data.audioProvider
-      });
-      
-      // CRITICAL: Log voice received from popup for offline TTS
-      log(`[ClipAIble Background] ===== OFFLINE TTS VOICE FROM POPUP ===== VOICE="${String(data.audioVoice || '')}" =====`, {
-        timestamp: Date.now(),
-        audioVoice: data.audioVoice,
-        VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
-        audioVoiceType: typeof data.audioVoice,
-        audioVoiceStr: String(data.audioVoice || ''),
-        isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
-        isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
-        willCauseReset: /^\d+$/.test(String(data.audioVoice || '')) || (data.audioVoice && !String(data.audioVoice).includes('_') && !String(data.audioVoice).includes('-'))
-      });
-      
-      // Offline TTS doesn't need API key
-      ttsApiKey = null;
-      log('[ClipAIble Background] Offline TTS selected - no API key needed', {
-        tabId: data.tabId,
-        timestamp: Date.now()
-      });
-    } else if (ttsProvider === 'elevenlabs') {
-      ttsApiKey = await decryptTtsApiKey(data.elevenlabsApiKey, 'elevenlabs', 'ElevenLabs');
-    } else if (ttsProvider === 'qwen') {
-      ttsApiKey = await decryptTtsApiKey(data.qwenApiKey, 'qwen', 'Qwen');
-    } else if (ttsProvider === 'respeecher') {
-      ttsApiKey = await decryptTtsApiKey(data.respeecherApiKey, 'respeecher', 'Respeecher');
-    } else if (ttsProvider === 'google') {
-      ttsApiKey = await decryptTtsApiKey(data.googleTtsApiKey, 'google', 'GoogleTTS');
-    } else {
-      // OpenAI - use main API key
-      ttsApiKey = data.apiKey;
-    }
-    
-    // DETAILED LOGGING: Voice received in continueProcessingPipeline
-    log('[ClipAIble Background] ===== VOICE IN continueProcessingPipeline =====', {
-      timestamp: Date.now(),
-      ttsProvider,
-      audioVoice: data.audioVoice,
-      audioVoiceType: typeof data.audioVoice,
-      audioVoiceString: String(data.audioVoice || ''),
-      isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
-      hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
-      hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
-      isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
-      googleTtsVoice: data.googleTtsVoice,
-      defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE,
-      VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
-      source: 'continueProcessingPipeline',
-      willBePassedToGenerateAudio: true
-    });
-    
-    /** @type {AudioGenerationData} */
-    const audioParams = {
-      content: result.content,
-      title: result.title,
-      apiKey: data.apiKey, // For text preparation
-      ttsApiKey: ttsApiKey, // For TTS conversion
-      model: data.model,
-      provider: ttsProvider,
-      // For Google TTS, use googleTtsVoice; for others, use audioVoice
-      // CRITICAL: Validate voice - if it's a number (index), it's invalid
-      voice: (() => {
-        // DETAILED LOGGING: Voice received from popup (in voice selection logic)
-        log('[ClipAIble Background] ===== VOICE RECEIVED FROM POPUP (in voice selection) =====', {
-          timestamp: Date.now(),
-          ttsProvider,
-          audioVoice: data.audioVoice,
-          audioVoiceType: typeof data.audioVoice,
-          audioVoiceString: String(data.audioVoice || ''),
-          isNumeric: /^\d+$/.test(String(data.audioVoice || '')),
-          hasUnderscore: data.audioVoice && String(data.audioVoice).includes('_'),
-          hasDash: data.audioVoice && String(data.audioVoice).includes('-'),
-          isValidFormat: data.audioVoice && (String(data.audioVoice).includes('_') || String(data.audioVoice).includes('-')),
-          googleTtsVoice: data.googleTtsVoice,
-          defaultVoice: CONFIG.DEFAULT_AUDIO_VOICE,
-          VOICE_STRING: `VOICE="${String(data.audioVoice || '')}"`, // Explicit string for visibility
-          source: 'voice_selection_logic',
-          willBeValidated: true
-        });
-        
-        if (ttsProvider === 'google') {
-          const googleVoice = data.googleTtsVoice || 'Callirrhoe';
-          logDebug('[ClipAIble Background] ===== USING GOOGLE TTS VOICE =====', {
-            timestamp: Date.now(),
-            googleVoice
-          });
-          return googleVoice;
-        }
-        const voice = data.audioVoice || CONFIG.DEFAULT_AUDIO_VOICE;
-        
-        // DETAILED LOGGING: Voice validation
-        logDebug('[ClipAIble Background] ===== VALIDATING VOICE =====', {
-          timestamp: Date.now(),
-          ttsProvider,
-          voice,
-          voiceType: typeof voice,
-          isNumeric: /^\d+$/.test(String(voice)),
-          hasUnderscore: voice && String(voice).includes('_'),
-          hasDash: voice && String(voice).includes('-')
-        });
-        
-        // If voice is a number (index), it's invalid - use default
-        if (/^\d+$/.test(String(voice))) {
-          logWarn('[ClipAIble Background] ===== INVALID VOICE (NUMERIC INDEX) =====', {
-            timestamp: Date.now(),
-            provider: ttsProvider,
-            invalidVoice: voice,
-            willUseDefault: CONFIG.DEFAULT_AUDIO_VOICE
-          });
-          return CONFIG.DEFAULT_AUDIO_VOICE;
-        }
-        // For offline provider, ensure voice ID format is valid (contains _ and -)
-        // CRITICAL: Ensure voice is a string before calling includes
-        const voiceStr = String(voice || '');
-        if (ttsProvider === 'offline' && voiceStr && !voiceStr.includes('_') && !voiceStr.includes('-')) {
-          logWarn('[ClipAIble Background] ===== INVALID VOICE FORMAT FOR OFFLINE =====', {
-            timestamp: Date.now(),
-            provider: ttsProvider,
-            invalidVoice: voice,
-            willUseDefault: CONFIG.DEFAULT_AUDIO_VOICE
-          });
-          return CONFIG.DEFAULT_AUDIO_VOICE;
-        }
-        
-        log('[ClipAIble Background] ===== VOICE VALIDATED AND READY =====', {
-          timestamp: Date.now(),
-          ttsProvider,
-          finalVoice: voice,
-          finalVoiceType: typeof voice,
-          finalVoiceString: String(voice),
-          isValidFormat: voice && (String(voice).includes('_') || String(voice).includes('-')),
-          VOICE_STRING: `VOICE="${String(voice)}"`, // Explicit string for visibility
-          willSendToTTS: true,
-          willBePassedToGenerateAudio: true,
-          source: 'voice_validation'
-        });
-        return voice;
-      })(),
-      speed: data.audioSpeed || CONFIG.DEFAULT_AUDIO_SPEED,
-      format: data.audioFormat || CONFIG.DEFAULT_AUDIO_FORMAT,
-      language: effectiveLanguage,
-      tabId: data.tabId || null, // For offline TTS
-      elevenlabsModel: data.elevenlabsModel || CONFIG.DEFAULT_ELEVENLABS_MODEL,
-      elevenlabsFormat: data.elevenlabsFormat || 'mp3_44100_192',
-      elevenlabsStability: data.elevenlabsStability !== undefined ? data.elevenlabsStability : 0.5,
-      elevenlabsSimilarity: data.elevenlabsSimilarity !== undefined ? data.elevenlabsSimilarity : 0.75,
-      elevenlabsStyle: data.elevenlabsStyle !== undefined ? data.elevenlabsStyle : 0.0,
-      elevenlabsSpeakerBoost: data.elevenlabsSpeakerBoost !== undefined ? data.elevenlabsSpeakerBoost : true,
-      openaiInstructions: data.openaiInstructions || null,
-      googleTtsModel: data.googleTtsModel || 'gemini-2.5-pro-preview-tts',
-      googleTtsVoice: data.googleTtsVoice || 'Callirrhoe',
-      googleTtsPrompt: data.googleTtsPrompt || null,
-      respeecherTemperature: data.respeecherTemperature !== undefined ? data.respeecherTemperature : 1.0,
-      respeecherRepetitionPenalty: data.respeecherRepetitionPenalty !== undefined ? data.respeecherRepetitionPenalty : 1.0,
-      respeecherTopP: data.respeecherTopP !== undefined ? data.respeecherTopP : 1.0
-    };
-    
-    log('[ClipAIble Background] === PREPARING TO CALL generateAudio ===', {
-      timestamp: Date.now(),
-      provider: audioParams.provider,
-      tabId: audioParams.tabId,
-      hasContent: !!audioParams.content,
-      contentItems: audioParams.content?.length || 0,
-      voice: audioParams.voice,
-      speed: audioParams.speed,
-      language: audioParams.language,
-      hasTtsApiKey: !!audioParams.ttsApiKey
-    });
-    
-    log('[ClipAIble Background] === Audio generation: Calling generateAudio ===', { 
-      provider: audioParams.provider,
-      tabId: audioParams.tabId,
-      hasContent: !!audioParams.content,
-      contentItems: audioParams.content?.length || 0,
-      voice: audioParams.voice,
-      speed: audioParams.speed,
-      language: audioParams.language,
-      timestamp: Date.now()
-    });
-    
-    const generateAudioStart = Date.now();
-    try {
-      const result = await generateAudio(audioParams, updateState);
-      log('[ClipAIble Background] === generateAudio COMPLETE ===', {
-        timestamp: Date.now(),
-        duration: Date.now() - generateAudioStart,
-        totalDuration: Date.now() - audioStartTime
-      });
-      return result;
-    } catch (error) {
-      logError('[ClipAIble Background] === generateAudio FAILED ===', {
-        timestamp: Date.now(),
-        duration: Date.now() - generateAudioStart,
-        totalDuration: Date.now() - audioStartTime,
-        error: error.message,
-        stack: error.stack
-      });
-      logError('[ClipAIble Background] generateAudio failed', {
-        error: error.message,
-        duration: Date.now() - generateAudioStart,
-        stack: error.stack
-      });
-      throw error;
-    }
-  } else {
-    // PDF (default)
-    const uiLang = await getUILanguage();
-    const status = tSync('statusGeneratingPdf', uiLang);
-    updateState({ stage: PROCESSING_STAGES.GENERATING.id, status: status, progress: 65 });
-    
-    // Use generatePdf (not generatePdfWithDebugger) - it accepts object parameters
-    const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
-    log('Calling generatePdf', {
-      contentItems: result.content?.length || 0,
-      imageCount: imageCount,
-      contentTypes: result.content ? [...new Set(result.content.map(item => item?.type).filter(Boolean))] : []
-    });
-    /** @type {ExtendedGenerationData} */
-    const pdfParams = {
-      content: result.content,
-      title: result.title,
-      author: result.author || '',
-      sourceUrl: data.url,
-      publishDate: result.publishDate || '',
-      generateToc: data.generateToc || false,
-      generateAbstract: data.generateAbstract || false,
-      abstract: result.abstract || '',
-      language: effectiveLanguage,
-      apiKey: data.apiKey,
-      model: data.model,
-      stylePreset: data.stylePreset || 'dark',
-      fontFamily: data.fontFamily || '',
-      fontSize: data.fontSize || '31',
-      bgColor: data.bgColor || '#303030',
-      textColor: data.textColor || '#b9b9b9',
-      headingColor: data.headingColor || '#cfcfcf',
-      linkColor: data.linkColor || '#6cacff',
-      pageMode: data.pageMode || 'single'
-    };
-    return generatePdf(pdfParams, updateState);
-  }
+  // Prepare data for factory (add effectiveLanguage for audio generation)
+  const factoryData = {
+    ...data,
+    effectiveLanguage: effectiveLanguage
+  };
+  
+  // Generate document using factory
+  return DocumentGeneratorFactory.generate(outputFormat, factoryData, result, updateState);
   
   // Note: recordSave and completeProcessing are handled by the promise chain
   // that calls this function, not here (since we return a promise from generate*)
@@ -2557,31 +2098,23 @@ async function processWithSelectorMode(data) {
     if (cached) {
       selectors = cached.selectors;
       fromCache = true;
-      const uiLang = await getUILanguage();
-      const cachedStatus = tSync('statusUsingCachedSelectors', uiLang);
-      updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: cachedStatus, progress: 3 });
+      await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
       log('Using cached selectors', { url, successCount: cached.successCount || 0 });
     }
   }
   
   if (!fromCache) {
     // Check if processing was cancelled before AI analysis
-    if (isCancelled()) {
-      log('Processing cancelled before AI selector analysis');
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('statusCancelled', uiLang));
-    }
+    await checkCancellation('AI selector analysis');
     
-    const uiLangAnalyzing = await getUILanguage();
-    const analyzingStatus = tSync('stageAnalyzing', uiLangAnalyzing);
-    updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: analyzingStatus, progress: 3 });
+    await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 3);
     
     // Trim HTML for analysis
     log('Trimming HTML for analysis...');
     const htmlForAnalysis = trimHtmlForAnalysis(html, CONFIG.MAX_HTML_FOR_ANALYSIS);
     log('Trimmed HTML', { originalLength: html.length, trimmedLength: htmlForAnalysis.length });
     
-    // Get selectors from AI
+    // Get selectors from AI (imported from processing/modes.js)
     log('Requesting selectors from AI...');
     try {
       selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model);
@@ -2597,15 +2130,9 @@ async function processWithSelectorMode(data) {
   }
   
   // Check if processing was cancelled before content extraction
-  if (isCancelled()) {
-    log('Processing cancelled before content extraction');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
+  await checkCancellation('content extraction');
   
-  const uiLang = await getUILanguage();
-  const extractingStatus = tSync('statusExtractingFromPage', uiLang);
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
+  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
   
   // Extract content using selectors
   log('Extracting content using selectors...', { tabId, selectors });
@@ -2652,9 +2179,7 @@ async function processWithSelectorMode(data) {
     // Don't throw - cache update failure shouldn't break extraction
   }
   
-  const uiLangComplete = await getUILanguage();
-  const completeStatus = tSync('statusProcessingComplete', uiLangComplete);
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: completeStatus, progress: 8 });
+  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingComplete', 8);
   
   const publishDate = selectors.publishDate || extractedContent.publishDate || '';
   const finalTitle = extractedContent.title || title;
@@ -2676,36 +2201,7 @@ async function processWithSelectorMode(data) {
   };
 }
 
-async function getSelectorsFromAI(html, url, title, apiKey, model) {
-  log('getSelectorsFromAI called', { url, model, htmlLength: html.length });
-  
-  // SECURITY: Validate HTML size before processing
-  const MAX_HTML_SIZE = 50 * 1024 * 1024; // 50MB
-  if (html && html.length > MAX_HTML_SIZE) {
-    logError('HTML too large for selector extraction', { size: html.length, maxSize: MAX_HTML_SIZE });
-    throw new Error('HTML content is too large to process');
-  }
-  
-  const systemPrompt = SELECTOR_SYSTEM_PROMPT;
-  const userPrompt = buildSelectorUserPrompt(html, url, title);
-  
-  log('Sending request to AI...', { model, promptLength: userPrompt.length });
-  
-  // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-  /** @type {RetryOptions} */
-  const retryOptions = {
-    maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-    delays: CONFIG.RETRY_DELAYS,
-    retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-  };
-  const parsed = await callWithRetry(
-    () => callAI(systemPrompt, userPrompt, apiKey, model, true),
-    retryOptions
-  );
-  log('Parsed selectors', parsed);
-  
-  return parsed;
-}
+// getSelectorsFromAI moved to scripts/processing/modes.js
 
 async function extractContentWithSelectors(tabId, selectors, baseUrl) {
   log('extractContentWithSelectors', { tabId, selectors, baseUrl });
@@ -2828,10 +2324,16 @@ async function extractContentWithSelectors(tabId, selectors, baseUrl) {
         listItems: item.type === 'list' && item.items ? {
           count: item.items.length,
           ordered: item.ordered || false,
-          itemsPreview: item.items.slice(0, 3).map((li, liIdx) => ({
-            index: liIdx,
-            text: typeof li === 'string' ? li.substring(0, 100) : (li.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100)
-          }))
+          itemsPreview: item.items.slice(0, 3).map((li, liIdx) => {
+            let text = '';
+            if (typeof li === 'string') {
+              text = li.substring(0, 100);
+            } else if (typeof li === 'object' && li !== null && 'html' in li) {
+              // @ts-ignore - li is object with html property
+              text = (li.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
+            }
+            return { index: liIdx, text };
+          })
         } : null
       }))
     });
@@ -3643,467 +3145,10 @@ function extractFromPageInlined(selectors, baseUrl) {
 // ============================================
 // MODE 2: AUTOMATIC MODE (NO AI)
 // ============================================
-
-async function processWithoutAI(data) {
-  log('=== processWithoutAI: ENTRY ===', {
-    hasData: !!data,
-    dataKeys: data ? Object.keys(data) : [],
-    timestamp: Date.now()
-  });
-  
-  const { html, url, title, tabId } = data;
-
-  log('=== AUTOMATIC MODE START (NO AI) ===');
-  log('Input data', { url, title, htmlLength: html?.length, tabId: tabId });
-
-  if (!html) throw new Error('No HTML content provided');
-  if (!tabId) throw new Error('Tab ID is required for automatic extraction');
-
-  // Check if processing was cancelled
-  if (isCancelled()) {
-    log('Processing cancelled before automatic extraction');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
-
-  const uiLangExtracting = await getUILanguage();
-  const extractingStatus = tSync('statusExtractingContent', uiLangExtracting);
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
-
-  log('=== processWithoutAI: About to execute script ===', {
-    tabId: tabId,
-    url: url,
-    hasExtractAutomaticallyInlined: typeof extractAutomaticallyInlined === 'function',
-    timestamp: Date.now()
-  });
-
-  // Performance optimization: only collect debug info if LOG_LEVEL is DEBUG (0)
-  // This significantly reduces memory and CPU usage in production
-  const enableDebugInfo = CONFIG.LOG_LEVEL === 0; // 0 = DEBUG level
-
-  // Execute automatic extraction in page context with timeout
-  let results;
-  try {
-    log('=== processWithoutAI: Creating timeout and script promises ===', {
-      enableDebugInfo: enableDebugInfo,
-      logLevel: CONFIG.LOG_LEVEL,
-      timestamp: Date.now()
-    });
-    
-    // Add timeout to prevent hanging (30 seconds should be enough for most pages)
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
-          timeout: 30000,
-          timestamp: Date.now()
-        });
-        reject(new Error('Automatic extraction timeout after 30 seconds'));
-      }, 30000);
-    });
-    
-    log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {
-      tabId: tabId,
-      url: url,
-      enableDebugInfo: enableDebugInfo,
-      timestamp: Date.now()
-    });
-    
-    const scriptPromise = chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      world: 'MAIN',
-      func: extractAutomaticallyInlined,
-      args: [url, enableDebugInfo] // Pass enableDebugInfo flag
-    });
-    
-    log('=== processWithoutAI: Waiting for Promise.race ===', {
-      timestamp: Date.now()
-    });
-    
-    try {
-      results = await Promise.race([scriptPromise, timeoutPromise]);
-      // Clear timeout if script completed successfully
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    } catch (error) {
-      // Clear timeout on error too
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-      throw error;
-    }
-    
-    log('=== processWithoutAI: Promise.race completed ===', {
-      hasResults: !!results,
-      resultsLength: results?.length,
-      timestamp: Date.now()
-    });
-    
-    log('Automatic extraction executed', { resultsLength: results?.length });
-  } catch (scriptError) {
-    logError('=== processWithoutAI: Script execution FAILED ===', {
-      error: scriptError?.message || String(scriptError),
-      errorStack: scriptError?.stack,
-      errorName: scriptError?.name,
-      timestamp: Date.now()
-    });
-    logError('Automatic extraction script execution failed', scriptError);
-    throw new Error(`Failed to execute automatic extraction: ${scriptError.message}`);
-  }
-
-  log('=== processWithoutAI: Validating results ===', {
-    hasResults: !!results,
-    resultsLength: results?.length,
-    hasFirstResult: !!results?.[0],
-    firstResultKeys: results?.[0] ? Object.keys(results[0]) : [],
-    timestamp: Date.now()
-  });
-
-  if (!results || !results[0]) {
-    logError('=== processWithoutAI: Empty results ===', {
-      results: results,
-      timestamp: Date.now()
-    });
-    throw new Error('Automatic extraction returned empty results');
-  }
-
-  if (results[0].error) {
-    const error = results[0].error;
-    logError('=== processWithoutAI: Result contains error ===', {
-      error: error,
-      timestamp: Date.now()
-    });
-    logError('Automatic extraction error', error);
-    throw new Error(`Automatic extraction error: ${error && typeof error === 'object' && 'message' in error ? error.message : String(error)}`);
-  }
-
-  /** @type {InjectionResult} */
-  const automaticResult = results[0].result;
-  
-  if (!automaticResult) {
-    logError('=== processWithoutAI: No result in results[0] ===', {
-      results0Keys: Object.keys(results[0]),
-      timestamp: Date.now()
-    });
-    throw new Error('Automatic extraction returned no result');
-  }
-  
-  log('=== processWithoutAI: Results validated successfully ===', {
-    hasResult: !!automaticResult,
-    resultKeys: automaticResult ? Object.keys(automaticResult) : [],
-    timestamp: Date.now()
-  });
-
-  const result = automaticResult;
-  const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
-  
-  // Log debug info if available and LOG_LEVEL is DEBUG (0)
-  // Performance optimization: skip debug logging in production (LOG_LEVEL >= 1)
-  if (result.debugInfo && CONFIG.LOG_LEVEL === 0) {
-    log('Automatic extraction debug info', {
-      foundElements: result.debugInfo.foundElements,
-      imageCount: result.debugInfo.imageCount,
-      allByType: result.debugInfo.allByType,
-      filteredElements: result.debugInfo.filteredElements,
-      filteredByType: result.debugInfo.filteredByType,
-      excludedByType: result.debugInfo.excludedByType,
-      excludedImageCount: result.debugInfo.excludedImageCount,
-      filteredImageCount: result.debugInfo.filteredImageCount,
-      processedCount: result.debugInfo.processedCount,
-      skippedCount: result.debugInfo.skippedCount,
-      finalImageCount: result.debugInfo.finalImageCount,
-      contentTypes: result.debugInfo.contentTypes,
-      finalContentTypes: result.debugInfo.finalContentTypes,
-      duplicateHeadingsRemoved: result.debugInfo.duplicateHeadingsRemoved
-    });
-  }
-  
-  const automaticExtractionDetails = {
-    title: result.title,
-    author: result.author || 'N/A',
-    publishDate: result.publishDate || 'N/A',
-    contentItems: result.content?.length || 0,
-    imageCount: imageCount,
-    contentTypes: result.content ? [...new Set(result.content.map(item => item?.type).filter(Boolean))] : [],
-    contentByType: result.content ? result.content.reduce((acc, item) => {
-      const type = item?.type || 'unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {}) : {},
-    contentPreview: result.content?.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      level: item.level || null,
-      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-      textPreview: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 200),
-      hasHtml: !!(item.html && item.html !== item.text),
-      htmlLength: item.html ? item.html.length : 0
-    })) || [],
-    totalTextLength: result.content ? result.content.reduce((sum, item) => {
-      const text = (item.text || '').replace(/<[^>]+>/g, '').trim();
-      return sum + text.length;
-    }, 0) : 0,
-    headingCount: result.content ? result.content.filter(item => item.type === 'heading').length : 0,
-    paragraphCount: result.content ? result.content.filter(item => item.type === 'paragraph').length : 0,
-    listCount: result.content ? result.content.filter(item => item.type === 'list').length : 0,
-    quoteCount: result.content ? result.content.filter(item => item.type === 'quote').length : 0,
-    hasError: !!result.error,
-    error: result.error
-  };
-  
-  log('=== EXTRACTION RESULT (AUTOMATIC MODE) ===', automaticExtractionDetails);
-  
-  // Log full content structure for debugging
-  if (result.content && result.content.length > 0) {
-    log('=== EXTRACTED CONTENT FULL STRUCTURE (AUTOMATIC) ===', {
-      totalItems: result.content.length,
-      items: result.content.map((item, idx) => ({
-        index: idx,
-        type: item.type,
-        level: item.level || null,
-        textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-        textFull: (item.text || '').replace(/<[^>]+>/g, '').trim(),
-        htmlLength: item.html ? item.html.length : 0,
-        hasImage: item.type === 'image' ? {
-          url: item.url || item.src || 'N/A',
-          alt: item.alt || 'N/A'
-        } : null,
-        listItems: item.type === 'list' && item.items ? {
-          count: item.items.length,
-          ordered: item.ordered || false,
-          itemsPreview: item.items.slice(0, 3).map((li, liIdx) => ({
-            index: liIdx,
-            text: typeof li === 'string' ? li.substring(0, 100) : (li.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100)
-          }))
-        } : null
-      }))
-    });
-  }
-  
-  // Log error details if present
-  if (result.error) {
-    logError('Automatic extraction returned error in result', {
-      error: result.error,
-      errorStack: result.errorStack
-    });
-  }
-
-  if (!result.content || result.content.length === 0) {
-    // Provide more detailed error message
-    const errorMsg = result.error 
-      ? `Automatic extraction failed: ${result.error}. The page structure may be too complex. Try using AI modes.`
-      : 'Automatic extraction returned no content. The page structure may be too complex. Try using AI modes.';
-    throw new Error(errorMsg);
-  }
-
-  // Detect language from content
-  let detectedLanguage = 'en';
-  try {
-    // Extract text for language detection
-    let text = '';
-    for (const item of result.content) {
-      if (item.text) {
-        const textOnly = item.text.replace(/<[^>]+>/g, ' ').trim();
-        text += textOnly + ' ';
-        if (text.length > 5000) break;
-      }
-    }
-    
-    if (text.trim()) {
-      // Use character-based detection (no AI needed)
-      detectedLanguage = detectLanguageByCharacters(text);
-      log('Language detected automatically', { language: detectedLanguage });
-    }
-  } catch (error) {
-    logWarn('Language detection failed, using default', error);
-  }
-
-  updateState({ progress: 15 });
-
-  return {
-    title: result.title || title || 'Untitled',
-    author: result.author || '',
-    content: result.content,
-    publishDate: result.publishDate || '',
-    detectedLanguage: detectedLanguage
-  };
-}
+// processWithoutAI moved to scripts/processing/modes.js
 
 // ============================================
 // MODE 3: EXTRACT MODE
 // ============================================
-
-async function processWithExtractMode(data) {
-  const { html, url, title, apiKey, model } = data;
-
-  log('=== EXTRACT MODE START ===');
-  log('Input data', { url, title, htmlLength: html?.length, model });
-
-  if (!html) throw new Error('No HTML content provided');
-  if (!apiKey) throw new Error('No API key provided');
-
-  // Check if processing was cancelled before extract mode processing
-  if (isCancelled()) {
-    log('Processing cancelled before extract mode processing');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
-
-  const uiLangAnalyzing = await getUILanguage();
-  const analyzingStatus = tSync('statusAnalyzingPage', uiLangAnalyzing);
-  updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: analyzingStatus, progress: 5 });
-
-  const chunks = splitHtmlIntoChunks(html, CONFIG.CHUNK_SIZE, CONFIG.CHUNK_OVERLAP);
-  
-  log('HTML split into chunks', { 
-    totalLength: html.length, 
-    chunkCount: chunks.length,
-    chunkSizes: chunks.map(c => c.length)
-  });
-
-  const uiLangExtracting = await getUILanguage();
-  const extractingContentStatus = tSync('statusExtractingContent', uiLangExtracting);
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingContentStatus, progress: 10 });
-  
-  // Check if processing was cancelled before chunk processing
-  if (isCancelled()) {
-    log('Processing cancelled before chunk processing');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
-  
-  let result;
-  if (chunks.length === 1) {
-    result = await processSingleChunk(chunks[0], url, title, apiKey, model);
-  } else {
-    result = await processMultipleChunks(chunks, url, title, apiKey, model);
-  }
-  
-  log('=== EXTRACT MODE END ===', { title: result.title, items: result.content?.length });
-  
-  if (!result.content || result.content.length === 0) {
-    throw new Error('AI Extract mode returned no content. The page may use dynamic loading. Try scrolling to load all content before saving.');
-  }
-  
-  return result;
-}
-
-async function processSingleChunk(html, url, title, apiKey, model) {
-  log('processSingleChunk', { url, htmlLength: html.length });
-  
-  // Check if processing was cancelled before single chunk processing
-  if (isCancelled()) {
-    log('Processing cancelled before single chunk processing');
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('statusCancelled', uiLang));
-  }
-  
-  const userPrompt = `Extract article content with ALL formatting preserved. Copy text EXACTLY.
-
-Base URL: ${url}
-Page title: ${title}
-
-HTML:
-${html}`;
-
-  const uiLangProcessing = await getUILanguage();
-  const processingStatus = tSync('stageAnalyzing', uiLangProcessing);
-  updateState({ stage: PROCESSING_STAGES.ANALYZING.id, status: processingStatus, progress: 10 });
-  
-  // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-  /** @type {RetryOptions} */
-  const retryOptions2 = {
-    maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-    delays: CONFIG.RETRY_DELAYS,
-    retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-  };
-  const result = await callWithRetry(
-    () => callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true),
-    retryOptions2
-  );
-  
-  log('Single chunk result', { title: result.title, items: result.content?.length });
-  
-  // Clean title from service data if present
-  if (result.title) {
-    result.title = cleanTitleFromServiceTokens(result.title, result.title);
-  }
-  
-  updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, progress: 15 });
-  return result;
-}
-
-async function processMultipleChunks(chunks, url, title, apiKey, model) {
-  log('processMultipleChunks', { chunkCount: chunks.length, url });
-  
-  const allContent = [];
-  let articleTitle = title;
-  let publishDate = '';
-
-  for (let i = 0; i < chunks.length; i++) {
-    // Check if processing was cancelled
-    if (isCancelled()) {
-      log('Processing cancelled during chunk processing');
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('statusCancelled', uiLang));
-    }
-    
-    const isFirst = i === 0;
-    
-    log(`Processing chunk ${i + 1}/${chunks.length}`, { chunkLength: chunks[i].length, isFirst });
-    
-    const progressBase = 5 + Math.floor((i / chunks.length) * 10);
-    const uiLangChunk = await getUILanguage();
-    const chunkStatus = tSync('statusProcessingChunk', uiLangChunk)
-      .replace('{current}', String(i + 1))
-      .replace('{total}', String(chunks.length));
-    updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: chunkStatus, progress: progressBase });
-
-    const systemPrompt = buildChunkSystemPrompt(i, chunks.length);
-    const userPrompt = buildChunkUserPrompt(chunks[i], url, title, i, chunks.length);
-
-    try {
-      // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-      /** @type {RetryOptions} */
-      const retryOptions4 = {
-        maxRetries: 3,
-        delays: [1000, 2000, 4000],
-        retryableStatusCodes: [429, 500, 502, 503, 504]
-      };
-      const result = await callWithRetry(
-        () => callAI(systemPrompt, userPrompt, apiKey, model, true),
-        retryOptions4
-      );
-      
-      log(`Chunk ${i + 1} result`, { title: result.title, contentItems: result.content?.length });
-      
-      if (isFirst) {
-        if (result.title) {
-          // Clean title from service data using shared utility
-          articleTitle = cleanTitleFromServiceTokens(result.title, result.title);
-        }
-        if (result.publishDate) publishDate = result.publishDate;
-      }
-      
-      if (result.content && Array.isArray(result.content)) {
-        allContent.push(...result.content);
-      }
-    } catch (error) {
-      logError(`Failed to process chunk ${i + 1}`, error);
-      throw error;
-    }
-  }
-
-  log('All chunks processed', { totalItems: allContent.length });
-  
-  const deduplicated = deduplicateContent(allContent);
-  log('After deduplication', { items: deduplicated.length });
-
-  return {
-    title: articleTitle,
-    content: deduplicated,
-    publishDate: publishDate
-  };
-}
+// processWithExtractMode, processSingleChunk, processMultipleChunks moved to scripts/processing/modes.js
 
