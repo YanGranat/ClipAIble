@@ -27,28 +27,31 @@ export function handleYoutubeSubtitlesResult(request, sender, sendResponse) {
   // that should catch this message. We save to storage for popup,
   // but DON'T return true here - let the message pass through to temporary listener
   // Save to storage for popup to use (as fallback)
-  // Use Promise-based approach since we're in a callback
+  // Use async IIFE since we're in a callback
   if (request.result && !request.error) {
-    chrome.storage.local.set({
-      lastSubtitles: {
-        subtitles: request.result.subtitles,
-        metadata: request.result.metadata,
-        timestamp: Date.now()
+    (async () => {
+      try {
+        await chrome.storage.local.set({
+          lastSubtitles: {
+            subtitles: request.result.subtitles,
+            metadata: request.result.metadata,
+            timestamp: Date.now()
+          }
+        });
+        log('🟢 Saved subtitles to storage for popup (fallback)', {
+          subtitleCount: request.result.subtitles?.length || 0
+        });
+      } catch (error) {
+        const normalized = await handleError(error, {
+          source: 'messageHandler',
+          errorType: 'storageSaveFailed',
+          logError: true,
+          createUserMessage: false,
+          context: { operation: 'saveSubtitles' }
+        });
+        logError('Failed to save subtitles to storage', normalized);
       }
-    }).then(() => {
-      log('🟢 Saved subtitles to storage for popup (fallback)', {
-        subtitleCount: request.result.subtitles?.length || 0
-      });
-    }).catch(async error => {
-      const normalized = await handleError(error, {
-        source: 'messageHandler',
-        errorType: 'storageSaveFailed',
-        logError: true,
-        createUserMessage: false,
-        context: { operation: 'saveSubtitles' }
-      });
-      logError('Failed to save subtitles to storage', normalized);
-    });
+    })();
   }
   
   // CRITICAL: Don't return true here! Let the message pass through to temporary listener
@@ -77,12 +80,12 @@ export function handleExtractYouTubeSubtitlesForSummary(request, sender, sendRes
     sendResponse({ error: 'Tab ID is required' });
     return true;
   }
-  extractYouTubeSubtitles(tabId)
-    .then(result => {
+  (async () => {
+    try {
+      const result = await extractYouTubeSubtitles(tabId);
       log('extractYouTubeSubtitlesForSummary success', { subtitleCount: result?.subtitles?.length || 0 });
       sendResponse({ success: true, result });
-    })
-    .catch(async error => {
+    } catch (error) {
       const normalized = await handleError(error, {
         source: 'messageHandler',
         errorType: 'subtitleExtractionFailed',
@@ -90,7 +93,8 @@ export function handleExtractYouTubeSubtitlesForSummary(request, sender, sendRes
         createUserMessage: false
       });
       sendResponse({ error: normalized.message || 'Failed to extract subtitles' });
-    });
+    }
+  })();
   return true;
 }
 

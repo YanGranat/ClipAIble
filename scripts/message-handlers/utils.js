@@ -14,8 +14,9 @@ import { logError, log } from '../utils/logging.js';
 export function withErrorHandling(promise, errorType, sendResponse) {
   // CRITICAL: Return true IMMEDIATELY to keep message channel open for async response
   // Then handle the promise and call sendResponse when ready
-  promise
-    .then(result => {
+  (async () => {
+    try {
+      const result = await promise;
       try {
         sendResponse(result);
       } catch (sendError) {
@@ -25,8 +26,7 @@ export function withErrorHandling(promise, errorType, sendResponse) {
           lastError: chrome.runtime.lastError?.message
         });
       }
-    })
-    .catch(async error => {
+    } catch (error) {
       logError('withErrorHandling: promise rejected', { errorType, error: error.message });
       const normalized = await handleError(error, {
         source: 'messageHandler',
@@ -44,7 +44,8 @@ export function withErrorHandling(promise, errorType, sendResponse) {
           lastError: chrome.runtime.lastError?.message
         });
       }
-    });
+    }
+  })();
   
   // Return true immediately to keep channel open
   return true;

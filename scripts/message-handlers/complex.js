@@ -104,8 +104,9 @@ export function handleExtractContentOnly(
     timestamp: Date.now()
   });
   
-  processFunction({ html, url, title, apiKey, model, mode, useCache, tabId })
-    .then(async result => {
+  (async () => {
+    try {
+      const result = await processFunction({ html, url, title, apiKey, model, mode, useCache, tabId });
       log('=== extractContentOnly: processFunction completed ===', {
         hasResult: !!result,
         resultKeys: result ? Object.keys(result) : [],
@@ -154,8 +155,7 @@ export function handleExtractContentOnly(
           }
         }
       }
-    })
-    .catch(async error => {
+    } catch (error) {
       logError('=== extractContentOnly: processFunction FAILED ===', {
         error: error?.message || String(error),
         errorStack: error?.stack,
@@ -175,7 +175,8 @@ export function handleExtractContentOnly(
         code: normalized.code,
         timestamp: Date.now()
       });
-    });
+    }
+  })();
   return true;
 }
 

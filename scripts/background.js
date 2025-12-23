@@ -180,7 +180,11 @@ setTimeout(() => {
   // CRITICAL: On extension reload/restart, ALWAYS reset all generation flags AND clear summary
   // This ensures clean state after extension reload
   // Check if this is a fresh start (no active processing) and reset flags
-  chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp']).then(/** @type {ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number}} */ (result) => {
+  (async () => {
+    try {
+      const result = /** @type {ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number}} */ (
+        await chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp'])
+      );
     /** @type {Partial<ProcessingState>|undefined} */
     const processingState = result.processingState && typeof result.processingState === 'object' ? result.processingState : undefined;
     const hasProcessingState = processingState && processingState.isProcessing === true;
@@ -201,17 +205,18 @@ setTimeout(() => {
           summaryAge,
           threshold: RESET_THRESHOLD
         });
-        chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp'])
-          .catch(async error => {
-            const normalized = await handleError(error, {
-              source: 'initialization',
-              errorType: 'storageRemoveFailed',
-              logError: false,
-              createUserMessage: false,
-              context: { operation: 'removeSummaryText' }
-            });
-            logWarn('Failed to remove summary_text on reload', normalized);
+        try {
+          await chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp']);
+        } catch (error) {
+          const normalized = await handleError(error, {
+            source: 'initialization',
+            errorType: 'storageRemoveFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'removeSummaryText' }
           });
+          logWarn('Failed to remove summary_text on reload', normalized);
+        }
       } else {
         log('Summary is recent - may keep (quick restart)', {
           summaryAge,
@@ -228,17 +233,18 @@ setTimeout(() => {
           timeSinceUpdate,
           threshold: RESET_THRESHOLD
         });
-        chrome.storage.local.remove(['processingState'])
-          .catch(async error => {
-            const normalized = await handleError(error, {
-              source: 'initialization',
-              errorType: 'storageRemoveFailed',
-              logError: false,
-              createUserMessage: false,
-              context: { operation: 'removeProcessingState' }
-            });
-            logWarn('Failed to remove processingState on reload', normalized);
+        try {
+          await chrome.storage.local.remove(['processingState']);
+        } catch (error) {
+          const normalized = await handleError(error, {
+            source: 'initialization',
+            errorType: 'storageRemoveFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'removeProcessingState' }
           });
+          logWarn('Failed to remove processingState on reload', normalized);
+        }
       } else {
         log('ProcessingState is recent - may restore (quick restart)', {
           timeSinceUpdate,
@@ -256,20 +262,21 @@ setTimeout(() => {
           timeSinceStart,
           threshold: RESET_THRESHOLD
         });
-        chrome.storage.local.set({
-          summary_generating: false,
-          summary_generating_start_time: null
-        })
-          .catch(async error => {
-            const normalized = await handleError(error, {
-              source: 'initialization',
-              errorType: 'storageSetFailed',
-              logError: false,
-              createUserMessage: false,
-              context: { operation: 'clearSummaryGenerating' }
-            });
-            logWarn('Failed to clear summary_generating on reload', normalized);
+        try {
+          await chrome.storage.local.set({
+            summary_generating: false,
+            summary_generating_start_time: null
           });
+        } catch (error) {
+          const normalized = await handleError(error, {
+            source: 'initialization',
+            errorType: 'storageSetFailed',
+            logError: false,
+            createUserMessage: false,
+            context: { operation: 'clearSummaryGenerating' }
+          });
+          logWarn('Failed to clear summary_generating on reload', normalized);
+        }
       } else {
         log('summary_generating is recent - may restore (quick restart)', {
           timeSinceStart,
@@ -280,8 +287,9 @@ setTimeout(() => {
     
     // CRITICAL: After resetting stale flags, restore state only if it's recent (quick restart)
     // This handles service worker restarts during active generation, but resets on extension reload
-    restoreStateFromStorage().then(() => {
-      setTimeout(() => {
+    try {
+      await restoreStateFromStorage();
+      setTimeout(async () => {
         try {
           const state = getProcessingState();
           
@@ -305,9 +313,12 @@ setTimeout(() => {
             }
           } else {
             // CRITICAL: Check summary_generating only if very recent (< 1 minute)
-            chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']).then(/** @type {{summary_generating?: boolean, summary_generating_start_time?: number}} */ (result) => {
-              const startTime = result.summary_generating_start_time;
-              if (result.summary_generating && startTime && typeof startTime === 'number') {
+            try {
+              const summaryResult = /** @type {{summary_generating?: boolean, summary_generating_start_time?: number}} */ (
+                await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time'])
+              );
+              const startTime = summaryResult.summary_generating_start_time;
+              if (summaryResult.summary_generating && startTime && typeof startTime === 'number') {
                 const timeSinceStart = Date.now() - startTime;
                 
                 if (timeSinceStart < RESET_THRESHOLD) {
@@ -323,55 +334,52 @@ setTimeout(() => {
                     timeSinceStart,
                     threshold: RESET_THRESHOLD
                   });
-                  chrome.storage.local.set({
+                  await chrome.storage.local.set({
                     summary_generating: false,
                     summary_generating_start_time: null
                   });
                 }
               }
-            })
-              .catch(async error => {
-                const normalized = await handleError(error, {
-                  source: 'initialization',
-                  errorType: 'storageGetFailed',
-                  logError: false,
-                  createUserMessage: false,
-                  context: { operation: 'checkSummaryGenerating' }
-                });
-                logWarn('Failed to check summary_generating on service worker start', normalized);
+            } catch (error) {
+              const normalized = await handleError(error, {
+                source: 'initialization',
+                errorType: 'storageGetFailed',
+                logError: false,
+                createUserMessage: false,
+                context: { operation: 'checkSummaryGenerating' }
               });
+              logWarn('Failed to check summary_generating on service worker start', normalized);
+            }
           }
         } catch (error) {
-          handleError(error, {
+          const normalized = await handleError(error, {
             source: 'initialization',
             errorType: 'keepAliveRestoreFailed',
             logError: false,
             createUserMessage: false
-          }).then(normalized => {
-            logWarn('Failed to restore keep-alive on service worker start', normalized);
           });
+          logWarn('Failed to restore keep-alive on service worker start', normalized);
         }
       }, 100);
-    })
-      .catch(async error => {
-        const normalized = await handleError(error, {
-          source: 'initialization',
-          errorType: 'stateRestoreFailed',
-          logError: false,
-          createUserMessage: false
-        });
-        logWarn('Failed to restore state on service worker start', normalized);
-      });
-  })
-    .catch(async error => {
+    } catch (error) {
       const normalized = await handleError(error, {
         source: 'initialization',
-        errorType: 'stateCheckFailed',
+        errorType: 'stateRestoreFailed',
         logError: false,
         createUserMessage: false
       });
-      logWarn('Failed to check state on extension load', normalized);
+      logWarn('Failed to restore state on service worker start', normalized);
+    }
+  } catch (error) {
+    const normalized = await handleError(error, {
+      source: 'initialization',
+      errorType: 'stateCheckFailed',
+      logError: false,
+      createUserMessage: false
     });
+    logWarn('Failed to check state on extension load', normalized);
+  }
+  })();
 
   // Run initialization tasks (migration and default settings)
   runInitialization();
@@ -684,22 +692,25 @@ try {
       });
       
       // CRITICAL: Log full state of voice storage after change
-      chrome.storage.local.get(['audio_voice', 'audio_voice_map', 'audio_provider']).then((currentState) => {
-        log('[ClipAIble Background] ===== CURRENT VOICE STATE AFTER CHANGE =====', {
-          timestamp: Date.now(),
-          audio_provider: currentState.audio_provider,
-          audio_voice: currentState.audio_voice,
-          audio_voice_type: typeof currentState.audio_voice,
-          audio_voice_map: currentState.audio_voice_map,
-          audio_voice_map_type: typeof currentState.audio_voice_map,
-          audio_voice_map_keys: currentState.audio_voice_map ? Object.keys(currentState.audio_voice_map) : [],
-          audio_voice_map_has_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map,
-          audio_voice_map_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map ? currentState.audio_voice_map.current : null,
-          audio_voice_map_current_keys: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map && typeof currentState.audio_voice_map.current === 'object' ? Object.keys(currentState.audio_voice_map.current) : []
-        });
-      }).catch((error) => {
-        logError('[ClipAIble Background] Failed to read current voice state after change', error);
-      });
+      (async () => {
+        try {
+          const currentState = await chrome.storage.local.get(['audio_voice', 'audio_voice_map', 'audio_provider']);
+          log('[ClipAIble Background] ===== CURRENT VOICE STATE AFTER CHANGE =====', {
+            timestamp: Date.now(),
+            audio_provider: currentState.audio_provider,
+            audio_voice: currentState.audio_voice,
+            audio_voice_type: typeof currentState.audio_voice,
+            audio_voice_map: currentState.audio_voice_map,
+            audio_voice_map_type: typeof currentState.audio_voice_map,
+            audio_voice_map_keys: currentState.audio_voice_map ? Object.keys(currentState.audio_voice_map) : [],
+            audio_voice_map_has_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map,
+            audio_voice_map_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map ? currentState.audio_voice_map.current : null,
+            audio_voice_map_current_keys: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map && typeof currentState.audio_voice_map.current === 'object' ? Object.keys(currentState.audio_voice_map.current) : []
+          });
+        } catch (error) {
+          logError('[ClipAIble Background] Failed to read current voice state after change', error);
+        }
+      })();
     }
     
     if (areaName === 'local') {
@@ -1246,8 +1257,9 @@ async function startArticleProcessing(data) {
     
     const processingStartTimeRef = { processingStartTime };
     
-    processVideoPage(data, videoInfo)
-      .then(async result => {
+    (async () => {
+      try {
+        const result = await processVideoPage(data, videoInfo);
         log('Video processing complete', { 
           title: result.title, 
           contentItems: result.content?.length || 0 
@@ -1260,8 +1272,7 @@ async function startArticleProcessing(data) {
           processingStartTimeRef,
           continueProcessingPipeline
         );
-      })
-      .catch(async error => {
+      } catch (error) {
         await handleProcessingError(error, data, stopKeepAlive, {
           source: 'videoProcessing',
           errorType: 'videoProcessingFailed',
@@ -1270,7 +1281,8 @@ async function startArticleProcessing(data) {
             videoId: videoInfo.videoId
           }
         });
-      });
+      }
+    })();
     return true;
   }
   
@@ -1317,8 +1329,9 @@ async function startArticleProcessing(data) {
     processPromise = processWithExtractMode(data);
   }
   
-  processPromise
-    .then(async result => {
+  (async () => {
+    try {
+      const result = await processPromise;
       log('=== startArticleProcessing: processFunction completed ===', {
         hasResult: !!result,
         resultKeys: result ? Object.keys(result) : [],
@@ -1332,8 +1345,7 @@ async function startArticleProcessing(data) {
         processingStartTimeRef,
         continueProcessingPipeline
       );
-    })
-    .catch(async error => {
+    } catch (error) {
       await handleProcessingError(error, data, stopKeepAlive, {
         source: 'articleProcessing',
         errorType: 'contentExtractionFailed',
@@ -1343,7 +1355,8 @@ async function startArticleProcessing(data) {
           mode: data.mode || data.extractionMode
         }
       });
-    });
+    }
+  })();
   
   return true;
 }

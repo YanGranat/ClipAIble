@@ -132,50 +132,34 @@ export async function initializeDefaultSettings() {
  */
 export async function runInitialization() {
   // Migrate existing API keys to encrypted format (fire and forget)
-  try {
-    migrateApiKeys()
-      .catch(async error => {
-        const normalized = await handleError(error, {
-          source: 'initialization',
-          errorType: 'apiKeyMigrationFailed',
-          logError: true,
-          createUserMessage: false
-        });
-        logError('API keys migration failed', normalized);
+  (async () => {
+    try {
+      await migrateApiKeys();
+    } catch (error) {
+      const normalized = await handleError(error, {
+        source: 'initialization',
+        errorType: 'apiKeyMigrationFailed',
+        logError: true,
+        createUserMessage: false
       });
-  } catch (error) {
-    handleError(error, {
-      source: 'initialization',
-      errorType: 'apiKeyMigrationStartFailed',
-      logError: true,
-      createUserMessage: false
-    }).then(normalized => {
-      logError('Failed to start migration', normalized);
-    });
-  }
+      logError('API keys migration failed', normalized);
+    }
+  })();
 
   // Initialize default settings (fire and forget)
-  try {
-    initializeDefaultSettings()
-      .catch(async error => {
-        const normalized = await handleError(error, {
-          source: 'initialization',
-          errorType: 'settingsInitializationFailed',
-          logError: true,
-          createUserMessage: false
-        });
-        logError('Default settings initialization failed', normalized);
+  (async () => {
+    try {
+      await initializeDefaultSettings();
+    } catch (error) {
+      const normalized = await handleError(error, {
+        source: 'initialization',
+        errorType: 'settingsInitializationFailed',
+        logError: true,
+        createUserMessage: false
       });
-  } catch (error) {
-    handleError(error, {
-      source: 'initialization',
-      errorType: 'settingsInitializationStartFailed',
-      logError: true,
-      createUserMessage: false
-    }).then(normalized => {
-      logError('Failed to initialize default settings', normalized);
-    });
-  }
+      logError('Default settings initialization failed', normalized);
+    }
+  })();
 }
 
 
