@@ -34,7 +34,6 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
   - Plusieurs méthodes d'extraction avec replis
   - Priorité : sous-titres manuels > générés automatiquement > traduits
   - Traitement IA : supprime les horodatages, fusionne les paragraphes, corrige les erreurs
-  - Repli de transcription audio lorsque les sous-titres ne sont pas disponibles
 - **Détection intelligente** : Trouve le contenu principal de l'article, supprime automatiquement les éléments indésirables
 - **Stratégies de repli avancées** : 6 stratégies différentes pour une extraction de contenu fiable
 - **Préserve la structure** : Titres, images, blocs de code, tableaux, notes de bas de page
@@ -72,7 +71,6 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 - **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v3.0.0)
   - Extraction directe des sous-titres (aucune clé API de YouTube/Vimeo requise)
   - Traitement IA : supprime les horodatages, fusionne les paragraphes, corrige les erreurs
-  - Repli de transcription audio : transcription automatique lorsque les sous-titres ne sont pas disponibles (nécessite une clé API OpenAI avec le modèle gpt-4o-transcribe)
   - Intégration complète du pipeline : traduction, table des matières, résumé, tous les formats d'export
 - **Génération de résumé** : Créez des résumés IA détaillés de n'importe quel article ou vidéo
   - Cliquez sur le bouton **"Générer un résumé"** pour créer un résumé complet
@@ -225,7 +223,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 
 | Fournisseur | Idéal pour | Audio | Traduction d'images |
 |-------------|------------|-------|---------------------|
-| **OpenAI** | Usage général, export audio, transcription vidéo | ✅ (11 voix) | ❌ |
+| **OpenAI** | Usage général, export audio | ✅ (11 voix) | ❌ |
 | **Gemini** | Extraction rapide, traduction d'images, export audio (30 voix) | ✅ (30 voix) | ✅ |
 | **Claude** | Articles longs, pages complexes | ❌ | ❌ |
 | **Grok** | Tâches de raisonnement rapides | ❌ | ❌ |

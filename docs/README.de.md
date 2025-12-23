@@ -74,7 +74,6 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 - **Video-Unterstützung**: Untertitel von YouTube/Vimeo-Videos extrahieren und in Artikel umwandeln (v3.0.0)
   - Direkte Untertitel-Extraktion (keine API-Schlüssel von YouTube/Vimeo erforderlich)
   - KI-Verarbeitung: entfernt Zeitstempel, fügt Absätze zusammen, korrigiert Fehler
-  - Audio-Transkriptions-Fallback: automatische Transkription, wenn keine Untertitel verfügbar sind (erfordert OpenAI API-Schlüssel mit gpt-4o-transcribe Modell)
   - Vollständige Pipeline-Integration: Übersetzung, Inhaltsverzeichnis, Zusammenfassung, alle Exportformate
 - **Zusammenfassungs-Generierung**: Erstellen Sie detaillierte KI-Zusammenfassungen von Artikeln oder Videos
   - Klicken Sie auf die Schaltfläche **"Zusammenfassung erstellen"**, um eine umfassende Zusammenfassung zu erstellen

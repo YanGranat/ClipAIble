@@ -36,7 +36,6 @@ All formats support **translation to 11 languages** — even translating text on
   - Multiple extraction methods with fallbacks
   - Priority: manual subtitles > auto-generated > translated
   - AI processing: removes timestamps, merges paragraphs, fixes errors
-  - Audio transcription fallback when subtitles unavailable
 - **Smart detection**: Finds main article content, removes unnecessary elements automatically
 - **Enhanced fallback strategies**: 6 different strategies for reliable content extraction
 - **Preserves structure**: Headings, images, code blocks, tables, footnotes
@@ -76,7 +75,6 @@ All formats support **translation to 11 languages** — even translating text on
 - **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles
   - Direct subtitle extraction (no API keys required from YouTube/Vimeo)
   - AI processing: removes timestamps, merges paragraphs, fixes errors
-  - Audio transcription fallback: automatic transcription when subtitles unavailable (requires OpenAI API key with gpt-4o-transcribe model)
   - Full pipeline integration: translation, TOC, abstract, all export formats
 - **Summary Generation**: Generate detailed AI summaries of any article or video
   - Click **"Generate Summary"** button to create comprehensive summary
@@ -241,7 +239,7 @@ All formats support **translation to 11 languages** — even translating text on
 
 | Provider | Best For | Audio | Image Translation |
 |----------|----------|-------|-------------------|
-| **OpenAI** | General use, Audio export, Video transcription | ✅ (11 voices) | ❌ |
+| **OpenAI** | General use, Audio export | ✅ (11 voices) | ❌ |
 | **Gemini** | Fast extraction, Image translation, Audio export (30 voices) | ✅ (30 voices) | ✅ |
 | **Claude** | Long articles, Complex pages | ❌ | ❌ |
 | **Grok** | Fast reasoning tasks | ❌ | ❌ |
