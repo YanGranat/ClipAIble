@@ -47,6 +47,11 @@ import { initSettings } from './settings.js';
 import { initCore } from './core.js';
 import { initHandlers } from './handlers.js';
 import { initializeDOMElements, initializeModules, finalizeInitialization } from './utils/init-helpers.js';
+import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS } from './constants.js';
+import { getElement, setElementDisplay, setElementGroupDisplay, setDisplayForIds } from './utils/dom-helpers.js';
+import { markdownToHtml, formatTime, escapeHtml, formatRelativeDate } from './utils/format-helpers.js';
+import { debouncedSaveSettings, saveAudioVoice } from './utils/settings-helpers.js';
+import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils/timer-helpers.js';
 
 // Function to send error to service worker for centralized logging
 async function sendErrorToServiceWorker(message, error, context = {}) {
@@ -161,112 +166,6 @@ window.addEventListener('unhandledrejection', (event) => {
   });
 });
 
-const STORAGE_KEYS = {
-  API_KEY: 'openai_api_key',
-  CLAUDE_API_KEY: 'claude_api_key',
-  GEMINI_API_KEY: 'gemini_api_key',
-  GROK_API_KEY: 'grok_api_key',
-  OPENROUTER_API_KEY: 'openrouter_api_key',
-  GOOGLE_API_KEY: 'google_api_key',
-  API_PROVIDER: 'api_provider',
-  MODEL: 'openai_model',
-  MODEL_BY_PROVIDER: 'model_by_provider', // Store selected model for each provider
-  CUSTOM_MODELS: 'custom_models',
-  HIDDEN_MODELS: 'hidden_models',
-  MODE: 'extraction_mode',
-  USE_CACHE: 'use_selector_cache',
-  ENABLE_CACHE: 'enable_selector_caching',
-  ENABLE_STATS: 'enable_statistics',
-  OUTPUT_FORMAT: 'output_format',
-  GENERATE_TOC: 'generate_toc',
-  GENERATE_ABSTRACT: 'generate_abstract',
-  PAGE_MODE: 'page_mode',
-  LANGUAGE: 'pdf_language',
-  TRANSLATE_IMAGES: 'translate_images',
-  STYLE_PRESET: 'pdf_style_preset',
-  FONT_FAMILY: 'pdf_font_family',
-  FONT_SIZE: 'pdf_font_size',
-  BG_COLOR: 'pdf_bg_color',
-  TEXT_COLOR: 'pdf_text_color',
-  HEADING_COLOR: 'pdf_heading_color',
-  LINK_COLOR: 'pdf_link_color',
-  THEME: 'popup_theme',
-  UI_LANGUAGE: 'ui_language',
-  AUDIO_PROVIDER: 'audio_provider',
-  ELEVENLABS_API_KEY: 'elevenlabs_api_key',
-  ELEVENLABS_MODEL: 'elevenlabs_model',
-  ELEVENLABS_STABILITY: 'elevenlabs_stability',
-  ELEVENLABS_SIMILARITY: 'elevenlabs_similarity',
-  ELEVENLABS_STYLE: 'elevenlabs_style',
-  ELEVENLABS_SPEAKER_BOOST: 'elevenlabs_speaker_boost',
-  ELEVENLABS_FORMAT: 'elevenlabs_format',
-  QWEN_API_KEY: 'qwen_api_key',
-  RESPEECHER_API_KEY: 'respeecher_api_key',
-  RESPEECHER_TEMPERATURE: 'respeecher_temperature',
-  RESPEECHER_REPETITION_PENALTY: 'respeecher_repetition_penalty',
-  RESPEECHER_TOP_P: 'respeecher_top_p',
-  GOOGLE_TTS_API_KEY: 'google_tts_api_key',
-  GOOGLE_TTS_MODEL: 'google_tts_model',
-  AUDIO_VOICE: 'audio_voice',
-  AUDIO_VOICE_MAP: 'audio_voice_map',
-  AUDIO_SPEED: 'audio_speed',
-  OPENAI_INSTRUCTIONS: 'openai_instructions',
-  GOOGLE_TTS_VOICE: 'google_tts_voice',
-  GOOGLE_TTS_PROMPT: 'google_tts_prompt',
-  SUMMARY_TEXT: 'summary_text',
-  SUMMARY_GENERATING: 'summary_generating'
-};
-
-// Default style values
-const DEFAULT_STYLES = {
-  fontFamily: '',
-  fontSize: '31',
-  bgColor: '#303030',
-  textColor: '#b9b9b9',
-  headingColor: '#cfcfcf',
-  linkColor: '#6cacff'
-};
-
-// Style presets - carefully designed color schemes
-// Each preset tested for WCAG AA contrast (min 4.5:1 for text)
-const STYLE_PRESETS = {
-  // Dark theme - user's custom default
-  dark: {
-    bgColor: '#303030',
-    textColor: '#b9b9b9',
-    headingColor: '#cfcfcf',
-    linkColor: '#6cacff'
-  },
-  // Light theme - Modern clean design
-  // Slightly off-white to reduce eye strain
-  light: {
-    bgColor: '#f8f9fa',      // Soft white (not pure white)
-    textColor: '#343a40',    // Dark gray text (contrast ~10:1)
-    headingColor: '#212529', // Near-black headings
-    linkColor: '#0d6efd'     // Bootstrap blue links
-  },
-  // Sepia theme - E-reader style (Kindle-inspired)
-  // Warm tones for comfortable extended reading
-  sepia: {
-    bgColor: '#faf4e8',      // Warm cream background
-    textColor: '#5d4e37',    // Warm brown text (contrast ~7:1)
-    headingColor: '#3d2e1f', // Dark chocolate headings
-    linkColor: '#8b6914'     // Muted gold links
-  },
-  // High Contrast - Accessibility focused
-  // Maximum contrast for visual impairment (WCAG AAA: 21:1)
-  contrast: {
-    bgColor: '#000000',      // Pure black
-    textColor: '#ffffff',    // Pure white (contrast 21:1)
-    headingColor: '#ffd700', // Gold headings (softer than yellow)
-    linkColor: '#00bfff'     // DeepSkyBlue (softer than cyan)
-  }
-};
-
-const MODE_HINTS = {
-  selector: 'AI finds article blocks, script extracts content',
-  extract: 'AI extracts and processes all content'
-};
 
 // DOM Elements
 const elements = {
@@ -404,280 +303,35 @@ const stateRefs = {
   currentStartTime: currentStartTimeRef
 };
 
-// Markdown to HTML converter
-function markdownToHtml(markdown) {
-  if (!markdown) return '';
-  
-  let html = markdown;
-  
-  // Code blocks first (to avoid processing markdown inside code)
-  const codeBlocks = [];
-  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
-    const id = `CODE_BLOCK_${codeBlocks.length}`;
-    codeBlocks.push(`<pre><code>${code.trim()}</code></pre>`);
-    return id;
-  });
-  
-  // Inline code
-  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  
-  // Headers (process from largest to smallest to avoid conflicts)
-  html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
-  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-  
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  
-  // Horizontal rules
-  html = html.replace(/^(\s*[-*]{3,}\s*)$/gm, '<hr>');
-  
-  // Bold
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
-  
-  // Italic
-  html = html.replace(/(?<!`)(?<!\*)\*(?!\*)([^*`]+?)(?<!\*)\*(?!\*)(?!`)/g, '<em>$1</em>');
-  html = html.replace(/(?<!`)(?<!_)_(?!_)([^_`]+?)(?<!_)_(?!_)(?!`)/g, '<em>$1</em>');
-  
-  // Restore code blocks
-  codeBlocks.forEach((codeBlock, index) => {
-    html = html.replace(`CODE_BLOCK_${index}`, codeBlock);
-  });
-  
-  // Convert newlines to <br>
-  const lines = html.split('\n');
-  const processedLines = lines.map(line => {
-    if (line.match(/^<(h[1-6])>.*<\/\1>$/)) {
-      return line;
-    }
-    if (line.trim() === '<hr>') {
-      return line;
-    }
-    return line + '<br>';
-  });
-  
-  html = processedLines.join('');
-  
-  // Clean up
-  html = html.replace(/<br><\/(h[1-6])>/g, '</$1>');
-  html = html.replace(/<br><hr>/g, '<hr>');
-  html = html.replace(/<hr><br>/g, '<hr>');
-  
-  return html;
-}
-
 // Helper functions for safe element access and manipulation
-/**
- * Safely get element from elements object
- * @param {string} key - Key in elements object
- * @returns {HTMLElement|null} Element or null if not found
- */
-function getElement(key) {
-  const el = elements[key];
-  if (!el) {
-    logWarn(`Element not found: ${key}`);
-    return null;
-  }
-  return el;
+// Wrapped to pass elements object
+function getElementLocal(key) {
+  return getElement(key, elements);
 }
 
-/**
- * Safely set display style for element
- * @param {string} key - Key in elements object
- * @param {string} displayValue - CSS display value ('flex', 'none', 'block', etc.)
- */
-function setElementDisplay(key, displayValue) {
-  const el = getElement(key);
-  if (el) {
-    el.style.display = displayValue;
-  }
+function setElementDisplayLocal(key, displayValue) {
+  return setElementDisplay(key, displayValue, elements);
 }
 
-/**
- * Safely set display style for element group (finds .setting-item parent)
- * @param {string} key - Key in elements object
- * @param {string} displayValue - CSS display value
- */
-function setElementGroupDisplay(key, displayValue) {
-  const el = getElement(key);
-  if (el) {
-    const group = el.closest('.setting-item') || el;
-    if (group instanceof HTMLElement) {
-      group.style.display = displayValue;
-    }
-  }
+function setElementGroupDisplayLocal(key, displayValue) {
+  return setElementGroupDisplay(key, displayValue, elements);
 }
 
-function setDisplayForIds(ids, displayValue) {
-  ids.forEach(id => {
-    const el = document.getElementById(id);
-    if (!el) {
-      logWarn(`Element not found by ID: ${id}`);
-      return;
-    }
-    const group = el.closest('.setting-item') || el;
-    if (group instanceof HTMLElement) {
-      group.style.display = displayValue;
-    }
-  });
+// Wrapped functions to pass required parameters
+function startTimerDisplayLocal(startTime) {
+  return startTimerDisplay(startTime, currentStartTimeRef, timerIntervalRef, elements);
 }
 
-// Debounce timer for settings save
-let settingsSaveTimer = null;
-
-// Format seconds to MM:SS
-function formatTime(seconds) {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+function stopTimerDisplayLocal() {
+  return stopTimerDisplay(currentStartTimeRef, timerIntervalRef);
 }
 
-// Debounced settings save - saves settings after 500ms of inactivity
-let isSavingSettings = false; // Flag to prevent concurrent saves
-function debouncedSaveSettings(key, value, callback = null) {
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-  }
-  
-  settingsSaveTimer = setTimeout(async () => {
-    // Prevent concurrent saves
-    if (isSavingSettings) {
-      // If already saving, schedule another save after current one completes
-      if (callback) {
-        const originalCallback = callback;
-        callback = async () => {
-          await originalCallback();
-          // Retry save after current one completes
-          setTimeout(() => debouncedSaveSettings(key, value, null), CONFIG.UI_RETRY_DELAY);
-        };
-      } else {
-        // Retry save after current one completes
-        setTimeout(() => debouncedSaveSettings(key, value, callback), CONFIG.UI_RETRY_DELAY);
-      }
-      return;
-    }
-    
-    isSavingSettings = true;
-    try {
-      // DETAILED LOGGING: Saving to storage
-      log('[ClipAIble Popup] ===== debouncedSaveSettings: ABOUT TO SAVE =====', {
-        timestamp: Date.now(),
-        key,
-        keyType: typeof key,
-        value,
-        valueType: typeof value,
-        isAudioVoice: key === 'audio_voice' || key === STORAGE_KEYS.AUDIO_VOICE,
-        isAudioVoiceMap: key === 'audio_voice_map' || key === STORAGE_KEYS.AUDIO_VOICE_MAP,
-        isNumeric: /^\d+$/.test(String(value)),
-        isObject: typeof value === 'object' && !Array.isArray(value),
-        objectKeys: typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : null
-      });
-      
-      await chrome.storage.local.set({ [key]: value });
-      
-      // DETAILED LOGGING: Saved to storage
-      log('[ClipAIble Popup] ===== debouncedSaveSettings: SAVED TO STORAGE =====', {
-        timestamp: Date.now(),
-        key,
-        value,
-        saved: true,
-        storageKey: key
-      });
-      
-      // CRITICAL: Send setting change to service worker for centralized logging
-      try {
-        chrome.runtime.sendMessage({
-          action: 'logSetting',
-          data: {
-            key,
-            value,
-            valueType: typeof value,
-            timestamp: Date.now()
-          }
-        }).catch(() => {
-          // Ignore errors when sending log (non-critical)
-        });
-      } catch (sendError) {
-        // Ignore errors when sending log (non-critical)
-      }
-      
-      if (callback) await callback();
-    } catch (error) {
-      logError('Failed to save settings', error);
-    } finally {
-      isSavingSettings = false;
-      settingsSaveTimer = null;
-    }
-  }, CONFIG.UI_DEBOUNCE_DELAY);
+function updateTimerDisplayLocal() {
+  return updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements);
 }
 
-// Save audio voice per provider with backward-compatible flat key
-function saveAudioVoice(provider, voice) {
-  if (!provider) return;
-  if (!audioVoiceMap || typeof audioVoiceMap !== 'object' || Array.isArray(audioVoiceMap)) {
-    audioVoiceMap = {};
-  }
-  audioVoiceMap[provider] = voice;
-  debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, voice);
-  debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE_MAP, audioVoiceMap);
-}
-
-// Start the timer display updates
-function startTimerDisplay(startTime) {
-  if (!startTime) {
-    logWarn('startTimerDisplay called without startTime');
-    return;
-  }
-  currentStartTimeRef.current = startTime;
-  if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-  // Update immediately, then set interval
-  updateTimerDisplay();
-  timerIntervalRef.current = setInterval(updateTimerDisplay, 1000);
-  log('Timer started', { startTime, currentStartTime: currentStartTimeRef.current });
-}
-
-// Stop the timer display
-function stopTimerDisplay() {
-  if (timerIntervalRef.current) {
-    clearInterval(timerIntervalRef.current);
-    timerIntervalRef.current = null;
-  }
-  currentStartTimeRef.current = null;
-}
-
-// Update timer display in status text
-function updateTimerDisplay() {
-  if (!currentStartTimeRef.current) {
-    // CRITICAL: Defer getState call to avoid blocking user interactions
-    // Use setTimeout to yield to event loop before making the call
-    setTimeout(() => {
-      chrome.runtime.sendMessage({ action: 'getState' }).then(state => {
-        if (state && state.isProcessing && state.startTime) {
-          currentStartTimeRef.current = state.startTime;
-          updateTimerDisplay(); // Retry after setting startTime
-        }
-      }).catch(() => {});
-    }, 0);
-    return;
-  }
-  const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
-  const timerSpan = document.getElementById('timerDisplay');
-  if (timerSpan) {
-    timerSpan.textContent = formatTime(elapsed);
-  } else {
-    // Timer element not found - try to recreate it if status is processing
-    if (elements.statusText) {
-      // Extract text without timer if it exists
-      const textContent = elements.statusText.textContent || elements.statusText.innerText || '';
-      const statusText = textContent.replace(/\s*\(\d{2}:\d{2}\)\s*$/, '').trim();
-      const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
-      // SECURITY: Escape status text to prevent XSS attacks
-      const escapedStatusText = escapeHtmlUtil(statusText);
-      elements.statusText.innerHTML = `${escapedStatusText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
-    }
-  }
+function saveAudioVoiceLocal(provider, voice) {
+  return saveAudioVoice(provider, voice, audioVoiceMap);
 }
 
 // Apply UI localization (kept for backward compatibility, now uses uiModule)
@@ -829,10 +483,10 @@ async function init() {
     const modules = initializeModules({
       elements,
       formatTime,
-      startTimerDisplay,
-      getElement,
-      setElementDisplay,
-      setElementGroupDisplay,
+      startTimerDisplay: startTimerDisplayLocal,
+      getElement: getElementLocal,
+      setElementDisplay: setElementDisplayLocal,
+      setElementGroupDisplay: setElementGroupDisplayLocal,
       setDisplayForIds,
       currentStartTimeRef,
       timerIntervalRef,
@@ -841,6 +495,7 @@ async function init() {
       DEFAULT_STYLES,
       STYLE_PRESETS,
       debouncedSaveSettings,
+      saveAudioVoice: saveAudioVoiceLocal,
       setCustomSelectValue,
       applyTheme,
       markdownToHtml,
@@ -857,7 +512,7 @@ async function init() {
       logWarn,
       setStatus,
       setProgress,
-      stopTimerDisplay,
+      stopTimerDisplay: stopTimerDisplayLocal,
       decryptApiKey,
       maskApiKey,
       encryptApiKey,
@@ -1479,7 +1134,7 @@ function setStatus(type, text, startTime = null) {
     elements.statusText.innerHTML = `${escapedText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
     // Ensure timer is running if we have a startTime
     if (effectiveStartTime && !timerIntervalRef.current) {
-      startTimerDisplay(effectiveStartTime);
+      startTimerDisplayLocal(effectiveStartTime);
     }
   } else if (type === 'error') {
     elements.statusDot.classList.add('error');
@@ -1642,27 +1297,6 @@ async function displayStats(stats) {
 
 // DEPRECATED: Use escapeHtmlUtil from scripts/utils/html.js instead
 // Kept for backward compatibility with existing code
-function escapeHtml(text) {
-  // Use the imported utility function for consistency
-  return escapeHtmlUtil(text);
-}
-
-function formatRelativeDate(date) {
-  const now = new Date();
-  const dateTime = date instanceof Date ? date.getTime() : (typeof date === 'number' ? date : Date.now());
-  const diffMs = now.getTime() - dateTime;
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  const minutes = Math.floor(diffMs / 60000);
-  const hours = Math.floor(diffMs / 3600000);
-  const days = Math.floor(diffMs / 86400000);
-  const weeks = Math.floor(diffMs / 604800000);
-
-  if (minutes < 1) return rtf.format(-0, 'minute');
-  if (minutes < 60) return rtf.format(-minutes, 'minute');
-  if (hours < 24) return rtf.format(-hours, 'hour');
-  if (days < 7) return rtf.format(-days, 'day');
-  return rtf.format(-weeks, 'week');
-}
 
 async function displayCacheStats(stats) {
   const domainsEl = document.getElementById('cacheDomains');

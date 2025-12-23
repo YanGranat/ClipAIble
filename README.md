@@ -410,13 +410,12 @@ ClipAIble caches AI-generated selectors by domain:
 clipaible/
 ├── manifest.json       # Extension config
 ├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # Main orchestration (reduced from 2841 to 1880 lines, -961 lines)
+│   ├── popup.js       # Main orchestration (1310 lines, v3.2.6)
+│   ├── constants.js   # Constants (STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS)
 │   ├── core.js        # Business logic facade (150 lines)
-│   ├── handlers.js    # Event handlers (reduced from 1935+ to 1703 lines, -232+ lines)
-│   ├── handlers/      # Handler sub-modules (v3.2.3+)
-│   │   └── api-keys.js # API key toggle handlers
-│   ├── utils/         # Popup utilities (v3.2.3+)
-│   │   └── init-helpers.js # Initialization helpers
+│   ├── handlers.js    # Event handlers facade (478 lines, v3.2.6)
+│   ├── handlers/      # Handler sub-modules (8 modules: api-keys, panels, format, style, model, audio, summary, theme, tts-keys)
+│   ├── utils/         # Popup utilities (5 modules: init-helpers, dom-helpers, format-helpers, settings-helpers, timer-helpers)
 │   ├── ui.js          # UI management
 │   ├── stats.js       # Statistics display
 │   └── settings.js    # Settings management
