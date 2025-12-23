@@ -27,6 +27,39 @@ let wasmTTSInstance = null;
 let wasmTTSLoading = null;
 
 /**
+ * Cleanup WASM TTS instance to free memory
+ * Should be called when TTS is no longer needed or before switching voices
+ */
+export function cleanupWASMTTS() {
+  if (wasmTTSInstance) {
+    try {
+      // Check if instance has cleanup/dispose method
+      if (typeof wasmTTSInstance.dispose === 'function') {
+        wasmTTSInstance.dispose();
+      } else if (typeof wasmTTSInstance.cleanup === 'function') {
+        wasmTTSInstance.cleanup();
+      } else if (typeof wasmTTSInstance.close === 'function') {
+        wasmTTSInstance.close();
+      }
+      
+      // Clear instance reference
+      wasmTTSInstance = null;
+      wasmTTSLoading = null;
+      
+      const useConsole = typeof log === 'undefined';
+      const logFn = useConsole ? console.log : log;
+      logFn('[ClipAIble] WASM TTS instance cleaned up');
+    } catch (error) {
+      const logErrorFn = typeof logError === 'undefined' ? console.error : logError;
+      logErrorFn('[ClipAIble] Failed to cleanup WASM TTS instance', error);
+      // Clear reference anyway
+      wasmTTSInstance = null;
+      wasmTTSLoading = null;
+    }
+  }
+}
+
+/**
  * Check if window object is available (required for js-tts-wrapper)
  * @returns {boolean} True if window is available
  */

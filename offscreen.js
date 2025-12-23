@@ -19,6 +19,97 @@ let ttsWorker = null; // Web Worker for TTS operations
 let ttsWorkerInitPromise = null; // Promise caching to prevent race conditions during simultaneous init calls
 let workerInactivityTimeout = null; // Timeout for automatic Worker termination after inactivity
 const WORKER_INACTIVITY_TIMEOUT = 5 * 60 * 1000; // 5 minutes of inactivity before terminating Worker
+
+/**
+ * Cleanup all TTS resources to prevent memory leaks
+ * Should be called when offscreen document is closing or when switching voices
+ */
+function cleanupTTSResources() {
+  log('[ClipAIble Offscreen] === CLEANUP TTS RESOURCES ===', {
+    timestamp: Date.now(),
+    hasTtsModule: !!ttsModule,
+    hasTtsWorker: !!ttsWorker,
+    hasWorkerTimeout: !!workerInactivityTimeout
+  });
+  
+  // Clear worker inactivity timeout
+  if (workerInactivityTimeout) {
+    clearTimeout(workerInactivityTimeout);
+    workerInactivityTimeout = null;
+  }
+  
+  // Terminate TTS Worker if exists
+  if (ttsWorker) {
+    try {
+      log('[ClipAIble Offscreen] Terminating TTS Worker during cleanup');
+      ttsWorker.terminate();
+      ttsWorker = null;
+      ttsWorkerInitPromise = null;
+    } catch (error) {
+      logError('[ClipAIble Offscreen] Failed to terminate TTS Worker', error);
+    }
+  }
+  
+  // Cleanup Piper TTS module - release ONNX Runtime sessions
+  if (ttsModule) {
+    try {
+      // Try to release ONNX Runtime sessions if accessible
+      if (ttsModule.TtsSession && ttsModule.TtsSession._instance) {
+        const instance = ttsModule.TtsSession._instance;
+        
+        // Try to release ONNX Runtime session
+        if (instance._ortSession && typeof instance._ortSession.release === 'function') {
+          try {
+            instance._ortSession.release();
+            log('[ClipAIble Offscreen] ONNX Runtime session released during cleanup');
+          } catch (releaseError) {
+            logWarn('[ClipAIble Offscreen] Failed to release ONNX Runtime session', releaseError);
+          }
+        }
+        
+        // Clear singleton instance
+        ttsModule.TtsSession._instance = null;
+      }
+      
+      // Clear module reference
+      ttsModule = null;
+      log('[ClipAIble Offscreen] TTS module cleared');
+    } catch (error) {
+      logError('[ClipAIble Offscreen] Failed to cleanup TTS module', error);
+      // Clear reference anyway
+      ttsModule = null;
+    }
+  }
+  
+  // Reset flags
+  wasmPreloaded = false;
+  voiceModelsPreloaded = false;
+  lastUsedVoiceId = null;
+  voiceSwitchRequested = false;
+  
+  log('[ClipAIble Offscreen] === CLEANUP COMPLETE ===', {
+    timestamp: Date.now()
+  });
+}
+
+// Register cleanup on page unload
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    cleanupTTSResources();
+  });
+  
+  // Also cleanup on visibility change (when offscreen document might be closed)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      // Don't cleanup immediately - might be temporary
+      // But reset inactivity timer to prevent memory buildup
+      if (workerInactivityTimeout) {
+        clearTimeout(workerInactivityTimeout);
+        workerInactivityTimeout = null;
+      }
+    }
+  });
+}
 // CRITICAL: Web Workers don't support import maps, but we can use importScripts() as workaround
 // tts-worker-bundle.js uses importScripts() instead of import maps to load modules
 // This allows WASM operations to run in separate thread, preventing main thread blocking
@@ -1104,7 +1195,35 @@ try {
       type: message.type
     });
   
-  // Handle async operations
+    // Handle CLEANUP_RESOURCES synchronously (before async block)
+    if (message.type === 'CLEANUP_RESOURCES') {
+      log(`[ClipAIble Offscreen] === CLEANUP_RESOURCES REQUEST ===`, {
+        messageId,
+        timestamp: Date.now()
+      });
+      
+      try {
+        cleanupTTSResources();
+        sendResponse({
+          success: true,
+          messageId,
+          message: 'Resources cleaned up successfully'
+        });
+      } catch (error) {
+        logError(`[ClipAIble Offscreen] Cleanup failed`, {
+          messageId,
+          error: error.message
+        });
+        sendResponse({
+          success: false,
+          messageId,
+          error: error.message
+        });
+      }
+      return true; // Keep channel open for async response
+    }
+    
+    // Handle async operations
   (async () => {
     const processingStartTime = Date.now();
     try {

@@ -48,6 +48,9 @@ let processingState = {
 // Simple lock to prevent concurrent updates (JavaScript is single-threaded, but async operations can interleave)
 let isUpdatingState = false;
 
+// Queue for pending updates to prevent data loss
+let updateQueue = [];
+
 // Debounce storage saves to reduce I/O load during frequent progress updates
 let storageSaveTimeout = null;
 let pendingStorageUpdate = null;
@@ -57,6 +60,9 @@ const STORAGE_SAVE_DEBOUNCE = 500; // Save to storage max once per 500ms
 // Less frequent storage saves reduce interference with WASM operations
 const STORAGE_SAVE_DEBOUNCE_AUDIO = 3000; // Save to storage max once per 3s for audio (very aggressive)
 
+// Track last saved state timestamp to detect stale data
+let lastSavedTimestamp = 0;
+
 // Force immediate save (bypass debounce) for critical updates
 function forceSaveState() {
   if (storageSaveTimeout) {
@@ -64,8 +70,10 @@ function forceSaveState() {
     storageSaveTimeout = null;
   }
   if (pendingStorageUpdate) {
+    const stateToSave = { ...pendingStorageUpdate, lastUpdate: Date.now() };
+    lastSavedTimestamp = stateToSave.lastUpdate;
     chrome.storage.local.set({ 
-      processingState: pendingStorageUpdate
+      processingState: stateToSave
     }).catch(error => {
       logWarn('Failed to force save processingState', error);
     });
@@ -73,37 +81,37 @@ function forceSaveState() {
   }
 }
 
-/**
- * Get current processing state (copy)
- * @returns {ProcessingState} Processing state
- */
-export function getProcessingState() {
-  return { ...processingState };
+// Check if update is critical (must be saved immediately)
+function isCriticalUpdate(updates) {
+  // Critical updates: progress 0% (reset), 100% (completion), stage changes, errors
+  return (
+    updates.progress === 0 ||
+    updates.progress === 100 ||
+    updates.stage !== undefined ||
+    updates.error !== undefined ||
+    updates.isCancelled !== undefined
+  );
 }
 
-/**
- * Update processing state
- * @param {Partial<ProcessingState> & {stage?: string}} updates - State updates
- * @param {number} [updates.progress] - Progress percentage (0-100)
- * @param {string} [updates.status] - Status message
- * @param {string} [updates.stage] - Optional stage ID to set
- * @param {Error|Object|null} [updates.error] - Error object
- * @param {Object|null} [updates.result] - Processing result
- */
-export function updateState(updates) {
-  // Simple protection against concurrent updates
-  // While JavaScript is single-threaded, async operations can interleave
-  // This ensures we don't have overlapping state updates
-  // Check and set flag atomically to prevent race conditions
-  if (isUpdatingState) {
-    // If update is in progress, queue this update (simple approach: skip if already updating)
-    // In practice, this is very rare since updateState is synchronous
-    logWarn('State update already in progress, skipping concurrent update', { updates });
+// Process queued updates
+function processUpdateQueue() {
+  if (updateQueue.length === 0 || isUpdatingState) {
     return;
   }
   
-  // Set flag immediately to prevent concurrent updates
-  // This check-then-set pattern is safe in single-threaded JavaScript
+  // Merge all queued updates into one
+  const mergedUpdates = {};
+  for (const queuedUpdate of updateQueue) {
+    Object.assign(mergedUpdates, queuedUpdate);
+  }
+  updateQueue = [];
+  
+  // Apply merged update
+  applyStateUpdate(mergedUpdates);
+}
+
+// Internal function to apply state update (without queue logic)
+function applyStateUpdate(updates) {
   isUpdatingState = true;
   
   try {
@@ -124,107 +132,155 @@ export function updateState(updates) {
       }
     }
   
-  // Protect progress from rolling back - progress should only increase
-  // Exception: allow 0% (reset) and 100% (completion) explicitly
-  if (updates.progress !== undefined && updates.progress !== null) {
-    const currentProgress = processingState.progress || 0;
-    const newProgress = updates.progress;
-    
-    // Allow explicit 0% (reset) or 100% (completion)
-    if (newProgress === 0 || newProgress === 100) {
-      // Allow these special values
-    } else if (newProgress < currentProgress) {
-      // Prevent progress rollback - use current progress instead
-      logWarn('Progress rollback prevented', { 
-        current: currentProgress, 
-        attempted: newProgress, 
-        difference: currentProgress - newProgress 
-      });
-      // Keep current progress, but still update other fields
-      updates = { ...updates };
-      delete updates.progress;
-      // Update other fields but keep current progress
-      processingState = { ...processingState, ...updates };
-      log('State updated (progress protected)', { 
-        status: updates.status, 
-        progress: currentProgress, 
-        stage: updates.stage 
-      });
+    // Protect progress from rolling back - progress should only increase
+    // Exception: allow 0% (reset) and 100% (completion) explicitly
+    if (updates.progress !== undefined && updates.progress !== null) {
+      const currentProgress = processingState.progress || 0;
+      const newProgress = updates.progress;
       
-      // Save to storage with debounce
-      if (processingState.isProcessing) {
-        // Use longer debounce for audio format to reduce main thread blocking
-        const isAudioFormat = processingState.outputFormat === 'audio';
-        const debounceInterval = isAudioFormat ? STORAGE_SAVE_DEBOUNCE_AUDIO : STORAGE_SAVE_DEBOUNCE;
+      // Allow explicit 0% (reset) or 100% (completion)
+      if (newProgress === 0 || newProgress === 100) {
+        // Allow these special values
+      } else if (newProgress < currentProgress) {
+        // Prevent progress rollback - use current progress instead
+        logWarn('Progress rollback prevented', { 
+          current: currentProgress, 
+          attempted: newProgress, 
+          difference: currentProgress - newProgress 
+        });
+        // Keep current progress, but still update other fields
+        updates = { ...updates };
+        delete updates.progress;
+        // Update other fields but keep current progress
+        processingState = { ...processingState, ...updates };
+        log('State updated (progress protected)', { 
+          status: updates.status, 
+          progress: currentProgress, 
+          stage: updates.stage 
+        });
         
-        pendingStorageUpdate = { ...processingState, lastUpdate: Date.now() };
-        
-        if (storageSaveTimeout) {
-          clearTimeout(storageSaveTimeout);
-        }
-        
-        storageSaveTimeout = setTimeout(() => {
-          if (pendingStorageUpdate) {
-            chrome.storage.local.set({ 
-              processingState: pendingStorageUpdate
-            }).catch(error => {
-              logWarn('Failed to save processingState in updateState', error);
-            });
-            pendingStorageUpdate = null;
-          }
-          storageSaveTimeout = null;
-        }, debounceInterval);
+        // Save to storage
+        saveStateToStorage(updates);
+        return;
       }
-      return;
     }
+  
+    processingState = { ...processingState, ...updates };
+    log('State updated', { status: updates.status, progress: updates.progress, stage: updates.stage });
+    
+    // Save to storage
+    saveStateToStorage(updates);
+  } finally {
+    isUpdatingState = false;
+    // Process any queued updates
+    processUpdateQueue();
   }
-  
-  processingState = { ...processingState, ...updates };
-  log('State updated', { status: updates.status, progress: updates.progress, stage: updates.stage });
-  
+}
+
+// Save state to storage with debounce (or immediately for critical updates)
+function saveStateToStorage(updates) {
   // Save to storage for crash recovery - NO AWAIT is intentional!
   // In-memory processingState is authoritative, storage is backup only.
   // Popup reads from memory via getProcessingState(), not from storage.
-  // See systemPatterns.md "Design Decisions" section.
-  if (processingState.isProcessing) {
-    // CRITICAL: Debounce storage saves to reduce I/O load during frequent progress updates
-    // This is especially important for audio generation which has many progress updates
-    // Use longer debounce for audio format to reduce main thread blocking
-    const isAudioFormat = processingState.outputFormat === 'audio';
-    const debounceInterval = isAudioFormat ? STORAGE_SAVE_DEBOUNCE_AUDIO : STORAGE_SAVE_DEBOUNCE;
-    
-    pendingStorageUpdate = { ...processingState, lastUpdate: Date.now() };
-    
+  if (!processingState.isProcessing) {
+    return;
+  }
+  
+  const isCritical = isCriticalUpdate(updates);
+  const isAudioFormat = processingState.outputFormat === 'audio';
+  const debounceInterval = isAudioFormat ? STORAGE_SAVE_DEBOUNCE_AUDIO : STORAGE_SAVE_DEBOUNCE;
+  
+  // Always update pending state (merge with existing if any)
+  pendingStorageUpdate = { 
+    ...processingState, 
+    lastUpdate: Date.now() 
+  };
+  
+  // For critical updates, save immediately (bypass debounce)
+  if (isCritical) {
     if (storageSaveTimeout) {
       clearTimeout(storageSaveTimeout);
+      storageSaveTimeout = null;
     }
     
-    storageSaveTimeout = setTimeout(() => {
-      if (pendingStorageUpdate) {
-        chrome.storage.local.set({ 
-          processingState: pendingStorageUpdate
-        }).catch(error => {
-          // Log but don't throw - storage errors shouldn't break processing
-          logWarn('Failed to save processingState in updateState', error);
-        });
-        pendingStorageUpdate = null;
-      }
-      storageSaveTimeout = null;
-    }, debounceInterval);
-    
-    // CRITICAL: Summary generation no longer uses processingState
-    // It uses only summary_generating flag to avoid interfering with document generation UI
-    // No need to sync summary_generating flag here
+    // Save immediately
+    const stateToSave = { ...pendingStorageUpdate };
+    lastSavedTimestamp = stateToSave.lastUpdate;
+    chrome.storage.local.set({ 
+      processingState: stateToSave
+    }).catch(error => {
+      logWarn('Failed to save critical processingState update', error);
+    });
+    pendingStorageUpdate = null;
+    return;
   }
-  } finally {
-    isUpdatingState = false;
+  
+  // For non-critical updates, use debounce
+  if (storageSaveTimeout) {
+    clearTimeout(storageSaveTimeout);
   }
+  
+  storageSaveTimeout = setTimeout(() => {
+    if (pendingStorageUpdate) {
+      const stateToSave = { ...pendingStorageUpdate };
+      lastSavedTimestamp = stateToSave.lastUpdate;
+      chrome.storage.local.set({ 
+        processingState: stateToSave
+      }).catch(error => {
+        // Log but don't throw - storage errors shouldn't break processing
+        logWarn('Failed to save processingState in updateState', error);
+      });
+      pendingStorageUpdate = null;
+    }
+    storageSaveTimeout = null;
+  }, debounceInterval);
+}
+
+/**
+ * Get current processing state (copy)
+ * @returns {ProcessingState} Processing state
+ */
+export function getProcessingState() {
+  return { ...processingState };
+}
+
+/**
+ * Update processing state
+ * @param {Partial<ProcessingState> & {stage?: string}} updates - State updates
+ * @param {number} [updates.progress] - Progress percentage (0-100)
+ * @param {string} [updates.status] - Status message
+ * @param {string} [updates.stage] - Optional stage ID to set
+ * @param {Error|Object|null} [updates.error] - Error object
+ * @param {Object|null} [updates.result] - Processing result
+ */
+export function updateState(updates) {
+  // Queue updates if another update is in progress
+  // This prevents data loss from concurrent updates
+  if (isUpdatingState) {
+    // Add to queue instead of skipping
+    updateQueue.push(updates);
+    log('State update queued', { queueLength: updateQueue.length, updates });
+    return;
+  }
+  
+  // Apply update immediately
+  applyStateUpdate(updates);
 }
 
 /**
  * Reset processing state to initial values
  */
 export function resetState() {
+  // Clear update queue
+  updateQueue = [];
+  
+  // Clear pending storage save
+  if (storageSaveTimeout) {
+    clearTimeout(storageSaveTimeout);
+    storageSaveTimeout = null;
+  }
+  pendingStorageUpdate = null;
+  
   processingState = {
     isProcessing: false,
     isCancelled: false,
@@ -295,11 +351,13 @@ export async function completeProcessing(stopKeepAlive) {
   // CRITICAL: Save final state to storage so popup can detect completion
   // Don't remove immediately - let popup poll and detect completion first
   // State will be cleared on next processing start
+  const finalState = { 
+    ...processingState, 
+    lastUpdate: Date.now() 
+  };
+  lastSavedTimestamp = finalState.lastUpdate;
   await chrome.storage.local.set({ 
-    processingState: { 
-      ...processingState, 
-      lastUpdate: Date.now() 
-    } 
+    processingState: finalState
   });
   
   // Clear from storage after a delay to allow popup to detect completion

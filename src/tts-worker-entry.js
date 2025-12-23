@@ -789,6 +789,50 @@ self.addEventListener('message', async (event) => {
   }
 });
 
+/**
+ * Cleanup function to release WASM resources
+ * Should be called when worker is terminating or before switching voices
+ */
+function cleanupWASMResources() {
+  try {
+    // Cleanup Piper TTS ONNX Runtime sessions
+    if (piperTTS && piperTTS.TtsSession && piperTTS.TtsSession._instance) {
+      const instance = piperTTS.TtsSession._instance;
+      
+      // Try to release ONNX Runtime session
+      if (instance._ortSession && typeof instance._ortSession.release === 'function') {
+        try {
+          instance._ortSession.release();
+          console.log(LOG_PREFIX, 'Worker: ONNX Runtime session released during cleanup');
+        } catch (releaseError) {
+          console.warn(LOG_PREFIX, 'Worker: Failed to release ONNX Runtime session', {
+            error: releaseError.message
+          });
+        }
+      }
+      
+      // Clear singleton instance
+      piperTTS.TtsSession._instance = null;
+    }
+    
+    // Clear module reference
+    piperTTS = null;
+    
+    console.log(LOG_PREFIX, 'Worker: WASM resources cleaned up');
+  } catch (error) {
+    console.error(LOG_PREFIX, 'Worker: Failed to cleanup WASM resources', {
+      error: error.message
+    });
+    // Clear reference anyway
+    piperTTS = null;
+  }
+}
+
+// Register cleanup on worker termination
+self.addEventListener('beforeunload', () => {
+  cleanupWASMResources();
+});
+
 // Signal that worker is ready
 console.log(LOG_PREFIX, 'Worker ready', {
   timestamp: Date.now()

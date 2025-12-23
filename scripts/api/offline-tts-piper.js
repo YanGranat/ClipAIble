@@ -35,6 +35,49 @@ let piperTTSModule = null;
 let piperTTSLoading = null;
 
 /**
+ * Cleanup Piper TTS module to free memory
+ * Releases ONNX Runtime sessions and clears module cache
+ * Should be called when TTS is no longer needed or before switching voices
+ */
+export function cleanupPiperTTS() {
+  if (piperTTSModule) {
+    try {
+      // Try to release ONNX Runtime sessions if accessible
+      if (piperTTSModule.TtsSession && piperTTSModule.TtsSession._instance) {
+        const instance = piperTTSModule.TtsSession._instance;
+        
+        // Try to release ONNX Runtime session
+        if (instance._ortSession && typeof instance._ortSession.release === 'function') {
+          try {
+            instance._ortSession.release();
+            log('Piper TTS: ONNX Runtime session released');
+          } catch (releaseError) {
+            logWarn('Piper TTS: Failed to release ONNX Runtime session', releaseError);
+          }
+        }
+        
+        // Clear singleton instance
+        piperTTSModule.TtsSession._instance = null;
+      }
+      
+      // Clear module reference
+      piperTTSModule = null;
+      piperTTSLoading = null;
+      
+      const useConsole = typeof log === 'undefined';
+      const logFn = useConsole ? console.log : log;
+      logFn('[ClipAIble] Piper TTS module cleaned up');
+    } catch (error) {
+      const logErrorFn = typeof logError === 'undefined' ? console.error : logError;
+      logErrorFn('[ClipAIble] Failed to cleanup Piper TTS module', error);
+      // Clear reference anyway
+      piperTTSModule = null;
+      piperTTSLoading = null;
+    }
+  }
+}
+
+/**
  * Check if running in valid context (not service worker)
  */
 function hasWindow() {

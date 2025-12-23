@@ -708,6 +708,20 @@ export async function closeOffscreenForVoiceSwitch() {
   });
   
   try {
+    // Send cleanup message to offscreen document before closing
+    // This ensures WASM resources are released before document is destroyed
+    try {
+      await sendToOffscreen('CLEANUP_RESOURCES', {});
+      log('[ClipAIble Offscreen] Cleanup message sent to offscreen document', {
+        timestamp: Date.now()
+      });
+    } catch (cleanupError) {
+      logWarn('[ClipAIble Offscreen] Failed to send cleanup message (non-critical)', {
+        error: cleanupError.message
+      });
+      // Continue with closing even if cleanup message fails
+    }
+    
     if (chrome.offscreen && typeof chrome.offscreen.closeDocument === 'function') {
       const hasDocument = await chrome.offscreen.hasDocument();
       if (hasDocument) {
