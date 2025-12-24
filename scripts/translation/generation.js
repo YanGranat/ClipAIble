@@ -134,9 +134,9 @@ Generate the TL;DR:`;
       if (!response.ok) {
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -163,9 +163,9 @@ Generate the TL;DR:`;
       if (!response.ok) {
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -186,9 +186,9 @@ Generate the TL;DR:`;
       if (!response.ok) {
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -235,11 +235,13 @@ export async function generateSummary(data) {
   });
   
   if (!contentItems || contentItems.length === 0) {
-    throw new Error('No content items provided for summary generation');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorNoContentForSummary', uiLang));
   }
   
   if (!apiKey || !model) {
-    throw new Error('API key and model are required for summary generation');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorApiKeyRequiredForSummary', uiLang));
   }
   
   // Determine target language for summary
@@ -358,7 +360,8 @@ export async function generateSummary(data) {
   }
   
   if (!articleText.trim()) {
-    throw new Error('No text extracted for summary generation');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorNoTextExtractedForSummary', uiLang));
   }
   
   const systemPrompt = `You are an expert at creating summaries. Generate a summary of the text content in Markdown format.
@@ -428,7 +431,8 @@ Generate a summary in Markdown format in ${langName} language:`;
       summaryType: typeof summary,
       summaryLength: summary?.length || 0
     });
-    throw new Error('AI returned empty summary');
+    const uiLang = await getUILanguage();
+    throw new Error(tSync('errorEmptySummary', uiLang));
   } catch (error) {
     logError('=== generateSummary FUNCTION ERROR ===', {
       error: error.message,

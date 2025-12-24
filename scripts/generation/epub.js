@@ -174,7 +174,7 @@ export async function generateEpub(data, updateState) {
     updateState({ status: tSync('statusDone', uiLang), progress: 100 });
   }
   
-  return { success: true };
+  return epubBlob;
 }
 
 /**
@@ -784,7 +784,7 @@ nav a {
 /**
  * Embed images into EPUB
  * Uses parallel loading for better performance
- * @returns {Array} Image manifest entries
+ * @returns {Promise<Array>} Image manifest entries
  */
 async function embedEpubImages(zip, content, updateState) {
   const imageManifest = [];

@@ -75,15 +75,23 @@ export function normalizeError(error, context = {}) {
   if (error instanceof Error) {
     message = error.message || 'Unknown error';
     // Check if error already has a code
-    if (error.code && Object.values(ERROR_CODES).includes(error.code)) {
-      code = error.code;
-    } else if (error.status) {
+    // @ts-ignore - Error may have custom properties (code, status)
+    const errorWithCode = error;
+    // @ts-ignore
+    if (errorWithCode.code && Object.values(ERROR_CODES).includes(errorWithCode.code)) {
+      // @ts-ignore
+      code = errorWithCode.code;
+      // @ts-ignore
+    } else if (errorWithCode.status) {
       // HTTP status code
-      if (error.status === 401 || error.status === 403) {
+      // @ts-ignore
+      if (errorWithCode.status === 401 || errorWithCode.status === 403) {
         code = ERROR_CODES.AUTH_ERROR;
-      } else if (error.status === 429) {
+        // @ts-ignore
+      } else if (errorWithCode.status === 429) {
         code = ERROR_CODES.RATE_LIMIT;
-      } else if (error.status >= 500) {
+        // @ts-ignore
+      } else if (errorWithCode.status >= 500) {
         code = ERROR_CODES.PROVIDER_ERROR;
       }
     }
@@ -240,8 +248,11 @@ export function withErrorHandling(fn, options = {}) {
       
       // Re-throw normalized error
       const normalizedError = new Error(handled.message);
+      // @ts-ignore - Adding custom properties to Error
       normalizedError.code = handled.code;
+      // @ts-ignore
       normalizedError.originalError = handled.originalError;
+      // @ts-ignore
       normalizedError.context = handled.context;
       throw normalizedError;
     }
@@ -260,16 +271,25 @@ export function createErrorHandler(options = {}) {
     
     // Return normalized error for further processing
     const normalizedError = new Error(handled.message);
+    // @ts-ignore - Adding custom properties to Error
     normalizedError.code = handled.code;
+    // @ts-ignore
     normalizedError.originalError = handled.originalError;
+    // @ts-ignore
     normalizedError.context = handled.context;
     
     // Include user-friendly message and code if available
-    if (handled.userMessage) {
-      normalizedError.userMessage = handled.userMessage;
+    // @ts-ignore
+    const handledWithUser = handled;
+    // @ts-ignore
+    if (handledWithUser.userMessage) {
+      // @ts-ignore
+      normalizedError.userMessage = handledWithUser.userMessage;
     }
-    if (handled.userCode) {
-      normalizedError.userCode = handled.userCode;
+    // @ts-ignore
+    if (handledWithUser.userCode) {
+      // @ts-ignore
+      normalizedError.userCode = handledWithUser.userCode;
     }
     
     return normalizedError;

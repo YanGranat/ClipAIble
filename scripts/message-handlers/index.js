@@ -239,6 +239,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
   };
   
   // Special case: youtubeSubtitlesResult can also come with type check
+  // @ts-ignore - request may have type property
   if ((request.action === 'youtubeSubtitlesResult' || 
        (request.type === 'ClipAIbleYouTubeSubtitles' && request.action === 'youtubeSubtitlesResult')) &&
       handlers['youtubeSubtitlesResult']) {

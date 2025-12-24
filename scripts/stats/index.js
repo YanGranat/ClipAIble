@@ -198,13 +198,13 @@ export async function getFormattedStats() {
         lastSavedText = tSync('lastSavedJustNow', uiLang);
       } else if (diff < 3600000) {
         const minutes = Math.floor(diff / 60000);
-        lastSavedText = tSync('lastSavedMinutesAgo', uiLang).replace('{count}', minutes);
+        lastSavedText = tSync('lastSavedMinutesAgo', uiLang).replace('{count}', String(minutes));
       } else if (diff < 86400000) {
         const hours = Math.floor(diff / 3600000);
-        lastSavedText = tSync('lastSavedHoursAgo', uiLang).replace('{count}', hours);
+        lastSavedText = tSync('lastSavedHoursAgo', uiLang).replace('{count}', String(hours));
       } else {
         const days = Math.floor(diff / 86400000);
-        lastSavedText = tSync('lastSavedDaysAgo', uiLang).replace('{count}', days);
+        lastSavedText = tSync('lastSavedDaysAgo', uiLang).replace('{count}', String(days));
       }
     }
     

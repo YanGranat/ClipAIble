@@ -48,6 +48,7 @@ function getIndexedDB() {
     };
     
     request.onupgradeneeded = (event) => {
+      // @ts-ignore - event.target is IDBOpenDBRequest in onupgradeneeded
       const db = event.target.result;
       if (!db) {
         reject(new Error('IndexedDB database is null during upgrade'));

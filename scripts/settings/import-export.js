@@ -4,6 +4,8 @@
 import { log, logError, logWarn } from '../utils/logging.js';
 import { exportStats } from '../stats/index.js';
 import { getCacheStats } from '../cache/selectors.js';
+import { tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 
 // Get current extension version from manifest
 function getCurrentVersion() {
@@ -168,6 +170,10 @@ export async function exportSettings(includeStats = false, includeCache = false)
  * @param {boolean} options.overwriteExisting - Overwrite existing settings
  * @returns {Promise<Object>} Import result with counts
  */
+/**
+ * @param {any} jsonData
+ * @param {any} options
+ */
 export async function importSettings(jsonData, options = {}) {
   const {
     importStats = false,
@@ -184,27 +190,31 @@ export async function importSettings(jsonData, options = {}) {
       data = JSON.parse(jsonData);
     } catch (parseError) {
       logError('Failed to parse import JSON', parseError);
-      throw new Error('Invalid export file: JSON parsing failed. The file may be corrupted or not a valid ClipAIble export file.');
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorImportJsonParseFailed', uiLang));
     }
     
+    const uiLang = await getUILanguageCached();
     if (!data || typeof data !== 'object') {
-      throw new Error('Invalid export file: data is not an object');
+      throw new Error(tSync('errorImportDataNotObject', uiLang));
     }
     
     if (!data.settings) {
-      throw new Error('Invalid export file: missing settings');
+      throw new Error(tSync('errorImportMissingSettings', uiLang));
     }
     
     // Validate data size to prevent DoS attacks
     const dataSize = JSON.stringify(data).length;
     const maxDataSize = 50 * 1024 * 1024; // 50MB limit
     if (dataSize > maxDataSize) {
-      throw new Error(`Import file is too large (${Math.round(dataSize / 1024 / 1024)}MB). Maximum size is ${Math.round(maxDataSize / 1024 / 1024)}MB.`);
+      const sizeMB = Math.round(dataSize / 1024 / 1024);
+      const maxMB = Math.round(maxDataSize / 1024 / 1024);
+      throw new Error(tSync('errorImportFileTooLarge', uiLang).replace('{size}', String(sizeMB)).replace('{max}', String(maxMB)));
     }
     
     // Validate settings object structure
     if (typeof data.settings !== 'object' || Array.isArray(data.settings)) {
-      throw new Error('Invalid export file: settings must be an object');
+      throw new Error(tSync('errorImportSettingsNotObject', uiLang));
     }
     
     const result = {
@@ -386,14 +396,16 @@ export async function importSettings(jsonData, options = {}) {
       try {
         // Validate cache structure
         if (typeof data.selectorCache !== 'object' || Array.isArray(data.selectorCache)) {
-          throw new Error('Invalid cache structure: must be an object');
+          throw new Error(tSync('errorImportCacheNotObject', uiLang));
         }
         
         // Validate cache size
         const cacheSize = JSON.stringify(data.selectorCache).length;
         const maxCacheSize = 10 * 1024 * 1024; // 10MB limit
         if (cacheSize > maxCacheSize) {
-          throw new Error(`Cache is too large (${Math.round(cacheSize / 1024 / 1024)}MB). Maximum size is ${Math.round(maxCacheSize / 1024 / 1024)}MB.`);
+          const sizeMB = Math.round(cacheSize / 1024 / 1024);
+          const maxMB = Math.round(maxCacheSize / 1024 / 1024);
+          throw new Error(tSync('errorImportCacheTooLarge', uiLang).replace('{size}', String(sizeMB)).replace('{max}', String(maxMB)));
         }
         
         await chrome.storage.local.set({ selector_cache: data.selectorCache });
@@ -441,7 +453,15 @@ export function downloadSettings(jsonData, filename = 'clipaible-settings.json')
 export function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target.result);
+    reader.onload = (e) => {
+      // @ts-ignore - FileReader.result can be string or ArrayBuffer
+      const result = e.target.result;
+      if (typeof result === 'string') {
+        resolve(result);
+      } else {
+        reject(new Error('Failed to read file as text'));
+      }
+    };
     reader.onerror = (e) => reject(new Error('Failed to read file'));
     reader.readAsText(file);
   });

@@ -142,7 +142,8 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
         return JSON.parse(jsonMatch[1].trim());
       }
       logError('Failed to parse Gemini JSON response', e);
-      throw new Error('Invalid JSON response from Gemini');
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorInvalidJsonResponse', uiLang));
     }
   }
   

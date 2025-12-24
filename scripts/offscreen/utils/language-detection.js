@@ -78,3 +78,4 @@ export function detectLanguage(text) {
   return lang;
 }
 
+

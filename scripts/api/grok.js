@@ -150,14 +150,16 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
     });
   } catch (parseError) {
     logError('Failed to parse response', parseError);
-    throw new Error('Failed to parse AI response');
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorFailedToParseResponse', uiLang));
   }
 
   const content = result.choices?.[0]?.message?.content;
 
   if (!content) {
     logError('No content in response', result);
-    throw new Error('No content received from AI');
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorNoContentReceived', uiLang));
   }
 
   log('Response content', { length: content.length, preview: content.substring(0, 100) });
@@ -171,7 +173,8 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
     parsed = JSON.parse(content);
   } catch (jsonError) {
     logError('JSON parse error', { error: jsonError, content: content.substring(0, 500) });
-    throw new Error('AI response is not valid JSON');
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorAiResponseNotValidJson', uiLang));
   }
 
   return parsed;

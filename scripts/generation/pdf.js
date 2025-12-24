@@ -12,6 +12,7 @@ import { translateMetadata } from '../translation/index.js';
 import { saveLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 
@@ -85,13 +86,16 @@ export async function generatePdf(data, updateState) {
     try {
       const stylesResponse = await fetch(chrome.runtime.getURL('config/pdf-styles.css'));
       if (!stylesResponse.ok) {
-        throw new Error(`Failed to load styles: ${stylesResponse.status}`);
+        const uiLang = await getUILanguageCached();
+        throw new Error(tSync('errorPdfLoadStylesFailed', uiLang).replace('{status}', String(stylesResponse.status)));
       }
       styles = await stylesResponse.text();
       log('Styles loaded', { length: styles.length });
     } catch (styleError) {
       logError('Failed to load styles', styleError);
-      throw new Error(`Failed to load PDF styles: ${styleError.message}`);
+      const uiLang = await getUILanguageCached();
+      const errorMsg = styleError instanceof Error ? styleError.message : 'Unknown error';
+      throw new Error(tSync('errorPdfLoadStylesError', uiLang).replace('{error}', errorMsg));
     }
     
     // Apply custom styles
@@ -225,7 +229,9 @@ export async function generatePdf(data, updateState) {
       log('HTML stored in storage', { length: htmlWithImages.length, pageMode });
     } catch (storageError) {
       logError('Failed to store HTML', storageError);
-      throw new Error(`Failed to store content: ${storageError.message}`);
+      const uiLang = await getUILanguageCached();
+      const errorMsg = storageError instanceof Error ? storageError.message : 'Unknown error';
+      throw new Error(tSync('errorPdfStoreContentFailed', uiLang).replace('{error}', errorMsg));
     }
     
     const currentWindow = await chrome.windows.getCurrent();

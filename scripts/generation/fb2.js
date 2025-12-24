@@ -143,7 +143,7 @@ ${generateBinaries(images)}
     updateState({ status: tSync('statusDone', uiLang), progress: 100 });
   }
   
-  return { success: true };
+  return blob;
 }
 
 /**

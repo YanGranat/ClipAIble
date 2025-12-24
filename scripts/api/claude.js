@@ -158,7 +158,8 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
         return JSON.parse(jsonMatch[1].trim());
       }
       logError('Failed to parse Claude JSON response', e);
-      throw new Error('Invalid JSON response from Claude');
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorInvalidJsonResponse', uiLang));
     }
   }
   

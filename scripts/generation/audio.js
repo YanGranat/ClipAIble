@@ -37,6 +37,9 @@ import {
  * @param {number} params.speed - TTS speed 0.25-4.0 (default: 1.0)
  * @param {string} params.format - Audio format (default: 'mp3')
  * @param {string} params.language - Target language for TTS pronunciation (default: 'auto')
+ * @param {string} [params.googleTtsVoice] - Google TTS voice
+ * @param {string} [params.googleTtsPrompt] - Google TTS prompt
+ * @param {number} [params.tabId] - Tab ID for offline TTS
  * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update callback
  * @returns {Promise<void>} Triggers download when complete
  */
@@ -63,7 +66,7 @@ export async function generateAudio(params, updateState) {
   logAudioGenerationStart(entryTime, { ...params, updateState }, allSettings);
 
   // Validate parameters
-  validateAudioParams(params, provider);
+  await validateAudioParams(params, provider);
   
   // Step 1: Prepare content for audio (using main model like GPT-5.1)
   // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)

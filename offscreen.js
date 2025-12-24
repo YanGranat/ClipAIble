@@ -3789,24 +3789,24 @@ try {
   return true; // Keep channel open for async response
 });
 
-// findWavDataChunk and concatenateWavBuffers are now imported from scripts/offscreen/audio/wav-utils.js
-// Removed duplicate definitions
+  // findWavDataChunk and concatenateWavBuffers are now imported from scripts/offscreen/audio/wav-utils.js
+  // Removed duplicate definitions
 
-// Signal ready
-const readyTime = Date.now();
-log('[ClipAIble Offscreen] === READY AND LISTENING FOR MESSAGES ===', {
-  timestamp: readyTime,
-  timeSinceLoad: readyTime - listenerRegisteredTime
-});
-
-// Export to global scope for bundle compatibility
-if (typeof window !== 'undefined') {
-  window.offscreenReady = true;
-  window.offscreenInitialized = true;
-  log('[ClipAIble Offscreen] Bundle loaded and ready', {
-    timestamp: readyTime
+  // Signal ready
+  const readyTime = Date.now();
+  log('[ClipAIble Offscreen] === READY AND LISTENING FOR MESSAGES ===', {
+    timestamp: readyTime,
+    timeSinceLoad: readyTime - listenerRegisteredTime
   });
-}
+
+  // Export to global scope for bundle compatibility
+  if (typeof window !== 'undefined') {
+    window.offscreenReady = true;
+    window.offscreenInitialized = true;
+    log('[ClipAIble Offscreen] Bundle loaded and ready', {
+      timestamp: readyTime
+    });
+  }
 } catch (error) {
   logError('[ClipAIble Offscreen] ❌ CRITICAL ERROR during initialization', {
     error: error.message,

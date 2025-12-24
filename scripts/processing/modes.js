@@ -358,7 +358,9 @@ export async function processWithoutAI(data) {
       timestamp: Date.now()
     });
     logError('Automatic extraction script execution failed', scriptError);
-    throw new Error(`Failed to execute automatic extraction: ${scriptError.message}`);
+    const uiLang = await getUILanguageCached();
+    const errorMsg = scriptError instanceof Error ? scriptError.message : 'Unknown error';
+    throw new Error(tSync('errorExtractionExecutionFailed', uiLang).replace('{error}', errorMsg));
   }
 
   log('=== processWithoutAI: Validating results ===', {
@@ -845,7 +847,8 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     } else {
       errorMsg = String(error);
     }
-    throw new Error(`Script error: ${errorMsg}`);
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorScriptError', uiLang).replace('{error}', errorMsg));
   }
   
   if (!injectionResult) {

@@ -58,7 +58,16 @@ export async function checkCancellation(context = '') {
  */
 export async function updateProgress(stage, statusKey, progress, options = {}) {
   const uiLang = await getUILanguageCached();
-  const status = tSync(statusKey, uiLang, ...(options.replacements || []));
+  let status = tSync(statusKey, uiLang);
+  
+  // Apply replacements if provided
+  if (options.replacements && Array.isArray(options.replacements)) {
+    // Simple replacement: replace {0}, {1}, etc. with replacement values
+    options.replacements.forEach((replacement, index) => {
+      status = status.replace(`{${index}}`, String(replacement));
+    });
+  }
+  
   updateState({ 
     stage: stage.id, 
     status, 

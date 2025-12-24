@@ -94,9 +94,9 @@ Rules:
       if (!response.ok) {
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -133,9 +133,9 @@ Rules:
       if (!response.ok) {
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -166,9 +166,9 @@ Rules:
       if (!response.ok) {
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -328,7 +328,9 @@ Rules:
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
-        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to API'}`);
+        const uiLang = await getUILanguage();
+        const errorMsg = fetchError.message || tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', 'Failed to connect to API');
+        throw new Error(tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', errorMsg));
       }
       
       if (!response.ok) {
@@ -344,7 +346,7 @@ Rules:
         const uiLang = await getUILanguage();
         if ([401, 403].includes(response.status)) {
           logError('Translation API authentication error', { status: response.status, error: errorData });
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', response.status));
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
         }
         
         logError('Translation API error', { status: response.status, error: errorData });
@@ -358,7 +360,7 @@ Rules:
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
         
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -401,7 +403,9 @@ Rules:
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
-        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to API'}`);
+        const uiLang = await getUILanguage();
+        const errorMsg = fetchError.message || tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', 'Failed to connect to API');
+        throw new Error(tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', errorMsg));
       }
       
       if (!response.ok) {
@@ -413,7 +417,7 @@ Rules:
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
         const uiLang = await getUILanguage();
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();
@@ -451,7 +455,9 @@ Rules:
           await new Promise(resolve => setTimeout(resolve, delay));
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
-        throw new Error(`Network error: ${fetchError.message || 'Failed to connect to API'}`);
+        const uiLang = await getUILanguage();
+        const errorMsg = fetchError.message || tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', 'Failed to connect to API');
+        throw new Error(tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', errorMsg));
       }
       
       if (!response.ok) {
@@ -463,7 +469,7 @@ Rules:
           return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
         }
         const uiLang = await getUILanguage();
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', response.status));
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
       }
       
       const result = await response.json();

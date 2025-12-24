@@ -6,11 +6,11 @@
 // @typedef {import('../types.js').ProcessingData} ProcessingData
 
 import { log, logError } from '../utils/logging.js';
+import { tSync } from '../locales.js';
+import { checkCancellation, updateProgress, getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { PROCESSING_STAGES, updateState } from '../state/processing.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from '../extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from '../extraction/video-processor.js';
-import { checkCancellation, updateProgress, getUILanguageCached } from '../utils/pipeline-helpers.js';
-import { tSync } from '../locales.js';
 
 /**
  * Process video page (YouTube/Vimeo) - extract subtitles, process with AI
@@ -75,7 +75,9 @@ export async function processVideoPage(data, videoInfo) {
     log('Subtitles processed', { contentItems: content.length });
   } catch (error) {
     logError('Failed to process subtitles', error);
-    throw new Error(`Failed to process subtitles: ${error.message}`);
+    const uiLang = await getUILanguageCached();
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    throw new Error(tSync('errorSubtitleProcessingFailed', uiLang).replace('{error}', errorMsg));
   }
   
   updateState({ progress: 40 });

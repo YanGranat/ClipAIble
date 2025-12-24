@@ -87,7 +87,7 @@ export function withErrorHandling(promise, errorType, sendResponse) {
  * @param {Promise} promise - Promise to handle
  * @param {string} errorType - Error type for error handler
  * @param {Function} sendResponse - Response function
- * @returns {boolean} - Always returns true for async handlers
+ * @returns {Promise<boolean>} - Always returns true for async handlers
  */
 export async function withSuccessResponse(promise, errorType, sendResponse) {
   try {

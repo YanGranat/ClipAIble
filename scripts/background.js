@@ -608,9 +608,7 @@ async function updateContextMenu() {
   }
 }
 
-// Initialize context menu on install
-try {
-  // Cleanup stale audio files from storage (protection against SW restart)
+// Cleanup stale audio files from storage (protection against SW restart)
 async function cleanupStaleAudio() {
   try {
     log('[ClipAIble Cleanup] Starting stale audio cleanup...');
@@ -660,12 +658,14 @@ async function cleanupStaleAudio() {
   }
 }
 
-chrome.runtime.onStartup.addListener(() => {
-  log('[ClipAIble] Extension startup detected');
-  cleanupStaleAudio();
-});
+// Initialize context menu on install
+try {
+  chrome.runtime.onStartup.addListener(() => {
+    log('[ClipAIble] Extension startup detected');
+    cleanupStaleAudio();
+  });
 
-chrome.runtime.onInstalled.addListener(() => {
+  chrome.runtime.onInstalled.addListener(() => {
     // Cleanup stale audio on install/update
     cleanupStaleAudio();
     

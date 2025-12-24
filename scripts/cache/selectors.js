@@ -146,6 +146,7 @@ export async function getCachedSelectors(url) {
     age: Math.round((Date.now() - entry.created) / 1000 / 60) + ' min'
   });
   
+  // @ts-ignore - SelectorResult may have selectors property
   return {
     selectors: entry.selectors,
     fromCache: true,

@@ -4,6 +4,8 @@
 
 import { log, logDebug } from '../utils/logging.js';
 import { AUDIO_CONFIG } from './audio-prep.js';
+import { tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 
 // Language to TTS instruction mapping
 const LANGUAGE_TTS_INSTRUCTIONS = {
@@ -113,19 +115,21 @@ export function buildAudioSettings(params) {
  * @param {string} provider - TTS provider
  * @throws {Error} If validation fails
  */
-export function validateAudioParams(params, provider) {
+export async function validateAudioParams(params, provider) {
   const { content, apiKey, ttsApiKey } = params;
+  const uiLang = await getUILanguageCached();
 
   if (!content || content.length === 0) {
-    throw new Error('No content to convert to audio');
+    throw new Error(tSync('errorNoContentToConvert', uiLang));
   }
 
   if (!apiKey) {
-    throw new Error('No API key provided for text preparation');
+    throw new Error(tSync('errorNoApiKeyForTextPrep', uiLang));
   }
 
   if (!ttsApiKey && provider !== 'offline') {
-    throw new Error(`No ${provider} API key provided for TTS`);
+    const providerName = getProviderName(provider);
+    throw new Error(tSync('errorNoTtsApiKey', uiLang).replace('{provider}', providerName));
   }
 }
 

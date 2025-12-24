@@ -129,8 +129,14 @@ export function blobToBase64(blob) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
-      log('Image converted to base64', { length: reader.result?.length });
-      resolve(reader.result);
+      // @ts-ignore - FileReader.result can be string or ArrayBuffer
+      const result = reader.result;
+      if (result && typeof result === 'string') {
+        log('Image converted to base64', { length: result.length });
+        resolve(result);
+      } else {
+        reject(new Error('Failed to convert image to base64'));
+      }
     };
     reader.onerror = (e) => {
       logError('FileReader error', e);

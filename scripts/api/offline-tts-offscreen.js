@@ -6,6 +6,8 @@
 import { log, logError, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { ttsQueue } from './tts-queue.js';
+import { tSync } from '../locales.js';
+import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 
 logDebug('[ClipAIble Offline TTS Offscreen] === MODULE LOADING ===', {
   timestamp: Date.now(),
@@ -78,7 +80,8 @@ async function setupOffscreenDocument() {
   // Check if offscreen API is available
   if (!chrome.offscreen) {
     logError('[ClipAIble Offscreen Setup] Offscreen API not available');
-    throw new Error('Offscreen API not available. Add "offscreen" permission to manifest.json');
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorOffscreenApiNotAvailable', uiLang));
   }
   log('[ClipAIble Offscreen Setup] Offscreen API available');
   
@@ -313,7 +316,8 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
       maxRetries: MAX_RETRIES,
       duration: Date.now() - sendStartTime
     });
-    throw new Error('Offscreen document not found after setup and retries');
+    const uiLang = await getUILanguageCached();
+    throw new Error(tSync('errorOffscreenDocumentNotFound', uiLang));
   }
   
   // Check for unlimitedStorage permission in service worker (where getManifest is available)
@@ -949,7 +953,8 @@ export async function textToSpeech(text, options = {}) {
 
     if (!text || text.length === 0) {
       logError('[ClipAIble Offscreen TTS] No text provided');
-      throw new Error('No text provided for TTS');
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorTtsNoText', uiLang));
     }
 
     if (text.length > OFFLINE_TTS_CONFIG.MAX_INPUT) {
@@ -957,7 +962,8 @@ export async function textToSpeech(text, options = {}) {
         textLength: text.length,
         maxInput: OFFLINE_TTS_CONFIG.MAX_INPUT
       });
-      throw new Error(`Text exceeds Piper TTS limit: ${text.length} > ${OFFLINE_TTS_CONFIG.MAX_INPUT} characters`);
+      const uiLang = await getUILanguageCached();
+      throw new Error(tSync('errorTtsTextTooLong', uiLang).replace('{length}', String(text.length)).replace('{max}', String(OFFLINE_TTS_CONFIG.MAX_INPUT)));
     }
 
     try {
@@ -1046,7 +1052,8 @@ export async function textToSpeech(text, options = {}) {
             availableKeys: Object.keys(data),
             hasMetadata: !!metadata
           });
-          throw new Error('Audio data not found in storage');
+          const uiLang = await getUILanguageCached();
+          throw new Error(tSync('errorAudioDataNotFound', uiLang));
         }
         
         // Log metadata if available
@@ -1067,7 +1074,8 @@ export async function textToSpeech(text, options = {}) {
             isArray: Array.isArray(audioArray),
             storageKey: response.storageKey
           });
-          throw new Error('Invalid audioArray format: expected array');
+          const uiLang = await getUILanguageCached();
+          throw new Error(tSync('errorInvalidAudioArrayFormat', uiLang));
         }
         
         log('[ClipAIble Offscreen TTS] Audio retrieved from storage', {
@@ -1220,7 +1228,9 @@ export async function textToSpeech(text, options = {}) {
             storageKey: response.storageKey,
             error: indexedDBError.message
           });
-          throw new Error(`Failed to read audio from IndexedDB: ${indexedDBError.message}`);
+          const uiLang = await getUILanguageCached();
+          const errorMsg = indexedDBError instanceof Error ? indexedDBError.message : 'Unknown error';
+          throw new Error(tSync('errorFailedToReadAudioFromIndexedDB', uiLang).replace('{error}', errorMsg));
         }
         
       } else if (response.method === 'inline') {
@@ -1230,7 +1240,8 @@ export async function textToSpeech(text, options = {}) {
             responseKeys: Object.keys(response || {}),
             response: response
           });
-          throw new Error('No audio data returned from offscreen document');
+          const uiLang = await getUILanguageCached();
+          throw new Error(tSync('errorNoAudioDataReturned', uiLang));
         }
         
         // Validate inline size (safety check)
@@ -1243,7 +1254,8 @@ export async function textToSpeech(text, options = {}) {
             isArray: Array.isArray(response.audioData),
             responseKeys: Object.keys(response || {})
           });
-          throw new Error('Invalid audioData format: expected array');
+          const uiLang = await getUILanguageCached();
+          throw new Error(tSync('errorInvalidAudioDataFormat', uiLang));
         }
         
         const audioDataArray = response.audioData;
@@ -1257,7 +1269,10 @@ export async function textToSpeech(text, options = {}) {
             isArray: Array.isArray(response.audioData),
             note: 'Offscreen should use storage method for files >= 5 MB or when serialized size >= 10 MB'
           });
-          throw new Error(`Audio too large for inline transfer: ${(audioDataLength / 1024 / 1024).toFixed(2)} MB exceeds inline limit of ${(MAX_INLINE_SIZE / 1024 / 1024).toFixed(2)} MB. This should not happen - offscreen should use storage method.`);
+          const uiLang = await getUILanguageCached();
+          const sizeMB = (audioDataLength / 1024 / 1024).toFixed(2);
+          const maxMB = (MAX_INLINE_SIZE / 1024 / 1024).toFixed(2);
+          throw new Error(tSync('errorAudioTooLargeForInline', uiLang).replace('{size}', sizeMB).replace('{max}', maxMB));
         }
         
         log('[ClipAIble Offscreen TTS] Converting inline audio data to ArrayBuffer...', {
@@ -1286,9 +1301,12 @@ export async function textToSpeech(text, options = {}) {
             audioSize: response.audioSize,
             threshold: response.threshold
           });
-          throw new Error(response.error || 'TTS generation failed');
+          const uiLang = await getUILanguageCached();
+          const errorMsg = response.error || tSync('errorTtsGenerationFailed', uiLang);
+          throw new Error(errorMsg);
         }
-        throw new Error(`Unknown response method: ${response.method || 'undefined'}`);
+        const uiLang = await getUILanguageCached();
+        throw new Error(tSync('errorUnknownResponseMethod', uiLang).replace('{method}', response.method || 'undefined'));
       }
       
       log('[ClipAIble Offscreen TTS] === textToSpeech SUCCESS ===', {
@@ -1309,7 +1327,9 @@ export async function textToSpeech(text, options = {}) {
         duration: errorTime - ttsStartTime,
         timestamp: errorTime
       });
-      throw new Error(`Offscreen TTS failed: ${error.message}`);
+      const uiLang = await getUILanguageCached();
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(tSync('errorOffscreenTtsFailed', uiLang).replace('{error}', errorMsg));
     }
   });
 }
