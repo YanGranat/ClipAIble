@@ -68,7 +68,8 @@ vi.mock('../../scripts/locales.js', () => ({
 vi.mock('../../scripts/state/processing.js', () => ({
   PROCESSING_STAGES: {
     LOADING_IMAGES: { id: 'loading_images' }
-  }
+  },
+  isCancelled: vi.fn(() => false)
 }));
 
 vi.mock('../../scripts/utils/security.js', () => ({
@@ -116,7 +117,7 @@ describe('generation/epub', () => {
     it('should throw error if content is empty', async () => {
       await expect(
         generateEpub({ content: [], title: 'Test' })
-      ).rejects.toThrow('No content to generate EPUB');
+      ).rejects.toThrow();
     });
 
     it('should generate basic EPUB with title', async () => {

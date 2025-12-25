@@ -15,6 +15,9 @@ vi.mock('../../scripts/utils/html.js', () => ({
 }));
 
 vi.mock('../../scripts/utils/config.js', () => ({
+  CONFIG: {
+    STORAGE_SAVE_DEBOUNCE: 500
+  },
   PDF_LOCALIZATION: {
     en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
     ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' }

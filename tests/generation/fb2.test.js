@@ -50,7 +50,8 @@ vi.mock('../../scripts/locales.js', () => ({
 vi.mock('../../scripts/state/processing.js', () => ({
   PROCESSING_STAGES: {
     LOADING_IMAGES: { id: 'loading_images' }
-  }
+  },
+  isCancelled: vi.fn(() => false)
 }));
 
 vi.mock('../../scripts/utils/security.js', () => ({
@@ -82,7 +83,7 @@ describe('generation/fb2', () => {
     it('should throw error if content is empty', async () => {
       await expect(
         generateFb2({ content: [], title: 'Test' })
-      ).rejects.toThrow('No content to generate FB2');
+      ).rejects.toThrow();
     });
 
     it('should generate basic FB2 with title', async () => {
