@@ -421,7 +421,25 @@ async function performKeepAlivePing() {
   try {
     // Check both processingState AND summary_generating
     const result = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
-    const isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
+    let isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
+    
+    // CRITICAL: Check if summary_generating flag is stale (older than threshold)
+    if (isSummaryGenerating && result.summary_generating_start_time && typeof result.summary_generating_start_time === 'number') {
+      const timeSinceStart = Date.now() - result.summary_generating_start_time;
+      if (timeSinceStart > CONFIG.SUMMARY_STALE_THRESHOLD_MS) {
+        // Flag is stale, clear it
+        logWarn('Summary generation flag is stale in keep-alive ping, clearing', {
+          timeSinceStart,
+          threshold: CONFIG.SUMMARY_STALE_THRESHOLD_MS
+        });
+        await chrome.storage.local.set({
+          summary_generating: false,
+          summary_generating_start_time: null
+        });
+        isSummaryGenerating = false;
+      }
+    }
+    
     const isProcessing = state.isProcessing;
     
     // If neither is active, stop keep-alive (called from interval check)
@@ -526,7 +544,22 @@ function startKeepAlive() {
   }
 }
 
-function stopKeepAlive() {
+async function stopKeepAlive() {
+  // CRITICAL: Check if summary generation is active before stopping keep-alive
+  // Summary generation is independent and should continue even if document/audio processing stops
+  try {
+    const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+    const isSummaryGenerating = summaryState.summary_generating && summaryState.summary_generating_start_time;
+    
+    if (isSummaryGenerating) {
+      log('Keep-alive kept active - summary generation in progress', { timestamp: Date.now() });
+      return; // Don't stop keep-alive if summary is generating
+    }
+  } catch (error) {
+    logWarn('Failed to check summary_generating in stopKeepAlive', error);
+    // Continue with stop if check fails (safer to stop than hang)
+  }
+  
   try {
     chrome.alarms.clear(KEEP_ALIVE_ALARM);
   } catch (error) {
@@ -1050,25 +1083,33 @@ try {
   });
   
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    log('=== chrome.runtime.onMessage: MESSAGE RECEIVED ===', {
-      action: request?.action,
-      type: request?.type,
-      target: request?.target,
-      hasData: !!request?.data,
-      senderUrl: sender?.tab?.url || sender?.url || 'popup',
-      senderTabId: sender?.tab?.id,
-      isOffscreen: sender?.id === chrome.runtime.id && !sender?.tab,
-      timestamp: Date.now()
-    });
+    // Skip verbose logging for frequent operations
+    const frequentActions = ['getState', 'TTS_PROGRESS'];
+    const isFrequentAction = frequentActions.includes(request?.action);
+    
+    if (!isFrequentAction) {
+      log('=== chrome.runtime.onMessage: MESSAGE RECEIVED ===', {
+        action: request?.action,
+        type: request?.type,
+        target: request?.target,
+        hasData: !!request?.data,
+        senderUrl: sender?.tab?.url || sender?.url || 'popup',
+        senderTabId: sender?.tab?.id,
+        isOffscreen: sender?.id === chrome.runtime.id && !sender?.tab,
+        timestamp: Date.now()
+      });
+    }
     
     // CRITICAL: Messages with target: 'offscreen' are for offscreen document
     // Service worker must NOT handle them - return false immediately to let them pass through
     if (request.target === 'offscreen') {
-      log('[ClipAIble Background] Offscreen message detected, passing through', {
-        type: request.type,
-        hasData: !!request.data,
-        timestamp: Date.now()
-      });
+      if (!isFrequentAction) {
+        log('[ClipAIble Background] Offscreen message detected, passing through', {
+          type: request.type,
+          hasData: !!request.data,
+          timestamp: Date.now()
+        });
+      }
       // Return false to allow message to reach offscreen document's listener
       return false;
     }
@@ -1085,13 +1126,15 @@ try {
       startKeepAlive
     });
     
-    log('=== chrome.runtime.onMessage: routeMessage returned ===', {
-      action: request?.action,
-      resultType: typeof result,
-      isPromise: result instanceof Promise,
-      isBoolean: typeof result === 'boolean',
-      timestamp: Date.now()
-    });
+    if (!isFrequentAction) {
+      log('=== chrome.runtime.onMessage: routeMessage returned ===', {
+        action: request?.action,
+        resultType: typeof result,
+        isPromise: result instanceof Promise,
+        isBoolean: typeof result === 'boolean',
+        timestamp: Date.now()
+      });
+    }
     
     return result;
   });

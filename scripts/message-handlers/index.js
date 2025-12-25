@@ -77,21 +77,29 @@ export function routeMessage(request, sender, sendResponse, deps) {
     startKeepAlive
   } = deps;
   
-  log('=== MESSAGE RECEIVED IN SERVICE WORKER ===', { 
-    action: request.action, 
-    sender: sender.tab?.url || sender.url || 'popup',
-    target: request.target,
-    hasData: !!request.data,
-    timestamp: Date.now()
-  });
+  // Skip verbose logging for frequent operations
+  const frequentActions = ['getState', 'TTS_PROGRESS'];
+  const isFrequentAction = frequentActions.includes(request.action);
+  
+  if (!isFrequentAction) {
+    log('=== MESSAGE RECEIVED IN SERVICE WORKER ===', { 
+      action: request.action, 
+      sender: sender.tab?.url || sender.url || 'popup',
+      target: request.target,
+      hasData: !!request.data,
+      timestamp: Date.now()
+    });
+  }
   
   // Messages with target: 'offscreen' are meant for offscreen document
   // Don't handle them here - let them pass through to offscreen document's listener
   if (request.target === 'offscreen') {
-    log('=== Message for offscreen document, passing through ===', {
-      type: request.type,
-      timestamp: Date.now()
-    });
+    if (!isFrequentAction) {
+      log('=== Message for offscreen document, passing through ===', {
+        type: request.type,
+        timestamp: Date.now()
+      });
+    }
     // Return false to allow message to reach offscreen document
     return false;
   }
@@ -170,12 +178,15 @@ export function routeMessage(request, sender, sendResponse, deps) {
       try {
         const { sentenceIndex, totalSentences, progressBase = 60, progressRange = 35 } = request.data || {};
         
-        log('[ClipAIble] TTS_PROGRESS handler called', {
-          sentenceIndex,
-          totalSentences,
-          progressBase,
-          progressRange
-        });
+        // Log only every 5th progress update to reduce log spam
+        if (sentenceIndex % 5 === 0 || sentenceIndex === totalSentences) {
+          log('[ClipAIble] TTS_PROGRESS handler called', {
+            sentenceIndex,
+            totalSentences,
+            progressBase,
+            progressRange
+          });
+        }
         
         if (sentenceIndex && totalSentences && totalSentences > 1) {
           // Calculate progress: 60-95% range for TTS conversion
@@ -183,12 +194,15 @@ export function routeMessage(request, sender, sendResponse, deps) {
             ((sentenceIndex - 1) / totalSentences) * progressRange
           );
           
-          log('[ClipAIble] Updating progress state', {
-            sentenceIndex,
-            totalSentences,
-            estimatedProgress,
-            cappedProgress: Math.min(estimatedProgress, 94)
-          });
+          // Log progress only every 5th update to reduce log spam
+          if (sentenceIndex % 5 === 0 || sentenceIndex === totalSentences) {
+            log('[ClipAIble] Updating progress state', {
+              sentenceIndex,
+              totalSentences,
+              estimatedProgress,
+              cappedProgress: Math.min(estimatedProgress, 94)
+            });
+          }
           
           // Update state with progress (updateState is imported at top of file)
           updateState({
@@ -249,32 +263,38 @@ export function routeMessage(request, sender, sendResponse, deps) {
   // Get handler for action
   const handler = handlers[request.action];
   
-  log('=== routeMessage: Looking for handler ===', {
-    action: request.action,
-    hasHandler: !!handler,
-    handlerType: typeof handler,
-    availableActions: Object.keys(handlers),
-    timestamp: Date.now()
-  });
+  // Skip verbose logging for frequent operations (already defined above)
+  
+  if (!isFrequentAction) {
+    log('=== routeMessage: Looking for handler ===', {
+      action: request.action,
+      hasHandler: !!handler,
+      handlerType: typeof handler,
+      availableActions: Object.keys(handlers),
+      timestamp: Date.now()
+    });
+  }
   
   if (handler) {
     try {
-      log('=== routeMessage: Calling handler ===', {
-        action: request.action,
-        timestamp: Date.now()
-      });
+      if (!isFrequentAction) {
+        log('=== routeMessage: Calling handler ===', {
+          action: request.action,
+          timestamp: Date.now()
+        });
+      }
       
       const result = handler();
       
-      log('=== routeMessage: Handler returned ===', {
-        action: request.action,
-        returnsPromise: result instanceof Promise,
-        returnsBoolean: result === true,
-        resultType: typeof result,
-        timestamp: Date.now()
-      });
-      
-      log('routeMessage: handler called', { action: request.action, returnsPromise: result instanceof Promise, returnsBoolean: result === true });
+      if (!isFrequentAction) {
+        log('=== routeMessage: Handler returned ===', {
+          action: request.action,
+          returnsPromise: result instanceof Promise,
+          returnsBoolean: result === true,
+          resultType: typeof result,
+          timestamp: Date.now()
+        });
+      }
       
       // If handler returns a promise, Chrome will wait for it
       // If handler returns true, it means async response will be sent

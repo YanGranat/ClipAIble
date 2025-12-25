@@ -1629,13 +1629,16 @@ try {
                 });
                 
                 const clearCachePromise = new Promise((resolve, reject) => {
-                  const timeout = setTimeout(() => {
+                  let timeout = setTimeout(() => {
                     logError(`[ClipAIble Offscreen] ❌ CLEAR_CACHE timeout for ${messageId}`, {
                       messageId,
                       clearCacheId,
                       timeout: 5000,
                       action: 'Worker did not respond to CLEAR_CACHE within 5 seconds'
                     });
+                    // Cleanup handler before rejecting
+                    state.getTTSWorker().removeEventListener('message', handler);
+                    timeout = null;
                     reject(new Error('CLEAR_CACHE timeout'));
                   }, 5000);
                   
@@ -1650,16 +1653,19 @@ try {
                     });
                     
                     if (event.data && event.data.type === 'CLEAR_CACHE_SUCCESS' && event.data.id === clearCacheId) {
-                      clearTimeout(timeout);
-                  state.getTTSWorker().removeEventListener('message', handler);
-                  log(`[ClipAIble Offscreen] ✅ CLEAR_CACHE_SUCCESS matched for ${messageId}`, {
-                    messageId,
-                    clearCacheId,
-                    action: 'Resolving Promise - Worker cache cleared'
-                  });
-                  resolve();
-                }
-              };
+                      if (timeout) {
+                        clearTimeout(timeout);
+                        timeout = null;
+                      }
+                      state.getTTSWorker().removeEventListener('message', handler);
+                      log(`[ClipAIble Offscreen] ✅ CLEAR_CACHE_SUCCESS matched for ${messageId}`, {
+                        messageId,
+                        clearCacheId,
+                        action: 'Resolving Promise - Worker cache cleared'
+                      });
+                      resolve();
+                    }
+                  };
               
               state.getTTSWorker().addEventListener('message', handler);
                   log(`[ClipAIble Offscreen] === CLEAR_CACHE LISTENER ADDED === for ${messageId}`, {

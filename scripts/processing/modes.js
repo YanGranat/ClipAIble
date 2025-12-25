@@ -207,11 +207,13 @@ export async function processWithoutAI(data) {
       // Clear timeout if script completed successfully
       if (timeoutId) {
         clearTimeout(timeoutId);
+        timeoutId = null;
       }
     } catch (error) {
       // Clear timeout on error too
       if (timeoutId) {
         clearTimeout(timeoutId);
+        timeoutId = null;
       }
       
       // Check if error is due to tab being closed

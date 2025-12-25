@@ -318,12 +318,36 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   const dateLabel = l10n.date || 'Date';
   const sourceLabel = l10n.source || 'Source';
   
+  // Extract subtitle from content (if present)
+  let subtitleText = '';
+  let subtitleIndex = -1;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i].type === 'subtitle') {
+      const item = content[i];
+      subtitleText = stripHtml(item.text || item.html || '');
+      if (subtitleText) {
+        subtitleIndex = i;
+        break;
+      }
+    }
+  }
+  
   // Title page section with book title, author, source and date
   let bodyContent = `  <body>
     <section>
       <title>
         <p>${escapedTitle}</p>
-      </title>
+      </title>`;
+  
+  // Add subtitle after title if present (FB2 has native <subtitle> tag)
+  if (subtitleText) {
+    bodyContent += `
+      <subtitle>
+        <p>${escapeXml(subtitleText)}</p>
+      </subtitle>`;
+  }
+  
+  bodyContent += `
       <empty-line/>`;
   
   // Add author
@@ -375,8 +399,9 @@ ${headings.map(h => `      <p>${'  '.repeat(h.level - 2)}• ${escapeXml(h.text)
     </section>`;
   }
   
-  // Split content into sections by headings
-  const sections = splitIntoSections(content, headings);
+  // Split content into sections by headings (excluding subtitle)
+  const filteredContent = content.filter((item, index) => item.type !== 'subtitle');
+  const sections = splitIntoSections(filteredContent, headings);
   
   for (const section of sections) {
     bodyContent += generateSection(section, sourceUrl);
@@ -534,6 +559,11 @@ function contentItemToFb2(item, sourceUrl = '') {
     
     case 'table': {
       return tableToFb2(item, sourceUrl);
+    }
+    
+    case 'subtitle': {
+      // Subtitle is already handled in generateBody, skip here
+      return '';
     }
     
     default: {

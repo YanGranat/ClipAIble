@@ -13,6 +13,7 @@ import { detectVideoPlatform } from './video.js';
 import { processVideoPage } from '../processing/video.js';
 import { processWithoutAI, processWithExtractMode, processWithSelectorMode } from '../processing/modes.js';
 import { handleProcessingResult, handleProcessingError } from './pipeline-helpers.js';
+import { getQuickSaveSettingsKeys, prepareQuickSaveData } from '../processing/quicksave.js';
 
 /**
  * Validate and initialize processing
@@ -286,8 +287,7 @@ export async function extractPageContent() {
  * @returns {Promise<Object>} Processing data
  */
 export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
-  const { getQuickSaveSettingsKeys, prepareQuickSaveData } = await import('../processing/quicksave.js');
-  
+  // CRITICAL: Use static import - dynamic import() is disallowed in Service Worker
   // Load settings
   const settings = await chrome.storage.local.get(getQuickSaveSettingsKeys());
   

@@ -338,9 +338,30 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   const sourceLabel = l10n.source || 'Source';
   const dateLabel = l10n.date || 'Date';
   
+  // Extract subtitle from content (if present)
+  let subtitleHtml = '';
+  let subtitleIndex = -1;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i].type === 'subtitle') {
+      const item = content[i];
+      const subtitleText = item.text || item.html || '';
+      if (subtitleText) {
+        const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
+        subtitleHtml = `\n    <p class="standfirst"${idAttr}>${sanitizeHtmlForXhtml(subtitleText, sourceUrl)}</p>`;
+        subtitleIndex = i;
+        break;
+      }
+    }
+  }
+  
   // Build header
   let headerHtml = `<header class="article-header">
     <h1>${escapedTitle}</h1>`;
+  
+  // Add subtitle after title, before meta
+  if (subtitleHtml) {
+    headerHtml += subtitleHtml;
+  }
   
   if (author || pubDate) {
     headerHtml += '\n    <p class="meta">';
@@ -373,7 +394,12 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   let contentHtml = '';
   let headingIndex = 0;
   
-  for (const item of content) {
+  for (let i = 0; i < content.length; i++) {
+    const item = content[i];
+    // Skip subtitle - it's already in header
+    if (item.type === 'subtitle') {
+      continue;
+    }
     contentHtml += contentItemToXhtml(item, headings, headingIndex, sourceUrl);
     if (item.type === 'heading' && item.level >= 2) {
       headingIndex++;
@@ -472,6 +498,11 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
     
     case 'table': {
       return tableToXhtml(item, sourceUrl);
+    }
+    
+    case 'subtitle': {
+      // Subtitle is already handled in generateContentXhtml, skip here
+      return '';
     }
     
     default: {

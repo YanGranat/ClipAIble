@@ -32,7 +32,7 @@ export async function predictWithWorker(text, voiceId) {
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
-    const timeout = setTimeout(() => {
+    let timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker predict timeout (60s)');
       logError('[ClipAIble Offscreen] predictWithWorker timeout', {
         callId: id,
@@ -40,12 +40,19 @@ export async function predictWithWorker(text, voiceId) {
         voiceId,
         duration: Date.now() - requestStartTime
       });
+      // Cleanup handler before rejecting
+      worker.removeEventListener('message', handler);
+      worker.removeEventListener('error', errorHandler);
+      timeout = null;
       reject(timeoutError);
     }, 60000); // 60 second timeout
     
     const handler = (event) => {
       if (event.data.id === id) {
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
         worker.removeEventListener('message', handler);
         
         const handlerTime = Date.now();
@@ -89,7 +96,10 @@ export async function predictWithWorker(text, voiceId) {
     
     // Handle worker errors during predict
     const errorHandler = (error) => {
-      clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
       worker.removeEventListener('message', handler);
       worker.removeEventListener('error', errorHandler);
       const workerError = new Error(`Worker error during predict: ${error.message}`);

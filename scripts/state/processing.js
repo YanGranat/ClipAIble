@@ -336,7 +336,17 @@ export async function cancelProcessing(stopKeepAlive) {
     const uiLang = await getUILanguage();
     processingState.status = tSync('statusCancelled', uiLang);
     processingState.error = tSync('statusCancelled', uiLang);
-    if (stopKeepAlive) stopKeepAlive();
+    
+    // CRITICAL: Check if summary generation is active before stopping keep-alive
+    // Summary generation is independent and should continue even if document/audio processing is cancelled
+    const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+    const isSummaryGenerating = summaryState.summary_generating && summaryState.summary_generating_start_time;
+    
+    if (stopKeepAlive && !isSummaryGenerating) {
+      await stopKeepAlive();
+    } else if (isSummaryGenerating) {
+      log('Keep-alive kept active - summary generation in progress', { timestamp: Date.now() });
+    }
     
     // Clear decrypted key cache for security (processing was cancelled)
     clearDecryptedKeyCache();
@@ -356,7 +366,17 @@ export async function completeProcessing(stopKeepAlive) {
   processingState.progress = 100;
   const uiLang = await getUILanguage();
   processingState.status = tSync('statusDone', uiLang);
-  if (stopKeepAlive) stopKeepAlive();
+  
+  // CRITICAL: Check if summary generation is active before stopping keep-alive
+  // Summary generation is independent and should continue even if document/audio processing completes
+  const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+  const isSummaryGenerating = summaryState.summary_generating && summaryState.summary_generating_start_time;
+  
+  if (stopKeepAlive && !isSummaryGenerating) {
+    await stopKeepAlive();
+  } else if (isSummaryGenerating) {
+    log('Keep-alive kept active - summary generation in progress', { timestamp: Date.now() });
+  }
   
   // CRITICAL: Save final state to storage so popup can detect completion
   // Don't remove immediately - let popup poll and detect completion first
@@ -400,7 +420,18 @@ export async function setError(error, stopKeepAlive) {
   
   const uiLang = await getUILanguage();
   processingState.status = tSync('statusError', uiLang);
-  if (stopKeepAlive) stopKeepAlive();
+  
+  // CRITICAL: Check if summary generation is active before stopping keep-alive
+  // Summary generation is independent and should continue even if document/audio processing fails
+  const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
+  const isSummaryGenerating = summaryState.summary_generating && summaryState.summary_generating_start_time;
+  
+  if (stopKeepAlive && !isSummaryGenerating) {
+    await stopKeepAlive();
+  } else if (isSummaryGenerating) {
+    log('Keep-alive kept active - summary generation in progress', { timestamp: Date.now() });
+  }
+  
   chrome.storage.local.remove(['processingState']);
   
   // Clear decrypted key cache for security (processing failed)

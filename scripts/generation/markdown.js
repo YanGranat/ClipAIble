@@ -69,6 +69,24 @@ export async function generateMarkdown(data, updateState) {
     markdown += `# ${title}\n\n`;
   }
   
+  // Extract and add subtitle (if present)
+  let subtitleText = '';
+  let subtitleIndex = -1;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i].type === 'subtitle') {
+      const item = content[i];
+      subtitleText = stripHtml(item.text || item.html || '');
+      if (subtitleText) {
+        subtitleIndex = i;
+        break;
+      }
+    }
+  }
+  
+  if (subtitleText) {
+    markdown += `*${subtitleText}*\n\n`;
+  }
+  
   // Add metadata block
   const langCode = language === 'auto' ? 'en' : language;
   // Get localization strings (cached for performance)
@@ -119,8 +137,11 @@ export async function generateMarkdown(data, updateState) {
     markdown += '---\n\n';
   }
   
-  // Process content items
+  // Process content items (skip subtitle - already added)
   for (const item of content) {
+    if (item.type === 'subtitle') {
+      continue;
+    }
     markdown += contentItemToMarkdown(item);
   }
   
@@ -257,6 +278,11 @@ function contentItemToMarkdown(item) {
     
     case 'table': {
       return tableToMarkdown(item);
+    }
+    
+    case 'subtitle': {
+      // Subtitle is already handled in generateMarkdown, skip here
+      return '';
     }
     
     default: {

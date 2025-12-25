@@ -122,8 +122,10 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
     timestamp: Date.now()
   });
   
-  processingPromise
-    .then((result) => {
+  // Use async IIFE with proper error handling and safe sendResponse
+  (async () => {
+    try {
+      const result = await processingPromise;
       log('=== handleProcessArticle: startArticleProcessing SUCCESS ===', {
         hasResult: !!result,
         resultType: typeof result,
@@ -134,13 +136,28 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
         timestamp: Date.now()
       });
       
-      sendResponse({ started: true });
+      // Check for Chrome runtime errors before sending response
+      if (chrome.runtime.lastError) {
+        logError('=== handleProcessArticle: chrome.runtime.lastError before sendResponse ===', {
+          error: chrome.runtime.lastError.message,
+          timestamp: Date.now()
+        });
+        return;
+      }
       
-      log('=== handleProcessArticle: Response sent ===', {
-        timestamp: Date.now()
-      });
-    })
-    .catch(async error => {
+      try {
+        sendResponse({ started: true });
+        log('=== handleProcessArticle: Response sent ===', {
+          timestamp: Date.now()
+        });
+      } catch (sendError) {
+        logError('=== handleProcessArticle: sendResponse failed ===', {
+          error: sendError.message,
+          lastError: chrome.runtime.lastError?.message,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
       logError('=== handleProcessArticle: startArticleProcessing FAILED ===', {
         error: error?.message || String(error),
         errorStack: error?.stack,
@@ -160,8 +177,26 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
         timestamp: Date.now()
       });
       
-      sendResponse({ error: normalized.message || 'Processing failed' });
-    });
+      // Check for Chrome runtime errors before sending error response
+      if (chrome.runtime.lastError) {
+        logError('=== handleProcessArticle: chrome.runtime.lastError before error sendResponse ===', {
+          error: chrome.runtime.lastError.message,
+          timestamp: Date.now()
+        });
+        return;
+      }
+      
+      try {
+        sendResponse({ error: normalized.message || 'Processing failed' });
+      } catch (sendError) {
+        logError('=== handleProcessArticle: sendResponse failed in error path ===', {
+          error: sendError.message,
+          lastError: chrome.runtime.lastError?.message,
+          timestamp: Date.now()
+        });
+      }
+    }
+  })();
   
   log('=== handleProcessArticle: Returning true ===', {
     timestamp: Date.now()

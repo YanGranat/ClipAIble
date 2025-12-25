@@ -3,6 +3,7 @@
 // Handles PDF saving, cancellation, and content extraction
 
 import { getUILanguage, tSync } from '../../scripts/locales.js';
+import { getUserFriendlyError } from '../../scripts/utils/error-messages.js';
 
 /**
  * Initialize processing module
@@ -57,6 +58,121 @@ export function initProcessing(deps) {
         elements.cancelBtn.disabled = false; // Re-enable on error
       }
     }
+  }
+
+  /**
+   * Determine error type from error message or context
+   * @param {Error|string} error - Error object or message
+   * @param {Object} context - Additional context (e.g., { tabId, url, scriptError, responseError })
+   * @returns {Promise<string>} Error type for getUserFriendlyError
+   */
+  async function determineErrorType(error, context = {}) {
+    const errorMessage = typeof error === 'string' ? error : (error?.message || '');
+    const lowerMessage = errorMessage.toLowerCase();
+    
+    // Tab-related errors
+    if (lowerMessage.includes('no active tab') || lowerMessage.includes('tab not found') || 
+        lowerMessage.includes('errornotab') || lowerMessage.includes('page tab not found')) {
+      return 'tabNotFound';
+    }
+    
+    // Generation errors (check first as they are more specific)
+    if (lowerMessage.includes('pdf generation failed') || lowerMessage.includes('errorpdfgenerationfailed')) {
+      return 'pdfGenerationFailed';
+    }
+    if (lowerMessage.includes('epub generation failed') || lowerMessage.includes('errorepubgenerationfailed')) {
+      return 'epubGenerationFailed';
+    }
+    if (lowerMessage.includes('fb2 generation failed') || lowerMessage.includes('errorfb2generationfailed')) {
+      return 'fb2GenerationFailed';
+    }
+    if (lowerMessage.includes('markdown generation failed') || lowerMessage.includes('errormarkdowngenerationfailed')) {
+      return 'markdownGenerationFailed';
+    }
+    if (lowerMessage.includes('audio generation failed') || lowerMessage.includes('erroraudiogenerationfailed')) {
+      return 'audioGenerationFailed';
+    }
+    
+    // Content extraction errors (check before script execution as they are more specific)
+    if (lowerMessage.includes('content extraction failed') || 
+        lowerMessage.includes('errorcontentextractionfailed') ||
+        lowerMessage.includes('failed to extract content from page')) {
+      return 'contentExtractionFailed';
+    }
+    
+    if (lowerMessage.includes('no content extracted') || 
+        lowerMessage.includes('errornocontentextracted') ||
+        lowerMessage.includes('no content found')) {
+      return 'noContentExtracted';
+    }
+    
+    if (lowerMessage.includes('selector analysis failed') || 
+        lowerMessage.includes('errorselectoranalysisfailed') ||
+        lowerMessage.includes('empty selectors') ||
+        lowerMessage.includes('error emptyselectors')) {
+      return 'selectorAnalysisFailed';
+    }
+    
+    if (lowerMessage.includes('extract mode no content') || 
+        lowerMessage.includes('errorextractmodenocontent')) {
+      return 'extractModeNoContent';
+    }
+    
+    // Script execution errors
+    if (lowerMessage.includes('extractpagecontent timeout') || 
+        lowerMessage.includes('timeout') ||
+        lowerMessage.includes('failed to extract page content') ||
+        lowerMessage.includes('script execution failed') ||
+        lowerMessage.includes('errorscriptexecutionfailed') ||
+        lowerMessage.includes('scripterror') ||
+        lowerMessage.includes('errorscript') ||
+        lowerMessage.includes('failed to read page content') ||
+        lowerMessage.includes('page may be blocking extensions') ||
+        context.scriptError) {
+      return 'scriptExecutionFailed';
+    }
+    
+    // Browser internal page errors
+    if (lowerMessage.includes('browser internal page') ||
+        lowerMessage.includes('cannot extract content from browser') ||
+        lowerMessage.includes('errorbrowserinternalpage') ||
+        lowerMessage.includes('chrome://') ||
+        lowerMessage.includes('chrome-extension://') ||
+        lowerMessage.includes('edge://') ||
+        lowerMessage.includes('about:')) {
+      return 'pageNotReady';
+    }
+    
+    // Communication errors
+    if (lowerMessage.includes('communication failed') ||
+        lowerMessage.includes('errorcommunicationfailed') ||
+        lowerMessage.includes('could not establish connection') ||
+        lowerMessage.includes('message port closed') ||
+        lowerMessage.includes('failed to communicate')) {
+      return 'scriptExecutionFailed'; // Treat as script execution issue
+    }
+    
+    // No page URL or HTML data
+    if (lowerMessage.includes('no page url') ||
+        lowerMessage.includes('errornopageurl') ||
+        lowerMessage.includes('no html data') ||
+        lowerMessage.includes('errornohtmldata')) {
+      return 'noContentExtracted';
+    }
+    
+    // Response errors from background (these are usually content extraction or generation errors)
+    if (context.responseError) {
+      // Check if it's a content extraction error
+      if (lowerMessage.includes('content extraction') || 
+          lowerMessage.includes('extract') ||
+          lowerMessage.includes('selector') ||
+          lowerMessage.includes('no content')) {
+        return 'contentExtractionFailed';
+      }
+    }
+    
+    // Default to script execution failed for unknown errors
+    return 'scriptExecutionFailed';
   }
 
   // Function to inject into page to extract content
@@ -130,8 +246,9 @@ export function initProcessing(deps) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (!tab) {
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorNoActiveTab', uiLang));
+        // Use user-friendly error message directly
+        const userFriendlyMessage = await getUserFriendlyError('tabNotFound', {});
+        throw new Error(userFriendlyMessage);
       }
       
       log('=== handleSavePdf: Tab found (at button click moment) ===', {
@@ -145,7 +262,10 @@ export function initProcessing(deps) {
       // Check if we can inject scripts on this page
       // Use tab.url for initial check, but we'll verify with actual pageData.url later
       if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
-        throw new Error('Cannot extract content from browser internal pages');
+        const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
+          error: { message: 'Cannot extract content from browser internal pages' }
+        });
+        throw new Error(userFriendlyMessage);
       }
 
       log('=== handleSavePdf: Setting status and disabling button ===', {
@@ -197,8 +317,10 @@ export function initProcessing(deps) {
         // Use inline function to ensure proper serialization
         let htmlResult;
         try {
+          let timeoutId = null;
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('extractPageContent timeout after 5 seconds')), 5000);
+            // Timeout error will be converted to user-friendly message in catch block
+            timeoutId = setTimeout(() => reject(new Error('extractPageContent timeout after 5 seconds')), 5000);
           });
           
           const scriptPromise = chrome.scripting.executeScript({
@@ -240,7 +362,21 @@ export function initProcessing(deps) {
             }
           });
           
-          htmlResult = await Promise.race([scriptPromise, timeoutPromise]);
+          try {
+            htmlResult = await Promise.race([scriptPromise, timeoutPromise]);
+            // Clear timeout if script completed successfully
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
+          } catch (error) {
+            // Clear timeout on error too
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+              timeoutId = null;
+            }
+            throw error;
+          }
           
           log('=== handleSavePdf: extractPageContent script executed ===', {
             hasResult: !!htmlResult,
@@ -259,13 +395,19 @@ export function initProcessing(deps) {
             chromeRuntimeLastError: chrome.runtime.lastError?.message,
             timestamp: Date.now()
           });
-          throw new Error(`Failed to extract page content: ${scriptError.message}`);
+          // Use user-friendly error message
+          const userFriendlyMessage = await getUserFriendlyError('scriptExecutionFailed', {
+            error: scriptError
+          });
+          throw new Error(userFriendlyMessage);
         }
       }
       
       if (!pageData || !pageData.html) {
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorNoHtmlData', uiLang));
+        const userFriendlyMessage = await getUserFriendlyError('noContentExtracted', {
+          error: { message: 'No HTML data received from page' }
+        });
+        throw new Error(userFriendlyMessage);
       }
 
       log('=== handleSavePdf: Page data extracted ===', {
@@ -284,13 +426,17 @@ export function initProcessing(deps) {
       // tab.url might be outdated or incorrect
       const actualUrl = pageData.url;
       if (!actualUrl) {
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorNoPageUrl', uiLang));
+        const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
+          error: { message: 'No page URL found' }
+        });
+        throw new Error(userFriendlyMessage);
       }
       
       if (actualUrl.startsWith('chrome://') || actualUrl.startsWith('chrome-extension://') || actualUrl.startsWith('edge://') || actualUrl.startsWith('about:')) {
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorBrowserInternalPage', uiLang));
+        const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
+          error: { message: 'Cannot extract content from browser internal pages' }
+        });
+        throw new Error(userFriendlyMessage);
       }
       
       // Log URL mismatch warning if URLs don't match
@@ -501,9 +647,11 @@ export function initProcessing(deps) {
           error: chrome.runtime.lastError.message,
           timestamp: Date.now()
         });
-        const uiLang = await getUILanguage();
-        const errorMsg = chrome.runtime.lastError?.message || tSync('errorCommunicationFailed', uiLang);
-        throw new Error(errorMsg);
+        // Use user-friendly error message for communication failures
+        const userFriendlyMessage = await getUserFriendlyError('scriptExecutionFailed', {
+          error: { message: chrome.runtime.lastError?.message || 'Failed to communicate with background script' }
+        });
+        throw new Error(userFriendlyMessage);
       }
 
       if (response.error) {
@@ -511,7 +659,15 @@ export function initProcessing(deps) {
           error: response.error,
           timestamp: Date.now()
         });
-        throw new Error(response.error);
+        
+        // Try to determine error type from response error message
+        const errorType = await determineErrorType(new Error(response.error), {
+          responseError: true
+        });
+        const userFriendlyMessage = await getUserFriendlyError(errorType, {
+          error: { message: response.error }
+        });
+        throw new Error(userFriendlyMessage);
       }
       
       log('=== handleSavePdf: Processing started successfully ===', {
@@ -552,8 +708,28 @@ export function initProcessing(deps) {
         timestamp: Date.now()
       });
       logError('Error', error);
-      setStatus('error', error.message);
-      showToast(error.message, 'error');
+      
+      // Determine error type and get user-friendly message
+      try {
+        const errorType = await determineErrorType(error, {
+          scriptError: error?.message?.includes('extractPageContent') || error?.message?.includes('timeout'),
+          responseError: error?.message?.includes('response') || error?.message?.includes('processArticle')
+        });
+        
+        const userFriendlyMessage = await getUserFriendlyError(errorType, {
+          error: error
+        });
+        
+        setStatus('error', userFriendlyMessage);
+        showToast(userFriendlyMessage, 'error');
+      } catch (errorHandlingError) {
+        // Fallback to original error message if user-friendly message generation fails
+        logError('Failed to generate user-friendly error message', errorHandlingError);
+        const fallbackMessage = error?.message || 'An error occurred. Please try again.';
+        setStatus('error', fallbackMessage);
+        showToast(fallbackMessage, 'error');
+      }
+      
       elements.savePdfBtn.disabled = false;
     }
   }

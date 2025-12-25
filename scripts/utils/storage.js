@@ -86,30 +86,37 @@ async function saveToIndexedDB(key, value) {
       transaction.onerror = () => {
         const error = transaction.error || new Error('Transaction failed');
         logError('IndexedDB transaction error (save)', error);
+        db.close();
         reject(error);
       };
       
       transaction.onabort = () => {
         const error = new Error('Transaction aborted');
         logError('IndexedDB transaction aborted (save)', error);
+        db.close();
         reject(error);
+      };
+      
+      // CRITICAL: Wait for transaction to complete, not just request success
+      // This ensures data is actually committed before resolving
+      transaction.oncomplete = () => {
+        log(`Saved ${key} to IndexedDB`, { size: getStringSize(JSON.stringify(value)) });
+        db.close();
+        resolve();
       };
       
       const store = transaction.objectStore('largeData');
       const request = store.put({ key, value, timestamp: Date.now() });
       
-      request.onsuccess = () => {
-        log(`Saved ${key} to IndexedDB`, { size: getStringSize(JSON.stringify(value)) });
-        resolve();
-      };
-      
       request.onerror = () => {
         const error = request.error || new Error('Put operation failed');
         logError('IndexedDB put error', error);
+        db.close();
         reject(error);
       };
     } catch (error) {
       logError('IndexedDB save error (catch)', error);
+      db.close();
       reject(error);
     }
   });
@@ -129,30 +136,42 @@ async function getFromIndexedDB(key) {
       transaction.onerror = () => {
         const error = transaction.error || new Error('Transaction failed');
         logError('IndexedDB transaction error (get)', error);
+        db.close();
         reject(error);
       };
       
       transaction.onabort = () => {
         const error = new Error('Transaction aborted');
         logError('IndexedDB transaction aborted (get)', error);
+        db.close();
         reject(error);
       };
       
       const store = transaction.objectStore('largeData');
       const request = store.get(key);
       
+      let result = null;
       request.onsuccess = () => {
-        const result = request.result;
-        resolve(result ? result.value : null);
+        result = request.result;
+        // Don't resolve here - wait for transaction.oncomplete
       };
       
       request.onerror = () => {
         const error = request.error || new Error('Get operation failed');
         logError('IndexedDB get error', error);
+        db.close();
         reject(error);
+      };
+      
+      // CRITICAL: Wait for transaction to complete, not just request success
+      // This ensures data is actually read before resolving
+      transaction.oncomplete = () => {
+        db.close();
+        resolve(result ? result.value : null);
       };
     } catch (error) {
       logError('IndexedDB get error (catch)', error);
+      db.close();
       reject(error);
     }
   });
@@ -172,30 +191,37 @@ async function removeFromIndexedDB(key) {
       transaction.onerror = () => {
         const error = transaction.error || new Error('Transaction failed');
         logError('IndexedDB transaction error (remove)', error);
+        db.close();
         reject(error);
       };
       
       transaction.onabort = () => {
         const error = new Error('Transaction aborted');
         logError('IndexedDB transaction aborted (remove)', error);
+        db.close();
         reject(error);
+      };
+      
+      // CRITICAL: Wait for transaction to complete, not just request success
+      // This ensures data is actually deleted before resolving
+      transaction.oncomplete = () => {
+        log(`Removed ${key} from IndexedDB`);
+        db.close();
+        resolve();
       };
       
       const store = transaction.objectStore('largeData');
       const request = store.delete(key);
       
-      request.onsuccess = () => {
-        log(`Removed ${key} from IndexedDB`);
-        resolve();
-      };
-      
       request.onerror = () => {
         const error = request.error || new Error('Delete operation failed');
         logError('IndexedDB delete error', error);
+        db.close();
         reject(error);
       };
     } catch (error) {
       logError('IndexedDB remove error (catch)', error);
+      db.close();
       reject(error);
     }
   });
