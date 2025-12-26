@@ -376,5 +376,3 @@ function tableToMarkdown(item) {
   
   return md + '\n';
 }
-
-

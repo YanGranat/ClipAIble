@@ -280,6 +280,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
       if (!isFrequentAction) {
         log('=== routeMessage: Calling handler ===', {
           action: request.action,
+          handlerName: handler.name || 'anonymous',
           timestamp: Date.now()
         });
       }
@@ -304,10 +305,18 @@ export function routeMessage(request, sender, sendResponse, deps) {
         action: request.action,
         error: error?.message || String(error),
         errorStack: error?.stack,
+        errorName: error?.name,
         timestamp: Date.now()
       });
       logError('Message handler error', error);
-      sendResponse({ error: error.message });
+      try {
+        sendResponse({ error: error.message });
+      } catch (sendError) {
+        logError('=== routeMessage: Failed to send error response ===', {
+          sendError: sendError?.message,
+          originalError: error?.message
+        });
+      }
       return true;
     }
   }

@@ -18,8 +18,8 @@ import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 
 /**
  * Generate PDF from content
- * @param {GenerationData & {pageMode?: string, fontFamily?: string, fontSize?: string, bgColor?: string, textColor?: string, headingColor?: string, linkColor?: string}} data - Generation data with PDF-specific options
- * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @param {GenerationData} data - Generation data with PDF-specific options (pageMode, fontFamily, fontSize, bgColor, textColor, headingColor, linkColor)
+ * @param {Function} [updateState] - State update function
  * @returns {Promise<Blob>} Generated PDF blob
  */
 export async function generatePdf(data, updateState) {

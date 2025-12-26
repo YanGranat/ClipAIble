@@ -374,8 +374,9 @@ function groupItemsByLines(items, medianHeight) {
         });
       }
       
+      const trimmedText = lineText.trim();
       resultLines.push({
-        text: lineText.trim(),
+        text: trimmedText,
         y: lineItems[0].y,
         x: lineItems[0].x,
         fontSize: Math.max(...lineItems.map(i => i.fontSize)),
@@ -384,7 +385,12 @@ function groupItemsByLines(items, medianHeight) {
         isItalic: hasItalic,
         items: lineItems,
         hasEOL: lineItems[lineItems.length - 1].hasEOL !== undefined ? 
-                lineItems[lineItems.length - 1].hasEOL : false
+                lineItems[lineItems.length - 1].hasEOL : false,
+        // CRITICAL: Track if line ends with colon - indicates section header
+        // This helps with paragraph grouping (line after colon should be new paragraph)
+        endsWithColon: trimmedText.endsWith(':'),
+        // Track line length for heading detection
+        length: trimmedText.length
       });
     }
   }
@@ -518,8 +524,22 @@ function groupIntoParagraphs(lines) {
     const nextLine = i < lines.length - 1 ? lines[i + 1] : null;
     
     // Detect heading: larger font size or pattern matching
-    const isHeading = line.fontSize > avgLineHeight * HEADING_FONT_THRESHOLD || 
-                      /^(Chapter|Section|\d+\.|\d+\))\s/.test(text);
+    // Patterns: numbered lists (1., 2.), section headers, or short lines ending with colon
+    const isHeadingBySize = line.fontSize > avgLineHeight * HEADING_FONT_THRESHOLD;
+    const isHeadingByPattern = /^(Chapter|Section|\d+\.|\d+\))\s/.test(text);
+    // Short lines (less than 60 chars) ending with colon are likely headings
+    const isHeadingByColon = text.length < 60 && text.trim().endsWith(':');
+    // Short lines (less than 50 chars) starting with capital letter are likely headings
+    const isHeadingByShortCapital = text.length < 50 && /^[А-ЯA-Z]/.test(text.trim());
+    
+    const isHeading = isHeadingBySize || isHeadingByPattern || isHeadingByColon || isHeadingByShortCapital;
+    
+    // CRITICAL: If previous line ended with colon, current line should start new paragraph
+    // This handles cases like "Описание задачи:" followed by paragraph text
+    // Use line.endsWithColon property if available (more reliable than text parsing)
+    const prevLineEndsWithColon = currentPara && 
+                                   (currentPara.endsWithColon || currentPara.text.trim().endsWith(':')) && 
+                                   (currentPara.length || currentPara.text.length) < 100; // Short line with colon
     
     // Calculate vertical gap to next line (adaptive)
     // IMPORTANT: nextLine.y > line.y (lines go top to bottom), so use nextLine.y - line.y (not Math.abs)
@@ -534,8 +554,14 @@ function groupIntoParagraphs(lines) {
     // CRITICAL FIX: Removed line.hasEOL - hasEOL indicates visual line break, NOT paragraph break
     // PDF.js sets hasEOL=true for every line in a paragraph because each line is a separate visual element
     // We should use only Y-coordinate gaps to determine paragraph breaks
+    // 
+    // ADDITIONAL HEURISTICS:
+    // - If previous line ended with colon (short line), next line should be new paragraph
+    // - If current line ends with colon (short line), it's likely a heading
+    // - Use stricter gap threshold for lines after colons
     const shouldStartNew = !currentPara || 
                           isHeading || 
+                          prevLineEndsWithColon || // CRITICAL: Line after colon should be new paragraph
                           yGap > adaptiveParaGap ||
                           fontChange; // Significant font size change
     
@@ -550,6 +576,7 @@ function groupIntoParagraphs(lines) {
       gapRatio: nextLine ? (yGap / adaptiveParaGap).toFixed(2) : 'N/A',
       gapRatioGreaterThanOne: nextLine ? (yGap > adaptiveParaGap) : false,
       isHeading,
+      prevLineEndsWithColon: prevLineEndsWithColon || false,
       fontChange: fontChange || false,
       fontChangeDetails: currentPara ? {
         lineFontSize: line.fontSize.toFixed(1),
@@ -563,6 +590,7 @@ function groupIntoParagraphs(lines) {
       shouldStartNewReasons: {
         noCurrentPara: !currentPara,
         isHeading: isHeading,
+        prevLineEndsWithColon: prevLineEndsWithColon || false,
         yGapTooLarge: nextLine ? (yGap > adaptiveParaGap) : false,
         hasEOL: line.hasEOL || false,
         fontChange: fontChange || false
@@ -590,7 +618,10 @@ function groupIntoParagraphs(lines) {
           lastY: line.y,
           isBold: line.isBold || false,
           isItalic: line.isItalic || false,
-          items: [line]
+          items: [line],
+          // CRITICAL: Preserve line metadata for paragraph grouping
+          endsWithColon: line.endsWithColon || false,
+          length: line.length || text.length
         });
         currentPara = null; // Headings are standalone
       } else {
@@ -602,7 +633,10 @@ function groupIntoParagraphs(lines) {
           lastY: line.y,
           isBold: line.isBold || false,
           isItalic: line.isItalic || false,
-          items: [line]
+          items: [line],
+          // CRITICAL: Preserve line metadata for paragraph grouping
+          endsWithColon: line.endsWithColon || false,
+          length: line.length || text.length
         };
       }
     } else {
@@ -634,6 +668,9 @@ function groupIntoParagraphs(lines) {
         if (line.isBold) currentPara.isBold = true;
         if (line.isItalic) currentPara.isItalic = true;
         currentPara.items.push(line);
+        // CRITICAL: Update metadata - last line's properties determine paragraph properties
+        currentPara.endsWithColon = line.endsWithColon || false;
+        currentPara.length = currentPara.text.length;
       }
     }
   }
@@ -678,6 +715,75 @@ function determineHeadingLevel(fontSize, avgFontSize) {
   if (ratio >= 1.4) return 3;
   if (ratio >= 1.2) return 4;
   return 5;
+}
+
+/**
+ * Build font format mapping from internal fontName to format (bold/italic)
+ * Uses width/height ratio heuristic: bold text is typically wider
+ * @param {Array} items - Text items with widthHeightRatio property
+ * @returns {Map<string, string>} Map from fontName to format ('bold', 'italic', 'bold-italic', or 'normal')
+ */
+function buildFontFormatMap(items) {
+  const fontToFormats = new Map();
+  
+  if (!items || items.length === 0) {
+    return fontToFormats;
+  }
+  
+  // Group items by fontName
+  const fontGroups = new Map();
+  items.forEach(item => {
+    const fontName = item.fontName || '';
+    if (!fontName) return;
+    
+    if (!fontGroups.has(fontName)) {
+      fontGroups.set(fontName, []);
+    }
+    fontGroups.get(fontName).push(item);
+  });
+  
+  // Calculate median widthHeightRatio across all items
+  const allRatios = items
+    .map(item => item.widthHeightRatio || 0)
+    .filter(ratio => ratio > 0)
+    .sort((a, b) => a - b);
+  
+  if (allRatios.length === 0) {
+    return fontToFormats;
+  }
+  
+  const medianRatio = allRatios[Math.floor(allRatios.length / 2)];
+  
+  // For each font, determine if it's bold/italic based on:
+  // 1. Average widthHeightRatio (bold text is wider)
+  // 2. Regex on fontName (if it contains style info)
+  fontGroups.forEach((groupItems, fontName) => {
+    const avgRatio = groupItems.reduce((sum, item) => sum + (item.widthHeightRatio || 0), 0) / groupItems.length;
+    
+    // Heuristic: if ratio is significantly above median, likely bold
+    // Use stricter threshold (1.2x instead of 1.15x) to reduce false positives
+    // Also require that the font has at least 3 items to avoid noise
+    const isBoldByRatio = groupItems.length >= 3 && avgRatio > medianRatio * 1.2;
+    
+    // Check regex on fontName (works if fontName contains style info)
+    const isBoldByRegex = /bold|black|heavy|demi|semi/i.test(fontName);
+    const isItalicByRegex = /italic|oblique/i.test(fontName);
+    
+    // Combine heuristics: prefer regex if available, otherwise use ratio
+    const isBold = isBoldByRegex || (isBoldByRatio && !isItalicByRegex);
+    const isItalic = isItalicByRegex;
+    
+    if (isBold && isItalic) {
+      fontToFormats.set(fontName, 'bold-italic');
+    } else if (isBold) {
+      fontToFormats.set(fontName, 'bold');
+    } else if (isItalic) {
+      fontToFormats.set(fontName, 'italic');
+    }
+    // else: normal (not stored in map)
+  });
+  
+  return fontToFormats;
 }
 
 /**
@@ -917,51 +1023,52 @@ export async function extractPdfContent(url) {
       // CRITICAL FIX: Use viewport.convertToViewportPoint() for proper coordinate transformation
       // This applies the full transformation matrix including rotation and scale
       // Returns coordinates in viewport space (top-left origin, Y increases downward)
-      const transformedItems = textItems
-        .filter(item => item.str !== null && item.str !== undefined && item.str.length > 0)
-        .map(item => {
-          const transform = item.transform || [1, 0, 0, 1, 0, 0];
-          const pdfX = transform[4] || 0;
-          const pdfY = transform[5] || 0;
-          
-          // CRITICAL: Use viewport API for proper coordinate transformation
-          // This handles rotation, scale, and coordinate system conversion correctly
-          const [viewportX, viewportY] = viewport.convertToViewportPoint(pdfX, pdfY);
-          
-          // Extract font style information (bold/italic)
-          // CRITICAL: fontName in PDF.js is internal ID like "g_d0_f1", NOT human-readable like "Arial-Bold"
-          // We need to use heuristics: width/height ratio or build fontToFormats mapping
-          const fontName = item.fontName || '';
-          
-          // Calculate width/height ratio for bold detection heuristic
-          const itemWidth = item.width || 0;
-          const itemHeight = item.height || Math.abs(transform[3]) || 12;
-          const widthHeightRatio = itemHeight > 0 ? itemWidth / itemHeight : 0;
-          
-          // Try regex first (works if fontName contains style info)
-          let isBold = /bold|black|heavy|demi|semi/i.test(fontName);
-          let isItalic = /italic|oblique/i.test(fontName);
-          
-          // Store ratio for later analysis (will be used to build fontToFormats mapping)
-          // We'll analyze all items first, then determine bold/italic based on distribution
-          
-          // DIAGNOSTIC: Log font detection for first 20 items
-          if (transformedItems.length < 20) {
-            log(`[ClipAIble Offscreen PDF] Page ${pageNum}: DIAGNOSTIC - Font detection for item ${transformedItems.length}`, {
-              text: item.str?.substring(0, 30) || '',
-              fontName: fontName || 'EMPTY',
-              fontWeight: item.fontWeight || 'NOT_AVAILABLE',
-              fontStyle: item.fontStyle || 'NOT_AVAILABLE',
-              width: itemWidth.toFixed(1),
-              height: itemHeight.toFixed(1),
-              widthHeightRatio: widthHeightRatio.toFixed(2),
-              isBold: isBold,
-              isItalic: isItalic,
-              boldRegexMatch: /bold|black|heavy|demi|semi/i.test(fontName),
-              italicRegexMatch: /italic|oblique/i.test(fontName),
-              allItemKeys: Object.keys(item)
-            });
-          }
+      // Filter and transform text items
+      const filteredItems = textItems.filter(item => item.str !== null && item.str !== undefined && item.str.length > 0);
+      
+      const transformedItems = filteredItems.map((item, index) => {
+        const transform = item.transform || [1, 0, 0, 1, 0, 0];
+        const pdfX = transform[4] || 0;
+        const pdfY = transform[5] || 0;
+        
+        // CRITICAL: Use viewport API for proper coordinate transformation
+        // This handles rotation, scale, and coordinate system conversion correctly
+        const [viewportX, viewportY] = viewport.convertToViewportPoint(pdfX, pdfY);
+        
+        // Extract font style information (bold/italic)
+        // CRITICAL: fontName in PDF.js is internal ID like "g_d0_f1", NOT human-readable like "Arial-Bold"
+        // We need to use heuristics: width/height ratio or build fontToFormats mapping
+        const fontName = item.fontName || '';
+        
+        // Calculate width/height ratio for bold detection heuristic
+        const itemWidth = item.width || 0;
+        const itemHeight = item.height || Math.abs(transform[3]) || 12;
+        const widthHeightRatio = itemHeight > 0 ? itemWidth / itemHeight : 0;
+        
+        // Try regex first (works if fontName contains style info)
+        let isBold = /bold|black|heavy|demi|semi/i.test(fontName);
+        let isItalic = /italic|oblique/i.test(fontName);
+        
+        // Store ratio for later analysis (will be used to build fontToFormats mapping)
+        // We'll analyze all items first, then determine bold/italic based on distribution
+        
+        // DIAGNOSTIC: Log font detection for first 20 items
+        if (index < 20) {
+          log(`[ClipAIble Offscreen PDF] Page ${pageNum}: DIAGNOSTIC - Font detection for item ${index}`, {
+            text: item.str?.substring(0, 30) || '',
+            fontName: fontName || 'EMPTY',
+            fontWeight: item.fontWeight || 'NOT_AVAILABLE',
+            fontStyle: item.fontStyle || 'NOT_AVAILABLE',
+            width: itemWidth.toFixed(1),
+            height: itemHeight.toFixed(1),
+            widthHeightRatio: widthHeightRatio.toFixed(2),
+            isBold: isBold,
+            isItalic: isItalic,
+            boldRegexMatch: /bold|black|heavy|demi|semi/i.test(fontName),
+            italicRegexMatch: /italic|oblique/i.test(fontName),
+            allItemKeys: Object.keys(item)
+          });
+        }
           
           return {
             ...item,
@@ -1066,7 +1173,14 @@ export async function extractPdfContent(url) {
       const fontToFormats = buildFontFormatMap(sortedItems);
       
       // Apply font format mapping to items
+      // CRITICAL: Reset isBold/isItalic first, then apply mapping
+      // This prevents false positives from regex matching on internal font IDs
       sortedItems.forEach(item => {
+        // Reset to false first (regex on fontName is unreliable for internal IDs)
+        item.isBold = false;
+        item.isItalic = false;
+        
+        // Apply mapping only if font is in the map (determined by ratio heuristic)
         if (fontToFormats.has(item.fontName)) {
           const format = fontToFormats.get(item.fontName);
           item.isBold = format === 'bold' || format === 'bold-italic';
@@ -1361,6 +1475,174 @@ export async function extractPdfContent(url) {
         }))
       });
     }
+    
+    // Check headings AND paragraphs at the start of document
+    if (title && allContent.length > 0) {
+      // Normalize title for comparison (remove extra whitespace, case-insensitive)
+      const normalizedTitle = title.trim().toLowerCase().replace(/\s+/g, ' ');
+      
+      log('[ClipAIble Offscreen PDF] Checking for duplicate title', {
+        title,
+        normalizedTitle,
+        contentItems: allContent.length,
+        firstItems: allContent.slice(0, 5).map((item, idx) => ({
+          index: idx,
+          type: item.type,
+          text: item.text ? item.text.substring(0, 60) + (item.text.length > 60 ? '...' : '') : 'NO TEXT'
+        }))
+      });
+      
+      // Find and remove all headings/paragraphs that match the title
+      const itemsToRemove = [];
+      for (let i = 0; i < Math.min(allContent.length, 5); i++) { // Check first 5 items
+        const item = allContent[i];
+        if (!item.text) continue;
+        
+        const normalizedText = item.text.trim().toLowerCase().replace(/\s+/g, ' ');
+        
+        // Check for exact match
+        if (normalizedText === normalizedTitle) {
+          log(`[ClipAIble Offscreen PDF] Found exact title match at index ${i}`, {
+            itemText: item.text.substring(0, 80)
+          });
+          itemsToRemove.push(i);
+          continue;
+        }
+        
+        // Check if text is part of title (title split across lines)
+        // e.g., title = "Longevity Priority: агентно-управляемая система приоритезации задач в науке о продлении жизни"
+        // item1 = "Longevity Priority: агентно-управляемая система приоритезации"
+        // item2 = "задач в науке о продлении жизни"
+        if (normalizedTitle.includes(normalizedText) || normalizedText.includes(normalizedTitle)) {
+          // Check if this is likely a split title (at the start of document)
+          // Also check if text is a continuation of title (starts with words from title)
+          const titleWords = normalizedTitle.split(/\s+/);
+          const textWords = normalizedText.split(/\s+/);
+          const firstWordsMatch = textWords.length > 0 && titleWords.includes(textWords[0]);
+          const isContinuation = firstWordsMatch && i < 5;
+          
+          // DIAGNOSTIC: Log all title matching attempts
+          log(`[ClipAIble Offscreen PDF] DIAGNOSTIC - Title matching check at index ${i}`, {
+            itemText: item.text.substring(0, 80),
+            normalizedText,
+            normalizedTitle,
+            lengthRatio: (normalizedText.length / normalizedTitle.length).toFixed(2),
+            titleIncludesText: normalizedTitle.includes(normalizedText),
+            textIncludesTitle: normalizedText.includes(normalizedTitle),
+            isContinuation,
+            firstWord: textWords[0] || '',
+            titleWords: titleWords.slice(0, 5),
+            textWords: textWords.slice(0, 5),
+            firstWordsMatch,
+            index: i,
+            willRemove: i < 5 && (normalizedText.length < normalizedTitle.length * 0.8 || isContinuation)
+          });
+          
+          if (i < 5 && (normalizedText.length < normalizedTitle.length * 0.8 || isContinuation)) {
+            log(`[ClipAIble Offscreen PDF] Found partial title match at index ${i}`, {
+              itemText: item.text.substring(0, 80),
+              normalizedText,
+              normalizedTitle,
+              lengthRatio: (normalizedText.length / normalizedTitle.length).toFixed(2),
+              isContinuation,
+              firstWord: textWords[0] || ''
+            });
+            itemsToRemove.push(i);
+          }
+        } else {
+          // DIAGNOSTIC: Log why title was NOT matched
+          if (i < 10) {
+            log(`[ClipAIble Offscreen PDF] DIAGNOSTIC - Title NOT matched at index ${i}`, {
+              itemText: item.text.substring(0, 80),
+              normalizedText,
+              normalizedTitle,
+              titleIncludesText: normalizedTitle.includes(normalizedText),
+              textIncludesTitle: normalizedText.includes(normalizedTitle)
+            });
+          }
+        }
+      }
+      
+      // Remove items in reverse order to maintain indices
+      if (itemsToRemove.length > 0) {
+        log('[ClipAIble Offscreen PDF] Removing duplicate title from content', { 
+          title, 
+          removedCount: itemsToRemove.length,
+          indices: itemsToRemove,
+          removedItems: itemsToRemove.map(idx => ({
+            index: idx,
+            type: allContent[idx].type,
+            text: allContent[idx].text ? allContent[idx].text.substring(0, 80) : 'NO TEXT'
+          }))
+        });
+        for (let i = itemsToRemove.length - 1; i >= 0; i--) {
+          allContent.splice(itemsToRemove[i], 1);
+        }
+      } else {
+        log('[ClipAIble Offscreen PDF] No duplicate title found in first 5 items');
+      }
+    }
+    
+    // Remove duplicate author from content (check first few paragraphs)
+    if (author && allContent.length > 0) {
+      const normalizedAuthor = author.trim().toLowerCase().replace(/\s+/g, ' ');
+      
+      log('[ClipAIble Offscreen PDF] Checking for duplicate author', {
+        author,
+        normalizedAuthor,
+        contentItems: allContent.length
+      });
+      
+      const itemsToRemove = [];
+      for (let i = 0; i < Math.min(allContent.length, 3); i++) { // Check first 3 items
+        const item = allContent[i];
+        if (!item.text) continue;
+        
+        const normalizedText = item.text.trim().toLowerCase().replace(/\s+/g, ' ');
+        
+        // Check if paragraph contains author name
+        if (normalizedText === normalizedAuthor || normalizedText.includes(normalizedAuthor)) {
+          log(`[ClipAIble Offscreen PDF] Found author match at index ${i}`, {
+            itemText: item.text.substring(0, 80),
+            normalizedText,
+            normalizedAuthor
+          });
+          itemsToRemove.push(i);
+        }
+      }
+      
+      if (itemsToRemove.length > 0) {
+        log('[ClipAIble Offscreen PDF] Removing duplicate author from content', { 
+          author, 
+          removedCount: itemsToRemove.length,
+          indices: itemsToRemove,
+          removedItems: itemsToRemove.map(idx => ({
+            index: idx,
+            type: allContent[idx].type,
+            text: allContent[idx].text ? allContent[idx].text.substring(0, 80) : 'NO TEXT'
+          }))
+        });
+        for (let i = itemsToRemove.length - 1; i >= 0; i--) {
+          allContent.splice(itemsToRemove[i], 1);
+        }
+      } else {
+        log('[ClipAIble Offscreen PDF] No duplicate author found in first 3 items');
+      }
+    }
+    
+    // Process outline to add heading IDs (if outline exists)
+    // TODO: Match outline items to headings in content and add IDs for internal links
+    
+    // Cleanup PDF resources
+    pdf.destroy();
+    
+    log('[ClipAIble Offscreen PDF] === PDF EXTRACTION END ===', {
+      title,
+      contentItems: allContent.length,
+      pages: pdf.numPages,
+      hasAuthor: !!author,
+      hasDate: !!publishDate
+    });
     
     return {
       title: title || 'Untitled PDF',

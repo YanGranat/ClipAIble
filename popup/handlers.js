@@ -468,12 +468,26 @@ export function initHandlers(deps) {
       log('=== setupEventListeners: Adding click handler to savePdfBtn ===', {
         hasButton: !!elements.savePdfBtn,
         hasHandler: typeof handleSavePdf === 'function',
+        isDisabled: elements.savePdfBtn.disabled,
+        displayStyle: elements.savePdfBtn.style.display,
+        computedDisplay: window.getComputedStyle(elements.savePdfBtn).display,
         timestamp: Date.now()
       });
-      elements.savePdfBtn.addEventListener('click', () => {
+      elements.savePdfBtn.addEventListener('click', (e) => {
         log('=== savePdfBtn: CLICK EVENT FIRED ===', {
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          isDisabled: elements.savePdfBtn.disabled,
+          displayStyle: elements.savePdfBtn.style.display,
+          computedDisplay: window.getComputedStyle(elements.savePdfBtn).display,
+          eventType: e.type,
+          target: e.target?.id
         });
+        if (elements.savePdfBtn.disabled) {
+          log('=== savePdfBtn: Button is disabled, ignoring click ===', {
+            timestamp: Date.now()
+          });
+          return;
+        }
         handleSavePdf();
       });
     } else {

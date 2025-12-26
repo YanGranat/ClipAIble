@@ -13,6 +13,7 @@
 
 // Import logging utilities first for use in global error handlers
 import { log, logError, logWarn, logDebug, LOG_LEVELS } from './utils/logging.js';
+import { CONFIG } from './utils/config.js';
 
 // Global error handler for uncaught errors during module loading
 // Uses logError with fallback to console.error if logging system is not yet initialized
@@ -59,7 +60,6 @@ self.addEventListener('unhandledrejection', (event) => {
     console.error('[ClipAIble] Failed to log rejection:', loggingError);
   }
 });
-import { CONFIG } from './utils/config.js';
 import { 
   getProcessingState, 
   updateState, 
@@ -109,7 +109,16 @@ import {
   handleAbstractGeneration,
   detectEffectiveLanguage
 } from './utils/pipeline-helpers.js';
-import { handlePdfPageProcessing } from './utils/processing-helpers.js';
+import {
+  handlePdfPageProcessing,
+  validateAndInitializeProcessing,
+  handleVideoPageProcessing,
+  handleStandardArticleProcessing,
+  showQuickSaveNotification,
+  extractPageContent,
+  prepareQuickSaveProcessingData,
+  handleQuickSaveError
+} from './utils/processing-helpers.js';
 import { VoiceValidator } from './utils/voice-validator.js';
 import { TTSApiKeyManager } from './utils/api-key-manager.js';
 import { selectProcessingFunction } from './processing/mode-selector.js';
@@ -119,15 +128,6 @@ import { getQuickSaveSettingsKeys, prepareQuickSaveData } from './processing/qui
 import { updateContextMenuWithLang } from './utils/context-menu.js';
 import { runInitialization } from './initialization/index.js';
 import { routeMessage } from './message-handlers/index.js';
-import { 
-  validateAndInitializeProcessing,
-  handleVideoPageProcessing,
-  handleStandardArticleProcessing,
-  showQuickSaveNotification,
-  extractPageContent,
-  prepareQuickSaveProcessingData,
-  handleQuickSaveError
-} from './utils/processing-helpers.js';
 
 // ============================================
 // NOTIFICATION HELPER
@@ -1085,16 +1085,18 @@ try {
   });
   
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    // Skip verbose logging for frequent operations
+    // CRITICAL: Log ALL messages to catch any issues
     const frequentActions = ['getState', 'TTS_PROGRESS'];
     const isFrequentAction = frequentActions.includes(request?.action);
     
-    if (!isFrequentAction) {
+    // Always log processArticle messages
+    if (request?.action === 'processArticle' || !isFrequentAction) {
       log('=== chrome.runtime.onMessage: MESSAGE RECEIVED ===', {
         action: request?.action,
         type: request?.type,
         target: request?.target,
         hasData: !!request?.data,
+        dataKeys: request?.data ? Object.keys(request?.data) : [],
         senderUrl: sender?.tab?.url || sender?.url || 'popup',
         senderTabId: sender?.tab?.id,
         isOffscreen: sender?.id === chrome.runtime.id && !sender?.tab,
@@ -1487,7 +1489,14 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   function normalizeImageUrl(url) {
     if (!url) return '';
-    try { return new URL(url, window.location.href).pathname.toLowerCase(); } catch { return url.toLowerCase(); }
+    try { 
+      // CRITICAL: window is only available in page context, not in service worker
+      // This function runs in page context via executeScript, so window is safe here
+      const baseUrl = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
+      return new URL(url, baseUrl || 'http://localhost').pathname.toLowerCase(); 
+    } catch { 
+      return url.toLowerCase(); 
+    }
   }
   
   function isInfoboxDiv(element) {
