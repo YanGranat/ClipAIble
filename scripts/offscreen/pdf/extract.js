@@ -231,6 +231,302 @@ async function imageDataToDataUrl(imageData, xObject) {
 }
 
 /**
+ * Detect columns in PDF page using X-coordinate histogram
+ * @param {Array} items - Text items with x coordinates
+ * @param {number} pageWidth - Page width in viewport coordinates
+ * @returns {Array} Array of column definitions { start, end }
+ */
+function detectColumns(items, pageWidth) {
+  if (items.length === 0) return [{ start: 0, end: pageWidth }];
+  
+  // Create histogram of X-coordinates
+  const histogram = new Map();
+  const BUCKET_SIZE = 10; // pixels
+  
+  for (const item of items) {
+    const bucket = Math.floor(item.x / BUCKET_SIZE) * BUCKET_SIZE;
+    histogram.set(bucket, (histogram.get(bucket) || 0) + 1);
+  }
+  
+  // Find peaks (column starts)
+  const peaks = [];
+  const entries = Array.from(histogram.entries()).sort((a, b) => a[0] - b[0]);
+  
+  let inPeak = false;
+  let peakStart = 0;
+  let peakCount = 0;
+  const MIN_PEAK_COUNT = 5; // Minimum items to consider a column
+  
+  for (let i = 0; i < entries.length; i++) {
+    const [x, count] = entries[i];
+    
+    if (count >= MIN_PEAK_COUNT && !inPeak) {
+      // Start of peak
+      inPeak = true;
+      peakStart = x;
+      peakCount = count;
+    } else if (count < MIN_PEAK_COUNT && inPeak) {
+      // End of peak
+      peaks.push({ x: peakStart, count: peakCount });
+      inPeak = false;
+    } else if (inPeak && count > peakCount) {
+      // Update peak if we find a higher count
+      peakStart = x;
+      peakCount = count;
+    }
+  }
+  
+  if (inPeak) {
+    peaks.push({ x: peakStart, count: peakCount });
+  }
+  
+  // Filter peaks: minimum distance between columns
+  const MIN_COLUMN_GAP = 50; // pixels
+  const columns = [];
+  let lastColumnX = -Infinity;
+  
+  for (const peak of peaks) {
+    if (peak.x - lastColumnX > MIN_COLUMN_GAP) {
+      // Estimate column width (use average or fixed width)
+      const columnWidth = Math.min(200, pageWidth / 2); // Max 200px or half page
+      columns.push({
+        start: peak.x,
+        end: peak.x + columnWidth
+      });
+      lastColumnX = peak.x;
+    }
+  }
+  
+  // If no columns detected, treat entire page as single column
+  if (columns.length === 0) {
+    columns.push({ start: 0, end: pageWidth });
+  }
+  
+  return columns;
+}
+
+/**
+ * Get column index for X coordinate
+ * @param {number} x - X coordinate
+ * @param {Array} columns - Column definitions
+ * @returns {number} Column index (0-based)
+ */
+function getColumnIndex(x, columns) {
+  for (let i = 0; i < columns.length; i++) {
+    if (x >= columns[i].start && x < columns[i].end) {
+      return i;
+    }
+  }
+  // Default to last column if not found
+  return Math.max(0, columns.length - 1);
+}
+
+/**
+ * Group text items into lines with improved algorithm
+ * Handles RTL/LTR text direction and explicit line breaks
+ * @param {Array} items - Sorted text items
+ * @returns {Array} Array of line objects
+ */
+function groupIntoLines(items) {
+  if (items.length === 0) return [];
+  
+  const lines = [];
+  const LINE_Y_TOLERANCE = 2; // pixels
+  
+  // Group by Y-coordinate using rounding for tolerance
+  const lineMap = new Map();
+  
+  for (const item of items) {
+    // Round Y to nearest tolerance value for grouping
+    const roundedY = Math.round(item.y / LINE_Y_TOLERANCE) * LINE_Y_TOLERANCE;
+    
+    if (!lineMap.has(roundedY)) {
+      lineMap.set(roundedY, []);
+    }
+    lineMap.get(roundedY).push(item);
+  }
+  
+  // Sort lines by Y (already sorted, but ensure order)
+  const sortedLines = Array.from(lineMap.entries())
+    .sort((a, b) => a[0] - b[0]);
+  
+  // Process each line
+  for (const [lineY, lineItems] of sortedLines) {
+    // Items are already sorted by X (with RTL/LTR consideration) from previous step
+    // But verify and re-sort if needed
+    // Sort items within line by X coordinate
+    // Consider text direction if available (RTL languages)
+    lineItems.sort((a, b) => {
+      // Check if both items have RTL direction
+      const aDir = a.dir || 'ltr';
+      const bDir = b.dir || 'ltr';
+      if (aDir === 'rtl' && bDir === 'rtl') {
+        return b.x - a.x; // RTL: right to left (larger X first)
+      }
+      return a.x - b.x; // LTR: left to right (smaller X first)
+    });
+    
+    // Build line text with smart spacing
+    let lineText = '';
+    let prevItem = null;
+    
+    for (const item of lineItems) {
+      if (prevItem) {
+        // Determine if space is needed
+        const expectedX = prevItem.x + (prevItem.width || prevItem.fontSize * (prevItem.str?.length || 1));
+        const actualX = item.x;
+        const gap = Math.abs(actualX - expectedX);
+        const avgFontSize = (item.fontSize + prevItem.fontSize) / 2;
+        
+        // Space needed if:
+        // 1. Gap > 25% of font size (word boundary)
+        // 2. OR previous item has explicit line break flag (if available)
+        const needsSpace = gap > avgFontSize * 0.25 || 
+                          (prevItem.hasEOL !== undefined && prevItem.hasEOL);
+        if (needsSpace) {
+          lineText += ' ';
+        }
+      }
+      
+      lineText += item.str || '';
+      prevItem = item;
+    }
+    
+    if (lineText.trim()) {
+      lines.push({
+        text: lineText.trim(),
+        y: lineY,
+        x: lineItems[0].x,
+        fontSize: Math.max(...lineItems.map(i => i.fontSize)),
+        fontName: lineItems[0].fontName || '',
+        items: lineItems,
+        // hasEOL may not be available - use safe check
+        hasEOL: lineItems[lineItems.length - 1].hasEOL !== undefined ? 
+                lineItems[lineItems.length - 1].hasEOL : false
+      });
+    }
+  }
+  
+  return lines;
+}
+
+/**
+ * Group lines into paragraphs with improved algorithm
+ * Handles headings, line spacing, and explicit line breaks
+ * @param {Array} lines - Array of line objects
+ * @returns {Array} Array of paragraph/heading objects
+ */
+function groupIntoParagraphs(lines) {
+  if (lines.length === 0) return [];
+  
+  const paragraphs = [];
+  let currentPara = null;
+  
+  // Calculate average line height for dynamic thresholds
+  const avgLineHeight = lines.reduce((sum, l) => sum + l.fontSize, 0) / lines.length;
+  const PARA_Y_GAP = avgLineHeight * 1.5; // 1.5x line spacing for paragraph break
+  const HEADING_FONT_THRESHOLD = avgLineHeight * 1.2; // 20% larger than average = heading
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const text = line.text.trim();
+    if (!text) continue;
+    
+    const nextLine = i < lines.length - 1 ? lines[i + 1] : null;
+    
+    // Detect heading: larger font size or pattern matching
+    const isHeading = line.fontSize > HEADING_FONT_THRESHOLD || 
+                      /^(Chapter|Section|\d+\.|\d+\))\s/.test(text);
+    
+    // Calculate vertical gap to next line
+    const yGap = nextLine ? (nextLine.y - line.y) : 0;
+    
+    // Determine if we should start a new paragraph
+    const shouldStartNew = !currentPara || 
+                          isHeading || 
+                          yGap > PARA_Y_GAP ||
+                          line.hasEOL; // Explicit line break from PDF
+    
+    if (shouldStartNew) {
+      // Finalize previous paragraph
+      if (currentPara && currentPara.text.trim()) {
+        paragraphs.push(currentPara);
+      }
+      
+      // Start new paragraph or heading
+      if (isHeading) {
+        const level = determineHeadingLevel(line.fontSize, avgLineHeight);
+        paragraphs.push({
+          type: 'heading',
+          text: text,
+          level: level,
+          fontSize: line.fontSize,
+          y: line.y,
+          lastY: line.y,
+          items: [line]
+        });
+        currentPara = null; // Headings are standalone
+      } else {
+        currentPara = {
+          type: 'paragraph',
+          text: text,
+          fontSize: line.fontSize,
+          y: line.y,
+          lastY: line.y,
+          items: [line]
+        };
+      }
+    } else {
+      // Continue current paragraph
+      if (currentPara) {
+        // Add space between lines
+        const prevEndsWithPunct = /[.!?;:]$/.test(currentPara.text.trim());
+        const lineStartsWithCapital = /^[A-ZА-ЯЁ]/.test(text);
+        
+        if (prevEndsWithPunct || lineStartsWithCapital) {
+          currentPara.text += ' ' + text;
+        } else {
+          // Check if space needed
+          const lastChar = currentPara.text[currentPara.text.length - 1];
+          const firstChar = text[0];
+          if (lastChar !== ' ' && firstChar !== ' ') {
+            currentPara.text += ' ' + text;
+          } else {
+            currentPara.text += text;
+          }
+        }
+        
+        currentPara.lastY = line.y;
+        currentPara.fontSize = Math.max(currentPara.fontSize, line.fontSize);
+        currentPara.items.push(line);
+      }
+    }
+  }
+  
+  // Add last paragraph
+  if (currentPara && currentPara.text.trim()) {
+    paragraphs.push(currentPara);
+  }
+  
+  return paragraphs;
+}
+
+/**
+ * Determine heading level based on font size ratio
+ * @param {number} fontSize - Font size of heading
+ * @param {number} avgFontSize - Average font size in document
+ * @returns {number} Heading level (1-5)
+ */
+function determineHeadingLevel(fontSize, avgFontSize) {
+  const ratio = fontSize / avgFontSize;
+  if (ratio >= 2.0) return 1;
+  if (ratio >= 1.7) return 2;
+  if (ratio >= 1.4) return 3;
+  if (ratio >= 1.2) return 4;
+  return 5;
+}
+
+/**
  * Extract content from PDF file
  * Based on PDF.js official examples and documentation
  * @param {string} url - PDF file URL
@@ -374,11 +670,12 @@ export async function extractPdfContent(url) {
       const page = await pdf.getPage(pageNum);
       
       // Get viewport for coordinate transformation
+      // CRITICAL: Use viewport.convertToViewportPoint() for proper coordinate transformation
+      // This applies the full transformation matrix (rotation, scale, translation)
       // PDF coordinate system: origin (0,0) is at bottom-left, Y increases upward
       // getTextContent() returns coordinates in PDF coordinate system
-      // We need to convert to top-left origin for correct reading order
+      // viewport.convertToViewportPoint() converts to viewport coordinates (top-left origin)
       const viewport = page.getViewport({ scale: 1.0 });
-      const viewportHeight = viewport.height;
       
       // Extract text using getTextContent()
       // Returns: { items: [{ str, transform, width, height, fontName, dir }] }
@@ -403,11 +700,14 @@ export async function extractPdfContent(url) {
       if (textItems.length > 0) {
         const sampleItem = textItems[0];
         const sampleTransform = sampleItem.transform || [1, 0, 0, 1, 0, 0];
+        const [sampleViewportX, sampleViewportY] = viewport.convertToViewportPoint(sampleTransform[4], sampleTransform[5]);
         log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Sample coordinates`, {
-          viewportHeight,
+          viewportHeight: viewport.height,
           viewportWidth: viewport.width,
-          sampleY: sampleTransform[5],
-          sampleX: sampleTransform[4],
+          pdfX: sampleTransform[4],
+          pdfY: sampleTransform[5],
+          viewportX: sampleViewportX,
+          viewportY: sampleViewportY,
           sampleText: sampleItem.str?.substring(0, 50)
         });
       }
@@ -416,234 +716,94 @@ export async function extractPdfContent(url) {
       
       // CRITICAL: Sort text items by position (top to bottom, left to right)
       // PDF.js getTextContent() does NOT guarantee reading order
-      // PDF coordinate system: origin (0,0) is at bottom-left, Y increases upward
       // Transform matrix: [a, b, c, d, e, f]
-      // - transform[4] (e) = X translation
-      // - transform[5] (f) = Y translation (in PDF coordinates, bottom-left origin)
-      // To convert to top-left origin: yTop = viewportHeight - yBottom
-      // Then sort by yTop ascending (smaller = top, larger = bottom)
-      // NOTE: Don't filter out items with special characters - they might be formulas
-      const sortedItems = textItems
+      // - transform[4] (e) = X translation in PDF coordinates
+      // - transform[5] (f) = Y translation in PDF coordinates (bottom-left origin)
+      // 
+      // CRITICAL FIX: Use viewport.convertToViewportPoint() for proper coordinate transformation
+      // This applies the full transformation matrix including rotation and scale
+      // Returns coordinates in viewport space (top-left origin, Y increases downward)
+      const transformedItems = textItems
         .filter(item => item.str !== null && item.str !== undefined && item.str.length > 0)
         .map(item => {
           const transform = item.transform || [1, 0, 0, 1, 0, 0];
-          const x = transform[4] || 0;
-          const yBottom = transform[5] || 0; // Y in PDF coordinates (bottom-left origin)
+          const pdfX = transform[4] || 0;
+          const pdfY = transform[5] || 0;
           
-          // CRITICAL: PDF coordinate system has origin at bottom-left, Y increases upward
-          // getTextContent() returns coordinates in PDF coordinate system
-          // For reading order (top to bottom), we need to invert Y
-          // Convert to top-left origin: yTop = viewportHeight - yBottom
-          // - yBottom = 0 (bottom of page) -> yTop = viewportHeight (bottom in top-left system)
-          // - yBottom = viewportHeight (top of page) -> yTop = 0 (top in top-left system)
-          // So: smaller yTop = top of page, larger yTop = bottom of page
-          const yTop = viewportHeight - yBottom;
+          // CRITICAL: Use viewport API for proper coordinate transformation
+          // This handles rotation, scale, and coordinate system conversion correctly
+          const [viewportX, viewportY] = viewport.convertToViewportPoint(pdfX, pdfY);
           
           return {
             ...item,
-            x: x,
-            y: yTop, // Use top-left origin for sorting (smaller = top, larger = bottom)
-            yOriginal: yBottom, // Keep original for reference
-            fontSize: item.height || Math.abs(transform[3]) || item.width || 12
+            x: viewportX,
+            y: viewportY, // Viewport coordinates: top-left origin, Y increases downward
+            pdfX: pdfX, // Keep original PDF coordinates for reference
+            pdfY: pdfY,
+            fontSize: item.height || Math.abs(transform[3]) || item.width || 12,
+            // hasEOL may not be available in all PDF.js versions - use safe check
+            hasEOL: item.hasEOL !== undefined ? item.hasEOL : false,
+            // dir may not be available - default to LTR
+            dir: item.dir || 'ltr'
           };
-        })
-        .sort((a, b) => {
-          // Primary sort: Y coordinate (top to bottom)
-          // After conversion to top-left origin: yTop = viewportHeight - yBottom
-          // - yBottom=0 (bottom in PDF) -> yTop=viewportHeight (bottom in top-left) ✓
-          // - yBottom=viewportHeight (top in PDF) -> yTop=0 (top in top-left) ✓
-          // So: smaller yTop = top of page, larger yTop = bottom of page
-          // For reading order (top to bottom): sort ascending (smaller yTop first)
-          const yDiff = a.y - b.y; // Ascending: smaller Y (top of page) comes first
-          if (Math.abs(yDiff) > 0.5) {
-            return yDiff;
-          }
-          // Secondary sort: X coordinate (left to right)
-          return a.x - b.x;
         });
+      
+      // Step 1: Column Detection for multi-column layouts
+      const columns = detectColumns(transformedItems, viewport.width);
+      log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Detected ${columns.length} column(s)`);
+      
+      // Step 2: Sort items by column, then Y, then X (with RTL/LTR support)
+      const sortedItems = transformedItems.sort((a, b) => {
+        // 1. Sort by column (left to right)
+        const colA = getColumnIndex(a.x, columns);
+        const colB = getColumnIndex(b.x, columns);
+        if (colA !== colB) {
+          return colA - colB;
+        }
+        
+        // 2. Within column: sort by Y (top to bottom)
+        // Viewport coordinates: smaller Y = top of page, larger Y = bottom of page
+        const yDiff = a.y - b.y;
+        if (Math.abs(yDiff) > 1.0) {
+          return yDiff; // Ascending: top to bottom
+        }
+        
+        // 3. On same line: sort by X (consider text direction)
+        // RTL languages (Arabic, Hebrew): right to left
+        // LTR languages (English, etc.): left to right
+        const aDir = a.dir || 'ltr';
+        const bDir = b.dir || 'ltr';
+        if (aDir === 'rtl' && bDir === 'rtl') {
+          return b.x - a.x; // RTL: larger X first (right to left)
+        }
+        return a.x - b.x; // LTR: smaller X first (left to right)
+      });
       
       // Log first and last items for debugging
       if (sortedItems.length > 0) {
         log(`[ClipAIble Offscreen PDF] Page ${pageNum}: First item (should be top)`, {
           text: sortedItems[0].str?.substring(0, 50),
           y: sortedItems[0].y,
-          yOriginal: sortedItems[0].yOriginal,
-          x: sortedItems[0].x
+          pdfY: sortedItems[0].pdfY,
+          x: sortedItems[0].x,
+          column: getColumnIndex(sortedItems[0].x, columns)
         });
         log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Last item (should be bottom)`, {
           text: sortedItems[sortedItems.length - 1].str?.substring(0, 50),
           y: sortedItems[sortedItems.length - 1].y,
-          yOriginal: sortedItems[sortedItems.length - 1].yOriginal,
-          x: sortedItems[sortedItems.length - 1].x
+          pdfY: sortedItems[sortedItems.length - 1].pdfY,
+          x: sortedItems[sortedItems.length - 1].x,
+          column: getColumnIndex(sortedItems[sortedItems.length - 1].x, columns)
         });
       }
       
       log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Sorted ${sortedItems.length} text items by position`);
       
-      // Group sorted text items into lines
-      // First, group items by Y coordinate (same line)
-      const Y_TOLERANCE = 3; // Pixels tolerance for same line (increased for better grouping)
-      const lineGroups = new Map();
+      // Step 3: Group items into lines with improved algorithm
+      const lines = groupIntoLines(sortedItems);
       
-      for (const item of sortedItems) {
-        const y = item.y;
-        // Find existing line group with similar Y coordinate
-        let foundGroup = null;
-        for (const [groupY, group] of lineGroups.entries()) {
-          if (Math.abs(y - groupY) <= Y_TOLERANCE) {
-            foundGroup = group;
-            break;
-          }
-        }
-        
-        if (foundGroup) {
-          foundGroup.push(item);
-        } else {
-          lineGroups.set(y, [item]);
-        }
-      }
-      
-      // Sort items within each line by X coordinate (left to right)
-      // Then build lines from sorted items
-      const lines = [];
-      for (const [lineY, items] of lineGroups.entries()) {
-        // Sort items in line by X coordinate
-        items.sort((a, b) => a.x - b.x);
-        
-        // Build line text from sorted items
-        let lineText = '';
-        let lastX = null;
-        const lineFontSize = Math.max(...items.map(item => item.fontSize));
-        
-        for (const item of items) {
-          const text = item.str || '';
-          const x = item.x;
-          const itemWidth = item.width || item.fontSize * text.length;
-          
-          if (lastX !== null) {
-            const spacing = x - lastX;
-            // Determine if we need a space between items
-            // If spacing is larger than a small fraction of font size, it's likely a word break
-            // Also check if the last character of previous text and first character of current text
-            // suggest a word boundary (letter + letter = likely same word, letter + space = already has space)
-            const needsSpace = spacing > lineFontSize * 0.3;
-            
-            if (needsSpace) {
-              lineText += ' ' + text;
-            } else {
-              lineText += text;
-            }
-          } else {
-            lineText = text;
-          }
-          
-          lastX = x + itemWidth;
-        }
-        
-        if (lineText.trim()) {
-          lines.push({
-            text: lineText.trim(),
-            y: lineY,
-            x: items[0].x,
-            fontSize: lineFontSize,
-            items: items
-          });
-        }
-      }
-      
-      // Sort lines by Y coordinate (top to bottom)
-      lines.sort((a, b) => a.y - b.y);
-      
-      // Group lines into paragraphs
-      // Lines that are close vertically and have similar font sizes should be merged
-      const PARAGRAPH_Y_TOLERANCE = 15; // Maximum vertical gap between lines in same paragraph
-      const HEADING_FONT_SIZE_THRESHOLD = 14;
-      const paragraphs = [];
-      let currentParagraph = null;
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const text = line.text.trim();
-        if (!text) continue;
-        
-        // Detect heading: larger font size
-        const isHeading = line.fontSize > HEADING_FONT_SIZE_THRESHOLD;
-        
-        // Check if this line should start a new paragraph
-        // New paragraph if:
-        // 1. It's a heading
-        // 2. Large vertical gap from previous line (new section)
-        // 3. Significant font size difference (likely different element type)
-        const shouldStartNewParagraph = isHeading || 
-          (currentParagraph === null) ||
-          (currentParagraph.lastY !== null && Math.abs(line.y - currentParagraph.lastY) > PARAGRAPH_Y_TOLERANCE) ||
-          (Math.abs(line.fontSize - currentParagraph.fontSize) > 3 && line.fontSize > HEADING_FONT_SIZE_THRESHOLD);
-        
-        if (shouldStartNewParagraph) {
-          // Finalize previous paragraph if exists
-          if (currentParagraph && currentParagraph.text.trim()) {
-            paragraphs.push(currentParagraph);
-          }
-          
-          // Start new paragraph or heading
-          if (isHeading) {
-            // Determine heading level based on font size
-            let level = 2; // Default to h2
-            if (line.fontSize > 20) level = 1;
-            else if (line.fontSize > 16) level = 2;
-            else if (line.fontSize > 14) level = 3;
-            else level = 4;
-            
-            paragraphs.push({
-              type: 'heading',
-              text: text,
-              level: level,
-              fontSize: line.fontSize,
-              y: line.y,
-              lastY: line.y
-            });
-            currentParagraph = null; // Headings are standalone
-          } else {
-            // Start new paragraph
-            currentParagraph = {
-              type: 'paragraph',
-              text: text,
-              fontSize: line.fontSize,
-              y: line.y,
-              lastY: line.y
-            };
-          }
-        } else {
-          // Continue current paragraph - merge this line
-          if (currentParagraph) {
-            // Add space between lines if needed
-            // Check if line ends with punctuation or starts with capital (likely new sentence)
-            const prevEndsWithPunct = /[.!?;:]$/.test(currentParagraph.text.trim());
-            const lineStartsWithCapital = /^[A-ZА-ЯЁ]/.test(text);
-            
-            if (prevEndsWithPunct || lineStartsWithCapital) {
-              currentParagraph.text += ' ' + text;
-            } else {
-              // Check if we need a space (if last char is not space and first char is not space)
-              const lastChar = currentParagraph.text[currentParagraph.text.length - 1];
-              const firstChar = text[0];
-              if (lastChar !== ' ' && firstChar !== ' ') {
-                currentParagraph.text += ' ' + text;
-              } else {
-                currentParagraph.text += text;
-              }
-            }
-            currentParagraph.lastY = line.y;
-            // Update font size to average (or keep largest)
-            currentParagraph.fontSize = Math.max(currentParagraph.fontSize, line.fontSize);
-          }
-        }
-      }
-      
-      // Add last paragraph if exists
-      if (currentParagraph && currentParagraph.text.trim()) {
-        paragraphs.push(currentParagraph);
-      }
+      // Step 4: Group lines into paragraphs with improved algorithm
+      const paragraphs = groupIntoParagraphs(lines);
       
       // Convert paragraphs to content items
       log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Processing ${lines.length} lines into ${paragraphs.length} paragraphs`);
@@ -740,21 +900,47 @@ export async function extractPdfContent(url) {
     }
     
     // Remove duplicate title from content if it matches metadata title
-    // This prevents showing the title twice (once in metadata, once as first heading)
+    // IMPROVED: Check all headings, not just first one
+    // Also handle case where title is split across multiple headings
     if (title && allContent.length > 0) {
-      const firstItem = allContent[0];
-      if (firstItem.type === 'heading' && firstItem.text === title) {
-        log('[ClipAIble Offscreen PDF] Removing duplicate title from content', { title });
-        allContent.shift(); // Remove first item (duplicate title)
-      } else {
-        // Also check if any heading matches the title (might not be first)
-        const titleHeadingIndex = allContent.findIndex(
-          item => item.type === 'heading' && item.text === title
-        );
-        if (titleHeadingIndex > 0) {
-          // Only remove if it's not the first item (already checked above)
-          // But if title is from metadata and matches a heading, we might want to keep it
-          // For now, only remove if it's the very first item
+      // Normalize title for comparison (remove extra whitespace, case-insensitive)
+      const normalizedTitle = title.trim().toLowerCase();
+      
+      // Find and remove all headings that match the title
+      const headingsToRemove = [];
+      for (let i = 0; i < allContent.length; i++) {
+        const item = allContent[i];
+        if (item.type === 'heading') {
+          const normalizedHeading = item.text.trim().toLowerCase();
+          
+          // Check for exact match
+          if (normalizedHeading === normalizedTitle) {
+            headingsToRemove.push(i);
+            continue;
+          }
+          
+          // Check if heading is part of title (title split across lines)
+          // e.g., title = "Neural network computation with DNA strand displacement cascades"
+          // heading1 = "Neural network computation with DNA strand"
+          // heading2 = "displacement cascades"
+          if (normalizedTitle.includes(normalizedHeading) || normalizedHeading.includes(normalizedTitle)) {
+            // Check if this is likely a split title (short heading at the start)
+            if (i < 3 && normalizedHeading.length < normalizedTitle.length * 0.7) {
+              headingsToRemove.push(i);
+            }
+          }
+        }
+      }
+      
+      // Remove headings in reverse order to maintain indices
+      if (headingsToRemove.length > 0) {
+        log('[ClipAIble Offscreen PDF] Removing duplicate title headings from content', { 
+          title, 
+          removedCount: headingsToRemove.length,
+          indices: headingsToRemove
+        });
+        for (let i = headingsToRemove.length - 1; i >= 0; i--) {
+          allContent.splice(headingsToRemove[i], 1);
         }
       }
     }
