@@ -961,6 +961,14 @@ export const UI_LOCALES = {
     errorPdfLoadStylesError: 'Не удалось загрузить стили PDF: {error}',
     errorPdfStoreContentFailed: 'Не удалось сохранить контент: {error}',
     errorPdfCreateTabFailed: 'Не удалось создать вкладку: {error}',
+    // PDF extraction errors
+    errorPdfJsLoadFailed: 'Не удалось загрузить библиотеку PDF.js',
+    errorPdfPasswordProtected: 'Этот PDF защищён паролем. Пожалуйста, разблокируйте его сначала.',
+    errorPdfTooLarge: 'PDF файл слишком большой ({size} МБ). Максимальный размер: {max} МБ.',
+    errorPdfNoTextLayer: 'У этого PDF нет текстового слоя (отсканированный PDF). OCR пока не поддерживается.',
+    errorPdfExtractionFailed: 'Не удалось извлечь контент из PDF: {error}',
+    errorPdfUrlNotFound: 'Не удалось определить URL PDF файла',
+    statusExtractingPdf: 'Извлечение контента из PDF...',
     
     // Import/Export errors
     errorImportJsonParseFailed: 'Неверный файл экспорта: ошибка парсинга JSON. Файл может быть поврежден или не является валидным файлом экспорта ClipAIble.',
@@ -1479,6 +1487,14 @@ export const UI_LOCALES = {
     errorPdfLoadStylesError: 'Не вдалося завантажити стилі PDF: {error}',
     errorPdfStoreContentFailed: 'Не вдалося зберегти контент: {error}',
     errorPdfCreateTabFailed: 'Не вдалося створити вкладку: {error}',
+    // PDF extraction errors
+    errorPdfJsLoadFailed: 'Не вдалося завантажити бібліотеку PDF.js',
+    errorPdfPasswordProtected: 'Цей PDF захищено паролем. Будь ласка, розблокуйте його спочатку.',
+    errorPdfTooLarge: 'PDF файл занадто великий ({size} МБ). Максимальний розмір: {max} МБ.',
+    errorPdfNoTextLayer: 'У цього PDF немає текстового шару (відсканований PDF). OCR поки не підтримується.',
+    errorPdfExtractionFailed: 'Не вдалося витягти контент з PDF: {error}',
+    errorPdfUrlNotFound: 'Не вдалося визначити URL PDF файлу',
+    statusExtractingPdf: 'Витягування контенту з PDF...',
     
     // Import/Export errors
     errorImportJsonParseFailed: 'Невірний файл експорту: помилка парсингу JSON. Файл може бути пошкоджений або не є валідним файлом експорту ClipAIble.',

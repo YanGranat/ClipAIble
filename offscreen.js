@@ -3,7 +3,7 @@
 
 // Import logging utilities
 import { log, logError, logWarn, logDebug } from './scripts/utils/logging.js';
-import { handleGetVoices, handleGetStoredVoices, handlePing } from './scripts/offscreen/message-handlers.js';
+import { handleGetVoices, handleGetStoredVoices, handlePing, handleExtractPdf } from './scripts/offscreen/message-handlers.js';
 
 // Import state management
 import { state } from './scripts/offscreen/state.js';
@@ -148,69 +148,6 @@ try {
         type: message.type
       });
       
-      // Initialize TTS module or Web Worker if needed
-      const ttsInitStart = Date.now();
-      let tts;
-      try {
-        // Initialize Web Worker - required, no fallback
-        log(`[ClipAIble Offscreen] === TTS INITIALIZATION START === for ${messageId}`, {
-          messageId,
-          useWorker: state.shouldUseWorker(),
-          hasTTSWorker: state.hasTTSWorker(),
-          timestamp: Date.now()
-        });
-        
-        if (state.shouldUseWorker()) {
-          log(`[ClipAIble Offscreen] Attempting to initialize TTS Worker for ${messageId}...`, {
-            messageId,
-            timestamp: Date.now()
-          });
-          try {
-            await initTTSWorker();
-            log(`[ClipAIble Offscreen] ✅ TTS Worker initialized successfully for ${messageId}`, {
-              messageId,
-              duration: Date.now() - ttsInitStart,
-              method: 'worker',
-              hasWorker: state.hasTTSWorker(),
-              useWorker: state.shouldUseWorker()
-            });
-            // Worker is ready, tts will be null (we'll use worker)
-          } catch (workerError) {
-            logError(`[ClipAIble Offscreen] ❌ TTS Worker initialization FAILED for ${messageId}`, {
-              messageId,
-              error: workerError.message,
-              stack: workerError.stack,
-              duration: Date.now() - ttsInitStart
-            });
-            throw new Error(`TTS Worker initialization failed: ${workerError.message}`);
-          }
-        } else {
-          throw new Error(`Web Worker is disabled (useWorker=false) for ${messageId}. Worker must be enabled.`);
-        }
-        
-        // CRITICAL: Worker is required - no fallback to direct execution
-        if (!state.getTTSWorker()) {
-          throw new Error(`TTS Worker is not initialized for ${messageId}. Worker initialization must succeed.`);
-        }
-        
-        log(`[ClipAIble Offscreen] ✅ TTS Worker ready for ${messageId}`, {
-          messageId,
-          useWorker: state.shouldUseWorker(),
-          hasTTSWorker: state.hasTTSWorker(),
-          timestamp: Date.now()
-        });
-      } catch (initError) {
-        logError(`[ClipAIble Offscreen] TTS initialization FAILED for ${messageId}`, {
-          messageId,
-          error: initError.message,
-          stack: initError.stack,
-          hasWindow: typeof window !== 'undefined',
-          importMapExists: !!document.querySelector('script[type="importmap"]'),
-          importMapContent: document.querySelector('script[type="importmap"]')?.textContent?.substring(0, 300)
-        });
-        throw initError;
-      }
-      
       switch (message.type) {
         /**
          * CRITICAL: PIPER_TTS handler is ~3300 lines long and MUST remain as a single case block.
@@ -245,6 +182,71 @@ try {
           const { text, options = {} } = message.data;
           let { language = 'en', voice = null } = options;
           
+          // Initialize TTS module or Web Worker if needed
+          const ttsInitStart = Date.now();
+          let tts;
+          try {
+            // Initialize Web Worker - required, no fallback
+            log(`[ClipAIble Offscreen] === TTS INITIALIZATION START === for ${messageId}`, {
+              messageId,
+              useWorker: state.shouldUseWorker(),
+              hasTTSWorker: state.hasTTSWorker(),
+              timestamp: Date.now()
+            });
+            
+            if (state.shouldUseWorker()) {
+              log(`[ClipAIble Offscreen] Attempting to initialize TTS Worker for ${messageId}...`, {
+                messageId,
+                timestamp: Date.now()
+              });
+              try {
+                await initTTSWorker();
+                log(`[ClipAIble Offscreen] ✅ TTS Worker initialized successfully for ${messageId}`, {
+                  messageId,
+                  duration: Date.now() - ttsInitStart,
+                  method: 'worker',
+                  hasWorker: state.hasTTSWorker(),
+                  useWorker: state.shouldUseWorker()
+                });
+                // Worker is ready, tts will be null (we'll use worker)
+              } catch (workerError) {
+                logError(`[ClipAIble Offscreen] ❌ TTS Worker initialization FAILED for ${messageId}`, {
+                  messageId,
+                  error: workerError.message,
+                  stack: workerError.stack,
+                  duration: Date.now() - ttsInitStart
+                });
+                throw new Error(`TTS Worker initialization failed: ${workerError.message}`);
+              }
+            } else {
+              throw new Error(`Web Worker is disabled (useWorker=false) for ${messageId}. Worker must be enabled.`);
+            }
+            
+            // CRITICAL: Worker is required - no fallback to direct execution
+            if (!state.getTTSWorker()) {
+              throw new Error(`TTS Worker is not initialized for ${messageId}. Worker initialization must succeed.`);
+            }
+            
+            log(`[ClipAIble Offscreen] ✅ TTS Worker ready for ${messageId}`, {
+              messageId,
+              useWorker: state.shouldUseWorker(),
+              hasTTSWorker: state.hasTTSWorker(),
+              timestamp: Date.now()
+            });
+          } catch (initError) {
+            logError(`[ClipAIble Offscreen] TTS initialization FAILED for ${messageId}`, {
+              messageId,
+              error: initError.message,
+              stack: initError.stack,
+              hasWindow: typeof window !== 'undefined',
+              importMapExists: !!document.querySelector('script[type="importmap"]'),
+              importMapContent: document.querySelector('script[type="importmap"]')?.textContent?.substring(0, 300)
+            });
+            throw initError;
+          }
+          
+          const ttsInitDuration = Date.now() - ttsInitStart;
+          
           // CRITICAL: Always initialize ttsModule for stored() and download() operations
           // Worker is used only for predict() operations
           if (!state.getTTSModule()) {
@@ -256,7 +258,7 @@ try {
           }
           
           // Define tts as ttsModule for stored() and download() operations
-          let tts = state.getTTSModule();
+          tts = state.getTTSModule();
           
           // CRITICAL: Log voice parameter in detail to debug issues
           // This is the FIRST place where we see the voice from the request
@@ -3526,9 +3528,9 @@ try {
                   }
                 });
               }
-                
-                // Use IndexedDB as fallback for large audio files
-                try {
+              
+              // Use IndexedDB as fallback for large audio files
+              try {
                   const dbName = 'ClipAIbleAudioStorage';
                   const storeName = 'audioFiles';
                   
@@ -3580,39 +3582,37 @@ try {
                     messageId,
                     error: indexedDBError.message
                   });
-                  // Fall through to error response
+                  
+                  // CRITICAL: Do NOT fallback to inline for large data!
+                  // This would cause message timeout and performance issues
+                  // Return error instead
+                  try {
+                    sendResponse({
+                      success: false,
+                      error: `Failed to store large audio (${uint8Array.length} bytes): ${storageError.message}. Audio exceeds storage threshold.`,
+                      code: 'STORAGE_QUOTA_EXCEEDED',
+                      audioSize: uint8Array.length,
+                      threshold: STORAGE_THRESHOLD,
+                      hasUnlimitedStorage: hasUnlimitedStorage
+                    });
+                    log(`[ClipAIble Offscreen] Error response sent for ${messageId}`, {
+                      messageId,
+                      errorCode: 'STORAGE_QUOTA_EXCEEDED'
+                    });
+                    return; // CRITICAL: Return after sending error response
+                  } catch (responseError) {
+                    logError(`[ClipAIble Offscreen] CRITICAL: Failed to send error response for ${messageId}`, {
+                      messageId,
+                      responseError: responseError.message,
+                      originalError: storageError.message
+                    });
+                    // Cannot send response - channel may be closed
+                    // This will be caught by outer try-catch
+                    throw new Error(`Failed to send error response: ${responseError.message}`);
+                  }
                 }
               }
-              
-              // CRITICAL: Do NOT fallback to inline for large data!
-              // This would cause message timeout and performance issues
-              // Return error instead
-              try {
-                sendResponse({
-                  success: false,
-                  error: `Failed to store large audio (${uint8Array.length} bytes): ${storageError.message}. Audio exceeds storage threshold.`,
-                  code: 'STORAGE_QUOTA_EXCEEDED',
-                  audioSize: uint8Array.length,
-                  threshold: STORAGE_THRESHOLD,
-                  hasUnlimitedStorage: hasUnlimitedStorage
-                });
-                log(`[ClipAIble Offscreen] Error response sent for ${messageId}`, {
-                  messageId,
-                  errorCode: 'STORAGE_QUOTA_EXCEEDED'
-                });
-                return; // CRITICAL: Return after sending error response
-              } catch (responseError) {
-                logError(`[ClipAIble Offscreen] CRITICAL: Failed to send error response for ${messageId}`, {
-                  messageId,
-                  responseError: responseError.message,
-                  originalError: storageError.message
-                });
-                // Cannot send response - channel may be closed
-                // This will be caught by outer try-catch
-                throw new Error(`Failed to send error response: ${responseError.message}`);
-              }
             }
-          }
           
           const totalDuration = Date.now() - ttsRequestStart;
           log(`[ClipAIble Offscreen] === PIPER_TTS COMPLETE ===`, {
@@ -3640,6 +3640,11 @@ try {
         
         case 'PING': {
           handlePing(messageId, sendResponse);
+          break;
+        }
+        
+        case 'EXTRACT_PDF': {
+          await handleExtractPdf(messageId, message.data, sendResponse);
           break;
         }
         

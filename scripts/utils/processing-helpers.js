@@ -11,6 +11,8 @@ import { removeLargeData } from './storage.js';
 import { validateAudioApiKeys } from './validation.js';
 import { detectVideoPlatform } from './video.js';
 import { processVideoPage } from '../processing/video.js';
+import { processPdfPage } from '../processing/pdf.js';
+import { detectPdfPage, getOriginalPdfUrl } from './pdf.js';
 import { processWithoutAI, processWithExtractMode, processWithSelectorMode } from '../processing/modes.js';
 import { handleProcessingResult, handleProcessingError } from './pipeline-helpers.js';
 import { getQuickSaveSettingsKeys, prepareQuickSaveData } from '../processing/quicksave.js';
@@ -86,6 +88,54 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
   if (!(await validateAudioApiKeys(data, stopKeepAlive))) {
     return false;
   }
+  
+  return true;
+}
+
+/**
+ * Handle PDF page processing
+ * @param {Object} data - Processing data
+ * @param {string} pdfUrl - Original PDF URL
+ * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {Function} continueProcessingPipeline - Function to continue processing pipeline
+ * @param {Object} processingStartTimeRef - Reference object with processingStartTime property
+ * @returns {Promise<boolean>} True if PDF processing started
+ */
+export async function handlePdfPageProcessing(
+  data,
+  pdfUrl,
+  stopKeepAlive,
+  continueProcessingPipeline,
+  processingStartTimeRef
+) {
+  log('Detected PDF page', { pdfUrl, originalUrl: data.url });
+  
+  (async () => {
+    try {
+      const result = await processPdfPage(data, pdfUrl);
+      log('PDF processing complete', { 
+        title: result.title, 
+        contentItems: result.content?.length || 0 
+      });
+      
+      await handleProcessingResult(
+        data, 
+        result, 
+        stopKeepAlive, 
+        processingStartTimeRef,
+        continueProcessingPipeline
+      );
+    } catch (error) {
+      await handleProcessingError(error, data, stopKeepAlive, {
+        source: 'pdfProcessing',
+        errorType: 'pdfProcessingFailed',
+        context: {
+          pdfUrl: pdfUrl,
+          originalUrl: data.url
+        }
+      });
+    }
+  })();
   
   return true;
 }
@@ -264,6 +314,32 @@ export async function extractPageContent() {
     throw new Error(tSync('errorNoActiveTab', uiLang));
   }
   
+  // Check if this is a PDF page (Chrome PDF viewer)
+  const pdfInfo = detectPdfPage(tab.url, tab.url);
+  
+  if (pdfInfo && pdfInfo.isPdf) {
+    // For PDF pages, we can't use executeScript (PDF viewer is isolated)
+    // Get original PDF URL instead
+    let pdfUrl = pdfInfo.originalUrl;
+    if (!pdfUrl) {
+      pdfUrl = await getOriginalPdfUrl(tab.id);
+    }
+    
+    if (!pdfUrl) {
+      // Fallback: try to extract from tab URL
+      pdfUrl = tab.url;
+    }
+    
+    return {
+      html: '', // PDFs don't have HTML
+      url: pdfUrl,
+      title: tab.title || 'Untitled PDF',
+      tabId: tab.id,
+      isPdf: true
+    };
+  }
+  
+  // For regular HTML pages, use executeScript
   const htmlResult = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: () => ({

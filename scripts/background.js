@@ -97,6 +97,7 @@ import { encryptApiKey, isEncrypted, decryptApiKey, clearDecryptedKeyCache } fro
 import { validateAudioApiKeys } from './utils/validation.js';
 import { getUILanguage, tSync } from './locales.js';
 import { detectVideoPlatform } from './utils/video.js';
+import { detectPdfPage, getOriginalPdfUrl } from './utils/pdf.js';
 import { 
   checkCancellation, 
   updateProgress, 
@@ -108,6 +109,7 @@ import {
   handleAbstractGeneration,
   detectEffectiveLanguage
 } from './utils/pipeline-helpers.js';
+import { handlePdfPageProcessing } from './utils/processing-helpers.js';
 import { VoiceValidator } from './utils/voice-validator.js';
 import { TTSApiKeyManager } from './utils/api-key-manager.js';
 import { selectProcessingFunction } from './processing/mode-selector.js';
@@ -1243,6 +1245,46 @@ async function startArticleProcessing(data) {
   
   const processingStartTimeRef = { processingStartTime };
   
+  // Check if this is a PDF page
+  // Get tab URL to check for Chrome PDF viewer
+  let tabUrl = null;
+  try {
+    if (data.tabId) {
+      const tab = await chrome.tabs.get(data.tabId);
+      tabUrl = tab.url;
+    }
+  } catch (e) {
+    logWarn('Failed to get tab URL for PDF detection', e);
+  }
+  
+  const pdfInfo = detectPdfPage(data.url, tabUrl);
+  if (pdfInfo && pdfInfo.isPdf) {
+    // Process as PDF page - skip selector/extract modes
+    let pdfUrl = pdfInfo.originalUrl;
+    
+    // If original URL is not available (Chrome PDF viewer), try to get it
+    if (!pdfUrl && data.tabId) {
+      pdfUrl = await getOriginalPdfUrl(data.tabId);
+    }
+    
+    if (!pdfUrl) {
+      const uiLang = await getUILanguageCached();
+      await setError({
+        message: tSync('errorPdfUrlNotFound', uiLang) || 'Could not determine PDF file URL',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive);
+      return false;
+    }
+    
+    return await handlePdfPageProcessing(
+      data,
+      pdfUrl,
+      stopKeepAlive,
+      continueProcessingPipeline,
+      processingStartTimeRef
+    );
+  }
+  
   // Check if this is a video page (YouTube/Vimeo)
   const videoInfo = detectVideoPlatform(data.url);
   if (videoInfo) {
@@ -1266,6 +1308,12 @@ async function startArticleProcessing(data) {
   );
 }
 
+
+// ============================================
+// PDF PAGE PROCESSING
+// ============================================
+
+// handlePdfPageProcessing moved to scripts/utils/processing-helpers.js
 
 // ============================================
 // VIDEO PAGE PROCESSING

@@ -4,6 +4,7 @@
 // @ts-check
 
 import { log, logError } from '../utils/logging.js';
+import { extractPdfContent } from './pdf/extract.js';
 
 /**
  * Handle GET_VOICES message
@@ -204,6 +205,49 @@ export function handlePing(messageId, sendResponse) {
   log(`[ClipAIble Offscreen] PING response sent for ${messageId}`, {
     messageId
   });
+}
+
+/**
+ * Handle EXTRACT_PDF message
+ * @param {string} messageId - Message ID for logging
+ * @param {Object} data - Request data with pdfUrl
+ * @param {Function} sendResponse - Response function
+ * @returns {Promise<void>}
+ */
+export async function handleExtractPdf(messageId, data, sendResponse) {
+  const extractStart = Date.now();
+  log(`[ClipAIble Offscreen] EXTRACT_PDF request for ${messageId}`, {
+    messageId,
+    pdfUrl: data.pdfUrl
+  });
+  
+  try {
+    const result = await extractPdfContent(data.pdfUrl);
+    const extractDuration = Date.now() - extractStart;
+    
+    log(`[ClipAIble Offscreen] EXTRACT_PDF complete for ${messageId}`, {
+      messageId,
+      title: result.title,
+      contentItems: result.content?.length || 0,
+      duration: extractDuration
+    });
+    
+    sendResponse({
+      success: true,
+      result: result
+    });
+  } catch (error) {
+    logError(`[ClipAIble Offscreen] EXTRACT_PDF failed for ${messageId}`, {
+      messageId,
+      error: error.message,
+      stack: error.stack
+    });
+    
+    sendResponse({
+      success: false,
+      error: error.message
+    });
+  }
 }
 
 

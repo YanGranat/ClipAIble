@@ -17,7 +17,8 @@
     "notifications",
     "contextMenus",
     "tabCapture",
-    "offscreen"
+    "offscreen",
+    "webNavigation"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -53,6 +54,7 @@
         "config/pdf-styles.css", 
         "print/print.html", 
         "lib/*",
+        "lib/pdfjs/*",
         "scripts/api/offline-tts-offscreen.js",
         "scripts/api/offline-tts-piper.js",
         "scripts/api/piper-voices-mapping.js",

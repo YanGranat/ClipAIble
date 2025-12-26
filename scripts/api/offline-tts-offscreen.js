@@ -133,8 +133,8 @@ async function setupOffscreenDocument() {
         
         await chrome.offscreen.createDocument({
           url: offscreenUrl,
-          reasons: ['BLOBS'],
-          justification: 'Piper TTS requires WASM and DOM access for offline speech generation'
+          reasons: ['BLOBS', 'DOM_SCRAPING'], // DOM_SCRAPING for PDF.js support
+          justification: 'Piper TTS requires WASM and DOM access for offline speech generation. PDF extraction requires PDF.js which needs DOM and ES modules support.'
         });
         
         const createDuration = Date.now() - creationStartTime;
