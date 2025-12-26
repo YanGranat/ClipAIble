@@ -235,26 +235,53 @@ async function imageDataToDataUrl(imageData, xObject) {
 // It handles multi-column layouts naturally without explicit column detection
 
 /**
- * Group text items into lines using proven algorithm from jzillmann/pdf-to-markdown
- * Groups items by Y coordinate with threshold-based line detection
- * @param {Array} items - Sorted text items (already sorted by Y, then X)
- * @param {number} lineThreshold - Threshold for line separation (typically medianHeight / 2)
+ * Group text items into lines using improved adaptive algorithm
+ * Combines jzillmann/pdf-to-markdown approach with adaptive thresholds
+ * Prevents text loss and handles multi-column layouts better
+ * @param {Array} items - Sorted text items (already sorted by Y, then X, with viewport coordinates)
+ * @param {number} medianHeight - Median font height for adaptive threshold calculation
  * @returns {Array} Array of line objects
  */
-function groupItemsByLines(items, lineThreshold) {
+function groupItemsByLines(items, medianHeight) {
   if (items.length === 0) return [];
+  
+  // Filter valid items: must have text and minimum font size
+  const MIN_FONT_SIZE = 6; // Minimum font size to consider (prevents noise)
+  const validItems = items.filter(item => {
+    const text = item.str?.trim();
+    const fontSize = item.fontSize || 0;
+    return text && text.length > 0 && fontSize >= MIN_FONT_SIZE;
+  });
+  
+  if (validItems.length === 0) {
+    log('[ClipAIble Offscreen PDF] groupItemsByLines: No valid items after filtering');
+    return [];
+  }
+  
+  log(`[ClipAIble Offscreen PDF] groupItemsByLines: ${validItems.length}/${items.length} valid items (filtered ${items.length - validItems.length} items)`);
   
   const lines = [];
   let currentLine = [];
   
-  // Group items by lines: if Y difference >= threshold, start new line
-  // This is the proven approach from pdf-to-markdown
-  items.forEach((item, idx) => {
+  // Adaptive line threshold: use medianHeight / 2 as base, but allow per-item adjustment
+  const baseThreshold = medianHeight / 2;
+  const MAX_LINE_DRIFT = 0.3; // 30% of font size for line grouping
+  
+  // Group items by lines with adaptive threshold
+  validItems.forEach((item, idx) => {
     if (currentLine.length > 0) {
       const firstItemY = currentLine[0].y;
+      const firstItemFontSize = currentLine[0].fontSize || medianHeight;
+      const itemFontSize = item.fontSize || medianHeight;
+      
+      // Adaptive threshold: use the larger font size to determine threshold
+      const adaptiveThreshold = Math.max(firstItemFontSize, itemFontSize) * MAX_LINE_DRIFT;
+      // Also check base threshold as fallback
+      const threshold = Math.max(adaptiveThreshold, baseThreshold);
+      
       const yDiff = Math.abs(firstItemY - item.y);
       
-      if (yDiff >= lineThreshold) {
+      if (yDiff >= threshold) {
         // New line detected - save current line and start new one
         lines.push(currentLine);
         currentLine = [];
@@ -267,6 +294,8 @@ function groupItemsByLines(items, lineThreshold) {
   if (currentLine.length > 0) {
     lines.push(currentLine);
   }
+  
+  log(`[ClipAIble Offscreen PDF] groupItemsByLines: Grouped into ${lines.length} lines`);
   
   // CRITICAL: Sort items within each line by X coordinate
   // (Items are already sorted, but ensure correct order)
@@ -326,8 +355,9 @@ function groupItemsByLines(items, lineThreshold) {
 }
 
 /**
- * Group lines into paragraphs with improved algorithm
+ * Group lines into paragraphs with improved adaptive algorithm
  * Handles headings, line spacing, and explicit line breaks
+ * Uses adaptive thresholds to better handle different PDF layouts
  * @param {Array} lines - Array of line objects
  * @returns {Array} Array of paragraph/heading objects
  */
@@ -339,8 +369,15 @@ function groupIntoParagraphs(lines) {
   
   // Calculate average line height for dynamic thresholds
   const avgLineHeight = lines.reduce((sum, l) => sum + l.fontSize, 0) / lines.length;
-  const PARA_Y_GAP = avgLineHeight * 1.5; // 1.5x line spacing for paragraph break
-  const HEADING_FONT_THRESHOLD = avgLineHeight * 1.2; // 20% larger than average = heading
+  const PARA_Y_GAP_MULTIPLIER = 1.5; // 1.5x line spacing for paragraph break
+  const HEADING_FONT_THRESHOLD = 1.3; // 30% larger than average = heading (improved from 1.2)
+  
+  // Adaptive paragraph gap: use average of adjacent lines' font sizes
+  const calculateParaGap = (line1, line2) => {
+    if (!line2) return 0;
+    const avgHeight = (line1.fontSize + line2.fontSize) / 2;
+    return avgHeight * PARA_Y_GAP_MULTIPLIER;
+  };
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -350,17 +387,23 @@ function groupIntoParagraphs(lines) {
     const nextLine = i < lines.length - 1 ? lines[i + 1] : null;
     
     // Detect heading: larger font size or pattern matching
-    const isHeading = line.fontSize > HEADING_FONT_THRESHOLD || 
+    const isHeading = line.fontSize > avgLineHeight * HEADING_FONT_THRESHOLD || 
                       /^(Chapter|Section|\d+\.|\d+\))\s/.test(text);
     
-    // Calculate vertical gap to next line
-    const yGap = nextLine ? (nextLine.y - line.y) : 0;
+    // Calculate vertical gap to next line (adaptive)
+    const yGap = nextLine ? Math.abs(nextLine.y - line.y) : 0;
+    const adaptiveParaGap = nextLine ? calculateParaGap(line, nextLine) : 0;
+    
+    // Check for font size change (significant change indicates new paragraph/heading)
+    const fontChange = currentPara && 
+                       Math.abs(line.fontSize - currentPara.fontSize) > avgLineHeight * 0.2;
     
     // Determine if we should start a new paragraph
     const shouldStartNew = !currentPara || 
                           isHeading || 
-                          yGap > PARA_Y_GAP ||
-                          line.hasEOL; // Explicit line break from PDF
+                          yGap > adaptiveParaGap ||
+                          line.hasEOL || // Explicit line break from PDF
+                          fontChange; // Significant font size change
     
     if (shouldStartNew) {
       // Finalize previous paragraph
