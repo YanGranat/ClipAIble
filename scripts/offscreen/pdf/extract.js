@@ -230,220 +230,73 @@ async function imageDataToDataUrl(imageData, xObject) {
   }
 }
 
-/**
- * Detect columns in PDF page using gap analysis in X-coordinates
- * Improved algorithm: finds significant gaps between text items to identify column boundaries
- * @param {Array} items - Text items with x coordinates
- * @param {number} pageWidth - Page width in viewport coordinates
- * @returns {Array} Array of column definitions { start, end, index, center }
- */
-function detectColumns(items, pageWidth) {
-  if (items.length === 0) {
-    log('[ClipAIble Offscreen PDF] detectColumns: No items, returning single column');
-    return [{ start: 0, end: pageWidth, index: 0, center: pageWidth / 2 }];
-  }
-  
-  // Collect all X coordinates and filter out invalid values
-  const xCoords = items
-    .map(item => item.x)
-    .filter(x => !isNaN(x) && isFinite(x) && x >= 0 && x <= pageWidth)
-    .sort((a, b) => a - b);
-  
-  if (xCoords.length < 10) {
-    log('[ClipAIble Offscreen PDF] detectColumns: Too few items, returning single column', {
-      itemCount: xCoords.length
-    });
-    return [{ start: 0, end: pageWidth, index: 0, center: pageWidth / 2 }];
-  }
-  
-  // Find gaps between adjacent X coordinates
-  const gaps = [];
-  for (let i = 1; i < xCoords.length; i++) {
-    const gap = xCoords[i] - xCoords[i - 1];
-    if (gap > 1) { // Ignore micro-gaps (same line items)
-      gaps.push({ 
-        position: xCoords[i - 1], 
-        width: gap,
-        endPosition: xCoords[i]
-      });
-    }
-  }
-  
-  // Determine minimum gap threshold for column separation
-  // Adaptive threshold based on page width (15% of page width, minimum 50px)
-  const minColumnGap = Math.max(50, pageWidth * 0.15);
-  
-  log('[ClipAIble Offscreen PDF] detectColumns: Analysis', {
-    pageWidth: pageWidth.toFixed(1),
-    minColumnGap: minColumnGap.toFixed(1),
-    totalItems: items.length,
-    validXCoords: xCoords.length,
-    xRange: {
-      min: xCoords[0].toFixed(1),
-      max: xCoords[xCoords.length - 1].toFixed(1),
-      median: xCoords[Math.floor(xCoords.length / 2)].toFixed(1)
-    },
-    totalGaps: gaps.length
-  });
-  
-  // Filter significant gaps (potential column boundaries)
-  const significantGaps = gaps
-    .filter(g => g.width > minColumnGap)
-    .sort((a, b) => b.width - a.width) // Sort by width (largest first)
-    .slice(0, 3); // Maximum 3 gaps = maximum 4 columns
-  
-  log('[ClipAIble Offscreen PDF] detectColumns: Significant gaps', {
-    count: significantGaps.length,
-    gaps: significantGaps.map(g => ({
-      position: g.position.toFixed(1),
-      width: g.width.toFixed(1),
-      endPosition: g.endPosition.toFixed(1)
-    }))
-  });
-  
-  // If no significant gaps found, treat as single column
-  if (significantGaps.length === 0) {
-    log('[ClipAIble Offscreen PDF] detectColumns: Single column layout detected');
-    return [{ start: 0, end: pageWidth, index: 0, center: pageWidth / 2 }];
-  }
-  
-  // Create column boundaries
-  // Start with page left edge
-  const columnBoundaries = [0];
-  
-  // Add boundaries at the middle of each significant gap
-  for (const gap of significantGaps) {
-    const boundary = gap.position + gap.width / 2;
-    columnBoundaries.push(boundary);
-  }
-  
-  // End with page right edge
-  columnBoundaries.push(pageWidth);
-  
-  // Sort boundaries to ensure correct order
-  columnBoundaries.sort((a, b) => a - b);
-  
-  // Create column objects
-  const columns = [];
-  for (let i = 0; i < columnBoundaries.length - 1; i++) {
-    const start = columnBoundaries[i];
-    const end = columnBoundaries[i + 1];
-    columns.push({
-      index: i,
-      start: start,
-      end: end,
-      center: (start + end) / 2,
-      width: end - start
-    });
-  }
-  
-  log('[ClipAIble Offscreen PDF] detectColumns: Detected columns', {
-    count: columns.length,
-    columns: columns.map(c => ({
-      index: c.index,
-      range: `[${c.start.toFixed(1)} - ${c.end.toFixed(1)}]`,
-      width: c.width.toFixed(1),
-      center: c.center.toFixed(1)
-    }))
-  });
-  
-  return columns;
-}
+// Column detection removed - using proven line-based grouping algorithm from jzillmann/pdf-to-markdown
+// This approach groups items by Y coordinate (lines) and sorts by X within each line
+// It handles multi-column layouts naturally without explicit column detection
 
 /**
- * Get column index for X coordinate
- * @param {number} x - X coordinate
- * @param {Array} columns - Column definitions
- * @returns {number} Column index (0-based)
- */
-function getColumnIndex(x, columns) {
-  if (!columns || columns.length === 0) {
-    return 0;
-  }
-  
-  // Check each column (in order)
-  for (let i = 0; i < columns.length; i++) {
-    const col = columns[i];
-    // Include left boundary, exclude right boundary (except for last column)
-    if (x >= col.start && (i === columns.length - 1 ? x <= col.end : x < col.end)) {
-      return i;
-    }
-  }
-  
-  // Fallback: find closest column by center distance
-  let closestIndex = 0;
-  let minDistance = Infinity;
-  for (let i = 0; i < columns.length; i++) {
-    const distance = Math.abs(x - columns[i].center);
-    if (distance < minDistance) {
-      minDistance = distance;
-      closestIndex = i;
-    }
-  }
-  
-  return closestIndex;
-}
-
-/**
- * Group text items into lines with improved algorithm
- * Handles RTL/LTR text direction and explicit line breaks
- * @param {Array} items - Sorted text items
+ * Group text items into lines using proven algorithm from jzillmann/pdf-to-markdown
+ * Groups items by Y coordinate with threshold-based line detection
+ * @param {Array} items - Sorted text items (already sorted by Y, then X)
+ * @param {number} lineThreshold - Threshold for line separation (typically medianHeight / 2)
  * @returns {Array} Array of line objects
  */
-function groupIntoLines(items) {
+function groupItemsByLines(items, lineThreshold) {
   if (items.length === 0) return [];
   
   const lines = [];
-  const LINE_Y_TOLERANCE = 2; // pixels
+  let currentLine = [];
   
-  // Group by Y-coordinate using rounding for tolerance
-  const lineMap = new Map();
-  
-  for (const item of items) {
-    // Round Y to nearest tolerance value for grouping
-    const roundedY = Math.round(item.y / LINE_Y_TOLERANCE) * LINE_Y_TOLERANCE;
-    
-    if (!lineMap.has(roundedY)) {
-      lineMap.set(roundedY, []);
+  // Group items by lines: if Y difference >= threshold, start new line
+  // This is the proven approach from pdf-to-markdown
+  items.forEach((item, idx) => {
+    if (currentLine.length > 0) {
+      const firstItemY = currentLine[0].y;
+      const yDiff = Math.abs(firstItemY - item.y);
+      
+      if (yDiff >= lineThreshold) {
+        // New line detected - save current line and start new one
+        lines.push(currentLine);
+        currentLine = [];
+      }
     }
-    lineMap.get(roundedY).push(item);
+    currentLine.push(item);
+  });
+  
+  // Add last line
+  if (currentLine.length > 0) {
+    lines.push(currentLine);
   }
   
-  // Sort lines by Y (already sorted, but ensure order)
-  const sortedLines = Array.from(lineMap.entries())
-    .sort((a, b) => a[0] - b[0]);
-  
-  // Process each line
-  for (const [lineY, lineItems] of sortedLines) {
-    // Items are already sorted by X (with RTL/LTR consideration) from previous step
-    // But verify and re-sort if needed
-    // Sort items within line by X coordinate
-    // Consider text direction if available (RTL languages)
+  // CRITICAL: Sort items within each line by X coordinate
+  // (Items are already sorted, but ensure correct order)
+  lines.forEach(lineItems => {
     lineItems.sort((a, b) => {
-      // Check if both items have RTL direction
       const aDir = a.dir || 'ltr';
       const bDir = b.dir || 'ltr';
       if (aDir === 'rtl' && bDir === 'rtl') {
-        return b.x - a.x; // RTL: right to left (larger X first)
+        return b.x - a.x; // RTL: right to left
       }
-      return a.x - b.x; // LTR: left to right (smaller X first)
+      return a.x - b.x; // LTR: left to right
     });
-    
-    // Build line text with smart spacing
+  });
+  
+  // Build line text with smart spacing
+  const resultLines = [];
+  for (const lineItems of lines) {
     let lineText = '';
     let prevItem = null;
     
     for (const item of lineItems) {
       if (prevItem) {
-        // Determine if space is needed
+        // Determine if space is needed between items
         const expectedX = prevItem.x + (prevItem.width || prevItem.fontSize * (prevItem.str?.length || 1));
         const actualX = item.x;
         const gap = Math.abs(actualX - expectedX);
         const avgFontSize = (item.fontSize + prevItem.fontSize) / 2;
         
-        // Space needed if:
-        // 1. Gap > 25% of font size (word boundary)
-        // 2. OR previous item has explicit line break flag (if available)
+        // Space needed if gap > 25% of font size (word boundary)
+        // OR if previous item has explicit line break flag
         const needsSpace = gap > avgFontSize * 0.25 || 
                           (prevItem.hasEOL !== undefined && prevItem.hasEOL);
         if (needsSpace) {
@@ -456,21 +309,20 @@ function groupIntoLines(items) {
     }
     
     if (lineText.trim()) {
-      lines.push({
+      resultLines.push({
         text: lineText.trim(),
-        y: lineY,
+        y: lineItems[0].y,
         x: lineItems[0].x,
         fontSize: Math.max(...lineItems.map(i => i.fontSize)),
         fontName: lineItems[0].fontName || '',
         items: lineItems,
-        // hasEOL may not be available - use safe check
         hasEOL: lineItems[lineItems.length - 1].hasEOL !== undefined ? 
                 lineItems[lineItems.length - 1].hasEOL : false
       });
     }
   }
   
-  return lines;
+  return resultLines;
 }
 
 /**
@@ -816,35 +668,43 @@ export async function extractPdfContent(url) {
           };
         });
       
-      // Step 1: Column Detection for multi-column layouts
-      const columns = detectColumns(transformedItems, viewport.width);
-      log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Detected ${columns.length} column(s)`);
+      // PROVEN ALGORITHM from jzillmann/pdf-to-markdown
+      // Group items by lines (Y coordinate) with automatic threshold
+      // Then sort items within each line by X coordinate
       
-      // Step 2: Sort items by column, then Y, then X (with RTL/LTR support)
+      // Calculate line threshold from median height (proven approach)
+      const heights = transformedItems
+        .map(item => item.fontSize)
+        .filter(h => h > 0 && isFinite(h));
+      
+      heights.sort((a, b) => a - b);
+      const medianHeight = heights.length > 0 
+        ? heights[Math.floor(heights.length / 2)] 
+        : 12;
+      const lineThreshold = medianHeight / 2; // Half of median height = threshold for new line
+      
+      log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Line detection`, {
+        medianHeight: medianHeight.toFixed(2),
+        lineThreshold: lineThreshold.toFixed(2),
+        totalItems: transformedItems.length
+      });
+      
+      // Sort all items by Y (top to bottom), then by X (left to right)
+      // This ensures correct reading order without column detection
       const sortedItems = transformedItems.sort((a, b) => {
-        // 1. Sort by column (left to right)
-        const colA = getColumnIndex(a.x, columns);
-        const colB = getColumnIndex(b.x, columns);
-        if (colA !== colB) {
-          return colA - colB;
-        }
-        
-        // 2. Within column: sort by Y (top to bottom)
-        // Viewport coordinates: smaller Y = top of page, larger Y = bottom of page
+        // Primary: Y coordinate (top to bottom)
         const yDiff = a.y - b.y;
-        if (Math.abs(yDiff) > 1.0) {
+        if (Math.abs(yDiff) > lineThreshold) {
           return yDiff; // Ascending: top to bottom
         }
         
-        // 3. On same line: sort by X (consider text direction)
-        // RTL languages (Arabic, Hebrew): right to left
-        // LTR languages (English, etc.): left to right
+        // Secondary: X coordinate (left to right, consider RTL)
         const aDir = a.dir || 'ltr';
         const bDir = b.dir || 'ltr';
         if (aDir === 'rtl' && bDir === 'rtl') {
-          return b.x - a.x; // RTL: larger X first (right to left)
+          return b.x - a.x; // RTL: right to left
         }
-        return a.x - b.x; // LTR: smaller X first (left to right)
+        return a.x - b.x; // LTR: left to right
       });
       
       // Log first and last items for debugging
@@ -859,7 +719,6 @@ export async function extractPdfContent(url) {
               viewport: { x: firstItem.x.toFixed(1), y: firstItem.y.toFixed(1) },
               pdf: { x: firstItem.pdfX.toFixed(1), y: firstItem.pdfY.toFixed(1) }
             },
-            column: getColumnIndex(firstItem.x, columns),
             dir: firstItem.dir || 'ltr'
           },
           last: {
@@ -868,33 +727,30 @@ export async function extractPdfContent(url) {
               viewport: { x: lastItem.x.toFixed(1), y: lastItem.y.toFixed(1) },
               pdf: { x: lastItem.pdfX.toFixed(1), y: lastItem.pdfY.toFixed(1) }
             },
-            column: getColumnIndex(lastItem.x, columns),
             dir: lastItem.dir || 'ltr'
           },
           totalItems: sortedItems.length
         });
         
-        // Log column distribution
-        const columnDistribution = new Map();
-        for (const item of sortedItems) {
-          const colIdx = getColumnIndex(item.x, columns);
-          columnDistribution.set(colIdx, (columnDistribution.get(colIdx) || 0) + 1);
+        // Log X coordinate distribution for debugging
+        const xCoords = sortedItems.map(i => i.x).filter(x => !isNaN(x)).sort((a, b) => a - b);
+        if (xCoords.length > 0) {
+          log(`[ClipAIble Offscreen PDF] Page ${pageNum}: X coordinate distribution`, {
+            min: xCoords[0].toFixed(1),
+            q1: xCoords[Math.floor(xCoords.length * 0.25)].toFixed(1),
+            median: xCoords[Math.floor(xCoords.length * 0.5)].toFixed(1),
+            q3: xCoords[Math.floor(xCoords.length * 0.75)].toFixed(1),
+            max: xCoords[xCoords.length - 1].toFixed(1),
+            range: (xCoords[xCoords.length - 1] - xCoords[0]).toFixed(1)
+          });
         }
-        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Items per column`, {
-          distribution: Array.from(columnDistribution.entries())
-            .sort((a, b) => a[0] - b[0])
-            .map(([colIdx, count]) => ({
-              column: colIdx,
-              items: count,
-              percentage: ((count / sortedItems.length) * 100).toFixed(1) + '%'
-            }))
-        });
       }
       
       log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Sorted ${sortedItems.length} text items by position`);
       
-      // Step 3: Group items into lines with improved algorithm
-      const lines = groupIntoLines(sortedItems);
+      // Step 3: Group items into lines using proven algorithm from pdf-to-markdown
+      // Groups items by Y coordinate with threshold = medianHeight / 2
+      const lines = groupItemsByLines(sortedItems, lineThreshold);
       
       // Step 4: Group lines into paragraphs with improved algorithm
       const paragraphs = groupIntoParagraphs(lines);
