@@ -231,76 +231,121 @@ async function imageDataToDataUrl(imageData, xObject) {
 }
 
 /**
- * Detect columns in PDF page using X-coordinate histogram
+ * Detect columns in PDF page using gap analysis in X-coordinates
+ * Improved algorithm: finds significant gaps between text items to identify column boundaries
  * @param {Array} items - Text items with x coordinates
  * @param {number} pageWidth - Page width in viewport coordinates
- * @returns {Array} Array of column definitions { start, end }
+ * @returns {Array} Array of column definitions { start, end, index, center }
  */
 function detectColumns(items, pageWidth) {
-  if (items.length === 0) return [{ start: 0, end: pageWidth }];
-  
-  // Create histogram of X-coordinates
-  const histogram = new Map();
-  const BUCKET_SIZE = 10; // pixels
-  
-  for (const item of items) {
-    const bucket = Math.floor(item.x / BUCKET_SIZE) * BUCKET_SIZE;
-    histogram.set(bucket, (histogram.get(bucket) || 0) + 1);
+  if (items.length === 0) {
+    log('[ClipAIble Offscreen PDF] detectColumns: No items, returning single column');
+    return [{ start: 0, end: pageWidth, index: 0, center: pageWidth / 2 }];
   }
   
-  // Find peaks (column starts)
-  const peaks = [];
-  const entries = Array.from(histogram.entries()).sort((a, b) => a[0] - b[0]);
+  // Collect all X coordinates and filter out invalid values
+  const xCoords = items
+    .map(item => item.x)
+    .filter(x => !isNaN(x) && isFinite(x) && x >= 0 && x <= pageWidth)
+    .sort((a, b) => a - b);
   
-  let inPeak = false;
-  let peakStart = 0;
-  let peakCount = 0;
-  const MIN_PEAK_COUNT = 5; // Minimum items to consider a column
-  
-  for (let i = 0; i < entries.length; i++) {
-    const [x, count] = entries[i];
-    
-    if (count >= MIN_PEAK_COUNT && !inPeak) {
-      // Start of peak
-      inPeak = true;
-      peakStart = x;
-      peakCount = count;
-    } else if (count < MIN_PEAK_COUNT && inPeak) {
-      // End of peak
-      peaks.push({ x: peakStart, count: peakCount });
-      inPeak = false;
-    } else if (inPeak && count > peakCount) {
-      // Update peak if we find a higher count
-      peakStart = x;
-      peakCount = count;
-    }
+  if (xCoords.length < 10) {
+    log('[ClipAIble Offscreen PDF] detectColumns: Too few items, returning single column', {
+      itemCount: xCoords.length
+    });
+    return [{ start: 0, end: pageWidth, index: 0, center: pageWidth / 2 }];
   }
   
-  if (inPeak) {
-    peaks.push({ x: peakStart, count: peakCount });
-  }
-  
-  // Filter peaks: minimum distance between columns
-  const MIN_COLUMN_GAP = 50; // pixels
-  const columns = [];
-  let lastColumnX = -Infinity;
-  
-  for (const peak of peaks) {
-    if (peak.x - lastColumnX > MIN_COLUMN_GAP) {
-      // Estimate column width (use average or fixed width)
-      const columnWidth = Math.min(200, pageWidth / 2); // Max 200px or half page
-      columns.push({
-        start: peak.x,
-        end: peak.x + columnWidth
+  // Find gaps between adjacent X coordinates
+  const gaps = [];
+  for (let i = 1; i < xCoords.length; i++) {
+    const gap = xCoords[i] - xCoords[i - 1];
+    if (gap > 1) { // Ignore micro-gaps (same line items)
+      gaps.push({ 
+        position: xCoords[i - 1], 
+        width: gap,
+        endPosition: xCoords[i]
       });
-      lastColumnX = peak.x;
     }
   }
   
-  // If no columns detected, treat entire page as single column
-  if (columns.length === 0) {
-    columns.push({ start: 0, end: pageWidth });
+  // Determine minimum gap threshold for column separation
+  // Adaptive threshold based on page width (15% of page width, minimum 50px)
+  const minColumnGap = Math.max(50, pageWidth * 0.15);
+  
+  log('[ClipAIble Offscreen PDF] detectColumns: Analysis', {
+    pageWidth: pageWidth.toFixed(1),
+    minColumnGap: minColumnGap.toFixed(1),
+    totalItems: items.length,
+    validXCoords: xCoords.length,
+    xRange: {
+      min: xCoords[0].toFixed(1),
+      max: xCoords[xCoords.length - 1].toFixed(1),
+      median: xCoords[Math.floor(xCoords.length / 2)].toFixed(1)
+    },
+    totalGaps: gaps.length
+  });
+  
+  // Filter significant gaps (potential column boundaries)
+  const significantGaps = gaps
+    .filter(g => g.width > minColumnGap)
+    .sort((a, b) => b.width - a.width) // Sort by width (largest first)
+    .slice(0, 3); // Maximum 3 gaps = maximum 4 columns
+  
+  log('[ClipAIble Offscreen PDF] detectColumns: Significant gaps', {
+    count: significantGaps.length,
+    gaps: significantGaps.map(g => ({
+      position: g.position.toFixed(1),
+      width: g.width.toFixed(1),
+      endPosition: g.endPosition.toFixed(1)
+    }))
+  });
+  
+  // If no significant gaps found, treat as single column
+  if (significantGaps.length === 0) {
+    log('[ClipAIble Offscreen PDF] detectColumns: Single column layout detected');
+    return [{ start: 0, end: pageWidth, index: 0, center: pageWidth / 2 }];
   }
+  
+  // Create column boundaries
+  // Start with page left edge
+  const columnBoundaries = [0];
+  
+  // Add boundaries at the middle of each significant gap
+  for (const gap of significantGaps) {
+    const boundary = gap.position + gap.width / 2;
+    columnBoundaries.push(boundary);
+  }
+  
+  // End with page right edge
+  columnBoundaries.push(pageWidth);
+  
+  // Sort boundaries to ensure correct order
+  columnBoundaries.sort((a, b) => a - b);
+  
+  // Create column objects
+  const columns = [];
+  for (let i = 0; i < columnBoundaries.length - 1; i++) {
+    const start = columnBoundaries[i];
+    const end = columnBoundaries[i + 1];
+    columns.push({
+      index: i,
+      start: start,
+      end: end,
+      center: (start + end) / 2,
+      width: end - start
+    });
+  }
+  
+  log('[ClipAIble Offscreen PDF] detectColumns: Detected columns', {
+    count: columns.length,
+    columns: columns.map(c => ({
+      index: c.index,
+      range: `[${c.start.toFixed(1)} - ${c.end.toFixed(1)}]`,
+      width: c.width.toFixed(1),
+      center: c.center.toFixed(1)
+    }))
+  });
   
   return columns;
 }
@@ -312,13 +357,31 @@ function detectColumns(items, pageWidth) {
  * @returns {number} Column index (0-based)
  */
 function getColumnIndex(x, columns) {
+  if (!columns || columns.length === 0) {
+    return 0;
+  }
+  
+  // Check each column (in order)
   for (let i = 0; i < columns.length; i++) {
-    if (x >= columns[i].start && x < columns[i].end) {
+    const col = columns[i];
+    // Include left boundary, exclude right boundary (except for last column)
+    if (x >= col.start && (i === columns.length - 1 ? x <= col.end : x < col.end)) {
       return i;
     }
   }
-  // Default to last column if not found
-  return Math.max(0, columns.length - 1);
+  
+  // Fallback: find closest column by center distance
+  let closestIndex = 0;
+  let minDistance = Infinity;
+  for (let i = 0; i < columns.length; i++) {
+    const distance = Math.abs(x - columns[i].center);
+    if (distance < minDistance) {
+      minDistance = distance;
+      closestIndex = i;
+    }
+  }
+  
+  return closestIndex;
 }
 
 /**
@@ -698,17 +761,22 @@ export async function extractPdfContent(url) {
       hasTextContent = true;
       // Log sample coordinates for debugging
       if (textItems.length > 0) {
-        const sampleItem = textItems[0];
-        const sampleTransform = sampleItem.transform || [1, 0, 0, 1, 0, 0];
-        const [sampleViewportX, sampleViewportY] = viewport.convertToViewportPoint(sampleTransform[4], sampleTransform[5]);
-        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Sample coordinates`, {
-          viewportHeight: viewport.height,
-          viewportWidth: viewport.width,
-          pdfX: sampleTransform[4],
-          pdfY: sampleTransform[5],
-          viewportX: sampleViewportX,
-          viewportY: sampleViewportY,
-          sampleText: sampleItem.str?.substring(0, 50)
+        const sampleItems = textItems.slice(0, 5);
+        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Sample coordinates (first 5 items)`, {
+          viewportHeight: viewport.height.toFixed(1),
+          viewportWidth: viewport.width.toFixed(1),
+          samples: sampleItems.map((item, idx) => {
+            const transform = item.transform || [1, 0, 0, 1, 0, 0];
+            const pdfX = transform[4] || 0;
+            const pdfY = transform[5] || 0;
+            const [viewportX, viewportY] = viewport.convertToViewportPoint(pdfX, pdfY);
+            return {
+              index: idx,
+              text: item.str?.substring(0, 30) || '',
+              pdf: { x: pdfX.toFixed(1), y: pdfY.toFixed(1) },
+              viewport: { x: viewportX.toFixed(1), y: viewportY.toFixed(1) }
+            };
+          })
         });
       }
       
@@ -781,19 +849,45 @@ export async function extractPdfContent(url) {
       
       // Log first and last items for debugging
       if (sortedItems.length > 0) {
-        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: First item (should be top)`, {
-          text: sortedItems[0].str?.substring(0, 50),
-          y: sortedItems[0].y,
-          pdfY: sortedItems[0].pdfY,
-          x: sortedItems[0].x,
-          column: getColumnIndex(sortedItems[0].x, columns)
+        const firstItem = sortedItems[0];
+        const lastItem = sortedItems[sortedItems.length - 1];
+        
+        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: First and last items after sorting`, {
+          first: {
+            text: firstItem.str?.substring(0, 50) || '',
+            coordinates: {
+              viewport: { x: firstItem.x.toFixed(1), y: firstItem.y.toFixed(1) },
+              pdf: { x: firstItem.pdfX.toFixed(1), y: firstItem.pdfY.toFixed(1) }
+            },
+            column: getColumnIndex(firstItem.x, columns),
+            dir: firstItem.dir || 'ltr'
+          },
+          last: {
+            text: lastItem.str?.substring(0, 50) || '',
+            coordinates: {
+              viewport: { x: lastItem.x.toFixed(1), y: lastItem.y.toFixed(1) },
+              pdf: { x: lastItem.pdfX.toFixed(1), y: lastItem.pdfY.toFixed(1) }
+            },
+            column: getColumnIndex(lastItem.x, columns),
+            dir: lastItem.dir || 'ltr'
+          },
+          totalItems: sortedItems.length
         });
-        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Last item (should be bottom)`, {
-          text: sortedItems[sortedItems.length - 1].str?.substring(0, 50),
-          y: sortedItems[sortedItems.length - 1].y,
-          pdfY: sortedItems[sortedItems.length - 1].pdfY,
-          x: sortedItems[sortedItems.length - 1].x,
-          column: getColumnIndex(sortedItems[sortedItems.length - 1].x, columns)
+        
+        // Log column distribution
+        const columnDistribution = new Map();
+        for (const item of sortedItems) {
+          const colIdx = getColumnIndex(item.x, columns);
+          columnDistribution.set(colIdx, (columnDistribution.get(colIdx) || 0) + 1);
+        }
+        log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Items per column`, {
+          distribution: Array.from(columnDistribution.entries())
+            .sort((a, b) => a[0] - b[0])
+            .map(([colIdx, count]) => ({
+              column: colIdx,
+              items: count,
+              percentage: ((count / sortedItems.length) * 100).toFixed(1) + '%'
+            }))
         });
       }
       
