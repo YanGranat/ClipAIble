@@ -112,7 +112,49 @@ export async function generateMarkdown(data, updateState) {
   const metaItems = [];
   if (author) metaItems.push(`**${authorLabel}:** ${author}`);
   if (translatedDate) metaItems.push(`**${dateLabel}:** ${translatedDate}`);
-  if (sourceUrl) metaItems.push(`**${sourceLabel}:** ${sourceUrl}`);
+  if (sourceUrl) {
+    // Extract only filename from URL (for local files, show just the filename)
+    // Improved regex-based extraction with URL decoding
+    let displaySource = sourceUrl;
+    try {
+      // Try regex extraction first (more reliable for file:// URLs)
+      const match = sourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
+      if (match) {
+        displaySource = decodeURIComponent(match[1]);
+        log('Markdown: Extracted filename from URL', {
+          original: sourceUrl.substring(0, 100),
+          extracted: displaySource
+        });
+      } else {
+        // Fallback to URL parsing
+        if (sourceUrl.startsWith('file://')) {
+          const urlObj = new URL(sourceUrl);
+          const pathParts = urlObj.pathname.split('/').filter(p => p);
+          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || sourceUrl);
+        } else {
+          // For http/https URLs, extract filename from path
+          const urlObj = new URL(sourceUrl);
+          const pathParts = urlObj.pathname.split('/').filter(p => p);
+          const filename = pathParts[pathParts.length - 1];
+          if (filename && filename.toLowerCase().endsWith('.pdf')) {
+            displaySource = decodeURIComponent(filename);
+          }
+        }
+      }
+    } catch (e) {
+      // If URL parsing fails, try simple extraction
+      const parts = sourceUrl.split('/');
+      const lastPart = parts[parts.length - 1].split('?')[0];
+      if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
+        try {
+          displaySource = decodeURIComponent(lastPart);
+        } catch (e2) {
+          displaySource = lastPart;
+        }
+      }
+    }
+    metaItems.push(`**${sourceLabel}:** ${displaySource}`);
+  }
   
   if (metaItems.length > 0) {
     markdown += metaItems.join('  \n') + '\n\n';
@@ -224,16 +266,30 @@ export async function generateMarkdown(data, updateState) {
 function contentItemToMarkdown(item) {
   if (!item || !item.type) return '';
   
+  // Helper to format text with bold/italic
+  const formatText = (text, isBold, isItalic) => {
+    if (!text) return '';
+    let formatted = stripHtml(text);
+    if (isBold && isItalic) {
+      formatted = `***${formatted}***`;
+    } else if (isBold) {
+      formatted = `**${formatted}**`;
+    } else if (isItalic) {
+      formatted = `*${formatted}*`;
+    }
+    return formatted;
+  };
+  
   switch (item.type) {
     case 'heading': {
       const level = Math.min(Math.max(item.level || 2, 1), 6);
       const prefix = '#'.repeat(level);
-      const text = stripHtml(item.text || '');
+      const text = formatText(item.text || '', item.isBold, item.isItalic);
       return `\n${prefix} ${text}\n\n`;
     }
     
     case 'paragraph': {
-      const text = htmlToMarkdown(item.text || '');
+      const text = formatText(item.text || '', item.isBold, item.isItalic);
       if (!text.trim()) return '';
       return `${text}\n\n`;
     }

@@ -169,7 +169,43 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   const metaItems = [];
   if (sourceUrl) {
     const cleanSourceUrl = sourceUrl.split('#')[0];
-    metaItems.push(`<a href="${escapeAttr(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(l10n.originalArticle)}</a>`);
+    // Extract only filename from URL (for local files, show just the filename)
+    // Improved regex-based extraction with URL decoding
+    let displaySource = cleanSourceUrl;
+    try {
+      // Try regex extraction first (more reliable for file:// URLs)
+      const match = cleanSourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
+      if (match) {
+        displaySource = decodeURIComponent(match[1]);
+      } else {
+        // Fallback to URL parsing
+        if (cleanSourceUrl.startsWith('file://')) {
+          const urlObj = new URL(cleanSourceUrl);
+          const pathParts = urlObj.pathname.split('/').filter(p => p);
+          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || cleanSourceUrl);
+        } else {
+          // For http/https URLs, extract filename from path
+          const urlObj = new URL(cleanSourceUrl);
+          const pathParts = urlObj.pathname.split('/').filter(p => p);
+          const filename = pathParts[pathParts.length - 1];
+          if (filename && filename.toLowerCase().endsWith('.pdf')) {
+            displaySource = decodeURIComponent(filename);
+          }
+        }
+      }
+    } catch (e) {
+      // If URL parsing fails, try simple extraction
+      const parts = cleanSourceUrl.split('/');
+      const lastPart = parts[parts.length - 1].split('?')[0];
+      if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
+        try {
+          displaySource = decodeURIComponent(lastPart);
+        } catch (e2) {
+          displaySource = lastPart;
+        }
+      }
+    }
+    metaItems.push(`<a href="${escapeAttr(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(displaySource)}</a>`);
   }
   if (author) {
     metaItems.push(`<span class="article-author">${escapeHtml(author)}</span>`);

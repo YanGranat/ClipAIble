@@ -258,7 +258,20 @@ function groupItemsByLines(items, medianHeight) {
     return [];
   }
   
-  log(`[ClipAIble Offscreen PDF] groupItemsByLines: ${validItems.length}/${items.length} valid items (filtered ${items.length - validItems.length} items)`);
+      log(`[ClipAIble Offscreen PDF] groupItemsByLines: ${validItems.length}/${items.length} valid items (filtered ${items.length - validItems.length} items)`);
+      
+      // DIAGNOSTIC: Log font names distribution
+      const fontNames = validItems.map(item => item.fontName || 'EMPTY').filter(f => f);
+      const fontNameCounts = {};
+      fontNames.forEach(fn => {
+        fontNameCounts[fn] = (fontNameCounts[fn] || 0) + 1;
+      });
+      log(`[ClipAIble Offscreen PDF] groupItemsByLines: DIAGNOSTIC - Font names distribution`, {
+        totalFontNames: Object.keys(fontNameCounts).length,
+        fontNameCounts: fontNameCounts,
+        boldDetected: validItems.filter(item => item.isBold).length,
+        italicDetected: validItems.filter(item => item.isItalic).length
+      });
   
   const lines = [];
   let currentLine = [];
@@ -338,12 +351,37 @@ function groupItemsByLines(items, medianHeight) {
     }
     
     if (lineText.trim()) {
+      // Check if line contains bold text (if any item is bold, mark line as bold)
+      const hasBold = lineItems.some(item => item.isBold);
+      const hasItalic = lineItems.some(item => item.isItalic);
+      
+      // DIAGNOSTIC: Log bold detection for ALL lines (not just first 5)
+      if (hasBold) {
+        log(`[ClipAIble Offscreen PDF] groupItemsByLines: DIAGNOSTIC - Line ${resultLines.length + 1} is bold`, {
+          text: lineText.trim().substring(0, 50),
+          fontNames: lineItems.map(i => i.fontName || 'EMPTY').filter(f => f),
+          boldItems: lineItems.filter(i => i.isBold).map(i => ({ 
+            fontName: i.fontName || 'EMPTY', 
+            text: i.str?.substring(0, 30),
+            isBold: i.isBold,
+            fontWeight: i.fontWeight || 'NOT_AVAILABLE'
+          })),
+          allItems: lineItems.map(i => ({
+            fontName: i.fontName || 'EMPTY',
+            isBold: i.isBold,
+            text: i.str?.substring(0, 20)
+          }))
+        });
+      }
+      
       resultLines.push({
         text: lineText.trim(),
         y: lineItems[0].y,
         x: lineItems[0].x,
         fontSize: Math.max(...lineItems.map(i => i.fontSize)),
         fontName: lineItems[0].fontName || '',
+        isBold: hasBold,
+        isItalic: hasItalic,
         items: lineItems,
         hasEOL: lineItems[lineItems.length - 1].hasEOL !== undefined ? 
                 lineItems[lineItems.length - 1].hasEOL : false
@@ -361,6 +399,74 @@ function groupItemsByLines(items, medianHeight) {
  * @param {Array} lines - Array of line objects
  * @returns {Array} Array of paragraph/heading objects
  */
+/**
+ * Analyze line spacing distribution to find most common spacing (mode)
+ * Based on LA-PDFText approach: use mode instead of mean for better accuracy
+ * @param {Array} lines - Array of line objects
+ * @returns {Object} Analysis result with mostUsedSpacing and statistics
+ */
+function analyzeLineSpacings(lines) {
+  if (lines.length < 2) {
+    return { mostUsedSpacing: 0, allSpacings: [], spacingCounts: new Map() };
+  }
+  
+  const spacings = [];
+  for (let i = 0; i < lines.length - 1; i++) {
+    const gap = lines[i + 1].y - lines[i].y;
+    if (gap > 0) { // Only positive gaps (lines go top to bottom)
+      spacings.push(gap);
+    }
+  }
+  
+  if (spacings.length === 0) {
+    return { mostUsedSpacing: 0, allSpacings: [], spacingCounts: new Map() };
+  }
+  
+  // Find most frequent spacing (mode) - round to integer for grouping
+  const spacingCounts = new Map();
+  spacings.forEach(s => {
+    const rounded = Math.round(s); // Round to integer for grouping similar values
+    spacingCounts.set(rounded, (spacingCounts.get(rounded) || 0) + 1);
+  });
+  
+  let mostUsedSpacing = 0;
+  let maxCount = 0;
+  spacingCounts.forEach((count, spacing) => {
+    if (count > maxCount) {
+      maxCount = count;
+      mostUsedSpacing = spacing;
+    }
+  });
+  
+  return {
+    mostUsedSpacing,
+    allSpacings: spacings,
+    spacingCounts: spacingCounts
+  };
+}
+
+/**
+ * Determine spacing type (tight/normal/loose) based on ratio of spacing to font size
+ * @param {Object} analysis - Result from analyzeLineSpacings
+ * @param {number} avgFontSize - Average font size
+ * @returns {string} 'tight', 'normal', or 'loose'
+ */
+function determineSpacingType(analysis, avgFontSize) {
+  if (analysis.mostUsedSpacing === 0 || avgFontSize === 0) {
+    return 'normal'; // Default fallback
+  }
+  
+  const ratio = analysis.mostUsedSpacing / avgFontSize;
+  
+  if (ratio < 1.2) {
+    return 'tight';  // Tight spacing (e.g., academic papers with 1.1x line spacing)
+  } else if (ratio < 1.5) {
+    return 'normal'; // Normal spacing (e.g., articles with 1.3-1.4x line spacing)
+  } else {
+    return 'loose';  // Loose spacing (e.g., documents with 1.6x+ line spacing)
+  }
+}
+
 function groupIntoParagraphs(lines) {
   if (lines.length === 0) return [];
   
@@ -369,14 +475,39 @@ function groupIntoParagraphs(lines) {
   
   // Calculate average line height for dynamic thresholds
   const avgLineHeight = lines.reduce((sum, l) => sum + l.fontSize, 0) / lines.length;
-  const PARA_Y_GAP_MULTIPLIER = 1.5; // 1.5x line spacing for paragraph break
-  const HEADING_FONT_THRESHOLD = 1.3; // 30% larger than average = heading (improved from 1.2)
+  const HEADING_FONT_THRESHOLD = 1.3; // 30% larger than average = heading
   
-  // Adaptive paragraph gap: use average of adjacent lines' font sizes
+  // CRITICAL FIX: Distribution analysis for line spacing (LA-PDFText approach)
+  // Use mode (most frequent value) instead of mean for better accuracy
+  const spacingAnalysis = analyzeLineSpacings(lines);
+  const spacingType = determineSpacingType(spacingAnalysis, avgLineHeight);
+  
+  // Dynamic multipliers based on spacing type (PDFPlumber approach)
+  const multipliers = {
+    'tight': 1.5,   // Tight spacing: paragraph threshold = 1.5x normal spacing
+    'normal': 1.8,  // Normal spacing: paragraph threshold = 1.8x normal spacing
+    'loose': 2.0    // Loose spacing: paragraph threshold = 2.0x normal spacing
+  };
+  
+  const dynamicMultiplier = multipliers[spacingType];
+  const adaptiveParaGapBase = spacingAnalysis.mostUsedSpacing || (avgLineHeight * 1.3); // Fallback if no spacing found
+  
+  log(`[ClipAIble Offscreen PDF] groupIntoParagraphs: Starting with ${lines.length} lines`, {
+    avgLineHeight: avgLineHeight.toFixed(2),
+    spacingAnalysis: {
+      mostUsedSpacing: spacingAnalysis.mostUsedSpacing.toFixed(1),
+      totalSpacings: spacingAnalysis.allSpacings.length,
+      spacingType: spacingType,
+      dynamicMultiplier: dynamicMultiplier
+    },
+    HEADING_FONT_THRESHOLD
+  });
+  
+  // Adaptive paragraph gap: use most common line spacing * dynamic multiplier
   const calculateParaGap = (line1, line2) => {
     if (!line2) return 0;
-    const avgHeight = (line1.fontSize + line2.fontSize) / 2;
-    return avgHeight * PARA_Y_GAP_MULTIPLIER;
+    // Use most common spacing from distribution analysis, not fontSize-based calculation
+    return adaptiveParaGapBase * dynamicMultiplier;
   };
   
   for (let i = 0; i < lines.length; i++) {
@@ -391,7 +522,8 @@ function groupIntoParagraphs(lines) {
                       /^(Chapter|Section|\d+\.|\d+\))\s/.test(text);
     
     // Calculate vertical gap to next line (adaptive)
-    const yGap = nextLine ? Math.abs(nextLine.y - line.y) : 0;
+    // IMPORTANT: nextLine.y > line.y (lines go top to bottom), so use nextLine.y - line.y (not Math.abs)
+    const yGap = nextLine ? (nextLine.y - line.y) : Infinity; // Infinity if no next line (end of page)
     const adaptiveParaGap = nextLine ? calculateParaGap(line, nextLine) : 0;
     
     // Check for font size change (significant change indicates new paragraph/heading)
@@ -399,11 +531,46 @@ function groupIntoParagraphs(lines) {
                        Math.abs(line.fontSize - currentPara.fontSize) > avgLineHeight * 0.2;
     
     // Determine if we should start a new paragraph
+    // CRITICAL FIX: Removed line.hasEOL - hasEOL indicates visual line break, NOT paragraph break
+    // PDF.js sets hasEOL=true for every line in a paragraph because each line is a separate visual element
+    // We should use only Y-coordinate gaps to determine paragraph breaks
     const shouldStartNew = !currentPara || 
                           isHeading || 
                           yGap > adaptiveParaGap ||
-                          line.hasEOL || // Explicit line break from PDF
                           fontChange; // Significant font size change
+    
+    // DIAGNOSTIC: Log decision for ALL lines to understand why each line becomes a paragraph
+    log(`[ClipAIble Offscreen PDF] groupIntoParagraphs: DIAGNOSTIC - Line ${i + 1}/${lines.length}`, {
+      text: text.substring(0, 50) + (text.length > 50 ? '...' : ''),
+      fontSize: line.fontSize.toFixed(1),
+      y: line.y.toFixed(1),
+      nextY: nextLine ? nextLine.y.toFixed(1) : 'N/A',
+      yGap: nextLine ? yGap.toFixed(1) : 'Infinity',
+      adaptiveParaGap: nextLine ? adaptiveParaGap.toFixed(1) : 'N/A',
+      gapRatio: nextLine ? (yGap / adaptiveParaGap).toFixed(2) : 'N/A',
+      gapRatioGreaterThanOne: nextLine ? (yGap > adaptiveParaGap) : false,
+      isHeading,
+      fontChange: fontChange || false,
+      fontChangeDetails: currentPara ? {
+        lineFontSize: line.fontSize.toFixed(1),
+        paraFontSize: currentPara.fontSize.toFixed(1),
+        diff: Math.abs(line.fontSize - currentPara.fontSize).toFixed(1),
+        threshold: (avgLineHeight * 0.2).toFixed(1),
+        exceedsThreshold: Math.abs(line.fontSize - currentPara.fontSize) > avgLineHeight * 0.2
+      } : null,
+      hasEOL: line.hasEOL || false,
+      shouldStartNew,
+      shouldStartNewReasons: {
+        noCurrentPara: !currentPara,
+        isHeading: isHeading,
+        yGapTooLarge: nextLine ? (yGap > adaptiveParaGap) : false,
+        hasEOL: line.hasEOL || false,
+        fontChange: fontChange || false
+      },
+      currentParaExists: !!currentPara,
+      currentParaFontSize: currentPara ? currentPara.fontSize.toFixed(1) : 'N/A',
+      currentParaText: currentPara ? currentPara.text.substring(0, 30) + '...' : 'N/A'
+    });
     
     if (shouldStartNew) {
       // Finalize previous paragraph
@@ -421,6 +588,8 @@ function groupIntoParagraphs(lines) {
           fontSize: line.fontSize,
           y: line.y,
           lastY: line.y,
+          isBold: line.isBold || false,
+          isItalic: line.isItalic || false,
           items: [line]
         });
         currentPara = null; // Headings are standalone
@@ -431,31 +600,39 @@ function groupIntoParagraphs(lines) {
           fontSize: line.fontSize,
           y: line.y,
           lastY: line.y,
+          isBold: line.isBold || false,
+          isItalic: line.isItalic || false,
           items: [line]
         };
       }
     } else {
-      // Continue current paragraph
+      // Continue current paragraph - merge lines with proper spacing
       if (currentPara) {
-        // Add space between lines
-        const prevEndsWithPunct = /[.!?;:]$/.test(currentPara.text.trim());
-        const lineStartsWithCapital = /^[A-ZА-ЯЁ]/.test(text);
+        // Always add space between lines when continuing paragraph
+        // This ensures proper word separation
+        const trimmedPara = currentPara.text.trim();
+        const trimmedLine = text.trim();
         
-        if (prevEndsWithPunct || lineStartsWithCapital) {
-          currentPara.text += ' ' + text;
-        } else {
-          // Check if space needed
-          const lastChar = currentPara.text[currentPara.text.length - 1];
-          const firstChar = text[0];
+        if (trimmedPara && trimmedLine) {
+          // Check if space is needed (avoid double spaces)
+          const lastChar = trimmedPara[trimmedPara.length - 1];
+          const firstChar = trimmedLine[0];
+          
+          // Add space if not already present
           if (lastChar !== ' ' && firstChar !== ' ') {
-            currentPara.text += ' ' + text;
+            currentPara.text += ' ' + trimmedLine;
           } else {
-            currentPara.text += text;
+            currentPara.text += trimmedLine;
           }
+        } else {
+          currentPara.text += text;
         }
         
         currentPara.lastY = line.y;
         currentPara.fontSize = Math.max(currentPara.fontSize, line.fontSize);
+        // Update bold/italic flags if line has them
+        if (line.isBold) currentPara.isBold = true;
+        if (line.isItalic) currentPara.isItalic = true;
         currentPara.items.push(line);
       }
     }
@@ -465,6 +642,25 @@ function groupIntoParagraphs(lines) {
   if (currentPara && currentPara.text.trim()) {
     paragraphs.push(currentPara);
   }
+  
+  log(`[ClipAIble Offscreen PDF] groupIntoParagraphs: Created ${paragraphs.length} paragraphs from ${lines.length} lines`, {
+    avgLinesPerPara: lines.length > 0 ? (lines.length / paragraphs.length).toFixed(2) : 0,
+    reductionRatio: lines.length > 0 ? ((lines.length - paragraphs.length) / lines.length * 100).toFixed(1) + '%' : '0%',
+    // DIAGNOSTIC: Detailed statistics
+    diagnostic: {
+      totalLines: lines.length,
+      totalParagraphs: paragraphs.length,
+      linesPerPara: lines.length > 0 ? (lines.length / paragraphs.length).toFixed(2) : '0',
+      // Count reasons for new paragraphs
+      reasons: {
+        headings: paragraphs.filter(p => p.type === 'heading').length,
+        paragraphs: paragraphs.filter(p => p.type === 'paragraph').length
+      },
+      // Check if every line became a paragraph (problem indicator)
+      allLinesBecameParagraphs: paragraphs.length === lines.length,
+      warning: paragraphs.length === lines.length ? 'EVERY LINE BECAME A PARAGRAPH - THIS IS A PROBLEM!' : null
+    }
+  });
   
   return paragraphs;
 }
@@ -654,6 +850,41 @@ export async function extractPdfContent(url) {
       }
       
       hasTextContent = true;
+      
+      // DIAGNOSTIC: Log ALL properties of first 10 items to understand what PDF.js provides
+      log(`[ClipAIble Offscreen PDF] Page ${pageNum}: DIAGNOSTIC - All properties of first 10 items`, {
+        totalItems: textItems.length,
+        sampleItems: textItems.slice(0, 10).map((item, idx) => {
+          const transform = item.transform || [1, 0, 0, 1, 0, 0];
+          const pdfX = transform[4] || 0;
+          const pdfY = transform[5] || 0;
+          const [viewportX, viewportY] = viewport.convertToViewportPoint(pdfX, pdfY);
+          
+          // Log ALL available properties
+          return {
+            index: idx,
+            text: item.str?.substring(0, 50) || '',
+            // All properties from getTextContent()
+            str: item.str || null,
+            transform: item.transform || null,
+            width: item.width || null,
+            height: item.height || null,
+            fontName: item.fontName || null,
+            fontSize: item.fontSize || null,
+            dir: item.dir || null,
+            hasEOL: item.hasEOL !== undefined ? item.hasEOL : null,
+            // Additional properties that might exist
+            fontWeight: item.fontWeight || null,
+            fontStyle: item.fontStyle || null,
+            // Coordinates
+            pdf: { x: pdfX.toFixed(1), y: pdfY.toFixed(1) },
+            viewport: { x: viewportX.toFixed(1), y: viewportY.toFixed(1) },
+            // All other properties (in case there are more)
+            allKeys: Object.keys(item)
+          };
+        })
+      });
+      
       // Log sample coordinates for debugging
       if (textItems.length > 0) {
         const sampleItems = textItems.slice(0, 5);
@@ -697,13 +928,52 @@ export async function extractPdfContent(url) {
           // This handles rotation, scale, and coordinate system conversion correctly
           const [viewportX, viewportY] = viewport.convertToViewportPoint(pdfX, pdfY);
           
+          // Extract font style information (bold/italic)
+          // CRITICAL: fontName in PDF.js is internal ID like "g_d0_f1", NOT human-readable like "Arial-Bold"
+          // We need to use heuristics: width/height ratio or build fontToFormats mapping
+          const fontName = item.fontName || '';
+          
+          // Calculate width/height ratio for bold detection heuristic
+          const itemWidth = item.width || 0;
+          const itemHeight = item.height || Math.abs(transform[3]) || 12;
+          const widthHeightRatio = itemHeight > 0 ? itemWidth / itemHeight : 0;
+          
+          // Try regex first (works if fontName contains style info)
+          let isBold = /bold|black|heavy|demi|semi/i.test(fontName);
+          let isItalic = /italic|oblique/i.test(fontName);
+          
+          // Store ratio for later analysis (will be used to build fontToFormats mapping)
+          // We'll analyze all items first, then determine bold/italic based on distribution
+          
+          // DIAGNOSTIC: Log font detection for first 20 items
+          if (transformedItems.length < 20) {
+            log(`[ClipAIble Offscreen PDF] Page ${pageNum}: DIAGNOSTIC - Font detection for item ${transformedItems.length}`, {
+              text: item.str?.substring(0, 30) || '',
+              fontName: fontName || 'EMPTY',
+              fontWeight: item.fontWeight || 'NOT_AVAILABLE',
+              fontStyle: item.fontStyle || 'NOT_AVAILABLE',
+              width: itemWidth.toFixed(1),
+              height: itemHeight.toFixed(1),
+              widthHeightRatio: widthHeightRatio.toFixed(2),
+              isBold: isBold,
+              isItalic: isItalic,
+              boldRegexMatch: /bold|black|heavy|demi|semi/i.test(fontName),
+              italicRegexMatch: /italic|oblique/i.test(fontName),
+              allItemKeys: Object.keys(item)
+            });
+          }
+          
           return {
             ...item,
             x: viewportX,
             y: viewportY, // Viewport coordinates: top-left origin, Y increases downward
             pdfX: pdfX, // Keep original PDF coordinates for reference
             pdfY: pdfY,
-            fontSize: item.height || Math.abs(transform[3]) || item.width || 12,
+            fontSize: itemHeight,
+            fontName: fontName,
+            isBold: isBold, // Will be refined later with fontToFormats mapping
+            isItalic: isItalic, // Will be refined later with fontToFormats mapping
+            widthHeightRatio: widthHeightRatio, // For bold detection heuristic
             // hasEOL may not be available in all PDF.js versions - use safe check
             hasEOL: item.hasEOL !== undefined ? item.hasEOL : false,
             // dir may not be available - default to LTR
@@ -791,7 +1061,20 @@ export async function extractPdfContent(url) {
       
       log(`[ClipAIble Offscreen PDF] Page ${pageNum}: Sorted ${sortedItems.length} text items by position`);
       
-      // Step 3: Group items into lines using proven algorithm from pdf-to-markdown
+      // Step 3: Build fontToFormats mapping using width/height ratio heuristic
+      // This is needed because PDF.js fontName is internal ID (e.g., "g_d0_f1"), not human-readable
+      const fontToFormats = buildFontFormatMap(sortedItems);
+      
+      // Apply font format mapping to items
+      sortedItems.forEach(item => {
+        if (fontToFormats.has(item.fontName)) {
+          const format = fontToFormats.get(item.fontName);
+          item.isBold = format === 'bold' || format === 'bold-italic';
+          item.isItalic = format === 'italic' || format === 'bold-italic';
+        }
+      });
+      
+      // Step 4: Group items into lines using proven algorithm from pdf-to-markdown
       // Groups items by Y coordinate with threshold = medianHeight / 2
       const lines = groupItemsByLines(sortedItems, lineThreshold);
       
@@ -892,49 +1175,158 @@ export async function extractPdfContent(url) {
       }
     }
     
-    // Remove duplicate title from content if it matches metadata title
-    // IMPROVED: Check all headings, not just first one
-    // Also handle case where title is split across multiple headings
+    // Remove duplicate title and author from content
+    // Check headings AND paragraphs at the start of document
     if (title && allContent.length > 0) {
       // Normalize title for comparison (remove extra whitespace, case-insensitive)
-      const normalizedTitle = title.trim().toLowerCase();
+      const normalizedTitle = title.trim().toLowerCase().replace(/\s+/g, ' ');
       
-      // Find and remove all headings that match the title
-      const headingsToRemove = [];
-      for (let i = 0; i < allContent.length; i++) {
+      log('[ClipAIble Offscreen PDF] Checking for duplicate title', {
+        title,
+        normalizedTitle,
+        contentItems: allContent.length,
+        firstItems: allContent.slice(0, 5).map((item, idx) => ({
+          index: idx,
+          type: item.type,
+          text: item.text ? item.text.substring(0, 60) + (item.text.length > 60 ? '...' : '') : 'NO TEXT'
+        }))
+      });
+      
+      // Find and remove all headings/paragraphs that match the title
+      const itemsToRemove = [];
+      for (let i = 0; i < Math.min(allContent.length, 5); i++) { // Check first 5 items
         const item = allContent[i];
-        if (item.type === 'heading') {
-          const normalizedHeading = item.text.trim().toLowerCase();
+        if (!item.text) continue;
+        
+        const normalizedText = item.text.trim().toLowerCase().replace(/\s+/g, ' ');
+        
+        // Check for exact match
+        if (normalizedText === normalizedTitle) {
+          log(`[ClipAIble Offscreen PDF] Found exact title match at index ${i}`, {
+            itemText: item.text.substring(0, 80)
+          });
+          itemsToRemove.push(i);
+          continue;
+        }
+        
+        // Check if text is part of title (title split across lines)
+        // e.g., title = "Longevity Priority: агентно-управляемая система приоритезации задач в науке о продлении жизни"
+        // item1 = "Longevity Priority: агентно-управляемая система приоритезации"
+        // item2 = "задач в науке о продлении жизни"
+        if (normalizedTitle.includes(normalizedText) || normalizedText.includes(normalizedTitle)) {
+          // Check if this is likely a split title (at the start of document)
+          // Also check if text is a continuation of title (starts with words from title)
+          const titleWords = normalizedTitle.split(/\s+/);
+          const textWords = normalizedText.split(/\s+/);
+          const firstWordsMatch = textWords.length > 0 && titleWords.includes(textWords[0]);
+          const isContinuation = firstWordsMatch && i < 5;
           
-          // Check for exact match
-          if (normalizedHeading === normalizedTitle) {
-            headingsToRemove.push(i);
-            continue;
+          // DIAGNOSTIC: Log all title matching attempts
+          log(`[ClipAIble Offscreen PDF] DIAGNOSTIC - Title matching check at index ${i}`, {
+            itemText: item.text.substring(0, 80),
+            normalizedText,
+            normalizedTitle,
+            lengthRatio: (normalizedText.length / normalizedTitle.length).toFixed(2),
+            titleIncludesText: normalizedTitle.includes(normalizedText),
+            textIncludesTitle: normalizedText.includes(normalizedTitle),
+            isContinuation,
+            firstWord: textWords[0] || '',
+            titleWords: titleWords.slice(0, 5),
+            textWords: textWords.slice(0, 5),
+            firstWordsMatch,
+            index: i,
+            willRemove: i < 5 && (normalizedText.length < normalizedTitle.length * 0.8 || isContinuation)
+          });
+          
+          if (i < 5 && (normalizedText.length < normalizedTitle.length * 0.8 || isContinuation)) {
+            log(`[ClipAIble Offscreen PDF] Found partial title match at index ${i}`, {
+              itemText: item.text.substring(0, 80),
+              normalizedText,
+              normalizedTitle,
+              lengthRatio: (normalizedText.length / normalizedTitle.length).toFixed(2),
+              isContinuation,
+              firstWord: textWords[0] || ''
+            });
+            itemsToRemove.push(i);
           }
-          
-          // Check if heading is part of title (title split across lines)
-          // e.g., title = "Neural network computation with DNA strand displacement cascades"
-          // heading1 = "Neural network computation with DNA strand"
-          // heading2 = "displacement cascades"
-          if (normalizedTitle.includes(normalizedHeading) || normalizedHeading.includes(normalizedTitle)) {
-            // Check if this is likely a split title (short heading at the start)
-            if (i < 3 && normalizedHeading.length < normalizedTitle.length * 0.7) {
-              headingsToRemove.push(i);
-            }
+        } else {
+          // DIAGNOSTIC: Log why title was NOT matched
+          if (i < 10) {
+            log(`[ClipAIble Offscreen PDF] DIAGNOSTIC - Title NOT matched at index ${i}`, {
+              itemText: item.text.substring(0, 80),
+              normalizedText,
+              normalizedTitle,
+              titleIncludesText: normalizedTitle.includes(normalizedText),
+              textIncludesTitle: normalizedText.includes(normalizedTitle)
+            });
           }
         }
       }
       
-      // Remove headings in reverse order to maintain indices
-      if (headingsToRemove.length > 0) {
-        log('[ClipAIble Offscreen PDF] Removing duplicate title headings from content', { 
+      // Remove items in reverse order to maintain indices
+      if (itemsToRemove.length > 0) {
+        log('[ClipAIble Offscreen PDF] Removing duplicate title from content', { 
           title, 
-          removedCount: headingsToRemove.length,
-          indices: headingsToRemove
+          removedCount: itemsToRemove.length,
+          indices: itemsToRemove,
+          removedItems: itemsToRemove.map(idx => ({
+            index: idx,
+            type: allContent[idx].type,
+            text: allContent[idx].text ? allContent[idx].text.substring(0, 80) : 'NO TEXT'
+          }))
         });
-        for (let i = headingsToRemove.length - 1; i >= 0; i--) {
-          allContent.splice(headingsToRemove[i], 1);
+        for (let i = itemsToRemove.length - 1; i >= 0; i--) {
+          allContent.splice(itemsToRemove[i], 1);
         }
+      } else {
+        log('[ClipAIble Offscreen PDF] No duplicate title found in first 5 items');
+      }
+    }
+    
+    // Remove duplicate author from content (check first few paragraphs)
+    if (author && allContent.length > 0) {
+      const normalizedAuthor = author.trim().toLowerCase().replace(/\s+/g, ' ');
+      
+      log('[ClipAIble Offscreen PDF] Checking for duplicate author', {
+        author,
+        normalizedAuthor,
+        contentItems: allContent.length
+      });
+      
+      const itemsToRemove = [];
+      for (let i = 0; i < Math.min(allContent.length, 3); i++) { // Check first 3 items
+        const item = allContent[i];
+        if (!item.text) continue;
+        
+        const normalizedText = item.text.trim().toLowerCase().replace(/\s+/g, ' ');
+        
+        // Check if paragraph contains author name
+        if (normalizedText === normalizedAuthor || normalizedText.includes(normalizedAuthor)) {
+          log(`[ClipAIble Offscreen PDF] Found author match at index ${i}`, {
+            itemText: item.text.substring(0, 80),
+            normalizedText,
+            normalizedAuthor
+          });
+          itemsToRemove.push(i);
+        }
+      }
+      
+      if (itemsToRemove.length > 0) {
+        log('[ClipAIble Offscreen PDF] Removing duplicate author from content', { 
+          author, 
+          removedCount: itemsToRemove.length,
+          indices: itemsToRemove,
+          removedItems: itemsToRemove.map(idx => ({
+            index: idx,
+            type: allContent[idx].type,
+            text: allContent[idx].text ? allContent[idx].text.substring(0, 80) : 'NO TEXT'
+          }))
+        });
+        for (let i = itemsToRemove.length - 1; i >= 0; i--) {
+          allContent.splice(itemsToRemove[i], 1);
+        }
+      } else {
+        log('[ClipAIble Offscreen PDF] No duplicate author found in first 3 items');
       }
     }
     
