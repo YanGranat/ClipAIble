@@ -75,8 +75,9 @@ export function isIcon(element) {
   
   // Check for emoji arrow images
   if (tagName === 'img') {
-    const alt = (element.alt || '').trim();
-    const src = (element.src || '').toLowerCase();
+    const imgElement = /** @type {HTMLImageElement} */ (element);
+    const alt = (imgElement.alt || '').trim();
+    const src = (imgElement.src || '').toLowerCase();
     if (alt === '↩' || /[←→↑↓↗↘↩]/.test(alt) || (src.includes('emoji') && alt.includes('arrow'))) {
       return true;
     }

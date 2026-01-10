@@ -14,6 +14,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'OpenAI API Key',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Claude API Key',
@@ -24,6 +25,8 @@ export const UI_LOCALES = {
     enterGrokApiKey: 'xai-...',
     openrouterApiKey: 'OpenRouter API Key',
     enterOpenRouterApiKey: 'sk-or-...',
+    deepseekApiKey: 'DeepSeek API Key',
+    enterDeepSeekApiKey: 'sk-...',
     googleApiKey: 'Google AI API Key',
     enterGoogleApiKey: 'AIza...',
     optionalBadge: 'for image translation',
@@ -51,7 +54,7 @@ export const UI_LOCALES = {
     model: 'Model',
     addModel: 'Add Model',
     showModelList: 'Show Model List',
-    addModelPrompt: 'Enter model name (e.g., gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Enter model name:',
     addModelInvalidFormat: 'Invalid model name format. Use code name like gpt-5.2 or claude-sonnet-4-5',
     addModelAlreadyExists: 'This model already exists',
     extractionMode: 'Extraction Mode',
@@ -87,7 +90,6 @@ export const UI_LOCALES = {
     elevenlabs: 'ElevenLabs',
     googleTts: 'Google Gemini 2.5 TTS',
     qwenTts: 'Qwen3-TTS-Flash',
-    respeecher: 'Respeecher',
     offlineTts: 'Piper TTS (offline)',
     elevenlabsModel: 'ElevenLabs Model',
     multilingualV2: 'Multilingual v2 (stable, natural)',
@@ -202,7 +204,7 @@ export const UI_LOCALES = {
     spaHint: '💡 For SPA/dynamic pages: scroll to load all content before saving',
     automaticMode: 'Automatic (no AI)',
     aiSelectorFaster: 'AI Selector (faster, exact text)',
-    aiExtractFull: 'AI Extract (full processing)',
+    aiExtractFull: 'AI Extract (not recommended)',
     useCachedSelectorsHint: 'Skip AI for sites you\'ve saved before',
     ttsProviderHint: 'Choose text-to-speech provider',
     getElevenlabsKeyFrom: 'Get your API key from',
@@ -236,8 +238,6 @@ export const UI_LOCALES = {
     statusExtractingSubtitles: 'Extracting subtitles...',
     statusProcessingSubtitles: 'Processing subtitles...',
     extractingSubtitles: 'Extracting subtitles...',
-    extractingPageContent: 'Extracting content...',
-    errorSubtitleProcessingFailed: 'Failed to process subtitles',
     statusProcessingComplete: 'Processing complete',
     statusAnalyzingPage: 'Analyzing page...',
     statusExtractingContent: 'Extracting content...',
@@ -249,6 +249,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Processing was interrupted. Please try again.',
     statusLoadingStyles: 'Loading styles...',
     deleteFromHistory: 'Delete from history',
+    openOriginalArticle: 'Open original article',
     statusConvertingToSpeech: 'Converting to speech using {provider}...',
     statusDownloadingAudio: 'Downloading audio file...',
     errorNoHtmlData: 'Failed to extract page content: no HTML data received',
@@ -288,11 +289,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Import/Export Settings',
     exportSettings: 'Export Settings',
     importSettings: 'Import Settings',
-    includeStatisticsInExport: 'Include statistics in export',
-    includeSelectorCacheInExport: 'Include selector cache in export',
     includeStatisticsInImport: 'Import statistics (if present)',
     includeSelectorCacheInImport: 'Import selector cache (if present)',
-    overwriteExistingSettings: 'Overwrite existing settings',
     exportStatsHint: 'Include usage statistics and history',
     exportCacheHint: 'Include cached AI selectors for offline mode',
     exportSecurityNote: 'Note: API keys are never exported for security reasons.',
@@ -300,7 +298,6 @@ export const UI_LOCALES = {
     importCacheHint: 'Replace current cache with imported data',
     overwriteHint: 'Replace current settings with imported ones',
     confirm: 'Confirm',
-    cancel: 'Cancel',
     exportHint: 'Export includes: settings (without API keys), optional stats & cache',
     exporting: 'Exporting...',
     importing: 'Importing...',
@@ -320,12 +317,14 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Invalid Gemini API key format (should start with AIza)',
     invalidGrokKeyFormat: 'Invalid Grok API key format (should start with xai-)',
     invalidOpenRouterKeyFormat: 'Invalid OpenRouter API key format (should start with sk-or-)',
+    invalidDeepSeekKeyFormat: 'Invalid DeepSeek API key format (should start with sk-)',
     invalidGoogleKeyFormat: 'Invalid Google API key format (should start with AIza)',
     failedToEncryptApiKey: 'Failed to encrypt API key',
     failedToDecryptApiKey: 'Failed to decrypt API key. Please re-enter it.',
     pleaseEnterOpenAiApiKey: 'Please enter OpenAI API key for GPT models',
     pleaseEnterClaudeApiKey: 'Please enter Claude API key for Claude models',
     pleaseEnterGeminiApiKey: 'Please enter Gemini API key for Gemini models',
+    pleaseEnterDeepSeekApiKey: 'Please enter DeepSeek API key for DeepSeek models',
     extractingPageContent: 'Extracting page content...',
     apiKeysSaved: 'API keys saved',
     stats: 'Stats',
@@ -355,6 +354,16 @@ export const UI_LOCALES = {
     // Modal
     closeButton: 'Close',
     
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Select PDF File',
+    pdfFileSelectionDialogMessage: 'Working with local files in browser extensions has limitations. Please select the PDF file you want to process.',
+    pdfFileSelectionDialogWarning: 'Important: Do not switch tabs while the extension is processing.',
+    ok: 'OK',
+    showHide: 'Show/Hide',
+    getApiKeyFrom: 'Get your API key from',
+    processing: 'Processing...',
+    done: 'Done!',
+    
     // Confirm dialogs
     clearAllStatisticsConfirm: 'Clear all statistics? This cannot be undone.',
     clearSelectorCacheConfirm: 'Clear selector cache? Next extractions will use AI.',
@@ -383,7 +392,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Invalid Qwen API key. Please check your settings.',
     errorRespeecherKeyRequired: 'Respeecher API key is required. Please add it in settings.',
     errorRespeecherKeyInvalid: 'Invalid Respeecher API key. Please check your settings.',
-    untitled: 'Untitled',
     errorTranslationFailed: 'Translation failed, using original text',
     errorNoSubtitles: 'No subtitles found. Make sure subtitles are enabled for this video.',
     errorSubtitlesExtractionFailed: 'Failed to extract subtitles: {error}',
@@ -416,10 +424,6 @@ export const UI_LOCALES = {
     errorExecutePiperTTSNotPromise: 'executePiperTTS did not return a promise. Got: {type}',
     
     // User-friendly error messages with actionable advice
-    errorSelectorAnalysisFailed: 'Failed to analyze page structure. Try switching to "AI Extract" mode in settings, or check your API key.',
-    errorContentExtractionFailed: 'Failed to extract content from page. Try: 1) Switch to "AI Extract" mode, 2) Scroll to load all content, 3) Check if page uses dynamic loading.',
-    errorNoContentExtracted: 'No content found on this page. Try: 1) Switch to "AI Extract" mode, 2) Make sure the page has loaded completely, 3) Try a different article.',
-    errorScriptExecutionFailed: 'Failed to read page content. The page may be blocking extensions. Try refreshing the page and try again.',
     errorEmptySelectors: 'AI could not find content selectors. Try switching to "AI Extract" mode in settings.',
     errorExtractModeNoContent: 'AI Extract mode returned no content. The page may use dynamic loading. Try scrolling to load all content before saving.',
     errorVideoProcessingFailed: 'Failed to process video. Make sure subtitles are enabled on the video page.',
@@ -435,6 +439,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'API key is required. Please add your API key in settings.',
     errorInvalidFormat: 'Invalid export format selected. Please choose a valid format.',
     errorPageNotReady: 'Page is not ready. Please wait for the page to load completely and try again.',
+    pageNotAccessible: 'This page is not accessible for content extraction. Please open a regular web page.',
+    noContentInApiResponse: 'No content in API response',
+    screenshotResultEmpty: 'Screenshot result is empty',
+    tabLoadTimeout: 'Tab load timeout after 5 minutes',
+    tabDoesNotExist: 'Tab does not exist',
+    noTextContentToConvert: 'No text content to convert to audio',
+    failedToSplitText: 'Failed to split text into chunks',
+    noContentProvidedForPdf: 'No content provided for PDF generation',
+    noContentProvidedForFb2: 'No content provided for FB2 generation',
+    failedToPrepareContentForAudio: 'Failed to prepare content for audio generation',
+    audioGenerationReturnedEmpty: 'Audio generation returned empty result',
+    noContentProvidedForSummary: 'No content provided for summary generation',
+    apiKeyOrModelNotProvided: 'API key or model not provided for summary generation',
+    noTextExtractedFromContent: 'No text extracted from content for summary generation',
+    noContentInResponse: 'No content in response',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'No text provided for TTS',
@@ -486,7 +506,7 @@ export const UI_LOCALES = {
     errorAiEmptySelectors: 'AI returned empty selectors',
     errorContentExtractionFailed: 'Content extraction failed: {error}',
     errorNoContentExtracted: 'No content extracted from page',
-    errorContentEmpty: 'Extracted content is empty. Try switching to "AI Extract" mode.',
+    errorContentEmpty: 'Extracted content is empty.',
     
     // PDF generation errors
     errorPdfNoContent: 'No content to generate PDF',
@@ -543,7 +563,10 @@ export const UI_LOCALES = {
     downloadFailed: 'Failed to download',
     copy: 'Copy',
     download: 'Download',
-    close: 'Close'
+    close: 'Close',
+    noTabAvailable: 'No active tab found. Please open a web page.',
+    errorPrintPage: 'Error',
+    unknownError: 'Unknown error'
   },
   
   ru: {
@@ -554,6 +577,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'API ключ OpenAI',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'API ключ Claude',
@@ -564,6 +588,8 @@ export const UI_LOCALES = {
     enterGrokApiKey: 'xai-...',
     openrouterApiKey: 'API ключ OpenRouter',
     enterOpenRouterApiKey: 'sk-or-...',
+    deepseekApiKey: 'API ключ DeepSeek',
+    enterDeepSeekApiKey: 'sk-...',
     googleApiKey: 'API ключ Google AI',
     enterGoogleApiKey: 'AIza...',
     optionalBadge: 'для перевода изображений',
@@ -585,7 +611,7 @@ export const UI_LOCALES = {
     model: 'Модель',
     addModel: 'Добавить модель',
     showModelList: 'Показать список моделей',
-    addModelPrompt: 'Введите название модели (например, gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Введите название модели:',
     addModelInvalidFormat: 'Неверный формат названия модели. Используйте кодовое имя, например gpt-5.2 или claude-sonnet-4-5',
     addModelAlreadyExists: 'Эта модель уже существует',
     extractionMode: 'Режим извлечения',
@@ -687,6 +713,7 @@ export const UI_LOCALES = {
     processing: 'Обработка...',
     done: 'Готово!',
     pleaseEnterApiKey: 'Пожалуйста, введите API ключ',
+    pleaseEnterDeepSeekApiKey: 'Пожалуйста, введите API ключ DeepSeek для моделей DeepSeek',
     apiKeySaved: 'API ключ сохранён!',
     failedToSave: 'Не удалось сохранить API ключ. Попробуйте снова.',
     keyCorrupted: 'Ключ повреждён, пожалуйста, введите заново',
@@ -728,7 +755,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Для SPA/динамических страниц: прокрутите страницу, чтобы загрузить весь контент перед сохранением',
     automaticMode: 'Автоматический (без ИИ)',
     aiSelectorFaster: 'AI Selector (быстрее, точный текст)',
-    aiExtractFull: 'AI Extract (полная обработка)',
+    aiExtractFull: 'AI Extract (не рекомендуется)',
     useCachedSelectorsHint: 'Пропустить ИИ для сайтов, которые вы уже сохраняли',
     ttsProviderHint: 'Выберите провайдера синтеза речи',
     getElevenlabsKeyFrom: 'Получите ваш API ключ на',
@@ -759,11 +786,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Импорт/Экспорт настроек',
     exportSettings: 'Экспорт настроек',
     importSettings: 'Импорт настроек',
-    includeStatisticsInExport: 'Включать статистику в экспорт',
-    includeSelectorCacheInExport: 'Включать кэш селекторов в экспорт',
     includeStatisticsInImport: 'Импортировать статистику (если есть)',
     includeSelectorCacheInImport: 'Импортировать кэш селекторов (если есть)',
-    overwriteExistingSettings: 'Перезаписать текущие настройки',
     exportStatsHint: 'Включать статистику использования и историю',
     exportCacheHint: 'Включать кэшированные AI селекторы для офлайн режима',
     exportSecurityNote: 'Примечание: API ключи никогда не экспортируются по соображениям безопасности.',
@@ -790,6 +814,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Неверный формат API ключа Gemini (должен начинаться с AIza)',
     invalidGrokKeyFormat: 'Неверный формат API ключа Grok (должен начинаться с xai-)',
     invalidOpenRouterKeyFormat: 'Неверный формат API ключа OpenRouter (должен начинаться с sk-or-)',
+    invalidDeepSeekKeyFormat: 'Неверный формат API ключа DeepSeek (должен начинаться с sk-)',
     invalidGoogleKeyFormat: 'Неверный формат API ключа Google (должен начинаться с AIza)',
     failedToEncryptApiKey: 'Не удалось зашифровать API ключ',
     failedToDecryptApiKey: 'Не удалось расшифровать API ключ. Пожалуйста, введите его заново.',
@@ -881,12 +906,14 @@ export const UI_LOCALES = {
     errorAiResponseNotValidJson: 'Ответ AI не является валидным JSON',
     errorNetworkConnectionFailed: 'Ошибка сети: {error}',
     errorTtsPiperFailed: 'Piper TTS не удалось: {error}',
+    errorWindowUndefined: 'Window не определён',
+    errorExecutePiperTTSNotFound: 'Функция executePiperTTS не найдена. Доступные ключи: {keys}',
+    errorExecutePiperTTSNotPromise: 'executePiperTTS не вернул promise. Получено: {type}',
+    errorNoContentToConvert: 'Нет контента для преобразования в аудио',
+    errorNoApiKeyForTextPrep: 'Не предоставлен API ключ для подготовки текста',
+    errorNoTtsApiKey: 'Не предоставлен API ключ {provider} для TTS',
     
     // User-friendly error messages with actionable advice
-    errorSelectorAnalysisFailed: 'Не удалось проанализировать структуру страницы. Попробуйте переключиться на режим "AI Extract" в настройках или проверьте API ключ.',
-    errorContentExtractionFailed: 'Не удалось извлечь контент со страницы. Попробуйте: 1) Переключиться на режим "AI Extract", 2) Прокрутить страницу для загрузки всего контента, 3) Проверить, использует ли страница динамическую загрузку.',
-    errorNoContentExtracted: 'Контент на странице не найден. Попробуйте: 1) Переключиться на режим "AI Extract", 2) Убедиться, что страница полностью загрузилась, 3) Попробовать другую статью.',
-    errorScriptExecutionFailed: 'Не удалось прочитать контент страницы. Страница может блокировать расширения. Попробуйте обновить страницу и повторить попытку.',
     errorEmptySelectors: 'ИИ не смог найти селекторы контента. Попробуйте переключиться на режим "AI Extract" в настройках.',
     errorExtractModeNoContent: 'Режим AI Extract не вернул контент. Страница может использовать динамическую загрузку. Попробуйте прокрутить страницу для загрузки всего контента перед сохранением.',
     errorVideoProcessingFailed: 'Не удалось обработать видео. Убедитесь, что субтитры включены на странице видео.',
@@ -902,6 +929,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'Требуется API ключ. Пожалуйста, добавьте API ключ в настройках.',
     errorInvalidFormat: 'Выбран неверный формат экспорта. Пожалуйста, выберите действительный формат.',
     errorPageNotReady: 'Страница не готова. Дождитесь полной загрузки страницы и попробуйте снова.',
+    pageNotAccessible: 'Эта страница недоступна для извлечения контента. Пожалуйста, откройте обычную веб-страницу.',
+    noContentInApiResponse: 'Нет содержимого в ответе API',
+    screenshotResultEmpty: 'Результат скриншота пуст',
+    tabLoadTimeout: 'Превышено время ожидания загрузки вкладки (5 минут)',
+    tabDoesNotExist: 'Вкладка не существует',
+    noTextContentToConvert: 'Нет текстового содержимого для преобразования в аудио',
+    failedToSplitText: 'Не удалось разделить текст на фрагменты',
+    noContentProvidedForPdf: 'Не предоставлено содержимое для генерации PDF',
+    noContentProvidedForFb2: 'Не предоставлено содержимое для генерации FB2',
+    failedToPrepareContentForAudio: 'Не удалось подготовить содержимое для генерации аудио',
+    audioGenerationReturnedEmpty: 'Генерация аудио вернула пустой результат',
+    noContentProvidedForSummary: 'Не предоставлено содержимое для генерации резюме',
+    apiKeyOrModelNotProvided: 'API ключ или модель не предоставлены для генерации резюме',
+    noTextExtractedFromContent: 'Не извлечен текст из содержимого для генерации резюме',
+    noContentInResponse: 'Нет содержимого в ответе',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'Текст для TTS не предоставлен',
@@ -953,7 +996,7 @@ export const UI_LOCALES = {
     errorAiEmptySelectors: 'ИИ вернул пустые селекторы',
     errorContentExtractionFailed: 'Извлечение контента не удалось: {error}',
     errorNoContentExtracted: 'Контент со страницы не извлечен',
-    errorContentEmpty: 'Извлеченный контент пуст. Попробуйте переключиться на режим "AI Extract".',
+    errorContentEmpty: 'Извлеченный контент пуст.',
     
     // PDF generation errors
     errorPdfNoContent: 'Нет контента для создания PDF',
@@ -1031,6 +1074,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Обработка была прервана. Пожалуйста, попробуйте снова.',
     statusLoadingStyles: 'Загрузка стилей...',
     deleteFromHistory: 'Удалить из истории',
+    openOriginalArticle: 'Открыть оригинальную статью',
     statusConvertingToSpeech: 'Преобразование в речь с помощью {provider}...',
     statusDownloadingAudio: 'Загрузка аудио файла...',
     errorNoHtmlData: 'Не удалось извлечь содержимое страницы: данные HTML не получены',
@@ -1070,10 +1114,20 @@ export const UI_LOCALES = {
     downloadFailed: 'Не удалось скачать',
     copy: 'Копировать',
     download: 'Скачать',
-    close: 'Закрыть'
+    close: 'Закрыть',
+    noTabAvailable: 'Активная вкладка не найдена. Пожалуйста, откройте веб-страницу.',
+    errorPrintPage: 'Ошибка',
+    unknownError: 'Неизвестная ошибка',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Выберите PDF файл',
+    pdfFileSelectionDialogMessage: 'Работа с локальными файлами в браузерных расширениях имеет ограничения. Пожалуйста, выберите PDF файл, который вы хотите обработать.',
+    pdfFileSelectionDialogWarning: 'Важно: Не переключайте вкладки во время обработки расширением.',
+    ok: 'ОК'
   },
   
   ua: {
+
     subtitle: 'Витяг статей за допомогою штучного інтелекту',
     aiProvider: 'AI Провайдер',
     openai: 'OpenAI',
@@ -1081,6 +1135,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'OpenAI API ключ',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Claude API ключ',
@@ -1098,6 +1153,7 @@ export const UI_LOCALES = {
     or: 'або',
     ready: 'Готово',
     cancel: 'Скасувати',
+    save: 'Зберегти',
     saveAsPdf: 'Зберегти як PDF',
     saveAsEpub: 'Зберегти як EPUB',
     saveAsFb2: 'Зберегти як FB2',
@@ -1111,7 +1167,7 @@ export const UI_LOCALES = {
     model: 'Модель',
     addModel: 'Додати модель',
     showModelList: 'Показати список моделей',
-    addModelPrompt: 'Введіть назву моделі (наприклад, gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Введіть назву моделі:',
     addModelInvalidFormat: 'Невірний формат назви моделі. Використовуйте кодове ім\'я, наприклад gpt-5.2 або claude-sonnet-4-5',
     addModelAlreadyExists: 'Ця модель вже існує',
     extractionMode: 'Режим витягування',
@@ -1254,7 +1310,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Для SPA/динамічних сторінок: прокрутіть сторінку, щоб завантажити весь контент перед збереженням',
     automaticMode: 'Автоматичний (без ШІ)',
     aiSelectorFaster: 'AI Selector (швидше, точний текст)',
-    aiExtractFull: 'AI Extract (повна обробка)',
+    aiExtractFull: 'AI Extract (не рекомендується)',
     useCachedSelectorsHint: 'Пропустити ШІ для сайтів, які ви вже зберігали',
     ttsProviderHint: 'Виберіть провайдера синтезу мовлення',
     getElevenlabsKeyFrom: 'Отримайте ваш API ключ на',
@@ -1285,11 +1341,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Імпорт/Експорт налаштувань',
     exportSettings: 'Експорт налаштувань',
     importSettings: 'Імпорт налаштувань',
-    includeStatisticsInExport: 'Додавати статистику в експорт',
-    includeSelectorCacheInExport: 'Додавати кеш селекторів в експорт',
     includeStatisticsInImport: 'Імпортувати статистику (якщо є)',
     includeSelectorCacheInImport: 'Імпортувати кеш селекторів (якщо є)',
-    overwriteExistingSettings: 'Перезаписати поточні налаштування',
     exportStatsHint: 'Додавати статистику використання та історію',
     exportCacheHint: 'Додавати кешовані AI селектори для офлайн режиму',
     exportSecurityNote: 'Примітка: API ключі ніколи не експортуються з міркувань безпеки.',
@@ -1316,6 +1369,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Невірний формат API ключа Gemini (має починатися з AIza)',
     invalidGrokKeyFormat: 'Невірний формат API ключа Grok (має починатися з xai-)',
     invalidOpenRouterKeyFormat: 'Невірний формат API ключа OpenRouter (має починатися з sk-or-)',
+    invalidDeepSeekKeyFormat: 'Невірний формат API ключа DeepSeek (має починатися з sk-)',
     invalidGoogleKeyFormat: 'Невірний формат API ключа Google (має починатися з AIza)',
     failedToEncryptApiKey: 'Не вдалося зашифрувати API ключ',
     failedToDecryptApiKey: 'Не вдалося розшифрувати API ключ. Будь ласка, введіть його знову.',
@@ -1379,7 +1433,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Невірний API ключ Qwen. Перевірте налаштування.',
     errorRespeecherKeyRequired: 'Потрібен API ключ Respeecher. Додайте його в налаштуваннях.',
     errorRespeecherKeyInvalid: 'Невірний API ключ Respeecher. Перевірте налаштування.',
-    untitled: 'Без назви',
     errorTranslationFailed: 'Помилка перекладу, використовується оригінальний текст',
     errorNoSubtitles: 'Субтитри не знайдено. Переконайтеся, що субтитри увімкнено для цього відео.',
     errorSubtitlesExtractionFailed: 'Не вдалося витягти субтитри: {error}',
@@ -1428,6 +1481,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'Потрібен API ключ. Будь ласка, додайте API ключ в налаштуваннях.',
     errorInvalidFormat: 'Вибрано невірний формат експорту. Будь ласка, виберіть дійсний формат.',
     errorPageNotReady: 'Сторінка не готова. Дочекайтеся повного завантаження сторінки і спробуйте знову.',
+    pageNotAccessible: 'Ця сторінка недоступна для витягу контенту. Будь ласка, відкрийте звичайну веб-сторінку.',
+    noContentInApiResponse: 'Немає вмісту в відповіді API',
+    screenshotResultEmpty: 'Результат скріншота порожній',
+    tabLoadTimeout: 'Перевищено час очікування завантаження вкладки (5 хвилин)',
+    tabDoesNotExist: 'Вкладка не існує',
+    noTextContentToConvert: 'Немає текстового вмісту для перетворення в аудіо',
+    failedToSplitText: 'Не вдалося розділити текст на фрагменти',
+    noContentProvidedForPdf: 'Не надано вміст для генерації PDF',
+    noContentProvidedForFb2: 'Не надано вміст для генерації FB2',
+    failedToPrepareContentForAudio: 'Не вдалося підготувати вміст для генерації аудіо',
+    audioGenerationReturnedEmpty: 'Генерація аудіо повернула порожній результат',
+    noContentProvidedForSummary: 'Не надано вміст для генерації резюме',
+    apiKeyOrModelNotProvided: 'API ключ або модель не надані для генерації резюме',
+    noTextExtractedFromContent: 'Не витягнуто текст з вмісту для генерації резюме',
+    noContentInResponse: 'Немає вмісту в відповіді',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'Текст для TTS не надано',
@@ -1470,16 +1539,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: 'Невірний baseUrl: має бути непорожньою рядком',
     errorInvalidSelectors: 'Невірні селектори: має бути об\'єктом',
     errorInvalidSelectorsExclude: 'Невірний selectors.exclude: має бути масивом',
-    errorScriptExecutionFailed: 'Не вдалося виконати скрипт на сторінці: {error}',
     errorScriptEmptyResults: 'Виконання скрипта повернуло порожні результати',
     errorScriptError: 'Помилка скрипта: {error}',
-    errorScriptNoResult: 'Скрипт не повернув результату',
-    errorNoTabId: 'ID вкладки не надано',
-    errorSelectorAnalysisFailed: 'Аналіз селекторів ШІ не вдався: {error}',
-    errorAiEmptySelectors: 'ШІ повернув порожні селектори',
-    errorContentExtractionFailed: 'Витягування контенту не вдалося: {error}',
-    errorNoContentExtracted: 'Контент зі сторінки не витягнуто',
-    errorContentEmpty: 'Витягнутий контент порожній. Спробуйте перемкнутися на режим "AI Extract".',
     
     // PDF generation errors
     errorPdfNoContent: 'Немає контенту для створення PDF',
@@ -1512,7 +1573,6 @@ export const UI_LOCALES = {
     // Processing helpers errors
     errorNoActiveTab: 'Активна вкладка не знайдена',
     errorExtractPageContentFailed: 'Не вдалося витягнути контент сторінки',
-    
     statusTranslatingContent: 'Переклад вмісту...',
     statusAnalyzingImages: 'Аналіз зображень для перекладу...',
     statusTranslatingText: 'Переклад тексту...',
@@ -1538,6 +1598,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Обробка була перервана. Будь ласка, спробуйте ще раз.',
     statusLoadingStyles: 'Завантаження стилів...',
     deleteFromHistory: 'Видалити з історії',
+    openOriginalArticle: 'Відкрити оригінальну статтю',
     statusConvertingToSpeech: 'Перетворення в мову за допомогою {provider}...',
     statusDownloadingAudio: 'Завантаження аудіо файлу...',
     errorNoHtmlData: 'Не вдалося витягти вміст сторінки: дані HTML не отримано',
@@ -1598,10 +1659,32 @@ export const UI_LOCALES = {
     downloadFailed: 'Не вдалося завантажити',
     copy: 'Копіювати',
     download: 'Завантажити',
-    close: 'Закрити'
+    close: 'Закрити',
+    noTabAvailable: 'Активна вкладка не знайдена. Будь ласка, відкрийте веб-сторінку.',
+    errorPrintPage: 'Помилка',
+    unknownError: 'Невідома помилка',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Виберіть PDF файл',
+    pdfFileSelectionDialogMessage: 'Робота з локальними файлами в браузерних розширеннях має обмеження. Будь ласка, виберіть PDF файл, який ви хочете обробити.',
+    pdfFileSelectionDialogWarning: 'Важливо: Не перемикайте вкладки під час обробки розширенням.',
+    ok: 'ОК',
+    deepseekApiKey: 'API ключ DeepSeek',
+    enterDeepSeekApiKey: 'sk-...',
+    pleaseEnterDeepSeekApiKey: 'Будь ласка, введіть API ключ DeepSeek для моделей DeepSeek',
+    errorWindowUndefined: 'Window не визначено',
+    errorExecutePiperTTSNotFound: 'Функція executePiperTTS не знайдена. Доступні ключі: {keys}',
+    errorExecutePiperTTSNotPromise: 'executePiperTTS не повернув promise. Отримано: {type}',
+    errorScriptNoResult: 'Скрипт не повернув результат',
+    errorNoTabId: 'Не надано ID вкладки',
+    errorAiEmptySelectors: 'AI повернув порожні селектори',
+    errorContentEmpty: 'Витягнутий контент порожній.',
+    errorNoContentToConvert: 'Немає контенту для перетворення в аудіо',
+    errorNoApiKeyForTextPrep: 'Не надано API ключ для підготовки тексту',
+    errorNoTtsApiKey: 'Не надано API ключ {provider} для TTS',
   },
-  
   de: {
+
     subtitle: 'KI-gestützter Artikel-Extraktor',
     aiProvider: 'KI-Anbieter',
     openai: 'OpenAI',
@@ -1609,6 +1692,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'OpenAI API-Schlüssel',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Claude API-Schlüssel',
@@ -1626,6 +1710,7 @@ export const UI_LOCALES = {
     or: 'oder',
     ready: 'Bereit',
     cancel: 'Abbrechen',
+    save: 'Speichern',
     saveAsPdf: 'Als PDF speichern',
     saveAsEpub: 'Als EPUB speichern',
     saveAsFb2: 'Als FB2 speichern',
@@ -1639,7 +1724,7 @@ export const UI_LOCALES = {
     model: 'Modell',
     addModel: 'Modell hinzufügen',
     showModelList: 'Modellliste anzeigen',
-    addModelPrompt: 'Modellname eingeben (z.B. gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Modellname eingeben:',
     addModelInvalidFormat: 'Ungültiges Modellnamensformat. Verwenden Sie einen Codenamen wie gpt-5.2 oder claude-sonnet-4-5',
     addModelAlreadyExists: 'Dieses Modell existiert bereits',
     extractionMode: 'Extraktionsmodus',
@@ -1782,7 +1867,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Für SPA/dynamische Seiten: Scrollen Sie, um alle Inhalte vor dem Speichern zu laden',
     automaticMode: 'Automatisch (ohne KI)',
     aiSelectorFaster: 'AI Selector (schneller, exakter Text)',
-    aiExtractFull: 'AI Extract (volle Verarbeitung)',
+    aiExtractFull: 'AI Extract (nicht empfohlen)',
     useCachedSelectorsHint: 'KI für bereits gespeicherte Websites überspringen',
     ttsProviderHint: 'Text-zu-Sprache-Anbieter wählen',
     getElevenlabsKeyFrom: 'Holen Sie Ihren API-Schlüssel von',
@@ -1813,11 +1898,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Einstellungen importieren/exportieren',
     exportSettings: 'Einstellungen exportieren',
     importSettings: 'Einstellungen importieren',
-    includeStatisticsInExport: 'Statistiken in Export aufnehmen',
-    includeSelectorCacheInExport: 'Selektoren-Cache in Export aufnehmen',
     includeStatisticsInImport: 'Statistiken importieren (falls vorhanden)',
     includeSelectorCacheInImport: 'Selektoren-Cache importieren (falls vorhanden)',
-    overwriteExistingSettings: 'Bestehende Einstellungen überschreiben',
     exportStatsHint: 'Nutzungsstatistiken und Verlauf einschließen',
     exportCacheHint: 'Gecachte KI-Selektoren für Offline-Modus einschließen',
     exportSecurityNote: 'Hinweis: API-Schlüssel werden aus Sicherheitsgründen niemals exportiert.',
@@ -1844,6 +1926,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Ungültiges Gemini API-Schlüsselformat (sollte mit AIza beginnen)',
     invalidGrokKeyFormat: 'Ungültiges Grok API-Schlüsselformat (sollte mit xai- beginnen)',
     invalidOpenRouterKeyFormat: 'Ungültiges OpenRouter API-Schlüsselformat (sollte mit sk-or- beginnen)',
+    invalidDeepSeekKeyFormat: 'Ungültiges DeepSeek API-Schlüsselformat (sollte mit sk- beginnen)',
     invalidGoogleKeyFormat: 'Ungültiges Google API-Schlüsselformat (sollte mit AIza beginnen)',
     failedToEncryptApiKey: 'API-Schlüssel konnte nicht verschlüsselt werden',
     failedToDecryptApiKey: 'API-Schlüssel konnte nicht entschlüsselt werden. Bitte erneut eingeben.',
@@ -1907,7 +1990,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Ungültiger Qwen API-Schlüssel. Bitte überprüfen Sie Ihre Einstellungen.',
     errorRespeecherKeyRequired: 'Respeecher API-Schlüssel erforderlich. Bitte fügen Sie ihn in den Einstellungen hinzu.',
     errorRespeecherKeyInvalid: 'Ungültiger Respeecher API-Schlüssel. Bitte überprüfen Sie Ihre Einstellungen.',
-    untitled: 'Ohne Titel',
     errorTranslationFailed: 'Übersetzung fehlgeschlagen, Originaltext wird verwendet',
     errorNoSubtitles: 'Keine Untertitel gefunden. Stellen Sie sicher, dass Untertitel für dieses Video aktiviert sind.',
     errorSubtitlesExtractionFailed: 'Fehler beim Extrahieren der Untertitel: {error}',
@@ -1935,7 +2017,6 @@ export const UI_LOCALES = {
     errorEmptySummary: 'KI hat eine leere Zusammenfassung zurückgegeben',
     errorInvalidJsonResponse: 'Ungültige JSON-Antwort von der API',
     errorFailedToParseResponse: 'KI-Antwort konnte nicht analysiert werden',
-    errorNoContentReceived: 'Kein Inhalt von der KI erhalten',
     
     // User-friendly error messages with actionable advice
     errorSelectorAnalysisFailed: 'Seitenstruktur konnte nicht analysiert werden. Versuchen Sie, in den Einstellungen auf "AI Extract"-Modus umzuschalten oder überprüfen Sie Ihren API-Schlüssel.',
@@ -1957,6 +2038,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'API-Schlüssel ist erforderlich. Bitte fügen Sie Ihren API-Schlüssel in den Einstellungen hinzu.',
     errorInvalidFormat: 'Ungültiges Exportformat ausgewählt. Bitte wählen Sie ein gültiges Format.',
     errorPageNotReady: 'Seite ist nicht bereit. Bitte warten Sie, bis die Seite vollständig geladen ist, und versuchen Sie es erneut.',
+    pageNotAccessible: 'Diese Seite ist für die Inhalts extraktion nicht zugänglich. Bitte öffnen Sie eine normale Webseite.',
+    noContentInApiResponse: 'Kein Inhalt in der API-Antwort',
+    screenshotResultEmpty: 'Screenshot-Ergebnis ist leer',
+    tabLoadTimeout: 'Tab-Ladezeitüberschreitung nach 5 Minuten',
+    tabDoesNotExist: 'Tab existiert nicht',
+    noTextContentToConvert: 'Kein Textinhalt zum Konvertieren in Audio',
+    failedToSplitText: 'Text konnte nicht in Chunks aufgeteilt werden',
+    noContentProvidedForPdf: 'Kein Inhalt für die PDF-Generierung bereitgestellt',
+    noContentProvidedForFb2: 'Kein Inhalt für die FB2-Generierung bereitgestellt',
+    failedToPrepareContentForAudio: 'Inhalt konnte nicht für die Audio-Generierung vorbereitet werden',
+    audioGenerationReturnedEmpty: 'Audio-Generierung lieferte leeres Ergebnis',
+    noContentProvidedForSummary: 'Kein Inhalt für die Zusammenfassungsgenerierung bereitgestellt',
+    apiKeyOrModelNotProvided: 'API-Schlüssel oder Modell nicht für die Zusammenfassungsgenerierung bereitgestellt',
+    noTextExtractedFromContent: 'Kein Text aus dem Inhalt für die Zusammenfassungsgenerierung extrahiert',
+    noContentInResponse: 'Kein Inhalt in der Antwort',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'Kein Text für TTS bereitgestellt',
@@ -1999,16 +2096,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: 'Ungültige baseUrl: muss eine nicht leere Zeichenkette sein',
     errorInvalidSelectors: 'Ungültige Selektoren: muss ein Objekt sein',
     errorInvalidSelectorsExclude: 'Ungültiges selectors.exclude: muss ein Array sein',
-    errorScriptExecutionFailed: 'Skript konnte nicht auf der Seite ausgeführt werden: {error}',
     errorScriptEmptyResults: 'Skriptausführung hat leere Ergebnisse zurückgegeben',
     errorScriptError: 'Skriptfehler: {error}',
-    errorScriptNoResult: 'Skript hat kein Ergebnis zurückgegeben',
-    errorNoTabId: 'Keine Tab-ID bereitgestellt',
-    errorSelectorAnalysisFailed: 'KI-Selektoranalyse fehlgeschlagen: {error}',
-    errorAiEmptySelectors: 'KI hat leere Selektoren zurückgegeben',
-    errorContentExtractionFailed: 'Inhaltsextraktion fehlgeschlagen: {error}',
-    errorNoContentExtracted: 'Kein Inhalt von der Seite extrahiert',
-    errorContentEmpty: 'Extrahierter Inhalt ist leer. Versuchen Sie, in den "AI Extract"-Modus zu wechseln.',
     
     // PDF generation errors
     errorPdfNoContent: 'Kein Inhalt zum Generieren von PDF',
@@ -2079,6 +2168,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Verarbeitung wurde unterbrochen. Bitte versuchen Sie es erneut.',
     statusLoadingStyles: 'Lade Stile...',
     deleteFromHistory: 'Aus Verlauf löschen',
+    openOriginalArticle: 'Originalartikel öffnen',
     statusConvertingToSpeech: 'Umwandlung in Sprache mit {provider}...',
     statusDownloadingAudio: 'Audio-Datei wird heruntergeladen...',
     errorNoHtmlData: 'Seiteninhalt konnte nicht extrahiert werden: Keine HTML-Daten erhalten',
@@ -2118,10 +2208,32 @@ export const UI_LOCALES = {
     downloadFailed: 'Download fehlgeschlagen',
     copy: 'Kopieren',
     download: 'Herunterladen',
-    close: 'Schließen'
+    close: 'Schließen',
+    noTabAvailable: 'Kein aktiver Tab gefunden. Bitte öffnen Sie eine Webseite.',
+    errorPrintPage: 'Fehler',
+    unknownError: 'Unbekannter Fehler',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'PDF-Datei auswählen',
+    pdfFileSelectionDialogMessage: 'Die Arbeit mit lokalen Dateien in Browser-Erweiterungen hat Einschränkungen. Bitte wählen Sie die PDF-Datei aus, die Sie verarbeiten möchten.',
+    pdfFileSelectionDialogWarning: 'Wichtig: Wechseln Sie nicht die Registerkarten, während die Erweiterung verarbeitet.',
+    ok: 'OK',
+    deepseekApiKey: 'DeepSeek API-Schlüssel',
+    enterDeepSeekApiKey: 'sk-...',
+    pleaseEnterDeepSeekApiKey: 'Bitte geben Sie den DeepSeek API-Schlüssel für DeepSeek-Modelle ein',
+    errorWindowUndefined: 'Window ist nicht definiert',
+    errorExecutePiperTTSNotFound: 'executePiperTTS-Funktion nicht gefunden. Verfügbare Schlüssel: {keys}',
+    errorExecutePiperTTSNotPromise: 'executePiperTTS hat kein Promise zurückgegeben. Erhalten: {type}',
+    errorScriptNoResult: 'Skript hat kein Ergebnis zurückgegeben',
+    errorNoTabId: 'Keine Tab-ID bereitgestellt',
+    errorAiEmptySelectors: 'KI hat leere Selektoren zurückgegeben',
+    errorContentEmpty: 'Extrahierter Inhalt ist leer.',
+    errorNoContentToConvert: 'Kein Inhalt zum Konvertieren in Audio',
+    errorNoApiKeyForTextPrep: 'Kein API-Schlüssel für die Textvorbereitung bereitgestellt',
+    errorNoTtsApiKey: 'Kein {provider} API-Schlüssel für TTS bereitgestellt',
   },
-  
   fr: {
+
     subtitle: 'Extracteur d\'articles alimenté par l\'IA',
     aiProvider: 'Fournisseur IA',
     openai: 'OpenAI',
@@ -2129,6 +2241,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'Clé API OpenAI',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Clé API Claude',
@@ -2146,6 +2259,7 @@ export const UI_LOCALES = {
     or: 'ou',
     ready: 'Prêt',
     cancel: 'Annuler',
+    save: 'Enregistrer',
     saveAsPdf: 'Enregistrer en PDF',
     saveAsEpub: 'Enregistrer en EPUB',
     saveAsFb2: 'Enregistrer en FB2',
@@ -2159,7 +2273,7 @@ export const UI_LOCALES = {
     model: 'Modèle',
     addModel: 'Ajouter un modèle',
     showModelList: 'Afficher la liste des modèles',
-    addModelPrompt: 'Entrez le nom du modèle (par exemple, gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Entrez le nom du modèle:',
     addModelInvalidFormat: 'Format de nom de modèle invalide. Utilisez un nom de code comme gpt-5.2 ou claude-sonnet-4-5',
     addModelAlreadyExists: 'Ce modèle existe déjà',
     extractionMode: 'Mode d\'extraction',
@@ -2302,7 +2416,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Pour les pages SPA/dynamiques: faites défiler pour charger tout le contenu avant de sauvegarder',
     automaticMode: 'Automatique (sans IA)',
     aiSelectorFaster: 'AI Selector (plus rapide, texte exact)',
-    aiExtractFull: 'AI Extract (traitement complet)',
+    aiExtractFull: 'AI Extract (non recommandé)',
     useCachedSelectorsHint: 'Ignorer l\'IA pour les sites déjà sauvegardés',
     ttsProviderHint: 'Choisir le fournisseur de synthèse vocale',
     getElevenlabsKeyFrom: 'Obtenez votre clé API sur',
@@ -2333,11 +2447,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Importer/Exporter les paramètres',
     exportSettings: 'Exporter les paramètres',
     importSettings: 'Importer les paramètres',
-    includeStatisticsInExport: 'Inclure les statistiques dans l’export',
-    includeSelectorCacheInExport: 'Inclure le cache de sélecteurs dans l’export',
     includeStatisticsInImport: 'Importer les statistiques (si présentes)',
     includeSelectorCacheInImport: 'Importer le cache de sélecteurs (si présent)',
-    overwriteExistingSettings: 'Remplacer les paramètres existants',
     exportStatsHint: 'Inclure les statistiques d\'utilisation et l\'historique',
     exportCacheHint: 'Inclure les sélecteurs IA mis en cache pour le mode hors ligne',
     exportSecurityNote: 'Note: Les clés API ne sont jamais exportées pour des raisons de sécurité.',
@@ -2364,6 +2475,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Format de clé API Gemini invalide (doit commencer par AIza)',
     invalidGrokKeyFormat: 'Format de clé API Grok invalide (doit commencer par xai-)',
     invalidOpenRouterKeyFormat: 'Format de clé API OpenRouter invalide (doit commencer par sk-or-)',
+    invalidDeepSeekKeyFormat: 'Format de clé API DeepSeek invalide (doit commencer par sk-)',
     invalidGoogleKeyFormat: 'Format de clé API Google invalide (doit commencer par AIza)',
     failedToEncryptApiKey: 'Échec du chiffrement de la clé API',
     failedToDecryptApiKey: 'Échec du déchiffrement de la clé API. Veuillez la saisir à nouveau.',
@@ -2398,7 +2510,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: 'Fermer',
-    
     clearAllStatisticsConfirm: 'Effacer toutes les statistiques? Cette action est irréversible.',
     clearSelectorCacheConfirm: 'Vider le cache des sélecteurs? Les prochaines extractions utiliseront l\'IA.',
     includeStatisticsInExport: 'Inclure les statistiques dans l\'export?',
@@ -2426,7 +2537,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Clé API Qwen invalide. Veuillez vérifier vos paramètres.',
     errorRespeecherKeyRequired: 'Clé API Respeecher requise. Veuillez l\'ajouter dans les paramètres.',
     errorRespeecherKeyInvalid: 'Clé API Respeecher invalide. Veuillez vérifier vos paramètres.',
-    untitled: 'Sans titre',
     errorTranslationFailed: 'Échec de la traduction, utilisation du texte original',
     errorNoSubtitles: 'Aucun sous-titre trouvé. Assurez-vous que les sous-titres sont activés pour cette vidéo.',
     errorSubtitlesExtractionFailed: 'Échec de l\'extraction des sous-titres: {error}',
@@ -2472,6 +2582,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'Une clé API est requise. Veuillez ajouter votre clé API dans les paramètres.',
     errorInvalidFormat: 'Format d\'export invalide sélectionné. Veuillez choisir un format valide.',
     errorPageNotReady: 'La page n\'est pas prête. Veuillez attendre que la page soit complètement chargée et réessayer.',
+    pageNotAccessible: 'Cette page n\'est pas accessible pour l\'extraction de contenu. Veuillez ouvrir une page web normale.',
+    noContentInApiResponse: 'Aucun contenu dans la réponse de l\'API',
+    screenshotResultEmpty: 'Le résultat de la capture d\'écran est vide',
+    tabLoadTimeout: 'Délai d\'attente de chargement de l\'onglet après 5 minutes',
+    tabDoesNotExist: 'L\'onglet n\'existe pas',
+    noTextContentToConvert: 'Aucun contenu texte à convertir en audio',
+    failedToSplitText: 'Échec de la division du texte en segments',
+    noContentProvidedForPdf: 'Aucun contenu fourni pour la génération PDF',
+    noContentProvidedForFb2: 'Aucun contenu fourni pour la génération FB2',
+    failedToPrepareContentForAudio: 'Échec de la préparation du contenu pour la génération audio',
+    audioGenerationReturnedEmpty: 'La génération audio a renvoyé un résultat vide',
+    noContentProvidedForSummary: 'Aucun contenu fourni pour la génération du résumé',
+    apiKeyOrModelNotProvided: 'Clé API ou modèle non fourni pour la génération du résumé',
+    noTextExtractedFromContent: 'Aucun texte extrait du contenu pour la génération du résumé',
+    noContentInResponse: 'Aucun contenu dans la réponse',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'Aucun texte fourni pour TTS',
@@ -2514,16 +2640,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: 'baseUrl invalide: doit être une chaîne non vide',
     errorInvalidSelectors: 'Sélecteurs invalides: doit être un objet',
     errorInvalidSelectorsExclude: 'selectors.exclude invalide: doit être un tableau',
-    errorScriptExecutionFailed: 'Échec de l\'exécution du script sur la page: {error}',
     errorScriptEmptyResults: 'L\'exécution du script a renvoyé des résultats vides',
     errorScriptError: 'Erreur de script: {error}',
-    errorScriptNoResult: 'Le script n\'a renvoyé aucun résultat',
-    errorNoTabId: 'Aucun ID d\'onglet fourni',
-    errorSelectorAnalysisFailed: 'Échec de l\'analyse des sélecteurs IA: {error}',
-    errorAiEmptySelectors: 'L\'IA a renvoyé des sélecteurs vides',
-    errorContentExtractionFailed: 'Échec de l\'extraction du contenu: {error}',
-    errorNoContentExtracted: 'Aucun contenu extrait de la page',
-    errorContentEmpty: 'Le contenu extrait est vide. Essayez de passer en mode "AI Extract".',
     
     // PDF generation errors
     errorPdfNoContent: 'Aucun contenu pour générer le PDF',
@@ -2594,6 +2712,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Le traitement a été interrompu. Veuillez réessayer.',
     statusLoadingStyles: 'Chargement des styles...',
     deleteFromHistory: 'Supprimer de l\'historique',
+    openOriginalArticle: 'Ouvrir l\'article original',
     statusConvertingToSpeech: 'Conversion en parole avec {provider}...',
     statusDownloadingAudio: 'Téléchargement du fichier audio...',
     errorNoHtmlData: 'Échec de l\'extraction du contenu de la page: aucune donnée HTML reçue',
@@ -2633,10 +2752,50 @@ export const UI_LOCALES = {
     downloadFailed: 'Échec du téléchargement',
     copy: 'Copier',
     download: 'Télécharger',
-    close: 'Fermer'
+    close: 'Fermer',
+    noTabAvailable: 'Aucun onglet actif trouvé. Veuillez ouvrir une page web.',
+    errorPrintPage: 'Erreur',
+    unknownError: 'Erreur inconnue',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Sélectionner un fichier PDF',
+    pdfFileSelectionDialogMessage: 'Le travail avec les fichiers locaux dans les extensions de navigateur a des limitations. Veuillez sélectionner le fichier PDF que vous souhaitez traiter.',
+    pdfFileSelectionDialogWarning: 'Important: Ne changez pas d\'onglet pendant que l\'extension traite.',
+    ok: 'OK',
+    deepseekApiKey: 'Clé API DeepSeek',
+
+    enterDeepSeekApiKey: 'sk-...',
+
+    pleaseEnterDeepSeekApiKey: 'Veuillez entrer la clé API DeepSeek pour les modèles DeepSeek',
+
+    errorAiResponseNotValidJson: 'La réponse de l\'IA n\'est pas un JSON valide',
+
+    errorNetworkConnectionFailed: 'Erreur réseau: {error}',
+
+    errorTtsPiperFailed: 'Piper TTS a échoué: {error}',
+
+    errorWindowUndefined: 'Window n\'est pas défini',
+
+    errorExecutePiperTTSNotFound: 'Fonction executePiperTTS introuvable. Clés disponibles: {keys}',
+
+    errorExecutePiperTTSNotPromise: 'executePiperTTS n\'a pas renvoyé une promesse. Reçu: {type}',
+
+    errorScriptNoResult: 'Le script n\'a renvoyé aucun résultat',
+
+    errorNoTabId: 'Aucun ID d\'onglet fourni',
+
+    errorAiEmptySelectors: 'L\'IA a renvoyé des sélecteurs vides',
+
+    errorContentEmpty: 'Le contenu extrait est vide.',
+
+    errorNoContentToConvert: 'Aucun contenu à convertir en audio',
+
+    errorNoApiKeyForTextPrep: 'Aucune clé API fournie pour la préparation du texte',
+
+    errorNoTtsApiKey: 'Aucune clé API {provider} fournie pour TTS',
   },
-  
   es: {
+
     subtitle: 'Extractor de artículos con IA',
     aiProvider: 'Proveedor IA',
     openai: 'OpenAI',
@@ -2644,6 +2803,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'Clave API de OpenAI',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Clave API de Claude',
@@ -2661,6 +2821,7 @@ export const UI_LOCALES = {
     or: 'o',
     ready: 'Listo',
     cancel: 'Cancelar',
+    save: 'Guardar',
     saveAsPdf: 'Guardar como PDF',
     saveAsEpub: 'Guardar como EPUB',
     saveAsFb2: 'Guardar como FB2',
@@ -2674,7 +2835,7 @@ export const UI_LOCALES = {
     model: 'Modelo',
     addModel: 'Agregar modelo',
     showModelList: 'Mostrar lista de modelos',
-    addModelPrompt: 'Ingrese el nombre del modelo (por ejemplo, gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Ingrese el nombre del modelo:',
     addModelInvalidFormat: 'Formato de nombre de modelo inválido. Use un nombre de código como gpt-5.2 o claude-sonnet-4-5',
     addModelAlreadyExists: 'Este modelo ya existe',
     extractionMode: 'Modo de extracción',
@@ -2817,7 +2978,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Para páginas SPA/dinámicas: desplázate para cargar todo el contenido antes de guardar',
     automaticMode: 'Automático (sin IA)',
     aiSelectorFaster: 'AI Selector (más rápido, texto exacto)',
-    aiExtractFull: 'AI Extract (procesamiento completo)',
+    aiExtractFull: 'AI Extract (no recomendado)',
     useCachedSelectorsHint: 'Omitir IA para sitios ya guardados',
     ttsProviderHint: 'Elegir proveedor de síntesis de voz',
     getElevenlabsKeyFrom: 'Obtenga su clave API en',
@@ -2848,11 +3009,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Importar/Exportar configuración',
     exportSettings: 'Exportar configuración',
     importSettings: 'Importar configuración',
-    includeStatisticsInExport: 'Incluir estadísticas en la exportación',
-    includeSelectorCacheInExport: 'Incluir caché de selectores en la exportación',
     includeStatisticsInImport: 'Importar estadísticas (si existen)',
     includeSelectorCacheInImport: 'Importar caché de selectores (si existe)',
-    overwriteExistingSettings: 'Sobrescribir configuración existente',
     exportStatsHint: 'Incluir estadísticas de uso e historial',
     exportCacheHint: 'Incluir selectores IA en caché para modo offline',
     exportSecurityNote: 'Nota: Las claves API nunca se exportan por razones de seguridad.',
@@ -2879,6 +3037,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Formato de clave API Gemini inválido (debe comenzar con AIza)',
     invalidGrokKeyFormat: 'Formato de clave API Grok inválido (debe comenzar con xai-)',
     invalidOpenRouterKeyFormat: 'Formato de clave API OpenRouter inválido (debe comenzar con sk-or-)',
+    invalidDeepSeekKeyFormat: 'Formato de clave API DeepSeek inválido (debe comenzar con sk-)',
     invalidGoogleKeyFormat: 'Formato de clave API Google inválido (debe comenzar con AIza)',
     failedToEncryptApiKey: 'Error al cifrar la clave API',
     failedToDecryptApiKey: 'Error al descifrar la clave API. Por favor, ingrésela nuevamente.',
@@ -2913,7 +3072,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: 'Cerrar',
-    
     clearAllStatisticsConfirm: '¿Limpiar todas las estadísticas? Esto no se puede deshacer.',
     clearSelectorCacheConfirm: '¿Limpiar caché de selectores? Las próximas extracciones usarán IA.',
     includeStatisticsInExport: '¿Incluir estadísticas en la exportación?',
@@ -2941,7 +3099,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Clave API de Qwen inválida. Por favor, verifique su configuración.',
     errorRespeecherKeyRequired: 'Se requiere la clave API de Respeecher. Por favor, agréguela en la configuración.',
     errorRespeecherKeyInvalid: 'Clave API de Respeecher inválida. Por favor, verifique su configuración.',
-    untitled: 'Sin título',
     errorTranslationFailed: 'Error de traducción, usando texto original',
     errorNoSubtitles: 'No se encontraron subtítulos. Asegúrese de que los subtítulos estén habilitados para este video.',
     errorSubtitlesExtractionFailed: 'Error al extraer subtítulos: {error}',
@@ -2987,6 +3144,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'Se requiere una clave API. Agregue su clave API en la configuración.',
     errorInvalidFormat: 'Formato de exportación inválido seleccionado. Elija un formato válido.',
     errorPageNotReady: 'La página no está lista. Espere a que la página se cargue completamente e intente nuevamente.',
+    pageNotAccessible: 'Esta página no es accesible para la extracción de contenido. Por favor, abra una página web normal.',
+    noContentInApiResponse: 'No hay contenido en la respuesta de la API',
+    screenshotResultEmpty: 'El resultado de la captura de pantalla está vacío',
+    tabLoadTimeout: 'Tiempo de espera de carga de pestaña después de 5 minutos',
+    tabDoesNotExist: 'La pestaña no existe',
+    noTextContentToConvert: 'No hay contenido de texto para convertir a audio',
+    failedToSplitText: 'Error al dividir el texto en fragmentos',
+    noContentProvidedForPdf: 'No se proporcionó contenido para la generación de PDF',
+    noContentProvidedForFb2: 'No se proporcionó contenido para la generación de FB2',
+    failedToPrepareContentForAudio: 'Error al preparar el contenido para la generación de audio',
+    audioGenerationReturnedEmpty: 'La generación de audio devolvió un resultado vacío',
+    noContentProvidedForSummary: 'No se proporcionó contenido para la generación del resumen',
+    apiKeyOrModelNotProvided: 'Clave API o modelo no proporcionados para la generación del resumen',
+    noTextExtractedFromContent: 'No se extrajo texto del contenido para la generación del resumen',
+    noContentInResponse: 'No hay contenido en la respuesta',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'No se proporcionó texto para TTS',
@@ -3029,16 +3202,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: 'baseUrl inválido: debe ser una cadena no vacía',
     errorInvalidSelectors: 'Selectores inválidos: debe ser un objeto',
     errorInvalidSelectorsExclude: 'selectors.exclude inválido: debe ser un array',
-    errorScriptExecutionFailed: 'Error al ejecutar el script en la página: {error}',
     errorScriptEmptyResults: 'La ejecución del script devolvió resultados vacíos',
     errorScriptError: 'Error de script: {error}',
-    errorScriptNoResult: 'El script no devolvió ningún resultado',
-    errorNoTabId: 'No se proporcionó ID de pestaña',
-    errorSelectorAnalysisFailed: 'Error en el análisis de selectores IA: {error}',
-    errorAiEmptySelectors: 'La IA devolvió selectores vacíos',
-    errorContentExtractionFailed: 'Error al extraer el contenido: {error}',
-    errorNoContentExtracted: 'No se extrajo contenido de la página',
-    errorContentEmpty: 'El contenido extraído está vacío. Intente cambiar al modo "AI Extract".',
     
     // PDF generation errors
     errorPdfNoContent: 'No hay contenido para generar PDF',
@@ -3108,6 +3273,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'El procesamiento fue interrumpido. Por favor, inténtelo de nuevo.',
     statusLoadingStyles: 'Cargando estilos...',
     deleteFromHistory: 'Eliminar del historial',
+    openOriginalArticle: 'Abrir artículo original',
     statusConvertingToSpeech: 'Convirtiendo a voz con {provider}...',
     statusDownloadingAudio: 'Descargando archivo de audio...',
     errorNoHtmlData: 'Error al extraer contenido de la página: no se recibieron datos HTML',
@@ -3147,10 +3313,52 @@ export const UI_LOCALES = {
     downloadFailed: 'Error al descargar',
     copy: 'Copiar',
     download: 'Descargar',
-    close: 'Cerrar'
+    close: 'Cerrar',
+    noTabAvailable: 'No se encontró ninguna pestaña activa. Por favor, abra una página web.',
+    errorPrintPage: 'Error',
+    unknownError: 'Error desconocido',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Seleccionar archivo PDF',
+    pdfFileSelectionDialogMessage: 'El trabajo con archivos locales en extensiones de navegador tiene limitaciones. Por favor, seleccione el archivo PDF que desea procesar.',
+    pdfFileSelectionDialogWarning: 'Importante: No cambie de pestaña mientras la extensión está procesando.',
+    ok: 'OK',
+    deepseekApiKey: 'Clave API DeepSeek',
+
+    enterDeepSeekApiKey: 'sk-...',
+
+    pleaseEnterDeepSeekApiKey: 'Por favor ingrese la clave API DeepSeek para modelos DeepSeek',
+
+    errorAiResponseNotValidJson: 'La respuesta de la IA no es un JSON válido',
+
+    errorNetworkConnectionFailed: 'Error de red: {error}',
+
+    errorTtsPiperFailed: 'Piper TTS falló: {error}',
+
+    errorWindowUndefined: 'Window no está definido',
+
+    errorExecutePiperTTSNotFound: 'Función executePiperTTS no encontrada. Claves disponibles: {keys}',
+
+    errorExecutePiperTTSNotPromise: 'executePiperTTS no devolvió una promesa. Obtuvo: {type}',
+
+    errorScriptNoResult: 'El script no devolvió ningún resultado',
+
+    errorNoTabId: 'No se proporcionó ID de pestaña',
+
+    errorAiEmptySelectors: 'La IA devolvió selectores vacíos',
+
+    errorContentEmpty: 'El contenido extraído está vacío.',
+
+    errorNoContentToConvert: 'No hay contenido para convertir a audio',
+
+    errorNoApiKeyForTextPrep: 'No se proporcionó clave API para la preparación del texto',
+
+    errorNoTtsApiKey: 'No se proporcionó clave API {provider} para TTS',
+
+    untitled: 'Untitled',
   },
-  
   it: {
+
     subtitle: 'Estrattore di articoli alimentato da IA',
     aiProvider: 'Fornitore IA',
     openai: 'OpenAI',
@@ -3158,6 +3366,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'Chiave API OpenAI',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Chiave API Claude',
@@ -3175,6 +3384,7 @@ export const UI_LOCALES = {
     or: 'o',
     ready: 'Pronto',
     cancel: 'Annulla',
+    save: 'Salva',
     saveAsPdf: 'Salva come PDF',
     saveAsEpub: 'Salva come EPUB',
     saveAsFb2: 'Salva come FB2',
@@ -3188,7 +3398,7 @@ export const UI_LOCALES = {
     model: 'Modello',
     addModel: 'Aggiungi modello',
     showModelList: 'Mostra elenco modelli',
-    addModelPrompt: 'Inserisci il nome del modello (ad esempio, gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Inserisci il nome del modello:',
     addModelInvalidFormat: 'Formato nome modello non valido. Usa un nome di codice come gpt-5.2 o claude-sonnet-4-5',
     addModelAlreadyExists: 'Questo modello esiste già',
     extractionMode: 'Modalità estrazione',
@@ -3331,7 +3541,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Per pagine SPA/dinamiche: scorri per caricare tutto il contenuto prima di salvare',
     automaticMode: 'Automatico (senza IA)',
     aiSelectorFaster: 'AI Selector (più veloce, testo esatto)',
-    aiExtractFull: 'AI Extract (elaborazione completa)',
+    aiExtractFull: 'AI Extract (non raccomandato)',
     useCachedSelectorsHint: 'Salta IA per siti già salvati',
     ttsProviderHint: 'Scegli fornitore sintesi vocale',
     getElevenlabsKeyFrom: 'Ottieni la tua chiave API su',
@@ -3362,11 +3572,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Importa/Esporta impostazioni',
     exportSettings: 'Esporta impostazioni',
     importSettings: 'Importa impostazioni',
-    includeStatisticsInExport: 'Includi statistiche nell’esportazione',
-    includeSelectorCacheInExport: 'Includi cache dei selettori nell’esportazione',
     includeStatisticsInImport: 'Importa statistiche (se presenti)',
     includeSelectorCacheInImport: 'Importa cache dei selettori (se presente)',
-    overwriteExistingSettings: 'Sovrascrivi le impostazioni esistenti',
     exportStatsHint: 'Includi statistiche di utilizzo e cronologia',
     exportCacheHint: 'Includi selettori IA memorizzati per modalità offline',
     exportSecurityNote: 'Nota: Le chiavi API non vengono mai esportate per motivi di sicurezza.',
@@ -3393,6 +3600,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Formato chiave API Gemini non valido (dovrebbe iniziare con AIza)',
     invalidGrokKeyFormat: 'Formato chiave API Grok non valido (dovrebbe iniziare con xai-)',
     invalidOpenRouterKeyFormat: 'Formato chiave API OpenRouter non valido (dovrebbe iniziare con sk-or-)',
+    invalidDeepSeekKeyFormat: 'Formato chiave API DeepSeek non valido (dovrebbe iniziare con sk-)',
     invalidGoogleKeyFormat: 'Formato chiave API Google non valido (dovrebbe iniziare con AIza)',
     failedToEncryptApiKey: 'Impossibile crittografare la chiave API',
     failedToDecryptApiKey: 'Impossibile decrittografare la chiave API. Si prega di inserirla nuovamente.',
@@ -3427,7 +3635,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: 'Chiudi',
-    
     clearAllStatisticsConfirm: 'Cancellare tutte le statistiche? Questa azione non può essere annullata.',
     clearSelectorCacheConfirm: 'Svuotare cache selettori? Le prossime estrazioni useranno l\'IA.',
     includeStatisticsInExport: 'Includere statistiche nell\'esportazione?',
@@ -3455,7 +3662,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Chiave API Qwen non valida. Si prega di controllare le impostazioni.',
     errorRespeecherKeyRequired: 'Chiave API Respeecher richiesta. Si prega di aggiungerla nelle impostazioni.',
     errorRespeecherKeyInvalid: 'Chiave API Respeecher non valida. Si prega di controllare le impostazioni.',
-    untitled: 'Senza titolo',
     errorTranslationFailed: 'Traduzione fallita, uso del testo originale',
     errorNoSubtitles: 'Nessun sottotitolo trovato. Assicurarsi che i sottotitoli siano abilitati per questo video.',
     errorSubtitlesExtractionFailed: 'Impossibile estrarre i sottotitoli: {error}',
@@ -3501,6 +3707,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'È richiesta una chiave API. Aggiungi la tua chiave API nelle impostazioni.',
     errorInvalidFormat: 'Formato di esportazione non valido selezionato. Scegli un formato valido.',
     errorPageNotReady: 'La pagina non è pronta. Attendi che la pagina sia completamente caricata e riprova.',
+    pageNotAccessible: 'Questa pagina non è accessibile per l\'estrazione del contenuto. Si prega di aprire una pagina web normale.',
+    noContentInApiResponse: 'Nessun contenuto nella risposta dell\'API',
+    screenshotResultEmpty: 'Il risultato dello screenshot è vuoto',
+    tabLoadTimeout: 'Timeout di caricamento della scheda dopo 5 minuti',
+    tabDoesNotExist: 'La scheda non esiste',
+    noTextContentToConvert: 'Nessun contenuto testuale da convertire in audio',
+    failedToSplitText: 'Impossibile dividere il testo in segmenti',
+    noContentProvidedForPdf: 'Nessun contenuto fornito per la generazione PDF',
+    noContentProvidedForFb2: 'Nessun contenuto fornito per la generazione FB2',
+    failedToPrepareContentForAudio: 'Impossibile preparare il contenuto per la generazione audio',
+    audioGenerationReturnedEmpty: 'La generazione audio ha restituito un risultato vuoto',
+    noContentProvidedForSummary: 'Nessun contenuto fornito per la generazione del riassunto',
+    apiKeyOrModelNotProvided: 'Chiave API o modello non forniti per la generazione del riassunto',
+    noTextExtractedFromContent: 'Nessun testo estratto dal contenuto per la generazione del riassunto',
+    noContentInResponse: 'Nessun contenuto nella risposta',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'Nessun testo fornito per TTS',
@@ -3543,16 +3765,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: 'baseUrl non valido: deve essere una stringa non vuota',
     errorInvalidSelectors: 'Selettori non validi: deve essere un oggetto',
     errorInvalidSelectorsExclude: 'selectors.exclude non valido: deve essere un array',
-    errorScriptExecutionFailed: 'Impossibile eseguire lo script sulla pagina: {error}',
     errorScriptEmptyResults: 'L\'esecuzione dello script ha restituito risultati vuoti',
     errorScriptError: 'Errore dello script: {error}',
-    errorScriptNoResult: 'Lo script non ha restituito alcun risultato',
-    errorNoTabId: 'Nessun ID scheda fornito',
-    errorSelectorAnalysisFailed: 'Analisi selettori IA fallita: {error}',
-    errorAiEmptySelectors: 'L\'IA ha restituito selettori vuoti',
-    errorContentExtractionFailed: 'Estrazione contenuto fallita: {error}',
-    errorNoContentExtracted: 'Nessun contenuto estratto dalla pagina',
-    errorContentEmpty: 'Il contenuto estratto è vuoto. Prova a passare alla modalità "AI Extract".',
     
     // PDF generation errors
     errorPdfNoContent: 'Nessun contenuto per generare PDF',
@@ -3623,6 +3837,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Elaborazione interrotta. Si prega di riprovare.',
     statusLoadingStyles: 'Caricamento stili...',
     deleteFromHistory: 'Elimina dalla cronologia',
+    openOriginalArticle: 'Apri articolo originale',
     statusConvertingToSpeech: 'Conversione in voce con {provider}...',
     statusDownloadingAudio: 'Download del file audio...',
     errorNoHtmlData: 'Impossibile estrarre il contenuto della pagina: nessun dato HTML ricevuto',
@@ -3662,10 +3877,50 @@ export const UI_LOCALES = {
     downloadFailed: 'Download fallito',
     copy: 'Copia',
     download: 'Scarica',
-    close: 'Chiudi'
+    close: 'Chiudi',
+    noTabAvailable: 'Nessuna scheda attiva trovata. Si prega di aprire una pagina web.',
+    errorPrintPage: 'Errore',
+    unknownError: 'Errore sconosciuto',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Seleziona file PDF',
+    pdfFileSelectionDialogMessage: 'Il lavoro con file locali nelle estensioni del browser ha limitazioni. Si prega di selezionare il file PDF che si desidera elaborare.',
+    pdfFileSelectionDialogWarning: 'Importante: Non cambiare scheda mentre l\'estensione sta elaborando.',
+    ok: 'OK',
+    deepseekApiKey: 'Chiave API DeepSeek',
+
+    enterDeepSeekApiKey: 'sk-...',
+
+    pleaseEnterDeepSeekApiKey: 'Inserisci la chiave API DeepSeek per i modelli DeepSeek',
+
+    errorAiResponseNotValidJson: 'La risposta dell\'IA non è un JSON valido',
+
+    errorNetworkConnectionFailed: 'Errore di rete: {error}',
+
+    errorTtsPiperFailed: 'Piper TTS fallito: {error}',
+
+    errorWindowUndefined: 'Window non è definito',
+
+    errorExecutePiperTTSNotFound: 'Funzione executePiperTTS non trovata. Chiavi disponibili: {keys}',
+
+    errorExecutePiperTTSNotPromise: 'executePiperTTS non ha restituito una promessa. Ottenuto: {type}',
+
+    errorScriptNoResult: 'Lo script non ha restituito alcun risultato',
+
+    errorNoTabId: 'Nessun ID scheda fornito',
+
+    errorAiEmptySelectors: 'L\'IA ha restituito selettori vuoti',
+
+    errorContentEmpty: 'Il contenuto estratto è vuoto.',
+
+    errorNoContentToConvert: 'Nessun contenuto da convertire in audio',
+
+    errorNoApiKeyForTextPrep: 'Nessuna chiave API fornita per la preparazione del testo',
+
+    errorNoTtsApiKey: 'Nessuna chiave API {provider} fornita per TTS',
   },
-  
   pt: {
+
     subtitle: 'Extrator de artigos com IA',
     aiProvider: 'Provedor IA',
     openai: 'OpenAI',
@@ -3673,6 +3928,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'Chave API OpenAI',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Chave API Claude',
@@ -3690,6 +3946,7 @@ export const UI_LOCALES = {
     or: 'ou',
     ready: 'Pronto',
     cancel: 'Cancelar',
+    save: 'Salvar',
     saveAsPdf: 'Salvar como PDF',
     saveAsEpub: 'Salvar como EPUB',
     saveAsFb2: 'Salvar como FB2',
@@ -3703,7 +3960,7 @@ export const UI_LOCALES = {
     model: 'Modelo',
     addModel: 'Adicionar modelo',
     showModelList: 'Mostrar lista de modelos',
-    addModelPrompt: 'Digite o nome do modelo (por exemplo, gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: 'Digite o nome do modelo:',
     addModelInvalidFormat: 'Formato de nome de modelo inválido. Use um nome de código como gpt-5.2 ou claude-sonnet-4-5',
     addModelAlreadyExists: 'Este modelo já existe',
     extractionMode: 'Modo de extração',
@@ -3846,7 +4103,7 @@ export const UI_LOCALES = {
     spaHint: '💡 Para páginas SPA/dinâmicas: role para carregar todo o conteúdo antes de salvar',
     automaticMode: 'Automático (sem IA)',
     aiSelectorFaster: 'AI Selector (mais rápido, texto exato)',
-    aiExtractFull: 'AI Extract (processamento completo)',
+    aiExtractFull: 'AI Extract (não recomendado)',
     useCachedSelectorsHint: 'Pular IA para sites já salvos',
     ttsProviderHint: 'Escolher provedor de síntese de voz',
     getElevenlabsKeyFrom: 'Obtenha sua chave API em',
@@ -3877,11 +4134,8 @@ export const UI_LOCALES = {
     importExportSettings: 'Importar/Exportar configurações',
     exportSettings: 'Exportar configurações',
     importSettings: 'Importar configurações',
-    includeStatisticsInExport: 'Incluir estatísticas na exportação',
-    includeSelectorCacheInExport: 'Incluir cache de seletores na exportação',
     includeStatisticsInImport: 'Importar estatísticas (se houver)',
     includeSelectorCacheInImport: 'Importar cache de seletores (se houver)',
-    overwriteExistingSettings: 'Sobrescrever configurações existentes',
     exportStatsHint: 'Incluir estatísticas de uso e histórico',
     exportCacheHint: 'Incluir seletores IA em cache para modo offline',
     exportSecurityNote: 'Nota: As chaves API nunca são exportadas por motivos de segurança.',
@@ -3908,6 +4162,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: 'Formato de chave API Gemini inválido (deve começar com AIza)',
     invalidGrokKeyFormat: 'Formato de chave API Grok inválido (deve começar com xai-)',
     invalidOpenRouterKeyFormat: 'Formato de chave API OpenRouter inválido (deve começar com sk-or-)',
+    invalidDeepSeekKeyFormat: 'Formato de chave API DeepSeek inválido (deve começar com sk-)',
     invalidGoogleKeyFormat: 'Formato de chave API Google inválido (deve começar com AIza)',
     failedToEncryptApiKey: 'Falha ao criptografar chave API',
     failedToDecryptApiKey: 'Falha ao descriptografar chave API. Por favor, insira novamente.',
@@ -3942,7 +4197,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: 'Fechar',
-    
     clearAllStatisticsConfirm: 'Limpar todas as estatísticas? Isso não pode ser desfeito.',
     clearSelectorCacheConfirm: 'Limpar cache de seletores? As próximas extrações usarão IA.',
     includeStatisticsInExport: 'Incluir estatísticas na exportação?',
@@ -3970,7 +4224,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Chave API Qwen inválida. Por favor, verifique suas configurações.',
     errorRespeecherKeyRequired: 'Chave API Respeecher necessária. Por favor, adicione-a nas configurações.',
     errorRespeecherKeyInvalid: 'Chave API Respeecher inválida. Por favor, verifique suas configurações.',
-    untitled: 'Sem título',
     errorTranslationFailed: 'Falha na tradução, usando texto original',
     errorNoSubtitles: 'Nenhuma legenda encontrada. Certifique-se de que as legendas estão habilitadas para este vídeo.',
     errorSubtitlesExtractionFailed: 'Falha ao extrair legendas: {error}',
@@ -4016,6 +4269,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'Uma chave API é necessária. Adicione sua chave API nas configurações.',
     errorInvalidFormat: 'Formato de exportação inválido selecionado. Escolha um formato válido.',
     errorPageNotReady: 'A página não está pronta. Aguarde até que a página carregue completamente e tente novamente.',
+    pageNotAccessible: 'Esta página não é acessível para extração de conteúdo. Por favor, abra uma página web normal.',
+    noContentInApiResponse: 'Nenhum conteúdo na resposta da API',
+    screenshotResultEmpty: 'O resultado da captura de tela está vazio',
+    tabLoadTimeout: 'Tempo limite de carregamento da aba após 5 minutos',
+    tabDoesNotExist: 'A aba não existe',
+    noTextContentToConvert: 'Nenhum conteúdo de texto para converter em áudio',
+    failedToSplitText: 'Falha ao dividir o texto em segmentos',
+    noContentProvidedForPdf: 'Nenhum conteúdo fornecido para geração de PDF',
+    noContentProvidedForFb2: 'Nenhum conteúdo fornecido para geração de FB2',
+    failedToPrepareContentForAudio: 'Falha ao preparar conteúdo para geração de áudio',
+    audioGenerationReturnedEmpty: 'A geração de áudio retornou resultado vazio',
+    noContentProvidedForSummary: 'Nenhum conteúdo fornecido para geração de resumo',
+    apiKeyOrModelNotProvided: 'Chave API ou modelo não fornecidos para geração de resumo',
+    noTextExtractedFromContent: 'Nenhum texto extraído do conteúdo para geração de resumo',
+    noContentInResponse: 'Nenhum conteúdo na resposta',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'Nenhum texto fornecido para TTS',
@@ -4058,16 +4327,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: 'baseUrl inválido: deve ser uma string não vazia',
     errorInvalidSelectors: 'Seletores inválidos: deve ser um objeto',
     errorInvalidSelectorsExclude: 'selectors.exclude inválido: deve ser um array',
-    errorScriptExecutionFailed: 'Falha ao executar o script na página: {error}',
     errorScriptEmptyResults: 'A execução do script retornou resultados vazios',
     errorScriptError: 'Erro de script: {error}',
-    errorScriptNoResult: 'O script não retornou nenhum resultado',
-    errorNoTabId: 'Nenhum ID de aba fornecido',
-    errorSelectorAnalysisFailed: 'Análise de seletores IA falhou: {error}',
-    errorAiEmptySelectors: 'A IA retornou seletores vazios',
-    errorContentExtractionFailed: 'Falha na extração de conteúdo: {error}',
-    errorNoContentExtracted: 'Nenhum conteúdo extraído da página',
-    errorContentEmpty: 'O conteúdo extraído está vazio. Tente mudar para o modo "AI Extract".',
     
     // PDF generation errors
     errorPdfNoContent: 'Nenhum conteúdo para gerar PDF',
@@ -4138,6 +4399,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: 'Processamento foi interrompido. Por favor, tente novamente.',
     statusLoadingStyles: 'Carregando estilos...',
     deleteFromHistory: 'Excluir do histórico',
+    openOriginalArticle: 'Abrir artigo original',
     statusConvertingToSpeech: 'Convertendo em fala com {provider}...',
     statusDownloadingAudio: 'Baixando arquivo de áudio...',
     errorNoHtmlData: 'Falha ao extrair conteúdo da página: nenhum dado HTML recebido',
@@ -4177,10 +4439,50 @@ export const UI_LOCALES = {
     downloadFailed: 'Falha ao baixar',
     copy: 'Copiar',
     download: 'Baixar',
-    close: 'Fechar'
+    close: 'Fechar',
+    noTabAvailable: 'Nenhuma aba ativa encontrada. Por favor, abra uma página web.',
+    errorPrintPage: 'Erro',
+    unknownError: 'Erro desconhecido',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'Selecionar arquivo PDF',
+    pdfFileSelectionDialogMessage: 'O trabalho com arquivos locais em extensões do navegador tem limitações. Por favor, selecione o arquivo PDF que deseja processar.',
+    pdfFileSelectionDialogWarning: 'Importante: Não altere as abas enquanto a extensão está processando.',
+    ok: 'OK',
+    deepseekApiKey: 'Chave API DeepSeek',
+
+    enterDeepSeekApiKey: 'sk-...',
+
+    pleaseEnterDeepSeekApiKey: 'Por favor, insira a chave API DeepSeek para modelos DeepSeek',
+
+    errorAiResponseNotValidJson: 'A resposta da IA não é um JSON válido',
+
+    errorNetworkConnectionFailed: 'Erro de rede: {error}',
+
+    errorTtsPiperFailed: 'Piper TTS falhou: {error}',
+
+    errorWindowUndefined: 'Window não está definido',
+
+    errorExecutePiperTTSNotFound: 'Função executePiperTTS não encontrada. Chaves disponíveis: {keys}',
+
+    errorExecutePiperTTSNotPromise: 'executePiperTTS não retornou uma promessa. Obtido: {type}',
+
+    errorScriptNoResult: 'O script não retornou nenhum resultado',
+
+    errorNoTabId: 'Nenhum ID de aba fornecido',
+
+    errorAiEmptySelectors: 'A IA retornou seletores vazios',
+
+    errorContentEmpty: 'O conteúdo extraído está vazio.',
+
+    errorNoContentToConvert: 'Nenhum conteúdo para converter em áudio',
+
+    errorNoApiKeyForTextPrep: 'Nenhuma chave API fornecida para preparação do texto',
+
+    errorNoTtsApiKey: 'Nenhuma chave API {provider} fornecida para TTS',
   },
-  
   zh: {
+
     subtitle: 'AI驱动的文章提取器',
     aiProvider: 'AI提供商',
     openai: 'OpenAI',
@@ -4188,6 +4490,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'OpenAI API密钥',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Claude API密钥',
@@ -4205,6 +4508,7 @@ export const UI_LOCALES = {
     or: '或',
     ready: '就绪',
     cancel: '取消',
+    save: '保存',
     saveAsPdf: '另存为PDF',
     saveAsEpub: '另存为EPUB',
     saveAsFb2: '另存为FB2',
@@ -4218,7 +4522,7 @@ export const UI_LOCALES = {
     model: '模型',
     addModel: '添加模型',
     showModelList: '显示模型列表',
-    addModelPrompt: '输入模型名称（例如，gpt-5.2, claude-sonnet-4-5）：',
+    addModelPrompt: '输入模型名称：',
     addModelInvalidFormat: '模型名称格式无效。使用代码名称，如 gpt-5.2 或 claude-sonnet-4-5',
     addModelAlreadyExists: '此模型已存在',
     extractionMode: '提取模式',
@@ -4361,7 +4665,7 @@ export const UI_LOCALES = {
     spaHint: '💡 对于SPA/动态页面：在保存前滚动以加载所有内容',
     automaticMode: '自动（无AI）',
     aiSelectorFaster: 'AI Selector（更快，精确文本）',
-    aiExtractFull: 'AI Extract（完整处理）',
+    aiExtractFull: 'AI Extract（不推荐）',
     useCachedSelectorsHint: '跳过已保存网站的AI',
     ttsProviderHint: '选择文本转语音提供商',
     getElevenlabsKeyFrom: '在以下位置获取您的API密钥',
@@ -4392,11 +4696,8 @@ export const UI_LOCALES = {
     importExportSettings: '导入/导出设置',
     exportSettings: '导出设置',
     importSettings: '导入设置',
-    includeStatisticsInExport: '导出时包含统计数据',
-    includeSelectorCacheInExport: '导出时包含选择器缓存',
     includeStatisticsInImport: '导入统计数据（如果有）',
     includeSelectorCacheInImport: '导入选择器缓存（如果有）',
-    overwriteExistingSettings: '覆盖现有设置',
     exportHint: '导出包括：设置（不含API密钥），可选统计和缓存',
     exporting: '导出中...',
     importing: '导入中...',
@@ -4416,6 +4717,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: '无效的Gemini API密钥格式（应以AIza开头）',
     invalidGrokKeyFormat: '无效的Grok API密钥格式（应以xai-开头）',
     invalidOpenRouterKeyFormat: '无效的OpenRouter API密钥格式（应以sk-or-开头）',
+    invalidDeepSeekKeyFormat: '无效的DeepSeek API密钥格式（应以sk-开头）',
     invalidGoogleKeyFormat: '无效的Google API密钥格式（应以AIza开头）',
     failedToEncryptApiKey: '加密API密钥失败',
     failedToDecryptApiKey: '解密API密钥失败。请重新输入。',
@@ -4450,7 +4752,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: '关闭',
-    
     clearAllStatisticsConfirm: '清除所有统计？此操作无法撤销。',
     clearSelectorCacheConfirm: '清除选择器缓存？下次提取将使用AI。',
     includeStatisticsInExport: '在导出中包含统计？',
@@ -4485,7 +4786,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Qwen API密钥无效。请检查您的设置。',
     errorRespeecherKeyRequired: '需要Respeecher API密钥。请在设置中添加。',
     errorRespeecherKeyInvalid: 'Respeecher API密钥无效。请检查您的设置。',
-    untitled: '无标题',
     errorTranslationFailed: '翻译失败，使用原文',
     errorNoSubtitles: '未找到字幕。请确保已为此视频启用字幕。',
     errorSubtitlesExtractionFailed: '提取字幕失败：{error}',
@@ -4534,6 +4834,22 @@ export const UI_LOCALES = {
     errorNoApiKey: '需要API密钥。请在设置中添加您的API密钥。',
     errorInvalidFormat: '选择了无效的导出格式。请选择有效格式。',
     errorPageNotReady: '页面未就绪。请等待页面完全加载后重试。',
+    pageNotAccessible: '此页面无法访问以提取内容。请打开普通网页。',
+    noContentInApiResponse: 'API响应中无内容',
+    screenshotResultEmpty: '截图结果为空',
+    tabLoadTimeout: '标签页加载超时（5分钟后）',
+    tabDoesNotExist: '标签页不存在',
+    noTextContentToConvert: '没有可转换为音频的文本内容',
+    failedToSplitText: '无法将文本分割成块',
+    noContentProvidedForPdf: '未提供PDF生成内容',
+    noContentProvidedForFb2: '未提供FB2生成内容',
+    failedToPrepareContentForAudio: '无法为音频生成准备内容',
+    audioGenerationReturnedEmpty: '音频生成返回空结果',
+    noContentProvidedForSummary: '未提供摘要生成内容',
+    apiKeyOrModelNotProvided: '未提供摘要生成的API密钥或模型',
+    noTextExtractedFromContent: '未从内容中提取文本用于摘要生成',
+    noContentInResponse: '响应中无内容',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: '未提供TTS文本',
@@ -4576,16 +4892,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: '无效的baseUrl: 必须是非空字符串',
     errorInvalidSelectors: '无效的选择器: 必须是对象',
     errorInvalidSelectorsExclude: '无效的selectors.exclude: 必须是数组',
-    errorScriptExecutionFailed: '在页面上执行脚本失败: {error}',
     errorScriptEmptyResults: '脚本执行返回空结果',
     errorScriptError: '脚本错误: {error}',
-    errorScriptNoResult: '脚本未返回结果',
-    errorNoTabId: '未提供标签页ID',
-    errorSelectorAnalysisFailed: 'AI选择器分析失败: {error}',
-    errorAiEmptySelectors: 'AI返回空选择器',
-    errorContentExtractionFailed: '内容提取失败: {error}',
-    errorNoContentExtracted: '未从页面提取内容',
-    errorContentEmpty: '提取的内容为空。请尝试切换到"AI Extract"模式。',
     
     // PDF generation errors
     errorPdfNoContent: '没有内容可生成PDF',
@@ -4656,6 +4964,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: '处理被中断。请重试。',
     statusLoadingStyles: '正在加载样式...',
     deleteFromHistory: '从历史记录中删除',
+    openOriginalArticle: '打开原文',
     statusConvertingToSpeech: '正在使用 {provider} 转换为语音...',
     statusDownloadingAudio: '正在下载音频文件...',
     errorNoHtmlData: '提取页面内容失败：未收到HTML数据',
@@ -4695,10 +5004,38 @@ export const UI_LOCALES = {
     downloadFailed: '下载失败',
     copy: '复制',
     download: '下载',
-    close: '关闭'
+    close: '关闭',
+    noTabAvailable: '未找到活动标签页。请打开一个网页。',
+    errorPrintPage: '错误',
+    unknownError: '未知错误',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: '选择PDF文件',
+    pdfFileSelectionDialogMessage: '在浏览器扩展中使用本地文件有限制。请选择要处理的PDF文件。',
+    pdfFileSelectionDialogWarning: '重要提示：扩展处理时请勿切换标签页。',
+    ok: '确定',
+    deepseekApiKey: 'DeepSeek API密钥',
+    enterDeepSeekApiKey: 'sk-...',
+    pleaseEnterDeepSeekApiKey: '请输入DeepSeek模型的DeepSeek API密钥',
+    errorWindowUndefined: 'Window未定义',
+    errorExecutePiperTTSNotFound: '未找到executePiperTTS函数。可用键: {keys}',
+    errorExecutePiperTTSNotPromise: 'executePiperTTS未返回promise。得到: {type}',
+    errorScriptNoResult: '脚本未返回结果',
+
+    errorNoTabId: '未提供标签ID',
+
+    errorAiEmptySelectors: 'AI返回了空选择器',
+
+    errorContentEmpty: '提取的内容为空。',
+
+    errorNoContentToConvert: '没有要转换为音频的内容',
+
+    errorNoApiKeyForTextPrep: '未提供用于文本准备的API密钥',
+
+    errorNoTtsApiKey: '未提供{provider} TTS的API密钥',
   },
-  
   ja: {
+
     subtitle: 'AI駆動の記事抽出ツール',
     aiProvider: 'AIプロバイダー',
     openai: 'OpenAI',
@@ -4706,6 +5043,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'OpenAI APIキー',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Claude APIキー',
@@ -4723,6 +5061,7 @@ export const UI_LOCALES = {
     or: 'または',
     ready: '準備完了',
     cancel: 'キャンセル',
+    save: '保存',
     saveAsPdf: 'PDFとして保存',
     saveAsEpub: 'EPUBとして保存',
     saveAsFb2: 'FB2として保存',
@@ -4736,7 +5075,7 @@ export const UI_LOCALES = {
     model: 'モデル',
     addModel: 'モデルを追加',
     showModelList: 'モデルリストを表示',
-    addModelPrompt: 'モデル名を入力してください（例：gpt-5.2, claude-sonnet-4-5）：',
+    addModelPrompt: 'モデル名を入力してください：',
     addModelInvalidFormat: 'モデル名の形式が無効です。gpt-5.2 や claude-sonnet-4-5 などのコード名を使用してください',
     addModelAlreadyExists: 'このモデルは既に存在します',
     extractionMode: '抽出モード',
@@ -4879,7 +5218,7 @@ export const UI_LOCALES = {
     spaHint: '💡 SPA/動的ページの場合：保存する前にスクロールしてすべてのコンテンツを読み込んでください',
     automaticMode: '自動（AIなし）',
     aiSelectorFaster: 'AI Selector（高速、正確なテキスト）',
-    aiExtractFull: 'AI Extract（完全処理）',
+    aiExtractFull: 'AI Extract（推奨されません）',
     useCachedSelectorsHint: '既に保存したサイトのAIをスキップ',
     ttsProviderHint: 'テキスト読み上げプロバイダーを選択',
     getElevenlabsKeyFrom: 'APIキーを取得',
@@ -4910,11 +5249,8 @@ export const UI_LOCALES = {
     importExportSettings: '設定のインポート/エクスポート',
     exportSettings: '設定をエクスポート',
     importSettings: '設定をインポート',
-    includeStatisticsInExport: 'エクスポートに統計を含める',
-    includeSelectorCacheInExport: 'エクスポートにセレクターキャッシュを含める',
     includeStatisticsInImport: '統計をインポート（存在する場合）',
     includeSelectorCacheInImport: 'セレクターキャッシュをインポート（存在する場合）',
-    overwriteExistingSettings: '既存の設定を上書きする',
     exportHint: 'エクスポートには以下が含まれます：設定（APIキーを除く）、オプションの統計とキャッシュ',
     exporting: 'エクスポート中...',
     importing: 'インポート中...',
@@ -4934,6 +5270,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: '無効なGemini APIキー形式（AIzaで始まる必要があります）',
     invalidGrokKeyFormat: '無効なGrok APIキー形式（xai-で始まる必要があります）',
     invalidOpenRouterKeyFormat: '無効なOpenRouter APIキー形式（sk-or-で始まる必要があります）',
+    invalidDeepSeekKeyFormat: '無効なDeepSeek APIキー形式（sk-で始まる必要があります）',
     invalidGoogleKeyFormat: '無効なGoogle APIキー形式（AIzaで始まる必要があります）',
     failedToEncryptApiKey: 'APIキーの暗号化に失敗しました',
     failedToDecryptApiKey: 'APIキーの復号化に失敗しました。再度入力してください。',
@@ -4968,7 +5305,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: '閉じる',
-    
     clearAllStatisticsConfirm: 'すべての統計をクリアしますか？この操作は元に戻せません。',
     clearSelectorCacheConfirm: 'セレクターキャッシュをクリアしますか？次の抽出ではAIが使用されます。',
     includeStatisticsInExport: 'エクスポートに統計を含めますか？',
@@ -5003,7 +5339,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Qwen APIキーが無効です。設定を確認してください。',
     errorRespeecherKeyRequired: 'Respeecher APIキーが必要です。設定に追加してください。',
     errorRespeecherKeyInvalid: 'Respeecher APIキーが無効です。設定を確認してください。',
-    untitled: 'タイトルなし',
     errorTranslationFailed: '翻訳に失敗しました。元のテキストを使用します',
     errorNoSubtitles: '字幕が見つかりませんでした。この動画で字幕が有効になっていることを確認してください。',
     errorSubtitlesExtractionFailed: '字幕の抽出に失敗しました：{error}',
@@ -5049,6 +5384,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'APIキーが必要です。設定にAPIキーを追加してください。',
     errorInvalidFormat: '無効なエクスポート形式が選択されました。有効な形式を選択してください。',
     errorPageNotReady: 'ページの準備ができていません。ページが完全に読み込まれるまで待ってから再試行してください。',
+    pageNotAccessible: 'このページはコンテンツ抽出にアクセスできません。通常のウェブページを開いてください。',
+    noContentInApiResponse: 'APIレスポンスにコンテンツがありません',
+    screenshotResultEmpty: 'スクリーンショット結果が空です',
+    tabLoadTimeout: 'タブの読み込みタイムアウト（5分後）',
+    tabDoesNotExist: 'タブが存在しません',
+    noTextContentToConvert: 'オーディオに変換するテキストコンテンツがありません',
+    failedToSplitText: 'テキストをチャンクに分割できませんでした',
+    noContentProvidedForPdf: 'PDF生成用のコンテンツが提供されていません',
+    noContentProvidedForFb2: 'FB2生成用のコンテンツが提供されていません',
+    failedToPrepareContentForAudio: 'オーディオ生成用のコンテンツを準備できませんでした',
+    audioGenerationReturnedEmpty: 'オーディオ生成が空の結果を返しました',
+    noContentProvidedForSummary: '要約生成用のコンテンツが提供されていません',
+    apiKeyOrModelNotProvided: '要約生成用のAPIキーまたはモデルが提供されていません',
+    noTextExtractedFromContent: '要約生成用にコンテンツからテキストが抽出されていません',
+    noContentInResponse: 'レスポンスにコンテンツがありません',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'TTS用のテキストが提供されていません',
@@ -5091,16 +5442,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: '無効なbaseUrl: 空でない文字列である必要があります',
     errorInvalidSelectors: '無効なセレクター: オブジェクトである必要があります',
     errorInvalidSelectorsExclude: '無効なselectors.exclude: 配列である必要があります',
-    errorScriptExecutionFailed: 'ページでスクリプトの実行に失敗しました: {error}',
     errorScriptEmptyResults: 'スクリプト実行が空の結果を返しました',
     errorScriptError: 'スクリプトエラー: {error}',
-    errorScriptNoResult: 'スクリプトが結果を返しませんでした',
-    errorNoTabId: 'タブIDが提供されていません',
-    errorSelectorAnalysisFailed: 'AIセレクター分析に失敗しました: {error}',
-    errorAiEmptySelectors: 'AIが空のセレクターを返しました',
-    errorContentExtractionFailed: 'コンテンツ抽出に失敗しました: {error}',
-    errorNoContentExtracted: 'ページからコンテンツが抽出されませんでした',
-    errorContentEmpty: '抽出されたコンテンツが空です。「AI Extract」モードに切り替えてみてください。',
     
     // PDF generation errors
     errorPdfNoContent: 'PDFを生成するコンテンツがありません',
@@ -5171,6 +5514,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: '処理が中断されました。もう一度お試しください。',
     statusLoadingStyles: 'スタイルを読み込み中...',
     deleteFromHistory: '履歴から削除',
+    openOriginalArticle: '元の記事を開く',
     statusConvertingToSpeech: '{provider}を使用して音声に変換中...',
     statusDownloadingAudio: 'オーディオファイルをダウンロード中...',
     errorNoHtmlData: 'ページコンテンツの抽出に失敗しました：HTMLデータが受信されませんでした',
@@ -5210,10 +5554,45 @@ export const UI_LOCALES = {
     downloadFailed: 'ダウンロードに失敗しました',
     copy: 'コピー',
     download: 'ダウンロード',
-    close: '閉じる'
+    close: '閉じる',
+    noTabAvailable: 'アクティブなタブが見つかりません。ウェブページを開いてください。',
+    errorPrintPage: 'エラー',
+    unknownError: '不明なエラー',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'PDFファイルを選択',
+    pdfFileSelectionDialogMessage: 'ブラウザ拡張機能でのローカルファイルの操作には制限があります。処理するPDFファイルを選択してください。',
+    pdfFileSelectionDialogWarning: '重要：拡張機能が処理中はタブを切り替えないでください。',
+    ok: 'OK',
+    deepseekApiKey: 'DeepSeek APIキー',
+    enterDeepSeekApiKey: 'sk-...',
+    pleaseEnterDeepSeekApiKey: 'DeepSeekモデル用のDeepSeek APIキーを入力してください',
+    errorAiResponseNotValidJson: 'AIの応答が有効なJSONではありません',
+    errorNetworkConnectionFailed: 'ネットワークエラー: {error}',
+    errorTtsPiperFailed: 'Piper TTSが失敗しました: {error}',
+
+    errorWindowUndefined: 'Windowが定義されていません',
+
+    errorExecutePiperTTSNotFound: 'executePiperTTS関数が見つかりません。利用可能なキー: {keys}',
+
+    errorExecutePiperTTSNotPromise: 'executePiperTTSがpromiseを返しませんでした。取得: {type}',
+
+    errorScriptNoResult: 'スクリプトが結果を返しませんでした',
+
+    errorNoTabId: 'タブIDが提供されていません',
+
+    errorAiEmptySelectors: 'AIが空のセレクターを返しました',
+
+    errorContentEmpty: '抽出されたコンテンツが空です。',
+
+    errorNoContentToConvert: 'オーディオに変換するコンテンツがありません',
+
+    errorNoApiKeyForTextPrep: 'テキスト準備用のAPIキーが提供されていません',
+
+    errorNoTtsApiKey: 'TTS用の{provider} APIキーが提供されていません',
   },
-  
   ko: {
+
     subtitle: 'AI 기반 기사 추출기',
     aiProvider: 'AI 제공업체',
     openai: 'OpenAI',
@@ -5221,6 +5600,7 @@ export const UI_LOCALES = {
     gemini: 'Gemini',
     grok: 'Grok',
     openrouter: 'OpenRouter',
+    deepseek: 'DeepSeek',
     openaiApiKey: 'OpenAI API 키',
     enterOpenAiApiKey: 'sk-...',
     claudeApiKey: 'Claude API 키',
@@ -5238,6 +5618,7 @@ export const UI_LOCALES = {
     or: '또는',
     ready: '준비됨',
     cancel: '취소',
+    save: '저장',
     saveAsPdf: 'PDF로 저장',
     saveAsEpub: 'EPUB로 저장',
     saveAsFb2: 'FB2로 저장',
@@ -5251,7 +5632,7 @@ export const UI_LOCALES = {
     model: '모델',
     addModel: '모델 추가',
     showModelList: '모델 목록 표시',
-    addModelPrompt: '모델 이름을 입력하세요 (예: gpt-5.2, claude-sonnet-4-5):',
+    addModelPrompt: '모델 이름을 입력하세요:',
     addModelInvalidFormat: '모델 이름 형식이 잘못되었습니다. gpt-5.2 또는 claude-sonnet-4-5와 같은 코드 이름을 사용하세요',
     addModelAlreadyExists: '이 모델은 이미 존재합니다',
     extractionMode: '추출 모드',
@@ -5394,7 +5775,7 @@ export const UI_LOCALES = {
     spaHint: '💡 SPA/동적 페이지의 경우: 저장하기 전에 스크롤하여 모든 콘텐츠를 로드하세요',
     automaticMode: '자동 (AI 없음)',
     aiSelectorFaster: 'AI Selector (빠름, 정확한 텍스트)',
-    aiExtractFull: 'AI Extract (전체 처리)',
+    aiExtractFull: 'AI Extract (권장하지 않음)',
     useCachedSelectorsHint: '이미 저장한 사이트의 AI 건너뛰기',
     ttsProviderHint: '텍스트 음성 변환 제공업체 선택',
     getElevenlabsKeyFrom: 'API 키 가져오기',
@@ -5425,11 +5806,8 @@ export const UI_LOCALES = {
     importExportSettings: '설정 가져오기/내보내기',
     exportSettings: '설정 내보내기',
     importSettings: '설정 가져오기',
-    includeStatisticsInExport: '내보내기에 통계 포함',
-    includeSelectorCacheInExport: '내보내기에 선택자 캐시 포함',
     includeStatisticsInImport: '통계 가져오기 (있을 경우)',
     includeSelectorCacheInImport: '선택자 캐시 가져오기 (있을 경우)',
-    overwriteExistingSettings: '기존 설정 덮어쓰기',
     exportHint: '내보내기 포함: 설정 (API 키 제외), 선택적 통계 및 캐시',
     exporting: '내보내는 중...',
     importing: '가져오는 중...',
@@ -5449,6 +5827,7 @@ export const UI_LOCALES = {
     invalidGeminiKeyFormat: '잘못된 Gemini API 키 형식 (AIza로 시작해야 함)',
     invalidGrokKeyFormat: '잘못된 Grok API 키 형식 (xai-로 시작해야 함)',
     invalidOpenRouterKeyFormat: '잘못된 OpenRouter API 키 형식 (sk-or-로 시작해야 함)',
+    invalidDeepSeekKeyFormat: '잘못된 DeepSeek API 키 형식 (sk-로 시작해야 함)',
     invalidGoogleKeyFormat: '잘못된 Google API 키 형식 (AIza로 시작해야 함)',
     failedToEncryptApiKey: 'API 키 암호화 실패',
     failedToDecryptApiKey: 'API 키 복호화 실패. 다시 입력해주세요.',
@@ -5483,7 +5862,6 @@ export const UI_LOCALES = {
     
     // Modal
     closeButton: '닫기',
-    
     clearAllStatisticsConfirm: '모든 통계를 지우시겠습니까? 이 작업은 취소할 수 없습니다.',
     clearSelectorCacheConfirm: '선택자 캐시를 지우시겠습니까? 다음 추출에서는 AI가 사용됩니다.',
     includeStatisticsInExport: '내보내기에 통계를 포함하시겠습니까?',
@@ -5518,7 +5896,6 @@ export const UI_LOCALES = {
     errorQwenKeyInvalid: 'Qwen API 키가 유효하지 않습니다. 설정을 확인하세요.',
     errorRespeecherKeyRequired: 'Respeecher API 키가 필요합니다. 설정에 추가하세요.',
     errorRespeecherKeyInvalid: 'Respeecher API 키가 유효하지 않습니다. 설정을 확인하세요.',
-    untitled: '제목 없음',
     errorTranslationFailed: '번역 실패, 원본 텍스트 사용',
     errorNoSubtitles: '자막을 찾을 수 없습니다. 이 비디오에 자막이 활성화되어 있는지 확인하세요.',
     errorSubtitlesExtractionFailed: '자막 추출 실패: {error}',
@@ -5564,6 +5941,22 @@ export const UI_LOCALES = {
     errorNoApiKey: 'API 키가 필요합니다. 설정에 API 키를 추가하세요.',
     errorInvalidFormat: '잘못된 내보내기 형식이 선택되었습니다. 유효한 형식을 선택하세요.',
     errorPageNotReady: '페이지가 준비되지 않았습니다. 페이지가 완전히 로드될 때까지 기다린 후 다시 시도하세요.',
+    pageNotAccessible: '이 페이지는 콘텐츠 추출에 액세스할 수 없습니다. 일반 웹 페이지를 열어주세요.',
+    noContentInApiResponse: 'API 응답에 콘텐츠가 없습니다',
+    screenshotResultEmpty: '스크린샷 결과가 비어 있습니다',
+    tabLoadTimeout: '탭 로드 타임아웃 (5분 후)',
+    tabDoesNotExist: '탭이 존재하지 않습니다',
+    noTextContentToConvert: '오디오로 변환할 텍스트 콘텐츠가 없습니다',
+    failedToSplitText: '텍스트를 청크로 분할하지 못했습니다',
+    noContentProvidedForPdf: 'PDF 생성용 콘텐츠가 제공되지 않았습니다',
+    noContentProvidedForFb2: 'FB2 생성용 콘텐츠가 제공되지 않았습니다',
+    failedToPrepareContentForAudio: '오디오 생성용 콘텐츠를 준비하지 못했습니다',
+    audioGenerationReturnedEmpty: '오디오 생성이 빈 결과를 반환했습니다',
+    noContentProvidedForSummary: '요약 생성용 콘텐츠가 제공되지 않았습니다',
+    apiKeyOrModelNotProvided: '요약 생성용 API 키 또는 모델이 제공되지 않았습니다',
+    noTextExtractedFromContent: '요약 생성을 위해 콘텐츠에서 텍스트가 추출되지 않았습니다',
+    noContentInResponse: '응답에 콘텐츠가 없습니다',
+    extensionName: 'ClipAIble',
     
     // TTS errors
     errorTtsNoText: 'TTS용 텍스트가 제공되지 않았습니다',
@@ -5606,16 +5999,8 @@ export const UI_LOCALES = {
     errorInvalidBaseUrl: '잘못된 baseUrl: 비어 있지 않은 문자열이어야 합니다',
     errorInvalidSelectors: '잘못된 선택자: 객체여야 합니다',
     errorInvalidSelectorsExclude: '잘못된 selectors.exclude: 배열이어야 합니다',
-    errorScriptExecutionFailed: '페이지에서 스크립트 실행 실패: {error}',
     errorScriptEmptyResults: '스크립트 실행이 빈 결과를 반환했습니다',
     errorScriptError: '스크립트 오류: {error}',
-    errorScriptNoResult: '스크립트가 결과를 반환하지 않았습니다',
-    errorNoTabId: '탭 ID가 제공되지 않았습니다',
-    errorSelectorAnalysisFailed: 'AI 선택자 분석 실패: {error}',
-    errorAiEmptySelectors: 'AI가 빈 선택자를 반환했습니다',
-    errorContentExtractionFailed: '콘텐츠 추출 실패: {error}',
-    errorNoContentExtracted: '페이지에서 콘텐츠가 추출되지 않았습니다',
-    errorContentEmpty: '추출된 콘텐츠가 비어 있습니다. "AI Extract" 모드로 전환해 보세요.',
     
     // PDF generation errors
     errorPdfNoContent: 'PDF를 생성할 콘텐츠가 없습니다',
@@ -5686,6 +6071,7 @@ export const UI_LOCALES = {
     statusProcessingInterrupted: '처리가 중단되었습니다. 다시 시도해 주세요.',
     statusLoadingStyles: '스타일 로드 중...',
     deleteFromHistory: '기록에서 삭제',
+    openOriginalArticle: '원본 기사 열기',
     statusConvertingToSpeech: '{provider}를 사용하여 음성으로 변환 중...',
     statusDownloadingAudio: '오디오 파일 다운로드 중...',
     errorNoHtmlData: '페이지 콘텐츠 추출 실패: HTML 데이터를 받지 못했습니다',
@@ -5725,18 +6111,54 @@ export const UI_LOCALES = {
     downloadFailed: '다운로드 실패',
     copy: '복사',
     download: '다운로드',
-    close: '닫기'
+    close: '닫기',
+    noTabAvailable: '활성 탭을 찾을 수 없습니다. 웹 페이지를 열어주세요.',
+    errorPrintPage: '오류',
+    unknownError: '알 수 없는 오류',
+    
+    // PDF File Selection Dialog
+    pdfFileSelectionDialogTitle: 'PDF 파일 선택',
+    pdfFileSelectionDialogMessage: '브라우저 확장 프로그램에서 로컬 파일 작업에는 제한이 있습니다. 처리할 PDF 파일을 선택하세요.',
+    pdfFileSelectionDialogWarning: '중요: 확장 프로그램이 처리하는 동안 탭을 전환하지 마세요.',
+    ok: '확인',
+    deepseekApiKey: 'DeepSeek API 키',
+    enterDeepSeekApiKey: 'sk-...',
+    pleaseEnterDeepSeekApiKey: 'DeepSeek 모델용 DeepSeek API 키를 입력하세요',
+    errorAiResponseNotValidJson: 'AI 응답이 유효한 JSON이 아닙니다',
+    errorNetworkConnectionFailed: '네트워크 오류: {error}',
+
+    errorTtsPiperFailed: 'Piper TTS 실패: {error}',
+
+    errorWindowUndefined: 'Window가 정의되지 않았습니다',
+
+    errorExecutePiperTTSNotFound: 'executePiperTTS 함수를 찾을 수 없습니다. 사용 가능한 키: {keys}',
+
+    errorExecutePiperTTSNotPromise: 'executePiperTTS가 promise를 반환하지 않았습니다. 받음: {type}',
+
+    errorScriptNoResult: '스크립트가 결과를 반환하지 않았습니다',
+
+    errorNoTabId: '탭 ID가 제공되지 않았습니다',
+
+    errorAiEmptySelectors: 'AI가 빈 선택자를 반환했습니다',
+
+    errorContentEmpty: '추출된 콘텐츠가 비어 있습니다.',
+
+    errorNoContentToConvert: '오디오로 변환할 콘텐츠가 없습니다',
+
+    errorNoApiKeyForTextPrep: '텍스트 준비를 위한 API 키가 제공되지 않았습니다',
+
+    errorNoTtsApiKey: 'TTS용 {provider} API 키가 제공되지 않았습니다',
   }
 };
 
 /**
  * Get current UI language
- * @returns {string} Language code (default: 'en')
+ * @returns {Promise<string>} Language code (default: 'en')
  */
 export async function getUILanguage() {
   try {
     const result = await chrome.storage.local.get(['ui_language']);
-    return result.ui_language || 'en';
+    return /** @type {string} */ (result.ui_language) || 'en';
   } catch {
     return 'en';
   }
@@ -5760,7 +6182,7 @@ export async function setUILanguage(langCode) {
  * Get localized string
  * @param {string} key - Translation key
  * @param {string} langCode - Optional language code (defaults to current UI language)
- * @returns {string} Localized string
+ * @returns {Promise<string>} Localized string
  */
 export async function t(key, langCode = null) {
   const lang = langCode || await getUILanguage();

@@ -3,13 +3,10 @@
 
 // @ts-check
 
-// @typedef {import('../types.js').InjectionResult} InjectionResult
-// @typedef {import('../types.js').RetryOptions} RetryOptions
-
-import { log, logError, logWarn } from '../utils/logging.js';
+import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { PROCESSING_STAGES, updateState } from '../state/processing.js';
-import { callAI } from '../api/index.js';
+import { callAI, getProviderFromModel } from '../api/index.js';
 import { callWithRetry } from '../utils/retry.js';
 import { 
   EXTRACT_SYSTEM_PROMPT,
@@ -24,6 +21,7 @@ import { detectLanguageByCharacters } from '../translation/index.js';
 import { extractAutomaticallyInlined } from '../extraction/automatic.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { checkCancellation, getUILanguageCached, updateProgress } from '../utils/pipeline-helpers.js';
+import { cleanAuthor } from '../utils/author-validator.js';
 import { 
   getCachedSelectors, 
   cacheSelectors, 
@@ -41,7 +39,7 @@ import {
  * @returns {Promise<Object>} Selectors object
  */
 export async function getSelectorsFromAI(html, url, title, apiKey, model) {
-  log('getSelectorsFromAI called', { url, model, htmlLength: html.length });
+  logDebug('getSelectorsFromAI called', { url, model, htmlLength: html.length });
   
   // SECURITY: Validate HTML size before processing
   const MAX_HTML_SIZE = 50 * 1024 * 1024; // 50MB
@@ -54,10 +52,10 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
   const systemPrompt = SELECTOR_SYSTEM_PROMPT;
   const userPrompt = buildSelectorUserPrompt(html, url, title);
   
-  log('Sending request to AI...', { model, promptLength: userPrompt.length });
+  logDebug('Sending request to AI...', { model, promptLength: userPrompt.length });
   
   // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-  /** @type {RetryOptions} */
+  /** @type {import('../types.js').RetryOptions} */
   const retryOptions = {
     maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
     delays: CONFIG.RETRY_DELAYS,
@@ -74,11 +72,7 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
 
 /**
  * Process content without AI (automatic mode)
- * @param {Object} data - Processing data
- * @param {string} data.html - HTML content
- * @param {string} data.url - Page URL
- * @param {string} data.title - Page title
- * @param {number} data.tabId - Tab ID
+ * @param {import('../types.js').ProcessingData} data - Processing data
  * @returns {Promise<Object>} {title, author, content, publishDate, detectedLanguage}
  */
 export async function processWithoutAI(data) {
@@ -95,7 +89,7 @@ export async function processWithoutAI(data) {
     title: data.title,
     tabId: data.tabId,
     htmlLength: data.html?.length || 0,
-    htmlFull: data.html || null, // FULL HTML - NO TRUNCATION
+    htmlPreview: data.html ? data.html.substring(0, 500) + '...' : null,
     
     // Processing settings
     mode: data.mode,
@@ -105,7 +99,9 @@ export async function processWithoutAI(data) {
     
     // AI settings
     model: data.model,
-    apiKey: data.apiKey ? `${data.apiKey.substring(0, 10)}...` : null,
+    hasApiKey: !!data.apiKey,
+    apiKeyLength: data.apiKey?.length || 0,
+    apiKeyPrefix: data.apiKey ? (data.apiKey.startsWith('sk-') ? 'sk-' : data.apiKey.startsWith('AIza') ? 'AIza' : data.apiKey.startsWith('xai-') ? 'xai-' : 'other') : null,
     apiProvider: data.apiProvider,
     
     // Translation settings
@@ -137,7 +133,7 @@ export async function processWithoutAI(data) {
   
   const { html, url, title, tabId } = data;
 
-  log('=== AUTOMATIC MODE START (NO AI) ===');
+  log('⚡ Automatic mode: Starting content extraction (no AI required)');
   log('Input data', { url, title, htmlLength: html?.length, tabId: tabId });
 
   const uiLang = await getUILanguage();
@@ -265,15 +261,16 @@ export async function processWithoutAI(data) {
       }
       
       if (debugInfo.documentHTMLFull) {
-        log('=== DOCUMENT HTML FULL (FROM EXTRACTION) ===', {
-          documentHTMLFull: debugInfo.documentHTMLFull, // FULL HTML - NO TRUNCATION
+        log('=== DOCUMENT HTML PREVIEW (FROM EXTRACTION) ===', {
+          documentHTMLPreview: debugInfo.documentHTMLFull.substring(0, 500) + '...',
           documentHTMLLength: debugInfo.documentHTMLFull?.length || 0
         });
       }
       
       if (debugInfo.bodyHTMLFull) {
-        log('=== BODY HTML FULL (FROM EXTRACTION) ===', {
-          bodyHTMLFull: debugInfo.bodyHTMLFull, // FULL HTML - NO TRUNCATION
+        const bodyHTMLPreview = debugInfo.bodyHTMLFull.length > 1000 ? debugInfo.bodyHTMLFull.substring(0, 1000) + '...' : debugInfo.bodyHTMLFull;
+        log('=== BODY HTML PREVIEW (FROM EXTRACTION) ===', {
+          bodyHTMLPreview,
           bodyHTMLLength: debugInfo.bodyHTMLFull?.length || 0
         });
       }
@@ -293,22 +290,30 @@ export async function processWithoutAI(data) {
       // CRITICAL: Compare HTML from popup vs HTML seen by extraction script
       // This will show if Google Translate modified DOM before extraction
       if (data.html && debugInfo.documentHTMLFull) {
+        const popupHTMLPreview = data.html.length > 1000 ? data.html.substring(0, 1000) + '...' : data.html;
+        const extractionHTMLPreview = debugInfo.documentHTMLFull.length > 1000 ? debugInfo.documentHTMLFull.substring(0, 1000) + '...' : debugInfo.documentHTMLFull;
         log('=== HTML COMPARISON: POPUP vs EXTRACTION SCRIPT ===', {
           popupHTMLLength: data.html.length,
           extractionHTMLLength: debugInfo.documentHTMLFull.length,
           lengthsMatch: data.html.length === debugInfo.documentHTMLFull.length,
-          popupHTMLFull: data.html, // FULL HTML - NO TRUNCATION
-          extractionHTMLFull: debugInfo.documentHTMLFull, // FULL HTML - NO TRUNCATION
+          popupHTMLPreview,
+          extractionHTMLPreview,
           htmlsMatch: data.html === debugInfo.documentHTMLFull,
           timestamp: Date.now()
         });
       }
       
-      // CRITICAL: Log ALL extraction logs from page console - they're now in debugInfo
+      // CRITICAL: Log extraction logs summary (not full logs to reduce size)
       if (debugInfo.extractionLogs && Array.isArray(debugInfo.extractionLogs)) {
-        log('=== ALL EXTRACTION LOGS FROM PAGE (NOW IN SERVICE WORKER) ===', {
+        const logTypes = debugInfo.extractionLogs.reduce((acc, log) => {
+          const type = log.type || 'unknown';
+          acc[type] = (acc[type] || 0) + 1;
+          return acc;
+        }, {});
+        log('=== EXTRACTION LOGS SUMMARY (FROM PAGE) ===', {
           totalLogs: debugInfo.extractionLogs.length,
-          logs: debugInfo.extractionLogs // ALL LOGS - NO TRUNCATION
+          logTypes,
+          note: 'Full logs removed to reduce log size'
         });
         
         // Also log each log separately for better visibility
@@ -330,25 +335,22 @@ export async function processWithoutAI(data) {
         timestamp: Date.now()
       });
       
-      // Log ALL content items with FULL text - NO TRUNCATION
-      // Log each item separately to ensure full visibility in console
+      // Log content items summary only (no full text to reduce log size)
       if (extractionResult.content && Array.isArray(extractionResult.content)) {
-        log('=== EXTRACTED CONTENT ITEMS (ALL - FULL TEXT) ===', {
-          totalItems: extractionResult.content.length
-        });
+        const itemsByType = extractionResult.content.reduce((acc, item) => {
+          acc[item.type] = (acc[item.type] || 0) + 1;
+          return acc;
+        }, {});
+        const totalTextLength = extractionResult.content.reduce((sum, item) => {
+          return sum + ((item.text || item.html || '').length);
+        }, 0);
         
-        // Log each item separately for full visibility
-        extractionResult.content.forEach((item, idx) => {
-          log(`=== CONTENT ITEM [${idx}] ===`, {
-            index: idx,
-            type: item.type,
-            text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
-            textLength: (item.text || item.html || '').length,
-            html: item.html || null, // FULL HTML - NO TRUNCATION
-            htmlLength: item.html ? item.html.length : 0,
-            wasTranslated: item._wasTranslated || false,
-            hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
-          });
+        log('=== EXTRACTED CONTENT ITEMS (SUMMARY) ===', {
+          totalItems: extractionResult.content.length,
+          itemsByType,
+          totalTextLength,
+          avgTextLength: Math.round(totalTextLength / extractionResult.content.length),
+          note: 'Full text logging removed to reduce log size'
         });
       }
     }
@@ -394,7 +396,7 @@ export async function processWithoutAI(data) {
     throw new Error(tSync('errorExtractionError', uiLang).replace('{error}', errorMsg));
   }
 
-  /** @type {InjectionResult} */
+  /** @type {import('../types.js').InjectionResult} */
   const automaticResult = results[0].result;
   
   if (!automaticResult) {
@@ -536,8 +538,22 @@ export async function processWithoutAI(data) {
     
     if (text.trim()) {
       // Use character-based detection (no AI needed)
+      log('🔍 LANGUAGE DETECTION: Starting character-based detection (automatic mode)', {
+        textLength: text.length,
+        method: 'detectLanguageByCharacters',
+        source: 'automatic extraction mode'
+      });
       detectedLanguage = detectLanguageByCharacters(text);
-      log('Language detected automatically', { language: detectedLanguage });
+      log('🌍 LANGUAGE DETECTION: Character-based detection result', { 
+        detectedLanguage,
+        method: 'character analysis',
+        source: 'automatic extraction mode'
+      });
+    } else {
+      log('⚠️ LANGUAGE DETECTION: No text found for detection, using default', {
+        defaultLanguage: 'en',
+        source: 'automatic extraction mode'
+      });
     }
   } catch (error) {
     logWarn('Language detection failed, using default', error);
@@ -545,9 +561,14 @@ export async function processWithoutAI(data) {
 
   updateState({ progress: 15 });
 
+  // CRITICAL: Clean author to remove anonymous/invalid values
+  const cleanedAuthor = cleanAuthor(result.author || '');
+  
+  log(`✅ Automatic extraction complete: ${result.content?.length || 0} content items, language: ${detectedLanguage}`);
+  
   return {
     title: result.title || title || 'Untitled',
-    author: result.author || '',
+    author: cleanedAuthor,
     content: result.content,
     publishDate: result.publishDate || '',
     detectedLanguage: detectedLanguage
@@ -556,18 +577,13 @@ export async function processWithoutAI(data) {
 
 /**
  * Process content with extract mode (AI Extract)
- * @param {Object} data - Processing data
- * @param {string} data.html - HTML content
- * @param {string} data.url - Page URL
- * @param {string} data.title - Page title
- * @param {string} data.apiKey - API key
- * @param {string} data.model - Model name
+ * @param {import('../types.js').ProcessingData} data - Processing data
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithExtractMode(data) {
   const { html, url, title, apiKey, model } = data;
 
-  log('=== EXTRACT MODE START ===');
+  log('🤖 AI Extract mode: Starting content extraction with AI');
   log('Input data', { url, title, htmlLength: html?.length, model });
 
   const uiLang = await getUILanguage();
@@ -579,13 +595,33 @@ export async function processWithExtractMode(data) {
 
   await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusAnalyzingPage', 5);
 
+  // FULL HTML BEFORE CHUNKING
+  log('=== FULL HTML BEFORE CHUNKING (AI EXTRACT MODE) ===', {
+    url,
+    title,
+    model,
+    htmlLength: html.length,
+    htmlFull: html, // FULL HTML - NO TRUNCATION
+    htmlPreview: html.substring(0, 2000) + (html.length > 2000 ? '...' : ''),
+    htmlEnd: html.length > 2000 ? html.substring(html.length - 2000) : html,
+    timestamp: Date.now()
+  });
+  
   const chunks = splitHtmlIntoChunks(html, CONFIG.CHUNK_SIZE, CONFIG.CHUNK_OVERLAP);
   
-  log('HTML split into chunks', { 
-    totalLength: html.length, 
-    chunkCount: chunks.length,
-    chunkSizes: chunks.map(c => c.length)
+  const avgChunkSize = chunks.length > 0 ? Math.round(chunks.reduce((sum, c) => sum + c.length, 0) / chunks.length) : 0;
+  const maxChunkSize = chunks.length > 0 ? Math.max(...chunks.map(c => c.length)) : 0;
+  const maxChunkUsage = Math.round((maxChunkSize / CONFIG.CHUNK_SIZE) * 100);
+  
+  log(`📦 HTML split into ${chunks.length} chunks for AI processing`, { 
+    totalLength: html.length,
+    chunkSizeLimit: CONFIG.CHUNK_SIZE,
+    avgChunkSize: avgChunkSize,
+    maxChunkSize: maxChunkSize,
+    maxChunkUsage: `${maxChunkUsage}%`,
+    warning: maxChunkUsage > 90 ? '⚠️ Large chunks' : 'OK'
   });
+  
 
   const uiLangExtracting = await getUILanguage();
   const extractingContentStatus = tSync('statusExtractingContent', uiLangExtracting);
@@ -601,11 +637,16 @@ export async function processWithExtractMode(data) {
     result = await processMultipleChunks(chunks, url, title, apiKey, model);
   }
   
-  log('=== EXTRACT MODE END ===', { title: result.title, items: result.content?.length });
+  log(`✅ AI Extract mode complete: ${result.content?.length || 0} content items extracted`, { title: result.title });
 
   if (!result.content || result.content.length === 0) {
     const uiLang = await getUILanguage();
     throw new Error(tSync('errorExtractModeNoContent', uiLang));
+  }
+
+  // CRITICAL: Clean author to remove anonymous/invalid values
+  if (result.author) {
+    result.author = cleanAuthor(result.author);
   }
 
   return result;
@@ -637,7 +678,7 @@ ${html}`;
   await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 10);
   
   // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-  /** @type {RetryOptions} */
+  /** @type {import('../types.js').RetryOptions} */
   const retryOptions2 = {
     maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
     delays: CONFIG.RETRY_DELAYS,
@@ -648,15 +689,18 @@ ${html}`;
     retryOptions2
   );
   
-  log('Single chunk result', { title: result.title, items: result.content?.length });
+  // When jsonResponse=true, callAI returns parsed JSON object (AIResponse), not string
+  /** @type {any} */ const resultAny = result;
+  
+  log('Single chunk result', { title: resultAny.title, items: resultAny.content?.length });
   
   // Clean title from service data if present
-  if (result.title) {
-    result.title = cleanTitleFromServiceTokens(result.title, result.title);
+  if (resultAny.title) {
+    resultAny.title = cleanTitleFromServiceTokens(resultAny.title, resultAny.title);
   }
   
   updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, progress: 15 });
-  return result;
+  return resultAny;
 }
 
 /**
@@ -669,11 +713,24 @@ ${html}`;
  * @returns {Promise<Object>} {title, content, publishDate}
  */
 async function processMultipleChunks(chunks, url, title, apiKey, model) {
-  log('processMultipleChunks', { chunkCount: chunks.length, url });
+  const chunksStartTime = Date.now();
+  const totalChunks = chunks.length;
+  const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const avgChunkSize = Math.round(totalSize / totalChunks);
+  const maxChunkSize = Math.max(...chunks.map(c => c.length));
+  
+  log(`🔄 Processing ${totalChunks} chunks with AI`, { 
+    url,
+    totalSize: `${(totalSize / 1024).toFixed(1)} KB`,
+    avgChunkSize: `${(avgChunkSize / 1024).toFixed(1)} KB`,
+    maxChunkSize: `${(maxChunkSize / 1024).toFixed(1)} KB`,
+    estimatedTime: `${Math.ceil(totalChunks * 3)}s (rough estimate: ~3s per chunk)`
+  });
   
   const allContent = [];
   let articleTitle = title;
   let publishDate = '';
+  const chunkDurations = [];
 
   for (let i = 0; i < chunks.length; i++) {
     // Check if processing was cancelled
@@ -681,7 +738,7 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
     
     const isFirst = i === 0;
     
-    log(`Processing chunk ${i + 1}/${chunks.length}`, { chunkLength: chunks[i].length, isFirst });
+    log(`📦 Processing chunk ${i + 1}/${chunks.length}`, { chunkLength: chunks[i].length, isFirst });
     
     const progressBase = 5 + Math.floor((i / chunks.length) * 10);
     const chunkStatus = tSync('statusProcessingChunk', await getUILanguageCached())
@@ -689,12 +746,50 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
       .replace('{total}', String(chunks.length));
     updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: chunkStatus, progress: progressBase });
 
+    // FULL CHUNK HTML LOGGING
+    log(`=== FULL CHUNK ${i + 1}/${chunks.length} HTML FOR AI EXTRACTION ===`, {
+      chunkIndex: i,
+      totalChunks: chunks.length,
+      url,
+      title,
+      model,
+      chunkLength: chunks[i].length,
+      chunkFull: chunks[i], // FULL CHUNK HTML - NO TRUNCATION
+      chunkPreview: chunks[i].substring(0, 2000) + (chunks[i].length > 2000 ? '...' : ''),
+      chunkEnd: chunks[i].length > 2000 ? chunks[i].substring(chunks[i].length - 2000) : chunks[i],
+      timestamp: Date.now()
+    });
+    
     const systemPrompt = buildChunkSystemPrompt(i, chunks.length);
     const userPrompt = buildChunkUserPrompt(chunks[i], url, title, i, chunks.length);
+    const chunkStartTime = Date.now();
+    const promptSize = systemPrompt.length + userPrompt.length;
+
+    // FULL PROMPT LOGGING FOR EACH CHUNK
+    log(`=== FULL PROMPT FOR CHUNK ${i + 1}/${chunks.length} AI EXTRACTION ===`, {
+      chunkIndex: i,
+      totalChunks: chunks.length,
+      url,
+      title,
+      model,
+      systemPromptLength: systemPrompt.length,
+      systemPromptFull: systemPrompt, // FULL SYSTEM PROMPT
+      userPromptLength: userPrompt.length,
+      userPromptFull: userPrompt, // FULL USER PROMPT - INCLUDES FULL HTML CHUNK
+      userPromptPreview: userPrompt.substring(0, 2000) + (userPrompt.length > 2000 ? '...' : ''),
+      userPromptEnd: userPrompt.length > 2000 ? userPrompt.substring(userPrompt.length - 2000) : userPrompt,
+      timestamp: Date.now()
+    });
+
+    log(`📦 Processing chunk ${i + 1}/${chunks.length}`, {
+      chunkSize: `${(chunks[i].length / 1024).toFixed(1)} KB`,
+      promptSize: `${(promptSize / 1024).toFixed(1)} KB`,
+      isFirst: isFirst
+    });
 
     try {
       // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-      /** @type {RetryOptions} */
+      /** @type {import('../types.js').RetryOptions} */
       const retryOptions4 = {
         maxRetries: 3,
         delays: [1000, 2000, 4000],
@@ -705,18 +800,33 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
         retryOptions4
       );
       
-      log(`Chunk ${i + 1} result`, { title: result.title, contentItems: result.content?.length });
+      // When jsonResponse=true, callAI returns parsed JSON object (AIResponse), not string
+      /** @type {any} */ const resultAny = result;
+      
+      const chunkDuration = Date.now() - chunkStartTime;
+      chunkDurations.push(chunkDuration);
+      const avgDuration = chunkDurations.reduce((a, b) => a + b, 0) / chunkDurations.length;
+      const remainingChunks = chunks.length - (i + 1);
+      const estimatedRemaining = Math.round(remainingChunks * avgDuration / 1000);
+      
+      log(`✅ Chunk ${i + 1}/${chunks.length} processed`, {
+        duration: `${chunkDuration}ms`,
+        contentItems: resultAny.content?.length || 0,
+        title: resultAny.title,
+        avgDuration: `${Math.round(avgDuration)}ms`,
+        estimatedRemaining: `${estimatedRemaining}s`
+      });
       
       if (isFirst) {
-        if (result.title) {
+        if (resultAny.title) {
           // Clean title from service data using shared utility
-          articleTitle = cleanTitleFromServiceTokens(result.title, result.title);
+          articleTitle = cleanTitleFromServiceTokens(resultAny.title, resultAny.title);
         }
-        if (result.publishDate) publishDate = result.publishDate;
+        if (resultAny.publishDate) publishDate = resultAny.publishDate;
       }
       
-      if (result.content && Array.isArray(result.content)) {
-        allContent.push(...result.content);
+      if (resultAny.content && Array.isArray(resultAny.content)) {
+        allContent.push(...resultAny.content);
       }
     } catch (error) {
       logError(`Failed to process chunk ${i + 1}`, error);
@@ -724,10 +834,81 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
     }
   }
 
-  log('All chunks processed', { totalItems: allContent.length });
+  const totalDuration = Date.now() - chunksStartTime;
+  const avgChunkDuration = chunkDurations.length > 0 
+    ? Math.round(chunkDurations.reduce((a, b) => a + b, 0) / chunkDurations.length)
+    : 0;
+  const minChunkDuration = chunkDurations.length > 0 ? Math.min(...chunkDurations) : 0;
+  const maxChunkDuration = chunkDurations.length > 0 ? Math.max(...chunkDurations) : 0;
+  
+  log(`✅ All ${chunks.length} chunks processed`, {
+    totalDuration: `${totalDuration}ms (${(totalDuration / 1000).toFixed(1)}s)`,
+    contentItems: allContent.length,
+    avgChunkDuration: `${avgChunkDuration}ms`,
+    minChunkDuration: `${minChunkDuration}ms`,
+    maxChunkDuration: `${maxChunkDuration}ms`,
+    throughput: `${(chunks.length / (totalDuration / 1000)).toFixed(2)} chunks/sec`,
+    url
+  });
+  
+  const dedupStartTime = Date.now();
+  // FULL ALL CONTENT BEFORE DEDUPLICATION
+  log('=== FULL ALL CONTENT BEFORE DEDUPLICATION (MULTIPLE CHUNKS) ===', {
+    url,
+    title,
+    model,
+    totalChunks: chunks.length,
+    allContentItemsCount: allContent.length,
+    allContentFull: JSON.stringify(allContent, null, 2), // FULL CONTENT - NO TRUNCATION
+    allContentPreview: allContent.slice(0, 10).map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+    })),
+    allContentEnd: allContent.slice(-10).map((item, idx) => ({
+      index: allContent.length - 10 + idx,
+      type: item.type,
+      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+    })),
+    timestamp: Date.now()
+  });
   
   const deduplicated = deduplicateContent(allContent);
-  log('After deduplication', { items: deduplicated.length });
+  
+  // FULL DEDUPLICATED CONTENT
+  log('=== FULL DEDUPLICATED CONTENT (MULTIPLE CHUNKS) ===', {
+    url,
+    title,
+    model,
+    totalChunks: chunks.length,
+    deduplicatedItemsCount: deduplicated.length,
+    removedItems: allContent.length - deduplicated.length,
+    deduplicatedContentFull: JSON.stringify(deduplicated, null, 2), // FULL CONTENT - NO TRUNCATION
+    deduplicatedContentPreview: deduplicated.slice(0, 10).map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+    })),
+    deduplicatedContentEnd: deduplicated.slice(-10).map((item, idx) => ({
+      index: deduplicated.length - 10 + idx,
+      type: item.type,
+      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+    })),
+    timestamp: Date.now()
+  });
+  const dedupDuration = Date.now() - dedupStartTime;
+  const duplicatesRemoved = allContent.length - deduplicated.length;
+  
+  log(`✅ Deduplication complete`, {
+    uniqueItems: deduplicated.length,
+    duplicatesRemoved: duplicatesRemoved,
+    dedupDuration: `${dedupDuration}ms`,
+    duplicateRate: `${Math.round((duplicatesRemoved / allContent.length) * 100)}%`
+  });
 
   return {
     title: articleTitle,
@@ -739,10 +920,10 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
 /**
  * Extract content using selectors (executes script in page context)
  * @param {number} tabId - Tab ID
- * @param {Object} selectors - Selectors object from AI
+ * @param {{title?: string, content?: string, author?: string, date?: string, [key: string]: string|undefined}} selectors - Selectors object from AI
  * @param {string} baseUrl - Base URL for resolving relative links
- * @param {Function} extractFromPageInlined - Inline extraction function (must be passed from background.js)
- * @returns {Promise<InjectionResult>} Extracted content result
+ * @param {(selectors: Record<string, string|undefined>, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
+ * @returns {Promise<import('../types.js').InjectionResult>} Extracted content result
  */
 export async function extractContentWithSelectors(tabId, selectors, baseUrl, extractFromPageInlined) {
   log('extractContentWithSelectors', { tabId, selectors, baseUrl });
@@ -830,8 +1011,52 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     throw new Error(tSync('errorScriptEmptyResults', uiLang));
   }
   
-  /** @type {InjectionResult} */
+  /** @type {import('../types.js').InjectionResult} */
   const injectionResult = results[0].result;
+  
+  // Log extraction debug info if available
+  // Note: background.js returns debugInfo as 'debug' property
+  const debugInfo = injectionResult?.debug || injectionResult?.debugInfo;
+  if (debugInfo) {
+    // Log detailed logs if available
+    if (debugInfo.detailedLogs && debugInfo.detailedLogs.length > 0) {
+      log('=== DETAILED EXTRACTION LOGS ===', {
+        totalLogs: debugInfo.detailedLogs.length,
+        logsByType: debugInfo.detailedLogs.reduce((acc, log) => {
+          acc[log.type] = (acc[log.type] || 0) + 1;
+          return acc;
+        }, {}),
+        allLogs: debugInfo.detailedLogs
+      });
+    }
+    
+    if (debugInfo.extractionDebug) {
+      log('=== EXTRACTION DEBUG INFO ===', {
+        containerSelector: debugInfo.extractionDebug.containerSelector,
+        contentSelector: debugInfo.extractionDebug.contentSelector,
+        containersFound: debugInfo.extractionDebug.containersFound,
+        containerFound: debugInfo.extractionDebug.containerFound,
+        contentElementsFound: debugInfo.extractionDebug.contentElementsFound,
+        strategiesUsed: debugInfo.extractionDebug.strategiesUsed,
+        elementsProcessed: debugInfo.elementsProcessed,
+        elementsExcluded: debugInfo.elementsExcluded,
+        headingCount: debugInfo.headingCount
+      });
+    } else {
+      logWarn('extractionDebug not available in debugInfo', {
+        hasDebugInfo: !!debugInfo,
+        debugInfoKeys: debugInfo ? Object.keys(debugInfo) : [],
+        hasExtractionDebug: !!(debugInfo && debugInfo.extractionDebug)
+      });
+    }
+  } else {
+    logWarn('debugInfo not available in injectionResult', {
+      hasInjectionResult: !!injectionResult,
+      injectionResultKeys: injectionResult ? Object.keys(injectionResult) : [],
+      hasDebug: !!(injectionResult && injectionResult.debug),
+      hasDebugInfo: !!(injectionResult && injectionResult.debugInfo)
+    });
+  }
   
   if (injectionResult && 'error' in injectionResult && injectionResult.error) {
     const error = injectionResult.error;
@@ -999,21 +1224,14 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
 
 /**
  * Process content with selector mode (AI Selector)
- * @param {Object} data - Processing data
- * @param {string} data.html - HTML content
- * @param {string} data.url - Page URL
- * @param {string} data.title - Page title
- * @param {string} data.apiKey - API key
- * @param {string} data.model - Model name
- * @param {number} data.tabId - Tab ID
- * @param {boolean} [data.useCache] - Whether to use selector cache
- * @param {Function} extractFromPageInlined - Inline extraction function (must be passed from background.js)
+ * @param {import('../types.js').ProcessingData} data - Processing data
+ * @param {(selectors: Object, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithSelectorMode(data, extractFromPageInlined) {
   const { html, url, title, apiKey, model, tabId } = data;
   
-  log('=== SELECTOR MODE START ===');
+  log('🎯 AI Selector mode: Starting content extraction');
   log('Input data', { url, title, htmlLength: html?.length, tabId });
   
   const uiLang = await getUILanguage();
@@ -1029,13 +1247,13 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   const useCache = data.useCache !== false; // true if undefined/null/true, false only if explicitly false
   
   if (useCache) {
-    /** @type {import('../cache/selectors.js').ExtendedCacheEntry|null} */
+    /** @type {import('../types.js').ExtendedCacheEntry|null} */
     const cached = await getCachedSelectors(url);
     if (cached) {
       selectors = cached.selectors;
       fromCache = true;
       await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
-      log('Using cached selectors', { url, successCount: cached.successCount || 0 });
+      log(`💾 Using cached selectors (${cached.successCount || 0} previous successes)`, { url });
     }
   }
   
@@ -1046,15 +1264,28 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 3);
     
     // Trim HTML for analysis
-    log('Trimming HTML for analysis...');
-    const htmlForAnalysis = trimHtmlForAnalysis(html, CONFIG.MAX_HTML_FOR_ANALYSIS);
-    log('Trimmed HTML', { originalLength: html.length, trimmedLength: htmlForAnalysis.length });
+    // DeepSeek and Qwen have smaller context windows, use 200k instead of 450k
+    const provider = getProviderFromModel(model);
+    const isQwen = provider === 'openrouter' && model && model.toLowerCase().includes('qwen');
+    const maxHtmlLength = (provider === 'deepseek' || isQwen) ? 200000 : CONFIG.MAX_HTML_FOR_ANALYSIS;
+    
+    log('Trimming HTML for analysis...', { provider, maxHtmlLength });
+    const htmlForAnalysis = trimHtmlForAnalysis(html, maxHtmlLength);
+    const htmlUsagePercent = Math.round((html.length / maxHtmlLength) * 100);
+    log('Trimmed HTML', { 
+      originalLength: html.length, 
+      trimmedLength: htmlForAnalysis.length,
+      limit: maxHtmlLength,
+      provider,
+      usage: `${htmlUsagePercent}%`,
+      warning: htmlUsagePercent > 80 ? '⚠️ Close to limit' : 'OK'
+    });
     
     // Get selectors from AI
-    log('Requesting selectors from AI...');
+    log('🤖 Requesting selectors from AI...');
     try {
       selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model);
-      log('Received selectors from AI', selectors);
+      log('✅ Selectors received from AI', selectors);
     } catch (error) {
       logError('Failed to get selectors from AI', error);
       const uiLang = await getUILanguage();
@@ -1073,18 +1304,25 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
   
   // Extract content using selectors
-  log('Extracting content using selectors...', { tabId, selectors });
+  log('🔍 Extracting content using selectors...', { tabId });
+  
+  
   let extractedContent;
   try {
     extractedContent = await extractContentWithSelectors(tabId, selectors, url, extractFromPageInlined);
-    log('Content extracted', { 
-      title: extractedContent?.title,
-      contentItems: extractedContent?.content?.length || 0
+    
+    log(`✅ Content extracted: ${extractedContent?.content?.length || 0} items`, { 
+      title: extractedContent?.title
     });
   } catch (error) {
     // Invalidate cache if extraction failed with cached selectors
     if (fromCache) {
-      log('Extraction failed with cached selectors, invalidating cache');
+      logWarn('⚠️ FALLBACK: Extraction failed with cached selectors - invalidating cache and will retry', {
+        reason: 'Cached selectors failed to extract content',
+        method: 'cache invalidation + retry',
+        impact: 'Will request new selectors from AI on next attempt',
+        url
+      });
       await invalidateCache(url);
     }
     logError('Failed to extract content with selectors', error);
@@ -1124,21 +1362,45 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   const publishDate = selectors.publishDate || extractedContent.publishDate || '';
   const finalTitle = extractedContent.title || title;
-  const finalAuthor = extractedContent.author || selectors.author || '';
+  const rawAuthor = extractedContent.author || selectors.author || '';
+  
+  // CRITICAL: Clean author to remove anonymous/invalid values
+  const finalAuthor = cleanAuthor(rawAuthor);
   
   // NOTE: Title and author separation is now handled by AI in prompts
   // AI is instructed to return clean title (without author) in "title" field
   // and author name (without prefixes) in "author" field
   // If AI returns title with author included, it's a prompt issue - improve prompts, don't add code-side fixes
-  // This approach is site-agnostic and works for all languages (not just "от/by" patterns)
+  // This approach is site-agnostic and works for all languages (not just "from/by" patterns)
   
-  log('=== SELECTOR MODE END ===', { title: finalTitle, author: finalAuthor, items: extractedContent.content.length });
+  // Extract detected language from selectors (if AI provided it)
+  const detectedLanguage = selectors.detectedLanguage || null;
+  
+  if (detectedLanguage) {
+    log('🌍 LANGUAGE DETECTION: AI selector returned language', { 
+      detectedLanguage,
+      source: 'AI selector mode',
+      method: 'AI analysis during selector extraction'
+    });
+  } else {
+    log('⚠️ LANGUAGE DETECTION: No language detected by AI selector (will be detected later)', {
+      source: 'AI selector mode',
+      nextStep: 'Language will be detected in detectEffectiveLanguage step'
+    });
+  }
+  
+  log(`✅ AI Selector mode complete: ${extractedContent.content.length} content items extracted`, { 
+    title: finalTitle, 
+    author: finalAuthor,
+    detectedLanguage: detectedLanguage || 'not detected'
+  });
   
   return {
     title: finalTitle,
     author: finalAuthor,
     content: extractedContent.content,
-    publishDate: publishDate
+    publishDate: publishDate,
+    detectedLanguage: detectedLanguage || undefined
   };
 }
 

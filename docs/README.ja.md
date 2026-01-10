@@ -2,7 +2,7 @@
 
 > **AI駆動の記事抽出ツール** — ウェブ上の任意の記事をPDF、EPUB、FB2、Markdown、または音声として保存。11言語への翻訳に対応。あらゆるウェブサイトで動作。
 
-![バージョン](https://img.shields.io/badge/バージョン-3.2.4-blue)
+![バージョン](https://img.shields.io/badge/バージョン-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-拡張機能-green)
 ![ライセンス](https://img.shields.io/badge/ライセンス-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 ### 🤖 AI駆動の抽出
 - **3つのモード**：自動（AIなし、高速）、AI Selector（高速、再利用可能）とAI Extract（徹底的）
 - **自動モード**：AIなしでドキュメントを作成 — APIキー不要、即座に抽出
-- **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
+- **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、DeepSeek、OpenRouter
+- **PDFコンテンツ抽出**（v3.3.0）：PDF.jsライブラリを使用してPDFファイルからコンテンツを抽出
+  - 複雑なマルチレベル分類システムを備えた実験的機能
+  - PDFファイルからテキスト、画像、構造、メタデータを抽出
+  - WebおよびローカルPDFファイルをサポート
+  - マルチカラムレイアウト、表、見出し、リスト、ページ間マージを処理
+  - 注意：この機能は実験的であり、複雑なPDF（スキャンされたPDF、パスワード保護されたPDF）には制限がある場合があります
 - **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v3.0.0）
   - 複数の抽出方法とフォールバック
   - 優先順位：手動字幕 > 自動生成 > 翻訳
@@ -69,6 +75,12 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 
 
 ### ⚡ インテリジェント機能
+- **PDFコンテンツ抽出**（v3.3.0）：PDFファイルからコンテンツを抽出して記事に変換
+  - PDF.jsライブラリを使用してoffscreenドキュメントで解析
+  - 正確な抽出のためのマルチレベル分類システム
+  - WebおよびローカルPDFファイルをサポート
+  - 完全なパイプライン統合：翻訳、目次、要約、すべてのエクスポート形式
+  - 注意：実験的機能、複雑なPDFには制限がある場合があります
 - **動画サポート**：YouTube/Vimeo動画から字幕を抽出して記事に変換（v3.0.0）
   - 直接字幕抽出（YouTube/VimeoのAPIキー不要）
   - AI処理：タイムスタンプを削除、段落をマージ、エラーを修正
@@ -95,7 +107,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - **設定のインポート/エクスポート**：すべての設定のバックアップと復元（セキュリティのためAPIキーは除外）
 
 ### 🔒 セキュリティ
-- **APIキー暗号化** AES-256-GCM（OpenAI、Claude、Gemini、ElevenLabs、Qwen、Respeecher）
+- **APIキー暗号化** AES-256-GCM（OpenAI、Claude、Gemini、Grok、DeepSeek、OpenRouter、ElevenLabs、Qwen、Respeecher）
 - **キーはエクスポートされない** — 設定バックアップから除外
 - **すべてのデータはローカルに保存** — 第三者に送信されない
 
@@ -114,10 +126,15 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
   - テキストは文/単語の境界で自動的にインテリジェントに分割されます
 
 ### 技術的制約
-- **Keep-alive要件**：Chrome MV3では、keep-alive間隔が少なくとも1分である必要があります。長時間の処理タスクには数分かかる場合があります。拡張機能は統一されたkeep-aliveメカニズム（1分ごとにアラーム + 2秒ごとに状態保存）を使用して、service workerの停止を防ぎます。
+- **Keep-alive要件**：Chrome MV3では、keep-alive間隔が少なくとも1分である必要があります。長時間の処理タスクには数分かかる場合があります。拡張機能は統一されたkeep-aliveメカニズム（1分ごとにアラーム）を使用して、service workerの停止を防ぎます。
 - **画像のCORS**：ウェブサイトがクロスオリジンリクエストをブロックしている場合、一部の画像が読み込まれない可能性があります。拡張機能はこれらの画像をスキップします。
 - **キャンセルは即座ではない**：キャンセルには、すべてのバックグラウンドプロセスを完全に停止するのに数秒かかる場合があります。
-- **Service Workerの回復**：操作はservice workerの再起動後、自動的に再開されます（2時間以内）。
+- **Service Workerの回復**：状態が最近の場合（< 1分）、操作はservice workerの再起動後、自動的に再開されます。拡張機能の再読み込みは常に状態をリセットします。
+- **PDF抽出の制限**（v3.3.0）： 
+  - スキャンされたPDF（テキストレイヤーなし）はサポートされていません — OCRはまだ利用できません
+  - パスワード保護されたPDFは抽出前にロック解除する必要があります
+  - 非常に大きなPDF（>100MB）はメモリ制限により機能しない場合があります
+  - 複雑なレイアウト（マルチカラム、表）は抽出されますが、手動検証が必要な場合があります
 
 ### ブラウザの互換性
 - **Chrome/Edge/Brave/Arc**：完全にサポート
@@ -178,6 +195,16 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 5. キーをコピー（`sk-ant-...`で始まる）
 6. **Plans & Billing**でクレジットを追加
 
+### DeepSeek
+
+1. [platform.deepseek.com](https://platform.deepseek.com/)にアクセス
+2. 登録またはログイン
+3. **API Keys**に移動、または [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys) にアクセス
+4. **"Create API key"**をクリック
+5. キーをコピー（`sk-...`で始まる）
+
+> **注意：** DeepSeekはDeepSeek-V3.2モデルを提供：`deepseek-chat`（非思考モード）と`deepseek-reasoner`（思考モード）。APIはOpenAI形式と互換性があります。
+
 ### ElevenLabs（音声）
 
 1. [ElevenLabs](https://elevenlabs.io/)にアクセス
@@ -228,6 +255,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 | **Gemini** | 高速抽出、画像翻訳、音声エクスポート（30音声） | ✅ (30音声) | ✅ |
 | **Claude** | 長い記事、複雑なページ | ❌ | ❌ |
 | **Grok** | 高速推論タスク | ❌ | ❌ |
+| **DeepSeek** | 高度な推論、コスト効率 | ❌ | ❌ |
 | **OpenRouter** | 複数のモデルへのアクセス | ❌ | ❌ |
 | **ElevenLabs** | 音声エクスポート（9音声、高品質） | ✅ (9音声) | ❌ |
 | **Qwen** | 音声エクスポート（49音声、ロシア語サポート） | ✅ (49音声) | ❌ |
@@ -282,6 +310,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 | Anthropic | Claude Sonnet 4.5 | 長い記事に最適 |
 | Google | Gemini 3 Pro | 高速抽出、画像翻訳 |
 | Grok | Grok 4.1 Fast Reasoning | 高速推論 |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | 高度な推論、コスト効率 |
 | OpenRouter | 各種モデル | 複数のプロバイダーへのアクセス |
 
 **カスタムモデル：** モデルセレクターの横の**"+"**ボタンをクリックしてカスタムモデルを追加します（例：`gpt-4o`、`claude-opus-4.5`）。カスタムモデルはドロップダウンメニューに表示され、必要に応じて非表示/表示できます。
@@ -381,6 +410,8 @@ ClipAIbleはドメインごとにAI生成セレクターをキャッシュ：
 | 音声が遅い | 長い記事はチャンクに分割；プログレスバーを監視 |
 | 要約が生成されない | APIキーを確認し、ページコンテンツが読み込まれていることを確認し、再試行 |
 | 要約生成タイムアウト | 非常に長い記事は最大45分かかる場合があります；待つか、より短いコンテンツで試す |
+| PDF抽出が機能しない | PDFがパスワード保護されているか（まずロック解除）、スキャンされているか（OCRはまだサポートされていません）を確認してください。まず、より単純なPDFで試してください。 |
+| PDFコンテンツが不完全 | 複雑なレイアウト（マルチカラム、表）は手動検証が必要な場合があります。機能は実験的です。 |
 
 ---
 
@@ -416,6 +447,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS

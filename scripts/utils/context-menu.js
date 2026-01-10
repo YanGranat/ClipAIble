@@ -45,6 +45,7 @@ function createMenuItem(options) {
     if (error.message && error.message.includes('duplicate id')) {
       logWarn(`Context menu item ${options.id} already exists, skipping`);
     } else {
+      logError(`Failed to create context menu item ${options.id}`, error);
       throw error;
     }
   }
@@ -81,9 +82,20 @@ export function createContextMenuItems(lang, useFallback = false) {
  * @returns {Promise<void>}
  */
 export async function removeAllContextMenuItems() {
-  await chrome.contextMenus.removeAll();
-  // Small delay to ensure removeAll() completes
-  await new Promise(resolve => setTimeout(resolve, CONFIG.UI_CONTEXT_MENU_DELAY));
+  try {
+    await chrome.contextMenus.removeAll();
+    // Small delay to ensure removeAll() completes
+    await new Promise(resolve => setTimeout(resolve, CONFIG.UI_CONTEXT_MENU_DELAY));
+  } catch (error) {
+    // Log but don't throw - removeAll() can fail if menu doesn't exist yet
+    // This is expected on first install
+    if (error.message && !error.message.includes('No matching item')) {
+      logError('Failed to remove context menu items', error);
+    } else {
+      logDebug('Context menu items already removed or never existed', { error: error.message });
+    }
+    // Continue anyway - we'll try to create items
+  }
 }
 
 /**

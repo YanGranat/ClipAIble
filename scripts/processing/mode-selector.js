@@ -5,12 +5,9 @@
 
 /**
  * Select processing function based on mode
- * @param {string} mode - Processing mode ('automatic', 'selector', 'extract')
- * @param {Object} functions - Object with processing functions
- * @param {Function} functions.processWithoutAI - Automatic mode function
- * @param {Function} functions.processWithSelectorMode - Selector mode function
- * @param {Function} functions.processWithExtractMode - Extract mode function
- * @returns {Function} Selected processing function
+ * @param {import('../types.js').ExtractionMode} mode - Processing mode ('automatic', 'selector', 'extract')
+ * @param {{processWithoutAI: function(import('../types.js').ProcessingData): Promise<import('../types.js').ExtractionResult>, processWithSelectorMode: function(import('../types.js').ProcessingData): Promise<import('../types.js').ExtractionResult>, processWithExtractMode: function(import('../types.js').ProcessingData): Promise<import('../types.js').ExtractionResult>}} functions - Object with processing functions
+ * @returns {function(import('../types.js').ProcessingData): Promise<import('../types.js').ExtractionResult>} Selected processing function
  */
 export function selectProcessingFunction(mode, functions) {
   const { processWithoutAI, processWithSelectorMode, processWithExtractMode } = functions;

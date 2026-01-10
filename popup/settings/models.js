@@ -37,31 +37,34 @@ export function initModels(deps) {
       openai: [
         { value: 'gpt-5.2', isCustom: false },
         { value: 'gpt-5.2-high', isCustom: false },
-        { value: 'gpt-5.1', isCustom: false },
-        { value: 'gpt-5.1-high', isCustom: false }
+        { value: 'gpt-5.1', isCustom: false }
       ],
       claude: [
-        { value: 'claude-sonnet-4-5', isCustom: false }
+        { value: 'claude-opus-4-5', isCustom: false },
+        { value: 'claude-sonnet-4-5', isCustom: false },
+        { value: 'claude-haiku-4-5', isCustom: false }
       ],
       gemini: [
         { value: 'gemini-3-flash-preview', isCustom: false },
         { value: 'gemini-3-pro-preview', isCustom: false }
       ],
       grok: [
+        { value: 'grok-4', isCustom: false },
         { value: 'grok-4-1-fast-reasoning', isCustom: false }
       ],
+      deepseek: [
+        { value: 'deepseek-chat', isCustom: false },
+        { value: 'deepseek-reasoner', isCustom: false }
+      ],
       openrouter: [
+        { value: 'openai/gpt-5.2', isCustom: false },
         { value: 'openai/gpt-5.1', isCustom: false },
-        { value: 'openai/gpt-5.1-high', isCustom: false },
+        { value: 'google/gemini-3-flash-preview', isCustom: false },
         { value: 'google/gemini-3-pro-preview', isCustom: false },
-        { value: 'anthropic/claude-opus-4.5', isCustom: false },
+        { value: 'anthropic/claude-sonnet-4.5', isCustom: false },
         { value: 'deepseek/deepseek-v3.2', isCustom: false },
-        { value: 'mistralai/mistral-nemo', isCustom: false },
         { value: 'qwen/qwen3-235b-a22b-2507', isCustom: false },
-        { value: 'mistralai/devstral-2512:free', isCustom: false },
-        { value: 'nex-agi/deepseek-v3.1-nex-n1:free', isCustom: false },
-        { value: 'openai/gpt-oss-120b:free', isCustom: false },
-        { value: 'z-ai/glm-4.5-air:free', isCustom: false }
+        { value: 'mistralai/devstral-2512:free', isCustom: false }
       ]
     };
     
@@ -129,10 +132,13 @@ export function initModels(deps) {
     if (modelToSelect) {
       elements.modelSelect.value = modelToSelect;
       // Save to both general model key (for backward compatibility) and provider-specific
+      const modelsByProvider = savedModelsByProvider && typeof savedModelsByProvider === 'object' 
+        ? savedModelsByProvider 
+        : {};
       await chrome.storage.local.set({ 
         [STORAGE_KEYS.MODEL]: modelToSelect,
         [STORAGE_KEYS.MODEL_BY_PROVIDER]: {
-          ...savedModelsByProvider,
+          ...modelsByProvider,
           [provider]: modelToSelect
         }
       });
@@ -154,6 +160,9 @@ export function initModels(deps) {
     }
     
     // Show dropdown immediately to prevent race condition with click handler
+    // CRITICAL: Remove 'hidden' class first (it has display: none !important)
+    // Then set display to block
+    elements.customModelDropdown.classList.remove('hidden');
     elements.customModelDropdown.style.display = 'block';
     
     const provider = elements.apiProviderSelect.value;
@@ -163,15 +172,17 @@ export function initModels(deps) {
     
     // Get all models (default + custom)
     const modelsByProvider = {
-      openai: ['gpt-5.2', 'gpt-5.2-high', 'gpt-5.1', 'gpt-5.1-high'],
-      claude: ['claude-sonnet-4-5'],
+      openai: ['gpt-5.2', 'gpt-5.2-high', 'gpt-5.1'],
+      claude: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
       gemini: ['gemini-3-flash-preview', 'gemini-3-pro-preview'],
-      grok: ['grok-4-1-fast-reasoning'],
+      grok: ['grok-4', 'grok-4-1-fast-reasoning'],
+      deepseek: ['deepseek-chat', 'deepseek-reasoner'],
       openrouter: [
-        'openai/gpt-5.1', 'openai/gpt-5.1-high', 'google/gemini-3-pro-preview',
-        'anthropic/claude-opus-4.5', 'deepseek/deepseek-v3.2', 'mistralai/mistral-nemo',
-        'qwen/qwen3-235b-a22b-2507', 'mistralai/devstral-2512:free',
-        'nex-agi/deepseek-v3.1-nex-n1:free', 'openai/gpt-oss-120b:free', 'z-ai/glm-4.5-air:free'
+        'openai/gpt-5.2', 'openai/gpt-5.1',
+        'google/gemini-3-flash-preview', 'google/gemini-3-pro-preview',
+        'anthropic/claude-sonnet-4.5',
+        'deepseek/deepseek-v3.2',
+        'qwen/qwen3-235b-a22b-2507', 'mistralai/devstral-2512:free'
       ]
     };
     
@@ -226,7 +237,8 @@ export function initModels(deps) {
       // Add click handler to entire option div for full-width clickable area
       optionDiv.addEventListener('click', (e) => {
         // Don't trigger selection if clicking on delete button
-        if (e.target.classList.contains('custom-model-delete') || e.target.closest('.custom-model-delete')) {
+        const target = e.target instanceof Element ? e.target : null;
+        if (target && (target.classList.contains('custom-model-delete') || target.closest('.custom-model-delete'))) {
           return;
         }
         
@@ -234,6 +246,8 @@ export function initModels(deps) {
         e.stopImmediatePropagation();
         // Update select value and close dropdown
         elements.modelSelect.value = modelValue;
+        // CRITICAL: Add 'hidden' class (it has display: none !important)
+        elements.customModelDropdown.classList.add('hidden');
         elements.customModelDropdown.style.display = 'none';
         // Trigger change event to save settings
         elements.modelSelect.dispatchEvent(new Event('change'));
@@ -249,7 +263,7 @@ export function initModels(deps) {
     const uiLang = await getUILanguage();
     const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
     
-    const modelName = prompt(locale.addModelPrompt || 'Enter model name (e.g., gpt-5.2, claude-sonnet-4-5):');
+    const modelName = prompt(locale.addModelPrompt || 'Enter model name:');
     
     if (!modelName || !modelName.trim()) {
       return;
@@ -333,7 +347,9 @@ export function initModels(deps) {
       await updateModelList();
       
       // Update custom dropdown if visible
-      if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      if (elements.customModelDropdown && 
+          !elements.customModelDropdown.classList.contains('hidden') &&
+          elements.customModelDropdown.style.display !== 'none') {
         await showCustomModelDropdown();
       }
     }
@@ -363,7 +379,9 @@ export function initModels(deps) {
       await updateModelList();
       
       // Update custom dropdown if visible
-      if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      if (elements.customModelDropdown && 
+          !elements.customModelDropdown.classList.contains('hidden') &&
+          elements.customModelDropdown.style.display !== 'none') {
         await showCustomModelDropdown();
       }
     }

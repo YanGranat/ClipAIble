@@ -10,6 +10,10 @@ import { resetWorkerInactivityTimer } from './lifecycle.js';
  * Initialize TTS Web Worker for non-blocking TTS operations
  * Web Workers execute WASM operations in separate thread, preventing main thread blocking
  * @returns {Promise<Worker>} Initialized TTS Worker
+ * @throws {Error} If Worker creation fails
+ * @throws {Error} If Worker initialization timeout (30s)
+ * @throws {Error} If Worker bundle URL is invalid
+ * @throws {Error} If chrome.runtime is not available
  */
 export async function initTTSWorker() {
   // If Worker already exists, return it immediately
@@ -237,6 +241,27 @@ export async function ensureTTSWorker() {
   
   return state.getTTSWorker();
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

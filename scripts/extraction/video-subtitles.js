@@ -17,7 +17,7 @@ export async function extractYouTubeSubtitles(tabId) {
   return new Promise((resolve, reject) => {
     let timeoutId = null;
     let resolved = false;
-    let storageCheckInterval = null; // КРИТИЧНО: Объявить раньше, чтобы использовать в ранних проверках DOM
+    let storageCheckInterval = null; // CRITICAL: Declare earlier to use in early DOM checks
     
     // Cleanup function to prevent memory leaks - ensures all timers and listeners are cleared
     const cleanup = () => {
@@ -39,15 +39,15 @@ export async function extractYouTubeSubtitles(tabId) {
     // Set up one-time message listener
     const messageListener = (message, sender, sendResponse) => {
       // Check both action and type to catch messages in different formats
-      // КРИТИЧНО: Проверяем все возможные форматы сообщений
+      // CRITICAL: Check all possible message formats
       const isYouTubeSubtitlesResult = 
         message.action === 'youtubeSubtitlesResult' || 
         (message.type === 'ClipAIbleYouTubeSubtitles' && message.action === 'youtubeSubtitlesResult') ||
         (message.type === 'ClipAIbleYouTubeSubtitles' && !message.action) || // Fallback for messages without action
-        (message.type === 'ClipAIbleYouTubeSubtitles' && message.result) || // Если есть result, это наше сообщение
-        (message.type === 'ClipAIbleYouTubeSubtitles' && message.error); // Если есть error, это тоже наше сообщение
+        (message.type === 'ClipAIbleYouTubeSubtitles' && message.result) || // If result exists, this is our message
+        (message.type === 'ClipAIbleYouTubeSubtitles' && message.error); // If error exists, this is also our message
       
-      // КРИТИЧНО: Игнорировать другие сообщения (getState, etc.)
+      // CRITICAL: Ignore other messages (getState, etc.)
       if (!isYouTubeSubtitlesResult) {
         // Not our message, don't handle
         return false;
@@ -103,14 +103,14 @@ export async function extractYouTubeSubtitles(tabId) {
       return false;
     };
     
-    // КРИТИЧНО: Регистрировать listener ДО выполнения скрипта!
-    // Это гарантирует, что listener будет готов к получению сообщения
-    // Listener регистрируется синхронно, так что он будет готов сразу
+    // CRITICAL: Register listener BEFORE executing script!
+    // This ensures listener is ready to receive messages
+    // Listener is registered synchronously, so it will be ready immediately
     chrome.runtime.onMessage.addListener(messageListener);
     
-    // КРИТИЧНО: Сначала проверить, загружен ли content script
-    // Если нет, попробовать принудительно инжектить content script
-    // Используем async IIFE, так как мы внутри Promise executor
+    // CRITICAL: First check if content script is loaded
+    // If not, try to forcefully inject content script
+    // Use async IIFE since we're inside Promise executor
     (async () => {
       let contentScriptAvailable = false;
       try {
@@ -122,14 +122,14 @@ export async function extractYouTubeSubtitles(tabId) {
       } catch (pingError) {
         logWarn('Content script not available, attempting to inject it programmatically', pingError);
         
-        // Попробовать принудительно инжектить content script
-        // В Manifest V3 нельзя инжектить в ISOLATED world через executeScript,
-        // но можно попробовать использовать files из manifest
+        // Try to forcefully inject content script
+        // In Manifest V3, cannot inject into ISOLATED world via executeScript,
+        // but can try to use files from manifest
         try {
-          // Попробовать инжектить content script через scripting.executeScript с files
-          // Но это не сработает для ISOLATED world - только для MAIN world
-          // Поэтому просто продолжим - injected script попробует использовать CustomEvent
-          // и если content script загрузится позже, он подхватит событие
+          // Try to inject content script via scripting.executeScript with files
+          // But this won't work for ISOLATED world - only for MAIN world
+          // So just continue - injected script will try to use CustomEvent
+          // and if content script loads later, it will catch the event
           log('Content script will be loaded by manifest.json, continuing with injected script');
         } catch (injectError) {
           logWarn('Failed to inject content script programmatically', injectError);
@@ -144,9 +144,9 @@ export async function extractYouTubeSubtitles(tabId) {
         funcName: extractYouTubeSubtitlesInlined?.name || 'unknown'
       });
       
-      // КРИТИЧНО: Проверить, что функция может быть сериализована
+      // CRITICAL: Check that function can be serialized
       try {
-        // Попытка сериализации функции для проверки
+        // Attempt function serialization for verification
         const funcString = extractYouTubeSubtitlesInlined.toString();
         log('Function can be serialized', { 
           funcLength: funcString.length,
@@ -165,7 +165,7 @@ export async function extractYouTubeSubtitles(tabId) {
       
       if (!results || !results[0]) {
         if (!resolved) {
-          // КРИТИЧНО: Проверить DOM перед reject (может быть уже сохранено)
+          // CRITICAL: Check DOM before reject (may already be saved)
           (async () => {
             try {
               const domResult = await chrome.scripting.executeScript({
@@ -218,7 +218,7 @@ export async function extractYouTubeSubtitles(tabId) {
               // Ignore DOM check errors
             }
             
-            // Если DOM пустой - reject
+            // If DOM is empty - reject
             if (!resolved) {
               resolved = true;
               cleanup();
@@ -234,9 +234,9 @@ export async function extractYouTubeSubtitles(tabId) {
         return;
       }
       
-      if (results[0].error) {
+      if ('error' in results[0] && results[0].error) {
         if (!resolved) {
-          // КРИТИЧНО: Проверить DOM перед reject (может быть уже сохранено)
+          // CRITICAL: Check DOM before reject (may already be saved)
           (async () => {
             try {
               const domResult = await chrome.scripting.executeScript({
@@ -289,18 +289,20 @@ export async function extractYouTubeSubtitles(tabId) {
               // Ignore DOM check errors
             }
             
-            // Если DOM пустой - reject
+            // If DOM is empty - reject
             if (!resolved) {
               resolved = true;
               cleanup();
+              /** @type {any} */
+              const errorObj = ('error' in results[0] ? results[0].error : null);
               logError('Subtitle extraction script error', {
-                error: results[0].error,
-                errorMessage: results[0].error?.message || String(results[0].error),
-                errorName: results[0].error?.name,
-                errorStack: results[0].error?.stack,
+                error: errorObj,
+                errorMessage: errorObj?.message || String(errorObj),
+                errorName: errorObj?.name,
+                errorStack: errorObj?.stack,
                 frameId: results[0].frameId
               });
-              reject(new Error(`Subtitle extraction failed: ${results[0].error?.message || results[0].error}`));
+              reject(new Error(`Subtitle extraction failed: ${errorObj?.message || errorObj}`));
             }
           })();
         }
@@ -310,9 +312,9 @@ export async function extractYouTubeSubtitles(tabId) {
       // Script executed successfully, wait for message with results
       // (fetch happens asynchronously in page context)
       
-      // КРИТИЧНО: Если есть ошибка выполнения, но она не была обработана выше
-      if (results[0]?.error && !resolved) {
-        // КРИТИЧНО: Проверить DOM перед reject
+      // CRITICAL: If there's an execution error but it wasn't handled above
+      if (results[0] && 'error' in results[0] && results[0].error && !resolved) {
+        // CRITICAL: Check DOM before reject
         (async () => {
           try {
             const domResult = await chrome.scripting.executeScript({
@@ -351,23 +353,25 @@ export async function extractYouTubeSubtitles(tabId) {
             // Ignore DOM check errors
           }
           
-          // Если DOM пустой - reject
+          // If DOM is empty - reject
           if (!resolved) {
             resolved = true;
             cleanup();
+            /** @type {any} */
+            const errorObj = (results[0] && 'error' in results[0] ? results[0].error : null);
             logError('Subtitle extraction script execution error (from results)', {
-              error: results[0].error,
-              errorMessage: results[0].error?.message || String(results[0].error),
-              errorStack: results[0].error?.stack
+              error: errorObj,
+              errorMessage: errorObj?.message || String(errorObj),
+              errorStack: errorObj?.stack
             });
-            reject(new Error(`Subtitle extraction failed: ${results[0].error?.message || results[0].error}`));
+            reject(new Error(`Subtitle extraction failed: ${errorObj?.message || errorObj}`));
           }
         })();
         return;
       }
       
-      // КРИТИЧНО: Немедленная проверка DOM fallback (если Extension context invalidated, данные уже могут быть в DOM)
-      // Это ускоряет получение данных при Extension context invalidated
+      // CRITICAL: Immediate DOM fallback check (if Extension context invalidated, data may already be in DOM)
+      // This speeds up data retrieval when Extension context is invalidated
       (async () => {
         try {
           const domResult = await chrome.scripting.executeScript({
@@ -378,7 +382,7 @@ export async function extractYouTubeSubtitles(tabId) {
               if (element && element.getAttribute('data-subtitles')) {
                 try {
                   const data = JSON.parse(element.getAttribute('data-subtitles'));
-                  // Удалить элемент после чтения
+                  // Remove element after reading
                   element.remove();
                   return data;
                 } catch (e) {
@@ -408,13 +412,13 @@ export async function extractYouTubeSubtitles(tabId) {
             }
           }
         } catch (domError) {
-          // Игнорируем ошибки DOM fallback (элемент может не существовать)
-          // Это нормально, если Extension context не invalidated
+          // Ignore DOM fallback errors (element may not exist)
+          // This is normal if Extension context is not invalidated
         }
       })();
     }).catch(async (error) => {
       if (!resolved) {
-        // КРИТИЧНО: Проверить DOM перед reject (может быть уже сохранено content script)
+        // CRITICAL: Check DOM before reject (may already be saved by content script)
         
         try {
           const domResult = await chrome.scripting.executeScript({
@@ -425,7 +429,7 @@ export async function extractYouTubeSubtitles(tabId) {
               if (element && element.getAttribute('data-subtitles')) {
                 try {
                   const data = JSON.parse(element.getAttribute('data-subtitles'));
-                  element.remove(); // Очистить после чтения
+                  element.remove(); // Clear after reading
                   return data;
                 } catch (e) {
                   return null;
@@ -439,7 +443,7 @@ export async function extractYouTubeSubtitles(tabId) {
             const domData = domResult[0].result;
             if (domData.subtitles && domData.subtitles.length > 0) {
               const age = Date.now() - (domData.timestamp || 0);
-              if (age < 30000) { // В пределах 30 секунд
+              if (age < 30000) { // Within 30 seconds
                 resolved = true;
                 cleanup();
                 
@@ -447,7 +451,7 @@ export async function extractYouTubeSubtitles(tabId) {
                   subtitles: domData.subtitles,
                   metadata: domData.metadata || {}
                 });
-                return; // КРИТИЧНО: выйти из catch, не продолжать с reject
+                return; // CRITICAL: exit from catch, don't continue with reject
               }
             }
           }
@@ -455,7 +459,7 @@ export async function extractYouTubeSubtitles(tabId) {
           logError('DOM check failed in catch block', domError);
         }
         
-        // Если DOM пустой или проверка не удалась - продолжить с reject
+        // If DOM is empty or check failed - continue with reject
         resolved = true;
         cleanup();
         logError('Script execution failed (catch block)', {
@@ -470,14 +474,15 @@ export async function extractYouTubeSubtitles(tabId) {
     })(); // End of async IIFE
     
     // Check storage periodically for pendingSubtitles (fallback when Extension context invalidated or content script not loaded)
-    // КРИТИЧНО: Если content script не загружен, injected script будет использовать storage API напрямую
-    // Поэтому нужно проверять storage чаще и быстрее
-    // storageCheckInterval уже объявлен в начале Promise (строка 18)
+    // CRITICAL: If content script is not loaded, injected script will use storage API directly
+    // Therefore need to check storage more frequently and faster
+    // storageCheckInterval already declared at start of Promise (line 18)
     const checkStorage = async () => {
       try {
         // Check storage first
         const storage = await chrome.storage.local.get(['pendingSubtitles']);
         if (storage.pendingSubtitles && !resolved) {
+          /** @type {any} */
           const pendingData = storage.pendingSubtitles;
           // Check if this is recent (within last 60 seconds - same as timeout)
           const age = Date.now() - (pendingData.timestamp || 0);
@@ -505,8 +510,8 @@ export async function extractYouTubeSubtitles(tabId) {
           }
         }
         
-        // КРИТИЧНО: Также проверяем DOM fallback (если chrome.storage недоступен)
-        // Content script может сохранить данные в DOM элемент ClipAIblePendingSubtitles
+        // CRITICAL: Also check DOM fallback (if chrome.storage is unavailable)
+        // Content script may save data to DOM element ClipAIblePendingSubtitles
         try {
           const domResult = await chrome.scripting.executeScript({
             target: { tabId },
@@ -516,7 +521,7 @@ export async function extractYouTubeSubtitles(tabId) {
               if (element && element.getAttribute('data-subtitles')) {
                 try {
                   const data = JSON.parse(element.getAttribute('data-subtitles'));
-                  // Удалить элемент после чтения
+                  // Remove element after reading
                   element.remove();
                   return data;
                 } catch (e) {
@@ -546,7 +551,7 @@ export async function extractYouTubeSubtitles(tabId) {
             }
           }
         } catch (domError) {
-          // Игнорируем ошибки DOM fallback (элемент может не существовать)
+          // Ignore DOM fallback errors (element may not exist)
         }
       } catch (error) {
         logError('Failed to check storage for pendingSubtitles', error);
@@ -554,8 +559,8 @@ export async function extractYouTubeSubtitles(tabId) {
     };
     
     // Check storage every 200ms (more frequent check for direct storage fallback)
-    // Более частая проверка, так как injected script может использовать storage напрямую
-    // если content script не загружен
+    // More frequent check, as injected script may use storage directly
+    // if content script is not loaded
     storageCheckInterval = setInterval(checkStorage, CONFIG.VIDEO_SUBTITLES_CHECK_INTERVAL);
     
     // Also check immediately
@@ -567,7 +572,7 @@ export async function extractYouTubeSubtitles(tabId) {
         // Final check of storage before timeout
         await checkStorage();
         
-        // КРИТИЧНО: Проверить DOM ПЕРЕД reject (если storage не сработал)
+        // CRITICAL: Check DOM BEFORE reject (if storage didn't work)
         if (!resolved) {
           
           try {
@@ -579,7 +584,7 @@ export async function extractYouTubeSubtitles(tabId) {
                 if (element && element.getAttribute('data-subtitles')) {
                   try {
                     const data = JSON.parse(element.getAttribute('data-subtitles'));
-                    element.remove(); // Очистить после чтения
+                    element.remove(); // Clear after reading
                     return data;
                   } catch (e) {
                     logError(' ❌ Failed to parse DOM data:', e);
@@ -594,7 +599,7 @@ export async function extractYouTubeSubtitles(tabId) {
               const domData = domResult[0].result;
               const age = Date.now() - (domData.timestamp || 0);
               
-              // Проверка возраста данных (не старше 60 секунд)
+              // Check data age (not older than 60 seconds)
               if (age < 60000 && domData.subtitles && domData.subtitles.length > 0) {
                 
                 resolved = true;
@@ -604,7 +609,7 @@ export async function extractYouTubeSubtitles(tabId) {
                   subtitles: domData.subtitles,
                   metadata: domData.metadata || {}
                 });
-                return; // КРИТИЧНО: выйти из timeout, не продолжать с reject
+                return; // CRITICAL: exit from timeout, don't continue with reject
               } else {
               }
             }
@@ -613,7 +618,7 @@ export async function extractYouTubeSubtitles(tabId) {
           }
         }
         
-        // Если DOM тоже пустой - reject
+        // If DOM is also empty - reject
         if (!resolved) {
           resolved = true;
           cleanup();
@@ -633,8 +638,8 @@ export async function extractYouTubeSubtitles(tabId) {
  * @param {boolean} contentScriptAvailable - Whether content script is loaded and responding
  */
 function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
-  // КРИТИЧНО: executeScript ждет Promise, если функция возвращает Promise
-  // Поэтому возвращаем Promise, чтобы executeScript дождался результата
+  // CRITICAL: executeScript waits for Promise if function returns Promise
+  // Therefore return Promise so executeScript waits for result
   return (async () => {
     try {
       // Extract metadata first
@@ -681,27 +686,29 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         throw new Error('Could not extract video ID from URL');
       }
       
-      // КРИТИЧНО: Проверить, что мы на правильной странице YouTube
+      // CRITICAL: Check that we are on correct YouTube page
       if (!window.location.hostname.includes('youtube.com')) {
         throw new Error('Not on YouTube page');
       }
       
       // ============================================
-      // METHOD 1 (ОСНОВНОЙ): Внутренний YouTube API (/youtubei/v1/player)
+      // METHOD 1 (PRIMARY): Internal YouTube API (/youtubei/v1/player)
       // Based on: Real-world testing shows this is the most reliable method (Dec 2025)
-      // YouTube Internal API работает стабильнее, чем прямой запрос к timedtext
+      // YouTube Internal API works more reliably than direct timedtext request
       // ============================================
       let subtitleData = null;
       let subtitleUrl = null;
       
       try {
-        const apiKey = window.yt?.config_?.INNERTUBE_API_KEY;
+        /** @type {any} */
+        const win = window;
+        const apiKey = win.yt?.config_?.INNERTUBE_API_KEY;
         if (!apiKey) {
           throw new Error('INNERTUBE_API_KEY not found');
         }
         
-        const clientName = window.yt?.config_?.INNERTUBE_CLIENT_NAME || 'WEB';
-        const clientVersion = window.yt?.config_?.INNERTUBE_CLIENT_VERSION || '2.0';
+        const clientName = win.yt?.config_?.INNERTUBE_CLIENT_NAME || 'WEB';
+        const clientVersion = win.yt?.config_?.INNERTUBE_CLIENT_VERSION || '2.0';
         
         const response = await fetch(
           `https://www.youtube.com/youtubei/v1/player?key=${apiKey}`,
@@ -731,7 +738,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         if (apiData?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
           const tracks = apiData.captions.playerCaptionsTracklistRenderer.captionTracks;
           
-          // Выбрать трек (приоритет: manual > auto-generated)
+          // Select track (priority: manual > auto-generated)
           let selectedTrack = tracks.find(t => !t.kind || t.kind === '');
                 if (!selectedTrack) {
             selectedTrack = tracks.find(t => t.kind === 'asr');
@@ -743,22 +750,22 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                 if (selectedTrack?.baseUrl) {
                   subtitleUrl = selectedTrack.baseUrl;
             
-            // КРИТИЧНО: Заменить или добавить &fmt=json3 к baseUrl
-            // Если URL уже содержит fmt=, заменить его, иначе добавить
+            // CRITICAL: Replace or add &fmt=json3 to baseUrl
+            // If URL already contains fmt=, replace it, otherwise add
             let jsonUrl;
             if (subtitleUrl.includes('fmt=')) {
-              // Заменить существующий fmt параметр
+              // Replace existing fmt parameter
               jsonUrl = subtitleUrl.replace(/[?&]fmt=[^&]*/, (match) => {
                 return match.startsWith('?') ? '?fmt=json3' : '&fmt=json3';
               });
           } else {
-              // Добавить fmt параметр
+              // Add fmt parameter
               jsonUrl = subtitleUrl.includes('?') 
                 ? subtitleUrl + '&fmt=json3'
                 : subtitleUrl + '?fmt=json3';
             }
             
-            // Простой fetch БЕЗ параметров
+            // Simple fetch WITHOUT parameters
             const subtitleResponse = await fetch(jsonUrl);
             
             if (!subtitleResponse.ok) {
@@ -767,12 +774,12 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
             
             const responseText = await subtitleResponse.text();
             
-            // КРИТИЧНО: Проверить что response НЕ пустой
+            // CRITICAL: Check that response is NOT empty
             if (!responseText || responseText.trim().length === 0) {
               throw new Error('Subtitle response is empty');
             }
             
-            // Проверить формат (JSON или XML)
+            // Check format (JSON or XML)
             const trimmed = responseText.trim();
             if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
               try {
@@ -783,15 +790,15 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                   throw new Error('Invalid JSON format: missing events array');
                 }
               } catch (parseError) {
-                // Попробуем XML формат как fallback
+                // Try XML format as fallback
                 if (trimmed.startsWith('<?xml') || trimmed.includes('<text')) {
-                  subtitleData = responseText; // Сохраним как XML
+                  subtitleData = responseText; // Save as XML
           } else {
                   throw new Error('Unknown subtitle format');
                 }
               }
             } else if (trimmed.startsWith('<?xml') || trimmed.includes('<text')) {
-              // XML формат (fallback)
+              // XML format (fallback)
               subtitleData = responseText;
             } else {
               throw new Error('Unknown subtitle format');
@@ -805,22 +812,24 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       // ============================================
       // METHOD 2 (FALLBACK): ytInitialPlayerResponse + &fmt=json3
       // Based on: MouseTooltipTranslator approach
-      // Используется, если Internal API недоступен или не сработал
-      // ВАЖНО: Может возвращать пустой ответ из-за expire параметра или POT токена
+      // Used if Internal API is unavailable or didn't work
+      // IMPORTANT: May return empty response due to expire parameter or POT token
       // ============================================
       if (!subtitleData) {
       
         // Wait for ytInitialPlayerResponse to be available (YouTube may load it asynchronously)
       let attempts = 0;
-        const maxAttempts = 5; // Уменьшено с 10 до 5, т.к. это fallback
+        const maxAttempts = 5; // Reduced from 10 to 5, as this is fallback
         const waitInterval = CONFIG.VIDEO_SUBTITLES_WAIT_INTERVAL;
         let method2Failed = false; // Track if METHOD 2 fetch failed (empty response)
       
         while (!subtitleData && !method2Failed && attempts < maxAttempts) {
         attempts++;
         
-        if (window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
-          const tracks = window.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
+        /** @type {any} */
+        const win = window;
+        if (win.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+          const tracks = win.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
           
             // Priority: manual > auto-generated > any
             let selectedTrack = tracks.find(t => !t.kind || t.kind === '');
@@ -834,23 +843,23 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
             if (selectedTrack?.baseUrl) {
               subtitleUrl = selectedTrack.baseUrl;
               
-              // КРИТИЧНО: Заменить или добавить &fmt=json3 к baseUrl
-              // Если URL уже содержит fmt=, заменить его, иначе добавить
+              // CRITICAL: Replace or add &fmt=json3 to baseUrl
+              // If URL already contains fmt=, replace it, otherwise add
               let jsonUrl;
               if (subtitleUrl.includes('fmt=')) {
-                // Заменить существующий fmt параметр
+                // Replace existing fmt parameter
                 jsonUrl = subtitleUrl.replace(/[?&]fmt=[^&]*/, (match) => {
                   return match.startsWith('?') ? '?fmt=json3' : '&fmt=json3';
                 });
               } else {
-                // Добавить fmt параметр
+                // Add fmt parameter
                 jsonUrl = subtitleUrl.includes('?') 
                   ? subtitleUrl + '&fmt=json3'
                   : subtitleUrl + '?fmt=json3';
               }
               
               try {
-                // Простой fetch БЕЗ параметров (как в MouseTooltipTranslator)
+                // Simple fetch WITHOUT parameters (as in MouseTooltipTranslator)
                 const response = await fetch(jsonUrl);
                 
                 if (!response.ok) {
@@ -859,48 +868,48 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                 
                 const responseText = await response.text();
                 
-                // КРИТИЧНО: Проверить что response НЕ пустой
+                // CRITICAL: Check that response is NOT empty
                 if (!responseText || responseText.trim().length === 0) {
-                  // Пустой ответ - не повторять попытки, сразу переходить к METHOD 3
+                  // Empty response - don't retry, immediately proceed to METHOD 3
                   method2Failed = true;
                   break;
                 }
                 
-                // Проверить, что это JSON
+                // Check that this is JSON
                 const trimmed = responseText.trim();
                 if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
                   try {
                     const jsonData = JSON.parse(responseText);
                     if (jsonData.events && Array.isArray(jsonData.events)) {
                       subtitleData = jsonData;
-                      break; // Успех!
+                      break; // Success!
                     }
                   } catch (parseError) {
-                    // Попробуем XML формат как fallback
+                    // Try XML format as fallback
                     if (trimmed.startsWith('<?xml') || trimmed.includes('<text')) {
-                      subtitleData = responseText; // Сохраним как XML
+                      subtitleData = responseText; // Save as XML
                       break;
                     }
                   }
                 } else if (trimmed.startsWith('<?xml') || trimmed.includes('<text')) {
-                  // XML формат (fallback)
+                  // XML format (fallback)
                   subtitleData = responseText;
                   break;
                 } else {
                   throw new Error('Unexpected response format');
                 }
               } catch (fetchError) {
-                // Если ошибка "empty response", не повторять попытки
+                // If error is "empty response", don't retry
                 if (fetchError.message && fetchError.message.includes('empty')) {
                   method2Failed = true;
                   break;
                 }
-                subtitleUrl = null; // Сбросить для следующего метода
+                subtitleUrl = null; // Reset for next method
               }
             }
           }
           
-          // Если не нашли и не было ошибки пустого ответа, подождать и попробовать снова
+          // If not found and no empty response error, wait and try again
           if (!subtitleData && !method2Failed && attempts < maxAttempts) {
           await new Promise(resolve => setTimeout(resolve, waitInterval));
         }
@@ -910,7 +919,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       // ============================================
       // METHOD 3 (FALLBACK): HTML Parsing
       // Based on: kazuki-sf/YouTube_Summary_with_ChatGPT
-      // Используется, если Internal API и ytInitialPlayerResponse не сработали
+      // Used if Internal API and ytInitialPlayerResponse didn't work
       // ============================================
       if (!subtitleData) {
         
@@ -929,7 +938,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                 if (captionsJson?.playerCaptionsTracklistRenderer?.captionTracks) {
                   const tracks = captionsJson.playerCaptionsTracklistRenderer.captionTracks;
                   
-                  // Выбрать трек
+                  // Select track
                   let selectedTrack = tracks.find(t => !t.kind || t.kind === '');
                   if (!selectedTrack) {
                     selectedTrack = tracks.find(t => t.kind === 'asr');
@@ -941,12 +950,12 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                   if (selectedTrack?.baseUrl) {
                     subtitleUrl = selectedTrack.baseUrl;
                     
-                    // КРИТИЧНО: Всегда добавлять &fmt=json3
+                    // CRITICAL: Always add &fmt=json3
                     const jsonUrl = subtitleUrl.includes('?') 
                       ? subtitleUrl + '&fmt=json3'
                       : subtitleUrl + '?fmt=json3';
                     
-                    // Простой fetch БЕЗ параметров
+                    // Simple fetch WITHOUT parameters
                     const subtitleResponse = await fetch(jsonUrl);
                     
                     if (subtitleResponse.ok) {
@@ -981,8 +990,8 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       }
       
       // ============================================
-      // METHOD 4 (ПОСЛЕДНИЙ FALLBACK): Прямой Timedtext API
-      // Используется только если все предыдущие методы не сработали
+      // METHOD 4 (LAST FALLBACK): Direct Timedtext API
+      // Used only if all previous methods didn't work
       // ============================================
       if (!subtitleData) {
         const browserLang = navigator.language.split('-')[0];
@@ -991,10 +1000,10 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         
         for (const lang of uniqueLangs) {
           try {
-            // Всегда использовать JSON формат
+            // Always use JSON format
             const timedtextUrl = `https://www.youtube.com/api/timedtext?v=${videoId}&lang=${lang}&fmt=json3`;
             
-            // Простой fetch БЕЗ параметров
+            // Simple fetch WITHOUT parameters
             const response = await fetch(timedtextUrl);
             
             if (response.ok) {
@@ -1007,7 +1016,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                     const jsonData = JSON.parse(responseText);
                     if (jsonData.events && Array.isArray(jsonData.events)) {
                       subtitleData = jsonData;
-                      break; // Успех!
+                      break; // Success!
                     }
                   } catch (parseError) {
                     // Ignore parse errors
@@ -1019,14 +1028,14 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
               }
             }
           } catch (fetchError) {
-            // Продолжить с следующим языком
+            // Continue with next language
           }
         }
       }
       
       // ============================================
-      // METHOD 5 (ОПЦИОНАЛЬНЫЙ): video.textTracks
-      // Используется только если все предыдущие методы не сработали
+      // METHOD 5 (OPTIONAL): video.textTracks
+      // Used only if all previous methods didn't work
       // ============================================
       if (!subtitleData) {
         
@@ -1049,20 +1058,24 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
             }
             
             if (activeTrack && activeTrack.cues && activeTrack.cues.length > 0) {
-              const subtitles = Array.from(activeTrack.cues).map(cue => ({
-                start: cue.startTime,
-                duration: cue.endTime - cue.startTime,
-                text: cue.text.trim().replace(/\n/g, ' ')
-              }));
+              const subtitles = Array.from(activeTrack.cues).map(cue => {
+                /** @type {any} */
+                const cueAny = cue;
+                return {
+                  start: cue.startTime,
+                  duration: cue.endTime - cue.startTime,
+                  text: (cueAny.text || '').trim().replace(/\n/g, ' ')
+                };
+              });
               
               if (subtitles.length > 0) {
-                // Отправить результат сразу
+                // Send result immediately
                 const result = {
                   subtitles: subtitles,
                   metadata: metadata
                 };
                 
-                // Отправить через CustomEvent (единственный надежный способ)
+                // Send via CustomEvent (the only reliable way)
                 document.dispatchEvent(new CustomEvent('ClipAIbleSubtitleMessage', {
                   detail: {
                     type: 'ClipAIbleYouTubeSubtitles',
@@ -1073,7 +1086,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
                   cancelable: true
                 }));
                 
-                return; // Выход из функции
+                return; // Exit from function
               }
             }
           }
@@ -1082,17 +1095,17 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         }
       }
       
-      // Если все методы не сработали
+      // If all methods didn't work
       if (!subtitleData) {
         throw new Error('No subtitles found. Make sure subtitles are enabled for this video.');
       }
       
-      // Парсинг полученных данных
+      // Parse received data
       const subtitles = [];
       
-      // Проверить формат данных
+      // Check data format
       if (typeof subtitleData === 'object' && subtitleData.events) {
-        // JSON формат (приоритетный)
+        // JSON format (priority)
         subtitleData.events.forEach((event) => {
           if (!event.segs || !Array.isArray(event.segs) || event.segs.length === 0) {
             return;
@@ -1116,7 +1129,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
           }
         });
       } else if (typeof subtitleData === 'string') {
-        // XML формат (fallback)
+        // XML format (fallback)
         
         // YouTube subtitle XML format: <text start="0.0" dur="3.5">Text content</text>
         // NOTE: DOMParser doesn't work on YouTube due to Trusted Types policy
@@ -1172,7 +1185,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         throw new Error('Subtitles data is empty or invalid');
       }
       
-      // Отправить результат
+      // Send result
       const result = {
         subtitles: subtitles,
         metadata: metadata
@@ -1184,14 +1197,14 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         result: result
       };
       
-      // КРИТИЧНО: CustomEvent на document - ЕДИНСТВЕННЫЙ надежный способ
-      // между MAIN world и ISOLATED world в Chrome Extensions
-      // window.postMessage НЕ работает между мирами!
+      // CRITICAL: CustomEvent on document - the ONLY reliable way
+      // between MAIN world and ISOLATED world in Chrome Extensions
+      // window.postMessage does NOT work between worlds!
       
       // Define sendViaCustomEvent function first
       const sendViaCustomEvent = () => {
         try {
-          // Основной способ: CustomEvent на document
+          // Primary method: CustomEvent on document
         const customEvent = new CustomEvent('ClipAIbleSubtitleMessage', {
           detail: messageData,
           bubbles: true,
@@ -1215,8 +1228,8 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       // Wait a bit for content script to be ready
       // Content script should be loaded by manifest.json, but give it a moment
       // Use setTimeout to ensure content script listener is registered
-      // КРИТИЧНО: Уменьшено количество ретраев для производительности
-      // Достаточно 2 ретраев (immediate + 200ms + 1000ms) вместо 5
+      // CRITICAL: Reduced number of retries for performance
+      // 2 retries are enough (immediate + 200ms + 1000ms) instead of 5
       const sendWithDelay = () => {
         // Try sending immediately first
         sendViaCustomEvent();
@@ -1244,8 +1257,8 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         }
       };
       
-      // КРИТИЧНО: Попробовать chrome.runtime.sendMessage напрямую (если доступен в MAIN world)
-      // В некоторых случаях chrome.runtime может быть доступен в MAIN world
+      // CRITICAL: Try chrome.runtime.sendMessage directly (if available in MAIN world)
+      // In some cases chrome.runtime may be available in MAIN world
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         try {
           chrome.runtime.sendMessage(messageData, (response) => {
@@ -1262,16 +1275,16 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         }
       }
       
-      // КРИТИЧНО: chrome.storage НЕ доступен в MAIN world!
-      // Extension APIs доступны только в ISOLATED world (content scripts) и background scripts
-      // Поэтому мы не можем использовать storage API напрямую из injected script
-      // Единственный способ - через CustomEvent, который должен слушать content script
-      // Если content script не загружен, CustomEvent не будет обработан
+      // CRITICAL: chrome.storage is NOT available in MAIN world!
+      // Extension APIs are only available in ISOLATED world (content scripts) and background scripts
+      // Therefore we cannot use storage API directly from injected script
+      // The only way is through CustomEvent, which should be listened to by content script
+      // If content script is not loaded, CustomEvent will not be processed
       // 
-      // Решение: убедиться, что content script загружается, или использовать альтернативный метод
+      // Solution: ensure content script loads, or use alternative method
       // 
-      // Попробуем использовать window.postMessage как дополнительный fallback
-      // (хотя он обычно не работает между MAIN и ISOLATED, но попробуем)
+      // Try to use window.postMessage as additional fallback
+      // (though it usually doesn't work between MAIN and ISOLATED, but let's try)
       try {
         window.postMessage({
           type: 'ClipAIbleYouTubeSubtitles',
@@ -1283,10 +1296,10 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       }
       
       // Always send via CustomEvent (even if direct sendMessage was attempted)
-      // CustomEvent может работать, если content script загрузится позже
-      // КРИТИЧНО: CustomEvent - единственный способ коммуникации из MAIN world в ISOLATED world
-      // Если content script не загружен, CustomEvent не будет обработан
-      // Но мы все равно отправляем его, на случай если content script загрузится позже
+      // CustomEvent may work if content script loads later
+      // CRITICAL: CustomEvent is the only way to communicate from MAIN world to ISOLATED world
+      // If content script is not loaded, CustomEvent will not be processed
+      // But we still send it, in case content script loads later
       sendViaCustomEventWithRetries();
     } catch (error) {
       logError(' Error in subtitle extraction:', error);
@@ -1300,7 +1313,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
       };
       
       try {
-        // Отправить ошибку через CustomEvent
+        // Send error via CustomEvent
         const customEvent = new CustomEvent('ClipAIbleSubtitleMessage', {
           detail: errorMessageData,
           bubbles: true,
@@ -1345,13 +1358,15 @@ export async function extractVimeoSubtitles(tabId) {
     throw new Error('Failed to execute subtitle extraction script');
   }
   
-  if (results[0].error) {
+  if ('error' in results[0] && results[0].error) {
+    /** @type {any} */
+    const errorObj = results[0].error;
     logError('Subtitle extraction script error', {
-      error: results[0].error,
-      errorMessage: results[0].error?.message,
-      errorStack: results[0].error?.stack
+      error: errorObj,
+      errorMessage: errorObj?.message,
+      errorStack: errorObj?.stack
     });
-    throw new Error(`Subtitle extraction failed: ${results[0].error.message || results[0].error}`);
+    throw new Error(`Subtitle extraction failed: ${errorObj?.message || errorObj}`);
   }
   
   if (!results[0].result) {
@@ -1480,9 +1495,11 @@ function extractVimeoSubtitlesInlined() {
       // ============================================
       // METHOD 1: window.vimeoPlayerConfig
       // ============================================
-      if (window.vimeoPlayerConfig) {
+      /** @type {any} */
+      const win = window;
+      if (win.vimeoPlayerConfig) {
         try {
-          const config = window.vimeoPlayerConfig;
+          const config = win.vimeoPlayerConfig;
           if (config.video && config.video.textTracks) {
             const tracks = config.video.textTracks;
             // Find best track (prefer manual, then auto-generated)
@@ -1509,7 +1526,9 @@ function extractVimeoSubtitlesInlined() {
       // ============================================
       // METHOD 2: window.player or window.vimeoPlayer
       // ============================================
-      const player = window.player || window.vimeoPlayer;
+      /** @type {any} */
+      const win2 = window;
+      const player = win2.player || win2.vimeoPlayer;
       if (player) {
         try {
           // Try to get text tracks from player
@@ -1587,11 +1606,15 @@ function extractVimeoSubtitlesInlined() {
             }
             
             if (cues && cues.length > 0) {
-              const parsedSubtitles = Array.from(cues).map(cue => ({
-                start: cue.startTime || 0,
-                duration: (cue.endTime || cue.startTime || 0) - (cue.startTime || 0),
-                text: (cue.text || cue.getCueAsHTML?.()?.textContent || '').trim().replace(/\n/g, ' ').replace(/<[^>]*>/g, '')
-              })).filter(sub => sub.text && sub.text.length > 0);
+              const parsedSubtitles = Array.from(cues).map(cue => {
+                /** @type {any} */
+                const cueAny = cue;
+                return {
+                  start: cue.startTime || 0,
+                  duration: (cue.endTime || cue.startTime || 0) - (cue.startTime || 0),
+                  text: (cueAny.text || cueAny.getCueAsHTML?.()?.textContent || '').trim().replace(/\n/g, ' ').replace(/<[^>]*>/g, '')
+                };
+              }).filter(sub => sub.text && sub.text.length > 0);
               
               if (parsedSubtitles.length > 0) {
                 return { subtitles: parsedSubtitles, metadata };
@@ -1606,7 +1629,9 @@ function extractVimeoSubtitlesInlined() {
       // ============================================
       // METHOD 4: window.__INITIAL_STATE__ or window.vimeoData
       // ============================================
-      const state = window.__INITIAL_STATE__ || window.vimeoData || window.vimeo;
+      /** @type {any} */
+      const win3 = window;
+      const state = win3.__INITIAL_STATE__ || win3.vimeoData || win3.vimeo;
       if (state) {
         try {
           // Try different possible structures
@@ -1755,16 +1780,17 @@ function extractVimeoSubtitlesInlined() {
         const videoContainer = document.querySelector('video')?.closest('[class*="player"], [class*="video"], [id*="player"], [id*="video"]');
         if (videoContainer) {
           const containerElements = videoContainer.querySelectorAll('*');
-          for (const el of containerElements) {
+          for (const el of Array.from(containerElements)) {
             const text = el.textContent?.trim();
             const style = window.getComputedStyle(el);
             
             // Check if element looks like a subtitle (small text, positioned over video, visible)
+            const zIndexNum = parseInt(style.zIndex, 10) || 0;
             if (text && 
                 text.length > 0 && 
                 text.length < 200 && // Subtitle lines are usually short
                 style.position !== 'static' &&
-                (style.zIndex > 0 || style.position === 'absolute' || style.position === 'fixed') &&
+                (zIndexNum > 0 || style.position === 'absolute' || style.position === 'fixed') &&
                 style.display !== 'none' &&
                 style.visibility !== 'hidden' &&
                 style.opacity !== '0') {

@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.2.4-blue) ![Refactoring](https://img.shields.io/badge/refactoring-completed-green)
+![Version](https://img.shields.io/badge/version-3.3.0-blue) ![Refactoring](https://img.shields.io/badge/refactoring-completed-green)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -31,7 +31,13 @@ All formats support **translation to 11 languages** — even translating text on
 ### 🤖 AI-Powered Extraction
 - **Three modes**: Automatic (no AI, fast), AI Selector (fast, reusable), and AI Extract (thorough)
 - **Automatic mode**: Create documents without AI — no API keys required, instant extraction
-- **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
+- **PDF content extraction** (v3.3.0): Extract content from PDF files using PDF.js library
+  - Experimental feature with complex multi-level classification system
+  - Extracts text, images, structure, and metadata from PDF files
+  - Supports both web and local PDF files
+  - Handles multi-column layouts, tables, headings, lists, cross-page merging
+  - Note: Feature is experimental and may have limitations with complex PDFs (scanned PDFs, password-protected PDFs)
 - **Video support**: Extract subtitles from YouTube/Vimeo videos and convert to articles
   - Multiple extraction methods with fallbacks
   - Priority: manual subtitles > auto-generated > translated
@@ -72,6 +78,12 @@ All formats support **translation to 11 languages** — even translating text on
 
 
 ### ⚡ Smart Features
+- **PDF content extraction** (v3.3.0): Extract content from PDF files and convert to articles
+  - Uses PDF.js library for parsing in offscreen document
+  - Complex multi-level classification system for accurate extraction
+  - Supports both web and local PDF files
+  - Full pipeline integration: translation, TOC, abstract, all export formats
+  - Note: Experimental feature, may have limitations with complex PDFs
 - **Video support**: Extract subtitles from YouTube/Vimeo and convert to articles
   - Direct subtitle extraction (no API keys required from YouTube/Vimeo)
   - AI processing: removes timestamps, merges paragraphs, fixes errors
@@ -118,10 +130,15 @@ All formats support **translation to 11 languages** — even translating text on
   - Text is automatically split intelligently at sentence/word boundaries
 
 ### Technical Constraints
-- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes. Extension uses unified keep-alive mechanism (alarm every 1 minute + state save every 2 seconds) to prevent service worker from dying.
+- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes. Extension uses unified keep-alive mechanism (alarm every 1 minute) to prevent service worker from dying.
 - **CORS for images**: Some images may fail to load if the website blocks cross-origin requests. The extension will skip these images.
 - **Cancel not instant**: Cancellation may take a few seconds to fully stop all background processes.
-- **Service Worker recovery**: Operations automatically resume after service worker restart (within 2 hours).
+- **Service Worker recovery**: Operations automatically resume after service worker restart if state is recent (< 1 minute). Extension reload always resets state.
+- **PDF extraction limitations** (v3.3.0): 
+  - Scanned PDFs (no text layer) are not supported — OCR is not available yet
+  - Password-protected PDFs must be unlocked before extraction
+  - Very large PDFs (>100MB) may fail due to memory constraints
+  - Complex layouts (multi-column, tables) are extracted but may require manual review
 
 ### Browser Compatibility
 - **Chrome/Edge/Brave/Arc**: Fully supported
@@ -159,7 +176,7 @@ All formats support **translation to 11 languages** — even translating text on
 > 
 > **💡 Fixed in v3.2.1**: Popup UI updates correctly after audio generation, voice switching works properly for offline TTS.
 > 
-> **💡 New in v3.2.4**: Google Translate interference fix - fixed issue where Google Translate was corrupting text in generated PDFs. Added comprehensive prevention measures (HTML attributes, meta tags, Chrome DevTools Protocol) to ensure PDFs contain correct original text.
+> **💡 New in v3.3.0**: PDF content extraction - Added experimental support for extracting content from PDF files. Previous: DeepSeek provider integration, performance optimizations, Google Translate interference fix.
 
 > **💡 New in v3.2.3**: Code duplication & magic numbers refactoring - centralized all timeouts/delays in CONFIG, extracted common handler patterns, eliminated ~30% handler code duplication. Improved maintainability and consistency.
 
@@ -194,6 +211,16 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **"Create Key"**
 5. Copy the key (starts with `sk-ant-...`)
 6. Add credits at **Plans & Billing**
+
+### DeepSeek
+
+1. Go to [platform.deepseek.com](https://platform.deepseek.com/)
+2. Sign up or log in
+3. Navigate to **API Keys** or go to [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+4. Click **"Create API key"**
+5. Copy the key (starts with `sk-...`)
+
+> **Note:** DeepSeek provides DeepSeek-V3.2 models: `deepseek-chat` (non-thinking mode) and `deepseek-reasoner` (thinking mode). API is compatible with OpenAI format.
 
 ### ElevenLabs (Audio)
 
@@ -245,6 +272,7 @@ All formats support **translation to 11 languages** — even translating text on
 | **Gemini** | Fast extraction, Image translation, Audio export (30 voices) | ✅ (30 voices) | ✅ |
 | **Claude** | Long articles, Complex pages | ❌ | ❌ |
 | **Grok** | Fast reasoning tasks | ❌ | ❌ |
+| **DeepSeek** | Advanced reasoning, Cost-effective | ❌ | ❌ |
 | **OpenRouter** | Access to multiple models | ❌ | ❌ |
 | **ElevenLabs** | Audio export (9 voices, high quality) | ✅ (9 voices) | ❌ |
 | **Qwen** | Audio export (49 voices, Russian support) | ✅ (49 voices) | ❌ |
@@ -401,6 +429,8 @@ ClipAIble caches AI-generated selectors by domain:
 | Audio slow | Long articles split into chunks; watch progress bar |
 | Summary not generating | Check API key, ensure page content is loaded, try again |
 | Summary generation timeout | Very long articles may take up to 45 minutes; wait or try with shorter content |
+| PDF extraction fails | Check if PDF is password-protected (unlock first) or scanned (OCR not supported). Try with simpler PDFs first. |
+| PDF content incomplete | Complex layouts (multi-column, tables) may require manual review. Feature is experimental. |
 
 ---
 
@@ -420,7 +450,7 @@ clipaible/
 │   ├── stats.js       # Statistics display
 │   └── settings.js    # Settings management
 ├── scripts/
-│   ├── background.js   # Service worker (2045 lines, reduced from 3705)
+│   ├── background.js   # Service worker (1094 lines, reduced from 3705)
 │   ├── content.js      # Content script for YouTube
 │   ├── locales.js      # UI localization (11 languages)
 │   ├── message-handlers/ # Message handler modules (v3.2.1+)
@@ -437,6 +467,7 @@ clipaible/
 │   ├── processing/     # Processing modules (v3.2.3+)
 │   │   ├── modes.js    # Processing modes (processWithoutAI, processWithExtractMode, getSelectorsFromAI)
 │   │   ├── video.js    # Video processing (processVideoPage)
+│   │   ├── pdf.js      # PDF page processing (v3.3.0) - processPdfPage, processPdfPageWithAI
 │   │   └── quicksave.js # Quick save processing (prepareQuickSaveData)
 │   ├── initialization/ # Initialization module (v3.2.3+)
 │   │   └── index.js    # API key migration, default settings initialization
@@ -454,6 +485,7 @@ clipaible/
 │   │   └── index.js    # API router
 │   ├── extraction/     # Content extraction
 │   │   ├── automatic.js # Automatic extraction (no AI) - extractAutomaticallyInlined()
+│   │   ├── pdf.js      # PDF content extraction (v3.3.0) - entry point
 │   │   ├── prompts.js  # AI prompts
 │   │   ├── html-utils.js # HTML utilities
 │   │   ├── video-subtitles.js # YouTube/Vimeo subtitle extraction
@@ -494,11 +526,23 @@ clipaible/
 │       ├── context-menu.js # Context menu utilities (v3.2.3+)
 │       ├── voice-validator.js # Voice validation utilities
 │       └── api-key-manager.js # API key management utilities
+├── scripts/offscreen/  # Offscreen document modules (v3.3.0)
+│   ├── pdf/            # PDF extraction modules - complex multi-level classification system
+│   │   ├── extract.js  # Main coordinator - entry point
+│   │   ├── core/       # Core algorithms (clustering, line-grouping, text-collation)
+│   │   ├── classifiers/ # Element classifiers (paragraph, heading, list, table, image, formula)
+│   │   ├── analyzers/  # Context and metrics analyzers (metrics, context, structure, gap-analysis)
+│   │   ├── processors/ # Processing processors (grouping, merging, post-processing, cross-page)
+│   │   └── utils/      # Utilities (array-helpers, text-helpers, font-detection, image-extraction)
+│   ├── audio/          # Audio utilities
+│   ├── tts/            # TTS modules
+│   ├── worker/         # Worker modules
+│   └── utils/          # Offscreen utilities
 ├── print/              # PDF rendering
 ├── config/             # Styles
-├── lib/                # JSZip
+├── lib/                # JSZip (includes PDF.js for PDF extraction)
 ├── docs/               # Localized README files
-├── offscreen.js        # Offscreen document for offline TTS (3752 lines, refactored from 4967)
+├── offscreen.js        # Offscreen document for PDF processing and offline TTS (3752 lines, refactored from 4967)
 └── memory-bank/        # Project documentation
 ```
 
@@ -524,7 +568,7 @@ ClipAIble requires the following permissions to function. All permissions are us
 | `scripting` | Inject the content extraction script into web pages. This script finds and extracts the article content (text, images, headings) from the page DOM. |
 | `downloads` | Save the generated files (PDF, EPUB, FB2, Markdown, Audio) to your computer. Without this permission, the extension cannot download files. |
 | `debugger` | **PDF generation only** - Uses Chrome's built-in print-to-PDF functionality to generate high-quality PDFs with proper page layout and styling. The debugger is attached only during PDF generation and immediately detached after completion. This is the only way to generate PDFs with custom styling in Chrome extensions. |
-| `alarms` | Keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Uses unified keep-alive mechanism (alarm every 1 minute + state save every 2 seconds) per MV3 rules. |
+| `alarms` | Keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Uses unified keep-alive mechanism (alarm every 1 minute) per MV3 rules. |
 | `contextMenus` | Add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/Audio) to the right-click context menu on web pages. |
 | `notifications` | Show desktop notifications when using the context menu "Save" feature. Notifies you if there's an error (e.g., missing API key). |
 | `unlimitedStorage` | Store selector cache and temporary print data locally. This enables faster repeat extractions without calling AI again (offline mode). |

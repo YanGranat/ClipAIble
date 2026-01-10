@@ -2,8 +2,6 @@
 // Centralized error handling for ClipAIble extension
 // Provides unified error normalization, classification, and user-friendly message generation
 //
-// @typedef {import('../types.js').NormalizedError} NormalizedError
-//
 // USAGE EXAMPLES:
 //
 // 1. Basic error handling in async function:
@@ -46,6 +44,8 @@ import { logError } from './logging.js';
 /**
  * Error patterns for automatic error code detection
  * Used to classify errors based on error message content
+ * @readonly
+ * @const {Record<string, Array<string>>}
  */
 export const ERROR_PATTERNS = {
   AUTH: ['authentication', '401', '403', 'unauthorized', 'forbidden', 'invalid api key', 'api key', 'api_key'],
@@ -61,10 +61,10 @@ export const ERROR_PATTERNS = {
  * Normalize error to standard format
  * Converts various error types (Error objects, strings, API responses) to unified format
  * @param {Error|string|Object} error - Error to normalize
- * @param {Object} [context] - Additional context (errorType, source, etc.)
- * @param {string} [context.errorType] - Error type identifier
- * @param {string} [context.source] - Source module name
- * @returns {NormalizedError} Normalized error object
+ * @param {import('../types.js').ErrorContext} [context={}] - Additional context
+ * @returns {import('../types.js').NormalizedError} Normalized error object
+ * @see {@link detectErrorCode} For automatic error code detection
+ * @see {@link handleError} For complete error handling with logging and user messages
  */
 export function normalizeError(error, context = {}) {
   let message = '';
@@ -75,22 +75,16 @@ export function normalizeError(error, context = {}) {
   if (error instanceof Error) {
     message = error.message || 'Unknown error';
     // Check if error already has a code
-    // @ts-ignore - Error may have custom properties (code, status)
+    /** @type {import('../types.js').ExtendedError} */
     const errorWithCode = error;
-    // @ts-ignore
     if (errorWithCode.code && Object.values(ERROR_CODES).includes(errorWithCode.code)) {
-      // @ts-ignore
       code = errorWithCode.code;
-      // @ts-ignore
     } else if (errorWithCode.status) {
       // HTTP status code
-      // @ts-ignore
       if (errorWithCode.status === 401 || errorWithCode.status === 403) {
         code = ERROR_CODES.AUTH_ERROR;
-        // @ts-ignore
       } else if (errorWithCode.status === 429) {
         code = ERROR_CODES.RATE_LIMIT;
-        // @ts-ignore
       } else if (errorWithCode.status >= 500) {
         code = ERROR_CODES.PROVIDER_ERROR;
       }
@@ -172,13 +166,38 @@ export function detectErrorCode(message) {
  * Handle error with centralized processing
  * Normalizes error, logs it, and optionally creates user-friendly message
  * @param {Error|string|Object} error - Error to handle
- * @param {Object} [options] - Handling options
- * @param {string} [options.errorType] - Error type for user-friendly message (e.g., 'contentExtractionFailed')
- * @param {string} [options.source] - Source module (e.g., 'extraction', 'translation')
- * @param {Object} [options.context] - Additional context
- * @param {boolean} [options.logError=true] - Whether to log error
- * @param {boolean} [options.createUserMessage=false] - Whether to create user-friendly message
- * @returns {Promise<NormalizedError & {userMessage?: string, userCode?: string}>} Normalized error with optional user-friendly message
+ * @param {import('../types.js').ErrorHandlingOptions} [options={}] - Handling options
+ * @returns {Promise<import('../types.js').NormalizedError & {userMessage?: string, userCode?: string}>} Normalized error with optional user-friendly message (if createUserMessage is true)
+ * @throws {Error} If user message creation fails (logged but not thrown)
+ * @see {@link normalizeError} For error normalization only
+ * @see {@link withErrorHandling} For wrapping functions with error handling
+ * @see {@link createErrorHandler} For promise chain error handlers
+ * @example
+ * // Basic error handling
+ * try {
+ *   await someFunction();
+ * } catch (error) {
+ *   const normalized = await handleError(error, {
+ *     source: 'moduleName',
+ *     errorType: 'operationFailed',
+ *     logError: true
+ *   });
+ *   throw normalized;
+ * }
+ * @example
+ * // Error handling with user-friendly message
+ * try {
+ *   await processArticle();
+ * } catch (error) {
+ *   const normalized = await handleError(error, {
+ *     source: 'articleProcessing',
+ *     errorType: 'contentExtractionFailed',
+ *     logError: true,
+ *     createUserMessage: true
+ *   });
+ *   // normalized.userMessage contains user-friendly message
+ *   showErrorToUser(normalized.userMessage);
+ * }
  */
 export async function handleError(error, options = {}) {
   const {
@@ -229,8 +248,10 @@ export async function handleError(error, options = {}) {
  * Catches errors, normalizes them, and optionally handles them
  * @template T
  * @param {(...args: any[]) => Promise<T>} fn - Async function to wrap
- * @param {Object} [options] - Error handling options (same as handleError)
+ * @param {import('../types.js').ErrorHandlingOptions} [options={}] - Error handling options
  * @returns {(...args: any[]) => Promise<T>} Wrapped function
+ * @see {@link handleError} For the underlying error handling logic
+ * @see {@link createErrorHandler} For promise chain error handlers
  */
 export function withErrorHandling(fn, options = {}) {
   return async (...args) => {
@@ -247,12 +268,10 @@ export function withErrorHandling(fn, options = {}) {
       });
       
       // Re-throw normalized error
+      /** @type {import('../types.js').ExtendedError} */
       const normalizedError = new Error(handled.message);
-      // @ts-ignore - Adding custom properties to Error
       normalizedError.code = handled.code;
-      // @ts-ignore
       normalizedError.originalError = handled.originalError;
-      // @ts-ignore
       normalizedError.context = handled.context;
       throw normalizedError;
     }
@@ -262,37 +281,25 @@ export function withErrorHandling(fn, options = {}) {
 /**
  * Create error wrapper for promise chains
  * Returns error handler function that can be used in .catch()
- * @param {Object} options - Error handling options (same as handleError)
- * @returns {Function} Error handler for .catch()
+ * @param {import('../types.js').ErrorHandlingOptions} [options={}] - Error handling options
+ * @returns {function(Error): Promise<import('../types.js').NormalizedError>} Error handler for .catch()
+ * @see {@link handleError} For the underlying error handling logic
+ * @see {@link withErrorHandling} For wrapping functions with error handling
  */
 export function createErrorHandler(options = {}) {
   return async (error) => {
     const handled = await handleError(error, options);
     
-    // Return normalized error for further processing
-    const normalizedError = new Error(handled.message);
-    // @ts-ignore - Adding custom properties to Error
-    normalizedError.code = handled.code;
-    // @ts-ignore
-    normalizedError.originalError = handled.originalError;
-    // @ts-ignore
-    normalizedError.context = handled.context;
-    
-    // Include user-friendly message and code if available
-    // @ts-ignore
-    const handledWithUser = handled;
-    // @ts-ignore
-    if (handledWithUser.userMessage) {
-      // @ts-ignore
-      normalizedError.userMessage = handledWithUser.userMessage;
-    }
-    // @ts-ignore
-    if (handledWithUser.userCode) {
-      // @ts-ignore
-      normalizedError.userCode = handledWithUser.userCode;
-    }
-    
-    return normalizedError;
+    // Return normalized error object directly (handleError already returns NormalizedError)
+    // Ensure code is always present (it's required in NormalizedError)
+    return {
+      message: handled.message,
+      code: handled.code,
+      originalError: handled.originalError,
+      context: handled.context,
+      ...(handled.userMessage && { userMessage: handled.userMessage }),
+      ...(handled.userCode && { userCode: handled.userCode })
+    };
   };
 }
 

@@ -13,7 +13,7 @@ class TTSQueue {
 
   /**
    * Add a request to the queue
-   * @param {Function} fn - Async function to execute
+   * @param {import('../types.js').AsyncFunction} fn - Async function to execute
    * @returns {Promise} Result of the function
    */
   async add(fn) {

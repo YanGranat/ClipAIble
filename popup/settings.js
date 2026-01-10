@@ -34,6 +34,8 @@ import { initUIVisibility } from './settings/ui-visibility.js';
  * @param {Function} deps.applyTheme - Apply theme function
  * @param {Function} deps.markdownToHtml - Markdown to HTML converter
  * @param {Object} deps.audioVoiceMap - Audio voice map reference
+ * @param {function(string, string?=): Promise<string>} deps.t - Translation function (second parameter is optional)
+ * @param {function(): Promise<string>} deps.getUILanguage - Get UI language function
  * @returns {Object} Settings functions
  */
 export function initSettings(deps) {
@@ -120,6 +122,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.GEMINI_API_KEY,
         STORAGE_KEYS.GROK_API_KEY,
         STORAGE_KEYS.OPENROUTER_API_KEY,
+        STORAGE_KEYS.DEEPSEEK_API_KEY,
         STORAGE_KEYS.GOOGLE_API_KEY,
         STORAGE_KEYS.MODEL,
         STORAGE_KEYS.MODEL_BY_PROVIDER,
@@ -176,7 +179,7 @@ export function initSettings(deps) {
       });
       
       // Load API provider (default: openai)
-      const apiProvider = result[STORAGE_KEYS.API_PROVIDER] || 'openai';
+      const apiProvider = String(result[STORAGE_KEYS.API_PROVIDER] || 'openai');
       log('loadSettings: setting API provider', { apiProvider, hasElement: !!elements.apiProviderSelect });
       if (elements.apiProviderSelect) {
         elements.apiProviderSelect.value = apiProvider;
@@ -190,53 +193,75 @@ export function initSettings(deps) {
       
       if (apiProvider === 'openai' && result[STORAGE_KEYS.API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           apiKeyValue = maskApiKey(decrypted);
-          apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+          apiKeyEncrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt OpenAI API key', error);
-          apiKeyValue = maskApiKey(result[STORAGE_KEYS.API_KEY]);
-          apiKeyEncrypted = result[STORAGE_KEYS.API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.API_KEY] || '');
+          apiKeyValue = maskApiKey(apiKey);
+          apiKeyEncrypted = apiKey;
         }
       } else if (apiProvider === 'claude' && result[STORAGE_KEYS.CLAUDE_API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.CLAUDE_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           apiKeyValue = maskApiKey(decrypted);
-          apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+          apiKeyEncrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt Claude API key', error);
-          apiKeyValue = maskApiKey(result[STORAGE_KEYS.CLAUDE_API_KEY]);
-          apiKeyEncrypted = result[STORAGE_KEYS.CLAUDE_API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.CLAUDE_API_KEY] || '');
+          apiKeyValue = maskApiKey(apiKey);
+          apiKeyEncrypted = apiKey;
         }
       } else if (apiProvider === 'gemini' && result[STORAGE_KEYS.GEMINI_API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.GEMINI_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           apiKeyValue = maskApiKey(decrypted);
-          apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+          apiKeyEncrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt Gemini API key', error);
-          apiKeyValue = maskApiKey(result[STORAGE_KEYS.GEMINI_API_KEY]);
-          apiKeyEncrypted = result[STORAGE_KEYS.GEMINI_API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.GEMINI_API_KEY] || '');
+          apiKeyValue = maskApiKey(apiKey);
+          apiKeyEncrypted = apiKey;
         }
       } else if (apiProvider === 'grok' && result[STORAGE_KEYS.GROK_API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.GROK_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           apiKeyValue = maskApiKey(decrypted);
-          apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+          apiKeyEncrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt Grok API key', error);
-          apiKeyValue = maskApiKey(result[STORAGE_KEYS.GROK_API_KEY]);
-          apiKeyEncrypted = result[STORAGE_KEYS.GROK_API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.GROK_API_KEY] || '');
+          apiKeyValue = maskApiKey(apiKey);
+          apiKeyEncrypted = apiKey;
         }
       } else if (apiProvider === 'openrouter' && result[STORAGE_KEYS.OPENROUTER_API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.OPENROUTER_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           apiKeyValue = maskApiKey(decrypted);
-          apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+          apiKeyEncrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt OpenRouter API key', error);
-          apiKeyValue = maskApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
-          apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.OPENROUTER_API_KEY] || '');
+          apiKeyValue = maskApiKey(apiKey);
+          apiKeyEncrypted = apiKey;
+        }
+      } else if (apiProvider === 'deepseek' && result[STORAGE_KEYS.DEEPSEEK_API_KEY]) {
+        try {
+          const apiKey = String(result[STORAGE_KEYS.DEEPSEEK_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
+          apiKeyValue = maskApiKey(decrypted);
+          apiKeyEncrypted = apiKey;
+        } catch (error) {
+          logError('Failed to decrypt DeepSeek API key', error);
+          const apiKey = String(result[STORAGE_KEYS.DEEPSEEK_API_KEY] || '');
+          apiKeyValue = maskApiKey(apiKey);
+          apiKeyEncrypted = apiKey;
         }
       }
       
@@ -255,20 +280,22 @@ export function initSettings(deps) {
       
       if (result[STORAGE_KEYS.GOOGLE_API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.GOOGLE_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.GOOGLE_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           elements.googleApiKey.value = maskApiKey(decrypted);
-          elements.googleApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_API_KEY];
+          elements.googleApiKey.dataset.encrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt Google API key', error);
-          elements.googleApiKey.value = maskApiKey(result[STORAGE_KEYS.GOOGLE_API_KEY]);
-          elements.googleApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.GOOGLE_API_KEY] || '');
+          elements.googleApiKey.value = maskApiKey(apiKey);
+          elements.googleApiKey.dataset.encrypted = apiKey;
         }
       }
       
       // Model is already set by updateApiProviderUI() -> updateModelList()
       // But we need to ensure saved model is selected if it belongs to current provider
       if (result[STORAGE_KEYS.MODEL] && elements.modelSelect) {
-        const savedModel = result[STORAGE_KEYS.MODEL];
+        const savedModel = String(result[STORAGE_KEYS.MODEL]);
         const savedModelProvider = getProviderFromModel(savedModel);
         const currentProvider = elements.apiProviderSelect?.value || 'openai';
         
@@ -286,7 +313,7 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.MODE]) {
-        elements.modeSelect.value = result[STORAGE_KEYS.MODE];
+        elements.modeSelect.value = String(result[STORAGE_KEYS.MODE]);
       }
       
       // Default: enabled (true) - cache selectors by default
@@ -395,9 +422,10 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.OUTPUT_FORMAT]) {
-        elements.outputFormat.value = result[STORAGE_KEYS.OUTPUT_FORMAT];
+        const outputFormat = String(result[STORAGE_KEYS.OUTPUT_FORMAT]);
+        elements.outputFormat.value = outputFormat;
         if (elements.mainFormatSelect) {
-          elements.mainFormatSelect.value = result[STORAGE_KEYS.OUTPUT_FORMAT];
+          elements.mainFormatSelect.value = outputFormat;
         }
       }
       
@@ -412,11 +440,11 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.PAGE_MODE]) {
-        elements.pageMode.value = result[STORAGE_KEYS.PAGE_MODE];
+        elements.pageMode.value = String(result[STORAGE_KEYS.PAGE_MODE]);
       }
       
       if (result[STORAGE_KEYS.LANGUAGE]) {
-        elements.languageSelect.value = result[STORAGE_KEYS.LANGUAGE];
+        elements.languageSelect.value = String(result[STORAGE_KEYS.LANGUAGE]);
       }
       
       if (result[STORAGE_KEYS.TRANSLATE_IMAGES]) {
@@ -424,7 +452,7 @@ export function initSettings(deps) {
       }
       
       // Load style preset
-      const savedPreset = result[STORAGE_KEYS.STYLE_PRESET] || 'dark';
+      const savedPreset = String(result[STORAGE_KEYS.STYLE_PRESET] || 'dark');
       elements.stylePreset.value = savedPreset;
       
       // Sync custom select display for stylePreset
@@ -442,14 +470,15 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.FONT_FAMILY]) {
-        elements.fontFamily.value = result[STORAGE_KEYS.FONT_FAMILY];
-        setCustomSelectValue(result[STORAGE_KEYS.FONT_FAMILY]);
+        const fontFamily = String(result[STORAGE_KEYS.FONT_FAMILY]);
+        elements.fontFamily.value = fontFamily;
+        setCustomSelectValue(fontFamily);
       }
       
       if (result[STORAGE_KEYS.FONT_SIZE]) {
         // Convert old preset values to numbers
         const oldToNew = { 'small': '24', 'medium': '31', 'large': '38', 'xlarge': '45' };
-        const savedSize = result[STORAGE_KEYS.FONT_SIZE];
+        const savedSize = String(result[STORAGE_KEYS.FONT_SIZE]);
         elements.fontSize.value = oldToNew[savedSize] || savedSize;
       }
       
@@ -468,32 +497,36 @@ export function initSettings(deps) {
       } else {
         // Load custom colors from storage (only for 'custom' preset)
         if (result[STORAGE_KEYS.BG_COLOR]) {
-          elements.bgColor.value = result[STORAGE_KEYS.BG_COLOR];
-          elements.bgColorText.value = result[STORAGE_KEYS.BG_COLOR];
+          const bgColor = String(result[STORAGE_KEYS.BG_COLOR]);
+          elements.bgColor.value = bgColor;
+          elements.bgColorText.value = bgColor;
         } else {
           elements.bgColor.value = DEFAULT_STYLES.bgColor;
           elements.bgColorText.value = DEFAULT_STYLES.bgColor;
         }
         
         if (result[STORAGE_KEYS.TEXT_COLOR]) {
-          elements.textColor.value = result[STORAGE_KEYS.TEXT_COLOR];
-          elements.textColorText.value = result[STORAGE_KEYS.TEXT_COLOR];
+          const textColor = String(result[STORAGE_KEYS.TEXT_COLOR]);
+          elements.textColor.value = textColor;
+          elements.textColorText.value = textColor;
         } else {
           elements.textColor.value = DEFAULT_STYLES.textColor;
           elements.textColorText.value = DEFAULT_STYLES.textColor;
         }
         
         if (result[STORAGE_KEYS.HEADING_COLOR]) {
-          elements.headingColor.value = result[STORAGE_KEYS.HEADING_COLOR];
-          elements.headingColorText.value = result[STORAGE_KEYS.HEADING_COLOR];
+          const headingColor = String(result[STORAGE_KEYS.HEADING_COLOR]);
+          elements.headingColor.value = headingColor;
+          elements.headingColorText.value = headingColor;
         } else {
           elements.headingColor.value = DEFAULT_STYLES.headingColor;
           elements.headingColorText.value = DEFAULT_STYLES.headingColor;
         }
         
         if (result[STORAGE_KEYS.LINK_COLOR]) {
-          elements.linkColor.value = result[STORAGE_KEYS.LINK_COLOR];
-          elements.linkColorText.value = result[STORAGE_KEYS.LINK_COLOR];
+          const linkColor = String(result[STORAGE_KEYS.LINK_COLOR]);
+          elements.linkColor.value = linkColor;
+          elements.linkColorText.value = linkColor;
         } else {
           elements.linkColor.value = DEFAULT_STYLES.linkColor;
           elements.linkColorText.value = DEFAULT_STYLES.linkColor;
@@ -501,18 +534,18 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.THEME] && elements.themeSelect) {
-        elements.themeSelect.value = result[STORAGE_KEYS.THEME];
+        elements.themeSelect.value = String(result[STORAGE_KEYS.THEME]);
       }
       
       if (result[STORAGE_KEYS.UI_LANGUAGE] && elements.uiLanguageSelect) {
-        elements.uiLanguageSelect.value = result[STORAGE_KEYS.UI_LANGUAGE];
+        elements.uiLanguageSelect.value = String(result[STORAGE_KEYS.UI_LANGUAGE]);
       } else if (elements.uiLanguageSelect) {
         elements.uiLanguageSelect.value = 'en';
       }
       
       // Load audio settings
       if (result[STORAGE_KEYS.AUDIO_PROVIDER]) {
-        elements.audioProvider.value = result[STORAGE_KEYS.AUDIO_PROVIDER];
+        elements.audioProvider.value = String(result[STORAGE_KEYS.AUDIO_PROVIDER]);
       } else {
         elements.audioProvider.value = 'openai'; // Default
       }
@@ -598,7 +631,8 @@ export function initSettings(deps) {
       // Load and mask ElevenLabs API key
       if (result[STORAGE_KEYS.ELEVENLABS_API_KEY]) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.ELEVENLABS_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.ELEVENLABS_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           
           // Check if decrypted value is a mask (corrupted data in storage)
           if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
@@ -608,7 +642,7 @@ export function initSettings(deps) {
             await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
           } else {
             elements.elevenlabsApiKey.value = maskApiKey(decrypted);
-            elements.elevenlabsApiKey.dataset.encrypted = result[STORAGE_KEYS.ELEVENLABS_API_KEY];
+            elements.elevenlabsApiKey.dataset.encrypted = apiKey;
           }
         } catch (error) {
           logError('Failed to decrypt ElevenLabs API key', error);
@@ -622,7 +656,8 @@ export function initSettings(deps) {
       // Load and mask Qwen API key
       if (result[STORAGE_KEYS.QWEN_API_KEY] && elements.qwenApiKey) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.QWEN_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.QWEN_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           
           // Check if decrypted value is a mask (corrupted data in storage)
           if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
@@ -632,7 +667,7 @@ export function initSettings(deps) {
             await chrome.storage.local.remove(STORAGE_KEYS.QWEN_API_KEY);
           } else {
             elements.qwenApiKey.value = maskApiKey(decrypted);
-            elements.qwenApiKey.dataset.encrypted = result[STORAGE_KEYS.QWEN_API_KEY];
+            elements.qwenApiKey.dataset.encrypted = apiKey;
           }
         } catch (error) {
           logError('Failed to decrypt Qwen API key', error);
@@ -646,7 +681,8 @@ export function initSettings(deps) {
       // Load and mask Respeecher API key
       if (result[STORAGE_KEYS.RESPEECHER_API_KEY] && elements.respeecherApiKey) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.RESPEECHER_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.RESPEECHER_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           
           // Check if decrypted value is a mask (corrupted data in storage)
           if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
@@ -656,7 +692,7 @@ export function initSettings(deps) {
             await chrome.storage.local.remove(STORAGE_KEYS.RESPEECHER_API_KEY);
           } else {
             elements.respeecherApiKey.value = maskApiKey(decrypted);
-            elements.respeecherApiKey.dataset.encrypted = result[STORAGE_KEYS.RESPEECHER_API_KEY];
+            elements.respeecherApiKey.dataset.encrypted = apiKey;
           }
         } catch (error) {
           logError('Failed to decrypt Respeecher API key', error);
@@ -670,19 +706,21 @@ export function initSettings(deps) {
       // Load and mask Google TTS API key
       if (result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] && elements.googleTtsApiKey) {
         try {
-          const decrypted = await decryptApiKey(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY]);
+          const apiKey = String(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] || '');
+          const decrypted = await decryptApiKey(apiKey);
           elements.googleTtsApiKey.value = maskApiKey(decrypted);
-          elements.googleTtsApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_TTS_API_KEY];
+          elements.googleTtsApiKey.dataset.encrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt Google TTS API key', error);
           // Keep the encrypted key in dataset even if decryption fails (same as Gemini key)
-          elements.googleTtsApiKey.value = maskApiKey(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY]);
-          elements.googleTtsApiKey.dataset.encrypted = result[STORAGE_KEYS.GOOGLE_TTS_API_KEY];
+          const apiKey = String(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] || '');
+          elements.googleTtsApiKey.value = maskApiKey(apiKey);
+          elements.googleTtsApiKey.dataset.encrypted = apiKey;
         }
       }
       
       if (result[STORAGE_KEYS.ELEVENLABS_MODEL]) {
-        elements.elevenlabsModel.value = result[STORAGE_KEYS.ELEVENLABS_MODEL];
+        elements.elevenlabsModel.value = String(result[STORAGE_KEYS.ELEVENLABS_MODEL]);
       }
       
       if (result[STORAGE_KEYS.ELEVENLABS_STABILITY] !== undefined) {
@@ -694,13 +732,14 @@ export function initSettings(deps) {
           if (num <= 0.75) return 0.5;
           return 1.0;
         };
-        const normalizedValue = normalizeStability(result[STORAGE_KEYS.ELEVENLABS_STABILITY]);
+        const normalizedValue = normalizeStability(String(result[STORAGE_KEYS.ELEVENLABS_STABILITY] || '0'));
         elements.elevenlabsStability.value = normalizedValue;
         if (elements.elevenlabsStabilityValue) {
           elements.elevenlabsStabilityValue.textContent = normalizedValue.toFixed(1);
         }
         // Save normalized value if it was different
-        if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_STABILITY])) {
+        const originalValue = parseFloat(String(result[STORAGE_KEYS.ELEVENLABS_STABILITY] || '0'));
+        if (normalizedValue !== originalValue) {
           debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STABILITY, normalizedValue);
         }
       }
@@ -712,13 +751,14 @@ export function initSettings(deps) {
           if (isNaN(num)) return 0.75;
           return Math.round(num * 10) / 10;
         };
-        const normalizedValue = normalizeSimilarity(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY]);
+        const normalizedValue = normalizeSimilarity(String(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY] || '0'));
         elements.elevenlabsSimilarity.value = normalizedValue;
         if (elements.elevenlabsSimilarityValue) {
           elements.elevenlabsSimilarityValue.textContent = normalizedValue.toFixed(1);
         }
         // Save normalized value if it was different
-        if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY])) {
+        const originalValue = parseFloat(String(result[STORAGE_KEYS.ELEVENLABS_SIMILARITY] || '0'));
+        if (normalizedValue !== originalValue) {
           debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_SIMILARITY, normalizedValue);
         }
       }
@@ -730,13 +770,14 @@ export function initSettings(deps) {
           if (isNaN(num)) return 0.0;
           return Math.round(num * 10) / 10;
         };
-        const normalizedValue = normalizeStyle(result[STORAGE_KEYS.ELEVENLABS_STYLE]);
+        const normalizedValue = normalizeStyle(String(result[STORAGE_KEYS.ELEVENLABS_STYLE] || '0'));
         elements.elevenlabsStyle.value = normalizedValue;
         if (elements.elevenlabsStyleValue) {
           elements.elevenlabsStyleValue.textContent = normalizedValue.toFixed(1);
         }
         // Save normalized value if it was different
-        if (normalizedValue !== parseFloat(result[STORAGE_KEYS.ELEVENLABS_STYLE])) {
+        const originalValue = parseFloat(String(result[STORAGE_KEYS.ELEVENLABS_STYLE] || '0'));
+        if (normalizedValue !== originalValue) {
           debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_STYLE, normalizedValue);
         }
       }
@@ -746,44 +787,47 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.ELEVENLABS_FORMAT] && elements.elevenlabsFormat) {
-        elements.elevenlabsFormat.value = result[STORAGE_KEYS.ELEVENLABS_FORMAT];
+        elements.elevenlabsFormat.value = String(result[STORAGE_KEYS.ELEVENLABS_FORMAT]);
       }
       
       if (result[STORAGE_KEYS.RESPEECHER_TEMPERATURE] !== undefined && elements.respeecherTemperature) {
-        elements.respeecherTemperature.value = result[STORAGE_KEYS.RESPEECHER_TEMPERATURE];
+        const temperature = String(result[STORAGE_KEYS.RESPEECHER_TEMPERATURE]);
+        elements.respeecherTemperature.value = temperature;
         if (elements.respeecherTemperatureValue) {
-          elements.respeecherTemperatureValue.textContent = parseFloat(result[STORAGE_KEYS.RESPEECHER_TEMPERATURE]).toFixed(1);
+          elements.respeecherTemperatureValue.textContent = parseFloat(temperature).toFixed(1);
         }
       }
       
       if (result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY] !== undefined && elements.respeecherRepetitionPenalty) {
-        elements.respeecherRepetitionPenalty.value = result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY];
+        const repetitionPenalty = String(result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY]);
+        elements.respeecherRepetitionPenalty.value = repetitionPenalty;
         if (elements.respeecherRepetitionPenaltyValue) {
-          elements.respeecherRepetitionPenaltyValue.textContent = parseFloat(result[STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY]).toFixed(1);
+          elements.respeecherRepetitionPenaltyValue.textContent = parseFloat(repetitionPenalty).toFixed(1);
         }
       }
       
       if (result[STORAGE_KEYS.RESPEECHER_TOP_P] !== undefined && elements.respeecherTopP) {
-        elements.respeecherTopP.value = result[STORAGE_KEYS.RESPEECHER_TOP_P];
+        const topP = String(result[STORAGE_KEYS.RESPEECHER_TOP_P]);
+        elements.respeecherTopP.value = topP;
         if (elements.respeecherTopPValue) {
-          elements.respeecherTopPValue.textContent = parseFloat(result[STORAGE_KEYS.RESPEECHER_TOP_P]).toFixed(2);
+          elements.respeecherTopPValue.textContent = parseFloat(topP).toFixed(2);
         }
       }
       
       if (result[STORAGE_KEYS.GOOGLE_TTS_MODEL] && elements.googleTtsModel) {
-        elements.googleTtsModel.value = result[STORAGE_KEYS.GOOGLE_TTS_MODEL];
+        elements.googleTtsModel.value = String(result[STORAGE_KEYS.GOOGLE_TTS_MODEL]);
       }
       
       if (result[STORAGE_KEYS.OPENAI_INSTRUCTIONS] !== undefined) {
-        elements.openaiInstructions.value = result[STORAGE_KEYS.OPENAI_INSTRUCTIONS];
+        elements.openaiInstructions.value = String(result[STORAGE_KEYS.OPENAI_INSTRUCTIONS]);
       }
       
       if (result[STORAGE_KEYS.GOOGLE_TTS_VOICE] && elements.googleTtsVoice) {
-        elements.googleTtsVoice.value = result[STORAGE_KEYS.GOOGLE_TTS_VOICE];
+        elements.googleTtsVoice.value = String(result[STORAGE_KEYS.GOOGLE_TTS_VOICE]);
       }
       
       if (result[STORAGE_KEYS.GOOGLE_TTS_PROMPT] !== undefined && elements.googleTtsPrompt) {
-        elements.googleTtsPrompt.value = result[STORAGE_KEYS.GOOGLE_TTS_PROMPT] || '';
+        elements.googleTtsPrompt.value = String(result[STORAGE_KEYS.GOOGLE_TTS_PROMPT] || '');
       }
       
       // Determine initial voice: prefer per-provider map, fallback to legacy single value
@@ -834,9 +878,10 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.AUDIO_SPEED]) {
-        elements.audioSpeed.value = result[STORAGE_KEYS.AUDIO_SPEED];
+        const audioSpeed = String(result[STORAGE_KEYS.AUDIO_SPEED]);
+        elements.audioSpeed.value = audioSpeed;
         if (elements.audioSpeedValue) {
-          elements.audioSpeedValue.textContent = result[STORAGE_KEYS.AUDIO_SPEED] + 'x';
+          elements.audioSpeedValue.textContent = audioSpeed + 'x';
         }
       }
       
@@ -918,22 +963,38 @@ export function initSettings(deps) {
             elements.generateSummaryBtn.textContent = generateSummaryText;
           }
         } else {
-          const timeSinceStart = Date.now() - stored.summary_generating_start_time;
-          
-          if (timeSinceStart > STALE_THRESHOLD) {
-            // Flag is stale - reset it
-            logWarn('Summary generation flag is stale on load, resetting', { timeSinceStart });
+          const startTime = stored.summary_generating_start_time;
+          if (typeof startTime !== 'number') {
+            // Invalid timestamp - reset flag
+            logWarn('Summary generation flag has invalid timestamp, resetting', { startTime });
             await chrome.storage.local.set({ 
               [STORAGE_KEYS.SUMMARY_GENERATING]: false,
               summary_generating_start_time: null
             });
             result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
-            
-            // Ensure button is enabled after reset
             if (elements.generateSummaryBtn) {
               elements.generateSummaryBtn.disabled = false;
               const generateSummaryText = await t('generateSummary') || 'Generate Summary';
               elements.generateSummaryBtn.textContent = generateSummaryText;
+            }
+          } else {
+            const timeSinceStart = Date.now() - startTime;
+            
+            if (timeSinceStart > STALE_THRESHOLD) {
+              // Flag is stale - reset it
+              logWarn('Summary generation flag is stale on load, resetting', { timeSinceStart });
+              await chrome.storage.local.set({ 
+                [STORAGE_KEYS.SUMMARY_GENERATING]: false,
+                summary_generating_start_time: null
+              });
+              result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
+              
+              // Ensure button is enabled after reset
+              if (elements.generateSummaryBtn) {
+                elements.generateSummaryBtn.disabled = false;
+                const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+                elements.generateSummaryBtn.textContent = generateSummaryText;
+              }
             }
           }
         }
@@ -956,16 +1017,23 @@ export function initSettings(deps) {
       // If summary exists and not generating, show it immediately
       // Background.js clears summary on reload, so if it exists here, it's valid
       if (result[STORAGE_KEYS.SUMMARY_TEXT] && !result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryText && elements.summaryContainer) {
-        const savedSummary = result[STORAGE_KEYS.SUMMARY_TEXT];
+        const savedSummary = String(result[STORAGE_KEYS.SUMMARY_TEXT]);
         elements.summaryText.dataset.originalMarkdown = savedSummary;
         const htmlSummary = markdownToHtml(savedSummary);
         // SECURITY: Sanitize HTML to prevent XSS attacks from AI-generated content
         const sanitizedHtml = sanitizeMarkdownHtml(htmlSummary);
         elements.summaryText.innerHTML = sanitizedHtml;
+        // CRITICAL: Remove 'hidden' class AND set display to 'block' to ensure visibility
+        elements.summaryContainer.classList.remove('hidden');
         elements.summaryContainer.style.display = 'block';
-        log('loadSettings: Summary restored from storage');
+        log('loadSettings: Summary restored from storage', {
+          summaryLength: savedSummary.length,
+          containerDisplay: elements.summaryContainer.style.display,
+          hasHiddenClass: elements.summaryContainer.classList.contains('hidden')
+        });
       } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryContainer) {
         // No summary and not generating - hide container
+        elements.summaryContainer.classList.add('hidden');
         elements.summaryContainer.style.display = 'none';
         log('loadSettings: No summary to restore');
       }

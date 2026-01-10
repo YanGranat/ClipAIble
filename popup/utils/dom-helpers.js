@@ -42,7 +42,17 @@ export function setElementGroupDisplay(key, displayValue, elements) {
   if (el) {
     const group = el.closest('.setting-item') || el;
     if (group instanceof HTMLElement) {
-      group.style.display = displayValue;
+      // CRITICAL: Remove 'hidden' class when showing, add when hiding
+      // The 'hidden' class has 'display: none !important' which overrides inline styles
+      if (displayValue === 'none' || displayValue === '') {
+        group.classList.add('hidden');
+        // Still set display for consistency, even though hidden class will override
+        group.style.display = 'none';
+      } else {
+        // Remove hidden class first, then set display
+        group.classList.remove('hidden');
+        group.style.display = displayValue;
+      }
     }
   }
 }
@@ -61,7 +71,17 @@ export function setDisplayForIds(ids, displayValue) {
     }
     const group = el.closest('.setting-item') || el;
     if (group instanceof HTMLElement) {
-      group.style.display = displayValue;
+      // CRITICAL: Remove 'hidden' class when showing, add when hiding
+      // The 'hidden' class has 'display: none !important' which overrides inline styles
+      if (displayValue === 'none' || displayValue === '') {
+        group.classList.add('hidden');
+        // Still set display for consistency, even though hidden class will override
+        group.style.display = 'none';
+      } else {
+        // Remove hidden class first, then set display
+        group.classList.remove('hidden');
+        group.style.display = displayValue;
+      }
     }
   });
 }

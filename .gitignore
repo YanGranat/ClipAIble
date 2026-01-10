@@ -14,6 +14,14 @@ coverage/
 .test-results/
 .vscode-test/
 
+# Test PDF files (generated for testing) 
+test-pdfs/
+*.test.pdf
+scripts/test/test-pdfs/
+
+# Test PDF generator scripts (development tool)
+scripts/test/
+
 # IDE
 .vscode/
 .idea/
@@ -65,3 +73,10 @@ assets/
 
 # Cursor rules (personal settings)
 .cursorrules
+
+
+*.backup
+*.bak
+
+
+*.map

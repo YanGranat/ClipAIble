@@ -24,8 +24,8 @@ const LANGUAGE_TTS_INSTRUCTIONS = {
 
 /**
  * Build settings object for logging
- * @param {Object} params - Generation parameters
- * @returns {Object} Settings object
+ * @param {Partial<import('../types.js').AudioGenerationData>} params - Generation parameters
+ * @returns {Record<string, any>} Settings object
  */
 export function buildAudioSettings(params) {
   const {
@@ -111,9 +111,11 @@ export function buildAudioSettings(params) {
 
 /**
  * Validate audio generation parameters
- * @param {Object} params - Generation parameters
+ * @param {Partial<import('../types.js').AudioGenerationData>} params - Generation parameters
  * @param {string} provider - TTS provider
- * @throws {Error} If validation fails
+ * @throws {Error} If content is empty
+ * @throws {Error} If API key is missing
+ * @throws {Error} If TTS API key is missing for non-offline provider
  */
 export async function validateAudioParams(params, provider) {
   const { content, apiKey, ttsApiKey } = params;
@@ -148,7 +150,7 @@ export function getTTSInstructions(language) {
  * @param {string} voice - Default voice
  * @param {string} format - Default format
  * @param {string} googleTtsVoice - Google TTS voice (if applicable)
- * @returns {{voice: string, format: string}} TTS voice and format
+ * @returns {{ttsVoice: string, ttsFormat: string}} TTS voice and format
  */
 export function getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice) {
   const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
@@ -176,12 +178,12 @@ export function getProviderName(provider) {
 
 /**
  * Build TTS options object for chunksToSpeech
- * @param {Object} params - Generation parameters
+ * @param {Partial<import('../types.js').AudioGenerationData>} params - Generation parameters
  * @param {string} ttsVoice - TTS voice
  * @param {string} ttsFormat - TTS format
- * @param {string} ttsPrompt - TTS prompt (if applicable)
- * @param {string} instructions - TTS instructions
- * @returns {Object} TTS options
+ * @param {string} [ttsPrompt] - TTS prompt (if applicable)
+ * @param {string} [instructions] - TTS instructions
+ * @returns {Partial<import('../types.js').TTSOptions>} TTS options object
  */
 export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instructions) {
   const {
@@ -228,9 +230,9 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
 
 /**
  * Log audio generation start
- * @param {Date} entryTime - Entry timestamp
- * @param {Object} params - Generation parameters
- * @param {Object} allSettings - Settings object
+ * @param {number} entryTime - Entry timestamp (milliseconds since epoch)
+ * @param {Partial<import('../types.js').AudioGenerationData> & {updateState?: function}} params - Generation parameters
+ * @param {Record<string, any>} allSettings - Settings object
  */
 export function logAudioGenerationStart(entryTime, params, allSettings) {
   log('[ClipAIble Audio Generation] === generateAudio ENTRY POINT ===', {
@@ -364,7 +366,7 @@ export function logTTSCallPreparation(provider, ttsVoice, speed, ttsFormat, lang
 
 /**
  * Log TTS completion
- * @param {Date} startTime - Start timestamp
+ * @param {number} startTime - Start timestamp (milliseconds since epoch)
  * @param {ArrayBuffer} audioBuffer - Generated audio buffer
  */
 export function logTTSCompletion(startTime, audioBuffer) {

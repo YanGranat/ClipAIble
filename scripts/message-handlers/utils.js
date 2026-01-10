@@ -24,7 +24,7 @@ function checkChromeRuntimeError(context, errorType) {
 
 /**
  * Safely send response with error handling
- * @param {Function} sendResponse - Response function
+ * @param {import('../types.js').SendResponseFunction} sendResponse - Response function
  * @param {*} response - Response data
  * @param {string} errorType - Error type for error handler
  * @param {string} context - Context for logging
@@ -45,7 +45,7 @@ function safeSendResponse(sendResponse, response, errorType, context) {
  * Wrapper for promise-based handlers with consistent error handling
  * @param {Promise} promise - Promise to handle
  * @param {string} errorType - Error type for error handler
- * @param {Function} sendResponse - Response function
+ * @param {import('../types.js').SendResponseFunction} sendResponse - Response function
  * @returns {boolean} - Always returns true for async handlers
  */
 export function withErrorHandling(promise, errorType, sendResponse) {
@@ -86,12 +86,16 @@ export function withErrorHandling(promise, errorType, sendResponse) {
  * Wrapper for handlers that return simple success response
  * @param {Promise} promise - Promise to handle
  * @param {string} errorType - Error type for error handler
- * @param {Function} sendResponse - Response function
+ * @param {import('../types.js').SendResponseFunction} sendResponse - Response function
  * @returns {Promise<boolean>} - Always returns true for async handlers
  */
 export async function withSuccessResponse(promise, errorType, sendResponse) {
   try {
     await promise;
+    // Check for Chrome runtime errors before sending response
+    if (checkChromeRuntimeError('before sendResponse', errorType)) {
+      return true;
+    }
     sendResponse({ success: true });
     return true;
   } catch (error) {
@@ -101,6 +105,10 @@ export async function withSuccessResponse(promise, errorType, sendResponse) {
       logError: true,
       createUserMessage: false
     });
+    // Check for Chrome runtime errors before sending error response
+    if (checkChromeRuntimeError('before error sendResponse', errorType)) {
+      return true;
+    }
     sendResponse({ error: normalized.message });
     return true;
   }

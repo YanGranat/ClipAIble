@@ -10,18 +10,24 @@ import { extractYouTubeSubtitles } from '../extraction/video-subtitles.js';
  * Handle youtubeSubtitlesResult request
  * CRITICAL: This is a fallback handler - don't return true to allow message to pass through
  * to temporary listener in extractYouTubeSubtitles
- * @param {Object} request - Request object
- * @param {Object} sender - Sender object
- * @param {Function} sendResponse - Response function
+ * @param {import('../types.js').MessageRequest} request - Request object
+ * @param {import('../types.js').ChromeRuntimeMessageSender} sender - Sender object
+ * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {boolean} - Returns false to let message pass through to temporary listener
  */
 export function handleYoutubeSubtitlesResult(request, sender, sendResponse) {
+  // Note: youtubeSubtitlesResult message has a different structure than standard MessageRequest
+  // It has result/error at the top level, not in data property
+  /** @type {any} */ const requestAny = request;
+  const result = requestAny.result;
+  const error = requestAny.error;
+  
   log('🟢 Received youtubeSubtitlesResult in main listener (fallback)', {
     action: request.action,
     type: request.type,
-    hasError: !!request.error,
-    hasResult: !!request.result,
-    subtitleCount: request.result?.subtitles?.length || 0
+    hasError: !!error,
+    hasResult: !!result,
+    subtitleCount: result?.subtitles?.length || 0
   });
   
   // The extractYouTubeSubtitles function creates a temporary listener
@@ -29,18 +35,18 @@ export function handleYoutubeSubtitlesResult(request, sender, sendResponse) {
   // but DON'T return true here - let the message pass through to temporary listener
   // Save to storage for popup to use (as fallback)
   // Use async IIFE since we're in a callback
-  if (request.result && !request.error) {
+  if (result && !error) {
     (async () => {
       try {
         await chrome.storage.local.set({
           lastSubtitles: {
-            subtitles: request.result.subtitles,
-            metadata: request.result.metadata,
+            subtitles: result.subtitles,
+            metadata: result.metadata,
             timestamp: Date.now()
           }
         });
         log('🟢 Saved subtitles to storage for popup (fallback)', {
-          subtitleCount: request.result.subtitles?.length || 0
+          subtitleCount: result.subtitles?.length || 0
         });
       } catch (error) {
         const normalized = await handleError(error, {
@@ -69,9 +75,9 @@ export function handleYoutubeSubtitlesResult(request, sender, sendResponse) {
 
 /**
  * Handle extractYouTubeSubtitlesForSummary request
- * @param {Object} request - Request object
- * @param {Object} sender - Sender object
- * @param {Function} sendResponse - Response function
+ * @param {import('../types.js').MessageRequest} request - Request object
+ * @param {import('../types.js').ChromeRuntimeMessageSender} sender - Sender object
+ * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {boolean} - Always returns true for async handlers
  */
 export function handleExtractYouTubeSubtitlesForSummary(request, sender, sendResponse) {

@@ -380,8 +380,14 @@ export function initAudio(deps) {
     if (!audioProvider) return;
     
     // Safety check: If format is not audio, hide all audio fields and return
+    // CRITICAL: Read format from mainFormatSelect first (user-facing control),
+    // then fallback to outputFormat. This ensures we use the actual selected value.
+    const mainFormatSelect = getElement('mainFormatSelect');
     const outputFormat = getElement('outputFormat');
-    const format = outputFormat?.value;
+    let format = outputFormat?.value;
+    if (mainFormatSelect && mainFormatSelect.value) {
+      format = mainFormatSelect.value;
+    }
     if (format !== 'audio') {
       hideAllAudioFields();
       return;

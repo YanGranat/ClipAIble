@@ -73,6 +73,8 @@ export function setupStyleHandlers(deps) {
       });
       
       if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+        // CRITICAL: Add 'hidden' class (it has display: none !important)
+        elements.customModelDropdown.classList.add('hidden');
         elements.customModelDropdown.style.display = 'none';
       }
       
@@ -109,7 +111,7 @@ export function setupStyleHandlers(deps) {
   }
 
   // Close dropdown when clicking outside
-  const windowWithModules = window;
+  const windowWithModules = /** @type {Window & { customSelectClickHandlerAdded?: boolean }} */ (window);
   if (!windowWithModules.customSelectClickHandlerAdded) {
     document.addEventListener('click', (e) => {
       requestAnimationFrame(() => {
@@ -126,11 +128,14 @@ export function setupStyleHandlers(deps) {
         
         const target = e.target instanceof Node ? e.target : null;
         if (elements.customModelDropdown && 
+            !elements.customModelDropdown.classList.contains('hidden') &&
             elements.customModelDropdown.style.display !== 'none' &&
             target &&
             !elements.customModelDropdown.contains(target) &&
             !(elements.modelSelect && elements.modelSelect.contains(target)) &&
             !(elements.addModelBtn && elements.addModelBtn.contains(target))) {
+          // CRITICAL: Add 'hidden' class (it has display: none !important)
+          elements.customModelDropdown.classList.add('hidden');
           elements.customModelDropdown.style.display = 'none';
         }
       });
@@ -240,7 +245,7 @@ export function setupStyleHandlers(deps) {
   document.querySelectorAll('.btn-reset-inline').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
-      const resetType = btn.dataset.reset;
+      const resetType = btn instanceof HTMLElement ? btn.dataset.reset : null;
       deferAsyncWork(async () => {
         if (settingsModule) {
           await settingsModule.resetStyleSetting(resetType);

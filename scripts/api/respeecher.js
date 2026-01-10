@@ -17,7 +17,7 @@
 //      https://space.respeecher.com/docs/api/tts/web-socket
 //      https://space.respeecher.com/docs/sdks/type-script
 
-import { log, logError, logWarn } from '../utils/logging.js';
+import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
@@ -33,6 +33,22 @@ import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils
  * WebSocket endpoint (wss://api.respeecher.com/v1/public/tts/{lang}/tts/websocket)
  * would provide better latency and support for concurrent generations,
  * but Bytes endpoint is sufficient for our article-to-audio use case.
+ * @readonly
+ * @const {{
+ *   API_URL_EN: string,
+ *   API_URL_UA: string,
+ *   VOICES_URL_EN: string,
+ *   VOICES_URL_UA: string,
+ *   MAX_INPUT: number,
+ *   SAMPLE_RATE: number,
+ *   FORMAT: string,
+ *   MAX_RESPONSE_SIZE: number,
+ *   MAX_CONCURRENT_REQUESTS: number,
+ *   DEFAULT_VOICE: string,
+ *   DEFAULT_TEMPERATURE: number,
+ *   DEFAULT_REPETITION_PENALTY: number,
+ *   DEFAULT_TOP_P: number
+ * }}
  */
 export const RESPEECHER_CONFIG = {
   // API endpoints - Bytes endpoint (HTTP POST)
@@ -200,9 +216,12 @@ function getApiUrl(voice, textLanguage = null) {
  * Convert text to speech using Respeecher API
  * @param {string} text - Text to convert (max 450 characters)
  * @param {string} apiKey - Respeecher API key
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID to use (default: 'samantha')
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format)
+ * @throws {Error} If text is empty or too long (max 450 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If Respeecher API request fails
+ * @throws {Error} If network error occurs
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   log('Respeecher TTS start', { textLength: text?.length, voice: options.voice, language: options.language });
@@ -210,12 +229,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
   const {
     voice = RESPEECHER_CONFIG.DEFAULT_VOICE,
     language = null, // Explicit language can override auto-detection
-    temperature = 1.0,
-    repetition_penalty = 1.0,
-    top_p = 1.0
+    respeecherTemperature: temperature = 1.0,
+    respeecherRepetitionPenalty: repetition_penalty = 1.0,
+    respeecherTopP: top_p = 1.0
   } = options;
   
-  log('Respeecher textToSpeech called', { textLength: text?.length, voice, language });
+  logDebug('Respeecher textToSpeech called', { textLength: text?.length, voice, language });
   
   if (!text || text.length === 0) {
     throw new Error('No text provided for TTS');
@@ -363,8 +382,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
           });
           
           if (!fetchResponse.ok) {
-            clearTimeout(timeout);
-            
             // Log full response details for debugging
             const responseHeaders = {};
             fetchResponse.headers.forEach((value, key) => {
@@ -383,7 +400,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
                   url: apiUrl,
                   method: 'POST',
                   hasApiKey: !!apiKeyParam,
-                  keyLength: apiKeyParam.length,
                   // Security: Don't log key prefix/suffix
                   keyLength: apiKeyParam?.length || 0
                 });
@@ -435,11 +451,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
             throw error;
           }
           
-          clearTimeout(timeout);
           return fetchResponse;
         } catch (e) {
-          clearTimeout(timeout);
           throw e;
+        } finally {
+          // CRITICAL: Always clear timeout in finally to prevent memory leaks
+          if (timeout) {
+            clearTimeout(timeout);
+          }
         }
       },
       {

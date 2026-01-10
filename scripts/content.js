@@ -5,15 +5,15 @@
 (function() {
   'use strict';
   
-  // КРИТИЧНО: Немедленная регистрация listener'ов ДО всего остального
-  // Это гарантирует, что listener'ы будут готовы к получению сообщений
+  // CRITICAL: Register listeners IMMEDIATELY before everything else
+  // This ensures listeners are ready to receive messages
   
-  // КРИТИЧНО: Проверить, что мы на YouTube странице
+  // CRITICAL: Check that we are on a YouTube page
   if (!window.location.hostname.includes('youtube.com')) {
     // Silent - non-YouTube pages are expected
   }
   
-  // Проверка валидности контекста расширения
+  // Check extension context validity
   function isExtensionContextValid() {
     try {
       return typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id !== undefined;
@@ -44,8 +44,11 @@
         chrome.runtime.sendMessage({
           action: 'logError',
           data: errorData
-        }).catch(() => {
-          // Ignore errors when sending error report
+        }, () => {
+          // CRITICAL: Check chrome.runtime.lastError to prevent "Unchecked runtime.lastError" spam
+          if (chrome.runtime.lastError) {
+            // Silently ignore - "Could not establish connection" is expected when receiver is closed
+          }
         });
       }
     } catch (sendError) {
@@ -60,9 +63,9 @@
   // Helper function to save subtitles to DOM as fallback when chrome.storage is unavailable
   function saveToDOMFallback(subtitleData) {
     try {
-      // Проверка что body существует
+      // Check that body exists
       if (!document.body) {
-        // Попробовать подождать и повторить
+        // Try to wait and retry
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', () => {
             if (document.body && subtitleData) {
@@ -73,14 +76,14 @@
         return;
       }
       
-      // Удалить старый элемент, если есть
+      // Remove old element if exists
       const oldElement = document.getElementById('ClipAIblePendingSubtitles');
       if (oldElement) {
         oldElement.remove();
       }
       
-      // Сохранить данные в специальный элемент на странице
-      // Background script может прочитать их через executeScript
+      // Save data to a special element on the page
+      // Background script can read them via executeScript
       const dataElement = document.createElement('div');
       dataElement.id = 'ClipAIblePendingSubtitles';
       dataElement.style.display = 'none';
@@ -94,10 +97,10 @@
       
       dataElement.setAttribute('data-subtitles', JSON.stringify(dataToSave));
       
-      // КРИТИЧНО: Добавить В НАЧАЛО body, не в конец (быстрее доступ)
+      // CRITICAL: Add at the BEGINNING of body, not at the end (faster access)
       document.body.insertBefore(dataElement, document.body.firstChild);
       
-      // Проверка что элемент действительно в DOM
+      // Check that element is actually in DOM
       const verification = document.getElementById('ClipAIblePendingSubtitles');
       if (!verification) {
         sendErrorToBackground('DOM element NOT found after adding', null, {
@@ -111,11 +114,15 @@
     }
   }
   
-  // НЕМЕДЛЕННАЯ регистрация postMessage и CustomEvent listeners
-  window.addEventListener('message', function handlePostMessage(event) {
+  // Store listener references for cleanup
+  let messageListener = null;
+  let runtimeMessageListener = null;
+  let customEventListeners = [];
+  
+  const handlePostMessage = function handlePostMessage(event) {
     
-    // КРИТИЧНО: НЕ блокировать сообщения по source!
-    // Обрабатываем два типа сообщений: субтитры и fetch requests
+    // CRITICAL: Do NOT block messages by source!
+    // Handle two types of messages: subtitles and fetch requests
     if (!event.data) {
       return;
     }
@@ -139,7 +146,7 @@
       return;
     }
     
-    // Обработка fetch requests для субтитров
+    // Handle fetch requests for subtitles
     if (event.data.type === 'ClipAIbleSubtitleFetchRequest') {
       // SECURITY: Validate URL to prevent SSRF attacks
       const url = event.data.url;
@@ -256,14 +263,14 @@
     }
     
     
-    // Обработка результатов извлечения субтитров
+    // Handle subtitle extraction results
     if (event.data.type !== 'ClipAIbleYouTubeSubtitles') {
       return;
     }
     
     if (event.data && event.data.type === 'ClipAIbleYouTubeSubtitles') {
       try {
-        // КРИТИЧНО: Проверка контекста ПЕРЕД отправкой сообщения
+        // CRITICAL: Check context BEFORE sending message
         if (!isExtensionContextValid()) {
           if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
             const subtitleData = {
@@ -289,7 +296,7 @@
           if (!backgroundResponded && !storageSaved && subtitleData) {
             storageSaved = true;
             
-            // Попробовать использовать chrome.storage
+            // Try to use chrome.storage
             try {
               if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
                 chrome.storage.local.set({
@@ -371,15 +378,15 @@
             metadata: event.data.result.metadata || {}
           };
           
-          // Проверяем тип ошибки
+          // Check error type
           const errorMsg = e.message || '';
           const isContextInvalidated = errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated');
           
-          // Если Extension context invalidated, используем DOM fallback сразу
+          // If Extension context invalidated, use DOM fallback immediately
           if (isContextInvalidated) {
             saveToDOMFallback(subtitleData);
           } else {
-            // Другие ошибки - пробуем storage, потом DOM fallback
+            // Other errors - try storage, then DOM fallback
             try {
               if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
                 chrome.storage.local.set({
@@ -409,8 +416,11 @@
         }
       }
     }
-  });
+  };
   
+  // Register window message listener
+  window.addEventListener('message', handlePostMessage);
+  messageListener = handlePostMessage;
 
   // Extract page content and metadata
   function extractPageContent() {
@@ -472,7 +482,7 @@
   }
 
   // Listen for extraction requests
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  runtimeMessageListener = (request, sender, sendResponse) => {
     if (request.action === 'extractContent') {
       const content = extractPageContent();
       sendResponse(content);
@@ -486,11 +496,13 @@
     }
     
     return false;
-  });
+  };
+  
+  chrome.runtime.onMessage.addListener(runtimeMessageListener);
 
-  // КРИТИЧНО: CustomEvent на document - ЕДИНСТВЕННЫЙ надежный способ
-  // коммуникации между MAIN world (injected script) и ISOLATED world (content script)
-  // window.postMessage НЕ работает между мирами!
+  // CRITICAL: CustomEvent on document - the ONLY reliable way
+  // to communicate between MAIN world (injected script) and ISOLATED world (content script)
+  // window.postMessage does NOT work between worlds!
   
   // Global flags to prevent duplicate processing
   let lastSubtitleTimestamp = 0;
@@ -524,7 +536,7 @@
     
     // Only check for duplicates if we have a hash AND it's very recent (2 seconds)
     // This allows retries from injected script but prevents true duplicates
-    // КРИТИЧНО: Увеличено окно до 2 секунд, чтобы поймать все ретраи из injected script
+    // CRITICAL: Increased window to 2 seconds to catch all retries from injected script
     const isDuplicate = subtitleData && 
                         currentHash && 
                         currentHash === lastSubtitleHash &&
@@ -540,7 +552,7 @@
     
     // Forward message to background script
     try {
-      // КРИТИЧНО: Проверка контекста ПЕРЕД отправкой сообщения
+      // CRITICAL: Check context BEFORE sending message
       if (!isExtensionContextValid()) {
         if (subtitleData) {
           saveToDOMFallback(subtitleData);
@@ -554,7 +566,7 @@
         if (!backgroundResponded && !storageSaved && subtitleData) {
           storageSaved = true;
           
-          // Попробовать использовать chrome.storage
+          // Try to use chrome.storage
           try {
             if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
               chrome.storage.local.set({
@@ -589,7 +601,7 @@
           backgroundResponded = true;
           clearTimeout(fallbackTimeout);
           
-          // КРИТИЧЕСКИ ВАЖНО: Проверить chrome.runtime.lastError!
+          // CRITICALLY IMPORTANT: Check chrome.runtime.lastError!
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
             sendErrorToBackground('Failed to forward message to background (CustomEvent)', chrome.runtime.lastError, {
@@ -694,15 +706,15 @@
         context: 'exception'
       });
       
-      // Проверяем тип ошибки
+      // Check error type
       const errorMsg = e.message || '';
       const isContextInvalidated = errorMsg.includes('Extension context invalidated') || errorMsg.includes('context invalidated');
       
-      // Если Extension context invalidated, используем DOM fallback сразу
+      // If Extension context invalidated, use DOM fallback immediately
       if (isContextInvalidated && subtitleData) {
         saveToDOMFallback(subtitleData);
       } else if (subtitleData) {
-        // Другие ошибки - пробуем storage, потом DOM fallback
+        // Other errors - try storage, then DOM fallback
         let storageSaved = false;
         if (!storageSaved) {
           storageSaved = true;
@@ -738,13 +750,15 @@
   
   // Register the listener IMMEDIATELY
   document.addEventListener('ClipAIbleSubtitleMessage', handleCustomEvent, true); // Use capture phase
+  customEventListeners.push({ element: document, event: 'ClipAIbleSubtitleMessage', handler: handleCustomEvent, capture: true });
   
   // Also register in bubble phase (just in case)
   document.addEventListener('ClipAIbleSubtitleMessage', handleCustomEvent, false);
+  customEventListeners.push({ element: document, event: 'ClipAIbleSubtitleMessage', handler: handleCustomEvent, capture: false });
   
 
   // Also listen for CustomEvent from MAIN world (for subtitle fetch requests)
-  document.addEventListener('ClipAIbleSubtitleFetchRequest', (event) => {
+  const handleFetchRequest = (event) => {
     const customEvent = /** @type {CustomEvent} */ (event);
     if (customEvent.detail && customEvent.detail.type === 'ClipAIbleSubtitleFetchRequest') {
       // SECURITY: Validate URL to prevent SSRF attacks
@@ -866,10 +880,46 @@
         }, window.location.origin);
       });
     }
-  });
+  };
+  
+  document.addEventListener('ClipAIbleSubtitleFetchRequest', handleFetchRequest);
+  customEventListeners.push({ element: document, event: 'ClipAIbleSubtitleFetchRequest', handler: handleFetchRequest, capture: false });
 
   // Make function available for direct injection
   // @ts-ignore - External library may use this
   window.__webpageToPdf_extractContent = extractPageContent;
+  
+  // Cleanup function to remove all listeners
+  function cleanupListeners() {
+    try {
+      // Remove window message listener
+      if (messageListener) {
+        window.removeEventListener('message', messageListener);
+        messageListener = null;
+      }
+      
+      // Remove chrome.runtime message listener
+      if (runtimeMessageListener) {
+        chrome.runtime.onMessage.removeListener(runtimeMessageListener);
+        runtimeMessageListener = null;
+      }
+      
+      // Remove custom event listeners
+      for (const { element, event, handler, capture } of customEventListeners) {
+        try {
+          element.removeEventListener(event, handler, capture);
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+      customEventListeners = [];
+    } catch (e) {
+      // Ignore errors during cleanup
+    }
+  }
+  
+  // Register cleanup on page unload
+  window.addEventListener('beforeunload', cleanupListeners);
+  window.addEventListener('pagehide', cleanupListeners);
 })();
 

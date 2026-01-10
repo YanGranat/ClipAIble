@@ -140,7 +140,7 @@ export async function runInitialization() {
         source: 'initialization',
         errorType: 'apiKeyMigrationFailed',
         logError: true,
-        createUserMessage: false
+        createUserMessage: true, // Use centralized user-friendly message
       });
       logError('API keys migration failed', normalized);
     }
@@ -155,7 +155,7 @@ export async function runInitialization() {
         source: 'initialization',
         errorType: 'settingsInitializationFailed',
         logError: true,
-        createUserMessage: false
+        createUserMessage: true, // Use centralized user-friendly message
       });
       logError('Default settings initialization failed', normalized);
     }

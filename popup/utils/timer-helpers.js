@@ -67,12 +67,18 @@ export function updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elemen
     // CRITICAL: Defer getState call to avoid blocking user interactions
     // Use setTimeout to yield to event loop before making the call
     setTimeout(() => {
-      chrome.runtime.sendMessage({ action: 'getState' }).then(state => {
-        if (state && state.isProcessing && state.startTime) {
-          currentStartTimeRef.current = state.startTime;
+      // Use callback-based API to properly handle lastError
+      chrome.runtime.sendMessage({ action: 'getState' }, (response) => {
+        // CRITICAL: Check chrome.runtime.lastError to prevent "Unchecked runtime.lastError" spam
+        if (chrome.runtime.lastError) {
+          // Silently ignore - "Could not establish connection" is expected when receiver is closed
+          return;
+        }
+        if (response && response.isProcessing && response.startTime) {
+          currentStartTimeRef.current = response.startTime;
           updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements); // Retry after setting startTime
         }
-      }).catch(() => {});
+      });
     }, 0);
     return;
   }

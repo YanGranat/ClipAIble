@@ -24,7 +24,7 @@ export function isPlaceholderUrlModule(url) {
 /**
  * Extract best URL from srcset attribute
  * @param {string} srcset - srcset attribute value
- * @param {Function} isPlaceholderUrl - Function to check if URL is placeholder
+ * @param {import('../../types.js').IsPlaceholderUrlFunction} isPlaceholderUrl - Function to check if URL is placeholder
  * @returns {string|null} Best URL or null
  */
 export function getBestSrcsetUrlModule(srcset, isPlaceholderUrl) {
@@ -69,8 +69,8 @@ export function getBestSrcsetUrlModule(srcset, isPlaceholderUrl) {
 /**
  * Extract best image URL from element (handles lazy loading, srcset, etc.)
  * @param {HTMLImageElement} imgElement - Image element
- * @param {Function} isPlaceholderUrl - Function to check if URL is placeholder
- * @param {Function} getBestSrcsetUrl - Function to extract best URL from srcset
+ * @param {import('../../types.js').IsPlaceholderUrlFunction} isPlaceholderUrl - Function to check if URL is placeholder
+ * @param {import('../../types.js').GetBestSrcsetUrlFunction} getBestSrcsetUrl - Function to extract best URL from srcset
  * @returns {string|null} Best image URL or null
  */
 export function extractBestImageUrlModule(imgElement, isPlaceholderUrl, getBestSrcsetUrl) {
@@ -106,7 +106,7 @@ export function extractBestImageUrlModule(imgElement, isPlaceholderUrl, getBestS
   if (!src) {
     const picture = imgElement.closest('picture');
     if (picture) {
-      for (const source of picture.querySelectorAll('source[srcset]')) {
+      for (const source of Array.from(picture.querySelectorAll('source[srcset]'))) {
         const srcset = source.getAttribute('srcset');
         if (srcset) {
           const candidate = getBestSrcsetUrl(srcset, isPlaceholderUrl);
@@ -202,7 +202,7 @@ export function isTrackingPixelModule(img) {
  * Check if image is decorative (logo, icon, brand image, author photo, etc.)
  * This is a large function that checks many conditions
  * @param {HTMLImageElement} img - Image element
- * @param {Object} constants - Constants object with LOGO_PATTERNS
+ * @param {{LOGO_PATTERNS: Array<string|RegExp>, [key: string]: any}} constants - Constants object with LOGO_PATTERNS
  * @returns {boolean} True if image is decorative
  */
 export function isDecorativeImageModule(img, constants) {
@@ -410,7 +410,14 @@ export function isDecorativeImageModule(img, constants) {
   }
   
   // Check for logo/brand patterns in URL (use constants)
-  if (LOGO_PATTERNS.some(pattern => src.includes(pattern))) {
+  if (LOGO_PATTERNS.some(pattern => {
+    if (typeof pattern === 'string') {
+      return src.includes(pattern);
+    } else if (pattern instanceof RegExp) {
+      return pattern.test(src);
+    }
+    return false;
+  })) {
     return true;
   }
   

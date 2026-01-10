@@ -28,7 +28,7 @@ export function isLikelyContentContainerModule(element) {
 /**
  * Calculate content score for element (Readability-inspired algorithm)
  * @param {Element} element - Element to score
- * @param {Function} isLikelyContentContainer - Function to check if element is likely content
+ * @param {import('../../types.js').IsLikelyContentContainerFunction} isLikelyContentContainer - Function to check if element is likely content
  * @returns {number} Content score
  */
 export function calculateContentScoreModule(element, isLikelyContentContainer) {
@@ -104,7 +104,7 @@ export function calculateContentScoreModule(element, isLikelyContentContainer) {
   let navigationLinkLength = 0;
   let totalLinkTextLength = 0;
   
-  for (const link of links) {
+  for (const link of Array.from(links)) {
     const linkText = link.textContent.trim();
     // Skip icon-only links (very short or empty, likely buttons/icons)
     if (linkText.length > 2 && linkText.length < 200) {
@@ -222,7 +222,7 @@ export function calculateContentScoreModule(element, isLikelyContentContainer) {
   
   // Bonus for long paragraphs (indicator of article content, not navigation)
   let longParagraphs = 0;
-  for (const p of paragraphs) {
+  for (const p of Array.from(paragraphs)) {
     if (p.textContent.trim().length > 200) {
       longParagraphs++;
     }
@@ -332,9 +332,9 @@ export function hasSubstantialContentModule(element) {
 
 /**
  * Find main content container using multiple strategies
- * @param {Function} isExcluded - Function to check if element is excluded
- * @param {Function} isLikelyContentContainer - Function to check if element is likely content
- * @param {Function} calculateContentScore - Function to calculate content score
+ * @param {import('../../types.js').IsExcludedFunction} isExcluded - Function to check if element is excluded
+ * @param {import('../../types.js').IsLikelyContentContainerFunction} isLikelyContentContainer - Function to check if element is likely content
+ * @param {import('../../types.js').CalculateContentScoreFunction} calculateContentScore - Function to calculate content score
  * @returns {Element|null} Main content element
  */
 export function findMainContentModule(isExcluded, isLikelyContentContainer, calculateContentScore) {

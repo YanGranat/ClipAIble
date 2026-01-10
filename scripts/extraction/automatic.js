@@ -31,9 +31,81 @@
  * 
  * @param {string} baseUrl - Base URL for resolving relative URLs
  * @param {boolean} enableDebugInfo - Whether to collect debug information (default: false)
- * @returns {Object} Extraction result with content, title, author, publishDate, debugInfo
+ * @returns {Promise<Object>} Extraction result with content, title, author, publishDate, debugInfo
  */
 export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
+  // Collect debug info to return to service worker (only if enabled)
+  // Performance optimization: skip debug info collection when LOG_LEVEL > DEBUG
+  // CRITICAL: ALL logs must be in debugInfo to be visible in service worker
+  // Initialize debugInfo FIRST so we can add logs to it
+  const debugInfo = enableDebugInfo ? {
+    foundElements: 0,
+    filteredElements: 0,
+    imageCount: 0,
+    excludedImageCount: 0,
+    processedCount: 0,
+    skippedCount: 0,
+    contentTypes: {},
+    // Store all console.log data here so it's visible in service worker
+    extractionLogs: [],
+    // Page information for service worker logging
+    pageInfo: {
+      url: window.location.href,
+      title: document.title,
+      baseUrl: baseUrl,
+      documentLang: document.documentElement.lang,
+      documentXmlLang: document.documentElement.getAttribute('xml:lang'),
+      bodyClasses: document.body.className,
+      bodyLang: document.body.lang,
+      hasGoogleTranslate: !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element'),
+      isTranslated: document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl'),
+      timestamp: Date.now()
+    },
+    // Meta tags
+    metaTags: (() => {
+      const metaTags = {};
+      document.querySelectorAll('meta').forEach(meta => {
+        const name = meta.getAttribute('name') || meta.getAttribute('property') || meta.getAttribute('http-equiv');
+        if (name) {
+          metaTags[name] = meta.getAttribute('content');
+        }
+      });
+      return metaTags;
+    })(),
+    // Document structure
+    documentStructure: {
+      hasArticle: !!document.querySelector('article'),
+      hasMain: !!document.querySelector('main'),
+      hasHeader: !!document.querySelector('header'),
+      hasFooter: !!document.querySelector('footer'),
+      hasNav: !!document.querySelector('nav'),
+      hasAside: !!document.querySelector('aside'),
+      allParagraphsCount: document.querySelectorAll('p').length,
+      allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+      allImagesCount: document.querySelectorAll('img').length
+    },
+    // Main content - FULL TEXT AND HTML - NO TRUNCATION
+    mainContentPreview: (() => {
+      const mainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
+      return {
+        hasMain: !!mainContent,
+        mainTagName: mainContent?.tagName,
+        mainClassName: mainContent?.className,
+        mainId: mainContent?.id,
+        mainTextLength: mainContent?.textContent?.length || 0,
+        mainTextFull: mainContent?.textContent || null, // FULL TEXT - NO TRUNCATION
+        mainHTMLFull: mainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
+        childCount: mainContent?.children?.length || 0
+      };
+    })(),
+    // FULL document HTML - NO TRUNCATION
+    documentHTMLFull: document.documentElement.outerHTML || null, // FULL HTML - NO TRUNCATION
+    bodyHTMLFull: document.body?.innerHTML || null, // FULL HTML - NO TRUNCATION
+    // Google Translate state - will be populated after check
+    googleTranslateState: null,
+    firstParagraphCheck: null
+  } : null;
+  
   // Log start (this will appear in page console, not service worker)
   // CRITICAL: This runs in MAIN world where modules are not available
   // console.log is acceptable here as logging module cannot be imported
@@ -129,78 +201,6 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
   } catch (e) {
     console.error('[ClipAIble] Failed to log page information', e);
   }
-  
-  // Collect debug info to return to service worker (only if enabled)
-  // Performance optimization: skip debug info collection when LOG_LEVEL > DEBUG
-  // CRITICAL: ALL logs must be in debugInfo to be visible in service worker
-  // Initialize debugInfo FIRST so we can add logs to it
-  const debugInfo = enableDebugInfo ? {
-    foundElements: 0,
-    filteredElements: 0,
-    imageCount: 0,
-    excludedImageCount: 0,
-    processedCount: 0,
-    skippedCount: 0,
-    contentTypes: {},
-    // Store all console.log data here so it's visible in service worker
-    extractionLogs: [],
-    // Page information for service worker logging
-    pageInfo: {
-      url: window.location.href,
-      title: document.title,
-      baseUrl: baseUrl,
-      documentLang: document.documentElement.lang,
-      documentXmlLang: document.documentElement.getAttribute('xml:lang'),
-      bodyClasses: document.body.className,
-      bodyLang: document.body.lang,
-      hasGoogleTranslate: !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element'),
-      isTranslated: document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl'),
-      timestamp: Date.now()
-    },
-    // Meta tags
-    metaTags: (() => {
-      const metaTags = {};
-      document.querySelectorAll('meta').forEach(meta => {
-        const name = meta.getAttribute('name') || meta.getAttribute('property') || meta.getAttribute('http-equiv');
-        if (name) {
-          metaTags[name] = meta.getAttribute('content');
-        }
-      });
-      return metaTags;
-    })(),
-    // Document structure
-    documentStructure: {
-      hasArticle: !!document.querySelector('article'),
-      hasMain: !!document.querySelector('main'),
-      hasHeader: !!document.querySelector('header'),
-      hasFooter: !!document.querySelector('footer'),
-      hasNav: !!document.querySelector('nav'),
-      hasAside: !!document.querySelector('aside'),
-      allParagraphsCount: document.querySelectorAll('p').length,
-      allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
-      allImagesCount: document.querySelectorAll('img').length
-    },
-    // Main content - FULL TEXT AND HTML - NO TRUNCATION
-    mainContentPreview: (() => {
-      const mainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
-      return {
-        hasMain: !!mainContent,
-        mainTagName: mainContent?.tagName,
-        mainClassName: mainContent?.className,
-        mainId: mainContent?.id,
-        mainTextLength: mainContent?.textContent?.length || 0,
-        mainTextFull: mainContent?.textContent || null, // FULL TEXT - NO TRUNCATION
-        mainHTMLFull: mainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
-        childCount: mainContent?.children?.length || 0
-      };
-    })(),
-    // FULL document HTML - NO TRUNCATION
-    documentHTMLFull: document.documentElement.outerHTML || null, // FULL HTML - NO TRUNCATION
-    bodyHTMLFull: document.body?.innerHTML || null, // FULL HTML - NO TRUNCATION
-    // Google Translate state - will be populated after check
-    googleTranslateState: null,
-    firstParagraphCheck: null
-  } : null;
   
   // CRITICAL: Initialize content array - must be declared before use
   const content = [];
@@ -382,7 +382,10 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     // Continue even if waiting fails - page might already be loaded
     try {
       console.log('[ClipAIble] waitForContentLoad completed or skipped', { error: e?.message });
-    } catch (logErr) {}
+    } catch (logErr) {
+      // Even console.log failed - this is extremely rare, nothing we can do
+      // This catch prevents the outer catch from being swallowed
+    }
   }
   
   try {
@@ -1191,7 +1194,13 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     function toAbsoluteUrl(url, baseUrl) {
       if (!url) return '';
       if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
-      try { return new URL(url, baseUrl).href; } catch (e) { return url; }
+      try { 
+        return new URL(url, baseUrl).href; 
+      } catch (e) { 
+        // Invalid URL format - fallback to original (graceful degradation)
+        // This is expected for malformed URLs from page content
+        return url; 
+      }
     }
     
     function isFootnoteLink(element) {
@@ -1366,7 +1375,10 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
             if (cssWidth <= 3 && cssHeight <= 3) return true;
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        // getComputedStyle may fail on some image elements (e.g., SVG in some browsers)
+        // This is expected - continue with other checks (graceful degradation)
+      }
       const naturalWidth = img.naturalWidth || 0;
       const naturalHeight = img.naturalHeight || 0;
       const cssWidth = img.width || 0;
@@ -1567,7 +1579,10 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
         if (style.backgroundImage !== 'none' && style.backgroundImage.includes(src)) {
           return true;
         }
-      } catch (e) {}
+      } catch (e) {
+        // getComputedStyle may fail on some image elements (e.g., SVG in some browsers)
+        // This is expected - continue with other checks (graceful degradation)
+      }
       if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth < 100 && naturalHeight < 100) &&
           !alt && !img.closest('figure') && !img.closest('a')) {
         let parent = img.parentElement;
@@ -1719,35 +1734,189 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     function hasSubstantialContentModule(element) {
       const text = element.textContent.trim();
       const paragraphs = element.querySelectorAll('p');
-      return text.length > 100 && (paragraphs.length >= 1 || text.length > 300);
+      const headings = element.querySelectorAll('h1, h2, h3, h4, h5, h6');
+      
+      // More lenient: accept if has paragraphs OR substantial text OR headings
+      // This helps with sites like LessWrong where content might be in non-standard containers
+      return (text.length > 100 && (paragraphs.length >= 1 || text.length > 300)) ||
+             (paragraphs.length >= 3) || // At least 3 paragraphs
+             (headings.length >= 1 && paragraphs.length >= 1); // At least 1 heading and 1 paragraph
+    }
+    
+    // Helper function to check if element is a widget (Intercom, chat, etc.)
+    // Must be defined at module level to be accessible in emergency fallback
+    function isWidget(element) {
+      if (!element) return false;
+      const className = String(element.className || '').toLowerCase();
+      const id = (element.id || '').toLowerCase();
+      const tagName = element.tagName.toLowerCase();
+      
+      // Check for widget indicators
+      const widgetPatterns = [
+        'intercom', 'widget', 'chat', 'support', 'popup', 'modal',
+        'notification', 'banner', 'overlay', 'sidebar-widget',
+        'floating', 'fixed', 'sticky-widget'
+      ];
+      
+      // Check class and id
+      for (const pattern of widgetPatterns) {
+        if (className.includes(pattern) || id.includes(pattern)) {
+          return true;
+        }
+      }
+      
+      // Check for common widget attributes
+      if (element.hasAttribute('data-widget') || 
+          element.hasAttribute('data-intercom') ||
+          element.hasAttribute('data-chat')) {
+        return true;
+      }
+      
+      // Check if element is positioned fixed/absolute and small (likely widget)
+      try {
+        const style = window.getComputedStyle(element);
+        if ((style.position === 'fixed' || style.position === 'absolute') &&
+            (parseInt(style.width) < 500 || parseInt(style.height) < 500)) {
+          // But exclude if it has substantial content (paragraphs)
+          const paragraphs = element.querySelectorAll('p');
+          if (paragraphs.length < 3) {
+            return true;
+          }
+        }
+      } catch (e) {
+        // Ignore style errors
+      }
+      
+      return false;
     }
     
     function findMainContentModule(isExcluded, isLikelyContentContainer, calculateContentScore) {
+      // Strategy 1: Try semantic HTML elements first (most reliable)
       const article = document.querySelector('article');
-      if (article) {
+      if (article && !isWidget(article)) {
         const articleScore = calculateContentScore(article);
-        if (articleScore > 0 && hasSubstantialContentModule(article)) {
+        // For article, be more lenient - if it has paragraphs, use it even if score is low
+        const hasParagraphs = article.querySelectorAll('p').length > 0;
+        if ((articleScore > 0 || hasParagraphs) && hasSubstantialContentModule(article)) {
           return article;
         }
       }
       const main = document.querySelector('main');
-      if (main) {
+      if (main && !isWidget(main)) {
         const mainScore = calculateContentScore(main);
-        if (mainScore > 0 && hasSubstantialContentModule(main)) {
+        // For main, be more lenient - if it has paragraphs, use it even if score is low
+        const hasParagraphs = main.querySelectorAll('p').length > 0;
+        if ((mainScore > 0 || hasParagraphs) && hasSubstantialContentModule(main)) {
           return main;
         }
       }
+      
+      // Strategy 2: Try role="main" or role="article"
+      const roleMain = document.querySelector('[role="main"], [role="article"]');
+      if (roleMain && !isWidget(roleMain)) {
+        const roleScore = calculateContentScore(roleMain);
+        const hasParagraphs = roleMain.querySelectorAll('p').length > 0;
+        if ((roleScore > 0 || hasParagraphs) && hasSubstantialContentModule(roleMain)) {
+          return roleMain;
+        }
+      }
+      
+      // Strategy 3: Try common content IDs/classes
+      const commonSelectors = [
+        '#content', '#main-content', '#article-content', '#post-content',
+        '.content', '.main-content', '.article-content', '.post-content',
+        '.entry-content', '.article-body', '.post-body'
+      ];
+      for (const selector of commonSelectors) {
+        try {
+          const element = document.querySelector(selector);
+          if (element && !isExcluded(element) && !isWidget(element)) {
+            const score = calculateContentScore(element);
+            const hasParagraphs = element.querySelectorAll('p').length > 0;
+            if ((score > 0 || hasParagraphs) && hasSubstantialContentModule(element)) {
+              return element;
+            }
+          }
+        } catch (e) {
+          // Invalid selector, continue
+        }
+      }
+      
+      // Strategy 3.5: Try to find content containers by class patterns (for sites like LessWrong)
+      // Look for containers with class names that suggest content areas
+      const contentClassPatterns = [
+        /tableofcontents/i, /toc/i, /layout/i, /article/i, /post/i,
+        /content/i, /main/i, /body/i, /entry/i, /story/i
+      ];
+      const allDivs = Array.from(document.querySelectorAll('div'));
+      for (const div of allDivs) {
+        if (isExcluded(div) || isWidget(div)) continue;
+        const className = String(div.className || '').toLowerCase();
+        const paragraphs = div.querySelectorAll('p');
+        const textLength = div.textContent.trim().length;
+        
+        // Check if class name matches content patterns and has substantial content
+        const matchesPattern = contentClassPatterns.some(pattern => pattern.test(className));
+        if (matchesPattern && paragraphs.length >= 10 && textLength > 5000) {
+          // This looks like a content container
+          if (hasSubstantialContentModule(div)) {
+            return div;
+          }
+        }
+      }
+      
+      // Strategy 4: Find best candidate by score (original logic)
       let bestElement = null;
       let bestScore = 0;
       const candidates = document.querySelectorAll('div, section, article, main');
       for (const candidate of Array.from(candidates)) {
-        if (isExcluded(candidate)) continue;
+        if (isExcluded(candidate) || isWidget(candidate)) continue;
         const score = calculateContentScore(candidate);
-        if (score > bestScore && hasSubstantialContentModule(candidate)) {
+        const hasParagraphs = candidate.querySelectorAll('p').length > 0;
+        // Be more lenient: accept if has paragraphs even with low score
+        if ((score > bestScore || (hasParagraphs && bestScore === 0)) && hasSubstantialContentModule(candidate)) {
           bestScore = score;
           bestElement = candidate;
         }
       }
+      
+      // Strategy 5: Last resort - find container with most paragraphs
+      // This is critical for sites like LessWrong that don't use semantic HTML
+      if (!bestElement) {
+        const allContainers = Array.from(document.querySelectorAll('div, section'));
+        let maxParagraphs = 0;
+        let bestContainer = null;
+        let bestTextLength = 0;
+        
+        for (const container of allContainers) {
+          if (isExcluded(container) || isWidget(container)) continue;
+          const paragraphs = container.querySelectorAll('p');
+          const textLength = container.textContent.trim().length;
+          
+          // Prioritize containers with many paragraphs and substantial text
+          // This helps find content containers on sites without semantic HTML
+          if (paragraphs.length >= 10 && textLength > 5000) {
+            // If this container has significantly more paragraphs, prefer it
+            if (paragraphs.length > maxParagraphs + 5 || 
+                (paragraphs.length > maxParagraphs && textLength > bestTextLength * 1.5)) {
+              maxParagraphs = paragraphs.length;
+              bestContainer = container;
+              bestTextLength = textLength;
+            }
+          } else if (paragraphs.length > maxParagraphs && textLength > 500) {
+            // Fallback for smaller content
+            maxParagraphs = paragraphs.length;
+            bestContainer = container;
+            bestTextLength = textLength;
+          }
+        }
+        
+        // Accept if we found a container with substantial content
+        if (bestContainer && maxParagraphs >= 5) {
+          return bestContainer;
+        }
+      }
+      
       return bestElement;
     }
     
@@ -1792,6 +1961,26 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
       const className = String(element.className || '').toLowerCase();
       const id = (element.id || '').toLowerCase();
       const isImageOrFigure = tagName === 'img' || tagName === 'figure';
+      
+      // CRITICAL: Exclude widgets (Intercom, chat, support, etc.)
+      const widgetPatterns = [
+        'intercom', 'widget', 'chat', 'support', 'popup', 'modal',
+        'notification', 'banner', 'overlay', 'sidebar-widget',
+        'floating', 'fixed', 'sticky-widget', 'live-chat', 'help-widget'
+      ];
+      for (const pattern of widgetPatterns) {
+        if (className.includes(pattern) || id.includes(pattern)) {
+          return true;
+        }
+      }
+      
+      // Check for widget attributes
+      if (element.hasAttribute('data-widget') || 
+          element.hasAttribute('data-intercom') ||
+          element.hasAttribute('data-chat') ||
+          element.hasAttribute('data-support')) {
+        return true;
+      }
       
       let style = null;
       try {
@@ -2808,6 +2997,24 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     // Find and extract content
     const mainContent = findMainContent();
     
+    // CRITICAL: Log mainContent finding for debugging
+    if (enableDebugInfo) {
+      const mainContentInfo = {
+        found: !!mainContent,
+        tagName: mainContent?.tagName,
+        id: mainContent?.id,
+        className: mainContent?.className,
+        textLength: mainContent?.textContent?.length || 0,
+        paragraphsCount: mainContent?.querySelectorAll('p').length || 0,
+        headingsCount: mainContent?.querySelectorAll('h1, h2, h3, h4, h5, h6').length || 0,
+        childrenCount: mainContent?.children?.length || 0
+      };
+      console.log('[ClipAIble] === MAIN CONTENT FINDING RESULT ===', mainContentInfo);
+      if (debugInfo) {
+        debugInfo.extractionLogs.push({ type: 'MAIN_CONTENT_FINDING', data: mainContentInfo });
+      }
+    }
+    
     // Extract featured/hero image BEFORE processing main content
     // Look for featured image in meta tags first
     let featuredImage = null;
@@ -2949,16 +3156,57 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     }
     
     if (!mainContent) {
+      // CRITICAL: Log that mainContent was not found
+      if (enableDebugInfo) {
+        console.log('[ClipAIble] === MAIN CONTENT NOT FOUND - USING FALLBACK ===', {
+          hasArticle: !!document.querySelector('article'),
+          hasMain: !!document.querySelector('main'),
+          hasRoleMain: !!document.querySelector('[role="main"]'),
+          hasRoleArticle: !!document.querySelector('[role="article"]'),
+          allDivsCount: document.querySelectorAll('div').length,
+          allSectionsCount: document.querySelectorAll('section').length
+        });
+        if (debugInfo) {
+          debugInfo.extractionLogs.push({ 
+            type: 'MAIN_CONTENT_NOT_FOUND', 
+            data: {
+              hasArticle: !!document.querySelector('article'),
+              hasMain: !!document.querySelector('main'),
+              hasRoleMain: !!document.querySelector('[role="main"]'),
+              hasRoleArticle: !!document.querySelector('[role="article"]'),
+              allDivsCount: document.querySelectorAll('div').length,
+              allSectionsCount: document.querySelectorAll('section').length
+            }
+          });
+        }
+      }
       
       // Fallback: try to find any article or main element, even without strict checks
       const fallbackArticle = document.querySelector('article');
       const fallbackMain = document.querySelector('main');
-      const fallbackContent = fallbackArticle || fallbackMain;
+      const fallbackRoleMain = document.querySelector('[role="main"], [role="article"]');
+      const fallbackContent = fallbackArticle || fallbackMain || fallbackRoleMain;
       
       if (fallbackContent) {
         // Use fallback but with less strict extraction
         const fallbackElements = Array.from(fallbackContent.querySelectorAll('h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table'));
-        if (debugInfo) debugInfo.foundElements = fallbackElements.length;
+        if (debugInfo) {
+          debugInfo.foundElements = fallbackElements.length;
+          // CRITICAL: Log fallback elements for debugging
+          const fallbackInfo = {
+            fallbackContentTag: fallbackContent.tagName,
+            fallbackContentId: fallbackContent.id,
+            fallbackContentClass: fallbackContent.className,
+            fallbackElementsCount: fallbackElements.length,
+            fallbackElementsByType: {}
+          };
+          fallbackElements.forEach(el => {
+            const tagName = el.tagName.toLowerCase();
+            fallbackInfo.fallbackElementsByType[tagName] = (fallbackInfo.fallbackElementsByType[tagName] || 0) + 1;
+          });
+          console.log('[ClipAIble] === FALLBACK CONTENT FOUND ===', fallbackInfo);
+          debugInfo.extractionLogs.push({ type: 'FALLBACK_CONTENT_FOUND', data: fallbackInfo });
+        }
         
         if (fallbackElements.length > 0) {
           
@@ -3022,16 +3270,20 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
                 const dataGtOrig = element.getAttribute('data-gt-orig-display');
                 const innerHTML = element.innerHTML;
                 
-                // Log EVERY paragraph for debugging - FULL TEXT - NO TRUNCATION
+                // Log EVERY paragraph for debugging - TRUNCATED to avoid huge logs
                 if (enableDebugInfo) {
                   const paragraphDebugLog = {
                     elementIndex: content.length,
-                    textContentFull: text, // FULL TEXT - NO TRUNCATION
-                    innerHTMLFull: innerHTML, // FULL HTML - NO TRUNCATION
+                    textContentPreview: text.substring(0, 500) + (text.length > 500 ? '...' : ''),
+                    textContentLength: text.length,
+                    innerHTMLPreview: innerHTML.substring(0, 500) + (innerHTML.length > 500 ? '...' : ''),
+                    innerHTMLLength: innerHTML.length,
                     hasDataOriginalText: hasDataOriginalText,
                     hasDataGtOrig: hasDataGtOrig,
-                    dataOriginalTextFull: dataOriginalText || null, // FULL TEXT - NO TRUNCATION
-                    dataGtOrigFull: dataGtOrig || null, // FULL TEXT - NO TRUNCATION
+                    dataOriginalTextPreview: dataOriginalText ? (dataOriginalText.substring(0, 500) + (dataOriginalText.length > 500 ? '...' : '')) : null,
+                    dataOriginalTextLength: dataOriginalText ? dataOriginalText.length : 0,
+                    dataGtOrigPreview: dataGtOrig ? (dataGtOrig.substring(0, 500) + (dataGtOrig.length > 500 ? '...' : '')) : null,
+                    dataGtOrigLength: dataGtOrig ? dataGtOrig.length : 0,
                     allAttributes: Array.from(element.attributes).map(attr => ({ name: attr.name, value: attr.value })),
                     timestamp: Date.now()
                   };
@@ -3170,7 +3422,312 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
         }
       }
       
+      // CRITICAL: Last resort fallback - try to find content even if mainContent not found
+      // This is important for sites like LessWrong where structure might be non-standard
+      if (enableDebugInfo) {
+        console.log('[ClipAIble] === LAST RESORT FALLBACK - SEARCHING FOR CONTENT ===', {
+          allParagraphsCount: document.querySelectorAll('p').length,
+          allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+          hasArticle: !!document.querySelector('article'),
+          hasMain: !!document.querySelector('main'),
+          hasRoleMain: !!document.querySelector('[role="main"]')
+        });
+        if (debugInfo) {
+          debugInfo.extractionLogs.push({ 
+            type: 'LAST_RESORT_FALLBACK', 
+            data: {
+              allParagraphsCount: document.querySelectorAll('p').length,
+              allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+              hasArticle: !!document.querySelector('article'),
+              hasMain: !!document.querySelector('main'),
+              hasRoleMain: !!document.querySelector('[role="main"]')
+            }
+          });
+        }
+      }
+      
+      // Try to find content in any container with substantial paragraphs
+      const allContainers = Array.from(document.querySelectorAll('div, section, article, main'));
+      let bestContainer = null;
+      let maxParagraphs = 0;
+      let bestTextLength = 0;
+      
+      if (enableDebugInfo) {
+        console.log('[ClipAIble] === LAST RESORT: SEARCHING CONTAINERS ===', {
+          totalContainers: allContainers.length
+        });
+      }
+      
+      for (const container of allContainers) {
+        // Skip excluded containers and widgets
+        if (isExcluded(container) || isWidget(container)) continue;
+        
+        const paragraphs = container.querySelectorAll('p');
+        const textLength = container.textContent.trim().length;
+        
+        // Accept if has substantial paragraphs and text
+        // Prioritize containers with many paragraphs (like LessWrong's MultiToCLayout-tableOfContents)
+        // For large content (like LessWrong with 175+ paragraphs), prioritize by paragraph count
+        if (paragraphs.length >= 10 && textLength > 5000) {
+          // Large content container - prioritize by paragraph count
+          if (paragraphs.length > maxParagraphs || 
+              (paragraphs.length === maxParagraphs && textLength > bestTextLength)) {
+            maxParagraphs = paragraphs.length;
+            bestContainer = container;
+            bestTextLength = textLength;
+          }
+        } else if (paragraphs.length > maxParagraphs && textLength > 500) {
+          // Smaller content - standard logic
+          maxParagraphs = paragraphs.length;
+          bestContainer = container;
+          bestTextLength = textLength;
+        }
+      }
+      
+      if (enableDebugInfo) {
+        console.log('[ClipAIble] === LAST RESORT: SEARCH COMPLETE ===', {
+          foundContainer: !!bestContainer,
+          maxParagraphs: maxParagraphs,
+          bestTextLength: bestTextLength,
+          bestContainerInfo: bestContainer ? {
+            tagName: bestContainer.tagName,
+            id: bestContainer.id,
+            className: bestContainer.className
+          } : null
+        });
+      }
+      
+      // If found a good container, extract from it
+      if (bestContainer && maxParagraphs >= 3) {
+        if (enableDebugInfo) {
+          console.log('[ClipAIble] === LAST RESORT: FOUND CONTAINER WITH PARAGRAPHS ===', {
+            tagName: bestContainer.tagName,
+            id: bestContainer.id,
+            className: bestContainer.className,
+            paragraphsCount: maxParagraphs,
+            textLength: bestContainer.textContent.trim().length,
+            headingsCount: bestContainer.querySelectorAll('h1, h2, h3, h4, h5, h6').length
+          });
+          if (debugInfo) {
+            debugInfo.extractionLogs.push({ 
+              type: 'LAST_RESORT_CONTAINER_FOUND', 
+              data: {
+                tagName: bestContainer.tagName,
+                id: bestContainer.id,
+                className: bestContainer.className,
+                paragraphsCount: maxParagraphs,
+                textLength: bestContainer.textContent.trim().length,
+                headingsCount: bestContainer.querySelectorAll('h1, h2, h3, h4, h5, h6').length
+              }
+            });
+          }
+        }
+        
+        const lastResortElements = Array.from(bestContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
+        // Only filter out clearly non-content
+        const filteredLastResort = lastResortElements.filter(el => {
+          const tagName = el.tagName.toLowerCase();
+          if (tagName === 'p') {
+            const text = el.textContent.trim();
+            return !isNavigationParagraph(text) && text.length > 10;
+          }
+          return true;
+        });
+        
+        // Extract from filtered elements
+        for (const el of filteredLastResort.slice(0, 200)) {
+          const tagName = el.tagName.toLowerCase();
+          if (tagName.match(/^h[1-6]$/)) {
+            const level = parseInt(tagName.substring(1));
+            const text = el.textContent.trim();
+            if (text && text.length > 3) {
+              const cleanedText = text.replace(/<[^>]+>/g, '').trim()
+                .replace(/\s*\[?obj\]?\s*/gi, '')
+                .replace(/\uFFFC/g, '')
+                .trim();
+              
+              if (cleanedText && cleanedText.length >= 3) {
+                const normalizedText = cleanedText.toLowerCase().trim();
+                if (mainTitleText && normalizedText === mainTitleText) continue;
+                if (addedHeadings.has(normalizedText)) continue;
+                
+                addedHeadings.add(normalizedText);
+                content.push({
+                  type: 'heading',
+                  level: level,
+                  text: cleanedText,
+                  id: el.id || null
+                });
+              }
+            }
+          } else if (tagName === 'p') {
+            const text = el.textContent.trim();
+            if (text && text.length > 10) {
+              const originalText = getOriginalTextIfTranslated(el);
+              const finalText = originalText || el.innerHTML;
+              const finalHtml = originalText ? originalText : el.innerHTML;
+              
+              content.push({
+                type: 'paragraph',
+                text: finalText,
+                html: finalHtml
+              });
+            }
+          }
+        }
+        
+        if (content.length > 0) {
+          if (debugInfo) {
+            const contentTypes = content.reduce((acc, item) => {
+              acc[item.type] = (acc[item.type] || 0) + 1;
+              return acc;
+            }, {});
+            debugInfo.contentTypes = contentTypes;
+          }
+          
+          return {
+            title: metadata.title,
+            author: metadata.author,
+            publishDate: metadata.publishDate,
+            content: content,
+            debugInfo: debugInfo
+          };
+        }
+      }
+      
+      // ULTIMATE FALLBACK: If still no container found, try to extract directly from all paragraphs
+      // This handles cases where all containers are excluded but paragraphs exist
+      if (!bestContainer && document.querySelectorAll('p').length >= 10) {
+        if (enableDebugInfo) {
+          console.log('[ClipAIble] === ULTIMATE FALLBACK: EXTRACTING FROM ALL PARAGRAPHS ===', {
+            allParagraphsCount: document.querySelectorAll('p').length,
+            allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
+          });
+          if (debugInfo) {
+            debugInfo.extractionLogs.push({ 
+              type: 'ULTIMATE_FALLBACK', 
+              data: {
+                allParagraphsCount: document.querySelectorAll('p').length,
+                allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
+              }
+            });
+          }
+        }
+        
+        // Extract all paragraphs and headings directly from document
+        const allParagraphs = Array.from(document.querySelectorAll('p'));
+        const allHeadings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
+        
+        // Filter out navigation and widget paragraphs
+        const filteredParagraphs = allParagraphs.filter(p => {
+          if (isExcluded(p) || isWidget(p)) return false;
+          const text = p.textContent.trim();
+          if (isNavigationParagraph(text)) return false;
+          if (text.length < 10) return false;
+          // Check if paragraph is inside a widget container
+          let parent = p.parentElement;
+          let depth = 0;
+          while (parent && parent !== document.body && depth < 5) {
+            if (isWidget(parent)) return false;
+            parent = parent.parentElement;
+            depth++;
+          }
+          return true;
+        });
+        
+        // Add headings first (in document order)
+        for (const heading of allHeadings.slice(0, 50)) {
+          if (isExcluded(heading) || isWidget(heading)) continue;
+          const text = heading.textContent.trim();
+          if (text.length < 3) continue;
+          
+          // Check if heading is inside a widget container
+          let parent = heading.parentElement;
+          let depth = 0;
+          while (parent && parent !== document.body && depth < 5) {
+            if (isWidget(parent)) break;
+            parent = parent.parentElement;
+            depth++;
+          }
+          if (depth >= 5 && parent !== document.body) continue; // Was inside widget
+          
+          const level = parseInt(heading.tagName.substring(1));
+          const cleanedText = text.replace(/<[^>]+>/g, '').trim()
+            .replace(/\s*\[?obj\]?\s*/gi, '')
+            .replace(/\uFFFC/g, '')
+            .trim();
+          
+          if (cleanedText && cleanedText.length >= 3) {
+            const normalizedText = cleanedText.toLowerCase().trim();
+            if (mainTitleText && normalizedText === mainTitleText) continue;
+            if (addedHeadings.has(normalizedText)) continue;
+            
+            addedHeadings.add(normalizedText);
+            content.push({
+              type: 'heading',
+              level: level,
+              text: cleanedText,
+              id: heading.id || null
+            });
+          }
+        }
+        
+        // Add paragraphs
+        for (const p of filteredParagraphs.slice(0, 500)) {
+          const text = p.textContent.trim();
+          if (text.length < 10) continue;
+          
+          const originalText = getOriginalTextIfTranslated(p);
+          const finalText = originalText || p.innerHTML;
+          const finalHtml = originalText ? originalText : p.innerHTML;
+          
+          content.push({
+            type: 'paragraph',
+            text: finalText,
+            html: finalHtml
+          });
+        }
+        
+        if (content.length > 0) {
+          if (debugInfo) {
+            const contentTypes = content.reduce((acc, item) => {
+              acc[item.type] = (acc[item.type] || 0) + 1;
+              return acc;
+            }, {});
+            debugInfo.contentTypes = contentTypes;
+          }
+          
+          return {
+            title: metadata.title,
+            author: metadata.author,
+            publishDate: metadata.publishDate,
+            content: content,
+            debugInfo: debugInfo
+          };
+        }
+      }
+      
       // Last resort: return empty result
+      if (enableDebugInfo) {
+        console.log('[ClipAIble] === LAST RESORT: NO CONTAINER FOUND ===', {
+          bestContainer: !!bestContainer,
+          maxParagraphs: maxParagraphs,
+          allParagraphsOnPage: document.querySelectorAll('p').length,
+          allHeadingsOnPage: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
+        });
+        if (debugInfo) {
+          debugInfo.extractionLogs.push({ 
+            type: 'LAST_RESORT_NO_CONTAINER', 
+            data: {
+              bestContainer: !!bestContainer,
+              maxParagraphs: maxParagraphs,
+              allParagraphsOnPage: document.querySelectorAll('p').length,
+              allHeadingsOnPage: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
+            }
+          });
+        }
+      }
+      
       return {
         title: metadata.title,
         author: metadata.author,
@@ -3214,7 +3771,7 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     // Only exclude elements that are clearly not content (ads, navigation, metadata)
     let excludedImageCount = 0;
     let excludedByType = {};
-    const filteredElements = allElements.filter(el => {
+    let filteredElements = allElements.filter(el => {
       const tagName = el.tagName.toLowerCase();
       
       // STEP 1: Check if element itself is excluded (hidden, tracking pixel, etc.)
@@ -3323,6 +3880,54 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
       debugInfo.excludedImageCount = excludedImageCount;
       debugInfo.filteredImageCount = filteredImageElements.length;
       debugInfo.excludedByType = excludedByType;
+    }
+    
+    // CRITICAL: If mainContent is found but filteredElements is empty or very small,
+    // use less strict filtering to avoid losing all content
+    // This helps with sites like LessWrong where content might be filtered too aggressively
+    if (mainContent && filteredElements.length < 5 && allElements.length > 10) {
+      // Re-filter with less strict rules - only exclude clearly non-content elements
+      const relaxedFiltered = allElements.filter(el => {
+        const tagName = el.tagName.toLowerCase();
+        
+        // Only exclude if element itself is clearly excluded (hidden, tracking pixel, etc.)
+        if (isExcluded(el)) {
+          return false;
+        }
+        
+        // For paragraphs/headings inside mainContent, be very lenient
+        // Only exclude if clearly navigation or paywall
+        if (tagName === 'p' || tagName.match(/^h[1-6]$/)) {
+          const text = el.textContent.trim();
+          // Only exclude if clearly navigation or paywall
+          if (isNavigationParagraph(text)) {
+            return false;
+          }
+          // Accept all other paragraphs/headings
+          return true;
+        }
+        
+        // For images, use original filtering
+        if (tagName === 'figure' || tagName === 'img') {
+          const img = tagName === 'img' ? el : el.querySelector('img');
+          if (img && isDecorativeImage(img)) {
+            return false;
+          }
+          return true;
+        }
+        
+        // Accept other elements
+        return true;
+      });
+      
+      if (relaxedFiltered.length > filteredElements.length) {
+        if (debugInfo) {
+          debugInfo.relaxedFiltering = true;
+          debugInfo.originalFilteredCount = filteredElements.length;
+          debugInfo.relaxedFilteredCount = relaxedFiltered.length;
+        }
+        filteredElements = relaxedFiltered;
+      }
     }
     
     // Count filtered elements by type for debugging (only if debug enabled)
@@ -4356,42 +4961,118 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     }
     
     // Final check: if no content extracted, try to extract at least something
+    // CRITICAL: This is important for sites like LessWrong where content might be filtered too aggressively
     if (content.length === 0) {
+      console.log('[ClipAIble] ⚠️ FALLBACK: No content extracted - using emergency fallback strategies (less strict filtering)', {
+        reason: 'Primary extraction returned empty content',
+        method: 'emergency fallback with multiple strategies',
+        impact: 'May include more navigation/noise but ensures some content is extracted',
+        strategies: 'Multiple fallback strategies will be tried'
+      });
       
-      // Emergency fallback: try multiple strategies
+      // Emergency fallback: try multiple strategies with less strict filtering
       let emergencyElements = [];
       
-      // Strategy 1: Use mainContent if available
+      // Strategy 1: Use mainContent if available (most reliable)
       if (mainContent) {
+        console.log('[ClipAIble] ⚠️ FALLBACK Strategy 1: Using mainContent with relaxed filtering');
+        // Get all paragraphs and headings from mainContent without filtering
         emergencyElements = Array.from(mainContent.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
+        // Only filter out clearly non-content (navigation, paywall)
+        emergencyElements = emergencyElements.filter(el => {
+          const tagName = el.tagName.toLowerCase();
+          if (tagName === 'p') {
+            const text = el.textContent.trim();
+            // Only exclude if clearly navigation or paywall
+            return !isNavigationParagraph(text) && text.length > 10;
+          }
+          // Accept all headings
+          return true;
+        });
       }
       
       // Strategy 2: If no elements from mainContent, try article/main
       if (emergencyElements.length === 0) {
         const article = document.querySelector('article');
         const main = document.querySelector('main');
-        const container = article || main;
+        const roleMain = document.querySelector('[role="main"], [role="article"]');
+        const container = article || main || roleMain;
         if (container) {
           emergencyElements = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
+          // Only filter out clearly non-content
+          emergencyElements = emergencyElements.filter(el => {
+            const tagName = el.tagName.toLowerCase();
+            if (tagName === 'p') {
+              const text = el.textContent.trim();
+              return !isNavigationParagraph(text) && text.length > 10;
+            }
+            return true;
+          });
         }
       }
       
-      // Strategy 3: Last resort - find largest container with paragraphs
+      // Strategy 3: Try common content selectors
       if (emergencyElements.length === 0) {
-        const allDivs = Array.from(document.querySelectorAll('div'));
-        let bestDiv = null;
+        const commonSelectors = [
+          '#content', '#main-content', '#article-content', '#post-content',
+          '.content', '.main-content', '.article-content', '.post-content',
+          '.entry-content', '.article-body', '.post-body'
+        ];
+        for (const selector of commonSelectors) {
+          try {
+            const container = document.querySelector(selector);
+            if (container) {
+              emergencyElements = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
+              if (emergencyElements.length > 0) {
+                // Only filter out clearly non-content
+                emergencyElements = emergencyElements.filter(el => {
+                  const tagName = el.tagName.toLowerCase();
+                  if (tagName === 'p') {
+                    const text = el.textContent.trim();
+                    return !isNavigationParagraph(text) && text.length > 10;
+                  }
+                  return true;
+                });
+                if (emergencyElements.length > 0) break;
+              }
+            }
+          } catch (e) {
+            // Invalid selector, continue
+          }
+        }
+      }
+      
+      // Strategy 4: Last resort - find largest container with paragraphs
+      if (emergencyElements.length === 0) {
+        const allContainers = Array.from(document.querySelectorAll('div, section, article, main'));
+        let bestContainer = null;
         let maxParagraphs = 0;
         
-        for (const div of allDivs) {
-          const paragraphs = div.querySelectorAll('p');
-          if (paragraphs.length > maxParagraphs && div.textContent.trim().length > 500) {
+        for (const container of allContainers) {
+          // Skip excluded containers
+          if (isExcluded(container)) continue;
+          
+          const paragraphs = container.querySelectorAll('p');
+          const textLength = container.textContent.trim().length;
+          
+          // Accept if has substantial paragraphs and text
+          if (paragraphs.length > maxParagraphs && textLength > 500) {
             maxParagraphs = paragraphs.length;
-            bestDiv = div;
+            bestContainer = container;
           }
         }
         
-        if (bestDiv) {
-          emergencyElements = Array.from(bestDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
+        if (bestContainer && maxParagraphs >= 3) {
+          emergencyElements = Array.from(bestContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
+          // Only filter out clearly non-content
+          emergencyElements = emergencyElements.filter(el => {
+            const tagName = el.tagName.toLowerCase();
+            if (tagName === 'p') {
+              const text = el.textContent.trim();
+              return !isNavigationParagraph(text) && text.length > 10;
+            }
+            return true;
+          });
         }
       }
       
@@ -4532,7 +5213,10 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
           );
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      // Non-critical debug logging failed - continue normally (graceful degradation)
+      // This is expected if console.log is unavailable or blocked
+    }
     
     return result;
   } catch (error) {
@@ -4545,7 +5229,10 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
         errorStack: error.stack,
         timestamp: Date.now()
       });
-    } catch (e) {}
+    } catch (e) {
+      // Even console.error failed - this is extremely rare, nothing we can do
+      // This catch prevents the outer catch from being swallowed
+    }
     
     // Return minimal result on error with error info
     return {

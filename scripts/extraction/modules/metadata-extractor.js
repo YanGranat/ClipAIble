@@ -139,7 +139,7 @@ export function getMonthNumberModule(monthName) {
 /**
  * Parse various date formats to ISO format
  * @param {string} dateStr - Date string in various formats
- * @param {Function} getMonthNumber - Function to get month number from name
+ * @param {import('../../types.js').GetMonthNumberFunction} getMonthNumber - Function to get month number from name
  * @returns {string|null} ISO date (YYYY-MM-DD, YYYY-MM, or YYYY) or null
  */
 export function parseDateToISOModule(dateStr, getMonthNumber) {

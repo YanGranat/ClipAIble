@@ -2,7 +2,7 @@
 
 > **AI 기반 기사 추출기** — 웹의 모든 기사를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장. 11개 언어로 번역. 모든 웹사이트에서 작동.
 
-![버전](https://img.shields.io/badge/버전-3.2.4-blue)
+![버전](https://img.shields.io/badge/버전-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-확장-프로그램-green)
 ![라이선스](https://img.shields.io/badge/라이선스-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 ### 🤖 AI 기반 추출
 - **세 가지 모드**: 자동 (AI 없음, 빠름), AI Selector (빠름, 재사용 가능) 및 AI Extract (철저함)
 - **자동 모드**: AI 없이 문서 생성 — API 키 불필요, 즉시 추출
-- **여러 제공업체 지원**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **여러 제공업체 지원**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
+- **PDF 콘텐츠 추출** (v3.3.0): PDF.js 라이브러리를 사용하여 PDF 파일에서 콘텐츠 추출
+  - 복잡한 다단계 분류 시스템을 갖춘 실험적 기능
+  - PDF 파일에서 텍스트, 이미지, 구조 및 메타데이터 추출
+  - 웹 및 로컬 PDF 파일 지원
+  - 다중 열 레이아웃, 테이블, 제목, 목록, 페이지 간 병합 처리
+  - 참고: 이 기능은 실험적이며 복잡한 PDF(스캔된 PDF, 비밀번호로 보호된 PDF)에는 제한이 있을 수 있습니다
 - **비디오 지원**: YouTube/Vimeo 비디오에서 자막 추출 및 기사로 변환 (v3.0.0)
   - 여러 추출 방법 및 폴백
   - 우선순위: 수동 자막 > 자동 생성 > 번역
@@ -69,6 +75,12 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 
 
 ### ⚡ 지능형 기능
+- **PDF 콘텐츠 추출** (v3.3.0): PDF 파일에서 콘텐츠를 추출하여 기사로 변환
+  - PDF.js 라이브러리를 사용하여 offscreen 문서에서 구문 분석
+  - 정확한 추출을 위한 다단계 분류 시스템
+  - 웹 및 로컬 PDF 파일 지원
+  - 전체 파이프라인 통합: 번역, 목차, 요약, 모든 내보내기 형식
+  - 참고: 실험적 기능, 복잡한 PDF에는 제한이 있을 수 있습니다
 - **비디오 지원**: YouTube/Vimeo 비디오에서 자막 추출 및 기사로 변환 (v3.0.0)
   - 직접 자막 추출 (YouTube/Vimeo의 API 키 불필요)
   - AI 처리: 타임스탬프 제거, 단락 병합, 오류 수정
@@ -95,7 +107,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - **설정 가져오기/내보내기**: 모든 설정의 백업 및 복원 (보안을 위해 API 키 제외)
 
 ### 🔒 보안
-- **API 키 암호화** AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
+- **API 키 암호화** AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **키는 내보내지 않음** — 설정 백업에서 제외
 - **모든 데이터 로컬** — 제3자에게 전송되지 않음
 
@@ -114,10 +126,15 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
   - 텍스트는 문장/단어 경계에서 지능적으로 자동 분할됩니다
 
 ### 기술적 제약
-- **Keep-alive 요구사항**: Chrome MV3는 최소 1분의 keep-alive 간격이 필요합니다. 긴 처리 작업은 몇 분이 걸릴 수 있습니다. 확장 프로그램은 통합된 keep-alive 메커니즘 (1분마다 알람 + 2초마다 상태 저장)을 사용하여 service worker가 중지되는 것을 방지합니다.
+- **Keep-alive 요구사항**: Chrome MV3는 최소 1분의 keep-alive 간격이 필요합니다. 긴 처리 작업은 몇 분이 걸릴 수 있습니다. 확장 프로그램은 통합된 keep-alive 메커니즘 (1분마다 알람)을 사용하여 service worker가 중지되는 것을 방지합니다.
 - **이미지의 CORS**: 웹사이트가 cross-origin 요청을 차단하는 경우 일부 이미지가 로드되지 않을 수 있습니다. 확장 프로그램은 이러한 이미지를 건너뜁니다.
 - **취소가 즉시 적용되지 않음**: 취소는 모든 백그라운드 프로세스를 완전히 중지하는 데 몇 초가 걸릴 수 있습니다.
-- **Service Worker 복구**: 작업은 service worker 재시작 후 자동으로 재개됩니다 (2시간 이내).
+- **Service Worker 복구**: 상태가 최근인 경우 (< 1분), 작업은 service worker 재시작 후 자동으로 재개됩니다. 확장 프로그램 다시 로드는 항상 상태를 재설정합니다.
+- **PDF 추출 제한** (v3.3.0): 
+  - 스캔된 PDF (텍스트 레이어 없음)는 지원되지 않습니다 — OCR은 아직 사용할 수 없습니다
+  - 비밀번호로 보호된 PDF는 추출 전에 잠금 해제해야 합니다
+  - 매우 큰 PDF (>100MB)는 메모리 제한으로 인해 작동하지 않을 수 있습니다
+  - 복잡한 레이아웃 (다중 열, 테이블)은 추출되지만 수동 검증이 필요할 수 있습니다
 
 ### 브라우저 호환성
 - **Chrome/Edge/Brave/Arc**: 완전히 지원됨
@@ -178,6 +195,16 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 5. 키 복사 (`sk-ant-...`로 시작)
 6. **Plans & Billing**에서 크레딧 추가
 
+### DeepSeek
+
+1. [platform.deepseek.com](https://platform.deepseek.com/)로 이동
+2. 가입 또는 로그인
+3. **API Keys**로 이동하거나 [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)로 이동
+4. **"Create API key"** 클릭
+5. 키 복사 (`sk-...`로 시작)
+
+> **참고:** DeepSeek은 DeepSeek-V3.2 모델을 제공합니다: `deepseek-chat` (비-사고 모드) 및 `deepseek-reasoner` (사고 모드). API는 OpenAI 형식과 호환됩니다.
+
 ### ElevenLabs (오디오)
 
 1. [ElevenLabs](https://elevenlabs.io/)로 이동
@@ -228,7 +255,8 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 | **Gemini** | 빠른 추출, 이미지 번역, 오디오 내보내기（30개 음성） | ✅ (30개 음성) | ✅ |
 | **Claude** | 긴 기사, 복잡한 페이지 | ❌ | ❌ |
 | **Grok** | 빠른 추론 작업 | ❌ | ❌ |
-| **OpenRouter** | 여러 모델 액세스 | ❌ | ❌ |
+| **DeepSeek** | 고급 추론, 비용 효율적 | ❌ | ❌ |
+| **OpenRouter** | 여러 모델 액세ス | ❌ | ❌ |
 | **ElevenLabs** | 오디오 내보내기（9개 음성, 고품질） | ✅ (9개 음성) | ❌ |
 | **Qwen** | 오디오 내보내기（49개 음성, 러시아어 지원） | ✅ (49개 음성) | ❌ |
 | **Respeecher** | 오디오 내보내기（우크라이나어） | ✅ (14개 음성) | ❌ |
@@ -282,6 +310,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 | Anthropic | Claude Sonnet 4.5 | 긴 기사에 적합 |
 | Google | Gemini 3 Pro | 빠른 추출, 이미지 번역 |
 | Grok | Grok 4.1 Fast Reasoning | 빠른 추론 |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | 고급 추론, 비용 효율적 |
 | OpenRouter | 다양한 모델 | 여러 제공업체 액세스 |
 
 **사용자 정의 모델:** 모델 선택기 옆의 **"+"** 버튼을 클릭하여 사용자 정의 모델을 추가합니다 (예: `gpt-4o`, `claude-opus-4.5`). 사용자 정의 모델은 드롭다운 메뉴에 나타나며 필요에 따라 숨기기/표시할 수 있습니다.
@@ -381,6 +410,8 @@ ClipAIble은 도메인별로 AI 생성 선택자를 캐시합니다:
 | 느린 오디오 | 긴 기사는 청크로 분할; 진행 표시줄 관찰 |
 | 요약이 생성되지 않음 | API 키 확인, 페이지 콘텐츠가 로드되었는지 확인, 다시 시도 |
 | 요약 생성 시간 초과 | 매우 긴 기사는 최대 45분이 걸릴 수 있습니다; 기다리거나 더 짧은 콘텐츠로 시도 |
+| PDF 추출이 작동하지 않음 | PDF가 비밀번호로 보호되어 있는지 (먼저 잠금 해제) 또는 스캔되었는지 (OCR은 아직 지원되지 않음) 확인하세요. 먼저 더 간단한 PDF로 시도하세요. |
+| PDF 콘텐츠가 불완전함 | 복잡한 레이아웃 (다중 열, 테이블)은 수동 검증이 필요할 수 있습니다. 기능은 실험적입니다. |
 
 ---
 
@@ -416,6 +447,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS

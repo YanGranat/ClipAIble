@@ -4,7 +4,7 @@
 // No microphone permissions required, generates audio directly
 // Requires browser context (window/document) - cannot run in service worker
 
-import { log, logError } from '../utils/logging.js';
+import { log, logError, logWarn } from '../utils/logging.js';
 
 /**
  * Configuration for offline Piper TTS
@@ -443,14 +443,14 @@ export async function findVoice(voiceName = null, language = null) {
  * Convert text to speech using Piper TTS
  * 
  * @param {string} text - Text to convert
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID (optional, auto-select by language)
- * @param {string} options.language - Language code (e.g., 'en', 'ru') (optional)
- * @param {number} options.speed - Speech speed (not directly supported, but kept for compatibility)
- * @param {Function} options.onProgress - Progress callback for model download (optional)
+ * @param {Partial<import('../types.js').TTSOptions> & {onProgress?: (progress: number) => void}} [options={}] - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
+ * @throws {Error} If text is empty
+ * @throws {Error} If TTS conversion fails
+ * @throws {Error} If voice is not available
+ * @throws {Error} If model download fails
  */
-export async function textToSpeech(text, options = {}) {
+export async function textToSpeech(text, /** @type {any} */ options = {}) {
   let {
     voice: voiceName = null,
     language = null,

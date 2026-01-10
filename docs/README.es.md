@@ -2,7 +2,7 @@
 
 > **Extractor de artículos con IA** — Guarda cualquier artículo de la web como PDF, EPUB, FB2, Markdown o Audio. Traducción a 11 idiomas. Funciona en cualquier sitio web.
 
-![Versión](https://img.shields.io/badge/versión-3.2.4-blue)
+![Versión](https://img.shields.io/badge/versión-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensión-green)
 ![Licencia](https://img.shields.io/badge/licencia-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 ### 🤖 Extracción con IA
 - **Tres modos**: Automático (sin IA, rápido), AI Selector (rápido, reutilizable) y AI Extract (exhaustivo)
 - **Modo automático**: Crear documentos sin IA — no se requieren claves API, extracción instantánea
-- **Varios proveedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Varios proveedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
+- **Extracción de contenido PDF** (v3.3.0): Extraer contenido de archivos PDF usando la biblioteca PDF.js
+  - Función experimental con sistema de clasificación multi-nivel complejo
+  - Extrae texto, imágenes, estructura y metadatos de archivos PDF
+  - Soporta archivos PDF web y locales
+  - Maneja diseños multi-columna, tablas, encabezados, listas, fusión entre páginas
+  - Nota: La función es experimental y puede tener limitaciones con PDFs complejos (PDFs escaneados, PDFs protegidos con contraseña)
 - **Soporte de video**: Extraer subtítulos de videos YouTube/Vimeo y convertirlos en artículos (v3.0.0)
   - Múltiples métodos de extracción con respaldos
   - Prioridad: subtítulos manuales > generados automáticamente > traducidos
@@ -69,6 +75,12 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 
 
 ### ⚡ Características inteligentes
+- **Extracción de contenido PDF** (v3.3.0): Extraer contenido de archivos PDF y convertirlos en artículos
+  - Usa la biblioteca PDF.js para analizar en un documento offscreen
+  - Sistema de clasificación multi-nivel para extracción precisa
+  - Soporta archivos PDF web y locales
+  - Integración completa del pipeline: traducción, tabla de contenidos, resumen, todos los formatos de exportación
+  - Nota: Función experimental, puede tener limitaciones con PDFs complejos
 - **Soporte de video**: Extraer subtítulos de videos YouTube/Vimeo y convertirlos en artículos (v3.0.0)
   - Extracción directa de subtítulos (no se requieren claves API de YouTube/Vimeo)
   - Procesamiento IA: elimina marcas de tiempo, fusiona párrafos, corrige errores
@@ -95,7 +107,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 - **Importar/Exportar configuración**: Respaldo y restauración de toda la configuración (claves API excluidas por seguridad)
 
 ### 🔒 Seguridad
-- **Claves API encriptadas** con AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
+- **Claves API encriptadas** con AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **Claves nunca exportadas** — excluidas de la copia de seguridad de configuración
 - **Todos los datos se almacenan localmente** — nada se envía a terceros
 
@@ -114,10 +126,15 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
   - El texto se divide automáticamente de forma inteligente en los límites de oraciones/palabras
 
 ### Restricciones Técnicas
-- **Requisito de keep-alive**: Chrome MV3 requiere un intervalo de keep-alive de al menos 1 minuto. Las tareas de procesamiento largas pueden tardar varios minutos. La extensión usa mecanismo unificado de keep-alive (alarma cada 1 minuto + guardado de estado cada 2 segundos) para evitar que el service worker se detenga.
+- **Requisito de keep-alive**: Chrome MV3 requiere un intervalo de keep-alive de al menos 1 minuto. Las tareas de procesamiento largas pueden tardar varios minutos. La extensión usa mecanismo unificado de keep-alive (alarma cada 1 minuto) para evitar que el service worker se detenga.
 - **CORS para imágenes**: Algunas imágenes pueden no cargarse si el sitio web bloquea las solicitudes cross-origin. La extensión omitirá estas imágenes.
 - **Cancelación no instantánea**: La cancelación puede tardar unos segundos en detener completamente todos los procesos en segundo plano.
-- **Recuperación del Service Worker**: Las operaciones se reanudan automáticamente después del reinicio del service worker (dentro de 2 horas).
+- **Recuperación del Service Worker**: Las operaciones se reanudan automáticamente después del reinicio del service worker, si el estado es reciente (< 1 minuto). La recarga de la extensión siempre restablece el estado.
+- **Limitaciones de extracción PDF** (v3.3.0): 
+  - Los PDFs escaneados (sin capa de texto) no son compatibles — OCR aún no está disponible
+  - Los PDFs protegidos con contraseña deben desbloquearse antes de la extracción
+  - Los PDFs muy grandes (>100MB) pueden no funcionar debido a limitaciones de memoria
+  - Los diseños complejos (multi-columna, tablas) se extraen pero pueden requerir verificación manual
 
 ### Compatibilidad del Navegador
 - **Chrome/Edge/Brave/Arc**: Totalmente compatible
@@ -178,6 +195,16 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 5. Copia la clave (comienza con `sk-ant-...`)
 6. Agrega créditos en **Plans & Billing**
 
+### DeepSeek
+
+1. Ve a [platform.deepseek.com](https://platform.deepseek.com/)
+2. Regístrate o inicia sesión
+3. Navega a **API Keys** o ve a [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+4. Haz clic en **"Create API key"**
+5. Copia la clave (comienza con `sk-...`)
+
+> **Nota:** DeepSeek proporciona modelos DeepSeek-V3.2: `deepseek-chat` (modo non-thinking) y `deepseek-reasoner` (modo thinking). La API es compatible con el formato OpenAI.
+
 ### ElevenLabs (Audio)
 
 1. Ve a [ElevenLabs](https://elevenlabs.io/)
@@ -228,6 +255,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 | **Gemini** | Extracción rápida, traducción de imágenes, exportación de audio (30 voces) | ✅ (30 voces) | ✅ |
 | **Claude** | Artículos largos, páginas complejas | ❌ | ❌ |
 | **Grok** | Tareas de razonamiento rápido | ❌ | ❌ |
+| **DeepSeek** | Razonamiento avanzado, rentable | ❌ | ❌ |
 | **OpenRouter** | Acceso a múltiples modelos | ❌ | ❌ |
 | **ElevenLabs** | Exportación de audio (9 voces, alta calidad) | ✅ (9 voces) | ❌ |
 | **Qwen** | Exportación de audio (49 voces, soporte ruso) | ✅ (49 voces) | ❌ |
@@ -282,6 +310,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 | Anthropic | Claude Sonnet 4.5 | Excelente para artículos largos |
 | Google | Gemini 3 Pro | Extracción rápida, traducción de imágenes |
 | Grok | Grok 4.1 Fast Reasoning | Razonamiento rápido |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | Razonamiento avanzado, rentable |
 | OpenRouter | Varios modelos | Acceso a múltiples proveedores |
 
 **Modelos personalizados:** Haz clic en el botón **"+"** junto al selector de modelos para agregar modelos personalizados (por ejemplo, `gpt-4o`, `claude-opus-4.5`). Los modelos personalizados aparecen en el menú desplegable y pueden ocultarse/mostrarse según sea necesario.
@@ -381,6 +410,8 @@ ClipAIble almacena en caché los selectores generados por IA por dominio:
 | Audio lento | Artículos largos divididos en fragmentos; observa la barra de progreso |
 | Resumen no generado | Verifica la clave API, asegúrate de que el contenido de la página esté cargado, intenta de nuevo |
 | Timeout de generación de resumen | Artículos muy largos pueden tardar hasta 45 minutos; espera o intenta con contenido más corto |
+| La extracción PDF no funciona | Verifica si el PDF está protegido con contraseña (desbloquéalo primero) o si está escaneado (OCR aún no es compatible). Prueba primero con PDFs más simples. |
+| Contenido PDF incompleto | Los diseños complejos (multi-columna, tablas) pueden requerir verificación manual. La función es experimental. |
 
 ---
 
@@ -416,6 +447,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS
@@ -424,10 +456,20 @@ clipaible/
 │   │   ├── tts.js      # Enrutador TTS
 │   │   └── index.js    # Enrutador API
 │   ├── extraction/     # Extracción de contenido
+│   │   ├── automatic.js # Extracción automática (sin IA) - extractAutomaticallyInlined()
+│   │   ├── pdf.js      # Extracción de contenido PDF (v3.3.0) - punto de entrada
 │   │   ├── prompts.js  # Prompts IA
 │   │   ├── html-utils.js # Utilidades HTML
 │   │   ├── video-subtitles.js # Extracción de subtítulos YouTube/Vimeo
-│   │   └── video-processor.js # Procesamiento de subtítulos IA
+│   │   ├── video-processor.js # Procesamiento de subtítulos IA
+│   │   └── modules/    # Funciones auxiliares modulares para extracción automática
+│   │       ├── utils.js # Utilidades básicas
+│   │       ├── content-finder.js # Búsqueda de contenido
+│   │       ├── element-filter.js # Filtrado de elementos
+│   │       ├── image-processor.js # Procesamiento de imágenes
+│   │       ├── metadata-extractor.js # Extracción de metadatos
+│   │       ├── content-cleaner.js # Limpieza de contenido
+│   │       └── builder.js # Inlining en tiempo de compilación
 │   ├── translation/    # Traducción y detección de idioma
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Caché de selectores

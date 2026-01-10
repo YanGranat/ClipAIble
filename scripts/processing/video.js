@@ -3,8 +3,6 @@
 
 // @ts-check
 
-// @typedef {import('../types.js').ProcessingData} ProcessingData
-
 import { log, logError } from '../utils/logging.js';
 import { tSync } from '../locales.js';
 import { checkCancellation, updateProgress, getUILanguageCached } from '../utils/pipeline-helpers.js';
@@ -14,19 +12,23 @@ import { processSubtitlesWithAI } from '../extraction/video-processor.js';
 
 /**
  * Process video page (YouTube/Vimeo) - extract subtitles, process with AI
- * @param {ProcessingData} data - Processing data
- * @param {Object} videoInfo - {platform: 'youtube'|'vimeo', videoId: string}
- * @returns {Promise<Object>} {title, author, content, publishDate}
+ * @param {import('../types.js').ProcessingData} data - Processing data
+ * @param {{platform: 'youtube'|'vimeo', videoId: string}} videoInfo - Video information
+ * @returns {Promise<{title: string, author: string, content: import('../types.js').ContentItem[], publishDate: string}>} Processed video data
+ * @throws {Error} If video processing fails
+ * @throws {Error} If subtitle extraction fails
+ * @throws {Error} If AI processing fails
  */
 export async function processVideoPage(data, videoInfo) {
   const { platform, videoId } = videoInfo;
   const { url, tabId, apiKey, model } = data;
   
-  log('Processing video page', { platform, videoId, url });
+  log(`🎥 Processing ${platform} video: ${videoId}`, { url });
   
   // Check if processing was cancelled before video processing
   await checkCancellation('video processing');
   
+  log('📝 Extracting subtitles from video');
   // Stage 1: Extract subtitles (5-15%)
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingSubtitles', 5);
   
@@ -41,7 +43,7 @@ export async function processVideoPage(data, videoInfo) {
     subtitles = subtitlesData.subtitles;
     metadata = subtitlesData.metadata;
     
-    log('Subtitles extracted', { count: subtitles.length, title: metadata.title });
+    log(`✅ Subtitles extracted: ${subtitles.length} entries`, { title: metadata.title });
   } catch (error) {
     logError('Failed to extract subtitles', error);
     const uiLang = await getUILanguageCached();
@@ -71,8 +73,9 @@ export async function processVideoPage(data, videoInfo) {
       }
     };
     
+    log('🤖 Processing subtitles with AI');
     content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback);
-    log('Subtitles processed', { contentItems: content.length });
+    log(`✅ Subtitles processed: ${content.length} content items created`);
   } catch (error) {
     logError('Failed to process subtitles', error);
     const uiLang = await getUILanguageCached();

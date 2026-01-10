@@ -13,14 +13,40 @@ import { saveLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
+import { handleError } from '../utils/error-handler.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
+import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 
 /**
  * Generate PDF from content
- * @param {GenerationData} data - Generation data with PDF-specific options (pageMode, fontFamily, fontSize, bgColor, textColor, headingColor, linkColor)
- * @param {Function} [updateState] - State update function
- * @returns {Promise<Blob>} Generated PDF blob
+ * @param {import('../types.js').ExtendedGenerationData} data - Generation data with PDF-specific options (pageMode, fontFamily, fontSize, bgColor, textColor, headingColor, linkColor)
+ * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
+ * @returns {Promise<Blob|{success: boolean}>} Generated PDF blob (when using debugger API) or success object (when using print page)
+ * @throws {Error} If content is empty
+ * @throws {Error} If styles loading fails
+ * @throws {Error} If PDF generation fails
+ * @throws {Error} If image embedding fails
+ * @throws {Error} If processing is cancelled
+ * @see {@link DocumentGeneratorFactory.generate} For unified document generation interface
+ * @see {@link generateEpub} For EPUB generation (similar structure)
+ * @see {@link generateFb2} For FB2 generation (similar structure)
+ * @example
+ * // Generate PDF with custom styles
+ * const pdfBlob = await generatePdf({
+ *   content: contentItems,
+ *   title: 'Article Title',
+ *   author: 'Author Name',
+ *   pageMode: 'single',
+ *   bgColor: '#ffffff',
+ *   textColor: '#000000',
+ *   headingColor: '#333333',
+ *   linkColor: '#0066cc',
+ *   generateToc: true,
+ *   generateAbstract: true
+ * }, updateState);
+ * const url = URL.createObjectURL(pdfBlob);
+ * // Download or display PDF...
  */
 export async function generatePdf(data, updateState) {
   const { 
@@ -35,7 +61,26 @@ export async function generatePdf(data, updateState) {
   
   const uiLang = await getUILanguage();
   if (!content || content.length === 0) {
-    throw new Error(tSync('errorPdfNoContent', uiLang));
+    // Normalize error with context for better logging and error tracking
+    const noContentError = new Error('No content provided for PDF generation');
+    const normalized = await handleError(noContentError, {
+      source: 'pdfGeneration',
+      errorType: 'noContentError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'validateContent',
+        hasContent: !!content,
+        contentLength: content?.length || 0
+      }
+    });
+    
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorPdfNoContent', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   // Translate metadata if language is set
@@ -49,9 +94,10 @@ export async function generatePdf(data, updateState) {
       try {
         const date = new Date(formattedDate);
         if (!isNaN(date.getTime())) {
-          const options = { year: 'numeric', month: 'long', day: 'numeric' };
-          const locale = getLocaleFromLanguage(language);
-          formattedDate = date.toLocaleDateString(locale, options);
+      /** @type {Intl.DateTimeFormatOptions} */
+      const options = { year: 'numeric', month: 'long', day: 'numeric' };
+      const locale = getLocaleFromLanguage(language);
+      formattedDate = date.toLocaleDateString(locale, options);
         } else {
           formattedDate = `${isoMatch[3]} ${isoMatch[2]} ${isoMatch[1]}`;
         }
@@ -65,14 +111,26 @@ export async function generatePdf(data, updateState) {
   if (language !== 'auto' && apiKey) {
     if (updateState) updateState({ status: 'Translating metadata...', progress: 68 });
     
+    // CRITICAL: Clean author BEFORE translation to avoid translating "anonymous" to anonymous variants
+    // If author is already anonymous, don't translate it
+    const cleanedAuthorBeforeTranslation = cleanAuthor(author);
+    const shouldTranslateAuthor = cleanedAuthorBeforeTranslation && author;
+    
     const [newAuthor, newDate] = await Promise.all([
-      author ? translateMetadata(author, language, apiKey, model, 'author') : Promise.resolve(''),
+      shouldTranslateAuthor ? translateMetadata(author, language, apiKey, model, 'author') : Promise.resolve(''),
       formattedDate ? translateMetadata(formattedDate, language, apiKey, model, 'date') : Promise.resolve('')
     ]);
     
-    translatedAuthor = newAuthor || author;
+    // CRITICAL: Clean translated author to remove any anonymous variants
+    // Translation might convert anonymous variants to other language variants
+    translatedAuthor = cleanAuthor(newAuthor || cleanedAuthorBeforeTranslation || '');
     formattedDate = newDate || formattedDate;
-    log('Metadata translated', { author: translatedAuthor, date: formattedDate });
+    log('Metadata translated and cleaned', { 
+      originalAuthor: author, 
+      translatedAuthor: newAuthor, 
+      cleanedAuthor: translatedAuthor,
+      date: formattedDate 
+    });
   }
   
   try {
@@ -86,16 +144,55 @@ export async function generatePdf(data, updateState) {
     try {
       const stylesResponse = await fetch(chrome.runtime.getURL('config/pdf-styles.css'));
       if (!stylesResponse.ok) {
+        // Normalize HTTP error with context
+        /** @type {import('../types.js').ExtendedError} */
+        const httpError = new Error(`Failed to load styles: HTTP ${stylesResponse.status}`);
+        httpError.status = stylesResponse.status;
+        const normalized = await handleError(httpError, {
+          source: 'pdfGeneration',
+          errorType: 'stylesLoadError',
+          logError: true,
+          createUserMessage: false, // Keep existing localized message
+          context: {
+            operation: 'loadStyles',
+            statusCode: stylesResponse.status
+          }
+        });
+        
         const uiLang = await getUILanguageCached();
-        throw new Error(tSync('errorPdfLoadStylesFailed', uiLang).replace('{status}', String(stylesResponse.status)));
+        const userMessage = normalized.userMessage || tSync('errorPdfLoadStylesFailed', uiLang).replace('{status}', String(stylesResponse.status));
+        /** @type {import('../types.js').ExtendedError} */
+        const error = new Error(userMessage);
+        error.code = normalized.code;
+        error.status = stylesResponse.status;
+        error.originalError = normalized.originalError;
+        error.context = normalized.context;
+        throw error;
       }
       styles = await stylesResponse.text();
       log('Styles loaded', { length: styles.length });
     } catch (styleError) {
-      logError('Failed to load styles', styleError);
+      // Normalize error with context for better logging and error tracking
+      const normalized = await handleError(styleError, {
+        source: 'pdfGeneration',
+        errorType: 'stylesLoadError',
+        logError: true,
+        createUserMessage: false, // Keep existing localized message
+        context: {
+          operation: 'loadStyles',
+          errorMessage: styleError instanceof Error ? styleError.message : 'Unknown error'
+        }
+      });
+      
       const uiLang = await getUILanguageCached();
       const errorMsg = styleError instanceof Error ? styleError.message : 'Unknown error';
-      throw new Error(tSync('errorPdfLoadStylesError', uiLang).replace('{error}', errorMsg));
+      const userMessage = normalized.userMessage || tSync('errorPdfLoadStylesError', uiLang).replace('{error}', errorMsg);
+      /** @type {import('../types.js').ExtendedError} */
+      const error = new Error(userMessage);
+      error.code = normalized.code;
+      error.originalError = normalized.originalError;
+      error.context = normalized.context;
+      throw error;
     }
     
     // Apply custom styles
@@ -138,6 +235,9 @@ export async function generatePdf(data, updateState) {
     }
     
     // Collect headings and assign IDs for TOC
+    if (generateToc) {
+      log(`📑 Collecting headings for table of contents`);
+    }
     const headings = [];
     const contentWithIds = content.map((item, index) => {
       if (item.type === 'heading' && item.level >= 2) {
@@ -166,6 +266,9 @@ export async function generatePdf(data, updateState) {
       abstract
     );
     log('HTML built', { length: htmlContent.length, tocEnabled: generateToc, headingsCount: headings.length });
+    if (generateToc && headings.length > 1) {
+      log(`✅ Table of contents generated: ${headings.length} headings`);
+    }
     
     // DETAILED LOGGING: Log FULL HTML content - NO TRUNCATION
     log('=== HTML CONTENT (FULL - NO TRUNCATION) ===', {
@@ -228,10 +331,27 @@ export async function generatePdf(data, updateState) {
       
       log('HTML stored in storage', { length: htmlWithImages.length, pageMode });
     } catch (storageError) {
-      logError('Failed to store HTML', storageError);
+      // Normalize error with context for better logging and error tracking
+      const normalized = await handleError(storageError, {
+        source: 'pdfGeneration',
+      errorType: 'storageError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+        context: {
+          operation: 'storeHtmlContent',
+          errorMessage: storageError instanceof Error ? storageError.message : 'Unknown error'
+        }
+      });
+      
       const uiLang = await getUILanguageCached();
       const errorMsg = storageError instanceof Error ? storageError.message : 'Unknown error';
-      throw new Error(tSync('errorPdfStoreContentFailed', uiLang).replace('{error}', errorMsg));
+      const userMessage = normalized.userMessage || tSync('errorPdfStoreContentFailed', uiLang).replace('{error}', errorMsg);
+      /** @type {import('../types.js').ExtendedError} */
+      const error = new Error(userMessage);
+      error.code = normalized.code;
+      error.originalError = normalized.originalError;
+      error.context = normalized.context;
+      throw error;
     }
     
     const currentWindow = await chrome.windows.getCurrent();
@@ -252,14 +372,35 @@ export async function generatePdf(data, updateState) {
       });
       log('Print tab created', { tabId: tab.id });
     } catch (tabError) {
-      logError('Failed to create tab', tabError);
+      // Normalize error with context for better logging and error tracking
+      const normalized = await handleError(tabError, {
+        source: 'pdfGeneration',
+      errorType: 'tabCreationError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+        context: {
+          operation: 'createPrintTab',
+          errorMessage: tabError.message || 'unknown'
+        }
+      });
+      
       const uiLang = await getUILanguage();
-      throw new Error(tSync('errorPdfCreateTabFailed', uiLang).replace('{error}', tabError.message || 'unknown'));
+      const userMessage = normalized.userMessage || tSync('errorPdfCreateTabFailed', uiLang).replace('{error}', tabError.message || 'unknown');
+      /** @type {import('../types.js').ExtendedError} */
+      const error = new Error(userMessage);
+      error.code = normalized.code;
+      error.originalError = normalized.originalError;
+      error.context = normalized.context;
+      throw error;
     }
 
     log('Print page opened, it will handle the rest');
     log('=== PDF GENERATION END ===');
-    return { success: true };
+    // Note: Function signature says it returns Blob, but in practice it returns success object
+    // The actual PDF generation happens in the print page
+    /** @type {any} */
+    const result = { success: true };
+    return result;
 
   } catch (error) {
     logError('PDF generation failed', error);
@@ -274,8 +415,8 @@ export async function generatePdf(data, updateState) {
  * @param {string} pageMode - 'single' or 'multi'
  * @param {number} contentWidth - Content width
  * @param {number} contentHeight - Content height
- * @param {Function} completeProcessing - Completion callback
- * @param {Function} setError - Error callback
+ * @param {import('../types.js').CompleteProcessingFunction} completeProcessing - Completion callback
+ * @param {import('../types.js').SetErrorFunction} setError - Error callback
  */
 export async function generatePdfWithDebugger(tabId, title, pageMode, contentWidth, contentHeight, completeProcessing, setError) {
   log('=== DEBUGGER PDF START ===');
@@ -332,18 +473,22 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
         returnByValue: true
       });
       
+      // Type assertion for Chrome DevTools Protocol response
+      /** @type {{result?: {type?: string, value?: any}, exceptionDetails?: any}} */
+      const typedResult = domCheckResult || {};
+      
       log('=== DOM CHECK RESULT (RAW) ===', { 
         hasResult: !!domCheckResult,
         resultKeys: domCheckResult ? Object.keys(domCheckResult) : [],
-        resultType: domCheckResult?.result?.type,
-        hasValue: !!domCheckResult?.result?.value,
-        valueType: typeof domCheckResult?.result?.value,
+        resultType: typedResult.result?.type,
+        hasValue: !!typedResult.result?.value,
+        valueType: typeof typedResult.result?.value,
         fullResult: domCheckResult
       });
       
-      if (domCheckResult && domCheckResult.result) {
-        if (domCheckResult.result.type === 'object' && domCheckResult.result.value) {
-          const paraInfo = domCheckResult.result.value;
+      if (typedResult.result) {
+        if (typedResult.result.type === 'object' && typedResult.result.value) {
+          const paraInfo = typedResult.result.value;
           log('=== DOM CHECK BEFORE Page.printToPDF (via DevTools Protocol) ===', {
             textContent: paraInfo.textContent,
             innerHTML: paraInfo.innerHTML,
@@ -355,8 +500,8 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
           });
         } else {
           logWarn('DOM check returned unexpected result type', { 
-            resultType: domCheckResult.result.type,
-            result: domCheckResult.result
+            resultType: typedResult.result.type,
+            result: typedResult.result
           });
         }
       } else {
@@ -447,14 +592,18 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
       generateDocumentOutline: true
     });
     
-    log('PDF generated', { dataLength: result.data?.length || 0 });
+    // Type assertion for Chrome DevTools Protocol response
+    /** @type {{data?: string}} */
+    const typedPdfResult = result || {};
+    
+    log('PDF generated', { dataLength: typedPdfResult.data?.length || 0 });
     
     // Detach debugger
     await chrome.debugger.detach(debuggee);
     log('Debugger detached');
     
     // Convert base64 to blob and download
-    const pdfData = result.data;
+    const pdfData = typedPdfResult.data;
     const filename = sanitizeFilename(title || 'article') + '.pdf';
     
     // Check if processing was cancelled before downloading
@@ -487,6 +636,12 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
           saveAs: true
         });
         
+        const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+        log('📊 PDF file generated', {
+          size: `${sizeMB} MB`,
+          sizeBytes: blob.size,
+          downloadId
+        });
         log('Download started', { downloadId, size: blob.size });
       } finally {
         // Revoke URL immediately - Chrome downloads API handles the download asynchronously
@@ -495,6 +650,12 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
       }
     } else {
       // Fallback for MV3 service worker without createObjectURL
+      logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
+        reason: 'URL.createObjectURL not available in MV3 service worker',
+        method: 'data URL via FileReader (fallback)',
+        impact: 'Slower download, higher memory usage',
+        size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`
+      });
       const dataUrl = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result);

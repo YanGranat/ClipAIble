@@ -5,6 +5,11 @@
 /**
  * Navigation text patterns (all languages)
  * Patterns that indicate navigation, related articles, subscription prompts
+ * @readonly
+ * @const {{
+ *   startsWith: Array<RegExp>,
+ *   contains: Array<RegExp>
+ * }}
  */
 export const NAVIGATION_PATTERNS = {
   // Patterns that match if text STARTS with them
@@ -188,6 +193,8 @@ export const NAVIGATION_PATTERNS = {
 
 /**
  * Paywall and subscription patterns (all languages)
+ * @readonly
+ * @const {Record<string, Array<string>>}
  */
 export const PAYWALL_PATTERNS = {
   english: [
@@ -252,6 +259,8 @@ export const PAYWALL_PATTERNS = {
 
 /**
  * Related articles patterns (all languages)
+ * @readonly
+ * @const {Record<string, Array<string>>}
  */
 export const RELATED_ARTICLES_PATTERNS = {
   english: [
@@ -313,6 +322,8 @@ export const RELATED_ARTICLES_PATTERNS = {
 
 /**
  * Course/product advertisement patterns
+ * @readonly
+ * @const {Array<string>}
  */
 export const COURSE_AD_PATTERNS = [
   'video + ux training', 'get video', 'video training', 'video course',
@@ -323,6 +334,8 @@ export const COURSE_AD_PATTERNS = [
 
 /**
  * Newsletter/email signup patterns
+ * @readonly
+ * @const {Array<string>}
  */
 export const NEWSLETTER_PATTERNS = [
   'sign up to our newsletter',
@@ -338,6 +351,8 @@ export const NEWSLETTER_PATTERNS = [
 
 /**
  * Excluded CSS classes
+ * @readonly
+ * @const {Array<string>}
  */
 export const EXCLUDED_CLASSES = [
   'nav', 'navigation', 'menu', 'sidebar', 'footer', 'header',
@@ -364,6 +379,8 @@ export const EXCLUDED_CLASSES = [
 
 /**
  * Paywall/subscription classes
+ * @readonly
+ * @const {Array<string>}
  */
 export const PAYWALL_CLASSES = [
   'freebie-message', 'subscribe-text', 'message--freebie', 'subscribe-',
@@ -372,6 +389,8 @@ export const PAYWALL_CLASSES = [
 
 /**
  * Logo/brand patterns for image exclusion
+ * @readonly
+ * @const {Array<string>}
  */
 export const LOGO_PATTERNS = [
   'logo', 'brand', 'icon', 'badge', 'watermark', 'sprite', 'spacer', 'blank', 'clear', 'pixel',
@@ -388,6 +407,8 @@ export const LOGO_PATTERNS = [
 
 /**
  * Tracking pixel patterns
+ * @readonly
+ * @const {Array<string>}
  */
 export const TRACKING_PATTERNS = [
   'pixel', 'tracking', 'beacon', 'analytics', 'facebook.com/tr', 'doubleclick', 'googleads'
@@ -395,6 +416,8 @@ export const TRACKING_PATTERNS = [
 
 /**
  * Placeholder URL patterns
+ * @readonly
+ * @const {Array<string>}
  */
 export const PLACEHOLDER_PATTERNS = [
   'placeholder', 'spacer', 'blank', '1x1', 'pixel.gif'

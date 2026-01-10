@@ -161,6 +161,7 @@ export async function getVoicesWithWorker() {
         callId: id,
         duration: Date.now() - requestStartTime
       });
+      worker.removeEventListener('message', handler);
       reject(timeoutError);
     }, 10000);
     
@@ -241,6 +242,7 @@ export async function getStoredWithWorker() {
         callId: id,
         duration: Date.now() - requestStartTime
       });
+      worker.removeEventListener('message', handler);
       reject(timeoutError);
     }, 10000);
     
@@ -294,7 +296,7 @@ export async function getStoredWithWorker() {
 /**
  * Download voice model using Web Worker
  * @param {string} voiceId - Voice ID to download
- * @param {Function} progressCallback - Optional progress callback
+ * @param {import('../../types.js').ProgressCallbackFunction} [progressCallback] - Optional progress callback
  * @returns {Promise<any>} Download result
  */
 export async function downloadWithWorker(voiceId, progressCallback) {
@@ -324,6 +326,7 @@ export async function downloadWithWorker(voiceId, progressCallback) {
         voiceId,
         duration: Date.now() - requestStartTime
       });
+      worker.removeEventListener('message', handler);
       reject(timeoutError);
     }, 300000); // 5 minutes timeout for large downloads
     
@@ -350,7 +353,7 @@ export async function downloadWithWorker(voiceId, progressCallback) {
           
           // Forward progress to callback if provided
           if (progressCallback && typeof progressCallback === 'function') {
-            progressCallback(progress);
+            progressCallback(progress.loaded, progress.total);
           }
           return; // Don't remove listener, wait for success/error
         }
@@ -435,6 +438,7 @@ export async function removeWithWorker(voiceId) {
         voiceId,
         duration: Date.now() - requestStartTime
       });
+      worker.removeEventListener('message', handler);
       reject(timeoutError);
     }, 30000);
     

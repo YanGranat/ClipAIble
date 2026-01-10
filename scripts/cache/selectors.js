@@ -2,8 +2,11 @@
 // Selector cache module for offline mode
 // Caches AI-generated selectors by domain for faster subsequent extractions
 
-// @typedef {import('../types.js').SelectorResult} SelectorResult
-// @typedef {import('../types.js').CacheEntry} CacheEntry
+/**
+ * @typedef {import('../types.js').SelectorResult} SelectorResult
+ * @typedef {import('../types.js').CacheEntry} CacheEntry
+ * @typedef {import('../types.js').ExtendedCacheEntry} ExtendedCacheEntry
+ */
 
 import { log, logWarn, logError } from '../utils/logging.js';
 
@@ -45,7 +48,7 @@ async function loadCache() {
 
 /**
  * Save cache to storage
- * @param {Object} cache 
+ * @param {Record<string, import('../types.js').ExtendedCacheEntry>} cache - Cache object 
  */
 async function saveCache(cache) {
   try {
@@ -112,27 +115,44 @@ async function isUsingCacheEnabled() {
 /**
  * Get cached selectors for a URL
  * @param {string} url - Page URL
- * @returns {Promise<SelectorResult|null>} Cached selectors or null
+ * @returns {Promise<ExtendedCacheEntry|null>} Cached selectors or null
  */
 export async function getCachedSelectors(url) {
+  const cacheStartTime = Date.now();
+  
   // Check if using cache is enabled
   if (!(await isUsingCacheEnabled())) {
+    log('📊 Cache check: disabled', { url: url.substring(0, 80) });
     return null;
   }
   
   const domain = extractDomain(url);
-  if (!domain) return null;
+  if (!domain) {
+    log('📊 Cache check: no domain extracted', { url: url.substring(0, 80) });
+    return null;
+  }
   
   const cache = await loadCache();
   const entry = cache[domain];
   
   if (!entry || !entry.selectors) {
+    const cacheDuration = Date.now() - cacheStartTime;
+    log('📊 Cache MISS: no entry found', { 
+      domain,
+      cacheDuration: `${cacheDuration}ms`,
+      willRequestFromAI: true
+    });
     return null;
   }
   
   // Check if cache was invalidated
   if (entry.invalidated) {
-    log('Cache invalidated for domain', { domain });
+    const cacheDuration = Date.now() - cacheStartTime;
+    log('📊 Cache MISS: entry invalidated', { 
+      domain,
+      cacheDuration: `${cacheDuration}ms`,
+      willRequestFromAI: true
+    });
     return null;
   }
   
@@ -140,25 +160,24 @@ export async function getCachedSelectors(url) {
   entry.lastUsed = Date.now();
   await saveCache(cache);
   
-  log('Using cached selectors', { 
+  const cacheDuration = Date.now() - cacheStartTime;
+  const ageMinutes = Math.round((Date.now() - entry.created) / 1000 / 60);
+  
+  log('📊 Cache HIT: using cached selectors', { 
     domain, 
     successCount: entry.successCount,
-    age: Math.round((Date.now() - entry.created) / 1000 / 60) + ' min'
+    age: `${ageMinutes} min`,
+    cacheDuration: `${cacheDuration}ms`,
+    savedTime: '~2-5s (estimated AI call time)'
   });
   
-  // @ts-ignore - SelectorResult may have selectors property
   return {
     selectors: entry.selectors,
-    fromCache: true,
+    timestamp: entry.created || Date.now(),
     successCount: entry.successCount
   };
 }
 
-/**
- * Cache selectors after successful extraction
- * @param {string} url - Page URL
- * @param {Object} selectors - Selectors object from AI
- */
 /**
  * Cache selectors for URL
  * @param {string} url - Page URL
@@ -166,22 +185,23 @@ export async function getCachedSelectors(url) {
  * @returns {Promise<void>}
  */
 export async function cacheSelectors(url, selectors) {
+  const cacheStartTime = Date.now();
   try {
     // Check if caching is enabled
     if (!(await isCachingEnabled())) {
-      log('Caching disabled, skipping cache save');
+      log('📊 Cache save: disabled, skipping');
       return;
     }
     
     const domain = extractDomain(url);
     if (!domain || !selectors) {
-      log('Cannot cache: missing domain or selectors', { domain: !!domain, selectors: !!selectors });
+      log('📊 Cache save: skipped (missing domain or selectors)', { domain: !!domain, selectors: !!selectors });
       return;
     }
     
     // Don't cache if selectors are incomplete
     if (!selectors.content && !selectors.articleContainer) {
-      log('Not caching - no content selector');
+      log('📊 Cache save: skipped (incomplete selectors)', { domain });
       return;
     }
     
@@ -195,7 +215,12 @@ export async function cacheSelectors(url, selectors) {
       existing.successCount = (existing.successCount || 0) + 1;
       existing.lastUsed = Date.now();
       existing.invalidated = false;
-      log('Updated cached selectors', { domain, successCount: existing.successCount });
+      const cacheDuration = Date.now() - cacheStartTime;
+      log('📊 Cache save: updated existing entry', { 
+        domain, 
+        successCount: existing.successCount,
+        cacheDuration: `${cacheDuration}ms`
+      });
     } else {
       // Create new entry
       cache[domain] = {
@@ -205,11 +230,19 @@ export async function cacheSelectors(url, selectors) {
         lastUsed: Date.now(),
         invalidated: false
       };
-      log('Cached new selectors', { domain });
+      const cacheDuration = Date.now() - cacheStartTime;
+      log('📊 Cache save: created new entry', { 
+        domain,
+        cacheDuration: `${cacheDuration}ms`
+      });
     }
     
     await saveCache(cache);
-    log('Cache saved successfully', { domain });
+    const totalDuration = Date.now() - cacheStartTime;
+    log('📊 Cache save: completed', { 
+      domain,
+      totalDuration: `${totalDuration}ms`
+    });
   } catch (error) {
     logError('Failed to cache selectors', error);
     // Don't throw - caching failure shouldn't break the main flow

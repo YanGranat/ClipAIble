@@ -2,18 +2,24 @@
 // Background service worker for ClipAIble extension
 // Main entry point - uses ES modules for modular architecture
 
-// @typedef {import('./types.js').ChromeStorageResult} ChromeStorageResult
-// @typedef {import('./types.js').SubtitleData} SubtitleData
-// @typedef {import('./types.js').InjectionResult} InjectionResult
-// @typedef {import('./types.js').ExtendedCacheEntry} ExtendedCacheEntry
-// @typedef {import('./types.js').ExtendedProcessingState} ExtendedProcessingState
-// @typedef {import('./types.js').ExtendedGenerationData} ExtendedGenerationData
-// @typedef {import('./types.js').AudioGenerationData} AudioGenerationData
-// @typedef {import('./types.js').RetryOptions} RetryOptions
+/**
+ * @typedef {import('./types.js').ChromeStorageResult} ChromeStorageResult
+ * @typedef {import('./types.js').SubtitleData} SubtitleData
+ * @typedef {import('./types.js').InjectionResult} InjectionResult
+ * @typedef {import('./types.js').ExtendedCacheEntry} ExtendedCacheEntry
+ * @typedef {import('./types.js').ContentItem} ContentItem
+ * @typedef {import('./types.js').ExportFormat} ExportFormat
+ * @typedef {import('./types.js').ProcessingState} ProcessingState
+ * @typedef {import('./types.js').ExtendedProcessingState} ExtendedProcessingState
+ * @typedef {import('./types.js').ExtendedGenerationData} ExtendedGenerationData
+ * @typedef {import('./types.js').AudioGenerationData} AudioGenerationData
+ * @typedef {import('./types.js').RetryOptions} RetryOptions
+ */
 
 // Import logging utilities first for use in global error handlers
-import { log, logError, logWarn, logDebug, LOG_LEVELS } from './utils/logging.js';
+import { log, logError, logWarn, logDebug } from './utils/logging.js';
 import { CONFIG } from './utils/config.js';
+import { getUILanguage, tSync } from './locales.js';
 
 // Global error handler for uncaught errors during module loading
 // Uses logError with fallback to console.error if logging system is not yet initialized
@@ -60,1046 +66,222 @@ self.addEventListener('unhandledrejection', (event) => {
     console.error('[ClipAIble] Failed to log rejection:', loggingError);
   }
 });
+
+// Import background modules
+import { initInitialization } from './background/initialization.js';
+import { handleError } from './utils/error-handler.js';
+import { clearDecryptedKeyCache } from './utils/encryption.js';
+import { restoreStateFromStorage } from './state/processing.js';
+import { runInitialization } from './initialization/index.js';
+import { initKeepAlive } from './background/keep-alive.js';
+import { initContextMenu } from './background/context-menu.js';
+import { updateContextMenuWithLang } from './utils/context-menu.js';
+import { handleQuickSave } from './background/quicksave.js';
+import { initLogging } from './background/logging.js';
+import { initPortListener } from './background/port-listener.js';
+import { initOrchestration } from './background/orchestration.js';
 import { 
-  getProcessingState, 
-  updateState, 
-  cancelProcessing, 
-  completeProcessing, 
   setError,
-  startProcessing,
   setResult,
-  restoreStateFromStorage,
-  PROCESSING_STAGES,
+  updateState,
   ERROR_CODES,
-  isCancelled
+  PROCESSING_STAGES
 } from './state/processing.js';
-import { handleError, createErrorHandler, normalizeError } from './utils/error-handler.js';
-import { callAI, getProviderFromModel } from './api/index.js';
-import { callWithRetry } from './utils/retry.js';
-import { trimHtmlForAnalysis } from './extraction/html-utils.js';
-import { cleanTitleFromServiceTokens } from './utils/html.js';
-import { translateContent, translateImages, detectSourceLanguage, generateAbstract, detectContentLanguage, generateSummary, detectLanguageByCharacters } from './translation/index.js';
-import { DocumentGeneratorFactory } from './generation/factory.js';
-import { generatePdfWithDebugger } from './generation/pdf.js';
-import { recordSave, getFormattedStats, clearStats, deleteHistoryItem } from './stats/index.js';
 import { 
-  getCachedSelectors, 
-  cacheSelectors, 
-  markCacheSuccess, 
-  invalidateCache, 
-  clearSelectorCache, 
-  getCacheStats,
-  deleteDomainFromCache
-} from './cache/selectors.js';
-import { exportSettings, importSettings } from './settings/import-export.js';
-import { removeLargeData } from './utils/storage.js';
-import { encryptApiKey, isEncrypted, decryptApiKey, clearDecryptedKeyCache } from './utils/encryption.js';
-import { validateAudioApiKeys } from './utils/validation.js';
-import { getUILanguage, tSync } from './locales.js';
-import { detectVideoPlatform } from './utils/video.js';
-import { detectPdfPage, getOriginalPdfUrl } from './utils/pdf.js';
+  validateAndInitializeProcessing,
+  handlePdfPageProcessing,
+  handleVideoPageProcessing,
+  handleStandardArticleProcessing
+} from './utils/processing-helpers.js';
 import { 
-  checkCancellation, 
-  updateProgress, 
+  checkCancellation,
+  updateProgress,
   getUILanguageCached,
-  finalizeProcessing,
-  handleProcessingResult,
-  handleProcessingError,
   handleTranslation,
   handleAbstractGeneration,
   detectEffectiveLanguage
 } from './utils/pipeline-helpers.js';
-import {
-  handlePdfPageProcessing,
-  validateAndInitializeProcessing,
-  handleVideoPageProcessing,
-  handleStandardArticleProcessing,
-  showQuickSaveNotification,
-  extractPageContent,
-  prepareQuickSaveProcessingData,
-  handleQuickSaveError
-} from './utils/processing-helpers.js';
-import { VoiceValidator } from './utils/voice-validator.js';
-import { TTSApiKeyManager } from './utils/api-key-manager.js';
-import { selectProcessingFunction } from './processing/mode-selector.js';
-import { processWithoutAI, processWithExtractMode, processWithSelectorMode, getSelectorsFromAI, extractContentWithSelectors } from './processing/modes.js';
-import { processVideoPage } from './processing/video.js';
-import { getQuickSaveSettingsKeys, prepareQuickSaveData } from './processing/quicksave.js';
-import { updateContextMenuWithLang } from './utils/context-menu.js';
-import { runInitialization } from './initialization/index.js';
+import { 
+  translateContent, 
+  translateImages, 
+  detectSourceLanguage, 
+  generateAbstract, 
+  detectContentLanguage 
+} from './translation/index.js';
+import { DocumentGeneratorFactory } from './generation/factory.js';
+import { detectPdfPage, getOriginalPdfUrl } from './utils/pdf.js';
+import { detectVideoPlatform } from './utils/video.js';
+import { initNotifications } from './background/notifications.js';
+import { 
+  getProcessingState, 
+  saveStateToStorageImmediate
+} from './state/processing.js';
+
+// Import processing functions needed for message routing
+import { processWithoutAI, processWithExtractMode, processWithSelectorMode } from './processing/modes.js';
 import { routeMessage } from './message-handlers/index.js';
-
-// ============================================
-// NOTIFICATION HELPER
-// ============================================
-
-/**
- * Create a notification with consistent styling
- * @param {string} message - Notification message
- * @param {string} title - Notification title (default: 'ClipAIble')
- * @returns {Promise<void>}
- */
-async function createNotification(message, title = 'ClipAIble') {
-  if (!chrome.notifications || !chrome.notifications.create) {
-    logWarn('chrome.notifications API not available');
-    return;
-  }
-  
-  const iconUrl = chrome.runtime.getURL('icons/icon128.png');
-  
-  try {
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: iconUrl,
-      title: title,
-      message: message,
-      requireInteraction: false
-    }, (notificationId) => {
-      if (chrome.runtime.lastError) {
-        logError('Failed to create notification', chrome.runtime.lastError);
-      } else {
-        log('Notification created successfully', { notificationId, message });
-      }
-    });
-  } catch (createError) {
-    logError('Exception while creating notification', createError);
-  }
-}
-
-// ============================================
-// API KEY MIGRATION AND INITIALIZATION
-// ============================================
-// Moved to scripts/initialization/index.js
 
 // ============================================
 // INITIALIZATION
 // ============================================
 
-// Initialize extension - use setTimeout to avoid blocking module loading
+// Initialize notifications module with DI
+const notificationsModule = initNotifications({
+  log,
+  logError,
+  logWarn,
+  getUILanguage,
+  tSync
+});
+
+// Initialize keep-alive module with DI
+const keepAliveModule = initKeepAlive({
+  log,
+  logError,
+  logWarn,
+  CONFIG,
+  getProcessingState,
+  saveStateToStorageImmediate
+});
+
+// Extract keep-alive functions for use in background.js and other modules
+const { startKeepAlive, stopKeepAlive, initKeepAliveListener } = keepAliveModule;
+
+// Initialize extension initialization module with DI
+const initializationModule = initInitialization({
+  log,
+  logWarn,
+  CONFIG,
+  handleError,
+  clearDecryptedKeyCache,
+  getProcessingState,
+  restoreStateFromStorage,
+  runInitialization,
+  startKeepAlive
+});
+
+// Initialize extension
+initializationModule();
+
+// Initialize keep-alive listener
+initKeepAliveListener();
+
+// Initialize log collection module with DI
+const loggingModule = initLogging({
+  log,
+  logError,
+  CONFIG
+});
+
+// Extract logging functions for use in background.js and other modules
+const { addLogToCollection, exportAllLogsToFile, initLogCollection } = loggingModule;
+
+// Initialize log collection system
+initLogCollection();
+
+// Initialize port listener module with DI
+const portListenerModule = initPortListener({
+  log,
+  logError,
+  addLogToCollection
+});
+
+// Initialize port listener for offscreen logging
+portListenerModule();
+
+// Initialize orchestration module with DI (must be after keep-alive module)
+const orchestrationModule = initOrchestration({
+  log,
+  logWarn,
+  CONFIG,
+  getProcessingState,
+  setError,
+  setResult,
+  updateState,
+  ERROR_CODES,
+  PROCESSING_STAGES,
+  validateAndInitializeProcessing,
+  handlePdfPageProcessing,
+  handleVideoPageProcessing,
+  handleStandardArticleProcessing,
+  checkCancellation,
+  updateProgress,
+  getUILanguageCached,
+  handleTranslation,
+  handleAbstractGeneration,
+  detectEffectiveLanguage,
+  translateContent,
+  translateImages,
+  detectSourceLanguage,
+  generateAbstract,
+  detectContentLanguage,
+  DocumentGeneratorFactory,
+  detectPdfPage,
+  getOriginalPdfUrl,
+  detectVideoPlatform,
+  tSync,
+  startKeepAlive,
+  stopKeepAlive
+});
+
+// Extract orchestration functions for use in background.js and other modules
+const { startArticleProcessing, continueProcessingPipeline } = orchestrationModule;
+
+// Initialize context menu module with DI
+const contextMenuModule = initContextMenu({
+  log,
+  logError,
+  logWarn,
+  logDebug,
+  CONFIG,
+  handleError,
+  getUILanguage,
+  updateContextMenuWithLang,
+  handleQuickSave
+});
+
+// Initialize context menu listeners (will be done after extractFromPageInlined is defined)
+// Use setTimeout to ensure extractFromPageInlined is available
 setTimeout(() => {
-  try {
-    log('Extension loaded', { config: CONFIG });
-  } catch (error) {
-    // CRITICAL: Fallback to console.error if logging system itself fails
-    // This is the only place where console.error is acceptable - it's a fallback
-    // when the centralized logging system cannot be used
-    console.error('[ClipAIble] Failed to log (logging system error):', error);
-  }
-
-  // SECURITY: Clear decrypted key cache on service worker restart
-  // This ensures keys don't remain in memory after SW restart
-  clearDecryptedKeyCache();
-  log('Decrypted key cache cleared on service worker start (security)');
-
-  // CRITICAL: On extension reload/restart, ALWAYS reset all generation flags AND clear summary
-  // This ensures clean state after extension reload
-  // Check if this is a fresh start (no active processing) and reset flags
-  (async () => {
-    try {
-      const result = /** @type {ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number}} */ (
-        await chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp'])
-      );
-    /** @type {Partial<ProcessingState>|undefined} */
-    const processingState = result.processingState && typeof result.processingState === 'object' ? result.processingState : undefined;
-    const hasProcessingState = processingState && processingState.isProcessing === true;
-    const hasSummaryGenerating = result.summary_generating;
-    const hasSummary = result.summary_text;
-    
-    // CRITICAL: If extension was reloaded, reset all flags AND clear summary completely
-    // We can't distinguish reload from restart, so we ALWAYS reset on service worker start
-    // Only restore if state is very recent (< 1 minute) - this handles quick service worker restarts
-    const RESET_THRESHOLD = CONFIG.RESET_THRESHOLD_MS;
-    
-    // CRITICAL: Clear summary on extension reload (one of 3 events that must clear summary)
-    if (hasSummary) {
-      const savedTimestamp = result.summary_saved_timestamp;
-      const summaryAge = savedTimestamp && typeof savedTimestamp === 'number' ? (Date.now() - savedTimestamp) : Infinity;
-      if (summaryAge > RESET_THRESHOLD) {
-        log('Extension reloaded - clearing summary (too old)', {
-          summaryAge,
-          threshold: RESET_THRESHOLD
-        });
-        try {
-          await chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp']);
-        } catch (error) {
-          const normalized = await handleError(error, {
-            source: 'initialization',
-            errorType: 'storageRemoveFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'removeSummaryText' }
-          });
-          logWarn('Failed to remove summary_text on reload', normalized);
-        }
-      } else {
-        log('Summary is recent - may keep (quick restart)', {
-          summaryAge,
-          threshold: RESET_THRESHOLD
-        });
-      }
-    }
-    
-    if (hasProcessingState && processingState) {
-      const lastUpdate = processingState.lastUpdate;
-      const timeSinceUpdate = lastUpdate && typeof lastUpdate === 'number' ? (Date.now() - lastUpdate) : Infinity;
-      if (timeSinceUpdate > RESET_THRESHOLD) {
-        log('Extension reloaded - resetting processingState (too old)', {
-          timeSinceUpdate,
-          threshold: RESET_THRESHOLD
-        });
-        try {
-          await chrome.storage.local.remove(['processingState']);
-        } catch (error) {
-          const normalized = await handleError(error, {
-            source: 'initialization',
-            errorType: 'storageRemoveFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'removeProcessingState' }
-          });
-          logWarn('Failed to remove processingState on reload', normalized);
-        }
-      } else {
-        log('ProcessingState is recent - may restore (quick restart)', {
-          timeSinceUpdate,
-          threshold: RESET_THRESHOLD
-        });
-      }
-    }
-    
-    if (hasSummaryGenerating) {
-      const startTime = result.summary_generating_start_time;
-      const timeSinceStart = startTime && typeof startTime === 'number' ? (Date.now() - startTime) : Infinity;
-      
-      if (timeSinceStart > RESET_THRESHOLD) {
-        log('Extension reloaded - resetting summary_generating flag (too old)', {
-          timeSinceStart,
-          threshold: RESET_THRESHOLD
-        });
-        try {
-          await chrome.storage.local.set({
-            summary_generating: false,
-            summary_generating_start_time: null
-          });
-        } catch (error) {
-          const normalized = await handleError(error, {
-            source: 'initialization',
-            errorType: 'storageSetFailed',
-            logError: false,
-            createUserMessage: false,
-            context: { operation: 'clearSummaryGenerating' }
-          });
-          logWarn('Failed to clear summary_generating on reload', normalized);
-        }
-      } else {
-        log('summary_generating is recent - may restore (quick restart)', {
-          timeSinceStart,
-          threshold: RESET_THRESHOLD
-        });
-      }
-    }
-    
-    // CRITICAL: After resetting stale flags, restore state only if it's recent (quick restart)
-    // This handles service worker restarts during active generation, but resets on extension reload
-    try {
-      await restoreStateFromStorage();
-      setTimeout(async () => {
-        try {
-          const state = getProcessingState();
-          
-          // CRITICAL: Only restore keep-alive if state is very recent (< 1 minute)
-          // This ensures we don't restore on extension reload
-          if (state.isProcessing) {
-            const stateAge = Date.now() - (state.startTime || 0);
-            if (stateAge < RESET_THRESHOLD) {
-              log('Processing state is recent - restoring keep-alive (quick restart)', {
-                status: state.status,
-                progress: state.progress,
-                stage: state.currentStage,
-                stateAge
-              });
-              startKeepAlive();
-            } else {
-              log('Processing state is too old - not restoring (extension reload)', {
-                stateAge,
-                threshold: RESET_THRESHOLD
-              });
-            }
-          } else {
-            // CRITICAL: Check summary_generating only if very recent (< 1 minute)
-            try {
-              const summaryResult = /** @type {{summary_generating?: boolean, summary_generating_start_time?: number}} */ (
-                await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time'])
-              );
-              const startTime = summaryResult.summary_generating_start_time;
-              if (summaryResult.summary_generating && startTime && typeof startTime === 'number') {
-                const timeSinceStart = Date.now() - startTime;
-                
-                if (timeSinceStart < RESET_THRESHOLD) {
-                  // Very recent - might be quick restart, restore
-                  log('summary_generating is very recent - restoring keep-alive (quick restart)', {
-                    timeSinceStart,
-                    threshold: RESET_THRESHOLD
-                  });
-                  startKeepAlive();
-                } else {
-                  // Too old - extension was reloaded, clear it
-                  log('summary_generating is too old - clearing (extension reload)', {
-                    timeSinceStart,
-                    threshold: RESET_THRESHOLD
-                  });
-                  await chrome.storage.local.set({
-                    summary_generating: false,
-                    summary_generating_start_time: null
-                  });
-                }
-              }
-            } catch (error) {
-              const normalized = await handleError(error, {
-                source: 'initialization',
-                errorType: 'storageGetFailed',
-                logError: false,
-                createUserMessage: false,
-                context: { operation: 'checkSummaryGenerating' }
-              });
-              logWarn('Failed to check summary_generating on service worker start', normalized);
-            }
-          }
-        } catch (error) {
-          const normalized = await handleError(error, {
-            source: 'initialization',
-            errorType: 'keepAliveRestoreFailed',
-            logError: false,
-            createUserMessage: false
-          });
-          logWarn('Failed to restore keep-alive on service worker start', normalized);
-        }
-      }, 100);
-    } catch (error) {
-      const normalized = await handleError(error, {
-        source: 'initialization',
-        errorType: 'stateRestoreFailed',
-        logError: false,
-        createUserMessage: false
-      });
-      logWarn('Failed to restore state on service worker start', normalized);
-    }
-  } catch (error) {
-    const normalized = await handleError(error, {
-      source: 'initialization',
-      errorType: 'stateCheckFailed',
-      logError: false,
-      createUserMessage: false
-    });
-    logWarn('Failed to check state on extension load', normalized);
-  }
-  })();
-
-  // Run initialization tasks (migration and default settings)
-  runInitialization();
+  // Create wrapper for startArticleProcessing that includes extractFromPageInlined
+  const startArticleProcessingWrapper = (data) => startArticleProcessing(data, extractFromPageInlined);
+  contextMenuModule.initContextMenuListeners(startArticleProcessingWrapper);
 }, 0);
-
-// ============================================
-// KEEP-ALIVE MECHANISM
-// ============================================
-
-const KEEP_ALIVE_ALARM = 'keepAlive';
-let keepAliveInterval = null;
-let isKeepAliveStarting = false; // Flag to prevent concurrent startKeepAlive() calls
-
-/**
- * Perform keep-alive ping: check state and save to storage to keep service worker alive
- * This is the unified logic used by both alarm and interval
- * 
- * CRITICAL: Includes forced event loop wake-up to prevent SW death during blocking operations
- */
-async function performKeepAlivePing() {
-  // CRITICAL: Force event loop wake-up before any async operations
-  // This ensures SW stays alive even if main thread is blocked by WASM/CPU-intensive operations
-  await new Promise(resolve => setTimeout(resolve, 0));
-  
-  const state = getProcessingState();
-  
-  try {
-    // Check both processingState AND summary_generating
-    const result = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
-    let isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
-    
-    // CRITICAL: Check if summary_generating flag is stale (older than threshold)
-    if (isSummaryGenerating && result.summary_generating_start_time && typeof result.summary_generating_start_time === 'number') {
-      const timeSinceStart = Date.now() - result.summary_generating_start_time;
-      if (timeSinceStart > CONFIG.SUMMARY_STALE_THRESHOLD_MS) {
-        // Flag is stale, clear it
-        logWarn('Summary generation flag is stale in keep-alive ping, clearing', {
-          timeSinceStart,
-          threshold: CONFIG.SUMMARY_STALE_THRESHOLD_MS
-        });
-        await chrome.storage.local.set({
-          summary_generating: false,
-          summary_generating_start_time: null
-        });
-        isSummaryGenerating = false;
-      }
-    }
-    
-    const isProcessing = state.isProcessing;
-    
-    // If neither is active, stop keep-alive (called from interval check)
-    if (!isProcessing && !isSummaryGenerating) {
-      return false; // Signal to stop
-    }
-    
-    const savePromises = [];
-    
-    if (isProcessing) {
-      // Save state to keep service worker alive and preserve progress
-      savePromises.push(
-        chrome.storage.local.set({
-          processingState: { ...state, lastUpdate: Date.now() }
-        })
-      );
-    }
-    
-    // CRITICAL: Also keep alive if summary is generating
-    if (isSummaryGenerating) {
-      // Update timestamp to keep service worker alive
-      savePromises.push(
-        chrome.storage.local.set({
-          summary_generating: true,
-          summary_generating_start_time: result.summary_generating_start_time
-        })
-      );
-    }
-    
-    if (savePromises.length > 0) {
-      await Promise.all(savePromises);
-    }
-    
-    // CRITICAL: Additional event loop wake-up after storage operations
-    // This ensures SW remains active even after async storage operations complete
-    await new Promise(resolve => setTimeout(resolve, 0));
-    
-    return true; // Signal to continue
-  } catch (error) {
-    // On error, still try to save processingState if active (fallback)
-    if (state.isProcessing) {
-      try {
-        await chrome.storage.local.set({
-          processingState: { ...state, lastUpdate: Date.now() }
-        });
-        // Force wake-up even on error path
-        await new Promise(resolve => setTimeout(resolve, 0));
-      } catch (fallbackError) {
-        logWarn('Keep-alive ping failed (including fallback)', { 
-          error: error.message, 
-          fallbackError: fallbackError.message 
-        });
-      }
-    } else {
-      logWarn('Keep-alive ping failed', error);
-    }
-    return true; // Continue on error to be safe
-  }
-}
-
-function startKeepAlive() {
-  // Prevent concurrent calls: if already starting, skip
-  if (isKeepAliveStarting) {
-    logWarn('Keep-alive already starting, skipping duplicate call');
-    return;
-  }
-  
-  // Prevent race condition: clear existing interval BEFORE creating new one
-  if (keepAliveInterval) {
-    clearInterval(keepAliveInterval);
-    keepAliveInterval = null;
-  }
-  
-  isKeepAliveStarting = true;
-  
-  try {
-    // Create alarm as primary mechanism (MV3 requires >=1 minute)
-    chrome.alarms.create(KEEP_ALIVE_ALARM, { periodInMinutes: CONFIG.KEEP_ALIVE_INTERVAL });
-    if (chrome.runtime.lastError) {
-      logWarn('Keep-alive alarm creation failed, using interval only', { error: chrome.runtime.lastError.message });
-    }
-    
-    // Unified interval: performs both keep-alive ping and periodic state save
-    // Uses STATE_SAVE_INTERVAL (2 seconds) for frequent pings to prevent SW death
-    keepAliveInterval = setInterval(async () => {
-      const shouldContinue = await performKeepAlivePing();
-      
-      // Auto-stop if neither processing nor summary generating
-      if (!shouldContinue && keepAliveInterval) {
-        clearInterval(keepAliveInterval);
-        keepAliveInterval = null;
-        log('Keep-alive interval stopped - no active processing');
-      }
-    }, CONFIG.STATE_SAVE_INTERVAL);
-    
-    log('Keep-alive started', { 
-      alarmIntervalMinutes: CONFIG.KEEP_ALIVE_INTERVAL, 
-      pingIntervalMs: CONFIG.STATE_SAVE_INTERVAL 
-    });
-  } finally {
-    isKeepAliveStarting = false;
-  }
-}
-
-async function stopKeepAlive() {
-  // CRITICAL: Check if summary generation is active before stopping keep-alive
-  // Summary generation is independent and should continue even if document/audio processing stops
-  try {
-    const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
-    const isSummaryGenerating = summaryState.summary_generating && summaryState.summary_generating_start_time;
-    
-    if (isSummaryGenerating) {
-      log('Keep-alive kept active - summary generation in progress', { timestamp: Date.now() });
-      return; // Don't stop keep-alive if summary is generating
-    }
-  } catch (error) {
-    logWarn('Failed to check summary_generating in stopKeepAlive', error);
-    // Continue with stop if check fails (safer to stop than hang)
-  }
-  
-  try {
-    chrome.alarms.clear(KEEP_ALIVE_ALARM);
-  } catch (error) {
-    logWarn('Failed to clear keep-alive alarm', error);
-  }
-  
-  // Guaranteed cleanup of interval
-  if (keepAliveInterval) {
-    try {
-      clearInterval(keepAliveInterval);
-    } catch (error) {
-      logWarn('Failed to clear keep-alive interval', error);
-    } finally {
-      keepAliveInterval = null;
-    }
-  }
-  
-  log('Keep-alive stopped');
-}
-
-// Alarm listener: uses same unified ping logic
-try {
-  chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (alarm.name === KEEP_ALIVE_ALARM) {
-      log('Keep-alive alarm ping');
-      await performKeepAlivePing();
-    }
-  });
-} catch (error) {
-  logError('Failed to register alarms.onAlarm listener', error);
-}
-
-// Backward compatibility: keep old function names but they're now no-ops
-// This ensures existing code that calls them doesn't break
-function startPeriodicStateSave() {
-  // No-op: functionality merged into startKeepAlive()
-  // Kept for backward compatibility
-}
-
-function stopPeriodicStateSave() {
-  // No-op: functionality merged into stopKeepAlive()
-  // Kept for backward compatibility
-}
-
-// ============================================
-// CONTEXT MENU
-// ============================================
-
-// Format mapping for context menu items
-const FORMAT_MENU_IDS = {
-  'save-as-pdf': 'pdf',
-  'save-as-epub': 'epub',
-  'save-as-fb2': 'fb2',
-  'save-as-markdown': 'markdown',
-  'save-as-audio': 'audio'
-};
-
-// Flag to prevent concurrent context menu updates
-let isUpdatingContextMenu = false;
-
-// Create or update context menu with localization
-async function updateContextMenu() {
-  // Prevent concurrent calls
-  if (isUpdatingContextMenu) {
-    logWarn('Context menu update already in progress, skipping');
-    return;
-  }
-  
-  isUpdatingContextMenu = true;
-  
-  try {
-    // Get current UI language
-    const lang = await getUILanguage();
-    await updateContextMenuWithLang(lang);
-  } catch (error) {
-    logError('Failed to update context menu', error);
-  } finally {
-    isUpdatingContextMenu = false;
-  }
-}
-
-// Cleanup stale audio files from storage (protection against SW restart)
-async function cleanupStaleAudio() {
-  try {
-    log('[ClipAIble Cleanup] Starting stale audio cleanup...');
-    const data = await chrome.storage.local.get(null);
-    const now = Date.now();
-    const toRemove = [];
-    const CLEANUP_THRESHOLD = 5 * 60 * 1000; // 5 minutes
-    
-    Object.keys(data).forEach(key => {
-      if (key.startsWith('clipaible_audio_') && key.endsWith('_meta')) {
-        // This is a metadata key, check if it's stale
-        const meta = data[key];
-        if (meta && typeof meta === 'object' && 'timestamp' in meta && typeof meta.timestamp === 'number') {
-          if ((now - meta.timestamp) > CLEANUP_THRESHOLD) {
-            // Extract base storage key (remove _meta suffix)
-            const baseKey = key.replace('_meta', '');
-            toRemove.push(key, baseKey);
-            log('[ClipAIble Cleanup] Found stale audio', {
-              baseKey,
-              age: now - meta.timestamp,
-              size: 'size' in meta && typeof meta.size === 'number' ? meta.size : undefined
-            });
-          }
-        }
-      } else if (key.startsWith('clipaible_audio_') && !key.endsWith('_meta')) {
-        // This is an audio key without metadata - check if metadata exists
-        const metaKey = `${key}_meta`;
-        if (!data[metaKey]) {
-          // No metadata - likely orphaned, remove it
-          toRemove.push(key);
-          log('[ClipAIble Cleanup] Found orphaned audio without metadata', { key });
-        }
-      }
-    });
-    
-    if (toRemove.length > 0) {
-      await chrome.storage.local.remove(toRemove);
-      log('[ClipAIble Cleanup] Cleanup completed', {
-        removedKeys: toRemove.length,
-        removedAudioFiles: toRemove.filter(k => !k.endsWith('_meta')).length
-      });
-    } else {
-      log('[ClipAIble Cleanup] No stale audio found');
-    }
-  } catch (error) {
-    logError('[ClipAIble Cleanup] Failed to cleanup stale audio', error);
-  }
-}
-
-// Initialize context menu on install
-try {
-  chrome.runtime.onStartup.addListener(() => {
-    log('[ClipAIble] Extension startup detected');
-    cleanupStaleAudio();
-  });
-
-  chrome.runtime.onInstalled.addListener(() => {
-    // Cleanup stale audio on install/update
-    cleanupStaleAudio();
-    
-    updateContextMenu()
-      .catch(async error => {
-        const normalized = await handleError(error, {
-          source: 'contextMenu',
-          errorType: 'contextMenuUpdateFailed',
-          logError: true,
-          createUserMessage: false,
-          context: { operation: 'onInstalled' }
-        });
-        logError('Failed to update context menu on install', normalized);
-      });
-  });
-} catch (error) {
-  logError('Failed to register runtime.onInstalled listener', error);
-}
-
-// Update context menu when extension starts (in case language changed)
-// Use setTimeout to avoid blocking service worker initialization
-setTimeout(() => {
-  updateContextMenu()
-    .catch(async error => {
-      const normalized = await handleError(error, {
-        source: 'contextMenu',
-        errorType: 'contextMenuUpdateFailed',
-        logError: true,
-        createUserMessage: false,
-        context: { operation: 'onStartup' }
-      });
-      logError('Failed to update context menu on startup', normalized);
-    });
-}, 0);
-
-// Update context menu when UI language changes
-try {
-  chrome.storage.onChanged.addListener((changes, areaName) => {
-    // DETAILED LOGGING: Storage changed event received
-    if (areaName === 'local' && (changes.audio_voice_map || changes.audio_voice)) {
-      const timestamp = Date.now();
-      log('[ClipAIble Background] ===== STORAGE CHANGED EVENT RECEIVED =====', {
-        timestamp,
-        hasAudioVoiceMap: !!changes.audio_voice_map,
-        hasAudioVoice: !!changes.audio_voice,
-        allChanges: Object.keys(changes),
-        stackTrace: new Error().stack?.split('\n').slice(0, 5).join('\n') // Show call stack to identify source
-      });
-      
-      // CRITICAL: Log full state of voice storage after change
-      (async () => {
-        try {
-          const currentState = await chrome.storage.local.get(['audio_voice', 'audio_voice_map', 'audio_provider']);
-          log('[ClipAIble Background] ===== CURRENT VOICE STATE AFTER CHANGE =====', {
-            timestamp: Date.now(),
-            audio_provider: currentState.audio_provider,
-            audio_voice: currentState.audio_voice,
-            audio_voice_type: typeof currentState.audio_voice,
-            audio_voice_map: currentState.audio_voice_map,
-            audio_voice_map_type: typeof currentState.audio_voice_map,
-            audio_voice_map_keys: currentState.audio_voice_map ? Object.keys(currentState.audio_voice_map) : [],
-            audio_voice_map_has_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map,
-            audio_voice_map_current: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map ? currentState.audio_voice_map.current : null,
-            audio_voice_map_current_keys: currentState.audio_voice_map && typeof currentState.audio_voice_map === 'object' && 'current' in currentState.audio_voice_map && typeof currentState.audio_voice_map.current === 'object' ? Object.keys(currentState.audio_voice_map.current) : []
-          });
-        } catch (error) {
-          logError('[ClipAIble Background] Failed to read current voice state after change', error);
-        }
-      })();
-    }
-    
-    if (areaName === 'local') {
-      
-      // DETAILED LOGGING: Voice selection changed in storage
-      if (changes.audio_voice_map) {
-        const oldValue = changes.audio_voice_map.oldValue;
-        const newValue = changes.audio_voice_map.newValue;
-        
-        // CRITICAL: Extract actual maps (handle both old and new format)
-        let oldMap = {};
-        let newMap = {};
-        
-        // Handle old format (direct map) vs new format (with 'current' property)
-        if (oldValue) {
-          if (typeof oldValue === 'object' && 'current' in oldValue && typeof oldValue.current === 'object') {
-            oldMap = oldValue.current || {};
-            logDebug('[ClipAIble Background] Old value has "current" property (new format)');
-          } else if (typeof oldValue === 'object' && !Array.isArray(oldValue)) {
-            oldMap = oldValue;
-            logDebug('[ClipAIble Background] Old value is direct map (old format)');
-          }
-        }
-        
-        if (newValue) {
-          if (typeof newValue === 'object' && 'current' in newValue && typeof newValue.current === 'object') {
-            newMap = newValue.current || {};
-            logDebug('[ClipAIble Background] New value has "current" property (new format)');
-          } else if (typeof newValue === 'object' && !Array.isArray(newValue)) {
-            newMap = newValue;
-            logDebug('[ClipAIble Background] New value is direct map (old format)');
-          }
-        }
-        
-        log('[ClipAIble Background] ===== VOICE MAP CHANGED IN STORAGE =====', {
-          timestamp: Date.now(),
-          oldValueRaw: oldValue,
-          newValueRaw: newValue,
-          oldValueType: typeof oldValue,
-          newValueType: typeof newValue,
-          oldValueHasCurrent: oldValue && typeof oldValue === 'object' && 'current' in oldValue,
-          newValueHasCurrent: newValue && typeof newValue === 'object' && 'current' in newValue,
-          oldMap,
-          newMap,
-          oldMapKeys: Object.keys(oldMap),
-          newMapKeys: Object.keys(newMap),
-          changedProviders: Object.keys(newMap).filter(provider => {
-            const oldVoice = oldMap[provider];
-            const newVoice = newMap[provider];
-            return oldVoice !== newVoice;
-          })
-        });
-        
-        // Log each provider change with detailed analysis
-        // CRITICAL: Filter out 'current' key - it's not a provider, it's a format property
-        for (const [provider, voice] of Object.entries(newMap)) {
-          // Skip 'current' - it's not a provider name
-          if (provider === 'current') {
-            continue;
-          }
-          
-          const oldVoice = oldMap[provider];
-          if (oldVoice !== voice) {
-            // CRITICAL: Ensure voice is a string before calling includes
-            const voiceStr = String(voice || '');
-            const oldVoiceStr = String(oldVoice || '');
-            
-            log('[ClipAIble Background] ===== VOICE CHANGED FOR PROVIDER =====', {
-              timestamp: Date.now(),
-              provider,
-              oldVoice,
-              oldVoiceType: typeof oldVoice,
-              oldVoiceStr,
-              newVoice: voice,
-              voiceType: typeof voice,
-              voiceStr,
-              isNumeric: /^\d+$/.test(voiceStr),
-              oldIsNumeric: /^\d+$/.test(oldVoiceStr),
-              isValidFormat: voiceStr && (voiceStr.includes('_') || voiceStr.includes('-') || provider !== 'offline'),
-              oldIsValidFormat: oldVoiceStr && (oldVoiceStr.includes('_') || oldVoiceStr.includes('-') || provider !== 'offline'),
-              changeReason: oldVoice ? 'voice_updated' : 'voice_set',
-              willCauseReset: provider === 'offline' && (/^\d+$/.test(voiceStr) || (!voiceStr.includes('_') && !voiceStr.includes('-')))
-            });
-            
-            // CRITICAL: Warn if voice format is invalid for offline provider
-            if (provider === 'offline') {
-              if (/^\d+$/.test(voiceStr)) {
-                logError('[ClipAIble Background] CRITICAL ERROR: Voice is numeric index (will cause reset!)', {
-                  provider,
-                  invalidVoice: voiceStr,
-                  oldVoice: oldVoiceStr,
-                  timestamp: Date.now()
-                });
-              } else if (!voiceStr.includes('_') && !voiceStr.includes('-')) {
-                logError('[ClipAIble Background] CRITICAL ERROR: Voice format invalid for offline (will cause reset!)', {
-                  provider,
-                  invalidVoice: voiceStr,
-                  oldVoice: oldVoiceStr,
-                  timestamp: Date.now()
-                });
-              }
-            }
-          }
-        }
-        
-        // CRITICAL: Check if any provider was removed
-        // CRITICAL: Filter out 'current' - it's not a provider, it's a format property
-        for (const [provider, oldVoice] of Object.entries(oldMap)) {
-          // Skip 'current' - it's not a provider name
-          if (provider === 'current') {
-            continue;
-          }
-          if (!(provider in newMap)) {
-            logWarn('[ClipAIble Background] CRITICAL: Provider voice was REMOVED from map', {
-              timestamp: Date.now(),
-              provider,
-              removedVoice: oldVoice,
-              willUseDefault: true
-            });
-          }
-        }
-      }
-      
-      // Handle legacy audio_voice key (backward compatibility)
-      if (changes.audio_voice) {
-        const oldVoice = changes.audio_voice.oldValue;
-        const newVoice = changes.audio_voice.newValue;
-        const oldVoiceStr = String(oldVoice || '');
-        const newVoiceStr = String(newVoice || '');
-        
-        log('[ClipAIble Background] ===== LEGACY VOICE CHANGED IN STORAGE =====', {
-          timestamp: Date.now(),
-          oldVoice,
-          oldVoiceType: typeof oldVoice,
-          oldVoiceStr,
-          newVoice,
-          newVoiceType: typeof newVoice,
-          newVoiceStr,
-          oldIsNumeric: /^\d+$/.test(oldVoiceStr),
-          isNumeric: /^\d+$/.test(newVoiceStr),
-          isValidFormat: newVoiceStr && (newVoiceStr.includes('_') || newVoiceStr.includes('-')),
-          changeReason: oldVoice ? 'voice_updated' : 'voice_set',
-          warning: /^\d+$/.test(newVoiceStr) ? 'CRITICAL: Voice is numeric index - will cause reset!' : null
-        });
-        
-        // CRITICAL: Warn if legacy voice is numeric (will cause issues)
-        if (/^\d+$/.test(newVoiceStr)) {
-          logError('[ClipAIble Background] CRITICAL ERROR: Legacy voice is numeric index (will cause reset!)', {
-            timestamp: Date.now(),
-            invalidVoice: newVoiceStr,
-            oldVoice: oldVoiceStr
-          });
-        }
-      }
-      
-      // Handle UI language change
-      if (changes.ui_language) {
-        log('UI language changed, updating context menu', { newLang: changes.ui_language.newValue });
-        updateContextMenu()
-          .catch(async error => {
-            const normalized = await handleError(error, {
-              source: 'contextMenu',
-              errorType: 'contextMenuUpdateFailed',
-              logError: true,
-              createUserMessage: false,
-              context: { operation: 'onLanguageChange' }
-            });
-            logError('Failed to update context menu after language change', normalized);
-          });
-      }
-      
-      // Handle pending subtitles (fallback when Extension context invalidated)
-      if (changes.pendingSubtitles && changes.pendingSubtitles.newValue) {
-        /** @type {SubtitleData} */
-        const pendingData = changes.pendingSubtitles.newValue;
-        log('🟢 Received pendingSubtitles from storage (Extension context invalidated fallback)', {
-          subtitleCount: pendingData.subtitles?.length || 0,
-          timestamp: pendingData.timestamp
-        });
-        
-        // Send message to extractYouTubeSubtitles listener if it's waiting
-        // This simulates the message that would have come via chrome.runtime.sendMessage
-        try {
-          chrome.runtime.sendMessage({
-            type: 'ClipAIbleYouTubeSubtitles',
-            action: 'youtubeSubtitlesResult',
-            result: {
-              subtitles: pendingData.subtitles,
-              metadata: pendingData.metadata
-            }
-          })
-            .catch(async error => {
-              const normalized = await handleError(error, {
-                source: 'messageHandler',
-                errorType: 'messageSendFailed',
-                logError: false,
-                createUserMessage: false,
-                context: { operation: 'sendPendingSubtitles', note: 'May timeout if no listener' }
-              });
-              // Ignore if no listener (extractYouTubeSubtitles may have timed out)
-            });
-          
-          // Also save to lastSubtitles for popup
-          chrome.storage.local.set({
-            lastSubtitles: {
-              subtitles: pendingData.subtitles,
-              metadata: pendingData.metadata,
-              timestamp: pendingData.timestamp || Date.now()
-            }
-          })
-            .catch(async error => {
-              const normalized = await handleError(error, {
-                source: 'messageHandler',
-                errorType: 'storageSaveFailed',
-                logError: true,
-                createUserMessage: false,
-                context: { operation: 'saveLastSubtitles' }
-              });
-              logError('Failed to save lastSubtitles', normalized);
-            });
-          
-          // Clear pendingSubtitles after processing
-          chrome.storage.local.remove('pendingSubtitles')
-            .catch(async error => {
-              const normalized = await handleError(error, {
-                source: 'messageHandler',
-                errorType: 'storageRemoveFailed',
-                logError: false,
-                createUserMessage: false,
-                context: { operation: 'removePendingSubtitles' }
-              });
-              // Ignore errors when clearing pending subtitles
-            });
-        } catch (error) {
-          handleError(error, {
-            source: 'messageHandler',
-            errorType: 'pendingSubtitlesProcessingFailed',
-            logError: true,
-            createUserMessage: false
-          }).then(normalized => {
-            logError('Failed to process pendingSubtitles', normalized);
-          });
-        }
-      }
-    }
-  });
-} catch (error) {
-  logError('Failed to register storage.onChanged listener', error);
-}
-
-// Listen for context menu clicks
-try {
-  chrome.contextMenus.onClicked.addListener((info, tab) => {
-    const format = FORMAT_MENU_IDS[info.menuItemId];
-    if (format) {
-      log('Context menu clicked', { format, tabId: tab?.id, url: tab?.url });
-      handleQuickSave(format);
-    }
-  });
-} catch (error) {
-  logError('Failed to register contextMenus.onClicked listener', error);
-}
-
-// ============================================
-// QUICK SAVE (Context Menu)
-// ============================================
-
-async function handleQuickSave(outputFormat = 'pdf') {
-  log('Quick save triggered', { outputFormat });
-  
-  const state = getProcessingState();
-  if (state.isProcessing) {
-    log('Already processing, ignoring quick save');
-    return;
-  }
-  
-  // Show notification about starting save
-  await showQuickSaveNotification(outputFormat, createNotification);
-  
-  try {
-    // Extract page content
-    const pageData = await extractPageContent();
-    
-    // Prepare processing data from settings
-    let processingData;
-    try {
-      processingData = await prepareQuickSaveProcessingData(outputFormat, pageData);
-    } catch (error) {
-      await handleQuickSaveError(error, createNotification);
-      return;
-    }
-    
-    log('Starting quick save processing', { url: pageData.url, model: processingData.model });
-    
-    // NOTE: No await here - this is intentional "fire and forget" pattern.
-    // startArticleProcessing returns true/false synchronously, processing
-    // runs async via .then()/.catch() chain with proper error handling.
-    // See systemPatterns.md "Design Decisions" section.
-    startArticleProcessing(processingData);
-    
-  } catch (error) {
-    await handleQuickSaveError(error, createNotification);
-  }
-}
 
 // ============================================
 // MESSAGE LISTENER
 // ============================================
 
 try {
-  log('=== background.js: Registering chrome.runtime.onMessage listener ===', {
-    timestamp: Date.now()
-  });
-  
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    // CRITICAL: Log ALL messages to catch any issues
+    // CRITICAL: Log ALL messages at the very start to catch any issues
+    // This includes messages from service worker to offscreen
     const frequentActions = ['getState', 'TTS_PROGRESS'];
     const isFrequentAction = frequentActions.includes(request?.action);
     
-    // Always log processArticle messages
-    if (request?.action === 'processArticle' || !isFrequentAction) {
-      log('=== chrome.runtime.onMessage: MESSAGE RECEIVED ===', {
-        action: request?.action,
+    // ALWAYS log messages with target: 'offscreen' to diagnose delivery issues
+    if (request?.target === 'offscreen') {
+      log('[ClipAIble Background] === OFFScreen MESSAGE IN LISTENER ===', {
         type: request?.type,
         target: request?.target,
         hasData: !!request?.data,
         dataKeys: request?.data ? Object.keys(request?.data) : [],
-        senderUrl: sender?.tab?.url || sender?.url || 'popup',
-        senderTabId: sender?.tab?.id,
+        hasPdfData: !!(request?.data && request?.data.pdfData),
+        hasPdfDataRef: !!(request?.data && request?.data.pdfDataRef),
+        pdfDataRef: request?.data?.pdfDataRef,
+        senderId: sender?.id,
+        senderUrl: sender?.url,
         isOffscreen: sender?.id === chrome.runtime.id && !sender?.tab,
+        timestamp: Date.now()
+      });
+    }
+    
+    // Only log important messages (processArticle, errors, etc.)
+    if (request?.action === 'processArticle') {
+      log('=== chrome.runtime.onMessage: processArticle ===', {
+        url: request?.data?.url,
+        mode: request?.data?.mode,
+        outputFormat: request?.data?.outputFormat,
         timestamp: Date.now()
       });
     }
@@ -1107,13 +289,16 @@ try {
     // CRITICAL: Messages with target: 'offscreen' are for offscreen document
     // Service worker must NOT handle them - return false immediately to let them pass through
     if (request.target === 'offscreen') {
-      if (!isFrequentAction) {
-        log('[ClipAIble Background] Offscreen message detected, passing through', {
-          type: request.type,
-          hasData: !!request.data,
-          timestamp: Date.now()
-        });
-      }
+      // ALWAYS log offscreen messages (even if frequent) to diagnose delivery issues
+      log('[ClipAIble Background] Offscreen message detected, passing through', {
+        type: request.type,
+        hasData: !!request.data,
+        dataKeys: request.data ? Object.keys(request.data) : [],
+        hasPdfData: !!(request.data && request.data.pdfData),
+        hasPdfDataRef: !!(request.data && request.data.pdfDataRef),
+        pdfDataRef: request.data?.pdfDataRef,
+        timestamp: Date.now()
+      });
       // Return false to allow message to reach offscreen document's listener
       return false;
     }
@@ -1121,12 +306,17 @@ try {
     // Create wrapper for processWithSelectorMode that includes extractFromPageInlined
     const processWithSelectorModeWrapper = (data) => processWithSelectorMode(data, extractFromPageInlined);
     
+    // Create wrapper for startArticleProcessing that includes extractFromPageInlined
+    const startArticleProcessingWrapperForMessage = (data) => startArticleProcessing(data, extractFromPageInlined);
+    
     const result = routeMessage(request, sender, sendResponse, {
-      startArticleProcessing,
+      startArticleProcessing: startArticleProcessingWrapperForMessage,
       processWithSelectorMode: processWithSelectorModeWrapper,
       processWithExtractMode,
       processWithoutAI,
       stopKeepAlive,
+      addLogToCollection,
+      exportAllLogsToFile,
       startKeepAlive
     });
     
@@ -1142,10 +332,6 @@ try {
     
     return result;
   });
-  
-  log('=== background.js: chrome.runtime.onMessage listener registered successfully ===', {
-    timestamp: Date.now()
-  });
 } catch (error) {
   logError('=== background.js: Failed to register runtime.onMessage listener ===', {
     error: error?.message || String(error),
@@ -1156,269 +342,8 @@ try {
 }
 
 // ============================================
-// ARTICLE PROCESSING
+// INLINED EXTRACTION FUNCTION
 // ============================================
-
-// Track processing start time for stats
-let processingStartTime = null;
-
-async function startArticleProcessing(data) {
-  // Validate and initialize processing
-  if (!(await validateAndInitializeProcessing(data, stopKeepAlive, startKeepAlive))) {
-    return false;
-  }
-  
-  processingStartTime = Date.now();
-  
-  // DETAILED LOGGING: All processing settings at start
-  log('=== START ARTICLE PROCESSING: ALL SETTINGS ===', {
-    // Basic data
-    url: data.url,
-    title: data.title,
-    tabId: data.tabId,
-    htmlLength: data.html?.length || 0,
-    htmlFull: data.html || null, // FULL HTML - NO TRUNCATION
-    
-    // Processing settings
-    mode: data.mode,
-    outputFormat: data.outputFormat,
-    generateToc: data.generateToc,
-    generateAbstract: data.generateAbstract,
-    
-    // AI settings
-    model: data.model,
-    apiKey: data.apiKey ? `${data.apiKey.substring(0, 10)}...` : null,
-    apiProvider: data.apiProvider,
-    
-    // Translation settings
-    targetLanguage: data.targetLanguage,
-    translateImages: data.translateImages,
-    
-    // PDF settings
-    pageMode: data.pageMode,
-    fontFamily: data.fontFamily,
-    fontSize: data.fontSize,
-    bgColor: data.bgColor,
-    textColor: data.textColor,
-    headingColor: data.headingColor,
-    linkColor: data.linkColor,
-    
-    // Audio settings
-    audioProvider: data.audioProvider,
-    audioVoice: data.audioVoice,
-    audioSpeed: data.audioSpeed,
-    audioFormat: data.audioFormat,
-    
-    // Cache settings
-    useCache: data.useCache,
-    
-    // Processing state
-    processingStartTime: processingStartTime,
-    timestamp: Date.now()
-  });
-  
-  log('Starting article processing', {
-    mode: data.mode,
-    model: data.model,
-    outputFormat: data.outputFormat,
-    generateToc: data.generateToc,
-    generateAbstract: data.generateAbstract,
-    url: data.url,
-    htmlLength: data.html?.length || 0
-  });
-  
-  // CRITICAL: Log audio parameters if output format is audio
-  if (data.outputFormat === 'audio') {
-    log('[ClipAIble Background] ===== AUDIO PARAMETERS IN startArticleProcessing =====', {
-      timestamp: Date.now(),
-      audioProvider: data.audioProvider,
-      audioVoice: data.audioVoice,
-      audioVoiceType: typeof data.audioVoice,
-      googleTtsVoice: data.googleTtsVoice,
-      googleTtsVoiceType: typeof data.googleTtsVoice,
-      googleTtsModel: data.googleTtsModel,
-      googleTtsPrompt: data.googleTtsPrompt,
-      audioSpeed: data.audioSpeed,
-      audioFormat: data.audioFormat,
-      url: data.url,
-      willBeUsedForAudio: true
-    });
-  }
-  
-  const processingStartTimeRef = { processingStartTime };
-  
-  // Check if this is a PDF page
-  // Get tab URL to check for Chrome PDF viewer
-  let tabUrl = null;
-  try {
-    if (data.tabId) {
-      const tab = await chrome.tabs.get(data.tabId);
-      tabUrl = tab.url;
-    }
-  } catch (e) {
-    logWarn('Failed to get tab URL for PDF detection', e);
-  }
-  
-  const pdfInfo = detectPdfPage(data.url, tabUrl);
-  if (pdfInfo && pdfInfo.isPdf) {
-    // Process as PDF page - skip selector/extract modes
-    let pdfUrl = pdfInfo.originalUrl;
-    
-    // If original URL is not available (Chrome PDF viewer), try to get it
-    if (!pdfUrl && data.tabId) {
-      pdfUrl = await getOriginalPdfUrl(data.tabId);
-    }
-    
-    if (!pdfUrl) {
-      const uiLang = await getUILanguageCached();
-      await setError({
-        message: tSync('errorPdfUrlNotFound', uiLang) || 'Could not determine PDF file URL',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
-      return false;
-    }
-    
-    return await handlePdfPageProcessing(
-      data,
-      pdfUrl,
-      stopKeepAlive,
-      continueProcessingPipeline,
-      processingStartTimeRef
-    );
-  }
-  
-  // Check if this is a video page (YouTube/Vimeo)
-  const videoInfo = detectVideoPlatform(data.url);
-  if (videoInfo) {
-    // Process as video page - skip selector/extract modes
-    return await handleVideoPageProcessing(
-      data,
-      videoInfo,
-      stopKeepAlive,
-      continueProcessingPipeline,
-      processingStartTimeRef
-    );
-  }
-  
-  // Standard article processing
-  return await handleStandardArticleProcessing(
-    data,
-    stopKeepAlive,
-    continueProcessingPipeline,
-    extractFromPageInlined,
-    processingStartTimeRef
-  );
-}
-
-
-// ============================================
-// PDF PAGE PROCESSING
-// ============================================
-
-// handlePdfPageProcessing moved to scripts/utils/processing-helpers.js
-
-// ============================================
-// VIDEO PAGE PROCESSING
-// ============================================
-
-// processVideoPage moved to scripts/processing/video.js
-
-/**
- * Continue processing pipeline after content extraction
- * Handles: translation, TOC/Abstract generation, document generation
- * Used by both standard article processing and video processing
- * @param {Object} data - Original processing data
- * @param {Object} result - Extracted content result
- * @param {Function} stopKeepAlive - Function to stop keep-alive
- */
-async function continueProcessingPipeline(data, result, stopKeepAlive) {
-  // Check if processing was cancelled
-  await checkCancellation('start of pipeline');
-  
-  // Handle translation step
-  result = await handleTranslation(
-    data,
-    result,
-    translateContent,
-    translateImages,
-    detectSourceLanguage,
-    updateState
-  );
-  
-  // Handle abstract generation step
-  await handleAbstractGeneration(
-    data,
-    result,
-    generateAbstract,
-    updateState
-  );
-  
-  setResult(result);
-  
-  const outputFormat = data.outputFormat || 'pdf';
-  
-  // Detect effective language for document generation
-  const effectiveLanguage = await detectEffectiveLanguage(
-    data,
-    result,
-    detectContentLanguage
-  );
-  
-  updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
-  
-  // Check if processing was cancelled before document generation
-  await checkCancellation('document generation');
-  
-  // DETAILED LOGGING: Log content before PDF generation
-  log('=== CONTENT BEFORE PDF GENERATION ===', {
-    title: result.title,
-    author: result.author,
-    publishDate: result.publishDate,
-    contentItemsCount: result.content?.length || 0,
-    outputFormat,
-    effectiveLanguage,
-    timestamp: Date.now()
-  });
-  
-  // Log ALL content items with FULL text - NO TRUNCATION
-  // Log each item separately to ensure full visibility in console
-  if (result.content && Array.isArray(result.content)) {
-    log('=== CONTENT ITEMS BEFORE PDF (ALL - FULL TEXT) ===', {
-      totalItems: result.content.length
-    });
-    
-    // Log each item separately for full visibility
-    result.content.forEach((item, idx) => {
-      log(`=== CONTENT ITEM BEFORE PDF [${idx}] ===`, {
-        index: idx,
-        type: item.type,
-        text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
-        textLength: (item.text || item.html || '').length,
-        html: item.html || null, // FULL HTML - NO TRUNCATION
-        htmlLength: item.html ? item.html.length : 0,
-        wasTranslated: item._wasTranslated || false,
-        hasGoogleTranslateText: (item.text || item.html || '').includes('Исходный текст') || (item.text || item.html || '').includes('Оцените этот перевод') || (item.text || item.html || '').includes('Google Переводчик')
-      });
-    });
-  }
-  
-  // Prepare data for factory (add effectiveLanguage for audio generation)
-  const factoryData = {
-    ...data,
-    effectiveLanguage: effectiveLanguage
-  };
-  
-  // Generate document using factory
-  return DocumentGeneratorFactory.generate(outputFormat, factoryData, result, updateState);
-  
-  // Note: recordSave and completeProcessing are handled by the promise chain
-  // that calls this function, not here (since we return a promise from generate*)
-}
-
-// ============================================
-// MODE 1: SELECTOR MODE
-// ============================================
-// processWithSelectorMode and extractContentWithSelectors moved to scripts/processing/modes.js
 // extractFromPageInlined remains here (must be inline for chrome.scripting.executeScript)
 
 /**
@@ -1439,18 +364,21 @@ async function continueProcessingPipeline(data, result, stopKeepAlive) {
  * 
  * See systemPatterns.md "Design Decisions" section for more details.
  * 
- * @param {Object} selectors - Selectors object from AI (content, title, author, exclude, etc.)
+ * @param {{content?: string, title?: string, author?: string, exclude?: string, [key: string]: string|undefined}} selectors - Selectors object from AI
  * @param {string} baseUrl - Base URL for resolving relative URLs
- * @returns {Object} Extraction result with content, title, author, publishDate, debugInfo
+ * @returns {import('./types.js').InjectionResult} Extraction result
  */
 export function extractFromPageInlined(selectors, baseUrl) {
+  
+  /** @type {ContentItem[]} */
   const content = [];
   const debugInfo = {
     containerFound: false,
     containerSelector: null,
     elementsProcessed: 0,
     elementsExcluded: 0,
-    headingCount: 0
+    headingCount: 0,
+    detailedLogs: [] // Add detailed logs array
   };
   
   const tocMapping = {};
@@ -1480,7 +408,11 @@ export function extractFromPageInlined(selectors, baseUrl) {
   function toAbsoluteUrl(url) {
     if (!url) return '';
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
-    try { return new URL(url, baseUrl).href; } catch (e) { return url; }
+    try { return new URL(url, baseUrl).href; } catch (e) { 
+      // Invalid URL format - fallback to original (graceful degradation)
+      // This is expected for malformed URLs from page content
+      return url; 
+    }
   }
   
   function normalizeText(text) {
@@ -1506,20 +438,94 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   
   function shouldExclude(element) {
-    if (isInfoboxDiv(element) || element.tagName.toLowerCase() === 'aside' || element.tagName.toLowerCase() === 'details') return false;
-    if (!selectors.exclude) return false;
-    // NO FALLBACKS - only check exclude selectors determined by AI
-    for (const selector of selectors.exclude) {
-      try { if (element.matches(selector) || element.closest(selector)) return true; } catch (e) {}
+    const tagName = element.tagName.toLowerCase();
+    const elementInfo = {
+      tagName: tagName,
+      id: element.id || null,
+      className: element.className || null,
+      matches: [],
+      closest: []
+    };
+    
+    if (isInfoboxDiv(element) || tagName === 'aside' || tagName === 'details') {
+      debugInfo.detailedLogs.push({
+        type: 'shouldExclude',
+        element: elementInfo,
+        result: false,
+        reason: 'Infobox/aside/details - always include'
+      });
+      return false;
     }
+    
+    if (!selectors.exclude) {
+      debugInfo.detailedLogs.push({
+        type: 'shouldExclude',
+        element: elementInfo,
+        result: false,
+        reason: 'No exclude selectors'
+      });
+      return false;
+    }
+    
+    // NO FALLBACKS - only check exclude selectors determined by AI
+    // CRITICAL: Only check if element itself matches the selector, NOT if it's inside a matching parent
+    // If we check closest(), we might exclude content elements that are inside excluded containers
+    // For example: div#postContent should NOT be excluded even if it's inside div.MultiToCLayout-tableOfContents
+    // The exclude selectors should match the element itself, not its parents
+    for (const selector of selectors.exclude) {
+      try {
+        const matches = element.matches(selector);
+        if (matches) {
+          elementInfo.matches.push(selector);
+          debugInfo.detailedLogs.push({
+            type: 'shouldExclude',
+            element: elementInfo,
+            result: true,
+            reason: 'Element itself matches exclude selector',
+            matchedSelector: selector,
+            matches: true
+          });
+          return true;
+        }
+      } catch (e) {
+        // Invalid selector from AI - skip it (graceful degradation)
+        debugInfo.detailedLogs.push({
+          type: 'shouldExclude',
+          element: elementInfo,
+          selector: selector,
+          error: e.message,
+          reason: 'Invalid selector - skipped'
+        });
+      }
+    }
+    
+    debugInfo.detailedLogs.push({
+      type: 'shouldExclude',
+      element: elementInfo,
+      result: false,
+      reason: 'No exclude selectors matched'
+    });
     return false;
   }
   
   function getFormattedHtml(element) {
     const clone = element.cloneNode(true);
-    clone.querySelectorAll('a[href]').forEach(a => { a.href = toAbsoluteUrl(a.getAttribute('href')); });
-    if (selectors.exclude) {
-      selectors.exclude.forEach(sel => { try { clone.querySelectorAll(sel).forEach(el => el.remove()); } catch (e) {} });
+    clone.querySelectorAll('a[href]').forEach(a => { 
+      a.href = toAbsoluteUrl(a.getAttribute('href'));
+      // CRITICAL: Remove target attribute to prevent it from leaking into text
+      // The target attribute will be added later by sanitizeHtml if needed
+      a.removeAttribute('target');
+      a.removeAttribute('rel');
+    });
+    if (selectors.exclude && Array.isArray(selectors.exclude)) {
+      selectors.exclude.forEach(sel => { 
+        try { 
+          clone.querySelectorAll(sel).forEach(el => el.remove()); 
+        } catch (e) {
+          // Invalid selector from AI - skip it (graceful degradation)
+          // This is expected - AI may provide invalid selectors, we just skip them
+        }
+      });
     }
     return clone.innerHTML;
   }
@@ -1629,10 +635,23 @@ export function extractFromPageInlined(selectors, baseUrl) {
     return isToc;
   }
   
+  // Helper function to check if element is visible
+  function isElementVisible(el) {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.display !== 'none' && 
+           style.visibility !== 'hidden' && 
+           rect.width > 0 && 
+           rect.height > 0;
+  }
+  
   // Find containers
+  // CRITICAL: Search for articleContainer FIRST, not content selector
+  // content selector is for finding content INSIDE containers, not for finding containers themselves
   let containers = [];
   let container = null;
-  const aiSelectors = [selectors.content, selectors.articleContainer].filter(Boolean);
+  const aiSelectors = [selectors.articleContainer, selectors.content].filter(Boolean);
   
   for (const sel of aiSelectors) {
     try {
@@ -1650,15 +669,36 @@ export function extractFromPageInlined(selectors, baseUrl) {
         debugInfo.containerSelector = sel;
         break;
       }
-    } catch (e) {}
+    } catch (e) {
+      // Invalid selector from AI - try next selector (graceful degradation)
+      // This is expected - AI may provide invalid selectors, we try next one
+    }
+  }
+  
+  // CRITICAL FIX: Filter out hidden containers
+  if (containers.length > 0) {
+    const visibleContainers = containers.filter(isElementVisible);
+    debugInfo.filteredHiddenContainers = containers.length - visibleContainers.length;
+    if (debugInfo.filteredHiddenContainers > 0) {
+      console.log('[ClipAIble extractFromPageInlined] Filtered out', debugInfo.filteredHiddenContainers, 'hidden container(s)');
+    }
+    containers = visibleContainers;
+  } else if (container) {
+    if (!isElementVisible(container)) {
+      debugInfo.filteredHiddenContainers = 1;
+      console.log('[ClipAIble extractFromPageInlined] Single container is hidden, discarding');
+      container = null; // Discard hidden single container
+    }
   }
   
   if (container && containers.length === 0) {
     const articlesInside = container.querySelectorAll('article');
     if (articlesInside.length > 1) {
-      containers = Array.from(articlesInside);
+      const visibleArticles = Array.from(articlesInside).filter(isElementVisible);
+      containers = visibleArticles;
       debugInfo.multipleContainers = true;
       debugInfo.containerCount = containers.length;
+      debugInfo.filteredHiddenContainers = articlesInside.length - visibleArticles.length;
       container = null;
     }
   }
@@ -1671,7 +711,13 @@ export function extractFromPageInlined(selectors, baseUrl) {
   // Get title
   let articleTitle = '';
   if (selectors.title) {
-    try { const titleEl = document.querySelector(selectors.title); if (titleEl) articleTitle = titleEl.textContent.trim(); } catch (e) {}
+    try { 
+      const titleEl = document.querySelector(selectors.title); 
+      if (titleEl) articleTitle = titleEl.textContent.trim(); 
+    } catch (e) {
+      // Invalid title selector from AI - fallback to default title extraction (graceful degradation)
+      // This is expected - AI may provide invalid selectors, we use fallback below
+    }
   }
   if (!articleTitle) {
     const allArticles = document.querySelectorAll('main article');
@@ -1699,7 +745,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   let articleAuthor = selectors.author || '';
   // NOTE: Author cleaning is now handled by AI in prompts
-  // AI is instructed to return author name without prefixes (от, by, автор:, etc.)
+  // AI is instructed to return author name without prefixes (from, by, author:, etc.)
   // If author still contains prefix, it's a prompt issue - improve prompts, don't add code-side fixes
   
   let publishDate = '';
@@ -1712,7 +758,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
         else publishDate = dateEl.textContent.trim();
         if (publishDate) break;
       }
-    } catch (e) {}
+    } catch (e) {
+      // Invalid selector - try next one (graceful degradation)
+      // This is expected for fallback selectors
+    }
   }
   
   function getAnchorId(el) {
@@ -1732,11 +781,68 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   
   function processElement(element) {
-    if (shouldExclude(element)) { debugInfo.elementsExcluded++; return; }
     const tagName = element.tagName.toLowerCase();
-    try { const style = window.getComputedStyle(element); if (style.display === 'none' || style.visibility === 'hidden') return; } catch (e) {}
+    const elementInfo = {
+      tagName: tagName,
+      id: element.id || null,
+      className: element.className || null,
+      textContentLength: element.textContent ? element.textContent.trim().length : 0,
+      textContentPreview: element.textContent ? element.textContent.trim().substring(0, 100) : null
+    };
+    
+    if (shouldExclude(element)) {
+      debugInfo.elementsExcluded++;
+      debugInfo.detailedLogs.push({
+        type: 'processElement',
+        element: elementInfo,
+        action: 'skipped',
+        reason: 'excluded by shouldExclude'
+      });
+      return;
+    }
+    
+    let cssHidden = false;
+    let cssDisplay = null;
+    let cssVisibility = null;
+    try { 
+      const style = window.getComputedStyle(element);
+      cssDisplay = style.display;
+      cssVisibility = style.visibility;
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        cssHidden = true;
+        debugInfo.detailedLogs.push({
+          type: 'processElement',
+          element: elementInfo,
+          action: 'skipped',
+          reason: 'hidden by CSS',
+          display: cssDisplay,
+          visibility: cssVisibility
+        });
+        return;
+      }
+    } catch (e) {
+      // getComputedStyle may fail on some elements (e.g., SVG in some browsers)
+      // This is expected - continue processing the element (graceful degradation)
+      debugInfo.detailedLogs.push({
+        type: 'processElement',
+        element: elementInfo,
+        action: 'continue',
+        reason: 'getComputedStyle failed - continuing anyway',
+        error: e.message
+      });
+    }
+    
     debugInfo.elementsProcessed++;
     const elementId = getAnchorId(element);
+    
+    debugInfo.detailedLogs.push({
+      type: 'processElement',
+      element: elementInfo,
+      action: 'processing',
+      elementId: elementId,
+      cssDisplay: cssDisplay,
+      cssVisibility: cssVisibility
+    });
     
     if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
       const text = element.textContent.trim();
@@ -1757,6 +863,16 @@ export function extractFromPageInlined(selectors, baseUrl) {
         debugInfo.headingCount++;
         const headingItem = { type: 'heading', level: parseInt(tagName[1]), text: formattedText, id: headingId };
         content.push(headingItem);
+        debugInfo.detailedLogs.push({
+          type: 'processElement',
+          element: elementInfo,
+          action: 'added',
+          itemType: 'heading',
+          itemLevel: parseInt(tagName[1]),
+          itemId: headingId,
+          textLength: formattedText.replace(/<[^>]+>/g, '').trim().length,
+          contentLength: content.length
+        });
         
         // Track first heading position and insert subtitle immediately after it
         // This ensures subtitle is right after the title, before any other content
@@ -1807,12 +923,26 @@ export function extractFromPageInlined(selectors, baseUrl) {
         src = toAbsoluteUrl(src);
         const ns = normalizeImageUrl(src);
         if (src && !isTrackingPixelOrSpacer(img, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(img, src)) {
-          const captionText = figcaption ? getFormattedHtml(figcaption) : '';
+          let captionText = figcaption ? getFormattedHtml(figcaption) : '';
+          // CRITICAL: Clean up problematic HTML but preserve links and formatting
+          // getFormattedHtml already removes target and rel attributes from links
+          // Remove any img tags from caption (images shouldn't be in captions)
+          captionText = captionText.replace(/<img[^>]*>/gi, '');
+          // Remove any URL fragments or file extensions that might have leaked into text
+          // Pattern: "filename.jpg"> or filename.jpg"> (standalone, not in tags)
+          // Match only if preceded by space or start of string, and followed by >
+          captionText = captionText.replace(/(^|\s)(["']?[a-zA-Z0-9_-]+\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|avif)["']?\s*>)>/gi, '$1');
+          // Remove any remaining attribute-like fragments that leaked (target="_blank">, etc.)
+          // But only if they're standalone (not inside proper HTML tags)
+          // Match pattern like: target="_blank"> or href="..."> at word boundaries
+          captionText = captionText.replace(/(^|\s)([a-zA-Z-]+\s*=\s*["'][^"']*["']\s*>)>/gi, '$1');
+          // Remove any standalone closing > that might be left at start or end
+          captionText = captionText.replace(/^\s*>\s*/, '').replace(/\s*>\s*$/, '');
           content.push({ 
             type: 'image', 
             src: src, 
             alt: img.alt || '', 
-            caption: captionText,
+            caption: captionText.trim(),
             id: elementId || img.id || '' 
           });
           addedImageUrls.add(ns);
@@ -1875,25 +1005,36 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   // Helper function to find content elements with fallback strategies
   function findContentElements(container, contentSelector, containerSelector) {
+    const debugLog = [];
+    
     if (!contentSelector || contentSelector === containerSelector) {
-      return null; // No specific content selector
+      debugLog.push({ strategy: 'none', reason: 'No content selector or same as container', found: 0 });
+      return { elements: null, debug: debugLog };
     }
     
     try {
       // Strategy 1: Try selector as-is (absolute from document)
       let elements = document.querySelectorAll(contentSelector);
+      debugLog.push({ strategy: 1, method: 'document.querySelectorAll', selector: contentSelector, found: elements.length });
       if (elements.length > 0) {
-        // Filter to only elements that are inside our container
-        const filtered = Array.from(elements).filter(el => container.contains(el));
+        // Filter to only elements that are inside our container AND visible
+        const filtered = Array.from(elements).filter(el => container.contains(el) && isElementVisible(el));
+        debugLog.push({ strategy: 1, filtered: filtered.length, containerMatches: filtered.length > 0, visibleOnly: true });
         if (filtered.length > 0) {
-          return filtered;
+          return { elements: filtered, debug: debugLog };
         }
       }
       
       // Strategy 2: Try selector relative to container
       elements = container.querySelectorAll(contentSelector);
+      debugLog.push({ strategy: 2, method: 'container.querySelectorAll', selector: contentSelector, found: elements.length });
       if (elements.length > 0) {
-        return Array.from(elements);
+        // Filter to only visible elements
+        const visibleElements = Array.from(elements).filter(isElementVisible);
+        debugLog.push({ strategy: 2, visibleFiltered: visibleElements.length, originalCount: elements.length });
+        if (visibleElements.length > 0) {
+          return { elements: visibleElements, debug: debugLog };
+        }
       }
       
       // Strategy 3: If selector contains container selector, try removing it
@@ -1909,8 +1050,13 @@ export function extractFromPageInlined(selectors, baseUrl) {
         
         if (normalizedSelector && normalizedSelector !== contentSelector) {
           elements = container.querySelectorAll(normalizedSelector);
+          debugLog.push({ strategy: 3, method: 'normalized selector', original: contentSelector, normalized: normalizedSelector, found: elements.length });
           if (elements.length > 0) {
-            return Array.from(elements);
+            const visibleElements = Array.from(elements).filter(isElementVisible);
+            debugLog.push({ strategy: 3, visibleFiltered: visibleElements.length, originalCount: elements.length });
+            if (visibleElements.length > 0) {
+              return { elements: visibleElements, debug: debugLog };
+            }
           }
         }
       }
@@ -1919,8 +1065,13 @@ export function extractFromPageInlined(selectors, baseUrl) {
       if (contentSelector.includes(' > ')) {
         const flexibleSelector = contentSelector.replace(/\s*>\s*/g, ' ');
         elements = container.querySelectorAll(flexibleSelector);
+        debugLog.push({ strategy: 4, method: 'flexible selector (removed >)', original: contentSelector, flexible: flexibleSelector, found: elements.length });
         if (elements.length > 0) {
-          return Array.from(elements);
+          const visibleElements = Array.from(elements).filter(isElementVisible);
+          debugLog.push({ strategy: 4, visibleFiltered: visibleElements.length, originalCount: elements.length });
+          if (visibleElements.length > 0) {
+            return { elements: visibleElements, debug: debugLog };
+          }
         }
       }
       
@@ -1928,8 +1079,9 @@ export function extractFromPageInlined(selectors, baseUrl) {
       if (contentSelector.startsWith('#')) {
         const id = contentSelector.substring(1);
         const element = document.getElementById(id);
-        if (element && container.contains(element)) {
-          return [element];
+        debugLog.push({ strategy: 5, method: 'getElementById', id: id, found: !!element, inContainer: element && container.contains(element), isVisible: element && isElementVisible(element) });
+        if (element && container.contains(element) && isElementVisible(element)) {
+          return { elements: [element], debug: debugLog };
         }
       }
       
@@ -1938,14 +1090,21 @@ export function extractFromPageInlined(selectors, baseUrl) {
       if (tagMatch) {
         const tagName = tagMatch[1].toLowerCase();
         elements = container.querySelectorAll(tagName);
+        debugLog.push({ strategy: 6, method: 'tag name fallback', tagName: tagName, found: elements.length });
         if (elements.length > 0) {
-          return Array.from(elements);
+          const visibleElements = Array.from(elements).filter(isElementVisible);
+          debugLog.push({ strategy: 6, visibleFiltered: visibleElements.length, originalCount: elements.length });
+          if (visibleElements.length > 0) {
+            return { elements: visibleElements, debug: debugLog };
+          }
         }
       }
       
-      return null; // No elements found with any strategy
+      debugLog.push({ strategy: 'final', result: 'No elements found with any strategy' });
+      return { elements: null, debug: debugLog };
     } catch (e) {
-      return null; // Selector is invalid
+      debugLog.push({ strategy: 'error', error: e.message || String(e) });
+      return { elements: null, debug: debugLog };
     }
   }
   
@@ -2001,31 +1160,233 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   // Start processing
   const containerSelector = selectors.articleContainer || 'body';
+  const extractionDebug = {
+    containerSelector: containerSelector,
+    contentSelector: selectors.content,
+    containersFound: containers.length,
+    containerFound: !!container,
+    contentElementsFound: 0,
+    strategiesUsed: []
+  };
+  
   if (containers.length > 0) {
     for (const cont of containers) {
-      const contentElements = findContentElements(cont, selectors.content, containerSelector);
-      if (contentElements && contentElements.length > 0) {
+      const result = findContentElements(cont, selectors.content, containerSelector);
+      extractionDebug.strategiesUsed.push(...(result.debug || []));
+      if (result.elements && result.elements.length > 0) {
+        extractionDebug.contentElementsFound += result.elements.length;
         // Process found elements
-        for (const el of contentElements) {
-          if (!shouldExclude(el)) processElement(el);
+        let excludedCount = 0;
+        let hiddenCount = 0;
+        for (let i = 0; i < result.elements.length; i++) {
+          const el = result.elements[i];
+          const elementInfo = {
+            index: i,
+            total: result.elements.length,
+            tagName: el.tagName.toLowerCase(),
+            id: el.id || null,
+            className: el.className || null,
+            textContentLength: el.textContent ? el.textContent.trim().length : 0
+          };
+          
+          debugInfo.detailedLogs.push({
+            type: 'elementProcessing',
+            element: elementInfo,
+            stage: 'before_shouldExclude'
+          });
+          
+          if (shouldExclude(el)) {
+            excludedCount++;
+            debugInfo.detailedLogs.push({
+              type: 'elementProcessing',
+              element: elementInfo,
+              stage: 'excluded',
+              reason: 'shouldExclude returned true'
+            });
+            continue;
+          }
+          
+          // Check if element is hidden
+          let isHidden = false;
+          let display = null;
+          let visibility = null;
+          try {
+            const style = window.getComputedStyle(el);
+            display = style.display;
+            visibility = style.visibility;
+            if (style.display === 'none' || style.visibility === 'hidden') {
+              isHidden = true;
+              hiddenCount++;
+              debugInfo.detailedLogs.push({
+                type: 'elementProcessing',
+                element: elementInfo,
+                stage: 'excluded',
+                reason: 'hidden by CSS',
+                display: display,
+                visibility: visibility
+              });
+              continue;
+            }
+          } catch (e) {
+            // getComputedStyle may fail - continue processing
+            debugInfo.detailedLogs.push({
+              type: 'elementProcessing',
+              element: elementInfo,
+              stage: 'css_check_failed',
+              error: e.message,
+              action: 'continuing'
+            });
+          }
+          
+          debugInfo.detailedLogs.push({
+            type: 'elementProcessing',
+            element: elementInfo,
+            stage: 'calling_processElement',
+            display: display,
+            visibility: visibility
+          });
+          
+          const contentLengthBefore = content.length;
+          processElement(el);
+          const contentLengthAfter = content.length;
+          
+          debugInfo.detailedLogs.push({
+            type: 'elementProcessing',
+            element: elementInfo,
+            stage: 'after_processElement',
+            contentItemsAdded: contentLengthAfter - contentLengthBefore,
+            newContentItems: content.slice(contentLengthBefore).map(item => ({
+              type: item.type,
+              textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+            }))
+          });
+        }
+        if (excludedCount > 0 || hiddenCount > 0) {
+          extractionDebug.strategiesUsed.push({
+            strategy: 'filtering',
+            excludedBySelector: excludedCount,
+            excludedByCSS: hiddenCount,
+            totalFound: result.elements.length,
+            processed: result.elements.length - excludedCount - hiddenCount
+          });
         }
       } else {
         // Fallback: process all children recursively
+        extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children', reason: 'No content elements found' });
         for (const child of cont.children) processElement(child);
       }
     }
   } else if (container) {
-    const contentElements = findContentElements(container, selectors.content, containerSelector);
-    if (contentElements && contentElements.length > 0) {
+    const result = findContentElements(container, selectors.content, containerSelector);
+    extractionDebug.strategiesUsed.push(...(result.debug || []));
+    if (result.elements && result.elements.length > 0) {
+      extractionDebug.contentElementsFound = result.elements.length;
       // Process found elements
-      for (const el of contentElements) {
-        if (!shouldExclude(el)) processElement(el);
+      let excludedCount = 0;
+      let hiddenCount = 0;
+      for (let i = 0; i < result.elements.length; i++) {
+        const el = result.elements[i];
+        const elementInfo = {
+          index: i,
+          total: result.elements.length,
+          tagName: el.tagName.toLowerCase(),
+          id: el.id || null,
+          className: el.className || null,
+          textContentLength: el.textContent ? el.textContent.trim().length : 0
+        };
+        
+        debugInfo.detailedLogs.push({
+          type: 'elementProcessing',
+          element: elementInfo,
+          stage: 'before_shouldExclude'
+        });
+        
+        if (shouldExclude(el)) {
+          excludedCount++;
+          debugInfo.detailedLogs.push({
+            type: 'elementProcessing',
+            element: elementInfo,
+            stage: 'excluded',
+            reason: 'shouldExclude returned true'
+          });
+          continue;
+        }
+        
+        // Check if element is hidden
+        let isHidden = false;
+        let display = null;
+        let visibility = null;
+        try {
+          const style = window.getComputedStyle(el);
+          display = style.display;
+          visibility = style.visibility;
+          if (style.display === 'none' || style.visibility === 'hidden') {
+            isHidden = true;
+            hiddenCount++;
+            debugInfo.detailedLogs.push({
+              type: 'elementProcessing',
+              element: elementInfo,
+              stage: 'excluded',
+              reason: 'hidden by CSS',
+              display: display,
+              visibility: visibility
+            });
+            continue;
+          }
+        } catch (e) {
+          // getComputedStyle may fail - continue processing
+          debugInfo.detailedLogs.push({
+            type: 'elementProcessing',
+            element: elementInfo,
+            stage: 'css_check_failed',
+            error: e.message,
+            action: 'continuing'
+          });
+        }
+        
+        debugInfo.detailedLogs.push({
+          type: 'elementProcessing',
+          element: elementInfo,
+          stage: 'calling_processElement',
+          display: display,
+          visibility: visibility
+        });
+        
+        const contentLengthBefore = content.length;
+        processElement(el);
+        const contentLengthAfter = content.length;
+        
+        debugInfo.detailedLogs.push({
+          type: 'elementProcessing',
+          element: elementInfo,
+          stage: 'after_processElement',
+          contentItemsAdded: contentLengthAfter - contentLengthBefore,
+          newContentItems: content.slice(contentLengthBefore).map(item => ({
+            type: item.type,
+            textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+          }))
+        });
+      }
+      if (excludedCount > 0 || hiddenCount > 0) {
+        extractionDebug.strategiesUsed.push({
+          strategy: 'filtering',
+          excludedBySelector: excludedCount,
+          excludedByCSS: hiddenCount,
+          totalFound: result.elements.length,
+          processed: result.elements.length - excludedCount - hiddenCount
+        });
       }
     } else {
       // Fallback: process all children recursively
-      for (const child of container.children) processElement(child);
+      extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children', reason: 'No content elements found' });
+      Array.from(container.children).forEach(child => processElement(child));
     }
+  } else {
+    extractionDebug.strategiesUsed.push({ strategy: 'error', reason: 'No container found' });
   }
+  
+  // Add extraction debug to debugInfo
+  debugInfo.extractionDebug = extractionDebug;
   
   // If subtitle wasn't inserted yet, ensure title is in content and insert subtitle after it
   // CRITICAL: Title (h1) might be outside article, so it won't be processed
@@ -2106,9 +1467,6 @@ export function extractFromPageInlined(selectors, baseUrl) {
     
     // Insert subtitle right after first heading (or at beginning if no heading)
     if (firstHeadingIndex >= 0 && subtitleToInsert) {
-      // Type assertion: subtitleToInsert is guaranteed to be ContentItem with type 'subtitle'
-      // splice accepts ContentItem[] which includes subtitle items (subtitle is a valid ContentItem type)
-      // @ts-expect-error - TypeScript cannot infer that subtitleToInsert matches ContentItem union type
       content.splice(firstHeadingIndex + 1, 0, subtitleToInsert);
       subtitleDebug.subtitleInserted = true;
       subtitleDebug.subtitleInsertIndex = firstHeadingIndex + 1;
@@ -2159,10 +1517,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
             insertIndex = firstHeadingIndex + 2; // Insert after subtitle
           }
           
-          /** @type {ContentItem} */
-          const imageItem = { type: 'image', url: heroSrc, src: heroSrc, alt: heroImgEl.alt || '', id: getAnchorId(heroImgEl) };
-          // splice accepts ContentItem[] which includes image items (image is a valid ContentItem type)
-          // @ts-expect-error - TypeScript cannot infer that imageItem matches ContentItem union type
+          const imageItem = /** @type {ContentItem} */ ({ type: 'image', url: heroSrc, src: heroSrc, alt: (heroImgEl instanceof HTMLImageElement ? heroImgEl.alt : '') || '', id: getAnchorId(heroImgEl) });
           content.splice(insertIndex, 0, imageItem);
           addedImageUrls.add(ns);
         }
@@ -2178,14 +1533,3 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   return { title: articleTitle, author: articleAuthor, content: content, publishDate: publishDate, debug: debugInfo };
 }
-
-// ============================================
-// MODE 2: AUTOMATIC MODE (NO AI)
-// ============================================
-// processWithoutAI moved to scripts/processing/modes.js
-
-// ============================================
-// MODE 3: EXTRACT MODE
-// ============================================
-// processWithExtractMode, processSingleChunk, processMultipleChunks moved to scripts/processing/modes.js
-

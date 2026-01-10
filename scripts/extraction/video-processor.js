@@ -3,6 +3,9 @@
 
 import { callAI } from '../api/index.js';
 import { log, logError } from '../utils/logging.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
+import { callWithRetry } from '../utils/retry.js';
+import { CONFIG } from '../utils/config.js';
 
 /**
  * System prompt for subtitle processing
@@ -131,7 +134,13 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model) {
     throw new Error('AI returned empty response');
   }
   
-  // callAI already returns parsed JSON
+  // callAI with jsonResponse=true returns parsed JSON object
+  // Type guard: ensure parsed is an object (not string)
+  if (typeof parsed !== 'object' || parsed === null) {
+    logError('AI response is not an object', parsed);
+    throw new Error('AI response is not an object');
+  }
+  
   if (!parsed.content || !Array.isArray(parsed.content)) {
     logError('AI response missing content array', parsed);
     throw new Error('AI response missing content array');
@@ -195,7 +204,13 @@ Remember:
     throw new Error('AI returned empty response');
   }
   
-  // callAI already returns parsed JSON
+  // callAI with jsonResponse=true returns parsed JSON object
+  // Type guard: ensure parsed is an object (not string)
+  if (typeof parsed !== 'object' || parsed === null) {
+    logError('AI response is not an object', parsed);
+    throw new Error('AI response is not an object');
+  }
+  
   if (!parsed.content || !Array.isArray(parsed.content)) {
     logError('AI response missing content array', parsed);
     throw new Error('AI response missing content array');
@@ -209,7 +224,7 @@ Remember:
  * @param {Array} subtitles - Array of subtitle entries
  * @param {string} apiKey - API key
  * @param {string} model - Model name
- * @param {Function} progressCallback - Optional callback for progress updates (current, total)
+ * @param {import('../types.js').ProgressCallbackFunction} [progressCallback] - Optional callback for progress updates (current, total)
  * @returns {Promise<Array>} Processed content items
  */
 export async function processSubtitlesWithAI(subtitles, apiKey, model, progressCallback = null) {
@@ -217,15 +232,14 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
     throw new Error('No subtitles provided');
   }
   
-  // Estimate output size (rough: 1 subtitle entry ≈ 50-100 chars output)
-  // AI can output ~30k chars max, so we need to chunk if input is large
-  // But we can give MORE input (context) - the limit is on OUTPUT
-  const ESTIMATED_OUTPUT_PER_ENTRY = 80; // chars
-  const MAX_OUTPUT_CHARS = 25000; // Leave margin
-  const MAX_INPUT_CHARS = 50000; // Can give more input for context
+  // Split subtitles into chunks based on input size only
+  // No output size restrictions - let AI generate as much as needed
+  const MAX_INPUT_CHARS = 50000; // Maximum input size per chunk
+  const ESTIMATED_INPUT_PER_ENTRY = 100; // Rough estimate: each subtitle entry is ~100 chars in JSON format
   
-  const estimatedOutput = subtitles.length * ESTIMATED_OUTPUT_PER_ENTRY;
-  const needsChunking = estimatedOutput > MAX_OUTPUT_CHARS;
+  // Calculate if chunking is needed based on input size
+  const estimatedInput = subtitles.length * ESTIMATED_INPUT_PER_ENTRY;
+  const needsChunking = estimatedInput > MAX_INPUT_CHARS;
   
   if (!needsChunking) {
     // Single chunk processing
@@ -238,12 +252,12 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
   // Multi-chunk processing with context
   log('Subtitle processing requires chunking', {
     totalEntries: subtitles.length,
-    estimatedOutput
+    estimatedInput
   });
   
-  // Split subtitles into chunks
-  // Each chunk should produce ~20k chars output (safe margin)
-  const ENTRIES_PER_CHUNK = Math.floor(MAX_OUTPUT_CHARS / ESTIMATED_OUTPUT_PER_ENTRY);
+  // Split subtitles into chunks based on input size
+  // Each chunk should have ~500 entries (MAX_INPUT_CHARS / ESTIMATED_INPUT_PER_ENTRY)
+  const ENTRIES_PER_CHUNK = Math.floor(MAX_INPUT_CHARS / ESTIMATED_INPUT_PER_ENTRY);
   const chunks = [];
   
   for (let i = 0; i < subtitles.length; i += ENTRIES_PER_CHUNK) {
@@ -260,6 +274,9 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
   let previousContent = null;
   
   for (let i = 0; i < chunks.length; i++) {
+    // Check if processing was cancelled before processing each chunk
+    await checkCancellation(`subtitle processing chunk ${i + 1}/${chunks.length}`);
+    
     const chunk = chunks[i];
     log(`Processing subtitle chunk ${i + 1}/${chunks.length}`, { 
       entries: chunk.length,
@@ -270,43 +287,36 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
       progressCallback(i, chunks.length);
     }
     
-    // КРИТИЧНО: Add retry logic for each chunk to handle transient errors
+    // CRITICAL: Use centralized retry logic for each chunk to handle transient errors
     let chunkContent;
-    let retries = 0;
-    const MAX_CHUNK_RETRIES = 5; // Increased from 3 to 5 for better reliability
-    
-    while (retries <= MAX_CHUNK_RETRIES) {
-      try {
-        if (i === 0) {
-          // First chunk: normal processing
-          chunkContent = await processSubtitlesSingleChunk(chunk, apiKey, model);
-        } else {
-          // Subsequent chunks: process with context
-          chunkContent = await processSubtitlesWithContext(
-            chunk, 
-            previousContent, 
-            apiKey, 
-            model
-          );
+    try {
+      chunkContent = await callWithRetry(
+        async () => {
+          if (i === 0) {
+            // First chunk: normal processing
+            return await processSubtitlesSingleChunk(chunk, apiKey, model);
+          } else {
+            // Subsequent chunks: process with context
+            return await processSubtitlesWithContext(
+              chunk, 
+              previousContent, 
+              apiKey, 
+              model
+            );
+          }
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          onRetry: (attempt, delay) => {
+            log(`Retrying chunk ${i + 1} after ${delay}ms delay (attempt ${attempt}/${CONFIG.RETRY_MAX_ATTEMPTS + 1})`);
+          }
         }
-        
-        // Success - break retry loop
-        break;
-      } catch (chunkError) {
-        retries++;
-        logError(`Chunk ${i + 1} processing failed (attempt ${retries}/${MAX_CHUNK_RETRIES + 1})`, chunkError);
-        
-        if (retries > MAX_CHUNK_RETRIES) {
-          // All retries exhausted - throw error
-          throw new Error(`Failed to process subtitle chunk ${i + 1}/${chunks.length} after ${MAX_CHUNK_RETRIES + 1} attempts: ${chunkError.message}`);
-        }
-        
-        // Wait before retry (exponential backoff with longer delays)
-        // Increased max delay from 10s to 30s for better network resilience
-        const retryDelay = Math.min(2000 * Math.pow(2, retries - 1), 30000); // Max 30 seconds
-        log(`Retrying chunk ${i + 1} after ${retryDelay}ms delay`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
-      }
+      );
+    } catch (error) {
+      // All retries exhausted - throw error
+      throw new Error(`Failed to process subtitle chunk ${i + 1}/${chunks.length} after ${CONFIG.RETRY_MAX_ATTEMPTS + 1} attempts: ${error.message}`);
     }
     
     allContent.push(...chunkContent);

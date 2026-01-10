@@ -6,8 +6,9 @@
  * 
  * Format: voice name -> voice ID
  * Only includes medium and high quality voices for supported languages
+ * @readonly
+ * @const {Record<string, string>}
  */
-
 export const PIPER_VOICES_MAPPING = {
   // Arabic (AR_JO) - not in supported languages, but keeping for reference
   'kareem': 'ar_JO-kareem-medium',

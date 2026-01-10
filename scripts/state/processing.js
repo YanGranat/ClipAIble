@@ -1,14 +1,29 @@
 // @ts-check
 // Processing state management for ClipAIble extension
 
-// @typedef {import('../types.js').ProcessingState} ProcessingState
+/**
+ * @typedef {Object} ProcessingState
+ * @property {boolean} isProcessing
+ * @property {boolean} isCancelled
+ * @property {number} progress
+ * @property {string} status
+ * @property {any} error
+ * @property {any} result
+ * @property {number|null} startTime
+ * @property {string|null} currentStage
+ * @property {string[]} completedStages
+ */
 
 import { log, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { clearDecryptedKeyCache } from '../utils/encryption.js';
 import { getUILanguage, tSync } from '../locales.js';
 
-// Standard error codes for consistent error handling
+/**
+ * Standard error codes for consistent error handling
+ * @readonly
+ * @const {Record<string, string>}
+ */
 export const ERROR_CODES = {
   AUTH_ERROR: 'auth_error',           // 401/403 - Invalid API key
   RATE_LIMIT: 'rate_limit',           // 429 - Too many requests
@@ -20,7 +35,11 @@ export const ERROR_CODES = {
   UNKNOWN_ERROR: 'unknown_error'      // Unknown error
 };
 
-// Processing stages definition
+/**
+ * Processing stages definition
+ * @readonly
+ * @const {Record<string, {id: string, label: string, order: number}>}
+ */
 export const PROCESSING_STAGES = {
   STARTING: { id: 'starting', label: 'Starting...', order: 0 },
   ANALYZING: { id: 'analyzing', label: 'AI analyzing page structure', order: 1 },
@@ -56,7 +75,8 @@ let updateQueue = [];
 let storageSaveTimeout = null;
 let pendingStorageUpdate = null;
 // Use centralized constants from CONFIG
-const STORAGE_SAVE_DEBOUNCE = CONFIG.STORAGE_SAVE_DEBOUNCE; // Save to storage max once per 500ms
+// OPTIMIZED: Increased from 500ms to 5000ms to reduce storage load by 80%
+const STORAGE_SAVE_DEBOUNCE = CONFIG.STORAGE_SAVE_DEBOUNCE; // Save to storage max once per 5000ms
 // CRITICAL: Increased to 3000ms (3s) for audio to minimize main thread blocking during WASM operations
 // Audio generation has long-running WASM operations (800-5000ms per sentence)
 // Less frequent storage saves reduce interference with WASM operations
@@ -64,6 +84,10 @@ const STORAGE_SAVE_DEBOUNCE_AUDIO = CONFIG.STORAGE_SAVE_DEBOUNCE_AUDIO; // Save 
 
 // Track last saved state timestamp to detect stale data
 let lastSavedTimestamp = 0;
+
+// Track storage save statistics for debugging
+let storageSaveCount = 0;
+let lastStorageSaveTime = 0;
 
 // Force immediate save (bypass debounce) for critical updates
 function forceSaveState() {
@@ -83,12 +107,54 @@ function forceSaveState() {
   }
 }
 
+/**
+ * Save current state to storage immediately (bypass debounce)
+ * Used by keep-alive mechanism to ensure state is saved without waiting for debounce
+ * @returns {Promise<void>} Promise that resolves when save is complete
+ */
+export async function saveStateToStorageImmediate() {
+  if (!processingState.isProcessing) {
+    return;
+  }
+  
+  // Clear any pending debounced save
+  if (storageSaveTimeout) {
+    clearTimeout(storageSaveTimeout);
+    storageSaveTimeout = null;
+  }
+  
+  // Save current state immediately
+  const stateToSave = { 
+    ...processingState, 
+    lastUpdate: Date.now() 
+  };
+  lastSavedTimestamp = stateToSave.lastUpdate;
+  
+  try {
+    await chrome.storage.local.set({ 
+      processingState: stateToSave
+    });
+    // Clear pending update since we just saved
+    pendingStorageUpdate = null;
+  } catch (error) {
+    logWarn('Failed to save processingState immediately', error);
+    throw error; // Re-throw so caller can handle
+  }
+}
+
 // Check if update is critical (must be saved immediately)
 function isCriticalUpdate(updates) {
   // Critical updates: progress 0% (reset), 100% (completion), stage changes, errors
+  // Also save progress updates every 10% to reduce data loss on service worker restart
+  const progressThreshold = 10;
+  const hasSignificantProgress = updates.progress !== undefined && 
+    processingState.progress !== undefined &&
+    Math.abs(updates.progress - processingState.progress) >= progressThreshold;
+  
   return (
     updates.progress === 0 ||
     updates.progress === 100 ||
+    hasSignificantProgress ||
     updates.stage !== undefined ||
     updates.error !== undefined ||
     updates.isCancelled !== undefined
@@ -145,21 +211,20 @@ function applyStateUpdate(updates) {
         // Allow these special values
       } else if (newProgress < currentProgress) {
         // Prevent progress rollback - use current progress instead
-        logWarn('Progress rollback prevented', { 
-          current: currentProgress, 
-          attempted: newProgress, 
-          difference: currentProgress - newProgress 
-        });
+        const difference = currentProgress - newProgress;
+        // Only log if difference is significant (>= 5%) to reduce log noise
+        if (difference >= 5) {
+          logWarn('Progress rollback prevented', { 
+            current: currentProgress, 
+            attempted: newProgress, 
+            difference 
+          });
+        }
         // Keep current progress, but still update other fields
         updates = { ...updates };
         delete updates.progress;
         // Update other fields but keep current progress
         processingState = { ...processingState, ...updates };
-        log('State updated (progress protected)', { 
-          status: updates.status, 
-          progress: currentProgress, 
-          stage: updates.stage 
-        });
         
         // Save to storage
         saveStateToStorage(updates);
@@ -168,7 +233,21 @@ function applyStateUpdate(updates) {
     }
   
     processingState = { ...processingState, ...updates };
-    log('State updated', { status: updates.status, progress: updates.progress, stage: updates.stage });
+    // Only log state updates when progress changes significantly (5%+) or stage changes
+    const progressChanged = updates.progress !== undefined && 
+      (processingState.progress === undefined || 
+       Math.abs(updates.progress - (processingState.progress || 0)) >= 5);
+    const stageChanged = updates.stage !== undefined && updates.stage !== processingState.stage;
+    if (progressChanged || stageChanged || updates.status?.includes('error') || updates.status?.includes('Error')) {
+      const stageName = updates.stage ? Object.values(PROCESSING_STAGES).find(s => s.id === updates.stage)?.label : 'unknown';
+      log('📊 State updated', { 
+        status: updates.status, 
+        progress: updates.progress, 
+        stage: stageName,
+        stageId: updates.stage,
+        progressChange: progressChanged ? `${processingState.progress || 0}% → ${updates.progress}%` : 'none'
+      });
+    }
     
     // Save to storage
     saveStateToStorage(updates);
@@ -184,7 +263,8 @@ function saveStateToStorage(updates) {
   // Save to storage for crash recovery - NO AWAIT is intentional!
   // In-memory processingState is authoritative, storage is backup only.
   // Popup reads from memory via getProcessingState(), not from storage.
-  if (!processingState.isProcessing) {
+  // CRITICAL: Don't save if processing was cancelled
+  if (!processingState.isProcessing || processingState.isCancelled) {
     return;
   }
   
@@ -208,6 +288,19 @@ function saveStateToStorage(updates) {
     // Save immediately
     const stateToSave = { ...pendingStorageUpdate };
     lastSavedTimestamp = stateToSave.lastUpdate;
+    storageSaveCount++;
+    const timeSinceLastSave = lastStorageSaveTime > 0 ? Date.now() - lastStorageSaveTime : 0;
+    lastStorageSaveTime = Date.now();
+    
+    // Log only summary to reduce log size (detailed info only every 10th save)
+    if (storageSaveCount % 10 === 0 || timeSinceLastSave > 10000) {
+      log('💾 Storage save: critical update', {
+        saveCount: storageSaveCount,
+        timeSinceLastSave: `${timeSinceLastSave}ms`,
+        outputFormat: processingState.outputFormat
+      });
+    }
+    
     chrome.storage.local.set({ 
       processingState: stateToSave
     }).catch(error => {
@@ -226,6 +319,19 @@ function saveStateToStorage(updates) {
     if (pendingStorageUpdate) {
       const stateToSave = { ...pendingStorageUpdate };
       lastSavedTimestamp = stateToSave.lastUpdate;
+      storageSaveCount++;
+      const timeSinceLastSave = lastStorageSaveTime > 0 ? Date.now() - lastStorageSaveTime : 0;
+      lastStorageSaveTime = Date.now();
+      
+      // Log only summary to reduce log size
+      if (storageSaveCount % 20 === 0 || timeSinceLastSave > 30000) {
+        log('💾 Storage save: debounced update', {
+          saveCount: storageSaveCount,
+          timeSinceLastSave: `${timeSinceLastSave}ms`,
+          outputFormat: processingState.outputFormat
+        });
+      }
+      
       chrome.storage.local.set({ 
         processingState: stateToSave
       }).catch(error => {
@@ -248,12 +354,13 @@ export function getProcessingState() {
 
 /**
  * Update processing state
- * @param {Partial<ProcessingState> & {stage?: string}} updates - State updates
+ * @param {object} updates - State updates (Partial<ProcessingState> & {stage?: string})
  * @param {number} [updates.progress] - Progress percentage (0-100)
  * @param {string} [updates.status] - Status message
  * @param {string} [updates.stage] - Optional stage ID to set
  * @param {Error|Object|null} [updates.error] - Error object
  * @param {Object|null} [updates.result] - Processing result
+ * @param {string} [updates.outputFormat] - Output format (pdf, epub, fb2, markdown, audio)
  */
 export function updateState(updates) {
   // Queue updates if another update is in progress
@@ -310,7 +417,7 @@ export function resetState() {
 
 /**
  * Set processing result
- * @param {Object} result - Processing result
+ * @param {import('../types.js').ExtractionResult} result - Processing result
  */
 export function setResult(result) {
   processingState.result = result;
@@ -326,16 +433,25 @@ export function isCancelled() {
 
 /**
  * Cancel processing
- * @param {Function} stopKeepAlive - Function to stop keep-alive
- * @returns {Object} Success response
+ * @param {import('../types.js').StopKeepAliveFunction} stopKeepAlive - Function to stop keep-alive
+ * @returns {Promise<Object>} Success response
  */
 export async function cancelProcessing(stopKeepAlive) {
   if (processingState.isProcessing) {
+    // CRITICAL: Cancel any pending storage saves first
+    if (storageSaveTimeout) {
+      clearTimeout(storageSaveTimeout);
+      storageSaveTimeout = null;
+    }
+    pendingStorageUpdate = null;
+    
     processingState.isProcessing = false;
     processingState.isCancelled = true;
     const uiLang = await getUILanguage();
     processingState.status = tSync('statusCancelled', uiLang);
-    processingState.error = tSync('statusCancelled', uiLang);
+    // CRITICAL: Don't set error when cancelled by user - it's not an error
+    // Set error to null to distinguish from real errors
+    processingState.error = null;
     
     // CRITICAL: Check if summary generation is active before stopping keep-alive
     // Summary generation is independent and should continue even if document/audio processing is cancelled
@@ -350,13 +466,32 @@ export async function cancelProcessing(stopKeepAlive) {
     
     // Clear decrypted key cache for security (processing was cancelled)
     clearDecryptedKeyCache();
+    
+    // CRITICAL: Immediately clear state from storage when cancelled
+    // This prevents state from being restored on extension reload
+    await chrome.storage.local.remove(['processingState']).catch(error => {
+      logWarn('Failed to clear processingState from storage on cancel', error);
+    });
+    
+    // Reset in-memory state to idle
+    processingState = {
+      isProcessing: false,
+      isCancelled: false,
+      progress: 0,
+      status: 'idle',
+      error: null,
+      result: null,
+      startTime: null,
+      currentStage: null,
+      completedStages: []
+    };
   }
   return { success: true };
 }
 
 /**
  * Complete processing successfully
- * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {import('../types.js').StopKeepAliveFunction} stopKeepAlive - Function to stop keep-alive
  */
 export async function completeProcessing(stopKeepAlive) {
   // Force save any pending state before clearing
@@ -401,7 +536,7 @@ export async function completeProcessing(stopKeepAlive) {
 /**
  * Set processing error
  * @param {string|Object} error - Error message string or object with {message, code}
- * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {import('../types.js').StopKeepAliveFunction} stopKeepAlive - Function to stop keep-alive
  */
 export async function setError(error, stopKeepAlive) {
   // Force save any pending state before clearing
@@ -432,7 +567,22 @@ export async function setError(error, stopKeepAlive) {
     log('Keep-alive kept active - summary generation in progress', { timestamp: Date.now() });
   }
   
-  chrome.storage.local.remove(['processingState']);
+  // CRITICAL: Save error state to storage BEFORE removing, so popup can see it
+  // Popup polls getProcessingState() which reads from memory, but also falls back to storage
+  // Save error state with a short TTL so popup can display it
+  const errorState = {
+    ...processingState,
+    lastUpdate: Date.now()
+  };
+  await chrome.storage.local.set({ processingState: errorState });
+  
+  // Wait a bit to ensure popup can read the error state
+  // Then remove after delay to allow popup to poll and see the error
+  setTimeout(() => {
+    chrome.storage.local.remove(['processingState']).catch(() => {
+      // Ignore errors when removing
+    });
+  }, 10000); // Keep error state for 10 seconds so popup can see it
   
   // Clear decrypted key cache for security (processing failed)
   clearDecryptedKeyCache();
@@ -440,8 +590,8 @@ export async function setError(error, stopKeepAlive) {
 
 /**
  * Start processing
- * @param {Function} startKeepAlive - Function to start keep-alive
- * @returns {boolean} True if started, false if already processing
+ * @param {import('../types.js').StartKeepAliveFunction} startKeepAlive - Function to start keep-alive
+ * @returns {Promise<boolean>} True if started, false if already processing
  */
 export async function startProcessing(startKeepAlive) {
   if (processingState.isProcessing) {
@@ -493,50 +643,79 @@ export function restoreStateFromStorage() {
         // Only restore processingState for document generation (PDF, EPUB, etc.)
         const result = await chrome.storage.local.get(['processingState']);
         
-        if (result.processingState && result.processingState.isProcessing) {
-          const savedState = result.processingState;
-          const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
-          
-          // CRITICAL: Use standard threshold for document generation (2 hours)
-          // Summary generation does NOT use processingState, so no special handling needed
-          const STALE_THRESHOLD = CONFIG.STATE_EXPIRY_MS; // 2 hours for PDF
-          
-          // If state is stale, reset it
-          if (timeSinceUpdate > STALE_THRESHOLD) {
-            log('Stale processing state found, resetting', { 
-              timeSinceUpdate, 
-              threshold: STALE_THRESHOLD,
-              stage: savedState.currentStage
-            });
-            await chrome.storage.local.remove(['processingState']);
-          } else {
-            log('Restored processing state from storage', { 
-              savedState, 
-              timeSinceUpdate, 
-              progress: savedState.progress,
-              stage: savedState.currentStage
-            });
-            // PDF generation - mark as error since we can't truly resume
-            const uiLang = await getUILanguage();
-            processingState = {
-              isProcessing: false,
-              progress: savedState.progress || 0,
-              status: tSync('statusError', uiLang),
-              error: tSync('statusProcessingInterrupted', uiLang),
-              result: null,
-              currentStage: savedState.currentStage || null,
-              completedStages: savedState.completedStages || []
-            };
-            // Try to get localized message asynchronously (non-blocking)
-            try {
-              const uiLang = await getUILanguage();
-              const errorStatus = tSync('statusError', uiLang);
-              const errorMsg = tSync('statusProcessingInterrupted', uiLang);
-              processingState.status = errorStatus;
-              processingState.error = errorMsg;
-            } catch (localeError) {
-              // Keep fallback values if locale fails
-              logWarn('Failed to localize error message', localeError);
+        if (result.processingState && typeof result.processingState === 'object' && result.processingState !== null) {
+          const savedState = /** @type {any} */ (result.processingState);
+          if (savedState.isProcessing) {
+            const timeSinceUpdate = Date.now() - (savedState.lastUpdate || 0);
+            
+            // CRITICAL: Use standard threshold for document generation (2 hours)
+            // Summary generation does NOT use processingState, so no special handling needed
+            const STALE_THRESHOLD = CONFIG.STATE_EXPIRY_MS; // 2 hours for PDF
+            
+            // If state is stale, reset it
+            if (timeSinceUpdate > STALE_THRESHOLD) {
+              log('Stale processing state found, resetting', { 
+                timeSinceUpdate, 
+                threshold: STALE_THRESHOLD,
+                stage: savedState.currentStage
+              });
+              await chrome.storage.local.remove(['processingState']);
+            } else {
+              // CRITICAL: Only restore state if it's very recent (< 1 minute) - quick service worker restart
+              // Otherwise, clear it - user expects clean state after extension reload
+              const QUICK_RESTART_THRESHOLD = CONFIG.RESET_THRESHOLD_MS; // 1 minute
+              
+              if (timeSinceUpdate < QUICK_RESTART_THRESHOLD) {
+                // Very recent state - likely service worker restart during active processing
+                
+                // CRITICAL: Check if processing was cancelled by user
+                // If cancelled, don't restore state - user expects clean state after cancellation
+                const wasCancelled = savedState.isCancelled === true;
+                
+                if (wasCancelled) {
+                  // Processing was cancelled - clear state, don't restore
+                  log('Processing was cancelled - clearing state (not restoring)', { 
+                    savedState, 
+                    timeSinceUpdate, 
+                    progress: savedState.progress,
+                    stage: savedState.currentStage
+                  });
+                  await chrome.storage.local.remove(['processingState']);
+                  return; // Don't restore cancelled state
+                }
+                
+                // Restore active processing state (only if not cancelled)
+                log('Restoring processing state (quick service worker restart)', { 
+                  savedState, 
+                  timeSinceUpdate, 
+                  progress: savedState.progress,
+                  stage: savedState.currentStage
+                });
+                
+                const uiLang = await getUILanguage();
+                processingState = {
+                  isProcessing: savedState.isProcessing || false,
+                  isCancelled: false,
+                  progress: savedState.progress || 0,
+                  status: savedState.status || tSync('statusProcessing', uiLang),
+                  error: null,
+                  result: null,
+                  startTime: savedState.startTime || null,
+                  currentStage: savedState.currentStage || null,
+                  completedStages: Array.isArray(savedState.completedStages) ? savedState.completedStages : []
+                };
+              } else {
+                // State is not very recent - extension was reloaded, clear it
+                log('Extension reloaded - clearing processing state (not restoring)', { 
+                  savedState, 
+                  timeSinceUpdate, 
+                  progress: savedState.progress,
+                  stage: savedState.currentStage,
+                  isCancelled: savedState.isCancelled
+                });
+                
+                await chrome.storage.local.remove(['processingState']);
+              }
             }
           }
         }

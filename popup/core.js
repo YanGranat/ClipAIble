@@ -14,21 +14,21 @@ import { initState } from './core/state.js';
  * @param {Object} deps - Dependencies object
  * @param {Object} deps.elements - DOM elements
  * @param {Object} deps.STORAGE_KEYS - Storage keys constants
- * @param {Function} deps.t - Translation function
- * @param {Function} deps.getUILanguage - Get UI language function
- * @param {Function} deps.logError - Error logging function
- * @param {Function} deps.log - Log function
- * @param {Function} deps.logWarn - Warning logging function
- * @param {Function} deps.showToast - Show toast notification function
- * @param {Function} deps.setStatus - Set status function
- * @param {Function} deps.setProgress - Set progress function
- * @param {Function} deps.stopTimerDisplay - Stop timer display function
- * @param {Function} deps.startTimerDisplay - Start timer display function
- * @param {Function} deps.decryptApiKey - Decrypt API key function
- * @param {Function} deps.getProviderFromModel - Get provider from model function
- * @param {Function} deps.detectVideoPlatform - Detect video platform function
- * @param {Function} deps.markdownToHtml - Markdown to HTML converter
- * @param {Function} deps.sanitizeMarkdownHtml - Sanitize markdown HTML function
+ * @param {function(string, string?): Promise<string>} deps.t - Translation function
+ * @param {function(): Promise<string>} deps.getUILanguage - Get UI language function
+ * @param {function(...*): void} deps.logError - Error logging function
+ * @param {function(...*): void} deps.log - Log function
+ * @param {function(...*): void} deps.logWarn - Warning logging function
+ * @param {function(string, string?): void} deps.showToast - Show toast notification function
+ * @param {function(string, string?, number?): void} deps.setStatus - Set status function
+ * @param {function(number, boolean?): void} deps.setProgress - Set progress function
+ * @param {function(): void} deps.stopTimerDisplay - Stop timer display function
+ * @param {function(): void} deps.startTimerDisplay - Start timer display function
+ * @param {function(string, string): Promise<string>} deps.decryptApiKey - Decrypt API key function
+ * @param {function(string): import('../scripts/types.js').AIProvider} deps.getProviderFromModel - Get provider from model function
+ * @param {function(): any} deps.detectVideoPlatform - Detect video platform function
+ * @param {function(string): string} deps.markdownToHtml - Markdown to HTML converter
+ * @param {function(string): string} deps.sanitizeMarkdownHtml - Sanitize markdown HTML function
  * @param {Object} deps.CONFIG - Configuration object
  * @param {Object} deps.stateRefs - State references object (for statePollingTimeout, timerInterval, currentStartTime)
  * @param {Object} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
@@ -160,6 +160,7 @@ export function initCore(deps) {
   const stateModule = initState({
     elements,
     t,
+    log,
     logError,
     logWarn,
     setStatus,

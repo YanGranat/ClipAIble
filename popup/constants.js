@@ -3,6 +3,8 @@
 
 /**
  * Storage keys for chrome.storage.local
+ * @readonly
+ * @const {Record<string, string>}
  */
 export const STORAGE_KEYS = {
   API_KEY: 'openai_api_key',
@@ -10,6 +12,7 @@ export const STORAGE_KEYS = {
   GEMINI_API_KEY: 'gemini_api_key',
   GROK_API_KEY: 'grok_api_key',
   OPENROUTER_API_KEY: 'openrouter_api_key',
+  DEEPSEEK_API_KEY: 'deepseek_api_key',
   GOOGLE_API_KEY: 'google_api_key',
   API_PROVIDER: 'api_provider',
   MODEL: 'openai_model',
@@ -62,6 +65,15 @@ export const STORAGE_KEYS = {
 
 /**
  * Default style values for PDF generation
+ * @readonly
+ * @const {{
+ *   fontFamily: string,
+ *   fontSize: string,
+ *   bgColor: string,
+ *   textColor: string,
+ *   headingColor: string,
+ *   linkColor: string
+ * }}
  */
 export const DEFAULT_STYLES = {
   fontFamily: '',
@@ -75,6 +87,8 @@ export const DEFAULT_STYLES = {
 /**
  * Style presets - carefully designed color schemes
  * Each preset tested for WCAG AA contrast (min 4.5:1 for text)
+ * @readonly
+ * @const {Record<string, {bgColor: string, textColor: string, headingColor: string, linkColor: string}>}
  */
 export const STYLE_PRESETS = {
   // Dark theme - user's custom default
@@ -112,6 +126,8 @@ export const STYLE_PRESETS = {
 
 /**
  * Mode hints for extraction modes
+ * @readonly
+ * @const {Record<string, string>}
  */
 export const MODE_HINTS = {
   selector: 'AI finds article blocks, script extracts content',

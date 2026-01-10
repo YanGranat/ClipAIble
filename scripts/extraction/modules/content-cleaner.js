@@ -6,8 +6,8 @@
  * Clean HTML content by removing footnotes, icons, OBJ markers, and unsafe attributes
  * Uses TreeWalker for efficient single-pass cleaning
  * @param {Element} element - Element to clean
- * @param {Function} isFootnoteLink - Function to check if link is footnote
- * @param {Function} isIcon - Function to check if element is icon
+ * @param {import('../../types.js').IsFootnoteLinkFunction} isFootnoteLink - Function to check if link is footnote
+ * @param {import('../../types.js').IsIconFunction} isIcon - Function to check if element is icon
  * @returns {string} Cleaned HTML string
  */
 export function cleanHtmlContentModule(element, isFootnoteLink, isIcon) {
@@ -23,21 +23,22 @@ export function cleanHtmlContentModule(element, isFootnoteLink, isIcon) {
     {
       acceptNode: (node) => {
         if (node.nodeType === Node.ELEMENT_NODE) {
-          const tagName = node.tagName.toLowerCase();
+          const element = /** @type {Element} */ (node);
+          const tagName = element.tagName.toLowerCase();
           
           // Remove footnote links
-          if (tagName === 'a' && isFootnoteLink(node)) {
+          if (tagName === 'a' && isFootnoteLink(element)) {
             return NodeFilter.FILTER_REJECT;
           }
           
           // Remove icons
-          if (isIcon(node)) {
+          if (isIcon(element)) {
             return NodeFilter.FILTER_REJECT;
           }
           
           // Remove sup elements with arrows
           if (tagName === 'sup') {
-            const supText = node.textContent.trim();
+            const supText = element.textContent.trim();
             if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
               return NodeFilter.FILTER_REJECT;
             }
@@ -49,22 +50,22 @@ export function cleanHtmlContentModule(element, isFootnoteLink, isIcon) {
           }
           
           // Remove elements that contain only "OBJ" text
-          const elText = node.textContent.trim();
+          const elText = element.textContent.trim();
           if (/^obj\s*$/i.test(elText) || /^\[obj\]\s*$/i.test(elText)) {
             return NodeFilter.FILTER_REJECT;
           }
           
           // Clean attributes in the same pass
-          node.removeAttribute('style');
+          element.removeAttribute('style');
           const safeAttributes = ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel'];
-          for (const attr of Array.from(node.attributes)) {
+          for (const attr of Array.from(element.attributes)) {
             if (attr.name.startsWith('on') || !safeAttributes.includes(attr.name.toLowerCase())) {
-              node.removeAttribute(attr.name);
+              element.removeAttribute(attr.name);
             }
           }
           
           // Remove empty spans and divs
-          if ((tagName === 'span' || tagName === 'div') && !node.textContent.trim() && !node.querySelector('img')) {
+          if ((tagName === 'span' || tagName === 'div') && !element.textContent.trim() && !element.querySelector('img')) {
             return NodeFilter.FILTER_REJECT;
           }
         } else if (node.nodeType === Node.TEXT_NODE) {
@@ -80,8 +81,7 @@ export function cleanHtmlContentModule(element, isFootnoteLink, isIcon) {
         }
         return NodeFilter.FILTER_ACCEPT;
       }
-    },
-    false
+    }
   );
   
   // Process all nodes
@@ -92,7 +92,7 @@ export function cleanHtmlContentModule(element, isFootnoteLink, isIcon) {
   }
   
   // Get cleaned HTML
-  let cleanedHtml = htmlClone.innerHTML
+  let cleanedHtml = /** @type {Element} */ (htmlClone).innerHTML
     .replace(/\s*\[?obj\]?\s*/gi, '') // Remove any remaining OBJ markers
     .replace(/<[^>]*>\s*\[?obj\]?\s*<\/[^>]*>/gi, '') // Remove empty tags with OBJ
     .trim();

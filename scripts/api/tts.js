@@ -2,13 +2,13 @@
 // Text-to-Speech API module for ClipAIble extension
 // Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
 
-import { log, logError, logDebug } from '../utils/logging.js';
+import { log, logError, logDebug, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
-import { getUILanguageCached } from '../utils/pipeline-helpers.js';
+import { getUILanguageCached, checkCancellation } from '../utils/pipeline-helpers.js';
 
 logDebug('[ClipAIble TTS] Loading TTS provider modules...', {
   timestamp: Date.now()
@@ -45,18 +45,41 @@ log('[ClipAIble TTS] TTS module initialized with all providers', {
 
 /**
  * Convert text to speech using TTS API (OpenAI, ElevenLabs, Qwen, Respeecher, Google Cloud TTS, or Offline)
- * @param {string} text - Text to convert
- * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud) - not needed for 'offline'
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
- * @param {string} [options.voice] - Voice to use
- * @param {number} [options.speed] - Speech speed 0.25-4.0 (default: 1.0, offline: 0.1-10.0)
- * @param {string} [options.format] - Output format (default: 'mp3', offline: always 'wav')
- * @param {string} [options.instructions] - Voice style instructions (OpenAI only)
- * @param {string} [options.language] - Language code for Qwen/Offline (auto-detected if not provided)
- * @param {number} [options.pitch] - Pitch -20.0 to 20.0 (Google Cloud TTS only, default: 0.0) or 0-2.0 (Offline)
- * @param {number} [options.tabId] - Tab ID for offline TTS
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {string} text - Text to convert (required)
+ * @param {string} [apiKey] - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud) - optional for 'offline' provider, required for others
+ * @param {import('../types.js').TTSOptions} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (format depends on provider: mp3 for OpenAI/ElevenLabs, wav for offline/Google)
+ * @throws {Error} If text is empty or too long
+ * @throws {Error} If API key is missing (for non-offline providers)
+ * @throws {Error} If TTS API request fails
+ * @throws {Error} If network error occurs
+ * @throws {Error} If TTS provider is invalid
+ * @see {@link generateAudio} For complete audio generation from article content
+ * @example
+ * // Use OpenAI TTS (default)
+ * const audio = await textToSpeech('Hello world', 'sk-...', {
+ *   provider: 'openai',
+ *   voice: 'nova',
+ *   speed: 1.0
+ * });
+ * const blob = new Blob([audio], { type: 'audio/mp3' });
+ * const url = URL.createObjectURL(blob);
+ * @example
+ * // Use offline TTS (no API key needed)
+ * const audio = await textToSpeech('Hello world', null, {
+ *   provider: 'offline',
+ *   voice: 'en_US-lessac-medium',
+ *   language: 'en',
+ *   tabId: 123
+ * });
+ * const blob = new Blob([audio], { type: 'audio/wav' });
+ * @example
+ * // Use ElevenLabs TTS
+ * const audio = await textToSpeech('Hello world', 'elevenlabs-api-key', {
+ *   provider: 'elevenlabs',
+ *   voice: '21m00Tcm4TlvDq8ikWAM',
+ *   speed: 1.2
+ * });
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   const entryTime = Date.now();
@@ -139,13 +162,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
  * Convert text to speech using OpenAI TTS API
  * @param {string} text - Text to convert (max 4096 characters)
  * @param {string} apiKey - OpenAI API key
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.voice='nova'] - Voice to use
- * @param {number} [options.speed=1.0] - Speech speed 0.25-4.0
- * @param {string} [options.format='mp3'] - Output format: mp3, opus, aac, flac, wav, pcm
- * @param {string} [options.instructions] - Voice style instructions (optional, only for gpt-4o-mini-tts)
- * @param {string} [options.openaiInstructions] - Alternative instructions property name
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (MP3 format)
+ * @throws {Error} If text is empty or too long (max 4096 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If OpenAI TTS API request fails
+ * @throws {Error} If network error occurs
  */
 async function textToSpeechOpenAI(text, apiKey, options = {}) {
   const {
@@ -223,7 +245,6 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
               const error = /** @type {Error & {status?: number, response?: Response}} */ (new Error(`HTTP ${fetchResponse.status}`));
               error.status = fetchResponse.status;
               error.response = fetchResponse;
-              clearTimeout(timeout);
               throw error;
             }
             
@@ -237,15 +258,17 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
             const errorMsg = errorData.error?.message || tSync('errorTtsApiError', uiLang).replace('{status}', String(fetchResponse.status));
             const error = /** @type {Error & {status?: number}} */ (new Error(errorMsg));
             error.status = fetchResponse.status;
-            clearTimeout(timeout);
             throw error;
           }
           
-          clearTimeout(timeout);
           return fetchResponse;
         } catch (e) {
-          clearTimeout(timeout);
           throw e;
+        } finally {
+          // CRITICAL: Always clear timeout in finally to prevent memory leaks
+          if (timeout) {
+            clearTimeout(timeout);
+          }
         }
       },
       {
@@ -334,17 +357,12 @@ function splitIfTooLong(text, maxLength) {
  * Convert text to speech using ElevenLabs TTS API
  * @param {string} text - Text to convert (max 5000 characters)
  * @param {string} apiKey - ElevenLabs API key
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.voice] - Voice ID to use (default: Rachel)
- * @param {number} [options.speed] - Speech speed 0.25-4.0 (default: 1.0)
- * @param {string} [options.format] - Output format (default: 'mp3_44100_128')
- * @param {string} [options.elevenlabsFormat] - Alternative format property name
- * @param {string} [options.elevenlabsModel] - Model ID
- * @param {number} [options.elevenlabsStability] - Stability setting
- * @param {number} [options.elevenlabsSimilarity] - Similarity setting
- * @param {number} [options.elevenlabsStyle] - Style setting
- * @param {boolean} [options.elevenlabsSpeakerBoost] - Speaker boost setting
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (MP3 format)
+ * @throws {Error} If text is empty or too long (max 5000 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If ElevenLabs TTS API request fails
+ * @throws {Error} If network error occurs
  */
 async function textToSpeechElevenLabs(text, apiKey, options = {}) {
   const {
@@ -367,7 +385,6 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
     speed, 
     format: finalFormat, 
     modelId: elevenlabsModel,
-    // @ts-expect-error - elevenlabsTTS accepts additional voice settings (stability, similarityBoost, style, useSpeakerBoost)
     stability: elevenlabsStability,
     similarityBoost: elevenlabsSimilarity,
     style: elevenlabsStyle,
@@ -379,11 +396,12 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
  * Convert text to speech using Qwen3-TTS-Flash API
  * @param {string} text - Text to convert (max 600 characters - very strict!)
  * @param {string} apiKey - Alibaba Cloud DashScope API key
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.voice] - Voice name to use (default: 'Cherry')
- * @param {number} [options.speed] - Speech speed 0.5-2.0 (default: 1.0, not directly supported)
- * @param {string} [options.language] - Language code (auto-detected if not provided)
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format)
+ * @throws {Error} If text is empty or too long (max 600 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If Qwen TTS API request fails
+ * @throws {Error} If network error occurs
  */
 async function textToSpeechQwen(text, apiKey, options = {}) {
   const {
@@ -399,13 +417,12 @@ async function textToSpeechQwen(text, apiKey, options = {}) {
  * Convert text to speech using Respeecher API
  * @param {string} text - Text to convert (max 450 characters)
  * @param {string} apiKey - Respeecher API key
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.voice] - Voice ID to use (default: 'samantha')
- * @param {string} [options.language] - Language code
- * @param {number} [options.respeecherTemperature] - Temperature setting
- * @param {number} [options.respeecherRepetitionPenalty] - Repetition penalty setting
- * @param {number} [options.respeecherTopP] - Top P setting
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format)
+ * @throws {Error} If text is empty or too long (max 450 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If Respeecher TTS API request fails
+ * @throws {Error} If network error occurs
  */
 async function textToSpeechRespeecher(text, apiKey, options = {}) {
   const {
@@ -418,11 +435,10 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
   
   return respeecherTTS(text, apiKey, { 
     voice, 
-    // @ts-expect-error - respeecherTTS accepts language and sampling parameters (temperature, repetition_penalty, top_p)
     language,
-    temperature: respeecherTemperature,
-    repetition_penalty: respeecherRepetitionPenalty,
-    top_p: respeecherTopP
+    respeecherTemperature,
+    respeecherRepetitionPenalty,
+    respeecherTopP
   });
 }
 
@@ -430,15 +446,12 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
  * Convert text to speech using Google Gemini 2.5 Pro TTS API
  * @param {string} text - Text to convert (max 5000 characters)
  * @param {string} apiKey - Google API key (same as Gemini API key)
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.voice] - Voice name to use (default: 'Callirrhoe')
- * @param {number} [options.speed] - Speech speed 0.25-4.0 (default: 1.0, not supported by Google TTS)
- * @param {string} [options.format] - Audio format (not supported by Google TTS, always returns WAV)
- * @param {string} [options.prompt] - Optional style prompt for voice control (emotion, tone)
- * @param {string} [options.googleTtsPrompt] - Alternative prompt property name
- * @param {string} [options.model] - Model name
- * @param {string} [options.googleTtsModel] - Alternative model property name
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format, 24kHz, 16-bit, mono)
+ * @throws {Error} If text is empty or too long (max 5000 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If Google TTS API request fails
+ * @throws {Error} If network error occurs
  */
 async function textToSpeechGoogle(text, apiKey, options = {}) {
   const {
@@ -466,14 +479,11 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
  * it will execute in page context via executeScript
  * @param {string} text - Text to convert (max 10000 characters)
  * @param {string} apiKey - Not used for offline TTS
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.voice] - Voice ID to use (optional, uses default)
- * @param {number} [options.speed] - Speech speed 0.1-10.0 (default: 1.0)
- * @param {number} [options.pitch] - Pitch 0-2.0 (default: 1.0, may not be supported)
- * @param {number} [options.volume] - Volume 0-1.0 (default: 1.0, may not be supported)
- * @param {string} [options.language] - Language code (e.g., 'en-US', 'ru-RU') (optional)
- * @param {number} [options.tabId] - Tab ID for executeScript (required if window is not available)
+ * @param {Partial<import('../types.js').TTSOptions> & {pitch?: number, volume?: number}} [options={}] - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
+ * @throws {Error} If text is empty or too long (max 10000 characters)
+ * @throws {Error} If tabId is missing when window is not available
+ * @throws {Error} If offline TTS execution fails
  */
 async function textToSpeechOffline(text, apiKey, options = {}) {
   const entryTime = Date.now();
@@ -592,8 +602,11 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
  * Piper TTS requires window object, so we inject a script that loads and uses it
  * @param {string} text - Text to convert
  * @param {number} tabId - Tab ID
- * @param {Object} options - TTS options
+ * @param {Partial<import('../types.js').TTSOptions>} options - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
+ * @throws {Error} If text is empty
+ * @throws {Error} If tabId is missing
+ * @throws {Error} If Piper TTS execution fails
  */
 async function executePiperTTSInPage(text, tabId, options = {}) {
   log('Executing Piper TTS in page context', { tabId, textLength: text.length });
@@ -675,10 +688,11 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
     const scriptPromise = chrome.scripting.executeScript({
       target: { tabId: tabId },
       world: 'MAIN',
-      func: (text, options, moduleUrl) => {
+      func: (/** @type {string} */ text, /** @type {any} */ options, /** @type {string} */ moduleUrl) => {
         try {
-          // CRITICAL: This runs in MAIN world where modules are not available
+          // DEBUG: This runs in MAIN world where modules are not available
           // console.log is acceptable here as logging module cannot be imported
+          // Note: Always logs for debugging (no access to CONFIG in MAIN world)
           console.log('[ClipAIble] executeScript func called', { textLength: text.length, hasWindow: typeof window !== 'undefined', moduleUrl });
           
           // Cannot use async/await or localization in MAIN world
@@ -694,7 +708,7 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
           // Add moduleUrl to options
           const optionsWithUrl = { ...options, moduleUrl };
           
-          // CRITICAL: This runs in MAIN world where modules are not available
+          // DEBUG: This runs in MAIN world where modules are not available
           console.log('[ClipAIble] Calling window.executePiperTTS...');
           // Call the function and return the promise
           // executeScript will wait for the promise to resolve
@@ -704,12 +718,13 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
             throw new Error(`executePiperTTS did not return a promise. Got: ${typeof promise}`);
           }
           
-          // CRITICAL: This runs in MAIN world where modules are not available
+          // DEBUG: This runs in MAIN world where modules are not available
           console.log('[ClipAIble] Promise returned from executePiperTTS, waiting for resolution...');
           return promise;
         } catch (error) {
-          // CRITICAL: This runs in MAIN world where modules are not available
+          // DEBUG: This runs in MAIN world where modules are not available
           // console.error is acceptable here as logging module cannot be imported
+          // Note: Always logs for debugging (no access to CONFIG in MAIN world)
           console.error('[ClipAIble] Error in executeScript func', error);
           console.error('[ClipAIble] Error stack', error.stack);
           throw error;
@@ -809,17 +824,12 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
  * 
  * @param {Array<{text: string, index: number}>} chunks - Prepared text chunks
  * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud)
- * @param {Object} [options={}] - TTS options
- * @param {string} [options.provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
- * @param {string} [options.voice] - Voice to use
- * @param {number} [options.speed] - Speech speed
- * @param {string} [options.format] - Output format
- * @param {string} [options.instructions] - Voice style instructions
- * @param {string} [options.language] - Language code
- * @param {number} [options.pitch] - Pitch setting
- * @param {number} [options.tabId] - Tab ID for offline TTS
- * @param {Function} [updateState] - State update callback
- * @returns {Promise<ArrayBuffer>} Concatenated audio data
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Concatenated audio data as ArrayBuffer
+ * @throws {Error} If chunks array is empty
+ * @throws {Error} If API key is missing (for non-offline providers)
+ * @throws {Error} If TTS conversion fails for any chunk
+ * @throws {Error} If network error occurs
  */
 export async function chunksToSpeech(chunks, apiKey, options = {}, updateState = null) {
   const entryTime = Date.now();
@@ -864,6 +874,20 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   
   log('TTS provider config', { provider, maxInput });
   
+  // Analyze chunk sizes before expansion
+  const maxChunkSize = chunks.length > 0 ? Math.max(...chunks.map(c => c.text.length)) : 0;
+  const chunksOverLimit = chunks.filter(c => c.text.length > maxInput).length;
+  const maxChunkUsage = Math.round((maxChunkSize / maxInput) * 100);
+  
+  log('📊 TTS chunk analysis', {
+    totalChunks: chunks.length,
+    maxChunkSize: maxChunkSize,
+    ttsLimit: maxInput,
+    maxChunkUsage: `${maxChunkUsage}%`,
+    chunksOverLimit: chunksOverLimit,
+    warning: maxChunkUsage > 90 ? '⚠️ Large chunks need splitting' : 'OK'
+  });
+  
   // Expand chunks that exceed TTS limit
   const expandedChunks = [];
   for (const chunk of chunks) {
@@ -877,7 +901,11 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     }
   }
   
-  log('Chunks expanded', { originalChunks: chunks.length, expandedChunks: expandedChunks.length });
+  log('Chunks expanded', { 
+    originalChunks: chunks.length, 
+    expandedChunks: expandedChunks.length,
+    expansionRatio: chunks.length > 0 ? `${Math.round((expandedChunks.length / chunks.length) * 100)}%` : '0%'
+  });
   
   const audioBuffers = [];
   const progressBase = 60; // Start at 60% (after preparation)
@@ -939,20 +967,87 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     });
   }
   
+  const failedChunks = [];
+  
   try {
     for (let i = 0; i < expandedChunks.length; i++) {
-      const chunk = expandedChunks[i];
+      // Check if processing was cancelled before processing each chunk
+      await checkCancellation(`TTS chunk ${i + 1}/${expandedChunks.length}`);
       
+      const chunk = expandedChunks[i];
+      let chunkProcessed = false;
+      let lastChunkError = null;
+      
+      // Use centralized retry logic for each chunk
       try {
-        // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
-        const audioBuffer = await textToSpeech(chunk.text, apiKey, options);
+        const audioBuffer = await callWithRetry(
+          async () => {
+            // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
+            return await textToSpeech(chunk.text, apiKey, options);
+          },
+          {
+            maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+            delays: CONFIG.RETRY_DELAYS,
+            retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+            onRetry: (attempt, delay) => {
+              logWarn(`Chunk ${i + 1} failed, retrying... (attempt ${attempt}/${CONFIG.RETRY_MAX_ATTEMPTS + 1}, waiting ${delay}ms)`, {
+                chunkIndex: i + 1,
+                totalChunks: expandedChunks.length
+              });
+            }
+          }
+        );
+        
         audioBuffers.push(audioBuffer);
         processedChunks = i + 1; // Update counter for progress tracker
+        chunkProcessed = true;
       } catch (error) {
-        logError(`Failed to convert chunk ${i + 1}`, error);
-        const uiLang = await getUILanguageCached();
-        throw new Error(tSync('errorTtsSegmentConversionFailed', uiLang).replace('{index}', String(i + 1)).replace('{error}', error.message || 'unknown'));
+        lastChunkError = error;
+        
+        const chunkError = {
+          index: i + 1,
+          total: expandedChunks.length,
+          error: error?.message || 'Unknown error',
+          status: error?.status,
+          retries: CONFIG.RETRY_MAX_ATTEMPTS + 1
+        };
+        failedChunks.push(chunkError);
+        
+        logError(`Failed to convert chunk ${i + 1}/${expandedChunks.length} after ${CONFIG.RETRY_MAX_ATTEMPTS + 1} attempts`, {
+          chunkIndex: i + 1,
+          totalChunks: expandedChunks.length,
+          error: error?.message,
+          status: error?.status,
+          failedChunksCount: failedChunks.length,
+          processedChunksCount: audioBuffers.length,
+          willContinue: true
+        });
+        
+        // Continue with next chunk instead of throwing error
+        // This allows partial success - we'll handle failed chunks at the end
       }
+    }
+    
+    // Check if we have any successfully processed chunks
+    if (audioBuffers.length === 0) {
+      const uiLang = await getUILanguageCached();
+      const errorMsg = failedChunks.length > 0
+        ? `All ${expandedChunks.length} chunks failed. Last error: ${failedChunks[failedChunks.length - 1].error}`
+        : 'All chunks failed to convert';
+      throw new Error(tSync('errorTtsAllChunksFailed', uiLang) || errorMsg);
+    }
+    
+    // Log summary of failed chunks (if any)
+    if (failedChunks.length > 0) {
+      const successRate = ((audioBuffers.length / expandedChunks.length) * 100).toFixed(1);
+      logWarn(`TTS processing completed with ${failedChunks.length} failed chunk(s)`, {
+        totalChunks: expandedChunks.length,
+        successfulChunks: audioBuffers.length,
+        failedChunks: failedChunks.length,
+        successRate: `${successRate}%`,
+        failedChunkIndices: failedChunks.map(c => c.index),
+        note: 'Continuing with successfully processed chunks'
+      });
     }
   } finally {
     // Clean up progress tracker
@@ -980,9 +1075,10 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
 }
 
 /**
- * Check if buffer is WAV format (starts with RIFF)
- * @param {ArrayBuffer} buffer - Audio buffer
- * @returns {boolean} True if WAV
+ * Check if buffer is WAV format by examining header
+ * Checks for "RIFF" at start and "WAVE" at offset 8
+ * @param {ArrayBuffer} buffer - Audio buffer to check
+ * @returns {boolean} True if buffer is WAV format, false otherwise
  */
 function isWavBuffer(buffer) {
   if (!buffer || buffer.byteLength < 12) return false;

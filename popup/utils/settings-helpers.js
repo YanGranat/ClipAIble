@@ -40,30 +40,22 @@ export function debouncedSaveSettings(key, value, callback = null) {
     
     isSavingSettings = true;
     try {
-      // DETAILED LOGGING: Saving to storage
-      log('[ClipAIble Popup] ===== debouncedSaveSettings: ABOUT TO SAVE =====', {
-        timestamp: Date.now(),
+      // Log only metadata, not full value to reduce log size
+      const valueSize = typeof value === 'string' ? value.length : 
+                       typeof value === 'object' && value !== null ? JSON.stringify(value).length : 0;
+      const valuePreview = typeof value === 'string' ? (value.length > 100 ? value.substring(0, 100) + '...' : value) :
+                          typeof value === 'object' && value !== null ? `[object with ${Object.keys(value).length} keys]` : value;
+      
+      log('[ClipAIble Popup] Saving setting', {
         key,
-        keyType: typeof key,
-        value,
         valueType: typeof value,
-        isAudioVoice: key === 'audio_voice' || key === STORAGE_KEYS.AUDIO_VOICE,
-        isAudioVoiceMap: key === 'audio_voice_map' || key === STORAGE_KEYS.AUDIO_VOICE_MAP,
-        isNumeric: /^\d+$/.test(String(value)),
-        isObject: typeof value === 'object' && !Array.isArray(value),
-        objectKeys: typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : null
+        valueSize,
+        valuePreview,
+        isObject: typeof value === 'object' && !Array.isArray(value) && value !== null,
+        objectKeys: typeof value === 'object' && !Array.isArray(value) && value !== null ? Object.keys(value) : null
       });
       
       await chrome.storage.local.set({ [key]: value });
-      
-      // DETAILED LOGGING: Saved to storage
-      log('[ClipAIble Popup] ===== debouncedSaveSettings: SAVED TO STORAGE =====', {
-        timestamp: Date.now(),
-        key,
-        value,
-        saved: true,
-        storageKey: key
-      });
       
       // CRITICAL: Send setting change to service worker for centralized logging
       try {

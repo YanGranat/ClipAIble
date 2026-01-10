@@ -42,7 +42,7 @@ export function setupPanelHandlers(deps) {
       const isOpen = elements.settingsPanel.classList.contains('open');
       
       const scheduleUpdate = (fn) => {
-        if (scheduler && scheduler.postTask) {
+        if (scheduler && typeof scheduler === 'object' && 'postTask' in scheduler && typeof scheduler.postTask === 'function') {
           scheduler.postTask(fn, { priority: 'user-blocking' });
         } else {
           setTimeout(fn, 0);

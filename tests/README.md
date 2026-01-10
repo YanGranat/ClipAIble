@@ -228,7 +228,7 @@ global.chrome.myApi = {
 - Tests use ES modules (type: "module" in package.json)
 - All tests pass successfully ✅
 
-## Recent Improvements (v3.2.4+)
+## Recent Improvements (v3.3.0+)
 
 - ✅ Added tests for Markdown generation (12 tests)
 - ✅ Added tests for FB2 generation (12 tests)

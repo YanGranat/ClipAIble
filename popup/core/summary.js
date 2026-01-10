@@ -7,6 +7,20 @@ import { tSync } from '../../scripts/locales.js';
 /**
  * Initialize summary module
  * @param {Object} deps - Dependencies
+ * @param {Object} deps.elements - DOM elements
+ * @param {Object} deps.STORAGE_KEYS - Storage keys constants
+ * @param {Function} deps.t - Translation function
+ * @param {Function} deps.getUILanguage - Get UI language function
+ * @param {Function} deps.logError - Error logging function
+ * @param {Function} deps.log - Log function
+ * @param {Function} deps.logWarn - Warning logging function
+ * @param {Function} deps.showToast - Show toast notification function
+ * @param {Function} deps.decryptApiKey - Decrypt API key function
+ * @param {Function} deps.getProviderFromModel - Get provider from model function
+ * @param {Function} deps.detectVideoPlatform - Detect video platform function
+ * @param {Function} deps.markdownToHtmlFn - Markdown to HTML converter
+ * @param {Function} deps.sanitizeMarkdownHtml - Sanitize markdown HTML function
+ * @param {Object} deps.CONFIG - Configuration object
  * @returns {Object} Summary functions
  */
 export function initSummary(deps) {
@@ -48,7 +62,8 @@ export function initSummary(deps) {
     if (!elements.summaryContainer) return;
     
     try {
-      // Hide summary container
+      // Hide summary container - add 'hidden' class AND set display to 'none'
+      elements.summaryContainer.classList.add('hidden');
       elements.summaryContainer.style.display = 'none';
       
       // Clear summary text
@@ -137,6 +152,17 @@ export function initSummary(deps) {
         'summary_saved_timestamp'
       ]);
       
+      const summaryTextFromStorage = storageResult[STORAGE_KEYS.SUMMARY_TEXT];
+      const summaryTextLength = typeof summaryTextFromStorage === 'string' ? summaryTextFromStorage.length : 0;
+      log('checkSummaryStatus: Storage check', {
+        hasSummaryTextInStorage: !!summaryTextFromStorage,
+        summaryTextLength: summaryTextLength,
+        isSummaryGenerating: !!storageResult[STORAGE_KEYS.SUMMARY_GENERATING],
+        hasSummaryContainer: !!elements.summaryContainer,
+        hasSummaryTextElement: !!elements.summaryText,
+        containerDisplay: elements.summaryContainer?.style.display
+      });
+      
       const isSummaryGenerating = storageResult[STORAGE_KEYS.SUMMARY_GENERATING];
       
       // Check if generation flag is stale
@@ -154,7 +180,10 @@ export function initSummary(deps) {
             summary_generating_start_time: null
           });
         } else {
-          const timeSinceStart = Date.now() - storageResult.summary_generating_start_time;
+          const startTime = typeof storageResult.summary_generating_start_time === 'number' 
+            ? storageResult.summary_generating_start_time 
+            : 0;
+          const timeSinceStart = Date.now() - startTime;
           
           if (timeSinceStart > STALE_THRESHOLD) {
             // Flag is stale - reset it
@@ -198,6 +227,14 @@ export function initSummary(deps) {
         const currentMarkdown = elements.summaryText.dataset.originalMarkdown;
         const containerWasHidden = elements.summaryContainer.style.display === 'none';
         
+        log('checkSummaryStatus: Found summary in storage, displaying', {
+          summaryLength: (typeof savedSummary === 'string' ? savedSummary.length : 0),
+          currentMarkdownLength: (typeof currentMarkdown === 'string' ? currentMarkdown.length : 0),
+          containerWasHidden,
+          hasSummaryText: !!elements.summaryText,
+          hasSummaryContainer: !!elements.summaryContainer
+        });
+        
         // Restore button when summary is ready
         if (elements.generateSummaryBtn) {
           elements.generateSummaryBtn.disabled = false;
@@ -206,13 +243,25 @@ export function initSummary(deps) {
         }
         
         // Update content if it changed or container is hidden
+        // CRITICAL: Always update if container is hidden (even if content is same)
         if (currentMarkdown !== savedSummary || containerWasHidden) {
-          elements.summaryText.dataset.originalMarkdown = savedSummary;
-          const htmlSummary = markdownToHtmlFn(savedSummary);
+          // Ensure savedSummary is a string
+          const summaryText = typeof savedSummary === 'string' ? savedSummary : String(savedSummary || '');
+          elements.summaryText.dataset.originalMarkdown = summaryText;
+          const htmlSummary = markdownToHtmlFn(summaryText);
           // SECURITY: Sanitize HTML to prevent XSS attacks from AI-generated content
           const sanitizedHtml = sanitizeMarkdownHtml(htmlSummary);
           elements.summaryText.innerHTML = sanitizedHtml;
+          // CRITICAL: Remove 'hidden' class AND set display to 'block' to ensure visibility
+          elements.summaryContainer.classList.remove('hidden');
           elements.summaryContainer.style.display = 'block';
+          
+          log('checkSummaryStatus: Summary content updated and container shown', {
+            summaryLength: summaryText.length,
+            htmlLength: sanitizedHtml.length,
+            containerDisplay: elements.summaryContainer.style.display,
+            hasHiddenClass: elements.summaryContainer.classList.contains('hidden')
+          });
           
           // Preserve expanded state if content is the same
           const wasExpanded = elements.summaryContent.classList.contains('expanded');
@@ -228,7 +277,13 @@ export function initSummary(deps) {
             if (toggleIcon) toggleIcon.textContent = '▼';
           }
           
-          log('checkSummaryStatus: Summary displayed', { summaryLength: savedSummary?.length || 0 });
+          const summaryLength = typeof savedSummary === 'string' ? savedSummary.length : 0;
+          log('checkSummaryStatus: Summary displayed', { summaryLength });
+        } else {
+          log('checkSummaryStatus: Summary already displayed, skipping update', {
+            summaryLength: (typeof savedSummary === 'string' ? savedSummary.length : 0),
+            containerDisplay: elements.summaryContainer.style.display
+          });
         }
       } else if (!isSummaryGenerating && elements.generateSummaryBtn) {
         // CRITICAL: If generation is not in progress and no summary, ensure button is enabled
@@ -310,6 +365,7 @@ export function initSummary(deps) {
       // CRITICAL: Clear old summary from UI
       // Hide summary container and clear content
       if (elements.summaryContainer) {
+        elements.summaryContainer.classList.add('hidden');
         elements.summaryContainer.style.display = 'none';
       }
       if (elements.summaryText) {
@@ -496,7 +552,7 @@ export function initSummary(deps) {
                 summary_generating_start_time: null
               });
               
-              const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
+              const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
               const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
               showToast(pleaseEnterKeyText, 'error');
               elements.generateSummaryBtn.disabled = false;
@@ -645,7 +701,7 @@ export function initSummary(deps) {
           }
           
           if (!apiKey) {
-            const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : 'AI';
+            const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
             const pleaseEnterKeyText = await t(`pleaseEnter${providerName}ApiKey`) || `Please enter ${providerName} API key`;
             showToast(pleaseEnterKeyText, 'error');
             elements.generateSummaryBtn.disabled = false;

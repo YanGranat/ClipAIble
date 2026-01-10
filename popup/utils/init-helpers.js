@@ -4,10 +4,12 @@
 // @ts-check
 
 import { log, logError, logWarn } from '../../scripts/utils/logging.js';
+import { getExtensionVersion } from '../../scripts/utils/config.js';
+import { groupDependencies } from './dependencies.js';
 
 /**
  * Initialize all DOM elements
- * @param {Object} elements - Elements object to populate
+ * @param {Record<string, HTMLElement|null>} elements - Elements object to populate
  * @returns {void}
  */
 export function initializeDOMElements(elements) {
@@ -78,7 +80,9 @@ export function initializeDOMElements(elements) {
   // Find hint element - it's the <p> with class "setting-hint" inside translateImagesGroup
   const translateImagesHintEl = elements.translateImagesGroup?.querySelector('.setting-hint');
   if (translateImagesHintEl) {
-    elements.translateImagesHint = translateImagesHintEl;
+    /** @type {any} */
+    const hintElement = translateImagesHintEl;
+    elements.translateImagesHint = hintElement;
   }
   
   // Styles
@@ -171,61 +175,76 @@ export function initializeDOMElements(elements) {
 
 /**
  * Initialize all modules
- * @param {Object} deps - Dependencies for module initialization
- * @param {Function} deps.initUI - UI module initializer
- * @param {Function} deps.initStats - Stats module initializer
- * @param {Function} deps.initSettings - Settings module initializer
- * @param {Function} deps.initCore - Core module initializer
- * @param {Function} deps.initHandlers - Handlers module initializer
- * @returns {Object} Initialized modules
+ * Supports both flat dependencies (backward compatibility) and grouped dependencies (new approach)
+ * @param {Object} rawDeps - Dependencies for module initialization (flat or grouped)
+ * @returns {import('../../scripts/types.js').PopupModules} Initialized modules
  */
-export function initializeModules(deps) {
+export function initializeModules(rawDeps) {
+  // Check if dependencies are already grouped (has 'domHelpers' property)
+  // If not, group them for consistency
+  const isGrouped = rawDeps.domHelpers !== undefined;
+  const deps = isGrouped ? rawDeps : groupDependencies(rawDeps);
+  
+  // Extract dependencies from grouped structure
   const {
     elements,
-    formatTime,
-    startTimerDisplay,
-    getElement,
-    setElementDisplay,
-    setElementGroupDisplay,
-    setDisplayForIds,
-    currentStartTimeRef,
-    timerIntervalRef,
-    showToast,
-    STORAGE_KEYS,
-    DEFAULT_STYLES,
-    STYLE_PRESETS,
-    debouncedSaveSettings,
-    setCustomSelectValue,
-    applyTheme,
-    markdownToHtml,
-    audioVoiceMap,
-    t,
-    getUILanguage,
-    setUILanguage,
-    UI_LOCALES,
-    loadAndDisplayStats,
-    applyLocalization,
-    initAllCustomSelects,
-    logError,
-    log,
-    logWarn,
-    setStatus,
-    setProgress,
-    stopTimerDisplay,
-    decryptApiKey,
-    maskApiKey,
-    encryptApiKey,
-    getProviderFromModel,
-    detectVideoPlatform,
-    sanitizeMarkdownHtml,
-    CONFIG,
-    stateRefs,
-    initUI,
-    initStats,
-    initSettings,
-    initCore,
-    initHandlers
+    domHelpers,
+    formatHelpers,
+    settingsHelpers,
+    logging,
+    localization,
+    config,
+    stateRefs: stateRefsGroup,
+    uiHelpers,
+    apiHelpers,
+    timerHelpers,
+    moduleInitializers
   } = deps;
+  
+  // Unpack grouped dependencies for backward compatibility with existing modules
+  const formatTime = formatHelpers.formatTime;
+  const startTimerDisplay = timerHelpers.startTimerDisplay;
+  const getElement = domHelpers.getElement;
+  const setElementDisplay = domHelpers.setElementDisplay;
+  const setElementGroupDisplay = domHelpers.setElementGroupDisplay;
+  const setDisplayForIds = domHelpers.setDisplayForIds;
+  const currentStartTimeRef = stateRefsGroup.currentStartTimeRef;
+  const timerIntervalRef = stateRefsGroup.timerIntervalRef;
+  const showToast = uiHelpers.showToast;
+  const STORAGE_KEYS = config.STORAGE_KEYS;
+  const DEFAULT_STYLES = config.DEFAULT_STYLES;
+  const STYLE_PRESETS = config.STYLE_PRESETS;
+  const debouncedSaveSettings = settingsHelpers.debouncedSaveSettings;
+  const setCustomSelectValue = settingsHelpers.setCustomSelectValue;
+  const applyTheme = uiHelpers.applyTheme;
+  const markdownToHtml = formatHelpers.markdownToHtml;
+  const audioVoiceMap = stateRefsGroup.audioVoiceMap;
+  const t = localization.t;
+  const getUILanguage = localization.getUILanguage;
+  const setUILanguage = localization.setUILanguage;
+  const UI_LOCALES = localization.UI_LOCALES;
+  const loadAndDisplayStats = uiHelpers.loadAndDisplayStats;
+  const applyLocalization = localization.applyLocalization;
+  const initAllCustomSelects = uiHelpers.initAllCustomSelects;
+  const logError = logging.logError;
+  const log = logging.log;
+  const logWarn = logging.logWarn;
+  const setStatus = uiHelpers.setStatus;
+  const setProgress = uiHelpers.setProgress;
+  const stopTimerDisplay = timerHelpers.stopTimerDisplay;
+  const decryptApiKey = apiHelpers.decryptApiKey;
+  const maskApiKey = apiHelpers.maskApiKey;
+  const encryptApiKey = apiHelpers.encryptApiKey;
+  const getProviderFromModel = apiHelpers.getProviderFromModel;
+  const detectVideoPlatform = apiHelpers.detectVideoPlatform;
+  const sanitizeMarkdownHtml = apiHelpers.sanitizeMarkdownHtml;
+  const CONFIG = config.CONFIG;
+  const stateRefs = stateRefsGroup.stateRefs;
+  const initUI = moduleInitializers.initUI;
+  const initStats = moduleInitializers.initStats;
+  const initSettings = moduleInitializers.initSettings;
+  const initCore = moduleInitializers.initCore;
+  const initHandlers = moduleInitializers.initHandlers;
   
   // Initialize UI module
   const uiModule = initUI({
@@ -265,19 +284,8 @@ export function initializeModules(deps) {
     getUILanguage
   });
   
-  // Make modules available globally for debugging purposes only
-  // NOTE: This is an anti-pattern and should be avoided in new code
-  // Use dependency injection instead of accessing modules through window object
-  // These are kept only for backward compatibility and debugging
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  // Type assertion: window is extended with modules at runtime for debugging/backward compatibility
-  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
-  windowWithModules.uiModule = uiModule;
-  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
-  windowWithModules.statsModule = statsModule;
-  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
-  windowWithModules.settingsModule = settingsModule;
+  // NOTE: Modules are no longer added to window object (removed anti-pattern)
+  // All modules are returned and should be accessed through DI
   
   // Initialize core module (business logic)
   // Pass settingsModule to coreModule so it can be passed to processingModule for getVoiceIdByIndex
@@ -303,8 +311,6 @@ export function initializeModules(deps) {
     stateRefs,
     settingsModule
   });
-  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
-  windowWithModules.coreModule = coreModule;
   
   // Initialize handlers module (event listeners)
   // Pass settingsModule to handlers so it doesn't need to use window.settingsModule
@@ -337,8 +343,6 @@ export function initializeModules(deps) {
     closeSummary: coreModule.closeSummary,
     settingsModule
   });
-  // @ts-ignore - modules are added to window for debugging/backward compatibility (runtime extension)
-  windowWithModules.handlersModule = handlersModule;
   
   return {
     uiModule,
@@ -351,15 +355,12 @@ export function initializeModules(deps) {
 
 /**
  * Finalize initialization: load settings, apply localization, setup event listeners
- * @param {Object} modules - Initialized modules
- * @param {Function} initAllCustomSelects - Function to initialize custom selects
+ * @param {import('../../scripts/types.js').PopupModules} modules - Initialized modules
+ * @param {function(): void} initAllCustomSelects - Function to initialize custom selects
  * @returns {Promise<void>}
  */
 export async function finalizeInitialization(modules, initAllCustomSelects) {
   const { settingsModule, uiModule, handlersModule, coreModule } = modules;
-  
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
   
   // Load settings after modules are initialized
   try {
@@ -396,7 +397,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   
   try {
     // Type assertion: handlersModule is returned from initHandlers which has setupEventListeners method
-    const handlersModuleTyped = /** @type {{setupEventListeners: () => void}} */ (handlersModule);
+    const handlersModuleTyped = /** @type {{setupEventListeners: () => void}} */ (/** @type {unknown} */ (handlersModule));
     if (handlersModuleTyped && typeof handlersModuleTyped.setupEventListeners === 'function') {
       handlersModuleTyped.setupEventListeners();
     } else {
@@ -425,6 +426,17 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
     // Continue initialization even if checkProcessingState fails
   }
   
+  // Check summary status immediately on popup open
+  // This ensures summary is displayed if it was generated while popup was closed
+  try {
+    if (coreModule.checkSummaryStatus) {
+      await coreModule.checkSummaryStatus();
+    }
+  } catch (error) {
+    logError('CRITICAL: checkSummaryStatus() failed in init()', error);
+    // Continue initialization even if checkSummaryStatus fails
+  }
+  
   // Start polling for state updates
   try {
     coreModule.startStatePolling();
@@ -435,14 +447,24 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   
   // Load and display version
   try {
-    const manifest = chrome.runtime.getManifest();
-    const version = manifest.version || '3.2.4';
+    const version = getExtensionVersion();
     const versionElement = document.getElementById('versionText');
     if (versionElement) {
       versionElement.textContent = `v${version}`;
     }
   } catch (error) {
     logError('Failed to load version', error);
+    // Fallback: try to get from manifest directly
+    try {
+      const manifest = chrome.runtime.getManifest();
+      const version = manifest?.version || '3.3.0';
+      const versionElement = document.getElementById('versionText');
+      if (versionElement) {
+        versionElement.textContent = `v${version}`;
+      }
+    } catch (fallbackError) {
+      // If all fails, leave default from HTML (v3.3.0)
+    }
   }
 }
 

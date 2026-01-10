@@ -6,15 +6,11 @@ import { exportStats } from '../stats/index.js';
 import { getCacheStats } from '../cache/selectors.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
+import { getExtensionVersion } from '../utils/config.js';
 
-// Get current extension version from manifest
+// Get current extension version (centralized function)
 function getCurrentVersion() {
-  try {
-    return chrome.runtime.getManifest().version || '3.2.4';
-  } catch (error) {
-    logWarn('Failed to get version from manifest, using fallback', error);
-    return '3.2.4';
-  }
+  return getExtensionVersion();
 }
 
 // Settings that can be exported/imported
@@ -79,6 +75,7 @@ const API_KEY_NAMES = [
   'gemini_api_key',
   'grok_api_key',
   'openrouter_api_key',
+  'deepseek_api_key',
   'google_api_key',
   'elevenlabs_api_key',
   'qwen_api_key',
@@ -164,11 +161,10 @@ export async function exportSettings(includeStats = false, includeCache = false)
 /**
  * Import settings from JSON
  * @param {string} jsonData - JSON string
- * @param {Object} options - Import options
- * @param {boolean} options.importStats - Import statistics
- * @param {boolean} options.importCache - Import selector cache
- * @param {boolean} options.overwriteExisting - Overwrite existing settings
- * @returns {Promise<Object>} Import result with counts
+ * @param {{importStats?: boolean, importCache?: boolean, overwriteExisting?: boolean}} [options={}] - Import options
+ * @returns {Promise<{settingsCount: number, statsImported: boolean, cacheImported: boolean}>} Import result
+ * @throws {Error} If JSON parsing fails
+ * @throws {Error} If validation fails
  */
 /**
  * @param {any} jsonData
@@ -275,13 +271,44 @@ export async function importSettings(jsonData, options = {}) {
     
     // Valid enum values for validation
     const VALID_ENUMS = {
-      api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter'],
+      api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter', 'deepseek'],
       audio_provider: ['openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
       output_format: ['pdf', 'epub', 'fb2', 'markdown', 'audio'],
       extraction_mode: ['auto', 'manual'],
       page_mode: ['single', 'multi'],
       pdf_style_preset: ['light', 'dark', 'sepia', 'custom'],
       popup_theme: ['light', 'dark', 'auto']
+    };
+    
+    // Numeric range validators
+    const NUMERIC_RANGES = {
+      audio_speed: { min: 0.25, max: 4.0 },
+      pdf_font_size: { min: 8, max: 72 },
+      elevenlabs_stability: { min: 0.0, max: 1.0 },
+      elevenlabs_similarity: { min: 0.0, max: 1.0 },
+      elevenlabs_style: { min: 0.0, max: 1.0 },
+      respeecher_temperature: { min: 0.0, max: 2.0 },
+      respeecher_repetition_penalty: { min: 0.0, max: 2.0 },
+      respeecher_top_p: { min: 0.0, max: 1.0 }
+    };
+    
+    // Boolean settings that must be validated
+    const BOOLEAN_KEYS = [
+      'generate_toc',
+      'generate_abstract',
+      'translate_images',
+      'use_selector_cache',
+      'enable_selector_caching',
+      'enable_statistics',
+      'elevenlabs_speaker_boost'
+    ];
+    
+    // Object structure validators
+    const OBJECT_KEYS = {
+      custom_models: 'object',
+      hidden_models: 'object',
+      model_by_provider: 'object',
+      audio_voice_map: 'object'
     };
     
     for (const key of STORAGE_KEYS_TO_EXPORT) {
@@ -307,6 +334,19 @@ export async function importSettings(jsonData, options = {}) {
         continue;
       }
       
+      // Handle explicit null values (intentional reset)
+      if (data.settings[key] === null) {
+        if (overwriteExisting) {
+          // Remove the setting from storage (set to undefined to clear it)
+          settingsToImport[key] = undefined;
+          result.settingsImported++;
+          log('Importing null value to reset setting', { key });
+        } else {
+          result.settingsSkipped++;
+        }
+        continue;
+      }
+      
       if (data.settings[key] !== undefined) {
         // Validate enum values
         if (VALID_ENUMS[key] && !VALID_ENUMS[key].includes(data.settings[key])) {
@@ -315,26 +355,41 @@ export async function importSettings(jsonData, options = {}) {
           continue;
         }
         
-        // Validate numeric ranges for specific settings
-        if (key === 'audio_speed' && (typeof data.settings[key] !== 'number' || data.settings[key] < 0.25 || data.settings[key] > 4.0)) {
-          logWarn('Invalid audio_speed value', { value: data.settings[key] });
-          result.warnings.push(`Invalid audio_speed value: ${data.settings[key]}. Must be between 0.25 and 4.0. Skipping.`);
-          continue;
+        // Validate numeric ranges
+        if (NUMERIC_RANGES[key]) {
+          const range = NUMERIC_RANGES[key];
+          if (typeof data.settings[key] !== 'number' || data.settings[key] < range.min || data.settings[key] > range.max) {
+            logWarn('Invalid numeric value for setting', { key, value: data.settings[key], range });
+            result.warnings.push(`Invalid ${key} value: ${data.settings[key]}. Must be between ${range.min} and ${range.max}. Skipping.`);
+            continue;
+          }
         }
         
-        if (key === 'pdf_font_size' && (typeof data.settings[key] !== 'number' || data.settings[key] < 8 || data.settings[key] > 72)) {
-          logWarn('Invalid pdf_font_size value', { value: data.settings[key] });
-          result.warnings.push(`Invalid pdf_font_size value: ${data.settings[key]}. Must be between 8 and 72. Skipping.`);
-          continue;
+        // Validate object structure for complex objects
+        if (OBJECT_KEYS[key]) {
+          const value = data.settings[key];
+          if (value !== null && (typeof value !== 'object' || Array.isArray(value))) {
+            logWarn('Invalid object structure for setting', { key, valueType: typeof value, isArray: Array.isArray(value) });
+            result.warnings.push(`Invalid ${key} value: must be an object. Skipping.`);
+            continue;
+          }
         }
         
         // Validate boolean settings
-        if ((key === 'generate_toc' || key === 'generate_abstract' || key === 'translate_images' || 
-             key === 'use_selector_cache' || key === 'enable_selector_caching' || key === 'enable_statistics') &&
-            typeof data.settings[key] !== 'boolean') {
+        if (BOOLEAN_KEYS.includes(key) && typeof data.settings[key] !== 'boolean') {
           logWarn('Invalid boolean value for setting', { key, value: data.settings[key] });
           result.warnings.push(`Invalid boolean value for ${key}. Skipping.`);
           continue;
+        }
+        
+        // Validate string length for text settings (prevent DoS)
+        if (typeof data.settings[key] === 'string') {
+          const maxStringLength = 100000; // 100KB limit per string setting
+          if (data.settings[key].length > maxStringLength) {
+            logWarn('String value too long for setting', { key, length: data.settings[key].length, max: maxStringLength });
+            result.warnings.push(`Invalid ${key} value: string too long (${data.settings[key].length} > ${maxStringLength}). Skipping.`);
+            continue;
+          }
         }
         
         if (overwriteExisting || !currentSettings[key]) {
@@ -360,9 +415,29 @@ export async function importSettings(jsonData, options = {}) {
       }
     }
     
-    if (Object.keys(settingsToImport).length > 0) {
-      await chrome.storage.local.set(settingsToImport);
+    // Prepare settings for import (remove undefined values, they will clear the setting)
+    const settingsToSave = {};
+    const keysToRemove = [];
+    
+    for (const [key, value] of Object.entries(settingsToImport)) {
+      if (value === undefined) {
+        // Mark for removal
+        keysToRemove.push(key);
+      } else {
+        settingsToSave[key] = value;
+      }
+    }
+    
+    // Save settings
+    if (Object.keys(settingsToSave).length > 0) {
+      await chrome.storage.local.set(settingsToSave);
       log('Settings imported', { count: result.settingsImported });
+    }
+    
+    // Remove settings that were explicitly set to null/undefined
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      log('Settings removed (reset to default)', { keys: keysToRemove });
     }
     
     // Ensure use_selector_cache has a default value if not imported
@@ -433,14 +508,18 @@ export async function importSettings(jsonData, options = {}) {
 export function downloadSettings(jsonData, filename = 'clipaible-settings.json') {
   const blob = new Blob([jsonData], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
   try {
-    const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
   } finally {
+    // CRITICAL: Always clean up DOM element and URL, even if errors occur
+    // Check if element is still in DOM before removing (may have been removed by error)
+    if (a.parentNode) {
+      document.body.removeChild(a);
+    }
     URL.revokeObjectURL(url);
   }
 }
@@ -454,8 +533,9 @@ export function readFileAsText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
-      // @ts-ignore - FileReader.result can be string or ArrayBuffer
-      const result = e.target.result;
+      /** @type {import('../types.js').FileReaderEventTarget} */
+      const target = e.target;
+      const result = target.result;
       if (typeof result === 'string') {
         resolve(result);
       } else {

@@ -1,13 +1,26 @@
 // @ts-check
 // ElevenLabs Text-to-Speech API module for ClipAIble extension
 
-import { log, logError } from '../utils/logging.js';
+import { log, logError, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
 
 /**
  * ElevenLabs TTS API configuration
+ * @readonly
+ * @const {{
+ *   API_URL: string,
+ *   DEFAULT_MODEL: string,
+ *   MODELS: Array<{id: string, name: string}>,
+ *   DEFAULT_VOICE_ID: string,
+ *   POPULAR_VOICES: Array<{id: string, name: string}>,
+ *   MAX_INPUT: number,
+ *   MIN_SPEED: number,
+ *   MAX_SPEED: number,
+ *   DEFAULT_SPEED: number,
+ *   FORMATS: Array<string>
+ * }}
  */
 export const ELEVENLABS_CONFIG = {
   // API endpoint
@@ -67,12 +80,12 @@ export const ELEVENLABS_CONFIG = {
  * Convert text to speech using ElevenLabs TTS API
  * @param {string} text - Text to convert (max 5000 characters)
  * @param {string} apiKey - ElevenLabs API key
- * @param {Object} options - TTS options
- * @param {string} options.voiceId - Voice ID to use (default: Rachel)
- * @param {number} options.speed - Speech speed 0.25-4.0 (default: 1.0)
- * @param {string} options.modelId - Model ID (default: 'eleven_multilingual_v2')
- * @param {string} options.format - Output format (default: 'mp3_44100_128')
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {Partial<import('../types.js').TTSOptions> & {voiceId?: string, modelId?: string, stability?: number, similarityBoost?: number, style?: number, useSpeakerBoost?: boolean}} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (MP3 format)
+ * @throws {Error} If text is empty or too long (max 5000 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If ElevenLabs API request fails
+ * @throws {Error} If network error occurs
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   const {
@@ -86,7 +99,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     useSpeakerBoost = true
   } = options;
   
-  log('ElevenLabs textToSpeech called', { 
+  logDebug('ElevenLabs textToSpeech called', { 
     textLength: text?.length, 
     voiceId, 
     speed, 
@@ -118,7 +131,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
   // eslint-disable-next-line no-control-regex
   if (!/^[\x00-\x7F]*$/.test(apiKey)) {
     logError('ElevenLabs API key contains invalid characters', { 
-      keyLength: apiKey.length,
       // Security: Don't log key prefix
       keyLength: apiKey?.length || 0
     });
@@ -172,7 +184,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
           });
           
           if (!fetchResponse.ok) {
-            clearTimeout(timeout);
             const error = await handleApiError(fetchResponse, 'ElevenLabs', {
               parseErrorData: (errorData) => {
                 // ElevenLabs uses 'detail' instead of 'error'
@@ -192,11 +203,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
             throw error;
           }
           
-          clearTimeout(timeout);
           return fetchResponse;
         } catch (e) {
-          clearTimeout(timeout);
           throw e;
+        } finally {
+          // CRITICAL: Always clear timeout in finally to prevent memory leaks
+          if (timeout) {
+            clearTimeout(timeout);
+          }
         }
       },
       {

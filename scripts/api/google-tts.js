@@ -9,13 +9,22 @@
 //
 // NO FALLBACKS - if API fails, error is thrown immediately
 
-import { log, logError, logWarn } from '../utils/logging.js';
+import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
 
 /**
  * Google Gemini 2.5 TTS API configuration
+ * @readonly
+ * @const {{
+ *   MODELS: Array<string>,
+ *   MODEL: string,
+ *   API_BASE: string,
+ *   MAX_INPUT: number,
+ *   DEFAULT_VOICE: string,
+ *   VOICES: Array<{id: string, name: string}>
+ * }}
  */
 export const GOOGLE_TTS_CONFIG = {
   // Supported TTS models (using Generative Language API endpoint)
@@ -159,11 +168,12 @@ function pcmToWav(pcmData, sampleRate = 24000, bitsPerSample = 16, numChannels =
  * Convert text to speech using Google Gemini 2.5 TTS API
  * @param {string} text - Text to convert (max 24000 characters)
  * @param {string} apiKey - Google API key (same as Gemini API key)
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice name to use (default: 'Callirrhoe')
- * @param {string} options.prompt - Optional style prompt for voice control (combined with text as "Say {prompt}: {text}", API handles correctly and prompt is NOT spoken)
- * @param {string} options.model - Model to use: 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-preview-tts', or 'gemini-2.5-flash-lite-preview-tts' (default: 'gemini-2.5-pro-preview-tts')
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format, 24kHz, 16-bit, mono)
+ * @throws {Error} If text is empty or too long (max 24000 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If Google TTS API request fails
+ * @throws {Error} If network error occurs
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   const {
@@ -254,7 +264,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     // Use Generative Language API endpoint with model in URL
     const endpointUrl = `${GOOGLE_TTS_CONFIG.API_BASE}/models/${validModel}:generateContent`;
     
-    log('Google TTS request', { 
+    logDebug('Google TTS request', { 
       url: endpointUrl, 
       model: validModel,
       voice: validVoice,
@@ -288,7 +298,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
             });
             
             if (!fetchResponse.ok) {
-              clearTimeout(timeout);
               // Log response details for errors to help diagnose
               try {
                 // Clone response before reading to avoid consuming it
@@ -322,11 +331,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
               throw error;
             }
             
-            clearTimeout(timeout);
             return fetchResponse;
           } catch (e) {
-            clearTimeout(timeout);
             throw e;
+          } finally {
+            // CRITICAL: Always clear timeout in finally to prevent memory leaks
+            if (timeout) {
+              clearTimeout(timeout);
+            }
           }
         },
         {

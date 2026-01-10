@@ -37,6 +37,16 @@ export const CONTENT_THRESHOLDS = {
 
 /**
  * Image size thresholds
+ * @readonly
+ * @const {{
+ *   FEATURED_IMAGE_MIN_WIDTH: number,
+ *   FEATURED_IMAGE_MIN_HEIGHT: number,
+ *   AUTHOR_PHOTO_MAX_SIZE: number,
+ *   AUTHOR_PHOTO_SMALL_SIZE: number,
+ *   TRACKING_PIXEL_MAX_SIZE: number,
+ *   SMALL_ICON_MAX_SIZE: number,
+ *   VERY_SMALL_IMAGE_SIZE: number
+ * }}
  */
 export const IMAGE_THRESHOLDS = {
   // Minimum dimensions for featured image
@@ -59,6 +69,17 @@ export const IMAGE_THRESHOLDS = {
 
 /**
  * Content scoring thresholds
+ * @readonly
+ * @const {{
+ *   MIN_CONTENT_SCORE: number,
+ *   GOOD_ENOUGH_SCORE: number,
+ *   HIGH_LINK_DENSITY: number,
+ *   MEDIUM_LINK_DENSITY: number,
+ *   LOW_LINK_DENSITY: number,
+ *   HIGH_COMMA_COUNT: number,
+ *   MEDIUM_COMMA_COUNT: number,
+ *   MIN_SENTENCE_COUNT: number
+ * }}
  */
 export const SCORING_THRESHOLDS = {
   // Minimum score for content candidate
@@ -82,6 +103,8 @@ export const SCORING_THRESHOLDS = {
 
 /**
  * Content container selectors
+ * @readonly
+ * @const {Array<string>}
  */
 export const CONTENT_SELECTORS = [
   '[role="main"]',
@@ -106,6 +129,8 @@ export const STANDFIRST_SELECTORS = [
 
 /**
  * Author selectors
+ * @readonly
+ * @const {Array<string>}
  */
 export const AUTHOR_SELECTORS = [
   'meta[name="author"]',
@@ -121,6 +146,8 @@ export const AUTHOR_SELECTORS = [
 
 /**
  * Date selectors
+ * @readonly
+ * @const {Array<string>}
  */
 export const DATE_SELECTORS = [
   'meta[property="article:published_time"]',
@@ -135,6 +162,8 @@ export const DATE_SELECTORS = [
 
 /**
  * Featured image selectors
+ * @readonly
+ * @const {Array<string>}
  */
 export const FEATURED_IMAGE_SELECTORS = [
   'meta[property="og:image"]',

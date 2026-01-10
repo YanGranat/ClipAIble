@@ -14,7 +14,7 @@ import { extractPdfViaOffscreen } from '../api/pdf-offscreen.js';
  * Extract content from PDF file
  * Uses offscreen document to avoid service worker limitations
  * @param {string} url - PDF file URL
- * @returns {Promise<ExtractionResult>} Extracted content result
+ * @returns {Promise<import('../types.js').ExtractionResult>} Extracted content result
  */
 export async function extractPdfContent(url) {
   log('=== PDF EXTRACTION START ===', { url });

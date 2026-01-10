@@ -4,7 +4,7 @@
 /**
  * Generic function to save TTS API key
  * @param {Object} config - Configuration
- * @param {HTMLElement} config.input - Input element
+ * @param {HTMLInputElement} config.input - Input element
  * @param {HTMLElement} config.saveButton - Save button element
  * @param {HTMLElement} [config.toggleButton] - Toggle button element
  * @param {string} config.storageKey - Storage key

@@ -6,6 +6,8 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { callAI } from '../api/index.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
+import { handleError } from '../utils/error-handler.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
 import {
   buildPreparationSettings,
   logContentAnalysis,
@@ -16,7 +18,21 @@ import {
   logAudioPreparationComplete
 } from './audio-prep-helpers.js';
 
-// Configuration for audio preparation
+/**
+ * Configuration for audio preparation
+ * @readonly
+ * @const {{
+ *   MIN_CHUNK_SIZE: number,
+ *   MAX_CHUNK_SIZE: number,
+ *   IDEAL_CHUNK_SIZE: number,
+ *   TTS_MAX_INPUT: number,
+ *   VOICES: Array<string>,
+ *   DEFAULT_VOICE: string,
+ *   MIN_SPEED: number,
+ *   MAX_SPEED: number,
+ *   DEFAULT_SPEED: number
+ * }}
+ */
 export const AUDIO_CONFIG = {
   // Target chunk size in characters (4-6k for efficiency, will be within TTS limit after cleanup)
   MIN_CHUNK_SIZE: 4000,
@@ -491,6 +507,8 @@ RULES:
    - File paths
    - Version numbers in technical context
    - Markdown formatting symbols (*, _, #, etc.)
+   - PDF page numbers and page references: "Page X", "Page X of Y", "see page X", "refer to page X"
+   - Standalone page numbers (numbers that appear alone on a line or at the end of lines)
 
 2. CONVERT to readable form:
    - Abbreviations → full words (e.g., "etc." → "and so on", "e.g." → "for example")
@@ -558,6 +576,12 @@ ${chunkText}`;
       // Remove leftover URLs
       .replace(/https?:\/\/\S+/g, '')
       .replace(/www\.\S+/g, '')
+      // Remove PDF-specific elements: page numbers and page references
+      .replace(/\bpage\s+\d+\s+of\s+\d+\b/gi, '') // "Page X of Y"
+      .replace(/\bpage\s+\d+\b/gi, '') // "Page X" or "page X"
+      .replace(/\bsee\s+page\s+\d+\b/gi, '') // "see page 5"
+      .replace(/\brefer\s+to\s+page\s+\d+\b/gi, '') // "refer to page 5"
+      .replace(/^\s*\d+\s*$/gm, '') // Standalone page numbers (entire line with just a number)
       // Clean up whitespace
       .replace(/\s+/g, ' ')
       .replace(/\n\s*\n/g, '\n\n')
@@ -737,6 +761,13 @@ export function basicCleanup(text, language = 'auto') {
     .replace(/\[\d+\]/g, '')
     .replace(/\^\d+/g, '')
     .replace(/\(see\s+[^)]+\)/gi, '') // Remove "see X" references
+    // Remove PDF-specific elements: page numbers and page references
+    .replace(/\bpage\s+\d+\s+of\s+\d+\b/gi, '') // "Page X of Y"
+    .replace(/\bpage\s+\d+\b/gi, '') // "Page X" or "page X" (standalone, not part of other text)
+    .replace(/\bsee\s+page\s+\d+\b/gi, '') // "see page 5"
+    .replace(/\brefer\s+to\s+page\s+\d+\b/gi, '') // "refer to page 5"
+    .replace(/^\s*\d+\s*$/gm, '') // Standalone page numbers (entire line with just a number, likely from footer)
+    // Note: We don't remove numbers at end of lines as they might be part of content (e.g., "Section 1", "Chapter 2")
     // Remove code blocks and inline code
     .replace(/```[\s\S]*?```/g, '')
     .replace(/`[^`]+`/g, '')
@@ -792,19 +823,23 @@ export function basicCleanup(text, language = 'auto') {
  * @param {string} apiKey - API key
  * @param {string} model - Model to use
  * @param {string} language - Target language code (e.g., 'ru', 'en', 'auto')
- * @param {Function} updateState - State update callback
+ * @param {import('../types.js').UpdateStateFunction} updateState - State update callback
  * @returns {Promise<Array<{text: string, index: number}>>} Prepared chunks ready for TTS
  */
 export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState, provider = null) {
   // Determine cleanup mode: use AI cleanup for online TTS, basic cleanup for offline
-  const useAICleanup = provider !== 'offline' && apiKey && model;
+  const useAICleanup = Boolean(provider !== 'offline' && apiKey && model);
   
   // Log all preparation settings
   const preparationSettings = buildPreparationSettings(
     { content, title, language, model, apiKey, provider },
     useAICleanup
   );
-  log('Starting audio preparation with all settings', preparationSettings);
+  log('🎙️ Starting audio preparation', { 
+    provider, 
+    useAICleanup: useAICleanup ? 'AI cleanup' : 'basic cleanup',
+    contentItems: content?.length || 0
+  });
   
   // Get UI language for localization
   const uiLang = await getUILanguage();
@@ -823,15 +858,35 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   logContentAnalysis(content, title);
   
   // Convert content to plain text
+  log('📝 Converting content to plain text');
   const convertingStatus = tSync('stageConvertingToText', uiLang);
   updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus, progress: startProgress });
   const plainText = contentToPlainText(content);
   
   // Log plain text conversion
   logPlainTextConversion(content, plainText);
+  log(`✅ Plain text conversion complete: ${plainText.length} characters`);
   
   if (!plainText) {
-    throw new Error('No text content to convert to audio');
+    // Normalize error with context for better logging and error tracking
+    const noTextError = new Error('No text content to convert to audio');
+    const normalized = await handleError(noTextError, {
+      source: 'audioPrep',
+      errorType: 'noTextError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'validateTextContent',
+        contentItemsCount: content?.length || 0
+      }
+    });
+    
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || 'No text content to convert to audio');
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   log('Converted to plain text', { length: plainText.length });
@@ -851,6 +906,7 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   }
   
   // Split into chunks
+  log('✂️ Splitting text into chunks for TTS');
   const splittingStatus = tSync('stageSplittingIntoChunks', uiLang);
   const splitProgress = currentProgress >= 60 ? 60 : 15;
   updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus, progress: splitProgress });
@@ -858,9 +914,39 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   logChunkSplitting(fullText);
   
   const chunks = splitTextIntoChunks(fullText);
+  const avgChunkSize = chunks.length > 0 ? Math.round(chunks.reduce((sum, c) => sum + c.text.length, 0) / chunks.length) : 0;
+  const maxChunkSize = chunks.length > 0 ? Math.max(...chunks.map(c => c.text.length)) : 0;
+  const maxChunkUsage = Math.round((maxChunkSize / AUDIO_CONFIG.MAX_CHUNK_SIZE) * 100);
+  
+  log(`✅ Text split into ${chunks.length} chunks`, {
+    totalTextLength: fullText.length,
+    chunkSizeLimit: AUDIO_CONFIG.MAX_CHUNK_SIZE,
+    avgChunkSize: avgChunkSize,
+    maxChunkSize: maxChunkSize,
+    maxChunkUsage: `${maxChunkUsage}%`,
+    warning: maxChunkUsage > 90 ? '⚠️ Large chunks' : 'OK'
+  });
   
   if (chunks.length === 0) {
-    throw new Error('Failed to split text into chunks');
+    // Normalize error with context for better logging and error tracking
+    const splitError = new Error('Failed to split text into chunks');
+    const normalized = await handleError(splitError, {
+      source: 'audioPrep',
+      errorType: 'splitError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'splitTextIntoChunks',
+        fullTextLength: fullText?.length || 0
+      }
+    });
+    
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || 'Failed to split text into chunks');
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   logChunkSplittingResults(chunks);
@@ -869,6 +955,9 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   const preparedChunks = [];
   
   for (let i = 0; i < chunks.length; i++) {
+    // Check if processing was cancelled before processing each chunk
+    await checkCancellation(`audio preparation chunk ${i + 1}/${chunks.length}`);
+    
     const chunk = chunks[i];
     
     // If already at 60%, keep it there (progress protection will prevent rollback)
@@ -888,9 +977,9 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
       chunk,
       i,
       chunks.length,
-      useAICleanup,
-      apiKey,
-      model,
+      Boolean(useAICleanup),
+      apiKey || '',
+      model || '',
       language,
       prepareChunkForAudio,
       basicCleanup

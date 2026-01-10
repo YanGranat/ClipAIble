@@ -41,14 +41,28 @@ function sleep(ms) {
 
 /**
  * Call function with retry logic
- * @param {Function} fn - Function to call (should return Promise)
- * @param {Object} [options] - Retry options
- * @param {number} [options.maxRetries] - Maximum number of retries
- * @param {Array<number>} [options.delays] - Array of delay times in ms for each retry
- * @param {Array<number>} [options.retryableStatusCodes] - HTTP status codes that should trigger retry
- * @param {Function} [options.onRetry] - Callback called before each retry (attempt, delay)
- * @param {Function} [options.shouldRetry] - Custom function to determine if should retry (error) => boolean
- * @returns {Promise<any>} Result of function call
+ * @template T
+ * @param {() => Promise<T>} fn - Function to call (should return Promise)
+ * @param {import('../types.js').RetryOptions} [options] - Retry options
+ * @returns {Promise<T>} Result of function call
+ * @throws {Error} If all retry attempts fail and error is not retryable
+ * @throws {Error} If max retries exceeded
+ * @example
+ * // Retry API call with default settings
+ * const result = await callWithRetry(async () => {
+ *   const response = await fetch('https://api.example.com/data');
+ *   if (!response.ok) throw new Error(`HTTP ${response.status}`);
+ *   return response.json();
+ * });
+ * @example
+ * // Retry with custom options
+ * const result = await callWithRetry(async () => {
+ *   return await callAPI();
+ * }, {
+ *   maxRetries: 3,
+ *   delays: [1000, 2000, 5000],
+ *   shouldRetry: (error) => error.status === 429 || error.status >= 500
+ * });
  */
 export async function callWithRetry(fn, options = {}) {
   const config = {
@@ -56,14 +70,32 @@ export async function callWithRetry(fn, options = {}) {
     ...options
   };
   
+  const operationStartTime = Date.now();
   let lastError;
   let attempt = 0;
   
+  log('🔄 Starting operation with retry logic', {
+    maxRetries: config.maxRetries,
+    retryableStatusCodes: config.retryableStatusCodes
+  });
+  
   while (attempt <= config.maxRetries) {
+    const attemptStartTime = Date.now();
     try {
       const result = await fn();
+      const attemptDuration = Date.now() - attemptStartTime;
+      const totalDuration = Date.now() - operationStartTime;
+      
       if (attempt > 0) {
-        log(`Retry successful after ${attempt} attempt(s)`);
+        log(`✅ Retry successful after ${attempt} attempt(s)`, {
+          attemptDuration: `${attemptDuration}ms`,
+          totalDuration: `${totalDuration}ms`,
+          retriesUsed: attempt
+        });
+      } else {
+        log('✅ Operation succeeded on first attempt', {
+          duration: `${attemptDuration}ms`
+        });
       }
       return result;
     } catch (error) {
@@ -100,8 +132,14 @@ export async function callWithRetry(fn, options = {}) {
       
       // Don't retry if max attempts reached or error is not retryable
       if (attempt >= config.maxRetries || !shouldRetry) {
+        const totalDuration = Date.now() - operationStartTime;
         if (attempt > 0) {
-          logError(`Retry failed after ${attempt} attempt(s)`, lastError);
+          logError(`❌ Retry failed after ${attempt} attempt(s)`, {
+            totalDuration: `${totalDuration}ms`,
+            error: lastError.message,
+            statusCode: lastError.status || lastError.statusCode,
+            reason: !shouldRetry ? 'Error is not retryable' : 'Max retries reached'
+          });
         }
         throw lastError;
       }
@@ -135,13 +173,20 @@ export async function callWithRetry(fn, options = {}) {
       delay = Math.max(100, delay + jitterAmount); // Minimum 100ms to prevent too-fast retries
       const finalDelay = Math.floor(delay);
       
+      const attemptDuration = Date.now() - attemptStartTime;
+      const totalDuration = Date.now() - operationStartTime;
+      
       // Call onRetry callback if provided
       if (config.onRetry) {
         config.onRetry(attempt + 1, finalDelay);
       } else {
-        logWarn(`Retrying... (attempt ${attempt + 1}/${config.maxRetries}, waiting ${finalDelay}ms)`, {
+        logWarn(`🔄 Retrying operation (attempt ${attempt + 1}/${config.maxRetries})`, {
           error: error.message,
-          statusCode: error.status || error.statusCode
+          statusCode: error.status || error.statusCode,
+          attemptDuration: `${attemptDuration}ms`,
+          totalDuration: `${totalDuration}ms`,
+          waitTime: `${finalDelay}ms`,
+          reason: error.status ? `HTTP ${error.status}` : error.name || 'Network error'
         });
       }
       
@@ -158,8 +203,11 @@ export async function callWithRetry(fn, options = {}) {
  * Wrap fetch call with retry logic
  * @param {string} url - Request URL
  * @param {RequestInit} init - Fetch options
- * @param {Object} retryOptions - Retry configuration
+ * @param {import('../types.js').RetryOptions} retryOptions - Retry configuration
  * @returns {Promise<Response>} Fetch response
+ * @throws {Error} If all retry attempts fail
+ * @throws {Error} If network error occurs
+ * @throws {Error} If max retries exceeded
  */
 export async function fetchWithRetry(url, init = {}, retryOptions = {}) {
   return callWithRetry(

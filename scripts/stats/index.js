@@ -1,12 +1,15 @@
 // @ts-check
 // Statistics module for ClipAIble extension
 
-// @typedef {import('../types.js').StatsData} StatsData
-// @typedef {import('../types.js').HistoryItem} HistoryItem
-// @typedef {import('../types.js').ExportFormat} ExportFormat
+/**
+ * @typedef {import('../types.js').StatsData} StatsData
+ * @typedef {import('../types.js').HistoryItem} HistoryItem
+ * @typedef {import('../types.js').ExportFormat} ExportFormat
+ */
 
 import { log, logError } from '../utils/logging.js';
 import { getUILanguage, tSync } from '../locales.js';
+import { stripHtml } from '../utils/html.js';
 
 const STORAGE_KEY = 'extension_stats';
 
@@ -42,7 +45,12 @@ function getDefaultStats() {
 export async function loadStats() {
   try {
     const result = await chrome.storage.local.get([STORAGE_KEY]);
-    return result[STORAGE_KEY] || getDefaultStats();
+    const stats = result[STORAGE_KEY];
+    if (!stats || typeof stats !== 'object') {
+      return getDefaultStats();
+    }
+    // Type assertion: chrome.storage returns any, but we know it should be StatsData
+    return /** @type {StatsData} */ (stats);
   } catch (error) {
     logError('Failed to load stats', error);
     return getDefaultStats();
@@ -51,7 +59,7 @@ export async function loadStats() {
 
 /**
  * Save stats to storage
- * @param {Object} stats - Stats object to save
+ * @param {import('../types.js').StatsData} stats - Stats object to save
  */
 async function saveStats(stats) {
   try {
@@ -90,11 +98,7 @@ function getCurrentMonthKey() {
 
 /**
  * Record a successful save
- * @param {Object} data - Save data
- * @param {string} data.title - Article title
- * @param {string} data.url - Article URL
- * @param {ExportFormat} data.format - Output format
- * @param {number} data.processingTime - Processing time in ms
+ * @param {{title: string, url: string, format: ExportFormat, processingTime: number}} data - Save data
  */
 export async function recordSave(data) {
   try {
@@ -118,7 +122,7 @@ export async function recordSave(data) {
       // On error, continue with recording (fail-safe)
     }
     
-    log('Recording save', { title, format, processingTime, url });
+    log(`📊 Recording statistics: ${format.toUpperCase()} saved`, { title, processingTime: `${(processingTime / 1000).toFixed(1)}s` });
     
     const stats = await loadStats();
     
@@ -142,8 +146,10 @@ export async function recordSave(data) {
     stats.lastSaved = Date.now();
     
     // Add to history (keep last 50)
+    // SECURITY: Sanitize title to remove any HTML before saving to storage
+    const sanitizedTitle = title ? stripHtml(title).substring(0, 100).trim() : 'Untitled';
     stats.history.unshift({
-      title: title?.substring(0, 100) || 'Untitled', // Note: This is for stats, not user-facing, so English is acceptable
+      title: sanitizedTitle || 'Untitled', // Note: This is for stats, not user-facing, so English is acceptable
       url,
       domain,
       format,

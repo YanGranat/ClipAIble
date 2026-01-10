@@ -49,16 +49,19 @@ export function initUI(deps) {
           const key = element.getAttribute('data-i18n');
           const translation = locale[key] || UI_LOCALES.en[key] || key;
           
-          if (element.tagName === 'INPUT' && (element.type === 'text' || element.type === 'password')) {
-            if (element.hasAttribute('data-i18n-placeholder')) {
-              const placeholderKey = element.getAttribute('data-i18n-placeholder');
-              updates.push(() => {
-                element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
-              });
-            } else {
-              updates.push(() => {
-                element.placeholder = translation;
-              });
+          if (element.tagName === 'INPUT') {
+            const inputElement = /** @type {HTMLInputElement} */ (element);
+            if (inputElement.type === 'text' || inputElement.type === 'password') {
+              if (inputElement.hasAttribute('data-i18n-placeholder')) {
+                const placeholderKey = inputElement.getAttribute('data-i18n-placeholder');
+                updates.push(() => {
+                  inputElement.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+                });
+              } else {
+                updates.push(() => {
+                  inputElement.placeholder = translation;
+                });
+              }
             }
           } else if (element.tagName !== 'OPTION') {
             updates.push(() => {
@@ -71,9 +74,11 @@ export function initUI(deps) {
         document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
           if (!element.hasAttribute('data-i18n')) {
             const placeholderKey = element.getAttribute('data-i18n-placeholder');
-            updates.push(() => {
-              element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
-            });
+            if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+              updates.push(() => {
+                element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+              });
+            }
           }
         });
         
@@ -115,9 +120,11 @@ export function initUI(deps) {
         // Collect title updates
         document.querySelectorAll('[data-i18n-title]').forEach(element => {
           const key = element.getAttribute('data-i18n-title');
-          updates.push(() => {
-            element.title = locale[key] || UI_LOCALES.en[key] || key;
-          });
+          if (element instanceof HTMLElement) {
+            updates.push(() => {
+              element.title = locale[key] || UI_LOCALES.en[key] || key;
+            });
+          }
         });
         
         // Collect aria-label updates
@@ -204,10 +211,13 @@ export function initUI(deps) {
       };
       
       // Remove old listener if exists
+      // @ts-ignore - custom property on window
       if (window.themeChangeListener) {
+        // @ts-ignore - custom property on window
         mediaQuery.removeListener(window.themeChangeListener);
       }
       
+      // @ts-ignore - custom property on window
       window.themeChangeListener = handleThemeChange;
       mediaQuery.addListener(handleThemeChange);
     }
@@ -238,7 +248,13 @@ export function initUI(deps) {
 
   // Set progress bar
   function setProgress(percent, show = true) {
-    elements.progressContainer.style.display = show ? 'block' : 'none';
+    if (show) {
+      elements.progressContainer.classList.remove('hidden');
+      elements.progressContainer.style.display = 'block';
+    } else {
+      elements.progressContainer.classList.add('hidden');
+      elements.progressContainer.style.display = 'none';
+    }
     elements.progressBar.style.width = `${percent}%`;
     elements.progressText.textContent = `${Math.round(percent)}%`;
   }

@@ -4,13 +4,14 @@
 
 // @typedef {import('../types.js').ContentItem} ContentItem
 
-import { log } from '../utils/logging.js';
+import { log, logWarn, logError } from '../utils/logging.js';
 import { prepareContentForAudio } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
 import { PROCESSING_STAGES, getProcessingState, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { cleanTitleForFilename } from '../utils/html.js';
 import { getUILanguage, tSync } from '../locales.js';
+import { handleError } from '../utils/error-handler.js';
 import {
   buildAudioSettings,
   validateAudioParams,
@@ -26,22 +27,16 @@ import {
 
 /**
  * Generate audio file from article content
- * @param {Object} params - Generation parameters
- * @param {Array} params.content - Content items from extraction
- * @param {string} params.title - Article title
- * @param {string} params.apiKey - API key for text preparation (OpenAI/Claude/Gemini)
- * @param {string} params.ttsApiKey - API key for TTS (OpenAI or ElevenLabs)
- * @param {string} params.model - Model for text preparation (e.g., 'gpt-5.1')
- * @param {string} params.provider - TTS provider: 'openai' or 'elevenlabs' (default: 'openai')
- * @param {string} params.voice - TTS voice (OpenAI: voice name, ElevenLabs: voice ID)
- * @param {number} params.speed - TTS speed 0.25-4.0 (default: 1.0)
- * @param {string} params.format - Audio format (default: 'mp3')
- * @param {string} params.language - Target language for TTS pronunciation (default: 'auto')
- * @param {string} [params.googleTtsVoice] - Google TTS voice
- * @param {string} [params.googleTtsPrompt] - Google TTS prompt
- * @param {number} [params.tabId] - Tab ID for offline TTS
- * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update callback
+ * @param {import('../types.js').AudioGenerationData} params - Generation parameters
+ * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update callback
  * @returns {Promise<void>} Triggers download when complete
+ * @throws {Error} If content is empty
+ * @throws {Error} If API key is missing (for non-offline providers)
+ * @throws {Error} If audio generation fails
+ * @throws {Error} If TTS conversion fails
+ * @throws {Error} If processing is cancelled
+ * @see {@link DocumentGeneratorFactory.generate} For unified document generation interface
+ * @see {@link textToSpeech} For the underlying TTS conversion
  */
 export async function generateAudio(params, updateState) {
   const entryTime = Date.now();
@@ -105,8 +100,28 @@ export async function generateAudio(params, updateState) {
   );
   
   if (!preparedChunks || preparedChunks.length === 0) {
+    // Normalize error with context for better logging and error tracking
+    const prepError = new Error('Failed to prepare content for audio generation');
+    const normalized = await handleError(prepError, {
+      source: 'audioGeneration',
+      errorType: 'preparationError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'prepareContentForAudio',
+        contentItemsCount: content?.length || 0,
+        hasPreparedChunks: !!preparedChunks,
+        preparedChunksLength: preparedChunks?.length || 0
+      }
+    });
+    
     const uiLang = await getUILanguage();
-    throw new Error(tSync('errorFailedToPrepareContent', uiLang));
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorFailedToPrepareContent', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   // Determine voice and format based on provider
@@ -118,6 +133,12 @@ export async function generateAudio(params, updateState) {
 
   // Step 2: Convert chunks to speech (using selected TTS provider)
   const providerName = getProviderName(provider);
+  log(`🔊 Starting TTS conversion with ${providerName}`, { 
+    chunks: preparedChunks.length, 
+    voice: ttsVoice, 
+    format: ttsFormat 
+  });
+  
   if (updateState) {
     const uiLang = await getUILanguage();
     updateState({ 
@@ -138,16 +159,65 @@ export async function generateAudio(params, updateState) {
   const chunksToSpeechStart = Date.now();
   const audioBuffer = await chunksToSpeech(preparedChunks, ttsApiKey, ttsOptions, updateState);
   
-  // Log completion
-  logTTSCompletion(chunksToSpeechStart, audioBuffer);
-  
+  // CRITICAL: Check audioBuffer BEFORE using it
   if (!audioBuffer || audioBuffer.byteLength === 0) {
     const uiLang = await getUILanguage();
-    throw new Error(tSync('errorAudioEmptyResult', uiLang));
+    // Normalize error with context for better logging and error tracking
+    const emptyResultError = new Error('Audio generation returned empty result');
+    const normalized = await handleError(emptyResultError, {
+      source: 'audioGeneration',
+      errorType: 'emptyResultError',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'validateAudioResult',
+        hasAudioBuffer: !!audioBuffer,
+        audioBufferLength: audioBuffer?.byteLength || 0,
+        preparedChunksCount: preparedChunks?.length || 0
+      }
+    });
+    
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorAudioEmptyResult', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   // Detect actual format from buffer (API may return different format than requested)
-  const actualFormat = detectAudioFormat(audioBuffer);
+  // CRITICAL: Must be done AFTER validation to ensure audioBuffer is valid
+  let actualFormat;
+  try {
+    actualFormat = detectAudioFormat(audioBuffer);
+    // Validate detected format
+    if (!actualFormat || typeof actualFormat !== 'string') {
+      logWarn('Invalid format detected, using requested format as fallback', {
+        detectedFormat: actualFormat,
+        requestedFormat: format,
+        bufferSize: audioBuffer.byteLength
+      });
+      actualFormat = format || 'mp3';
+    }
+  } catch (formatError) {
+    logError('Failed to detect audio format, using requested format', {
+      error: formatError.message,
+      requestedFormat: format,
+      bufferSize: audioBuffer.byteLength,
+      stack: formatError.stack
+    });
+    actualFormat = format || 'mp3';
+  }
+  
+  // Log completion
+  logTTSCompletion(chunksToSpeechStart, audioBuffer);
+  const audioSizeMB = (audioBuffer.byteLength / 1024 / 1024).toFixed(2);
+  const audioSizeKB = (audioBuffer.byteLength / 1024).toFixed(1);
+  log(`✅ TTS conversion complete: ${audioSizeMB} MB (${audioSizeKB} KB) audio generated`, {
+    sizeBytes: audioBuffer.byteLength,
+    format: actualFormat,
+    chunksProcessed: preparedChunks.length
+  });
   
   log('Audio generated', { 
     totalSize: audioBuffer.byteLength,
@@ -165,7 +235,26 @@ export async function generateAudio(params, updateState) {
     });
   }
   
-  const extension = getAudioExtension(actualFormat);
+  // Validate extension generation
+  let extension;
+  try {
+    extension = getAudioExtension(actualFormat);
+    if (!extension || typeof extension !== 'string' || extension.length === 0) {
+      logWarn('Invalid extension generated, using mp3 as fallback', {
+        format: actualFormat,
+        generatedExtension: extension
+      });
+      extension = 'mp3';
+    }
+  } catch (extensionError) {
+    logError('Failed to get audio extension, using mp3 as fallback', {
+      error: extensionError.message,
+      format: actualFormat,
+      stack: extensionError.stack
+    });
+    extension = 'mp3';
+  }
+  
   // Title should already be cleaned in background.js, but do final cleanup just in case
   const cleanTitle = cleanTitleForFilename(title || 'article');
   const filename = sanitizeFilename(cleanTitle) + '.' + extension;
@@ -177,7 +266,20 @@ export async function generateAudio(params, updateState) {
   }
   
   // Use actual format for MIME/extension to avoid corrupt files (e.g., WAV from Qwen/Respeecher)
-  await downloadAudio(audioBuffer, filename, actualFormat);
+  try {
+    await downloadAudio(audioBuffer, filename, actualFormat);
+  } catch (downloadError) {
+    // Enhanced error context for expensive operations
+    logError('Audio download failed', {
+      error: downloadError.message,
+      filename,
+      format: actualFormat,
+      bufferSize: audioBuffer.byteLength,
+      chunksProcessed: preparedChunks.length,
+      stack: downloadError.stack
+    });
+    throw downloadError;
+  }
   
   if (updateState) {
     const uiLang = await getUILanguage();
@@ -234,6 +336,12 @@ async function downloadAudio(buffer, filename, format) {
     }
   } else {
     // Fallback for environments without createObjectURL (MV3 SW)
+    logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
+      reason: 'URL.createObjectURL not available in MV3 service worker',
+      method: 'data URL via FileReader (fallback)',
+      impact: 'Slower download, higher memory usage',
+      size: `${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB`
+    });
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
@@ -264,7 +372,18 @@ async function downloadAudio(buffer, filename, format) {
 function detectAudioFormat(buffer) {
   if (!buffer || buffer.byteLength < 12) return 'mp3';
   
-  const view = new Uint8Array(buffer);
+  // Safety check: ensure buffer is valid ArrayBuffer
+  if (!(buffer instanceof ArrayBuffer)) {
+    return 'mp3';
+  }
+  
+  let view;
+  try {
+    view = new Uint8Array(buffer);
+  } catch (e) {
+    // If Uint8Array creation fails, return default format
+    return 'mp3';
+  }
   
   // WAV: starts with "RIFF" and has "WAVE" at offset 8
   if (view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46 &&

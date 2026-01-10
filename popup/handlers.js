@@ -11,7 +11,7 @@ import { setupAudioHandlers } from './handlers/audio.js';
 import { setupSummaryHandlers } from './handlers/summary.js';
 import { setupThemeHandlers } from './handlers/theme.js';
 import { setupTtsKeyHandlers } from './handlers/tts-keys.js';
-import { CONFIG } from '../../scripts/utils/config.js';
+import { CONFIG } from '../scripts/utils/config.js';
 
 /**
  * @typedef {Object} WindowWithModules
@@ -285,6 +285,8 @@ export function initHandlers(deps) {
         // Close custom dropdown immediately (lightweight operation)
         if (elements.customModelDropdown) {
           requestAnimationFrame(() => {
+            // CRITICAL: Add 'hidden' class (it has display: none !important)
+            elements.customModelDropdown.classList.add('hidden');
             elements.customModelDropdown.style.display = 'none';
           });
         }
@@ -301,7 +303,8 @@ export function initHandlers(deps) {
             STORAGE_KEYS.CLAUDE_API_KEY,
             STORAGE_KEYS.GEMINI_API_KEY,
             STORAGE_KEYS.GROK_API_KEY,
-            STORAGE_KEYS.OPENROUTER_API_KEY
+            STORAGE_KEYS.OPENROUTER_API_KEY,
+            STORAGE_KEYS.DEEPSEEK_API_KEY
           ]);
           
           let apiKeyValue = '';
@@ -357,6 +360,16 @@ export function initHandlers(deps) {
               apiKeyValue = maskApiKey(result[STORAGE_KEYS.OPENROUTER_API_KEY]);
               apiKeyEncrypted = result[STORAGE_KEYS.OPENROUTER_API_KEY];
             }
+          } else if (provider === 'deepseek' && result[STORAGE_KEYS.DEEPSEEK_API_KEY]) {
+            try {
+              const decrypted = await decryptApiKey(result[STORAGE_KEYS.DEEPSEEK_API_KEY]);
+              apiKeyValue = maskApiKey(decrypted);
+              apiKeyEncrypted = result[STORAGE_KEYS.DEEPSEEK_API_KEY];
+            } catch (error) {
+              logError('Failed to decrypt DeepSeek API key', error);
+              apiKeyValue = maskApiKey(result[STORAGE_KEYS.DEEPSEEK_API_KEY]);
+              apiKeyEncrypted = result[STORAGE_KEYS.DEEPSEEK_API_KEY];
+            }
           }
           
           // Defer DOM updates to requestAnimationFrame
@@ -385,7 +398,7 @@ export function initHandlers(deps) {
               logError('Failed to update API provider UI', error);
             });
           }
-        }, 0);
+        });
       });
     }
 

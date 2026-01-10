@@ -3,14 +3,16 @@
 
 // @ts-check
 
-// @typedef {import('../types.js').ContentItem} ContentItem
+/**
+ * @typedef {import('../types.js').ContentItem} ContentItem
+ */
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { LANGUAGE_NAMES } from '../utils/config.js';
-import { getProviderFromModel, parseModelConfig, callAI } from '../api/index.js';
-import { decryptApiKey } from '../utils/encryption.js';
+import { callAI } from '../api/index.js';
 import { stripHtml } from '../utils/html.js';
 import { tSync, getUILanguage } from '../locales.js';
+import { handleError } from '../utils/error-handler.js';
 
 /**
  * Generate abstract for content
@@ -30,40 +32,86 @@ export async function generateAbstract(content, title, apiKey, model, language =
     return '';
   }
   
-  // Decrypt API key if needed
-  let decryptedApiKey = apiKey;
-  try {
-    decryptedApiKey = await decryptApiKey(apiKey);
-  } catch (error) {
-    log('API key decryption failed for abstract generation, using as-is', error);
-  }
-  
   // Extract text content (skip code, images, etc.)
+  // CRITICAL: Use same extraction logic as generateSummary for consistency
   let articleText = '';
   for (const item of content) {
     if (item.type === 'code') continue; // Skip code blocks
     if (item.type === 'image') continue; // Skip images
     
-    if (item.text) {
-      // Strip HTML tags for cleaner text
-      const text = stripHtml(item.text);
-      if (text && text.trim()) {
-        articleText += text.trim() + '\n\n';
+    switch (item.type) {
+      case 'heading': {
+        const level = Math.min(Math.max(item.level || 2, 1), 6);
+        const prefix = '#'.repeat(level);
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          articleText += `${prefix} ${text.trim()}\n\n`;
+        }
+        break;
       }
-    }
-    
-    if (item.items && Array.isArray(item.items)) {
-      for (const listItem of item.items) {
-        if (typeof listItem === 'string') {
-          articleText += listItem.trim() + '\n';
-        } else if (listItem && listItem.html) {
-          const text = stripHtml(listItem.html);
+      
+      case 'paragraph': {
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          articleText += `${text.trim()}\n\n`;
+        }
+        break;
+      }
+      
+      case 'quote':
+      case 'blockquote': {
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          const quoted = text.trim().split('\n').map(line => `> ${line}`).join('\n');
+          articleText += `${quoted}\n\n`;
+        }
+        break;
+      }
+      
+      case 'list': {
+        const items = item.items || [];
+        const isOrdered = item.ordered || false;
+        items.forEach((listItem, index) => {
+          const prefix = isOrdered ? `${index + 1}.` : '-';
+          let itemText = '';
+          if (typeof listItem === 'string') {
+            itemText = listItem.trim();
+          } else if (listItem && listItem.html) {
+            itemText = stripHtml(listItem.html).trim();
+          } else if (listItem && 'text' in listItem && listItem.text && typeof listItem.text === 'string') {
+            itemText = stripHtml(listItem.text).trim();
+          }
+          if (itemText) {
+            articleText += `${prefix} ${itemText}\n`;
+          }
+        });
+        articleText += '\n';
+        break;
+      }
+      
+      default: {
+        // Fallback for other types
+        if (item.text) {
+          const text = stripHtml(item.text);
           if (text && text.trim()) {
-            articleText += text.trim() + '\n';
+            articleText += `${text.trim()}\n\n`;
           }
         }
+        if (item.items && Array.isArray(item.items)) {
+          for (const listItem of item.items) {
+            if (typeof listItem === 'string') {
+              articleText += `${listItem.trim()}\n`;
+            } else if (listItem && listItem.html) {
+              const text = stripHtml(listItem.html);
+              if (text && text.trim()) {
+                articleText += `${text.trim()}\n`;
+              }
+            }
+          }
+          articleText += '\n';
+        }
+        break;
       }
-      articleText += '\n';
     }
   }
   
@@ -108,92 +156,20 @@ ${articleText}
 Generate the TL;DR:`;
   
   try {
-    const provider = getProviderFromModel(model);
-    const { modelName } = parseModelConfig(model);
-    let abstract = '';
+    // CRITICAL: Use callAI which automatically routes to the correct provider based on model
+    // callAI handles API key decryption internally (supports both encrypted and plain keys)
+    // This ensures support for all providers including DeepSeek, Qwen, Grok, etc.
+    log('=== CALLING AI FOR ABSTRACT ===', { 
+      model, 
+      promptLength: userPrompt.length,
+      systemPromptLength: systemPrompt.length,
+      timestamp: Date.now()
+    });
     
-    if (provider === 'openai') {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${decryptedApiKey}`
-        },
-        body: JSON.stringify({
-          model: modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          // Translation quality is priority #1 - never reduce quality for cost savings
-          // reasoning_effort: 'high' ensures best translation quality
-          reasoning_effort: 'high'
-        })
-      });
-      
-      if (!response.ok) {
-        const uiLang = await getUILanguage();
-        if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
-        }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
-      }
-      
-      const result = await response.json();
-      abstract = result.choices?.[0]?.message?.content?.trim() || '';
-    } else if (provider === 'claude') {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Api-Key': decryptedApiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true'
-        },
-        body: JSON.stringify({
-          model: modelName,
-          max_tokens: 1000,
-          system: systemPrompt,
-          messages: [
-            { role: 'user', content: userPrompt }
-          ]
-        })
-      });
-      
-      if (!response.ok) {
-        const uiLang = await getUILanguage();
-        if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
-        }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
-      }
-      
-      const result = await response.json();
-      abstract = result.content?.find(c => c.type === 'text')?.text?.trim() || '';
-    } else if (provider === 'gemini') {
-      const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': decryptedApiKey
-        },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: combinedPrompt }] }]
-        })
-      });
-      
-      if (!response.ok) {
-        const uiLang = await getUILanguage();
-        if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
-        }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
-      }
-      
-      const result = await response.json();
-      abstract = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
-    }
+    const abstractResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
+    
+    // Extract string from response (callAI returns string when jsonResponse=false, but TypeScript sees AIResponse|string)
+    let abstract = typeof abstractResponse === 'string' ? abstractResponse : (abstractResponse?.content || '');
     
     if (abstract) {
       // Post-process to ensure single paragraph: remove extra newlines and merge into one paragraph
@@ -219,8 +195,12 @@ Generate the TL;DR:`;
 
 /**
  * Generate summary for article content
- * @param {Object} data - {contentItems, apiKey, model, url, language}
- * @returns {Promise<Object>} {summary: string}
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string}} data - Summary generation data
+ * @returns {Promise<{summary: string}>} Generated summary
+ * @throws {Error} If contentItems is empty
+ * @throws {Error} If API key is missing
+ * @throws {Error} If summary generation fails
+ * @throws {Error} If network error occurs
  */
 export async function generateSummary(data) {
   const { contentItems, apiKey, model, url, language } = data;
@@ -235,13 +215,51 @@ export async function generateSummary(data) {
   });
   
   if (!contentItems || contentItems.length === 0) {
+    // Normalize error with context for better logging and error tracking
+    const noContentError = new Error('No content provided for summary generation');
+    const normalized = await handleError(noContentError, {
+      source: 'summaryGeneration',
+      errorType: 'noContentForSummary',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'validateContent',
+        hasContentItems: !!contentItems,
+        contentItemsLength: contentItems?.length || 0
+      }
+    });
+    
     const uiLang = await getUILanguage();
-    throw new Error(tSync('errorNoContentForSummary', uiLang));
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorNoContentForSummary', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   if (!apiKey || !model) {
+    // Normalize error with context for better logging and error tracking
+    const noApiKeyError = new Error('API key or model not provided for summary generation');
+    const normalized = await handleError(noApiKeyError, {
+      source: 'summaryGeneration',
+      errorType: 'noApiKeyForSummary',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'validateApiKey',
+        hasApiKey: !!apiKey,
+        hasModel: !!model
+      }
+    });
+    
     const uiLang = await getUILanguage();
-    throw new Error(tSync('errorApiKeyRequiredForSummary', uiLang));
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorApiKeyRequiredForSummary', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   // Determine target language for summary
@@ -260,7 +278,16 @@ export async function generateSummary(data) {
   // No need to decrypt here - callAI uses getDecryptedKeyCached which handles both encrypted and plain keys
   
   // Extract structured text content (preserve headings, lists, quotes, but skip code and images)
+  // CRITICAL: contentItems should already be translated if translation was performed
+  // (translation happens before summary generation in the pipeline)
   let articleText = '';
+  log('=== EXTRACTING TEXT FROM CONTENT ITEMS FOR SUMMARY ===', {
+    contentItemsCount: contentItems.length,
+    targetLanguage: targetLang,
+    langName,
+    timestamp: Date.now()
+  });
+  
   for (const item of contentItems) {
     if (item.type === 'code') continue; // Skip code blocks
     if (item.type === 'image') continue; // Skip images
@@ -304,7 +331,7 @@ export async function generateSummary(data) {
             itemText = listItem.trim();
           } else if (listItem && listItem.html) {
             itemText = stripHtml(listItem.html).trim();
-          } else if (listItem && listItem.text) {
+          } else if (listItem && 'text' in listItem && listItem.text && typeof listItem.text === 'string') {
             itemText = stripHtml(listItem.text).trim();
           }
           if (itemText) {
@@ -360,8 +387,27 @@ export async function generateSummary(data) {
   }
   
   if (!articleText.trim()) {
+    // Normalize error with context for better logging and error tracking
+    const noTextError = new Error('No text extracted from content for summary generation');
+    const normalized = await handleError(noTextError, {
+      source: 'summaryGeneration',
+      errorType: 'noTextExtractedForSummary',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'extractText',
+        contentItemsCount: contentItems?.length || 0,
+        articleTextLength: articleText.length
+      }
+    });
+    
     const uiLang = await getUILanguage();
-    throw new Error(tSync('errorNoTextExtractedForSummary', uiLang));
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorNoTextExtractedForSummary', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   const systemPrompt = `You are an expert at creating summaries. Generate a summary of the text content in Markdown format.
@@ -408,7 +454,10 @@ Generate a summary in Markdown format in ${langName} language:`;
       timestamp: Date.now()
     });
     
-    const summary = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
+    const summaryResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
+    
+    // Extract string from response (callAI returns string when jsonResponse=false, but TypeScript sees AIResponse|string)
+    const summary = typeof summaryResponse === 'string' ? summaryResponse : (summaryResponse?.content || '');
     
     log('=== AI RESPONSE RECEIVED ===', { 
       summaryLength: summary?.length || 0,

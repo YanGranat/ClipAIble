@@ -50,8 +50,8 @@ export function isNavigationParagraphModule(text, NAV_PATTERNS_STARTS_WITH, PAYW
  * Check if element should be excluded
  * This is a large function (~500 lines) that checks many exclusion conditions
  * @param {Element} element - Element to check
- * @param {Object} constants - Constants object with patterns and thresholds
- * @param {Object} helpers - Helper functions (isFootnoteLink, isIcon, etc.)
+ * @param {{EXCLUDED_CLASSES: Array<string>, PAYWALL_CLASSES: Array<string>, NAV_PATTERNS_CONTAINS: Array<RegExp>, COURSE_AD_PATTERNS: Array<string>, [key: string]: any}} constants - Constants object with patterns and thresholds
+ * @param {{isFootnoteLink: function(Element): boolean, isIcon: function(Element): boolean, [key: string]: any}} helpers - Helper functions
  * @returns {boolean} True if element should be excluded
  */
 export function isExcludedModule(element, constants, helpers) {
@@ -134,7 +134,8 @@ export function isExcludedModule(element, constants, helpers) {
   // Exclude iframe elements (except those that might be embedded content)
   if (tagName === 'iframe') {
     // Check if iframe is likely an ad or tracking
-    const src = (element.src || '').toLowerCase();
+    const iframeElement = /** @type {HTMLIFrameElement} */ (element);
+    const src = (iframeElement.src || '').toLowerCase();
     const adPatterns = ['ad', 'ads', 'advertisement', 'doubleclick', 'googleads', 'pubmatic', 'openx', 'adsystem'];
     if (adPatterns.some(pattern => src.includes(pattern))) {
       return true;
@@ -167,6 +168,11 @@ export function isExcludedModule(element, constants, helpers) {
   // Exclude elements containing email input fields (newsletter signup)
   // But be careful - contact forms in articles should not be excluded
   // Only exclude if it's clearly a newsletter/subscription form
+  // Check for navigation text patterns
+  const text = element.textContent || '';
+  const textLower = text.toLowerCase();
+  const textTrimmed = text.trim();
+  
   if (element.querySelector && element.querySelector('input[type="email"]')) {
     // Check if it's a newsletter signup (not a contact form in article)
     const hasNewsletterText = textLower.includes('newsletter') || 
@@ -200,11 +206,6 @@ export function isExcludedModule(element, constants, helpers) {
   // For paragraphs and headings, be more lenient with text-based exclusions
   // Only exclude if it's clearly not content (metadata, navigation, ads)
   const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
-  
-  // Check for navigation text patterns
-  const text = element.textContent || '';
-  const textLower = text.toLowerCase();
-  const textTrimmed = text.trim();
   
   // Common navigation tab words (multilingual) - defined early for use throughout function
   const navigationTabWords = [
@@ -420,7 +421,7 @@ export function isExcludedModule(element, constants, helpers) {
   }
   
   // Exclude metadata links (short text with URL pattern)
-  // Pattern: "Короткая ссылка сюда: lesswrong.ru/16" or similar
+  // Pattern: "Short link here: lesswrong.ru/16" or similar
   if (tagName === 'a' || tagName === 'p' || tagName === 'span') {
     // Check for metadata patterns: short text + URL or domain
     const urlPattern = /(https?:\/\/)?([a-z0-9-]+\.)+[a-z]{2,}(\/[^\s]*)?/i;

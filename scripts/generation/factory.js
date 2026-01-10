@@ -19,6 +19,12 @@ import { CONFIG } from '../utils/config.js';
  * @typedef {import('../types.js').GenerationData} GenerationData
  * @typedef {import('../types.js').ExtendedGenerationData} ExtendedGenerationData
  * @typedef {import('../types.js').AudioGenerationData} AudioGenerationData
+ * @typedef {import('../types.js').DocumentGenerationResult} DocumentGenerationResult
+ * @typedef {import('../types.js').PdfGenerationResult} PdfGenerationResult
+ * @typedef {import('../types.js').EpubGenerationResult} EpubGenerationResult
+ * @typedef {import('../types.js').Fb2GenerationResult} Fb2GenerationResult
+ * @typedef {import('../types.js').MarkdownGenerationResult} MarkdownGenerationResult
+ * @typedef {import('../types.js').AudioGenerationResult} AudioGenerationResult
  */
 
 /**
@@ -28,11 +34,35 @@ import { CONFIG } from '../utils/config.js';
 export class DocumentGeneratorFactory {
   /**
    * Generate document based on format
-   * @param {string} format - Output format ('pdf', 'epub', 'fb2', 'markdown', 'audio')
-   * @param {Object} data - Processing data
-   * @param {Object} result - Extracted content result
-   * @param {Function} updateState - State update function
-   * @returns {Promise<Blob|string>} Generated document (Blob for binary formats, string for text formats)
+   * @template {import('../types.js').ExportFormat} T
+   * @param {T} format - Output format ('pdf', 'epub', 'fb2', 'markdown', 'audio')
+   * @param {import('../types.js').ProcessingData} data - Processing data
+   * @param {import('../types.js').ExtractionResult} result - Extracted content result
+   * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
+   * @returns {Promise<DocumentGenerationResult>} Generated document (type depends on format: PdfGenerationResult for 'pdf', EpubGenerationResult for 'epub', Fb2GenerationResult for 'fb2', MarkdownGenerationResult for 'markdown', AudioGenerationResult for 'audio')
+   * @throws {Error} If content is empty
+   * @throws {Error} If document generation fails
+   * @throws {Error} If format is invalid
+   * @see {@link generatePdf} For PDF generation
+   * @see {@link generateEpub} For EPUB generation
+   * @see {@link generateFb2} For FB2 generation
+   * @see {@link generateMarkdown} For Markdown generation
+   * @see {@link generateAudio} For Audio generation
+   * @example
+   * // Generate PDF document
+   * const pdfResult = await DocumentGeneratorFactory.generate('pdf', processingData, extractionResult, updateState);
+   * if (pdfResult instanceof Blob) {
+   *   const url = URL.createObjectURL(pdfResult);
+   *   // Download PDF...
+   * }
+   * @example
+   * // Generate Markdown document
+   * const markdown = await DocumentGeneratorFactory.generate('markdown', processingData, extractionResult, updateState);
+   * // Use markdown content...
+   * @example
+   * // Generate Audio (triggers download automatically)
+   * await DocumentGeneratorFactory.generate('audio', processingData, extractionResult, updateState);
+   * // Audio file will be downloaded automatically
    */
   static async generate(format, data, result, updateState) {
     const commonParams = {
@@ -47,30 +77,44 @@ export class DocumentGeneratorFactory {
       language: data.effectiveLanguage || 'auto'
     };
 
+    log(`📄 Starting ${format.toUpperCase()} document generation`);
+    
     switch (format) {
-      case 'markdown':
+      case 'markdown': {
         await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingMarkdown', 65);
-        return generateMarkdown({
+        const markdownResult = await generateMarkdown({
           ...commonParams,
           apiKey: data.apiKey,
           model: data.model
         }, updateState);
+        log('✅ Markdown document generated successfully');
+        return markdownResult;
+      }
 
-      case 'epub':
+      case 'epub': {
         await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingEpub', 65);
-        return generateEpub(commonParams, updateState);
+        const epubResult = await generateEpub(commonParams, updateState);
+        log('✅ EPUB document generated successfully');
+        return epubResult;
+      }
 
-      case 'fb2':
+      case 'fb2': {
         await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingFb2', 65);
-        return generateFb2(commonParams, updateState);
+        const fb2Result = await generateFb2(commonParams, updateState);
+        log('✅ FB2 document generated successfully');
+        return fb2Result;
+      }
 
-      case 'audio':
-        return DocumentGeneratorFactory._generateAudio(data, result, updateState);
+      case 'audio': {
+        await DocumentGeneratorFactory._generateAudio(data, result, updateState);
+        log('✅ Audio file generated successfully');
+        return;
+      }
 
       case 'pdf':
-      default:
+      default: {
         await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingPdf', 65);
-        return generatePdf({
+        const pdfResult = await generatePdf({
           ...commonParams,
           apiKey: data.apiKey,
           model: data.model,
@@ -83,16 +127,22 @@ export class DocumentGeneratorFactory {
           linkColor: data.linkColor || '#6cacff',
           pageMode: data.pageMode || 'single'
         }, updateState);
+        log('✅ PDF document generated successfully');
+        return pdfResult;
+      }
     }
   }
 
   /**
    * Generate audio document (handles TTS provider selection and API key management)
    * @private
-   * @param {Object} data - Processing data
-   * @param {Object} result - Extracted content result
-   * @param {Function} updateState - State update function
-   * @returns {Promise<Blob>} Generated audio blob
+   * @param {import('../types.js').ProcessingData} data - Processing data
+   * @param {import('../types.js').ExtractionResult} result - Extracted content result
+   * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
+   * @returns {Promise<void>} Triggers download when complete
+   * @throws {Error} If TTS API key is missing (for non-offline providers)
+   * @throws {Error} If audio generation fails
+   * @throws {Error} If TTS provider is invalid
    */
   static async _generateAudio(data, result, updateState) {
     const audioStartTime = Date.now();

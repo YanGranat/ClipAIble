@@ -10,6 +10,17 @@ import { isValidExternalUrl } from '../utils/security.js';
 
 /**
  * Qwen3-TTS-Flash API configuration
+ * @readonly
+ * @const {{
+ *   API_URL: string,
+ *   MODEL: string,
+ *   MAX_INPUT: number,
+ *   SAMPLE_RATE: number,
+ *   FORMAT: string,
+ *   DEFAULT_VOICE: string,
+ *   DEFAULT_SPEED: number,
+ *   VOICES: Array<{id: string, name: string}>
+ * }}
  */
 export const QWEN_CONFIG = {
   // API endpoint (Alibaba Cloud DashScope - International/Singapore)
@@ -128,11 +139,12 @@ function detectLanguage(text) {
  * Convert text to speech using Qwen3-TTS-Flash API
  * @param {string} text - Text to convert (max 500 characters)
  * @param {string} apiKey - Alibaba Cloud DashScope API key
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice name to use (default: 'Cherry')
- * @param {string} options.language - Language code (auto-detected if not provided)
- * @param {number} options.speed - Speech speed (not directly supported)
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer
+ * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format)
+ * @throws {Error} If text is empty or too long (max 500 characters)
+ * @throws {Error} If API key is missing
+ * @throws {Error} If Qwen API request fails
+ * @throws {Error} If network error occurs
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   const {
@@ -204,16 +216,18 @@ export async function textToSpeech(text, apiKey, options = {}) {
           });
           
           if (!fetchResponse.ok) {
-            clearTimeout(timeout);
             const error = await handleApiError(fetchResponse, 'Qwen3-TTS-Flash');
             throw error;
           }
           
-          clearTimeout(timeout);
           return fetchResponse;
         } catch (e) {
-          clearTimeout(timeout);
           throw e;
+        } finally {
+          // CRITICAL: Always clear timeout in finally to prevent memory leaks
+          if (timeout) {
+            clearTimeout(timeout);
+          }
         }
       },
       {

@@ -5,12 +5,13 @@
 /**
  * Execute Piper TTS in page context
  * @param {string} text - Text to convert
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID
- * @param {string} options.language - Language code
- * @param {number} options.speed - Speech speed
- * @param {string} options.moduleUrl - URL of the Piper TTS module (passed from service worker)
+ * @param {{voice: string, language: string, speed: number, moduleUrl: string}} options - TTS options
  * @returns {Promise<string>} Base64-encoded WAV audio
+ * @throws {Error} If window is not available
+ * @throws {Error} If moduleUrl is missing
+ * @throws {Error} If Piper TTS module import fails
+ * @throws {Error} If textToSpeech function is not found
+ * @throws {Error} If TTS synthesis fails
  */
 async function executePiperTTS(text, options) {
   const { voice, language, speed, moduleUrl } = options;
@@ -23,6 +24,8 @@ async function executePiperTTS(text, options) {
     throw new Error('moduleUrl is required. chrome.runtime is not available in MAIN world.');
   }
   
+  // DEBUG: Logging in MAIN world (no access to CONFIG, always logs for debugging)
+  // Note: This runs in page context where modules are not available
   console.log('[ClipAIble] executePiperTTS called', { textLength: text.length, voice, language, speed, moduleUrl });
   
   try {
@@ -60,6 +63,7 @@ async function executePiperTTS(text, options) {
       binary += String.fromCharCode(bytes[i]);
     }
     const base64 = btoa(binary);
+    // DEBUG: Logging in MAIN world (no access to CONFIG, always logs for debugging)
     console.log('[ClipAIble] Audio converted to base64', { base64Length: base64.length });
     return base64;
   } catch (error) {

@@ -7,11 +7,13 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { LANGUAGE_NAMES } from '../utils/config.js';
-import { getProviderFromModel, parseModelConfig } from '../api/index.js';
+import { getProviderFromModel, parseModelConfig, callAIWithImage } from '../api/index.js';
 import { translateImageWithGemini } from '../api/gemini.js';
 import { imageToBase64 } from '../utils/images.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
+import { handleError } from '../utils/error-handler.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
 
 /**
  * Detect if image contains translatable text
@@ -38,7 +40,114 @@ Respond with ONLY "yes" or "no".`;
     const { modelName } = parseModelConfig(model);
     let answer;
     
-    if (provider === 'openai') {
+    if (provider === 'deepseek') {
+      // CRITICAL: deepseek-reasoner (DeepSeek 3.2) does NOT support vision/images
+      // Use deepseek-chat for vision tasks if model is deepseek-reasoner
+      // According to DeepSeek docs: deepseek-reasoner is for reasoning only, not vision
+      const visionModel = modelName.includes('reasoner') ? 'deepseek-chat' : modelName;
+      
+      if (visionModel !== modelName) {
+        log('Using deepseek-chat for vision (deepseek-reasoner does not support images)', {
+          originalModel: modelName,
+          visionModel
+        });
+      }
+      
+      try {
+        const result = await callAIWithImage('', prompt, imageBase64, apiKey, visionModel, false);
+        answer = typeof result === 'string' ? result.toLowerCase().trim() : String(result).toLowerCase().trim();
+      } catch (error) {
+        // Check if error indicates that model doesn't support images
+        const errorMessage = error?.message || '';
+        const errorDetails = error?.context?.errorData || {};
+        const isVisionNotSupported = 
+          errorMessage.includes('unknown variant') && errorMessage.includes('image_url') ||
+          errorMessage.includes('image_url') && errorMessage.includes('expected') ||
+          errorDetails.error?.includes('image_url');
+        
+        if (isVisionNotSupported) {
+          logWarn('DeepSeek model does not support vision/images', { 
+            model: visionModel,
+            originalModel: modelName,
+            error: errorMessage,
+            note: 'Model does not support image processing - assuming translation NOT needed'
+          });
+          // Model doesn't support images - assume translation is NOT needed (default behavior)
+          return false;
+        }
+        
+        // For other errors, also assume translation is NOT needed (default behavior)
+        logWarn('DeepSeek API error in detectImageText', { 
+          model: visionModel,
+          originalModel: modelName,
+          error: errorMessage,
+          errorDetails: JSON.stringify(errorDetails).substring(0, 500),
+          note: 'API error - assuming translation NOT needed (default behavior)'
+        });
+        return false;
+      }
+    } else if (provider === 'grok') {
+      // Grok API format (same as OpenAI)
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { 
+              role: 'user', 
+              content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: imageBase64, detail: 'low' } }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        logWarn('Grok API error in detectImageText', { status: response.status, model: modelName });
+        return false;
+      }
+      const data = await response.json();
+      answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+    } else if (provider === 'openrouter') {
+      // OpenRouter API format (similar to OpenAI but with different endpoint)
+      const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
+      const base64Image = matches ? matches[2] : (imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64);
+      
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+          'HTTP-Referer': 'https://github.com/clipaiable',
+          'X-Title': 'ClipAIble'
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { 
+              role: 'user', 
+              content: [
+                { type: 'text', text: prompt },
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Image}` } }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (!response.ok) {
+        logWarn('OpenRouter API error in detectImageText', { status: response.status, model: modelName });
+        return false;
+      }
+      const data = await response.json();
+      answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+    } else if (provider === 'openai') {
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -118,21 +227,32 @@ Respond with ONLY "yes" or "no".`;
     log('detectImageText result', { answer });
     return answer === 'yes';
   } catch (error) {
-    logError('detectImageText failed', error);
+    // Normalize error with context for better logging and error tracking
+    await handleError(error, {
+      source: 'imageTranslation',
+      errorType: 'detectImageTextFailed',
+      logError: true,
+      createUserMessage: false, // Keep existing behavior - return false on error
+      context: {
+        operation: 'detectImageText',
+        targetLang,
+        model
+      }
+    });
     return false;
   }
 }
 
 /**
  * Translate text in images using OCR
- * @param {Array<ContentItem>} content - Content items with images
+ * @param {Array<import('../types.js').ContentItem>} content - Content items with images
  * @param {string} sourceLang - Source language
  * @param {string} targetLang - Target language
  * @param {string} apiKey - AI API key for translation
  * @param {string} googleApiKey - Google API key for Gemini Vision
  * @param {string} model - Model name
- * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
- * @returns {Promise<Array<ContentItem>>} Content items with translated image text
+ * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
+ * @returns {Promise<Array<import('../types.js').ContentItem>>} Content items with translated image text
  */
 export async function translateImages(content, sourceLang, targetLang, apiKey, googleApiKey, model, updateState) {
   log('=== IMAGE TRANSLATION START ===', { sourceLang, targetLang });
@@ -177,6 +297,9 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
   let failed = 0;
   
   for (let i = 0; i < imageIndices.length; i++) {
+    // Check if processing was cancelled before processing each image
+    await checkCancellation(`image translation (${i + 1}/${imageIndices.length})`);
+    
     const idx = imageIndices[i];
     const img = content[idx];
     
@@ -224,11 +347,28 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         translated++;
         log(`Image ${i + 1} translated successfully`);
       } else {
-        logWarn(`Image ${i + 1} translation failed, keeping original`);
+        logWarn(`Image ${i + 1} translation failed, keeping original`, {
+          imageIndex: i + 1,
+          totalImages: imageIndices.length,
+          imageSrc: img?.src?.substring(0, 100) || 'unknown',
+          reason: 'translateImageWithGemini returned null (check logs above for details)'
+        });
         failed++;
       }
     } catch (error) {
-      logError(`Error processing image ${i + 1}`, error);
+      // Normalize error with context for better logging and error tracking
+      await handleError(error, {
+        source: 'imageTranslation',
+        errorType: 'processImageFailed',
+        logError: true,
+        createUserMessage: false, // Keep existing behavior - continue with other images
+        context: {
+          operation: 'translateImages',
+          imageIndex: i + 1,
+          totalImages: imageIndices.length,
+          imageSrc: img?.src?.substring(0, 100) || 'unknown'
+        }
+      });
       failed++;
     }
   }

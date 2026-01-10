@@ -3,8 +3,6 @@
 
 // @ts-check
 
-// @typedef {import('../types.js').ProcessingData} ProcessingData
-
 import { log, logError } from '../utils/logging.js';
 import { getProcessingState } from '../state/processing.js';
 import { tSync } from '../locales.js';
@@ -39,12 +37,12 @@ export function getQuickSaveSettingsKeys() {
 /**
  * Prepare processing data from settings for quick save
  * @param {Record<string, any>} settings - Settings from storage
- * @param {string} outputFormat - Output format
+ * @param {import('../types.js').ExportFormat} outputFormat - Output format
  * @param {number} tabId - Tab ID
  * @param {string} html - HTML content
  * @param {string} url - Page URL
  * @param {string} title - Page title
- * @returns {Promise<ProcessingData>} Processing data object
+ * @returns {Promise<import('../types.js').ProcessingData>} Processing data object
  * @throws {Error} If API key is missing or invalid
  */
 export async function prepareQuickSaveData(settings, outputFormat, tabId, html, url, title) {

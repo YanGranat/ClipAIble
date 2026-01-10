@@ -13,6 +13,10 @@ import { getDecryptedKeyCached, decryptApiKey } from '../utils/encryption.js';
 import { PROCESSING_STAGES, updateState } from '../state/processing.js';
 import { tSync, getUILanguage } from '../locales.js';
 import { sanitizePromptInput } from '../utils/security.js';
+import { cleanAuthor } from '../utils/author-validator.js';
+import { handleError } from '../utils/error-handler.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
+import { callWithRetry } from '../utils/retry.js';
 
 // Translation policy: quality-first. Do not downgrade accuracy to save cost or latency.
 
@@ -25,9 +29,10 @@ import { sanitizePromptInput } from '../utils/security.js';
  * @returns {Promise<string>} Translated text
  */
 export async function translateText(text, targetLang, apiKey, model) {
+  const textPreview = text && text.length > 200 ? text.substring(0, 200) + '...' : text;
   log('=== translateText: ENTRY ===', {
     textLength: text?.length || 0,
-    textFull: text || null, // FULL TEXT - NO TRUNCATION
+    textPreview,
     targetLang,
     model,
     hasApiKey: !!apiKey,
@@ -47,22 +52,53 @@ export async function translateText(text, targetLang, apiKey, model) {
   
   const systemPrompt = `Translate the given text to ${targetLang}. Output ONLY the translation, nothing else.
 
-Rules:
+CRITICAL RULES:
+- Translate ONLY the exact text provided - do NOT add any content that is not in the original text
+- Do NOT generate descriptions, examples, or additional information
+- Do NOT expand on the topic or add context
 - If text is already in ${targetLang}, output exactly: ${NO_TRANSLATION_MARKER}
 - Preserve ALL HTML tags exactly (<a href="...">, <strong>, <em>, etc.)
 - Do NOT translate URLs, code, or HTML attributes
 - Use natural ${targetLang} expressions and sentence structures
 - Maintain the author's tone (formal/casual/technical)
-- No explanations, no notes, no comments - just the translated text`;
+- No explanations, no notes, no comments, no additional content - just the translated text
+- If the input is a title or short phrase, translate ONLY that title/phrase, nothing more`;
 
-  // SECURITY: Sanitize user input to prevent prompt injection
-  const userPrompt = sanitizePromptInput(text);
+  // Clean HTML: remove id attributes and technical classes before translation
+  // IDs and technical classes (like blockquote_*) are not needed for translation and can confuse AI models
+  let cleanedText = text;
+  if (typeof text === 'string' && text.includes('<')) {
+    // Remove id attributes from all HTML tags
+    cleanedText = cleanedText.replace(/\s+id\s*=\s*["'][^"']*["']/gi, '');
+    cleanedText = cleanedText.replace(/\s+id\s*=\s*[^\s>]+/gi, '');
+    
+    // Remove technical classes (blockquote_*, etc.) that are used for styling but not content
+    // These classes often contain random hashes that confuse AI models
+    // First, remove empty span elements with technical classes (they serve no semantic purpose)
+    cleanedText = cleanedText.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*>\s*<\/span>/gi, '');
+    cleanedText = cleanedText.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*><\/span>/gi, '');
+    
+    // Then remove blockquote_* classes from remaining elements
+    cleanedText = cleanedText.replace(/\s+class\s*=\s*["']([^"']*blockquote_[^"']*)["']/gi, (match, classValue) => {
+      // Remove blockquote_* classes but keep other classes if any
+      const classes = classValue.split(/\s+/).filter(c => !c.startsWith('blockquote_'));
+      return classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
+    });
+    
+    // Remove span elements that have only technical classes (even if they have content, they're just styling wrappers)
+    cleanedText = cleanedText.replace(/<span\s+class\s*=\s*["']blockquote_[^"']*["'][^>]*>([^<]*)<\/span>/gi, '$1');
+  }
   
+  // SECURITY: Sanitize user input to prevent prompt injection
+  const userPrompt = sanitizePromptInput(cleanedText);
+  
+  const systemPromptPreview = systemPrompt.length > 300 ? systemPrompt.substring(0, 300) + '...' : systemPrompt;
+  const userPromptPreview = userPrompt.length > 300 ? userPrompt.substring(0, 300) + '...' : userPrompt;
   log('=== translateText: PROMPT PREPARED ===', {
     systemPromptLength: systemPrompt.length,
-    systemPromptFull: systemPrompt, // FULL PROMPT - NO TRUNCATION
+    systemPromptPreview,
     userPromptLength: userPrompt.length,
-    userPromptFull: userPrompt, // FULL PROMPT - NO TRUNCATION
+    userPromptPreview,
     provider,
     timestamp: Date.now()
   });
@@ -92,11 +128,37 @@ Rules:
       });
       
       if (!response.ok) {
+        // Normalize HTTP error with context
+        const httpError = new Error(`Translation API error: HTTP ${response.status}`);
+        // @ts-ignore - Adding status to error
+        httpError.status = response.status;
+        const normalized = await handleError(httpError, {
+          source: 'translation',
+          errorType: 'apiError',
+          logError: true,
+          createUserMessage: false, // Keep existing localized message
+          context: {
+            operation: 'translateText',
+            provider: 'openai',
+            model: modelName,
+            statusCode: response.status
+          }
+        });
+        
         const uiLang = await getUILanguage();
+        let userMessage;
         if ([401, 403].includes(response.status)) {
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
+          userMessage = tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status));
+        } else {
+          userMessage = tSync('errorApiError', uiLang).replace('{status}', String(response.status));
         }
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
+        /** @type {import('../types.js').ExtendedError} */
+        const error = new Error(userMessage);
+        error.code = normalized.code;
+        error.status = response.status;
+        error.originalError = normalized.originalError;
+        error.context = normalized.context;
+        throw error;
       }
       
       const result = await response.json();
@@ -183,6 +245,117 @@ Rules:
         isOriginal: translated === text,
         timestamp: Date.now()
       });
+    } else if (provider === 'grok') {
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${decryptedApiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      });
+      
+      if (!response.ok) {
+        const uiLang = await getUILanguage();
+        if ([401, 403].includes(response.status)) {
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
+        }
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
+      }
+      
+      const result = await response.json();
+      translated = result.choices?.[0]?.message?.content || text;
+      
+      log('=== translateText: Grok RESPONSE ===', {
+        hasResult: !!result,
+        hasChoices: !!result.choices,
+        choicesLength: result.choices?.length || 0,
+        translatedLength: translated?.length || 0,
+        translatedFull: translated || null, // FULL TEXT - NO TRUNCATION
+        isOriginal: translated === text,
+        timestamp: Date.now()
+      });
+    } else if (provider === 'deepseek') {
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${decryptedApiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ]
+        })
+      });
+      
+      if (!response.ok) {
+        const uiLang = await getUILanguage();
+        if ([401, 403].includes(response.status)) {
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
+        }
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
+      }
+      
+      const result = await response.json();
+      translated = result.choices?.[0]?.message?.content || text;
+      
+      log('=== translateText: DeepSeek RESPONSE ===', {
+        hasResult: !!result,
+        hasChoices: !!result.choices,
+        choicesLength: result.choices?.length || 0,
+        translatedLength: translated?.length || 0,
+        translatedFull: translated || null, // FULL TEXT - NO TRUNCATION
+        isOriginal: translated === text,
+        timestamp: Date.now()
+      });
+    } else if (provider === 'openrouter') {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${decryptedApiKey}`,
+          'HTTP-Referer': 'https://github.com/clipaiable',
+          'X-Title': 'ClipAIble'
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          max_tokens: CONFIG.MAX_TOKENS_OPENROUTER
+        })
+      });
+      
+      if (!response.ok) {
+        const uiLang = await getUILanguage();
+        if ([401, 403].includes(response.status)) {
+          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
+        }
+        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
+      }
+      
+      const result = await response.json();
+      translated = result.choices?.[0]?.message?.content || text;
+      
+      log('=== translateText: OpenRouter RESPONSE ===', {
+        hasResult: !!result,
+        hasChoices: !!result.choices,
+        choicesLength: result.choices?.length || 0,
+        translatedLength: translated?.length || 0,
+        translatedFull: translated || null, // FULL TEXT - NO TRUNCATION
+        isOriginal: translated === text,
+        timestamp: Date.now()
+      });
     } else {
       translated = text;
     }
@@ -202,22 +375,95 @@ Rules:
       return text;
     }
     
+    // CRITICAL: If translation is much longer than original, it likely contains hallucinated content
+    // For titles and short phrases, the translation should be similar length
+    // If translation is more than 3x longer, it's likely hallucinated - use original or truncate
+    const isTitleOrShortPhrase = text.length < 200 && !text.includes('\n');
+    if (isTitleOrShortPhrase && translated.length > text.length * 3) {
+      logWarn('Translation is suspiciously long for a title/short phrase - likely hallucinated', {
+        originalLength: text.length,
+        translatedLength: translated.length,
+        ratio: translated.length / text.length,
+        original: text,
+        translatedPreview: translated.substring(0, 200)
+      });
+      // Try to extract just the first sentence or line, which should be the actual translation
+      const firstLine = translated.split('\n')[0].trim();
+      const firstSentence = translated.split(/[.!?]/)[0].trim();
+      // Use the shorter of the two, but only if it's reasonable (not too short, not too long)
+      const candidate = firstLine.length < firstSentence.length ? firstLine : firstSentence;
+      if (candidate.length >= text.length * 0.5 && candidate.length <= text.length * 2) {
+        log('Using extracted first line/sentence as translation', {
+          extracted: candidate,
+          extractedLength: candidate.length
+        });
+        translated = candidate;
+      } else {
+        // If extraction doesn't work, just return original - better than hallucinated content
+        logWarn('Extraction failed, using original text to avoid hallucinated content');
+        translated = text;
+      }
+    }
+    
+    // Clean technical classes from translated text (AI might include them)
+    if (typeof translated === 'string' && translated.includes('<')) {
+      // Remove id attributes
+      translated = translated.replace(/\s+id\s*=\s*["'][^"']*["']/gi, '');
+      translated = translated.replace(/\s+id\s*=\s*[^\s>]+/gi, '');
+      
+      // Remove empty span elements with technical classes
+      translated = translated.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*>\s*<\/span>/gi, '');
+      translated = translated.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*><\/span>/gi, '');
+      
+      // Remove blockquote_* classes from remaining elements
+      translated = translated.replace(/\s+class\s*=\s*["']([^"']*blockquote_[^"']*)["']/gi, (match, classValue) => {
+        const classes = classValue.split(/\s+/).filter(c => !c.startsWith('blockquote_'));
+        return classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
+      });
+      
+      // Remove span elements that have only technical classes
+      translated = translated.replace(/<span\s+class\s*=\s*["']blockquote_[^"']*["'][^>]*>([^<]*)<\/span>/gi, '$1');
+    }
+    
+    // Log only metadata to reduce log size
+    const originalPreview = text.length > 200 ? text.substring(0, 200) + '...' : text;
+    const translatedPreview = translated.length > 200 ? translated.substring(0, 200) + '...' : translated;
     log('=== translateText: RESULT ===', {
       originalLength: text.length,
-      originalFull: text, // FULL TEXT - NO TRUNCATION
+      originalPreview,
       translatedLength: translated.length,
-      translatedFull: translated, // FULL TEXT - NO TRUNCATION
+      translatedPreview,
       wasTranslated: translated !== text,
       timestamp: Date.now()
     });
     
     return translated;
   } catch (error) {
-    logError('translateText failed', error);
+    // Normalize error with context for better logging and error tracking
+    const normalized = await handleError(error, {
+      source: 'translation',
+      errorType: 'translateTextFailed',
+      logError: true,
+      createUserMessage: false, // Keep existing behavior - return original text on non-auth errors
+      context: {
+        operation: 'translateText',
+        targetLang,
+        textLength: text?.length || 0,
+        isAuthError: error.message?.includes('authentication') || error.message?.includes('401') || error.message?.includes('403')
+      }
+    });
+    
     // Don't silently return original text on authentication errors
-    if (error.message?.includes('authentication')) {
-      throw error;
+    if (normalized.context.isAuthError || error.message?.includes('authentication')) {
+      // Re-throw normalized auth error
+      /** @type {import('../types.js').ExtendedError} */
+      const authError = new Error(error.message || normalized.message);
+      authError.code = normalized.code;
+      authError.originalError = normalized.originalError;
+      authError.context = normalized.context;
+      throw authError;
     }
+    // Return original text for non-auth errors (existing behavior)
     return text;
   }
 }
@@ -228,17 +474,15 @@ Rules:
  * @param {string} targetLang - Target language name
  * @param {string} apiKey - API key
  * @param {string} model - Model name
- * @param {number} [retryCount=0] - Retry attempt counter
  * @returns {Promise<Array<string>>} Translated texts
  */
-export async function translateBatch(texts, targetLang, apiKey, model, retryCount = 0) {
+export async function translateBatch(texts, targetLang, apiKey, model) {
   log('=== translateBatch: ENTRY ===', {
     textsCount: texts?.length || 0,
     textsLengths: texts?.map(t => t?.length || 0) || [],
     textsFull: texts || [], // FULL TEXTS - NO TRUNCATION
     targetLang,
     model,
-    retryCount,
     hasApiKey: !!apiKey,
     timestamp: Date.now()
   });
@@ -250,10 +494,6 @@ export async function translateBatch(texts, targetLang, apiKey, model, retryCoun
   } catch (error) {
     log('API key decryption failed for translateBatch, using as-is', error);
   }
-  
-  const MAX_RETRIES = 5; // Increased for better reliability
-  // Use centralized retry delays from CONFIG instead of duplicating
-  const RETRY_DELAYS = CONFIG.TRANSLATION_RETRY_DELAYS; // Longer delays for network issues
   
   // If only one text, use simple translation
   if (texts.length === 1) {
@@ -280,8 +520,37 @@ Rules:
 - Output format: {"translations": ["translation1", "translation2", ...]}
 - No markdown, no code blocks, no explanations - raw JSON only`;
 
+  // Clean HTML: remove id attributes and technical classes before translation
+  // IDs and technical classes (like blockquote_*) are not needed for translation and can confuse AI models
+  const cleanedTexts = texts.map(text => {
+    if (typeof text === 'string' && text.includes('<')) {
+      // Remove id attributes from all HTML tags
+      let cleaned = text.replace(/\s+id\s*=\s*["'][^"']*["']/gi, '');
+      cleaned = cleaned.replace(/\s+id\s*=\s*[^\s>]+/gi, '');
+      
+      // Remove technical classes (blockquote_*, etc.) that are used for styling but not content
+      // These classes often contain random hashes that confuse AI models
+      // First, remove empty span elements with technical classes (they serve no semantic purpose)
+      cleaned = cleaned.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*>\s*<\/span>/gi, '');
+      cleaned = cleaned.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*><\/span>/gi, '');
+      
+      // Then remove blockquote_* classes from remaining elements
+      cleaned = cleaned.replace(/\s+class\s*=\s*["']([^"']*blockquote_[^"']*)["']/gi, (match, classValue) => {
+        // Remove blockquote_* classes but keep other classes if any
+        const classes = classValue.split(/\s+/).filter(c => !c.startsWith('blockquote_'));
+        return classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
+      });
+      
+      // Remove span elements that have only technical classes (even if they have content, they're just styling wrappers)
+      cleaned = cleaned.replace(/<span\s+class\s*=\s*["']blockquote_[^"']*["'][^>]*>([^<]*)<\/span>/gi, '$1');
+      
+      return cleaned;
+    }
+    return text;
+  });
+  
   // SECURITY: Sanitize each text to prevent prompt injection
-  const sanitizedTexts = texts.map(text => sanitizePromptInput(text));
+  const sanitizedTexts = cleanedTexts.map(text => sanitizePromptInput(text));
   const userPrompt = `Translate to ${targetLang}:\n${JSON.stringify(sanitizedTexts)}`;
   
   log('=== translateBatch: PROMPT PREPARED ===', {
@@ -299,69 +568,98 @@ Rules:
     let content;
     
     if (provider === 'openai') {
-      let response;
-      try {
-        response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${decryptedApiKey}`
+      const response = await callWithRetry(
+        async () => {
+          const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${decryptedApiKey}`
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              response_format: { type: 'json_object' },
+              // Translation quality is priority #1 - never reduce quality for cost savings
+              // reasoning_effort: 'high' ensures best translation quality
+              reasoning_effort: 'high'
+            })
+          });
+          
+          if (!fetchResponse.ok) {
+            // Don't retry on authentication errors (401, 403)
+            if ([401, 403].includes(fetchResponse.status)) {
+              let errorData = {};
+              try {
+                errorData = await fetchResponse.json();
+              } catch (e) {
+                // If JSON parse fails, use empty object
+                errorData = {};
+              }
+              
+              const httpError = new Error(`Translation API error: HTTP ${fetchResponse.status}`);
+              // @ts-ignore - Adding status to error
+              httpError.status = fetchResponse.status;
+              // @ts-ignore
+              httpError.response = fetchResponse;
+              const normalized = await handleError(httpError, {
+                source: 'translation',
+                errorType: 'apiError',
+                logError: true,
+                createUserMessage: false,
+                context: {
+                  operation: 'translateBatch',
+                  provider: 'openai',
+                  model: modelName,
+                  statusCode: fetchResponse.status,
+                  errorData
+                }
+              });
+              
+              const uiLang = await getUILanguage();
+              const userMessage = tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status));
+              const error = new Error(userMessage);
+              // @ts-ignore
+              error.code = normalized.code;
+              // @ts-ignore
+              error.status = fetchResponse.status;
+              // @ts-ignore
+              error.originalError = normalized.originalError;
+              // @ts-ignore
+              error.context = normalized.context;
+              throw error;
+            }
+            
+            // For retryable errors, throw error with status for retry logic
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          
+          return fetchResponse;
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.TRANSLATION_RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          shouldRetry: (error) => {
+            // Don't retry on authentication errors
+            if (error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            // Use default retry logic for other errors
+            return undefined;
           },
-          body: JSON.stringify({
-            model: modelName,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            response_format: { type: 'json_object' },
-            // Translation quality is priority #1 - never reduce quality for cost savings
-            // reasoning_effort: 'high' ensures best translation quality
-            reasoning_effort: 'high'
-          })
-        });
-      } catch (fetchError) {
-        // Network error (connection failed, timeout, etc.) - retry
-        if (retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
-          const errorMsg = fetchError.message || 'Network error';
-          logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+          onRetry: (attempt, delay) => {
+            logWarn(`Translation API retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
         }
-        const uiLang = await getUILanguage();
-        const errorMsg = fetchError.message || tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', 'Failed to connect to API');
-        throw new Error(tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', errorMsg));
-      }
-      
-      if (!response.ok) {
-        let errorData = {};
-        try {
-          errorData = await response.json();
-        } catch (e) {
-          // If JSON parse fails, use empty object
-          errorData = {};
-        }
-        
-        // Don't retry on authentication errors (401, 403)
-        const uiLang = await getUILanguage();
-        if ([401, 403].includes(response.status)) {
-          logError('Translation API authentication error', { status: response.status, error: errorData });
-          throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(response.status)));
-        }
-        
-        logError('Translation API error', { status: response.status, error: errorData });
-        
-        // Retry on retryable status codes
-        const retryableStatuses = [503, 429, 500, 502, 504];
-        if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
-          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
-        }
-        
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
-      }
+      );
       
       const result = await response.json();
       content = result.choices?.[0]?.message?.content;
@@ -375,50 +673,59 @@ Rules:
         timestamp: Date.now()
       });
     } else if (provider === 'claude') {
-      let response;
-      try {
-        response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Api-Key': decryptedApiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true'
+      const response = await callWithRetry(
+        async () => {
+          const fetchResponse = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Api-Key': decryptedApiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+              model: modelName,
+              max_tokens: 32000,
+              system: systemPrompt,
+              messages: [
+                { role: 'user', content: userPrompt }
+              ]
+            })
+          });
+          
+          if (!fetchResponse.ok) {
+            // Don't retry on authentication errors (401, 403)
+            if ([401, 403].includes(fetchResponse.status)) {
+              const uiLang = await getUILanguage();
+              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+            }
+            
+            // For retryable errors, throw error with status for retry logic
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          
+          return fetchResponse;
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.TRANSLATION_RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          shouldRetry: (error) => {
+            // Don't retry on authentication errors
+            if (error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            return undefined;
           },
-          body: JSON.stringify({
-            model: modelName,
-            max_tokens: 32000,
-            system: systemPrompt,
-            messages: [
-              { role: 'user', content: userPrompt }
-            ]
-          })
-        });
-      } catch (fetchError) {
-        // Network error - retry
-        if (retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
-          const errorMsg = fetchError.message || 'Network error';
-          logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+          onRetry: (attempt, delay) => {
+            logWarn(`Translation API retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
         }
-        const uiLang = await getUILanguage();
-        const errorMsg = fetchError.message || tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', 'Failed to connect to API');
-        throw new Error(tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', errorMsg));
-      }
-      
-      if (!response.ok) {
-        const retryableStatuses = [503, 429, 500, 502, 504];
-        if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
-          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
-        }
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
-      }
+      );
       
       const result = await response.json();
       content = result.content?.find(c => c.type === 'text')?.text;
@@ -433,44 +740,53 @@ Rules:
       });
     } else if (provider === 'gemini') {
       const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
-      let response;
-      try {
-        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': decryptedApiKey
+      const response = await callWithRetry(
+        async () => {
+          const fetchResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': decryptedApiKey
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: combinedPrompt }] }],
+              generationConfig: { responseMimeType: 'application/json' }
+            })
+          });
+          
+          if (!fetchResponse.ok) {
+            // Don't retry on authentication errors (401, 403)
+            if ([401, 403].includes(fetchResponse.status)) {
+              const uiLang = await getUILanguage();
+              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+            }
+            
+            // For retryable errors, throw error with status for retry logic
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          
+          return fetchResponse;
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.TRANSLATION_RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          shouldRetry: (error) => {
+            // Don't retry on authentication errors
+            if (error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            return undefined;
           },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: combinedPrompt }] }],
-            generationConfig: { responseMimeType: 'application/json' }
-          })
-        });
-      } catch (fetchError) {
-        // Network error - retry
-        if (retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
-          const errorMsg = fetchError.message || 'Network error';
-          logWarn(`Translation API network error: ${errorMsg}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
+          onRetry: (attempt, delay) => {
+            logWarn(`Translation API retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
         }
-        const uiLang = await getUILanguage();
-        const errorMsg = fetchError.message || tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', 'Failed to connect to API');
-        throw new Error(tSync('errorNetworkConnectionFailed', uiLang).replace('{error}', errorMsg));
-      }
-      
-      if (!response.ok) {
-        const retryableStatuses = [503, 429, 500, 502, 504];
-        if (retryableStatuses.includes(response.status) && retryCount < MAX_RETRIES) {
-          const delay = RETRY_DELAYS[retryCount] || RETRY_DELAYS[RETRY_DELAYS.length - 1];
-          logWarn(`Translation API returned ${response.status}, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-          return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
-        }
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorApiError', uiLang).replace('{status}', String(response.status)));
-      }
+      );
       
       const result = await response.json();
       content = result.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -481,6 +797,200 @@ Rules:
         candidatesLength: result.candidates?.length || 0,
         extractedContentLength: content?.length || 0,
         extractedContentFull: content || null, // FULL TEXT - NO TRUNCATION
+        timestamp: Date.now()
+      });
+    } else if (provider === 'grok') {
+      const response = await callWithRetry(
+        async () => {
+          const fetchResponse = await fetch('https://api.x.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${decryptedApiKey}`
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              response_format: { type: 'json_object' }
+            })
+          });
+          
+          if (!fetchResponse.ok) {
+            // Don't retry on authentication errors (401, 403)
+            if ([401, 403].includes(fetchResponse.status)) {
+              const uiLang = await getUILanguage();
+              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+            }
+            
+            // For retryable errors, throw error with status for retry logic
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          
+          return fetchResponse;
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.TRANSLATION_RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          shouldRetry: (error) => {
+            // Don't retry on authentication errors
+            if (error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            return undefined;
+          },
+          onRetry: (attempt, delay) => {
+            logWarn(`Translation API retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
+        }
+      );
+      
+      const result = await response.json();
+      content = result.choices?.[0]?.message?.content;
+      
+      log('=== translateBatch: Grok RESPONSE ===', {
+        hasResult: !!result,
+        hasChoices: !!result.choices,
+        choicesLength: result.choices?.length || 0,
+        contentLength: content?.length || 0,
+        contentFull: content || null, // FULL TEXT - NO TRUNCATION
+        timestamp: Date.now()
+      });
+    } else if (provider === 'deepseek') {
+      const response = await callWithRetry(
+        async () => {
+          const fetchResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${decryptedApiKey}`
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              response_format: { type: 'json_object' }
+            })
+          });
+          
+          if (!fetchResponse.ok) {
+            // Don't retry on authentication errors (401, 403)
+            if ([401, 403].includes(fetchResponse.status)) {
+              const uiLang = await getUILanguage();
+              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+            }
+            
+            // For retryable errors, throw error with status for retry logic
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          
+          return fetchResponse;
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.TRANSLATION_RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          shouldRetry: (error) => {
+            // Don't retry on authentication errors
+            if (error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            return undefined;
+          },
+          onRetry: (attempt, delay) => {
+            logWarn(`Translation API retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
+        }
+      );
+      
+      const result = await response.json();
+      content = result.choices?.[0]?.message?.content;
+      
+      log('=== translateBatch: DeepSeek RESPONSE ===', {
+        hasResult: !!result,
+        hasChoices: !!result.choices,
+        choicesLength: result.choices?.length || 0,
+        contentLength: content?.length || 0,
+        contentFull: content || null, // FULL TEXT - NO TRUNCATION
+        timestamp: Date.now()
+      });
+    } else if (provider === 'openrouter') {
+      const response = await callWithRetry(
+        async () => {
+          const fetchResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${decryptedApiKey}`,
+              'HTTP-Referer': 'https://github.com/clipaiable',
+              'X-Title': 'ClipAIble'
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt }
+              ],
+              response_format: { type: 'json_object' }
+            })
+          });
+          
+          if (!fetchResponse.ok) {
+            // Don't retry on authentication errors (401, 403)
+            if ([401, 403].includes(fetchResponse.status)) {
+              const uiLang = await getUILanguage();
+              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+            }
+            
+            // For retryable errors, throw error with status for retry logic
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+            throw error;
+          }
+          
+          return fetchResponse;
+        },
+        {
+          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
+          delays: CONFIG.TRANSLATION_RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          shouldRetry: (error) => {
+            // Don't retry on authentication errors
+            if (error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            return undefined;
+          },
+          onRetry: (attempt, delay) => {
+            logWarn(`Translation API retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
+        }
+      );
+      
+      const result = await response.json();
+      content = result.choices?.[0]?.message?.content;
+      
+      log('=== translateBatch: OpenRouter RESPONSE ===', {
+        hasResult: !!result,
+        hasChoices: !!result.choices,
+        choicesLength: result.choices?.length || 0,
+        contentLength: content?.length || 0,
+        contentFull: content || null, // FULL TEXT - NO TRUNCATION
         timestamp: Date.now()
       });
     }
@@ -498,11 +1008,22 @@ Rules:
     
     let parsed;
     try {
-      let jsonContent = content;
-      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      let jsonContent = content.trim();
+      
+      // Extract JSON from markdown code blocks if present
+      const jsonMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         jsonContent = jsonMatch[1].trim();
       }
+      
+      // Try to extract JSON object from the beginning if there's extra text after
+      // This handles cases where AI adds reasoning or explanations after JSON
+      const jsonStart = jsonContent.indexOf('{');
+      const jsonEnd = jsonContent.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+        jsonContent = jsonContent.substring(jsonStart, jsonEnd + 1);
+      }
+      
       parsed = JSON.parse(jsonContent);
     } catch (parseError) {
       logError('Failed to parse translation JSON', { error: parseError.message });
@@ -515,7 +1036,28 @@ Rules:
       let skippedCount = 0;
       
       for (let i = 0; i < originalTexts.length; i++) {
-        const translated = translatedTexts[i];
+        let translated = translatedTexts[i];
+        
+        // Clean technical classes from translated text (AI might include them)
+        if (typeof translated === 'string' && translated.includes('<')) {
+          // Remove id attributes
+          translated = translated.replace(/\s+id\s*=\s*["'][^"']*["']/gi, '');
+          translated = translated.replace(/\s+id\s*=\s*[^\s>]+/gi, '');
+          
+          // Remove empty span elements with technical classes
+          translated = translated.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*>\s*<\/span>/gi, '');
+          translated = translated.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*><\/span>/gi, '');
+          
+          // Remove blockquote_* classes from remaining elements
+          translated = translated.replace(/\s+class\s*=\s*["']([^"']*blockquote_[^"']*)["']/gi, (match, classValue) => {
+            const classes = classValue.split(/\s+/).filter(c => !c.startsWith('blockquote_'));
+            return classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
+          });
+          
+          // Remove span elements that have only technical classes
+          translated = translated.replace(/<span\s+class\s*=\s*["']blockquote_[^"']*["'][^>]*>([^<]*)<\/span>/gi, '$1');
+        }
+        
         if (!translated || translated.trim() === NO_TRANSLATION_MARKER) {
           result.push(originalTexts[i]);
           skippedCount++;
@@ -611,33 +1153,22 @@ Rules:
   } catch (error) {
     logError('translateBatch failed', error);
     // Don't silently return original texts on authentication errors
-    if (error.message?.includes('authentication')) {
+    if (error.message?.includes('authentication') || (error.status && [401, 403].includes(error.status))) {
       throw error;
     }
-    // Retry on network errors if we haven't exceeded max retries
-    const isNetworkError = error.message?.includes('Network error') || 
-                           error.message?.includes('Failed to connect') ||
-                           error.message?.includes('fetch') ||
-                           error.name === 'TypeError';
-    if (isNetworkError && retryCount < MAX_RETRIES) {
-      const delay = RETRY_DELAYS[retryCount] || 30000;
-      logWarn(`Translation failed with network error, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return translateBatch(texts, targetLang, apiKey, model, retryCount + 1);
-    }
-    // If retries exhausted or non-network error, return original texts
+    // For other errors, return original texts (graceful degradation)
     return texts;
   }
 }
 
 /**
  * Translate content items
- * @param {ExtractionResult} result - Extraction result with content items
+ * @param {import('../types.js').ExtractionResult} result - Extraction result with content items
  * @param {string} targetLang - Target language name
  * @param {string} apiKey - API key
  * @param {string} model - Model name
- * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
- * @returns {Promise<ExtractionResult>} Translated extraction result
+ * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
+ * @returns {Promise<import('../types.js').ExtractionResult>} Translated extraction result
  */
 export async function translateContent(result, targetLang, apiKey, model, updateState) {
   log('=== translateContent: ENTRY ===', {
@@ -657,13 +1188,13 @@ export async function translateContent(result, targetLang, apiKey, model, update
     return result;
   }
   
-  log('=== translateContent: CONTENT (FULL TEXT) ===', {
+  log('=== translateContent: CONTENT ===', {
     contentItems: result.content.map((item, idx) => ({
       index: idx,
       type: item.type,
-      text: item.text || item.html || '', // FULL TEXT - NO TRUNCATION
+      textPreview: (item.text || item.html || '').substring(0, 200) + '...',
       textLength: (item.text || item.html || '').length,
-      html: item.html || null // FULL HTML - NO TRUNCATION
+      hasHtml: !!item.html
     })),
     totalItems: result.content.length
   });
@@ -684,7 +1215,43 @@ export async function translateContent(result, targetLang, apiKey, model, update
   
   if (result.title && result.title.trim()) {
     translationPromises.push(
-      translateText(result.title, langName, decryptedApiKey, model)
+      // Retry title translation if result is "404"
+      callWithRetry(
+        async () => {
+          const translated = await translateText(result.title, langName, decryptedApiKey, model);
+          
+          // Check if translation result is exactly "404"
+          if (translated.trim() === '404' && translated !== result.title) {
+            logWarn('Title translation returned "404", will retry', {
+              original: result.title,
+              translated: translated
+            });
+            throw new Error('Translation returned "404"');
+          }
+          
+          return translated;
+        },
+        {
+          maxRetries: 2, // Retry up to 2 times (3 total attempts)
+          delays: [1000, 2000], // Short delays for title retry
+          retryableStatusCodes: [],
+          shouldRetry: (error) => {
+            // Retry if error message indicates error-like result
+            if (error.message?.includes('error-like result')) {
+              return true;
+            }
+            // Don't retry on authentication errors
+            if (error.message?.includes('authentication') || error.status && [401, 403].includes(error.status)) {
+              return false;
+            }
+            // Retry on network/API errors
+            return undefined;
+          },
+          onRetry: (attempt, delay) => {
+            logWarn(`Title translation retry attempt ${attempt}, waiting ${delay}ms...`);
+          }
+        }
+      )
         .then(translated => {
           result.title = translated;
           return 'title';
@@ -694,25 +1261,47 @@ export async function translateContent(result, targetLang, apiKey, model, update
             logError('Translation stopped: authentication error in title translation', error);
             throw error; // Re-throw auth errors to stop translation
           }
-          logError('Title translation failed, using original', error);
+          logError('Title translation failed after retries, using original', error);
           return null; // Continue with original title
         })
     );
   }
   
   if (result.author && result.author.trim()) {
-    translationPromises.push(
-      translateText(result.author, langName, decryptedApiKey, model)
-        .then(translated => {
-          result.author = translated;
-          log('Author translated', { translated: result.author });
-          return 'author';
-        })
-        .catch(error => {
-          logWarn('Author translation failed, using original', error);
-          return null; // Continue with original author
-        })
-    );
+    // CRITICAL: Clean author BEFORE translation to avoid translating "anonymous" to anonymous variants
+    // If author is already anonymous, don't translate it
+    const cleanedAuthorBeforeTranslation = cleanAuthor(result.author);
+    const shouldTranslateAuthor = cleanedAuthorBeforeTranslation && result.author;
+    
+    if (shouldTranslateAuthor) {
+      translationPromises.push(
+        translateText(result.author, langName, decryptedApiKey, model)
+          .then(translated => {
+            // CRITICAL: Clean translated author to remove any anonymous variants
+            // Translation might convert anonymous variants to other language variants
+            result.author = cleanAuthor(translated);
+            log('Author translated and cleaned', { 
+              original: result.author, 
+              translated, 
+              cleaned: result.author 
+            });
+            return 'author';
+          })
+          .catch(error => {
+            logWarn('Author translation failed, using original', error);
+            // Use cleaned original if translation fails
+            result.author = cleanedAuthorBeforeTranslation;
+            return null; // Continue with original author
+          })
+      );
+    } else {
+      // Author is anonymous, don't translate, just clean it
+      result.author = cleanedAuthorBeforeTranslation;
+      log('Author is anonymous, skipping translation', { 
+        original: result.author, 
+        cleaned: result.author 
+      });
+    }
   }
   
   // Wait for title and author translations to complete
@@ -752,7 +1341,7 @@ export async function translateContent(result, targetLang, apiKey, model, update
         const listItem = item.items[j];
         if (typeof listItem === 'string' && listItem.trim()) {
           textItems.push({ index: i, field: 'items', subIndex: j, text: listItem });
-        } else if (listItem && listItem.html && listItem.html.trim()) {
+        } else if (listItem && typeof listItem === 'object' && listItem.html && listItem.html.trim()) {
           textItems.push({ index: i, field: 'items', subIndex: j, subField: 'html', text: listItem.html });
         }
       }
@@ -798,7 +1387,24 @@ export async function translateContent(result, targetLang, apiKey, model, update
     chunks.push(currentChunk);
   }
   
-  log('Translation chunks created', { count: chunks.length });
+  const totalTextLength = textItems.reduce((sum, item) => sum + item.text.length, 0);
+  const avgChunkSize = chunks.length > 0 ? Math.round(chunks.reduce((sum, chunk) => {
+    return sum + chunk.reduce((chunkSum, item) => chunkSum + item.text.length, 0);
+  }, 0) / chunks.length) : 0;
+  const maxChunkSize = chunks.length > 0 ? Math.max(...chunks.map(chunk => {
+    return chunk.reduce((sum, item) => sum + item.text.length, 0);
+  })) : 0;
+  const maxChunkUsage = Math.round((maxChunkSize / CONFIG.TRANSLATION_CHUNK_SIZE) * 100);
+  
+  log('📊 Translation chunks created', { 
+    count: chunks.length,
+    totalTextLength: totalTextLength,
+    chunkSizeLimit: CONFIG.TRANSLATION_CHUNK_SIZE,
+    avgChunkSize: avgChunkSize,
+    maxChunkSize: maxChunkSize,
+    maxChunkUsage: `${maxChunkUsage}%`,
+    warning: maxChunkUsage > 90 ? '⚠️ Large chunks' : 'OK'
+  });
   
   // Pre-calc weights for smoother progress: weight = sum of text lengths in chunk
   const chunkWeights = chunks.map(chunk => chunk.reduce((sum, item) => sum + item.text.length, 0));
@@ -806,6 +1412,9 @@ export async function translateContent(result, targetLang, apiKey, model, update
 
   // Translate each chunk
   for (let i = 0; i < chunks.length; i++) {
+    // Check if processing was cancelled before processing each chunk
+    await checkCancellation(`text translation chunk ${i + 1}/${chunks.length}`);
+    
     // Show progress BEFORE starting chunk translation (not after)
     // Range: 20% to 60% (text translation is the longest phase)
     const completedWeight = chunkWeights.slice(0, i).reduce((s, w) => s + w, 0);
@@ -827,7 +1436,27 @@ export async function translateContent(result, targetLang, apiKey, model, update
       // Apply translations back
       for (let j = 0; j < chunk.length; j++) {
         const item = chunk[j];
-        const translatedText = translated[j] || item.text;
+        let translatedText = translated[j] || item.text;
+        
+        // Clean technical classes from translated text (AI might include them)
+        if (typeof translatedText === 'string' && translatedText.includes('<')) {
+          // Remove id attributes
+          translatedText = translatedText.replace(/\s+id\s*=\s*["'][^"']*["']/gi, '');
+          translatedText = translatedText.replace(/\s+id\s*=\s*[^\s>]+/gi, '');
+          
+          // Remove empty span elements with technical classes
+          translatedText = translatedText.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*>\s*<\/span>/gi, '');
+          translatedText = translatedText.replace(/<span\s+[^>]*class\s*=\s*["'][^"']*blockquote_[^"']*["'][^>]*><\/span>/gi, '');
+          
+          // Remove blockquote_* classes from remaining elements
+          translatedText = translatedText.replace(/\s+class\s*=\s*["']([^"']*blockquote_[^"']*)["']/gi, (match, classValue) => {
+            const classes = classValue.split(/\s+/).filter(c => !c.startsWith('blockquote_'));
+            return classes.length > 0 ? ` class="${classes.join(' ')}"` : '';
+          });
+          
+          // Remove span elements that have only technical classes
+          translatedText = translatedText.replace(/<span\s+class\s*=\s*["']blockquote_[^"']*["'][^>]*>([^<]*)<\/span>/gi, '$1');
+        }
         
         if (item.field === 'text') {
           result.content[item.index].text = translatedText;
@@ -837,7 +1466,10 @@ export async function translateContent(result, targetLang, apiKey, model, update
           result.content[item.index].caption = translatedText;
         } else if (item.field === 'items') {
           if (item.subField === 'html') {
-            result.content[item.index].items[item.subIndex].html = translatedText;
+            const listItem = result.content[item.index].items[item.subIndex];
+            if (listItem && typeof listItem === 'object') {
+              listItem.html = translatedText;
+            }
           } else {
             result.content[item.index].items[item.subIndex] = translatedText;
           }
@@ -850,13 +1482,37 @@ export async function translateContent(result, targetLang, apiKey, model, update
         logWarn(`Chunk ${i + 1} returned original texts (translation may have failed)`);
       }
     } catch (error) {
+      // Normalize error with context for better logging and error tracking
+      const isAuthError = error.message?.includes('authentication') || 
+                          error.message?.includes('401') || 
+                          error.message?.includes('403') ||
+                          (error.status && [401, 403].includes(error.status));
+      
+      const normalized = await handleError(error, {
+        source: 'translation',
+        errorType: 'translateChunkFailed',
+        logError: true,
+        createUserMessage: false, // Keep existing behavior
+        context: {
+          operation: 'translateContent',
+          chunkIndex: i + 1,
+          totalChunks: chunks.length,
+          isAuthError,
+          statusCode: error.status
+        }
+      });
+      
       // If authentication error, stop translation and throw
-      if (error.message?.includes('authentication')) {
-        logError(`Translation stopped: authentication error`, error);
-        throw error;
+      if (isAuthError) {
+        /** @type {import('../types.js').ExtendedError} */
+        const authError = new Error(error.message || normalized.message);
+        authError.code = normalized.code;
+        if (error.status) authError.status = error.status;
+        authError.originalError = normalized.originalError;
+        authError.context = normalized.context;
+        throw authError;
       }
-      logError(`Translation chunk ${i + 1} FAILED`, error);
-      // Continue with other chunks, but log the failure
+      // Continue with other chunks, but log the failure (existing behavior)
     }
   }
   
@@ -1025,6 +1681,93 @@ Rules:
       const result = await response.json();
       translated = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
       log('=== translateMetadata: Gemini RESPONSE ===', {
+        hasResult: !!result,
+        translatedLength: translated?.length || 0,
+        translatedFull: translated || null, // FULL TEXT - NO TRUNCATION
+        timestamp: Date.now()
+      });
+    } else if (provider === 'grok') {
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${decryptedApiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: text }
+          ]
+        })
+      });
+      
+      if (!response.ok) {
+        log('=== translateMetadata: Grok ERROR ===', { status: response.status, returningOriginal: true });
+        return text;
+      }
+      const result = await response.json();
+      translated = result.choices?.[0]?.message?.content?.trim() || text;
+      log('=== translateMetadata: Grok RESPONSE ===', {
+        hasResult: !!result,
+        translatedLength: translated?.length || 0,
+        translatedFull: translated || null, // FULL TEXT - NO TRUNCATION
+        timestamp: Date.now()
+      });
+    } else if (provider === 'deepseek') {
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${decryptedApiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: text }
+          ]
+        })
+      });
+      
+      if (!response.ok) {
+        log('=== translateMetadata: DeepSeek ERROR ===', { status: response.status, returningOriginal: true });
+        return text;
+      }
+      const result = await response.json();
+      translated = result.choices?.[0]?.message?.content?.trim() || text;
+      log('=== translateMetadata: DeepSeek RESPONSE ===', {
+        hasResult: !!result,
+        translatedLength: translated?.length || 0,
+        translatedFull: translated || null, // FULL TEXT - NO TRUNCATION
+        timestamp: Date.now()
+      });
+    } else if (provider === 'openrouter') {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${decryptedApiKey}`,
+          'HTTP-Referer': 'https://github.com/clipaiable',
+          'X-Title': 'ClipAIble'
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: text }
+          ],
+          max_tokens: CONFIG.MAX_TOKENS_OPENROUTER
+        })
+      });
+      
+      if (!response.ok) {
+        log('=== translateMetadata: OpenRouter ERROR ===', { status: response.status, returningOriginal: true });
+        return text;
+      }
+      const result = await response.json();
+      translated = result.choices?.[0]?.message?.content?.trim() || text;
+      log('=== translateMetadata: OpenRouter RESPONSE ===', {
         hasResult: !!result,
         translatedLength: translated?.length || 0,
         translatedFull: translated || null, // FULL TEXT - NO TRUNCATION

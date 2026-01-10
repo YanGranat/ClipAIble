@@ -2,7 +2,7 @@
 
 > **KI-gestützter Artikel-Extraktor** — Speichern Sie beliebige Artikel aus dem Internet als PDF, EPUB, FB2, Markdown oder Audio. Übersetzung in 11 Sprachen. Funktioniert auf jeder Website.
 
-![Version](https://img.shields.io/badge/version-3.2.4-blue)
+![Version](https://img.shields.io/badge/version-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Erweiterung-green)
 ![Lizenz](https://img.shields.io/badge/lizenz-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 ### 🤖 KI-gestützte Extraktion
 - **Drei Modi**: Automatisch (ohne KI, schnell), AI Selector (schnell, wiederverwendbar) und AI Extract (gründlich)
 - **Automatischer Modus**: Dokumente ohne KI erstellen — keine API-Schlüssel erforderlich, sofortige Extraktion
-- **Mehrere Anbieter**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Mehrere Anbieter**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
+- **PDF-Inhaltsextraktion** (v3.3.0): Inhalt aus PDF-Dateien mit PDF.js-Bibliothek extrahieren
+  - Experimentelle Funktion mit komplexem mehrstufigem Klassifizierungssystem
+  - Extrahiert Text, Bilder, Struktur und Metadaten aus PDF-Dateien
+  - Unterstützt sowohl Web- als auch lokale PDF-Dateien
+  - Verarbeitet mehrspaltige Layouts, Tabellen, Überschriften, Listen, seitenübergreifende Zusammenführung
+  - Hinweis: Funktion ist experimentell und kann Einschränkungen bei komplexen PDFs haben (gescannte PDFs, passwortgeschützte PDFs)
 - **Video-Unterstützung**: Untertitel von YouTube/Vimeo-Videos extrahieren und in Artikel umwandeln (v3.0.0)
   - Mehrere Extraktionsmethoden mit Fallbacks
   - Priorität: manuelle Untertitel > automatisch generierte > übersetzte
@@ -71,6 +77,12 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 
 
 ### ⚡ Intelligente Funktionen
+- **PDF-Inhaltsextraktion** (v3.3.0): Inhalt aus PDF-Dateien extrahieren und in Artikel umwandeln
+  - Verwendet PDF.js-Bibliothek zum Parsen im Offscreen-Dokument
+  - Mehrstufiges Klassifizierungssystem für genaue Extraktion
+  - Unterstützt sowohl Web- als auch lokale PDF-Dateien
+  - Vollständige Pipeline-Integration: Übersetzung, Inhaltsverzeichnis, Zusammenfassung, alle Exportformate
+  - Hinweis: Experimentelle Funktion, kann Einschränkungen bei komplexen PDFs haben
 - **Video-Unterstützung**: Untertitel von YouTube/Vimeo-Videos extrahieren und in Artikel umwandeln (v3.0.0)
   - Direkte Untertitel-Extraktion (keine API-Schlüssel von YouTube/Vimeo erforderlich)
   - KI-Verarbeitung: entfernt Zeitstempel, fügt Absätze zusammen, korrigiert Fehler
@@ -97,7 +109,7 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 - **Einstellungen importieren/exportieren**: Backup und Wiederherstellung aller Einstellungen (API-Schlüssel aus Sicherheitsgründen ausgeschlossen)
 
 ### 🔒 Sicherheit
-- **API-Schlüssel verschlüsselt** mit AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
+- **API-Schlüssel verschlüsselt** mit AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **Schlüssel nie exportiert** — aus Sicherheitsgründen von Einstellungs-Backup ausgeschlossen
 - **Alle Daten lokal** — nichts wird an Dritte gesendet
 
@@ -116,10 +128,15 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
   - Text wird automatisch intelligent an Satz-/Wortgrenzen aufgeteilt
 
 ### Technische Einschränkungen
-- **Keep-alive-Anforderung**: Chrome MV3 erfordert ein Keep-alive-Intervall von mindestens 1 Minute. Lange Verarbeitungsaufgaben können mehrere Minuten dauern. Die Erweiterung verwendet einen einheitlichen Keep-alive-Mechanismus (Alarm alle 1 Minute + Status-Speicherung alle 2 Sekunden), um zu verhindern, dass der Service Worker stirbt.
+- **Keep-alive-Anforderung**: Chrome MV3 erfordert ein Keep-alive-Intervall von mindestens 1 Minute. Lange Verarbeitungsaufgaben können mehrere Minuten dauern. Die Erweiterung verwendet einen einheitlichen Keep-alive-Mechanismus (Alarm alle 1 Minute) um zu verhindern, dass der Service Worker stirbt.
 - **CORS für Bilder**: Einige Bilder können nicht geladen werden, wenn die Website Cross-Origin-Anfragen blockiert. Die Erweiterung überspringt diese Bilder.
 - **Abbruch nicht sofortig**: Der Abbruch kann einige Sekunden dauern, um alle Hintergrundprozesse vollständig zu stoppen.
-- **Service Worker-Wiederherstellung**: Operationen werden automatisch nach Service Worker-Neustart fortgesetzt (innerhalb von 2 Stunden).
+- **Service Worker-Wiederherstellung**: Operationen werden automatisch nach Service Worker-Neustart fortgesetzt, wenn der Status aktuell ist (< 1 Minute). Erweiterungs-Neuladen setzt den Status immer zurück.
+- **PDF-Extraktions-Einschränkungen** (v3.3.0): 
+  - Gescannte PDFs (keine Textebene) werden nicht unterstützt — OCR ist noch nicht verfügbar
+  - Passwortgeschützte PDFs müssen vor der Extraktion entsperrt werden
+  - Sehr große PDFs (>100MB) funktionieren möglicherweise nicht aufgrund von Speicherbeschränkungen
+  - Komplexe Layouts (mehrspaltig, Tabellen) werden extrahiert, können aber manuelle Überprüfung erfordern
 
 ### Browser-Kompatibilität
 - **Chrome/Edge/Brave/Arc**: Vollständig unterstützt
@@ -150,6 +167,14 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 
 ## 🔑 API-Schlüssel erhalten
 
+> **💡 Neu in v3.1.0**: Sie können ClipAIble jetzt ohne API-Schlüssel verwenden! Der automatische Modus funktioniert sofort mit lokalen Algorithmen. API-Schlüssel werden nur für KI-Funktionen benötigt (Übersetzung, Zusammenfassungsgenerierung, AI Extract-Modus).
+> 
+> **💡 Neu in v3.2.0**: Piper TTS (offline) - Generieren Sie Audio vollständig offline mit 50+ Stimmen in 9 Sprachen, keine API-Schlüssel erforderlich!
+> 
+> **💡 Behoben in v3.2.1**: Popup-UI aktualisiert sich korrekt nach Audio-Generierung, Stimmenwechsel funktioniert ordnungsgemäß für Offline-TTS.
+> 
+> **💡 Neu in v3.3.0**: PDF-Inhaltsextraktion - Experimentelle Unterstützung für die Extraktion von Inhalten aus PDF-Dateien hinzugefügt. Vorherige: DeepSeek-Anbieter-Integration, Leistungsoptimierungen, Google Translate-Interferenz-Fix.
+
 ### OpenAI (GPT-Modelle + Audio)
 
 1. Gehen Sie zu [platform.openai.com](https://platform.openai.com/)
@@ -179,6 +204,16 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 4. Klicken Sie auf **"Create Key"**
 5. Kopieren Sie den Schlüssel (beginnt mit `sk-ant-...`)
 6. Fügen Sie Credits unter **Plans & Billing** hinzu
+
+### DeepSeek
+
+1. Gehen Sie zu [platform.deepseek.com](https://platform.deepseek.com/)
+2. Registrieren Sie sich oder melden Sie sich an
+3. Navigieren Sie zu **API Keys** oder gehen Sie zu [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+4. Klicken Sie auf **"Create API key"**
+5. Kopieren Sie den Schlüssel (beginnt mit `sk-...`)
+
+> **Hinweis:** DeepSeek bietet DeepSeek-V3.2-Modelle: `deepseek-chat` (Non-Thinking-Modus) und `deepseek-reasoner` (Thinking-Modus). API ist mit OpenAI-Format kompatibel.
 
 ### ElevenLabs (Audio)
 
@@ -230,6 +265,7 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 | **Gemini** | Schnelle Extraktion, Bildübersetzung, Audio-Export (30 Stimmen) | ✅ (30 Stimmen) | ✅ |
 | **Claude** | Lange Artikel, komplexe Seiten | ❌ | ❌ |
 | **Grok** | Schnelle Reasoning-Aufgaben | ❌ | ❌ |
+| **DeepSeek** | Erweiterte Reasoning-Fähigkeiten, kosteneffizient | ❌ | ❌ |
 | **OpenRouter** | Zugriff auf mehrere Modelle | ❌ | ❌ |
 | **ElevenLabs** | Audio-Export (9 Stimmen, hohe Qualität) | ✅ (9 Stimmen) | ❌ |
 | **Qwen** | Audio-Export (49 Stimmen, Russisch-Unterstützung) | ✅ (49 Stimmen) | ❌ |
@@ -284,6 +320,7 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 | Anthropic | Claude Sonnet 4.5 | Großartig für lange Artikel |
 | Google | Gemini 3 Pro | Schnelle Extraktion, Bildübersetzung |
 | Grok | Grok 4.1 Fast Reasoning | Schnelles Reasoning |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | Erweiterte Reasoning-Fähigkeiten, kosteneffizient |
 | OpenRouter | Verschiedene Modelle | Zugriff auf mehrere Anbieter |
 
 **Benutzerdefinierte Modelle:** Klicken Sie auf die Schaltfläche **"+"** neben dem Modellauswahlfeld, um benutzerdefinierte Modelle hinzuzufügen (z.B. `gpt-4o`, `claude-opus-4.5`). Benutzerdefinierte Modelle erscheinen im Dropdown-Menü und können bei Bedarf ausgeblendet/angezeigt werden.
@@ -383,6 +420,8 @@ ClipAIble cached KI-generierte Selektoren nach Domain:
 | Langsames Audio | Lange Artikel werden in Chunks aufgeteilt; Fortschrittsbalken beobachten |
 | Zusammenfassung wird nicht generiert | Überprüfen Sie den API-Schlüssel, stellen Sie sicher, dass Seiteninhalt geladen ist, versuchen Sie es erneut |
 | Timeout bei Zusammenfassungs-Generierung | Sehr lange Artikel können bis zu 45 Minuten dauern; warten Sie oder versuchen Sie es mit kürzerem Inhalt |
+| PDF-Extraktion schlägt fehl | Überprüfen Sie, ob PDF passwortgeschützt ist (zuerst entsperren) oder gescannt ist (OCR wird noch nicht unterstützt). Versuchen Sie es zuerst mit einfacheren PDFs. |
+| PDF-Inhalt unvollständig | Komplexe Layouts (mehrspaltig, Tabellen) können manuelle Überprüfung erfordern. Funktion ist experimentell. |
 
 ---
 
@@ -418,6 +457,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS
@@ -426,10 +466,20 @@ clipaible/
 │   │   ├── tts.js      # TTS Router
 │   │   └── index.js    # API Router
 │   ├── extraction/     # Inhaltsextraktion
+│   │   ├── automatic.js # Automatische Extraktion (ohne KI) - extractAutomaticallyInlined()
+│   │   ├── pdf.js      # PDF-Inhaltsextraktion (v3.3.0) - Einstiegspunkt
 │   │   ├── prompts.js  # KI Prompts
 │   │   ├── html-utils.js # HTML Utilities
 │   │   ├── video-subtitles.js # YouTube/Vimeo Untertitel-Extraktion
-│   │   └── video-processor.js # KI Untertitel-Verarbeitung
+│   │   ├── video-processor.js # KI Untertitel-Verarbeitung
+│   │   └── modules/    # Modulare Hilfsfunktionen für automatische Extraktion
+│   │       ├── utils.js # Basis-Utilities
+│   │       ├── content-finder.js # Inhaltsfindung
+│   │       ├── element-filter.js # Elementfilterung
+│   │       ├── image-processor.js # Bildverarbeitung
+│   │       ├── metadata-extractor.js # Metadatenextraktion
+│   │       ├── content-cleaner.js # Inhaltsbereinigung
+│   │       └── builder.js # Build-Zeit-Inlining
 │   ├── translation/    # Übersetzung & Spracherkennung
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Selektor-Caching
@@ -437,13 +487,33 @@ clipaible/
 │   ├── settings/       # Einstellungen Import/Export
 │   ├── state/          # Verarbeitungsstatus-Verwaltung
 │   └── utils/          # Konfiguration, Verschlüsselung, Helfer
+│       ├── html.js     # HTML-Utilities (Titelbereinigung, Sanitisierung)
 │       ├── video.js    # Video-Plattform-Erkennung
 │       ├── validation.js # Validierungs-Utilities
-│       └── api-error-handler.js # Gemeinsame API-Fehlerbehandlung
+│       ├── api-error-handler.js # Gemeinsame API-Fehlerbehandlung
+│       ├── pipeline-helpers.js # Pipeline-Utilities (v3.2.3+) - handleProcessingResult, handleProcessingError, handleTranslation, handleAbstractGeneration
+│       ├── processing-helpers.js # Verarbeitungs-Utilities (v3.2.3+) - validateAndInitializeProcessing, handleVideoPageProcessing, handleQuickSave-Helfer
+│       ├── settings-helpers.js # Einstellungs-Utilities (v3.2.3+) - determineProviderAndModel, getVoiceFromSettings
+│       ├── context-menu.js # Kontextmenü-Utilities (v3.2.3+)
+│       ├── voice-validator.js # Stimmenvalidierungs-Utilities
+│       └── api-key-manager.js # API-Schlüsselverwaltungs-Utilities
+├── scripts/offscreen/  # Offscreen-Dokument-Module (v3.3.0)
+│   ├── pdf/            # PDF-Extraktionsmodule - komplexes mehrstufiges Klassifizierungssystem
+│   │   ├── extract.js  # Hauptkoordinator - Einstiegspunkt
+│   │   ├── core/       # Kernalgorithmen (clustering, line-grouping, text-collation)
+│   │   ├── classifiers/ # Elementklassifikatoren (paragraph, heading, list, table, image, formula)
+│   │   ├── analyzers/  # Kontext- und Metriken-Analysatoren (metrics, context, structure, gap-analysis)
+│   │   ├── processors/ # Verarbeitungsprozessoren (grouping, merging, post-processing, cross-page)
+│   │   └── utils/      # Utilities (array-helpers, text-helpers, font-detection, image-extraction)
+│   ├── audio/          # Audio-Utilities
+│   ├── tts/            # TTS-Module
+│   ├── worker/         # Worker-Module
+│   └── utils/           # Offscreen-Utilities
 ├── print/              # PDF-Rendering
 ├── config/             # Stile
-├── lib/                # JSZip
+├── lib/                # JSZip (enthält PDF.js für PDF-Extraktion)
 ├── docs/               # Lokalisierte README-Dateien
+├── offscreen.js        # Offscreen-Dokument für PDF-Verarbeitung und Offline-TTS (3752 Zeilen, refactoriert von 4967)
 └── memory-bank/        # Projektdokumentation
 ```
 

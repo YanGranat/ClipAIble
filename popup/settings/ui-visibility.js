@@ -46,19 +46,34 @@ export function initUIVisibility(deps) {
     const languageSelect = getElement('languageSelect');
     const translateImages = getElement('translateImages');
     const outputFormat = getElement('outputFormat');
+    const mainFormatSelect = getElement('mainFormatSelect');
     
     if (!languageSelect || !translateImages || !outputFormat) return;
     
+    // CRITICAL: Read format from mainFormatSelect first (user-facing control),
+    // then fallback to outputFormat. This ensures we use the actual selected value.
+    let format = outputFormat.value;
+    if (mainFormatSelect && mainFormatSelect.value) {
+      format = mainFormatSelect.value;
+    }
+    
     const isTranslating = languageSelect.value !== 'auto';
     const translateImagesEnabled = translateImages.checked;
-    const isAudio = outputFormat.value === 'audio';
+    const isAudio = format === 'audio';
+    const isMarkdown = format === 'markdown';
     
-    // Show image translation option only when translating AND not audio format
-    // Audio format doesn't use images, so translation option is not needed
-    setElementGroupDisplay('translateImagesGroup', (isTranslating && !isAudio) ? 'block' : 'none');
+    // Show image translation option for PDF, EPUB, FB2 formats (not for Markdown or Audio)
+    // Markdown doesn't support embedded images with translation, Audio doesn't use images
+    const supportsImageTranslation = format === 'pdf' || format === 'epub' || format === 'fb2';
+    
+    // Show image translation option when:
+    // 1. Format supports image translation (PDF, EPUB, FB2)
+    // 2. AND user has selected a target language (not 'auto')
+    const shouldShowTranslateImages = supportsImageTranslation && isTranslating;
+    setElementGroupDisplay('translateImagesGroup', shouldShowTranslateImages ? 'block' : 'none');
     
     // Show Google API key input when image translation is enabled
-    setElementGroupDisplay('googleApiGroup', (isTranslating && translateImagesEnabled) ? 'block' : 'none');
+    setElementGroupDisplay('googleApiGroup', (supportsImageTranslation && isTranslating && translateImagesEnabled) ? 'block' : 'none');
     
     // Show hint if translateImages is enabled but Google key is missing
     const translateImagesHint = getElement('translateImagesHint');
@@ -105,10 +120,20 @@ export function initUIVisibility(deps) {
    * to ensure all dependent UI elements are updated correctly.
    */
   async function updateOutputFormatUI() {
-    const format = elements.outputFormat.value;
-    // Sync main format select
-    if (elements.mainFormatSelect && elements.mainFormatSelect.value !== format) {
-      elements.mainFormatSelect.value = format;
+    // CRITICAL: Read format from mainFormatSelect first (user-facing control),
+    // then sync to hidden outputFormat. This ensures we use the actual selected value.
+    let format = elements.outputFormat.value;
+    if (elements.mainFormatSelect && elements.mainFormatSelect.value) {
+      format = elements.mainFormatSelect.value;
+      // Sync hidden outputFormat with mainFormatSelect
+      if (elements.outputFormat.value !== format) {
+        elements.outputFormat.value = format;
+      }
+    } else {
+      // Fallback: sync main format select from outputFormat
+      if (elements.mainFormatSelect && elements.mainFormatSelect.value !== format) {
+        elements.mainFormatSelect.value = format;
+      }
     }
     const isPdf = format === 'pdf';
     const isEpub = format === 'epub';
@@ -146,9 +171,22 @@ export function initUIVisibility(deps) {
     // PDF-SPECIFIC SETTINGS VISIBILITY
     // ============================================
     // Page mode (single/multi-page) is only for PDF
-    setElementGroupDisplay('pageModeGroup', isPdf ? 'flex' : 'none');
+    const pageModeGroup = getElement('pageModeGroup');
+    if (pageModeGroup) {
+      const pageModeContainer = pageModeGroup.closest('.setting-item') || pageModeGroup;
+      if (pageModeContainer instanceof HTMLElement) {
+        if (isPdf) {
+          pageModeContainer.classList.remove('hidden');
+          pageModeContainer.style.display = 'flex';
+        } else {
+          pageModeContainer.classList.add('hidden');
+          pageModeContainer.style.display = 'none';
+        }
+      }
+    }
 
     // PDF styling controls (colors, fonts, presets) are only for PDF
+    // Note: Some elements are direct IDs, some are inside .setting-item containers
     const pdfStyleIds = [
       'stylePreset',
       'fontFamily',
@@ -161,22 +199,45 @@ export function initUIVisibility(deps) {
       'headingColor',
       'headingColorText',
       'linkColor',
-      'linkColorText',
-      'pdfSettingsDivider'
+      'linkColorText'
     ];
-    setDisplayForIds(pdfStyleIds, showStyleSettings ? '' : 'none');
+    setDisplayForIds(pdfStyleIds, showStyleSettings ? 'block' : 'none');
+    
+    // PDF settings divider (special handling - it's a .settings-divider, not .setting-item)
+    const pdfSettingsDivider = document.getElementById('pdfSettingsDivider');
+    if (pdfSettingsDivider) {
+      if (showStyleSettings) {
+        pdfSettingsDivider.classList.remove('hidden');
+        pdfSettingsDivider.style.display = '';
+      } else {
+        pdfSettingsDivider.classList.add('hidden');
+        pdfSettingsDivider.style.display = 'none';
+      }
+    }
 
     // ============================================
     // TOC AND ABSTRACT VISIBILITY
     // ============================================
     // TOC and abstract are not applicable for audio format
     const tocIds = ['generateToc', 'generateAbstract'];
-    setDisplayForIds(tocIds, isAudio ? 'none' : '');
+    setDisplayForIds(tocIds, isAudio ? 'none' : 'block');
     
     // ============================================
     // TRANSLATION SETTINGS VISIBILITY
     // ============================================
-    // Update translation visibility (hides image translation for audio)
+    // Language selector: Show for ALL formats including audio
+    // Audio needs target language to know in which language to generate speech
+    const languageSelect = getElement('languageSelect');
+    if (languageSelect) {
+      const languageSelectContainer = languageSelect.closest('.setting-item');
+      if (languageSelectContainer) {
+        // Show for all formats (including audio)
+        languageSelectContainer.classList.remove('hidden');
+        languageSelectContainer.style.display = 'block';
+      }
+    }
+    
+    // Update translation visibility (hides image translation for audio, but keeps language selector)
     updateTranslationVisibility();
   }
 

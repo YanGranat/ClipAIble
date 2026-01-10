@@ -8,9 +8,9 @@ import { getProcessingState } from '../state/processing.js';
 
 /**
  * Build preparation settings object for logging
- * @param {Object} params - Preparation parameters
+ * @param {Partial<import('../types.js').AudioGenerationData>} params - Preparation parameters
  * @param {boolean} useAICleanup - Whether AI cleanup is used
- * @returns {Object} Settings object
+ * @returns {Record<string, any>} Settings object
  */
 export function buildPreparationSettings(params, useAICleanup) {
   const { content, title, language, model, apiKey, provider } = params;
@@ -129,15 +129,15 @@ export function logChunkSplittingResults(chunks) {
 
 /**
  * Process single chunk for audio
- * @param {Object} chunk - Chunk to process
+ * @param {{text: string, index: number}} chunk - Chunk to process
  * @param {number} chunkIndex - Index of chunk
  * @param {number} totalChunks - Total number of chunks
  * @param {boolean} useAICleanup - Whether to use AI cleanup
  * @param {string} apiKey - API key (if AI cleanup)
  * @param {string} model - Model (if AI cleanup)
  * @param {string} language - Language code
- * @param {Function} prepareChunkForAudio - AI cleanup function
- * @param {Function} basicCleanup - Basic cleanup function
+ * @param {function(string, number, number, string, string, string): Promise<string>} prepareChunkForAudio - AI cleanup function
+ * @param {function(string, string): string} basicCleanup - Basic cleanup function
  * @returns {Promise<{text: string, index: number, originalIndex: number}>} Prepared chunk
  */
 export async function processChunkForAudio(

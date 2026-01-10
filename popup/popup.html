@@ -49,6 +49,7 @@
             <option value="gemini" data-i18n="gemini">Gemini</option>
             <option value="grok" data-i18n="grok">Grok</option>
             <option value="openrouter" data-i18n="openrouter">OpenRouter</option>
+            <option value="deepseek" data-i18n="deepseek">DeepSeek</option>
           </select>
         </div>
         <div class="api-key-group">
@@ -59,7 +60,9 @@
               <option value="gpt-5.2-high">gpt-5.2-high</option>
               <option value="gpt-5.1">gpt-5.1</option>
               <option value="gpt-5.1-high">gpt-5.1-high</option>
+              <option value="claude-opus-4-5">claude-opus-4-5</option>
               <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
+              <option value="claude-haiku-4-5">claude-haiku-4-5</option>
               <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
               <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
               <option value="grok-4-1-fast-reasoning">grok-4-1-fast-reasoning</option>
@@ -68,7 +71,7 @@
               <span class="plus-icon">+</span>
             </button>
           </div>
-          <div id="customModelDropdown" class="custom-model-dropdown" style="display: none;">
+          <div id="customModelDropdown" class="custom-model-dropdown hidden">
             <div class="custom-model-options" id="customModelOptions"></div>
           </div>
         </div>
@@ -96,7 +99,7 @@
           <span class="status-dot"></span>
           <span class="status-text" id="statusText" data-i18n="ready">Ready</span>
         </div>
-        <div class="progress-container" id="progressContainer" style="display: none;">
+        <div class="progress-container hidden" id="progressContainer">
           <div class="progress-bar" id="progressBar"></div>
           <span class="progress-text" id="progressText">0%</span>
         </div>
@@ -109,11 +112,11 @@
             <span class="btn-icon-left" id="saveIcon">📄</span>
             <span id="saveText" data-i18n="save">Save</span>
           </button>
-          <button id="cancelBtn" class="btn btn-danger" style="display: none;">
+          <button id="cancelBtn" class="btn btn-danger hidden">
             <span class="btn-icon-left">✕</span>
             <span data-i18n="cancel">Cancel</span>
           </button>
-          <select id="mainFormatSelect" class="format-select">
+          <select id="mainFormatSelect" class="format-select" data-i18n-title="outputFormat" title="Output format">
             <option value="pdf" data-i18n="formatPdf">PDF</option>
             <option value="epub" data-i18n="formatEpub">EPUB</option>
             <option value="fb2" data-i18n="formatFb2">FB2</option>
@@ -125,7 +128,7 @@
 
       <!-- Summary Section -->
       <button id="generateSummaryBtn" class="btn btn-summary" data-i18n="generateSummary">Generate Summary</button>
-      <div id="summaryContainer" class="summary-container" style="display: none;">
+      <div id="summaryContainer" class="summary-container hidden">
         <div class="summary-header">
           <button id="summaryToggle" class="summary-toggle">
             <span class="summary-toggle-icon">▶</span>
@@ -209,7 +212,7 @@
         
         <div class="stats-section">
           <div class="stats-section-title" data-i18n="statisticsSettings">Statistics Settings</div>
-          <div class="setting-item" style="margin-bottom: 12px;">
+          <div class="setting-item margin-bottom-12">
             <label class="checkbox-label">
               <input type="checkbox" id="enableStats">
               <span class="checkbox-text" data-i18n="enableStatistics">Enable statistics collection</span>
@@ -221,7 +224,7 @@
         
         <div class="stats-section stats-section-cache">
           <div class="stats-section-title" data-i18n="selectorCache">Selector Cache</div>
-          <div class="setting-item" style="margin-bottom: 12px;">
+          <div class="setting-item margin-bottom-12">
             <label class="checkbox-label">
               <input type="checkbox" id="enableCache">
               <span class="checkbox-text" data-i18n="enableSelectorCaching">Enable selector caching</span>
@@ -262,15 +265,15 @@
           <p class="setting-hint" data-i18n="useCachedSelectorsHint">Skip AI for sites you've saved before</p>
         </div>
         <!-- Output format select is now on main screen, but kept hidden for synchronization -->
-        <select id="outputFormat" style="display: none;">
+        <select id="outputFormat" class="hidden" data-i18n-title="outputFormat" title="Output format">
           <option value="pdf" data-i18n="saveAsPdf">PDF</option>
           <option value="epub" data-i18n="epubEreaders">EPUB (e-readers)</option>
           <option value="fb2" data-i18n="fb2Ereaders">FB2 (e-readers)</option>
-          <option value="markdown" data-i18n="md">MD</option>
+            <option value="markdown" data-i18n="formatMarkdown">MD</option>
           <option value="audio" data-i18n="audioMp3">Audio</option>
         </select>
         <!-- Audio Settings (Hidden by default) -->
-        <div class="setting-item" id="audioProviderGroup" style="display: none;">
+        <div class="setting-item hidden" id="audioProviderGroup">
           <label for="audioProvider" data-i18n="ttsProvider">TTS Provider</label>
           <select id="audioProvider">
             <option value="offline" data-i18n="offlineTts">Piper TTS (offline)</option>
@@ -282,7 +285,7 @@
           </select>
           <p class="setting-hint" data-i18n="ttsProviderHint">Choose text-to-speech provider</p>
         </div>
-        <div class="setting-item" id="elevenlabsApiKeyGroup" style="display: none;">
+        <div class="setting-item hidden" id="elevenlabsApiKeyGroup">
           <label for="elevenlabsApiKey" data-i18n="elevenlabsApiKey">ElevenLabs API Key</label>
           <div class="input-group">
             <input 
@@ -297,9 +300,9 @@
             </button>
             <button type="button" id="saveElevenlabsApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint"><span data-i18n="getElevenlabsKeyFrom">Get your API key from</span> <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank">elevenlabs.io/app/developers/api-keys</a></p>
+          <p class="setting-hint"><span data-i18n="getElevenlabsKeyFrom">Get your API key from</span> <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" rel="noopener">elevenlabs.io/app/developers/api-keys</a></p>
         </div>
-        <div class="setting-item" id="qwenApiKeyGroup" style="display: none;">
+        <div class="setting-item hidden" id="qwenApiKeyGroup">
           <label for="qwenApiKey" data-i18n="qwenApiKey">Qwen API Key</label>
           <div class="input-group">
             <input 
@@ -314,9 +317,9 @@
             </button>
             <button type="button" id="saveQwenApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint"><span data-i18n="getQwenKeyFrom">Get your API key from</span> <a href="https://modelstudio.console.alibabacloud.com/?tab=dashboard#/api-key" target="_blank">modelstudio.console.alibabacloud.com</a></p>
+          <p class="setting-hint"><span data-i18n="getQwenKeyFrom">Get your API key from</span> <a href="https://modelstudio.console.alibabacloud.com/?tab=dashboard#/api-key" target="_blank" rel="noopener">modelstudio.console.alibabacloud.com</a></p>
         </div>
-        <div class="setting-item" id="respeecherApiKeyGroup" style="display: none;">
+        <div class="setting-item hidden" id="respeecherApiKeyGroup">
           <label for="respeecherApiKey" data-i18n="respeecherApiKey">Respeecher API Key</label>
           <div class="input-group">
             <input 
@@ -331,12 +334,12 @@
             </button>
             <button type="button" id="saveRespeecherApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint"><span data-i18n="getRespecherKeyFrom">Get your API key from</span> <a href="https://space.respeecher.com/api-keys" target="_blank">space.respeecher.com/api-keys</a></p>
+          <p class="setting-hint"><span data-i18n="getRespecherKeyFrom">Get your API key from</span> <a href="https://space.respeecher.com/api-keys" target="_blank" rel="noopener">space.respeecher.com/api-keys</a></p>
         </div>
-        <div class="setting-item" id="respeecherAdvancedGroup" style="display: none;">
+        <div class="setting-item hidden" id="respeecherAdvancedGroup">
           <details>
-            <summary style="cursor: pointer; user-select: none;" data-i18n="advancedSamplingParams">Advanced Sampling Parameters</summary>
-            <div style="margin-top: 10px;">
+            <summary class="clickable" data-i18n="advancedSamplingParams">Advanced Sampling Parameters</summary>
+            <div class="margin-top-10">
               <div class="setting-item">
                 <label for="respeecherTemperature" data-i18n="temperature">Temperature</label>
                 <div class="slider-container">
@@ -364,7 +367,7 @@
             </div>
           </details>
         </div>
-        <div class="setting-item" id="googleTtsApiKeyGroup" style="display: none;">
+        <div class="setting-item hidden" id="googleTtsApiKeyGroup">
           <label for="googleTtsApiKey" data-i18n="googleTtsApiKey">Google Gemini TTS API Key</label>
           <div class="input-group">
             <input 
@@ -379,9 +382,9 @@
             </button>
             <button type="button" id="saveGoogleTtsApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a></p>
+          <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a></p>
         </div>
-        <div class="setting-item" id="elevenlabsModelGroup" style="display: none;">
+        <div class="setting-item hidden" id="elevenlabsModelGroup">
           <label for="elevenlabsModel" data-i18n="elevenlabsModel">ElevenLabs Model</label>
           <select id="elevenlabsModel">
             <option value="eleven_multilingual_v2" data-i18n="multilingualV2">Multilingual v2 (stable, natural)</option>
@@ -389,7 +392,7 @@
             <option value="eleven_turbo_v2_5" data-i18n="turboV25">Turbo v2.5 (fast)</option>
           </select>
         </div>
-        <div class="setting-item" id="elevenlabsFormatGroup" style="display: none;">
+        <div class="setting-item hidden" id="elevenlabsFormatGroup">
           <label for="elevenlabsFormat" data-i18n="audioFormat">Audio Format</label>
           <select id="elevenlabsFormat">
             <option value="mp3_44100_192" selected>MP3 44.1kHz 192kbps (highest quality)</option>
@@ -402,10 +405,10 @@
             <option value="ulaw_8000">μ-law 8kHz</option>
           </select>
         </div>
-        <div class="setting-item" id="elevenlabsAdvancedGroup" style="display: none;">
+        <div class="setting-item hidden" id="elevenlabsAdvancedGroup">
           <details>
-            <summary style="cursor: pointer; user-select: none;" data-i18n="advancedVoiceSettings">Advanced Voice Settings</summary>
-            <div style="margin-top: 10px;">
+            <summary class="clickable" data-i18n="advancedVoiceSettings">Advanced Voice Settings</summary>
+            <div class="margin-top-10">
               <div class="setting-item">
                 <label for="elevenlabsStability" data-i18n="stability">Stability</label>
                 <div class="slider-container">
@@ -440,12 +443,12 @@
             </div>
           </details>
         </div>
-        <div class="setting-item" id="openaiInstructionsGroup" style="display: none;">
+        <div class="setting-item hidden" id="openaiInstructionsGroup">
           <label for="openaiInstructions" data-i18n="voiceInstructions">Voice Instructions (Optional)</label>
           <textarea id="openaiInstructions" rows="2" placeholder="e.g., Read slowly and clearly, Read with enthusiasm" data-i18n-placeholder="voiceInstructionsPlaceholder"></textarea>
           <p class="setting-hint" data-i18n="voiceInstructionsHint">Additional instructions for voice style (OpenAI only)</p>
         </div>
-        <div class="setting-item" id="googleTtsModelGroup" style="display: none;">
+        <div class="setting-item hidden" id="googleTtsModelGroup">
           <label for="googleTtsModel" data-i18n="model">Model</label>
           <select id="googleTtsModel">
             <option value="gemini-2.5-pro-preview-tts" selected data-i18n="geminiProTts">Gemini 2.5 Pro Preview TTS (higher quality)</option>
@@ -453,7 +456,7 @@
             <option value="gemini-2.5-flash-lite-preview-tts" data-i18n="geminiFlashLiteTts">Gemini 2.5 Flash Lite TTS (Preview, single-speaker only)</option>
           </select>
         </div>
-        <div class="setting-item" id="googleTtsVoiceGroup" style="display: none;">
+        <div class="setting-item hidden" id="googleTtsVoiceGroup">
           <label for="googleTtsVoice" data-i18n="voice">Voice</label>
           <select id="googleTtsVoice">
             <option value="Callirrhoe">Callirrhoe (Easy-going)</option>
@@ -489,12 +492,12 @@
           </select>
           <p class="setting-hint" data-i18n="googleTtsVoiceHint">Uses same API key as Gemini</p>
         </div>
-        <div class="setting-item" id="googleTtsPromptGroup" style="display: none;">
+        <div class="setting-item hidden" id="googleTtsPromptGroup">
           <label for="googleTtsPrompt" data-i18n="voiceStylePrompt">Voice Style Prompt (Optional)</label>
           <textarea id="googleTtsPrompt" rows="2" placeholder="e.g., Speak slowly and clearly, Read with enthusiasm" data-i18n-placeholder="voiceStylePromptPlaceholder"></textarea>
           <p class="setting-hint" data-i18n="googleTtsPromptHint">Control voice style and emotion. Leave empty for default natural speech.</p>
         </div>
-        <div class="setting-item" id="audioVoiceGroup" style="display: none;">
+        <div class="setting-item hidden" id="audioVoiceGroup">
           <label for="audioVoice" data-i18n="voice">Voice</label>
           <select id="audioVoice">
             <!-- OpenAI voices (default) -->
@@ -511,12 +514,12 @@
             <option value="verse">Verse (rhythmic)</option>
           </select>
         </div>
-        <div class="setting-item" id="audioSpeedGroup" style="display: none;">
+        <div class="setting-item hidden" id="audioSpeedGroup">
           <label for="audioSpeed" data-i18n="speed">Speech Speed</label>
           <div class="slider-container">
             <input type="range" id="audioSpeed" min="0.5" max="2" step="0.1" value="1">
             <span class="slider-value" id="audioSpeedValue">1.0x</span>
-            <small id="audioSpeedNote" style="display:none; color: var(--text-muted);">Not applicable for this provider</small>
+            <small id="audioSpeedNote" class="hidden-text-muted" data-i18n="speedNotApplicable">Not applicable for this provider</small>
           </div>
         </div>
         <div class="setting-item">
@@ -537,14 +540,14 @@
           </select>
           <p class="setting-hint" id="languageHint" data-i18n="keepOriginalOrTranslate">Keep original or translate to selected language</p>
         </div>
-        <div class="setting-item" id="translateImagesGroup" style="display: none;">
+        <div class="setting-item hidden" id="translateImagesGroup">
           <label class="checkbox-label">
             <input type="checkbox" id="translateImages">
             <span class="checkbox-text" data-i18n="translateImages">Translate images with text</span>
           </label>
           <p class="setting-hint" data-i18n="translateImagesHint">Uses Google Gemini AI to translate text on images</p>
         </div>
-        <div class="setting-item" id="googleApiGroup" style="display: none;">
+        <div class="setting-item hidden" id="googleApiGroup">
           <label for="googleApiKey" data-i18n="googleApiKey">Google AI API Key for image translation</label>
           <div class="input-group">
             <input 
@@ -559,7 +562,7 @@
             </button>
             <button type="button" id="saveGoogleApiKey" class="btn btn-small" data-i18n="save">Save</button>
           </div>
-          <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a></p>
+          <p class="setting-hint"><span data-i18n="getGoogleTtsKeyFrom">Get your API key from</span> <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a> <span data-i18n="or">or</span> <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a></p>
         </div>
         <div class="setting-item">
           <label class="checkbox-label">
@@ -603,17 +606,17 @@
                 <span class="custom-select-arrow">▾</span>
               </div>
               <div class="custom-select-options" id="fontFamilyOptions">
-                <div class="custom-select-option selected" data-value="" style="font-family: 'Segoe UI', sans-serif" data-i18n="defaultSegoeUi">Default (Segoe UI)</div>
-                <div class="custom-select-option" data-value="Arial" style="font-family: Arial, sans-serif">Arial</div>
-                <div class="custom-select-option" data-value="Georgia" style="font-family: Georgia, serif">Georgia</div>
-                <div class="custom-select-option" data-value="Times New Roman" style="font-family: 'Times New Roman', serif">Times New Roman</div>
-                <div class="custom-select-option" data-value="Verdana" style="font-family: Verdana, sans-serif">Verdana</div>
-                <div class="custom-select-option" data-value="Tahoma" style="font-family: Tahoma, sans-serif">Tahoma</div>
-                <div class="custom-select-option" data-value="Trebuchet MS" style="font-family: 'Trebuchet MS', sans-serif">Trebuchet MS</div>
-                <div class="custom-select-option" data-value="Palatino Linotype" style="font-family: 'Palatino Linotype', serif">Palatino Linotype</div>
-                <div class="custom-select-option" data-value="Garamond" style="font-family: Garamond, serif">Garamond</div>
-                <div class="custom-select-option" data-value="Courier New" style="font-family: 'Courier New', monospace">Courier New</div>
-                <div class="custom-select-option" data-value="Comic Sans MS" style="font-family: 'Comic Sans MS', cursive">Comic Sans MS</div>
+                <div class="custom-select-option selected font-segoe-ui" data-value="" data-i18n="defaultSegoeUi">Default (Segoe UI)</div>
+                <div class="custom-select-option font-arial" data-value="Arial">Arial</div>
+                <div class="custom-select-option font-georgia" data-value="Georgia">Georgia</div>
+                <div class="custom-select-option font-times-new-roman" data-value="Times New Roman">Times New Roman</div>
+                <div class="custom-select-option font-verdana" data-value="Verdana">Verdana</div>
+                <div class="custom-select-option font-tahoma" data-value="Tahoma">Tahoma</div>
+                <div class="custom-select-option font-trebuchet-ms" data-value="Trebuchet MS">Trebuchet MS</div>
+                <div class="custom-select-option font-palatino-linotype" data-value="Palatino Linotype">Palatino Linotype</div>
+                <div class="custom-select-option font-garamond" data-value="Garamond">Garamond</div>
+                <div class="custom-select-option font-courier-new" data-value="Courier New">Courier New</div>
+                <div class="custom-select-option font-comic-sans-ms" data-value="Comic Sans MS">Comic Sans MS</div>
               </div>
             </div>
             <input type="hidden" id="fontFamily" value="">
@@ -631,32 +634,32 @@
         <div class="setting-item">
           <label for="bgColor" data-i18n="pdfBackgroundColor">PDF Background Color</label>
           <div class="color-row">
-            <input type="color" id="bgColor" value="#303030">
-            <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input">
+            <input type="color" id="bgColor" value="#303030" title="Background color picker">
+            <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input" title="Background color hex code">
             <button class="btn-reset-inline" data-reset="bgColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
           <label for="textColor" data-i18n="pdfTextColor">PDF Text Color</label>
           <div class="color-row">
-            <input type="color" id="textColor" value="#b9b9b9">
-            <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input">
+            <input type="color" id="textColor" value="#b9b9b9" title="Text color picker">
+            <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input" title="Text color hex code">
             <button class="btn-reset-inline" data-reset="textColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
           <label for="headingColor" data-i18n="pdfHeadingColor">PDF Heading Color</label>
           <div class="color-row">
-            <input type="color" id="headingColor" value="#cfcfcf">
-            <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input">
+            <input type="color" id="headingColor" value="#cfcfcf" title="Heading color picker">
+            <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input" title="Heading color hex code">
             <button class="btn-reset-inline" data-reset="headingColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
           <label for="linkColor" data-i18n="pdfLinkColor">PDF Link Color</label>
           <div class="color-row">
-            <input type="color" id="linkColor" value="#6cacff">
-            <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input">
+            <input type="color" id="linkColor" value="#6cacff" title="Link color picker">
+            <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input" title="Link color hex code">
             <button class="btn-reset-inline" data-reset="linkColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
@@ -670,7 +673,7 @@
             <button id="importSettingsBtn" class="btn btn-secondary btn-small" data-i18n="importSettings">Import Settings</button>
           </div>
           <p class="setting-hint" data-i18n="exportHint">Export includes: settings (without API keys), optional stats & cache</p>
-          <input type="file" id="importFileInput" accept=".json" style="display: none;">
+          <input type="file" id="importFileInput" accept=".json" class="hidden" title="Import settings file">
         </div>
         </div>
       </section>
@@ -680,16 +683,16 @@
     <footer class="popup-footer">
       <div class="popup-footer-divider"></div>
       <div class="popup-footer-links">
-        <a href="https://github.com/YanGranat/ClipAIble" target="_blank" class="popup-footer-link" id="githubLink">GitHub</a>
+        <a href="https://github.com/YanGranat/ClipAIble" target="_blank" rel="noopener" class="popup-footer-link" id="githubLink">GitHub</a>
         <span class="popup-footer-separator">•</span>
-        <span class="popup-footer-version" id="versionText">v3.2.4</span>
+        <span class="popup-footer-version" id="versionText">v3.3.0</span>
       </div>
     </footer>
 
   </div>
 
   <!-- Import/Export Dialog Modal -->
-  <div id="importExportModal" class="modal-overlay" style="display: none;">
+  <div id="importExportModal" class="modal-overlay hidden">
     <div class="modal-dialog">
       <div class="modal-header">
         <h3 id="importExportModalTitle" data-i18n="exportSettings">Export Settings</h3>
@@ -703,6 +706,25 @@
       <div class="modal-footer">
         <button id="importExportModalCancel" class="btn btn-secondary" data-i18n="cancel">Cancel</button>
         <button id="importExportModalConfirm" class="btn btn-primary" data-i18n="confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF File Selection Dialog Modal -->
+  <div id="pdfFileSelectionModal" class="modal-overlay hidden">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="pdfFileSelectionModalTitle" data-i18n="pdfFileSelectionDialogTitle">Select PDF File</h3>
+        <button id="pdfFileSelectionModalClose" class="modal-close" data-i18n-aria-label="closeButton" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="pdfFileSelectionModalContent">
+          <p id="pdfFileSelectionModalMessage" data-i18n="pdfFileSelectionDialogMessage">Working with local files in browser extensions has limitations. Please select the PDF file you want to process.</p>
+          <p id="pdfFileSelectionModalWarning" class="pdf-file-selection-warning" data-i18n="pdfFileSelectionDialogWarning">Important: Do not switch tabs while the extension is processing. Keep this popup open until processing is complete.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="pdfFileSelectionModalOk" class="btn btn-primary" data-i18n="ok">OK</button>
       </div>
     </div>
   </div>

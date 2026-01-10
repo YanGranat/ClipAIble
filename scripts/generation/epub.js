@@ -4,21 +4,43 @@
 
 // @typedef {import('../types.js').ContentItem} ContentItem
 // @typedef {import('../types.js').GenerationData} GenerationData
+// @typedef {import('../types.js').ProcessingState} ProcessingState
 
-import { log, logError } from '../utils/logging.js';
-import { stripHtml } from '../utils/html.js';
+import { log, logError, logWarn } from '../utils/logging.js';
+import { stripHtml, markdownToHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import JSZip from '../../lib/jszip-wrapper.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
+import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
+import { handleError } from '../utils/error-handler.js';
 
 /**
  * Generate EPUB file from content
- * @param {GenerationData} data - Generation data
- * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
+ * @param {import('../types.js').GenerationData} data - Generation data
+ * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
  * @returns {Promise<Blob>} Generated EPUB blob
+ * @throws {Error} If content is empty
+ * @throws {Error} If EPUB generation fails
+ * @throws {Error} If image embedding fails
+ * @throws {Error} If processing is cancelled
+ * @see {@link DocumentGeneratorFactory.generate} For unified document generation interface
+ * @see {@link generatePdf} For PDF generation (similar structure)
+ * @see {@link generateFb2} For FB2 generation (similar structure)
+ * @example
+ * // Generate EPUB file
+ * const epubBlob = await generateEpub({
+ *   content: contentItems,
+ *   title: 'Article Title',
+ *   author: 'Author Name',
+ *   generateToc: true,
+ *   generateAbstract: true,
+ *   language: 'en'
+ * }, updateState);
+ * const url = URL.createObjectURL(epubBlob);
+ * // Download EPUB file...
  */
 export async function generateEpub(data, updateState) {
   const { 
@@ -30,8 +52,27 @@ export async function generateEpub(data, updateState) {
   log('Input', { title, author, contentItems: content?.length, generateToc });
   
   if (!content || content.length === 0) {
+    // Normalize error with context for better logging and error tracking
+    const noContentError = new Error('No content provided for EPUB generation');
+    const normalized = await handleError(noContentError, {
+      source: 'epubGeneration',
+      errorType: 'noContentToGenerateEpub',
+      logError: true,
+      createUserMessage: true, // Use centralized user-friendly message
+      context: {
+        operation: 'validateContent',
+        hasContent: !!content,
+        contentLength: content?.length || 0
+      }
+    });
+    
     const uiLang = await getUILanguage();
-    throw new Error(tSync('errorNoContentToGenerateEpub', uiLang));
+    /** @type {import('../types.js').ExtendedError} */
+    const error = new Error(normalized.userMessage || tSync('errorNoContentToGenerateEpub', uiLang));
+    error.code = normalized.code;
+    error.originalError = normalized.originalError;
+    error.context = normalized.context;
+    throw error;
   }
   
   if (updateState) updateState({ status: 'Building EPUB structure...', progress: 82 });
@@ -42,7 +83,9 @@ export async function generateEpub(data, updateState) {
   const bookId = `urn:uuid:${generateUUID()}`;
   const langCode = language === 'auto' ? 'en' : language;
   const safeTitle = title || 'Article';
-  const safeAuthor = author || 'Unknown';
+  // Only use author if it exists and is not empty/anonymous
+  // Use centralized validator to check all language variants
+  const safeAuthor = cleanAuthor(author);
   // Format ISO date to readable format using language code
   const pubDate = formatDateForDisplay(publishDate, langCode) || new Date().toLocaleDateString(getLocaleFromLanguage(langCode), { year: 'numeric', month: 'long', day: 'numeric' });
   
@@ -55,6 +98,9 @@ export async function generateEpub(data, updateState) {
   zip.file('META-INF/container.xml', generateContainerXml());
   
   // 3. Collect headings for TOC (preserve original IDs for internal links)
+  if (generateToc) {
+    log('📑 Collecting headings for EPUB table of contents');
+  }
   const headings = [];
   content.forEach((item, index) => {
     if (item.type === 'heading' && item.level >= 2) {
@@ -68,25 +114,38 @@ export async function generateEpub(data, updateState) {
   });
   
   // 4. Embed images FIRST (sets _epubSrc on items)
+  const imageCount = content.filter(item => item.type === 'image').length;
+  if (imageCount > 0) {
+    log(`🖼️ Loading and embedding ${imageCount} images for EPUB`);
+  }
   if (updateState) {
     const uiLang = await getUILanguage();
     const loadingStatus = tSync('stageLoadingImages', uiLang);
     updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 87 });
   }
   const imageManifest = await embedEpubImages(zip, content, updateState);
+  if (imageCount > 0) {
+    log(`✅ Images embedded: ${imageManifest.length} images added to EPUB`);
+  }
   
   // 5. Generate content XHTML (uses _epubSrc for images)
   if (updateState) updateState({ status: 'Converting content...', progress: 90 });
   const contentXhtml = generateContentXhtml(content, safeTitle, safeAuthor, pubDate, sourceUrl, headings, language, generateAbstract, abstract);
   zip.file('OEBPS/content.xhtml', contentXhtml);
   
-  // 6. Generate TOC navigation
-  const navXhtml = generateNavXhtml(safeTitle, headings, generateToc, langCode);
+  // 6. Generate TOC navigation (only if more than 1 heading)
+  if (generateToc && headings.length > 1) {
+    log(`📑 Generating EPUB table of contents: ${headings.length} headings`);
+  }
+  const navXhtml = generateNavXhtml(safeTitle, headings, generateToc && headings.length > 1, langCode);
   zip.file('OEBPS/nav.xhtml', navXhtml);
   
   // 7. Generate NCX for EPUB 2 compatibility
-  const tocNcx = generateTocNcx(bookId, safeTitle, headings, generateToc);
+  const tocNcx = generateTocNcx(bookId, safeTitle, headings, generateToc && headings.length > 1);
   zip.file('OEBPS/toc.ncx', tocNcx);
+  if (generateToc && headings.length > 1) {
+    log('✅ EPUB table of contents generated');
+  }
   
   // 8. Generate styles
   zip.file('OEBPS/style.css', generateEpubStyles());
@@ -102,6 +161,19 @@ export async function generateEpub(data, updateState) {
   
   // Generate the ZIP file as blob to avoid large base64 in memory
   log('Generating ZIP...');
+  
+  // Calculate estimated size metrics
+  const contentSize = new TextEncoder().encode(contentXhtml).length;
+  const estimatedSize = contentSize + (imageManifest.length * 50000); // Rough estimate: content + ~50KB per image
+  const estimatedSizeMB = (estimatedSize / 1024 / 1024).toFixed(2);
+  
+  log('📊 EPUB generation metrics', {
+    contentItems: content?.length || 0,
+    images: imageManifest.length,
+    headings: headings.length,
+    estimatedSize: `${estimatedSizeMB} MB`,
+    contentSize: `${(contentSize / 1024).toFixed(1)} KB`
+  });
   const zipBlob = await zip.generateAsync({ 
     type: 'blob',
     compression: 'DEFLATE',
@@ -110,6 +182,15 @@ export async function generateEpub(data, updateState) {
   
   // Create EPUB blob with correct MIME type
   const epubBlob = new Blob([zipBlob], { type: 'application/epub+zip' });
+  
+  const sizeMB = (epubBlob.size / 1024 / 1024).toFixed(2);
+  log('📊 EPUB file generated', {
+    size: `${sizeMB} MB`,
+    sizeBytes: epubBlob.size,
+    images: imageManifest.length,
+    headings: headings.length,
+    contentItems: content?.length || 0
+  });
   
   // Generate safe filename
   const safeFilename = sanitizeFilename(safeTitle);
@@ -147,6 +228,12 @@ export async function generateEpub(data, updateState) {
     }
   } else {
     // Fallback: data URL via FileReader
+    logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
+      reason: 'URL.createObjectURL not available in MV3 service worker',
+      method: 'data URL via FileReader (fallback)',
+      impact: 'Slower download, higher memory usage',
+      size: `${(epubBlob.size / 1024 / 1024).toFixed(2)} MB`
+    });
     const dataUrl = await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onloadend = () => resolve(reader.result);
@@ -216,7 +303,7 @@ function generateContentOpf(bookId, title, author, lang, pubDate, sourceUrl, gen
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
     <dc:identifier id="BookId">${bookId}</dc:identifier>
     <dc:title>${escapedTitle}</dc:title>
-    <dc:creator>${escapedAuthor}</dc:creator>
+${author ? `    <dc:creator>${escapedAuthor}</dc:creator>` : ''}
     <dc:language>${lang}</dc:language>
     <dc:date>${pubDate}</dc:date>
     <dc:source>${escapedSource}</dc:source>
@@ -256,7 +343,7 @@ function generateNavXhtml(title, headings, generateToc, language = 'en') {
   const contentsLabel = l10n.contents || 'Contents';
   
   let tocHtml = '';
-  if (generateToc && headings.length > 0) {
+  if (generateToc && headings.length > 1) {
     tocHtml = `    <nav epub:type="toc" id="toc">
       <h2>${escapeXml(contentsLabel)}</h2>
       <ol>
@@ -297,7 +384,7 @@ function generateTocNcx(bookId, title, headings, generateToc) {
   const escapedTitle = escapeXml(title);
   
   let navPoints = '';
-  if (generateToc && headings.length > 0) {
+  if (generateToc && headings.length > 1) {
     navPoints = headings.map((h, i) => `
     <navPoint id="navpoint-${i + 1}" playOrder="${i + 1}">
       <navLabel><text>${escapeXml(h.text)}</text></navLabel>
@@ -363,17 +450,51 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
     headerHtml += subtitleHtml;
   }
   
-  if (author || pubDate) {
+  // Only show author if it exists and is not empty/anonymous
+  // Use centralized validator to check all language variants
+  const cleanedAuthor = cleanAuthor(author);
+  const hasValidAuthor = !!cleanedAuthor;
+  
+  if (hasValidAuthor || pubDate) {
     headerHtml += '\n    <p class="meta">';
-    if (author) headerHtml += `<span class="author">${escapeXml(escapedAuthor)}</span>`;
-    if (author && pubDate) headerHtml += ' · ';
+    if (hasValidAuthor) headerHtml += `<span class="author">${escapeXml(escapedAuthor)}</span>`;
+    if (hasValidAuthor && pubDate) headerHtml += ' · ';
     if (pubDate) headerHtml += `<span class="date-label">${escapeXml(dateLabel)}:</span> <span class="date">${escapeXml(pubDate)}</span>`;
     headerHtml += '</p>';
   }
   
   if (sourceUrl) {
-    // Embed source URL in the label text as a link
-    headerHtml += `\n    <p class="source"><a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a></p>`;
+    // For local PDF files, show "Source:" label with filename (no link)
+    const isLocalPdf = sourceUrl.startsWith('file://') && sourceUrl.toLowerCase().includes('.pdf');
+    if (isLocalPdf) {
+      // Extract filename from file:// URL
+      let displaySource = sourceUrl;
+      try {
+        const match = sourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
+        if (match) {
+          displaySource = decodeURIComponent(match[1]);
+        } else if (sourceUrl.startsWith('file://')) {
+          const urlObj = new URL(sourceUrl);
+          const pathParts = urlObj.pathname.split('/').filter(p => p);
+          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || sourceUrl);
+        }
+      } catch (e) {
+        const parts = sourceUrl.split('/');
+        const lastPart = parts[parts.length - 1].split('?')[0];
+        if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
+          try {
+            displaySource = decodeURIComponent(lastPart);
+          } catch (e2) {
+            displaySource = lastPart;
+          }
+        }
+      }
+      // Show localized "Source:" label with filename (not hardcoded, uses sourceLabel from localization)
+      headerHtml += `\n    <p class="source">${escapeXml(sourceLabel)}: ${escapeXml(displaySource)}</p>`;
+    } else {
+      // For non-local files, show "Source:" label with link
+      headerHtml += `\n    <p class="source"><a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a></p>`;
+    }
   }
   
   headerHtml += '\n  </header>';
@@ -598,6 +719,16 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '') {
   
   // Preserve allowed inline tags, escape others
   let result = html;
+  
+  // CRITICAL: Convert markdown to HTML if text contains markdown syntax
+  // Check if text contains markdown patterns: **bold**, *italic*, `code`, [link](url)
+  // Convert even if HTML tags are present (markdown can be mixed with HTML)
+  // Pattern matches: **text**, *text*, `code`, [text](url), __bold__, ~~strikethrough~~
+  const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(result);
+  if (hasMarkdown) {
+    // Convert markdown to HTML first
+    result = markdownToHtml(result);
+  }
   
   // Convert internal links to local anchors
   if (sourceUrl) {

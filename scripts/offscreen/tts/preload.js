@@ -7,7 +7,7 @@ import { state } from '../state.js';
 /**
  * Preload WASM files to avoid blocking during first TTS call
  * This loads ONNX Runtime WASM files in advance
- * @param {Object} module - Piper TTS module
+ * @param {{voices?: function(): Promise<any>, download?: function(string): Promise<void>, [key: string]: any}} module - Piper TTS module
  */
 export async function preloadWASMFiles(module) {
   const preloadStart = Date.now();
@@ -49,7 +49,7 @@ export async function preloadWASMFiles(module) {
 /**
  * Preload common voice models to avoid blocking during first use
  * Downloads most commonly used voices in background
- * @param {Object} module - Piper TTS module
+ * @param {{download?: function(string): Promise<void>, [key: string]: any}} module - Piper TTS module
  */
 export async function preloadCommonVoiceModels(module) {
   const preloadStart = Date.now();
@@ -114,6 +114,27 @@ export async function preloadCommonVoiceModels(module) {
     // Don't throw - preload is optional
   }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

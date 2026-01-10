@@ -2,14 +2,28 @@
 // Processing module
 // Handles PDF saving, cancellation, and content extraction
 
-import { getUILanguage, tSync } from '../../scripts/locales.js';
+import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError } from '../../scripts/utils/error-messages.js';
 
 /**
  * Initialize processing module
  * @param {Object} deps - Dependencies
- * @param {Object} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
- * @returns {Object} Processing functions
+ * @param {Record<string, HTMLElement|null>} deps.elements - DOM elements
+ * @param {function(string, string?): Promise<string>} deps.t - Translation function
+ * @param {function(...*): void} deps.logError - Error logging function
+ * @param {function(...*): void} deps.log - Log function
+ * @param {function(...*): void} deps.logWarn - Warning logging function
+ * @param {function(string, string?): void} deps.showToast - Show toast notification function
+ * @param {function(string, string?, number?): void} deps.setStatus - Set status function
+ * @param {function(number, boolean?): void} deps.setProgress - Set progress function
+ * @param {function(): void} deps.stopTimerDisplay - Stop timer display function
+ * @param {function(string, string): Promise<string>} deps.decryptApiKey - Decrypt API key function
+ * @param {function(string): import('../../scripts/types.js').AIProvider} deps.getProviderFromModel - Get provider from model function
+ * @param {function(): void} deps.startStatePolling - Start state polling function
+ * @param {function(): Promise<void>} deps.checkProcessingState - Check processing state function
+ * @param {Object} deps.stateRefs - State references object
+ * @param {import('../../scripts/types.js').SettingsModule} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
+ * @returns {Object} Processing functions (handleSavePdf, handleCancel, handleGenerateSummary, etc.)
  */
 export function initProcessing(deps) {
   const {
@@ -38,24 +52,29 @@ export function initProcessing(deps) {
     }
     try {
       // Disable button to prevent double-clicks
-      elements.cancelBtn.disabled = true;
+      if (elements.cancelBtn) {
+        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = true;
+      }
       await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
-      const cancelledText = await t('processingCancelled');
+      const cancelledText = await t('processingCancelled', undefined);
       showToast(cancelledText, 'success');
-      const readyText = await t('ready');
-      setStatus('ready', readyText);
+      const readyText = await t('ready', undefined);
+      setStatus('ready', readyText, undefined);
       setProgress(0, false);
       stopTimerDisplay();
-      elements.savePdfBtn.disabled = false;
-      elements.savePdfBtn.style.display = 'block';
+      if (elements.savePdfBtn) {
+        /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
+        elements.savePdfBtn.style.display = 'block';
+      }
       if (elements.cancelBtn) {
+        elements.cancelBtn.classList.add('hidden');
         elements.cancelBtn.style.display = 'none';
-        elements.cancelBtn.disabled = false; // Re-enable for next time
+        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false; // Re-enable for next time
       }
     } catch (error) {
       logError('Error cancelling', error);
       if (elements.cancelBtn) {
-        elements.cancelBtn.disabled = false; // Re-enable on error
+        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false; // Re-enable on error
       }
     }
   }
@@ -209,9 +228,9 @@ export function initProcessing(deps) {
       timestamp: Date.now()
     });
     
-    const model = elements.modelSelect.value;
+    const model = elements.modelSelect ? /** @type {HTMLSelectElement} */ (elements.modelSelect).value : '';
     // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
-    const provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+    const provider = elements.apiProviderSelect ? /** @type {HTMLSelectElement} */ (elements.apiProviderSelect).value : getProviderFromModel(model);
     
     log('=== handleSavePdf: Got model and provider ===', {
       model: model,
@@ -221,22 +240,22 @@ export function initProcessing(deps) {
     
     // Get the appropriate API key based on selected provider
     let apiKey = '';
-    apiKey = elements.apiKey.value.trim();
+    apiKey = elements.apiKey ? /** @type {HTMLInputElement} */ (elements.apiKey).value.trim() : '';
     // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
+    if (apiKey.startsWith('****') && elements.apiKey && elements.apiKey.dataset.encrypted) {
       try {
-        apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
+        apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted, provider);
       } catch (error) {
         logError(`Failed to decrypt ${provider} API key`, error);
-        showToast(await t('failedToDecryptApiKey'), 'error');
+        showToast(await t('failedToDecryptApiKey', undefined), 'error');
         return;
       }
     }
     // Check API key only if not using automatic mode
-    const mode = elements.modeSelect.value;
+    const mode = elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '';
     if (mode !== 'automatic' && !apiKey) {
-      const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : 'Gemini';
-      showToast(await t(`pleaseEnter${providerName}ApiKey`), 'error');
+      const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
+      showToast(await t(`pleaseEnter${providerName}ApiKey`, undefined), 'error');
       return;
     }
 
@@ -272,9 +291,11 @@ export function initProcessing(deps) {
         timestamp: Date.now()
       });
       
-      setStatus('processing', await t('extractingPageContent'));
-      setProgress(0);
-      elements.savePdfBtn.disabled = true;
+      setStatus('processing', await t('extractingPageContent', undefined), undefined);
+      setProgress(0, false);
+      if (elements.savePdfBtn) {
+        /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = true;
+      }
 
       log('=== handleSavePdf: Waiting 500ms for dynamic content ===', {
         timestamp: Date.now()
@@ -451,22 +472,22 @@ export function initProcessing(deps) {
       }
 
       // Get Google API key if needed
-      let googleApiKey = elements.googleApiKey.value.trim();
+      let googleApiKey = elements.googleApiKey ? /** @type {HTMLInputElement} */ (elements.googleApiKey).value.trim() : '';
       // If masked, decrypt the encrypted version from dataset
-      if (googleApiKey.startsWith('****') && elements.googleApiKey.dataset.encrypted) {
+      if (googleApiKey.startsWith('****') && elements.googleApiKey && elements.googleApiKey.dataset.encrypted) {
         try {
-          googleApiKey = await decryptApiKey(elements.googleApiKey.dataset.encrypted);
+          googleApiKey = await decryptApiKey(elements.googleApiKey.dataset.encrypted, 'google');
         } catch (error) {
           logError('Failed to decrypt Google API key', error);
           // Continue without Google API key if decryption fails
           googleApiKey = '';
         }
       }
-      const translateImages = elements.translateImages.checked && elements.languageSelect.value !== 'auto';
+      const translateImages = elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto';
 
       log('=== handleSavePdf: About to send processArticle message ===', {
-        mode: elements.modeSelect.value,
-        outputFormat: elements.mainFormatSelect?.value || elements.outputFormat.value,
+        mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
+        outputFormat: elements.mainFormatSelect ? /** @type {HTMLSelectElement} */ (elements.mainFormatSelect).value : (elements.outputFormat ? /** @type {HTMLSelectElement} */ (elements.outputFormat).value : 'pdf'),
         hasApiKey: !!apiKey,
         hasTabId: !!tab.id,
         tabId: tab.id,
@@ -486,28 +507,28 @@ export function initProcessing(deps) {
           provider: provider,
           googleApiKey: googleApiKey,
           model: model,
-          mode: elements.modeSelect.value,
-          useCache: elements.useCache.checked,
-          outputFormat: elements.mainFormatSelect?.value || elements.outputFormat.value,
-          generateToc: elements.generateToc.checked,
-          generateAbstract: elements.generateAbstract.checked,
-          pageMode: elements.pageMode.value,
-          language: elements.languageSelect.value,
+          mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
+          useCache: elements.useCache ? /** @type {HTMLInputElement} */ (elements.useCache).checked : false,
+          outputFormat: elements.mainFormatSelect ? /** @type {HTMLSelectElement} */ (elements.mainFormatSelect).value : (elements.outputFormat ? /** @type {HTMLSelectElement} */ (elements.outputFormat).value : 'pdf'),
+          generateToc: elements.generateToc ? /** @type {HTMLInputElement} */ (elements.generateToc).checked : false,
+          generateAbstract: elements.generateAbstract ? /** @type {HTMLInputElement} */ (elements.generateAbstract).checked : false,
+          pageMode: elements.pageMode ? /** @type {HTMLSelectElement} */ (elements.pageMode).value : 'single',
+          language: elements.languageSelect ? /** @type {HTMLSelectElement} */ (elements.languageSelect).value : 'auto',
           translateImages: translateImages,
-          fontFamily: elements.fontFamily.value,
-          fontSize: elements.fontSize.value,
-          bgColor: elements.bgColor.value,
-          textColor: elements.textColor.value,
-          headingColor: elements.headingColor.value,
-          linkColor: elements.linkColor.value,
-          stylePreset: elements.stylePreset?.value || 'dark',
+          fontFamily: elements.fontFamily ? /** @type {HTMLSelectElement} */ (elements.fontFamily).value : 'Arial',
+          fontSize: elements.fontSize ? /** @type {HTMLSelectElement} */ (elements.fontSize).value : '12pt',
+          bgColor: elements.bgColor ? /** @type {HTMLInputElement} */ (elements.bgColor).value : '#ffffff',
+          textColor: elements.textColor ? /** @type {HTMLInputElement} */ (elements.textColor).value : '#000000',
+          headingColor: elements.headingColor ? /** @type {HTMLInputElement} */ (elements.headingColor).value : '#000000',
+          linkColor: elements.linkColor ? /** @type {HTMLInputElement} */ (elements.linkColor).value : '#0066cc',
+          stylePreset: elements.stylePreset ? /** @type {HTMLSelectElement} */ (elements.stylePreset).value : 'dark',
           tabId: tab.id,
           // Audio settings
-          audioProvider: elements.audioProvider?.value || 'openai',
+          audioProvider: elements.audioProvider ? /** @type {HTMLSelectElement} */ (elements.audioProvider).value : 'openai',
           // CRITICAL: Get actual voice ID, not index
           // If audioVoice.value is a number (index), get the actual value from options
           audioVoice: (() => {
-            const provider = elements.audioProvider?.value || 'openai';
+            const provider = elements.audioProvider ? /** @type {HTMLSelectElement} */ (elements.audioProvider).value : 'openai';
             if (!elements.audioVoice) {
               logWarn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
                 timestamp: Date.now(),
@@ -516,9 +537,10 @@ export function initProcessing(deps) {
               });
               return 'nova';
             }
-            const voiceValue = elements.audioVoice.value;
-            const selectedIndex = elements.audioVoice.selectedIndex;
-            const selectedOption = elements.audioVoice.options[selectedIndex];
+            const audioVoiceEl = /** @type {HTMLSelectElement} */ (elements.audioVoice);
+            const voiceValue = audioVoiceEl.value;
+            const selectedIndex = audioVoiceEl.selectedIndex;
+            const selectedOption = audioVoiceEl.options[selectedIndex];
             
             // DETAILED LOGGING: Voice value before processing
             log('[ClipAIble Processing] ===== EXTRACTING VOICE FROM UI =====', {
@@ -531,7 +553,7 @@ export function initProcessing(deps) {
               selectedOptionText: selectedOption?.textContent,
               datasetVoiceId: selectedOption?.dataset?.voiceId,
               isNumericIndex: /^\d+$/.test(String(voiceValue)),
-              optionsCount: elements.audioVoice.options.length
+              optionsCount: audioVoiceEl.options.length
             });
             
             // CRITICAL: Get voice ID from dataset.voiceId first (most reliable), then option.value
@@ -611,22 +633,22 @@ export function initProcessing(deps) {
             });
             return finalVoice;
           })(),
-          audioSpeed: parseFloat(elements.audioSpeed?.value || 1.0),
+          audioSpeed: parseFloat(elements.audioSpeed ? /** @type {HTMLInputElement} */ (elements.audioSpeed).value : '1.0'),
           audioFormat: 'mp3',
           elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
-          elevenlabsModel: elements.elevenlabsModel?.value || 'eleven_v3',
-          elevenlabsFormat: elements.elevenlabsFormat?.value || 'mp3_44100_192',
-          elevenlabsStability: elements.elevenlabsStability ? parseFloat(elements.elevenlabsStability.value) : 0.5,
-          elevenlabsSimilarity: elements.elevenlabsSimilarity ? parseFloat(elements.elevenlabsSimilarity.value) : 0.75,
-          elevenlabsStyle: elements.elevenlabsStyle ? parseFloat(elements.elevenlabsStyle.value) : 0.0,
-          elevenlabsSpeakerBoost: elements.elevenlabsSpeakerBoost ? elements.elevenlabsSpeakerBoost.checked : true,
-          openaiInstructions: elements.openaiInstructions ? elements.openaiInstructions.value.trim() : null,
-          googleTtsModel: elements.googleTtsModel?.value || 'gemini-2.5-pro-preview-tts',
-          googleTtsVoice: elements.googleTtsVoice?.value || 'Callirrhoe',
-          googleTtsPrompt: elements.googleTtsPrompt?.value.trim() || null,
-          respeecherTemperature: elements.respeecherTemperature ? parseFloat(elements.respeecherTemperature.value) : 1.0,
-          respeecherRepetitionPenalty: elements.respeecherRepetitionPenalty ? parseFloat(elements.respeecherRepetitionPenalty.value) : 1.0,
-          respeecherTopP: elements.respeecherTopP ? parseFloat(elements.respeecherTopP.value) : 1.0,
+          elevenlabsModel: elements.elevenlabsModel ? /** @type {HTMLSelectElement} */ (elements.elevenlabsModel).value : 'eleven_v3',
+          elevenlabsFormat: elements.elevenlabsFormat ? /** @type {HTMLSelectElement} */ (elements.elevenlabsFormat).value : 'mp3_44100_192',
+          elevenlabsStability: elements.elevenlabsStability ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStability).value) : 0.5,
+          elevenlabsSimilarity: elements.elevenlabsSimilarity ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsSimilarity).value) : 0.75,
+          elevenlabsStyle: elements.elevenlabsStyle ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStyle).value) : 0.0,
+          elevenlabsSpeakerBoost: elements.elevenlabsSpeakerBoost ? /** @type {HTMLInputElement} */ (elements.elevenlabsSpeakerBoost).checked : true,
+          openaiInstructions: elements.openaiInstructions ? /** @type {HTMLTextAreaElement} */ (elements.openaiInstructions).value.trim() : null,
+          googleTtsModel: elements.googleTtsModel ? /** @type {HTMLSelectElement} */ (elements.googleTtsModel).value : 'gemini-2.5-pro-preview-tts',
+          googleTtsVoice: elements.googleTtsVoice ? /** @type {HTMLSelectElement} */ (elements.googleTtsVoice).value : 'Callirrhoe',
+          googleTtsPrompt: elements.googleTtsPrompt ? /** @type {HTMLInputElement} */ (elements.googleTtsPrompt).value.trim() : null,
+          respeecherTemperature: elements.respeecherTemperature ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTemperature).value) : 1.0,
+          respeecherRepetitionPenalty: elements.respeecherRepetitionPenalty ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherRepetitionPenalty).value) : 1.0,
+          respeecherTopP: elements.respeecherTopP ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTopP).value) : 1.0,
           googleTtsApiKey: elements.googleTtsApiKey?.dataset.encrypted || null,
           geminiApiKey: elements.geminiApiKey?.dataset.encrypted || null,
           qwenApiKey: elements.qwenApiKey?.dataset.encrypted || null,
@@ -636,8 +658,13 @@ export function initProcessing(deps) {
       
       log('=== handleSavePdf: processArticle response received ===', {
         hasResponse: !!response,
+        responseType: typeof response,
+        responseIsNull: response === null,
+        responseIsUndefined: response === undefined,
+        responseKeys: response && typeof response === 'object' ? Object.keys(response) : [],
         hasError: !!response?.error,
         error: response?.error,
+        errorType: typeof response?.error,
         started: response?.started,
         timestamp: Date.now()
       });
@@ -654,7 +681,19 @@ export function initProcessing(deps) {
         throw new Error(userFriendlyMessage);
       }
 
-      if (response.error) {
+      // CRITICAL: Handle case when response is undefined or null (async response not received)
+      // This can happen when sendResponse is called asynchronously and channel is already closed
+      if (!response) {
+        logWarn('=== handleSavePdf: No response received (async response may be delayed) ===', {
+          timestamp: Date.now()
+        });
+        // For async handlers, assume processing started successfully if no error
+        // The actual status will be checked via state polling
+        log('=== handleSavePdf: Assuming processing started (will verify via state polling) ===', {
+          timestamp: Date.now()
+        });
+      } else if (response.error && typeof response.error === 'string') {
+        // Only treat as error if error is a non-empty string
         logError('=== handleSavePdf: Response contains error ===', {
           error: response.error,
           timestamp: Date.now()
@@ -668,6 +707,14 @@ export function initProcessing(deps) {
           error: { message: response.error }
         });
         throw new Error(userFriendlyMessage);
+      } else if (response.error) {
+        // Error exists but is not a string - log warning but don't throw
+        logWarn('=== handleSavePdf: Response has error property but it is not a string ===', {
+          error: response.error,
+          errorType: typeof response.error,
+          timestamp: Date.now()
+        });
+        // Continue processing - assume it's a false positive
       }
       
       log('=== handleSavePdf: Processing started successfully ===', {
@@ -677,7 +724,7 @@ export function initProcessing(deps) {
       // Processing started in background
       // CRITICAL: For audio, defer polling and state check to avoid blocking user interactions
       // Audio generation has long-running WASM operations that should not be interrupted
-      const outputFormat = elements.outputFormat?.value || 'pdf';
+      const outputFormat = elements.outputFormat ? /** @type {HTMLSelectElement} */ (elements.outputFormat).value : 'pdf';
       const isAudioFormat = outputFormat === 'audio';
       
       if (isAudioFormat) {
@@ -720,17 +767,19 @@ export function initProcessing(deps) {
           error: error
         });
         
-        setStatus('error', userFriendlyMessage);
+        setStatus('error', userFriendlyMessage, undefined);
         showToast(userFriendlyMessage, 'error');
       } catch (errorHandlingError) {
         // Fallback to original error message if user-friendly message generation fails
         logError('Failed to generate user-friendly error message', errorHandlingError);
-        const fallbackMessage = error?.message || 'An error occurred. Please try again.';
-        setStatus('error', fallbackMessage);
+        const fallbackMessage = error?.message || await t('errorUnknown', undefined);
+        setStatus('error', fallbackMessage, undefined);
         showToast(fallbackMessage, 'error');
       }
       
-      elements.savePdfBtn.disabled = false;
+      if (elements.savePdfBtn) {
+        /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
+      }
     }
   }
 

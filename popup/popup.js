@@ -1,7 +1,17 @@
 // @ts-check
 // Popup script for ClipAIble extension
 //
-// @typedef {import('../scripts/types.js').WindowWithModules} WindowWithModules
+/**
+ * @typedef {Window & {
+ *   uiModule?: Object;
+ *   statsModule?: Object;
+ *   settingsModule?: Object;
+ *   coreModule?: Object;
+ *   handlersModule?: Object;
+ *   themeChangeListener?: (e: MediaQueryListEvent) => void;
+ *   saveVoiceBeforeClose?: () => Promise<void>;
+ * }} WindowWithModules
+ */
 //
 // UI VISIBILITY MANAGEMENT STRUCTURE:
 // ====================================
@@ -33,13 +43,12 @@
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
-import { log, logError as originalLogError, logWarn, logDebug } from '../scripts/utils/logging.js';
+import { log, logWarn, logDebug } from '../scripts/utils/logging.js';
+import { enhancedLogError, initGlobalErrorHandlers } from './utils/error-handling.js';
+import { initPdfFileSelectionHandler } from './utils/pdf-dialog.js';
 import { CONFIG } from '../scripts/utils/config.js';
-import { RESPEECHER_CONFIG } from '../scripts/api/respeecher.js';
-import { AUDIO_CONFIG } from '../scripts/generation/audio-prep.js';
-import { getProviderFromModel, callAI } from '../scripts/api/index.js';
+import { getProviderFromModel } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
-import { processSubtitlesWithAI } from '../scripts/extraction/video-processor.js';
 import { sanitizeMarkdownHtml, escapeHtml as escapeHtmlUtil } from '../scripts/utils/html.js';
 import { initUI } from './ui.js';
 import { initStats } from './stats.js';
@@ -47,130 +56,31 @@ import { initSettings } from './settings.js';
 import { initCore } from './core.js';
 import { initHandlers } from './handlers.js';
 import { initializeDOMElements, initializeModules, finalizeInitialization } from './utils/init-helpers.js';
+import { groupDependencies } from './utils/dependencies.js';
 import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS } from './constants.js';
 import { getElement, setElementDisplay, setElementGroupDisplay, setDisplayForIds } from './utils/dom-helpers.js';
 import { markdownToHtml, formatTime, escapeHtml, formatRelativeDate } from './utils/format-helpers.js';
 import { debouncedSaveSettings, saveAudioVoice } from './utils/settings-helpers.js';
+
+// Settings save state (imported from settings-helpers via closure, but we need local references)
+let settingsSaveTimer = null;
+let isSavingSettings = false;
 import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils/timer-helpers.js';
 
-// Function to send error to service worker for centralized logging
-async function sendErrorToServiceWorker(message, error, context = {}) {
-  try {
-    // Import sanitizeErrorForLogging for stack trace sanitization
-    const { sanitizeErrorForLogging } = await import('../scripts/utils/security.js');
-    
-    // Sanitize error before sending (removes sensitive information from stack traces)
-    const sanitizedError = error ? sanitizeErrorForLogging(error) : null;
-    
-    const errorData = {
-      message: message,
-      error: sanitizedError ? {
-        name: sanitizedError.name,
-        message: sanitizedError.message,
-        stack: sanitizedError.stack,
-        ...(sanitizedError.code && { code: sanitizedError.code })
-      } : null,
-      context: context,
-      source: 'popup',
-      timestamp: Date.now(),
-      url: window.location.href
-    };
-    
-    // Send to service worker (fire and forget - don't wait for response)
-    chrome.runtime.sendMessage({
-      action: 'logError',
-      data: errorData
-    }).catch(() => {
-      // Ignore errors when sending error report (to avoid infinite loop)
-    });
-  } catch (sendError) {
-    // CRITICAL: Fallback to console.error if sending to service worker fails
-    // This is the only place where console.error is acceptable in sendErrorToServiceWorker
-    // It's a fallback when the service worker is unavailable
-    try {
-      if (typeof originalLogError === 'function') {
-        originalLogError('Failed to send error to service worker', sendError);
-      } else {
-        console.error('[ClipAIble] Failed to send error to service worker', sendError);
-      }
-    } catch (loggingError) {
-      // Ultimate fallback if even error logging fails
-      console.error('[ClipAIble] Failed to send error to service worker', sendError);
-      console.error('[ClipAIble] Failed to log sendError failure:', loggingError);
-    }
-  }
-}
+// Module references (replaces window.*Module pattern)
+let uiModuleRef = null;
+let statsModuleRef = null;
+let settingsModuleRef = null;
 
-// Enhanced logError that also sends to service worker
-const enhancedLogError = function(message, error = null) {
-  // Call original logError
-  originalLogError(message, error);
-  
-  // Also send to service worker
-  sendErrorToServiceWorker(message, error, {
-    source: 'popup.logError'
-  });
-};
-
-// Replace logError with enhanced version
+// Use enhanced logError that also sends to service worker
+// Must be defined before initGlobalErrorHandlers() which uses it
 const logError = enhancedLogError;
 
-// Global error handler for uncaught errors
-// Uses logError with fallback to console.error if logging system is not yet initialized
-window.addEventListener('error', (event) => {
-  const errorMessage = `Global error handler caught error: ${event.message || 'Unknown error'}`;
-  
-  try {
-    if (typeof logError === 'function') {
-      logError(errorMessage, event.error);
-      if (event.filename || event.lineno) {
-        logError('Error location', new Error(`File: ${event.filename || 'unknown'}, Line: ${event.lineno || 'unknown'}, Col: ${event.colno || 'unknown'}`));
-      }
-    } else {
-      // Fallback if logError is not yet available (should not happen, but safety first)
-      console.error('[ClipAIble] popup.js:', errorMessage, event.error, event.filename, event.lineno);
-    }
-  } catch (loggingError) {
-    // Ultimate fallback if even error logging fails
-    console.error('[ClipAIble] popup.js:', errorMessage, event.error, event.filename, event.lineno);
-    console.error('[ClipAIble] Failed to log error:', loggingError);
-  }
-  
-  // Always try to send to service worker for centralized logging
-  sendErrorToServiceWorker(errorMessage, event.error, {
-    source: 'popup.globalError',
-    filename: event.filename,
-    lineno: event.lineno,
-    colno: event.colno
-  });
-});
+// Initialize global error handlers early (before anything can break)
+initGlobalErrorHandlers();
 
-// Global error handler for unhandled promise rejections
-// Uses logError with fallback to console.error if logging system is not yet initialized
-window.addEventListener('unhandledrejection', (event) => {
-  const errorMessage = `Unhandled promise rejection: ${event.reason?.message || String(event.reason)}`;
-  const error = event.reason instanceof Error 
-    ? event.reason 
-    : new Error(String(event.reason));
-  
-  try {
-    if (typeof logError === 'function') {
-      logError(errorMessage, error);
-    } else {
-      // Fallback if logError is not yet available (should not happen, but safety first)
-      console.error('[ClipAIble] popup.js:', errorMessage, event.reason);
-    }
-  } catch (loggingError) {
-    // Ultimate fallback if even error logging fails
-    console.error('[ClipAIble] popup.js:', errorMessage, event.reason);
-    console.error('[ClipAIble] Failed to log rejection:', loggingError);
-  }
-  
-  // Always try to send to service worker for centralized logging
-  sendErrorToServiceWorker(errorMessage, error, {
-    source: 'popup.unhandledRejection'
-  });
-});
+// Initialize PDF file selection handler
+initPdfFileSelectionHandler();
 
 
 // DOM Elements
@@ -342,10 +252,8 @@ function saveAudioVoiceLocal(provider, voice) {
 
 // Apply UI localization (kept for backward compatibility, now uses uiModule)
 async function applyLocalization() {
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  if (windowWithModules.uiModule) {
-    return windowWithModules.uiModule.applyLocalization();
+  if (uiModuleRef) {
+    return uiModuleRef.applyLocalization();
   }
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
@@ -453,15 +361,16 @@ async function applyLocalization() {
   document.documentElement.lang = langCode;
 }
 
-// DEPRECATED: applyTheme function removed - use uiModule.applyTheme() instead
-// This is a temporary stub for backward compatibility during initialization
-// It will be replaced by uiModule.applyTheme() after modules are initialized
+/**
+ * Apply theme to popup
+ * @deprecated Use uiModule.applyTheme() instead. This is a temporary stub for backward compatibility during initialization.
+ * @returns {void}
+ */
 function applyTheme() {
   // This function is a stub - actual implementation is in uiModule
   // It's only used during module initialization, after which uiModule.applyTheme() is used
-  const windowWithModules = window;
-  if (windowWithModules.uiModule && windowWithModules.uiModule.applyTheme) {
-    return windowWithModules.uiModule.applyTheme();
+  if (uiModuleRef && uiModuleRef.applyTheme) {
+    return uiModuleRef.applyTheme();
   }
   // Fallback: basic theme application if uiModule not yet available
   if (!elements.themeSelect) {
@@ -485,8 +394,8 @@ async function init() {
     // Initialize DOM elements
     initializeDOMElements(elements);
     
-    // Initialize all modules
-    const modules = initializeModules({
+    // Group dependencies for cleaner module initialization
+    const groupedDeps = groupDependencies({
       elements,
       formatTime,
       startTimerDisplay: startTimerDisplayLocal,
@@ -505,6 +414,7 @@ async function init() {
       setCustomSelectValue,
       applyTheme,
       markdownToHtml,
+      escapeHtml,
       audioVoiceMap,
       t,
       getUILanguage,
@@ -534,15 +444,20 @@ async function init() {
       initHandlers
     });
     
+    // Initialize all modules with grouped dependencies
+    const modules = /** @type {any} */ (initializeModules)(groupedDeps);
+    
     // Finalize initialization: load settings, apply localization, setup event listeners
     await finalizeInitialization(modules, initAllCustomSelects);
     
-    // Store settingsModule reference for saveVoiceBeforeClose function
-    // This allows saveVoiceBeforeClose to access settingsModule without using window object
-    const settingsModuleRef = modules.settingsModule;
+    // Store module references for functions that need them (replaces window.*Module pattern)
+    uiModuleRef = modules.uiModule;
+    statsModuleRef = modules.statsModule;
+    settingsModuleRef = modules.settingsModule;
     
     // Override saveVoiceBeforeClose to use settingsModule from modules
     const originalSaveVoiceBeforeClose = saveVoiceBeforeClose;
+    // @ts-ignore - saveVoiceBeforeClose is added to window at runtime for event listeners
     window.saveVoiceBeforeClose = async function() {
       // Use settingsModule from modules instead of window
       if (!isSavingSettings && elements.audioVoice && elements.audioProvider && settingsModuleRef && settingsModuleRef.saveAudioVoice) {
@@ -565,7 +480,7 @@ async function init() {
               voiceToSave = selectedOption.value;
             }
             // Priority 3: Use getVoiceIdByIndex if value is an index
-            else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModuleRef.getVoiceIdByIndex) {
+            else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModuleRef && settingsModuleRef.getVoiceIdByIndex) {
               voiceToSave = settingsModuleRef.getVoiceIdByIndex(provider, selectedIndex);
             }
           }
@@ -586,17 +501,23 @@ async function init() {
             let currentMap = storageResult[STORAGE_KEYS.AUDIO_VOICE_MAP] || {};
             
             // CRITICAL: Ensure format is correct (with 'current' property)
-            if (!currentMap.current || typeof currentMap.current !== 'object' || Array.isArray(currentMap.current)) {
+            /** @type {{current?: Record<string, string>}} */
+            let typedCurrentMap = currentMap;
+            if (!typedCurrentMap.current || typeof typedCurrentMap.current !== 'object' || Array.isArray(typedCurrentMap.current)) {
               // Convert old format to new format
               if (typeof currentMap === 'object' && !Array.isArray(currentMap) && !('current' in currentMap)) {
-                currentMap = { current: { ...currentMap } };
+                typedCurrentMap = { current: { ...currentMap } };
               } else {
-                currentMap = { current: {} };
+                typedCurrentMap = { current: {} };
               }
             }
             
             // Update the voice for the provider
-            currentMap.current[provider] = voiceToSave;
+            if (typedCurrentMap.current) {
+              typedCurrentMap.current[provider] = voiceToSave;
+            }
+            
+            currentMap = typedCurrentMap;
             
             // Save immediately
             await chrome.storage.local.set({ [STORAGE_KEYS.AUDIO_VOICE_MAP]: currentMap });
@@ -798,7 +719,11 @@ function initCustomSelect(selectId, options = {}) {
     });
     
     // Close model dropdown if open
-    if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+    if (elements.customModelDropdown && 
+        !elements.customModelDropdown.classList.contains('hidden') &&
+        elements.customModelDropdown.style.display !== 'none') {
+      // CRITICAL: Add 'hidden' class (it has display: none !important)
+      elements.customModelDropdown.classList.add('hidden');
       elements.customModelDropdown.style.display = 'none';
     }
     
@@ -952,6 +877,8 @@ async function saveApiKey() {
         keysToSave[STORAGE_KEYS.GROK_API_KEY] = elements.apiKey.dataset.encrypted;
       } else if (provider === 'openrouter') {
         keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = elements.apiKey.dataset.encrypted;
+      } else if (provider === 'deepseek') {
+        keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = elements.apiKey.dataset.encrypted;
       }
     } else if (!apiKey.startsWith('****')) {
       // New key provided, validate and encrypt
@@ -1026,6 +953,21 @@ async function saveApiKey() {
           logError('Encryption error', error);
           return;
         }
+      } else if (provider === 'deepseek') {
+        // DeepSeek API keys start with 'sk-'
+        if (!apiKey.startsWith('sk-')) {
+          const invalidDeepSeekKeyText = await t('invalidDeepSeekKeyFormat');
+          showToast(invalidDeepSeekKeyText, 'error');
+          return;
+        }
+        try {
+          keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = await encryptApiKey(apiKey);
+        } catch (error) {
+          const failedToEncryptText = await t('failedToEncryptApiKey');
+          showToast(failedToEncryptText, 'error');
+          logError('Encryption error', error);
+          return;
+        }
       }
     }
   }
@@ -1059,10 +1001,8 @@ async function saveApiKey() {
 
 // Set status indicator (kept for backward compatibility, now uses uiModule)
 function setStatus(type, text, startTime = null) {
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  if (windowWithModules.uiModule) {
-    return windowWithModules.uiModule.setStatus(type, text, startTime);
+  if (uiModuleRef) {
+    return uiModuleRef.setStatus(type, text, startTime);
   }
   elements.statusDot.className = 'status-dot';
   if (type === 'processing') {
@@ -1087,22 +1027,24 @@ function setStatus(type, text, startTime = null) {
 
 // Set progress bar (kept for backward compatibility, now uses uiModule)
 function setProgress(percent, show = true) {
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  if (windowWithModules.uiModule) {
-    return windowWithModules.uiModule.setProgress(percent, show);
+  if (uiModuleRef) {
+    return uiModuleRef.setProgress(percent, show);
   }
-  elements.progressContainer.style.display = show ? 'block' : 'none';
+  if (show) {
+    elements.progressContainer.classList.remove('hidden');
+    elements.progressContainer.style.display = 'block';
+  } else {
+    elements.progressContainer.classList.add('hidden');
+    elements.progressContainer.style.display = 'none';
+  }
   elements.progressBar.style.width = `${percent}%`;
   elements.progressText.textContent = `${Math.round(percent)}%`;
 }
 
 // Show toast notification (kept for backward compatibility, now uses uiModule)
 function showToast(message, type = 'success') {
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  if (windowWithModules.uiModule) {
-    return windowWithModules.uiModule.showToast(message, type);
+  if (uiModuleRef) {
+    return uiModuleRef.showToast(message, type);
   }
   const existingToast = document.querySelector('.toast');
   if (existingToast) {
@@ -1157,10 +1099,8 @@ window.addEventListener('beforeunload', () => {
 // ========================================
 
 async function loadAndDisplayStats() {
-  /** @type {WindowWithModules} */
-  const windowWithModules = window;
-  if (windowWithModules.statsModule) {
-    return windowWithModules.statsModule.loadAndDisplayStats();
+  if (statsModuleRef) {
+    return statsModuleRef.loadAndDisplayStats();
   }
   // Fallback to original implementation if module not initialized
   try {
@@ -1196,13 +1136,16 @@ async function displayStats(stats) {
   // Update history
   const historyContainer = document.getElementById('statsHistory');
   if (stats.history && stats.history.length > 0) {
+    const langCode = await getUILanguage();
+    const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+    const openOriginalArticleText = locale.openOriginalArticle || UI_LOCALES.en.openOriginalArticle;
     historyContainer.innerHTML = stats.history.map((item, index) => {
       const date = new Date(item.date);
       const dateStr = formatRelativeDate(date);
       const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
       return `
         <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
-          <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="Open original article">
+          <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="${escapeHtml(openOriginalArticleText)}">
             <div class="history-title">${escapeHtml(item.title)}</div>
             <div class="history-meta">
               <span class="history-format">${item.format}</span>

@@ -7,11 +7,13 @@ import { log, logWarn } from '../utils/logging.js';
 import { getProviderFromModel, parseModelConfig } from '../api/index.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
+import { handleError } from '../utils/error-handler.js';
 
 /**
  * Detect source language from content
+ * Uses improved character-based detection that supports multiple languages
  * @param {Array} content - Content array
- * @returns {string} Language code: 'en', 'ru', 'ua', or 'unknown'
+ * @returns {string} Language code (en, ru, ua, de, fr, es, it, pt, zh, ja, ko, ar, or 'unknown' if no text)
  */
 export function detectSourceLanguage(content) {
   log('=== detectSourceLanguage: ENTRY ===', {
@@ -19,85 +21,92 @@ export function detectSourceLanguage(content) {
     timestamp: Date.now()
   });
   
-  let allText = '';
-  for (const item of content) {
-    if (item.text) allText += item.text + ' ';
-    if (item.alt) allText += item.alt + ' ';
-  }
-  
-  log('=== detectSourceLanguage: TEXT EXTRACTED ===', {
-    totalTextLength: allText.length,
-    textFull: allText, // FULL TEXT - NO TRUNCATION
-    timestamp: Date.now()
+  log('🔍 LANGUAGE DETECTION: Starting source language detection', {
+    contentItemsCount: content?.length || 0,
+    method: 'detectSourceLanguage (character-based)'
   });
   
-  const cyrillicCount = (allText.match(/[\u0400-\u04FF]/g) || []).length;
-  const latinCount = (allText.match(/[a-zA-Z]/g) || []).length;
-  const ukrainianChars = (allText.match(/[іїєґІЇЄҐ]/g) || []).length;
-  const russianChars = (allText.match(/[ёыэЁЫЭ]/g) || []).length;
-  
-  log('=== detectSourceLanguage: CHARACTER COUNTS ===', {
-    cyrillicCount,
-    latinCount,
-    ukrainianChars,
-    russianChars,
-    total: cyrillicCount + latinCount,
-    timestamp: Date.now()
-  });
-  
-  const total = cyrillicCount + latinCount;
-  if (total === 0) {
-    log('=== detectSourceLanguage: RESULT ===', { detectedLanguage: 'unknown', reason: 'no characters found' });
+  if (!content || content.length === 0) {
+    log('⚠️ LANGUAGE DETECTION: No content for source language detection', { 
+      detectedLanguage: 'unknown', 
+      reason: 'no content' 
+    });
     return 'unknown';
   }
   
-  let detectedLanguage;
-  if (cyrillicCount / total > 0.3) {
-    if (ukrainianChars > russianChars * 2 || allText.includes('що') || allText.includes('які') || allText.includes('від')) {
-      detectedLanguage = 'ua';
-      log('=== detectSourceLanguage: RESULT ===', { 
-        detectedLanguage: 'ua', 
-        reason: 'cyrillic with Ukrainian markers',
-        cyrillicRatio: cyrillicCount / total,
-        ukrainianChars,
-        russianChars
-      });
-    } else {
-      detectedLanguage = 'ru';
-      log('=== detectSourceLanguage: RESULT ===', { 
-        detectedLanguage: 'ru', 
-        reason: 'cyrillic without Ukrainian markers',
-        cyrillicRatio: cyrillicCount / total
-      });
+  // Extract text from content items
+  let allText = '';
+  for (const item of content) {
+    if (item.text) {
+      // Strip HTML tags for better detection
+      const textOnly = stripHtml(item.text);
+      allText += textOnly + ' ';
     }
-  } else {
-    detectedLanguage = 'en';
-    log('=== detectSourceLanguage: RESULT ===', { 
-      detectedLanguage: 'en', 
-      reason: 'mostly latin',
-      cyrillicRatio: cyrillicCount / total
-    });
+    if (item.alt) {
+      allText += item.alt + ' ';
+    }
   }
+  
+  allText = allText.trim();
+  
+  const textPreview = allText.length > 500 ? allText.substring(0, 500) + '...' : allText;
+  log('🔍 LANGUAGE DETECTION: Text extracted for source language detection', {
+    totalTextLength: allText.length,
+    textPreview,
+    timestamp: Date.now()
+  });
+  
+  if (!allText || allText.length === 0) {
+    log('⚠️ LANGUAGE DETECTION: No text found for source language detection', { 
+      detectedLanguage: 'unknown', 
+      reason: 'no text found in content' 
+    });
+    return 'unknown';
+  }
+  
+  // Use improved character-based detection
+  log('🔍 LANGUAGE DETECTION: Calling character-based detection', {
+    textLength: allText.length,
+    method: 'detectLanguageByCharacters'
+  });
+  const detectedLanguage = detectLanguageByCharacters(allText);
+  
+  log('🌍 LANGUAGE DETECTION: Source language detected', { 
+    detectedLanguage, 
+    method: 'detectLanguageByCharacters',
+    textLength: allText.length,
+    source: 'character-based analysis'
+  });
   
   return detectedLanguage;
 }
 
 /**
  * Detect language from text using character analysis (offline fallback)
+ * Supports: en, ru, ua, de, fr, es, it, pt, zh, ja, ko, ar
  * @param {string} text - Text to analyze
  * @returns {string} Language code (defaults to 'en' if uncertain)
  */
 export function detectLanguageByCharacters(text) {
-  log('=== detectLanguageByCharacters: ENTRY ===', {
+  const textPreview = text && text.length > 500 ? text.substring(0, 500) + '...' : text;
+  log('🔍 LANGUAGE DETECTION: Starting character-based language detection', {
     textLength: text?.length || 0,
-    textFull: text || null, // FULL TEXT - NO TRUNCATION
+    textPreview,
+    method: 'detectLanguageByCharacters',
     timestamp: Date.now()
   });
   
   if (!text || text.length < 50) {
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'en', reason: 'text too short or empty' });
+    log('⚠️ LANGUAGE DETECTION: Text too short for character-based detection, using default', { 
+      detectedLanguage: 'en', 
+      reason: 'text too short or empty',
+      textLength: text?.length || 0
+    });
     return 'en';
   }
+  
+  // Use sample for pattern matching (first 10k chars for better accuracy)
+  const sample = text.substring(0, 10000);
   
   // Count character types
   const cyrillicMatch = text.match(/[а-яёА-ЯЁ]/g) || [];
@@ -124,25 +133,45 @@ export function detectLanguageByCharacters(text) {
   });
   
   if (totalLetters < 20) {
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'en', reason: 'too few letters' });
+    log('⚠️ LANGUAGE DETECTION: Too few letters for character-based detection, using default', { 
+      detectedLanguage: 'en', 
+      reason: 'too few letters',
+      totalLetters
+    });
     return 'en';
   }
   
-  // Check for specific scripts
+  // Check for specific scripts (CJK, Arabic) - these have unique character sets
   if (chineseMatch.length > totalLetters * 0.3) {
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'zh', reason: 'chinese script detected' });
+    log('🌍 LANGUAGE DETECTION: Chinese script detected', { 
+      detectedLanguage: 'zh', 
+      reason: 'chinese script detected',
+      chineseRatio: (chineseMatch.length / totalLetters).toFixed(2)
+    });
     return 'zh';
   }
   if (japaneseMatch.length > totalLetters * 0.2) {
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'ja', reason: 'japanese script detected' });
+    log('🌍 LANGUAGE DETECTION: Japanese script detected', { 
+      detectedLanguage: 'ja', 
+      reason: 'japanese script detected',
+      japaneseRatio: (japaneseMatch.length / totalLetters).toFixed(2)
+    });
     return 'ja';
   }
   if (koreanMatch.length > totalLetters * 0.3) {
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'ko', reason: 'korean script detected' });
+    log('🌍 LANGUAGE DETECTION: Korean script detected', { 
+      detectedLanguage: 'ko', 
+      reason: 'korean script detected',
+      koreanRatio: (koreanMatch.length / totalLetters).toFixed(2)
+    });
     return 'ko';
   }
   if (arabicMatch.length > totalLetters * 0.3) {
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'ar', reason: 'arabic script detected' });
+    log('🌍 LANGUAGE DETECTION: Arabic script detected', { 
+      detectedLanguage: 'ar', 
+      reason: 'arabic script detected',
+      arabicRatio: (arabicMatch.length / totalLetters).toFixed(2)
+    });
     return 'ar';
   }
   
@@ -152,34 +181,98 @@ export function detectLanguageByCharacters(text) {
   if (cyrillicRatio > 0.5) {
     // Cyrillic text - check for Ukrainian specific letters
     if (ukrainianMatch.length > 3) {
-      log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'ua', reason: 'cyrillic with Ukrainian markers', cyrillicRatio, ukrainianCount: ukrainianMatch.length });
+      log('🌍 LANGUAGE DETECTION: Ukrainian detected (Cyrillic with Ukrainian markers)', { 
+        detectedLanguage: 'ua', 
+        reason: 'cyrillic with Ukrainian markers', 
+        cyrillicRatio: cyrillicRatio.toFixed(2), 
+        ukrainianCount: ukrainianMatch.length 
+      });
       return 'ua';
     }
-    log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'ru', reason: 'cyrillic without Ukrainian markers', cyrillicRatio });
+    log('🌍 LANGUAGE DETECTION: Russian detected (Cyrillic without Ukrainian markers)', { 
+      detectedLanguage: 'ru', 
+      reason: 'cyrillic without Ukrainian markers', 
+      cyrillicRatio: cyrillicRatio.toFixed(2) 
+    });
     return 'ru';
   }
   
-  log('=== detectLanguageByCharacters: RESULT ===', { detectedLanguage: 'en', reason: 'mostly latin', cyrillicRatio });
-  return 'en';
+  // For Latin-based languages, use word pattern matching
+  // IMPORTANT: Use specific patterns to avoid false positives
+  // Single-letter words like "a", "o", "e" are too common across languages
+  const patterns = {
+    'de': /\b(der|die|das|und|ist|sind|haben|sein|werden|können|mit|für|von|auf|zu|nicht|auch|wenn|oder|aber|dass|kann|wird|sich|nur|noch|nach|über|vor|durch|bei|gegen|ohne|während|seit|bis|innerhalb|außerhalb|wegen|trotz|statt|anstatt)\b/gi,
+    'fr': /\b(le|la|les|et|est|sont|avoir|être|peuvent|dans|pour|avec|sans|sur|sous|par|de|du|des|une|un|ce|que|qui|dont|où|mais|ou|car|donc|alors|puis|ensuite|toujours|jamais|souvent|parfois|maintenant|hier|aujourd\'hui|demain|ici|là|où|comment|pourquoi|combien|quel|quelle|quels|quelles)\b/gi,
+    'es': /\b(el|la|los|las|y|es|son|tener|ser|estar|pueden|con|por|para|de|del|en|sobre|bajo|entre|desde|hasta|durante|mediante|según|contra|sin|ante|tras|mientras|aunque|pero|o|ni|sino|también|tampoco|así|entonces|ahora|aquí|allí|allá|dónde|cuándo|cómo|por qué|cuánto|cuánta|cuántos|cuántas|qué|quién|quiénes)\b/gi,
+    'it': /\b(il|la|lo|gli|le|e|è|sono|avere|essere|possono|con|per|di|del|della|dei|delle|in|su|sotto|sopra|tra|fra|da|dal|dalla|dai|dalle|verso|durante|mentre|prima|dopo|quando|dove|come|perché|perchè|quanto|quanta|quanti|quante|che|chi|cosa|ma|o|anche|pure|ancora|già|sempre|mai|spesso|raramente|oggi|ieri|domani|qui|qua|là|dove)\b/gi,
+    'pt': /\b(o|a|os|as|e|é|são|ter|ser|estar|podem|com|para|de|do|da|dos|das|em|no|na|nos|nas|sobre|sob|entre|até|durante|mediante|segundo|contra|sem|ante|após|atrás|enquanto|embora|mas|ou|nem|também|ainda|já|sempre|nunca|muitas vezes|raramente|hoje|ontem|amanhã|aqui|ali|aí|onde|quando|como|por quê|porque|quanto|quanta|quantos|quantas|que|quem|o que|qual|quais)\b/gi,
+    'en': /\b(the|and|is|are|have|has|been|will|would|could|should|this|that|with|from|for|about|into|through|during|including|against|among|throughout|despite|towards|upon|concerning|to|of|in|on|at|by|as|but|or|if|when|where|how|why|what|which|who|whom|whose|while|although|because|since|until|unless|before|after|above|below|between|among|within|without|across|around|behind|beside|beyond|inside|outside|under|over|near|far|here|there|now|then|always|never|often|sometimes|usually|today|yesterday|tomorrow)\b/gi
+  };
+  
+  // Count matches for each language
+  const matchCounts = {};
+  let maxMatches = 0;
+  let detectedLang = 'en';
+  
+  for (const [code, pattern] of Object.entries(patterns)) {
+    const matches = (sample.match(pattern) || []).length;
+    matchCounts[code] = matches;
+    if (matches > maxMatches) {
+      maxMatches = matches;
+      detectedLang = code;
+    }
+  }
+  
+  // Require minimum threshold to avoid false positives
+  // If no language has significant matches, default to English
+  // With 10k chars sample, we need at least 10 matches or 0.1% of text for reliability
+  const minThreshold = Math.max(10, Math.floor(sample.length / 1000));
+  
+  if (maxMatches < minThreshold) {
+    log('🌍 LANGUAGE DETECTION: Defaulting to English (no significant language patterns)', { 
+      detectedLanguage: 'en', 
+      reason: 'mostly latin but no significant language patterns found', 
+      maxMatches, 
+      minThreshold,
+      matchCounts,
+      cyrillicRatio 
+    });
+    return 'en';
+  }
+  
+  log('🌍 LANGUAGE DETECTION: Language detected from character patterns', { 
+    detectedLanguage: detectedLang, 
+    reason: 'latin script with language-specific patterns detected', 
+    maxMatches, 
+    minThreshold,
+    matchCounts,
+    cyrillicRatio 
+  });
+  return detectedLang;
 }
 
 /**
  * Detect content language using AI (primary), character analysis (fallback for offline)
+ * Supports: en, ru, ua, de, fr, es, it, pt, zh, ja, ko, ar
  * @param {Array} content - Content array
  * @param {string} apiKey - API key
  * @param {string} model - Model name
- * @returns {Promise<string>} Detected language code (e.g., 'ru', 'en', 'ua')
+ * @returns {Promise<string>} Detected language code (e.g., 'ru', 'en', 'ua', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko', 'ar')
  */
 export async function detectContentLanguage(content, apiKey, model) {
-  log('=== detectContentLanguage: ENTRY ===', {
+  log('🔍 LANGUAGE DETECTION: Starting AI-based content language detection', {
     contentItemsCount: content?.length || 0,
     hasApiKey: !!apiKey,
     model: model,
+    method: 'detectContentLanguage (AI)',
     timestamp: Date.now()
   });
   
   if (!content || content.length === 0) {
-    log('=== detectContentLanguage: RESULT ===', { detectedLanguage: 'en', reason: 'no content' });
+    log('⚠️ LANGUAGE DETECTION: No content for AI detection, using default', { 
+      detectedLanguage: 'en', 
+      reason: 'no content' 
+    });
     return 'en';
   }
   
@@ -194,22 +287,35 @@ export async function detectContentLanguage(content, apiKey, model) {
   
   sampleText = sampleText.trim();
   
-  log('=== detectContentLanguage: SAMPLE TEXT EXTRACTED ===', {
+  log('🔍 LANGUAGE DETECTION: Sample text extracted for AI detection', {
     sampleTextLength: sampleText.length,
     sampleTextFull: sampleText, // FULL TEXT - NO TRUNCATION
     timestamp: Date.now()
   });
   
   if (!sampleText) {
-    log('=== detectContentLanguage: RESULT ===', { detectedLanguage: 'en', reason: 'no text in content' });
+    log('⚠️ LANGUAGE DETECTION: No text in content for AI detection, using default', { 
+      detectedLanguage: 'en', 
+      reason: 'no text in content' 
+    });
     return 'en';
   }
   
   // If no API key, use offline character-based detection
   if (!apiKey) {
-    log('=== detectContentLanguage: NO API KEY, USING OFFLINE DETECTION ===');
+    log('⚠️ LANGUAGE DETECTION: No API key - falling back to character-based detection', {
+      reason: 'No API key provided',
+      method: 'character analysis (offline)',
+      accuracy: 'Lower - may be less accurate than AI detection'
+    });
+    log('🔍 LANGUAGE DETECTION: Calling character-based detection (fallback)', {
+      textLength: sampleText.length
+    });
     const lang = detectLanguageByCharacters(sampleText);
-    log('=== detectContentLanguage: RESULT ===', { detectedLanguage: lang, method: 'offline character analysis' });
+    log('🌍 LANGUAGE DETECTION: Character-based detection result (fallback)', { 
+      detectedLanguage: lang, 
+      method: 'offline character analysis' 
+    });
     return lang;
   }
   
@@ -500,14 +606,45 @@ Example outputs: ru, en, ua, de`;
       rawResponseFull: rawResponse || null, // FULL RESPONSE - NO TRUNCATION
       parsedResultFull: parsedResult ? JSON.stringify(parsedResult) : null // FULL RESULT - NO TRUNCATION
     });
+    log('🔍 LANGUAGE DETECTION: AI returned invalid format, falling back to character-based detection', {
+      textLength: sampleText.length
+    });
     const fallbackLang = detectLanguageByCharacters(sampleText);
-    log('=== detectContentLanguage: RESULT ===', { detectedLanguage: fallbackLang, method: 'character analysis (AI fallback)' });
+    log('🌍 LANGUAGE DETECTION: Character-based detection result (AI fallback)', { 
+      detectedLanguage: fallbackLang, 
+      method: 'character analysis (AI fallback)' 
+    });
     return fallbackLang;
   } catch (error) {
+    // Normalize error with context for better logging and error tracking
+    await handleError(error, {
+      source: 'languageDetection',
+      errorType: 'detectContentLanguageFailed',
+      logError: true,
+      createUserMessage: false, // Keep existing behavior - fallback to character-based detection
+      context: {
+        operation: 'detectContentLanguage',
+        provider,
+        sampleTextLength: sampleText?.length || 0
+      }
+    });
     // API error - fallback to character-based detection
-    logWarn('=== detectContentLanguage: API ERROR, USING FALLBACK ===', { error: error.message, errorStack: error.stack });
+    logWarn('⚠️ FALLBACK: AI language detection failed - using offline character-based detection', { 
+      error: error.message,
+      reason: 'AI detection API call failed',
+      method: 'character analysis (offline fallback)',
+      accuracy: 'Lower - may be less accurate than AI detection',
+      originalError: error.message
+    });
+    log('🔍 LANGUAGE DETECTION: AI detection failed, falling back to character-based detection', {
+      textLength: sampleText.length,
+      error: error.message
+    });
     const fallbackLang = detectLanguageByCharacters(sampleText);
-    log('=== detectContentLanguage: RESULT ===', { detectedLanguage: fallbackLang, method: 'character analysis (offline fallback)' });
+    log('🌍 LANGUAGE DETECTION: Character-based detection result (error fallback)', { 
+      detectedLanguage: fallbackLang, 
+      method: 'character analysis (offline fallback)' 
+    });
     return fallbackLang;
   }
 }

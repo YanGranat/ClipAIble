@@ -268,8 +268,8 @@ html[data-theme="light"]::-webkit-scrollbar-corner {
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   min-width: 50px;
-  appearance: none;
   -webkit-appearance: none;
+  appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 6px center;
@@ -423,9 +423,9 @@ body[data-theme="light"] .api-section label {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   width: 100%;
   box-sizing: border-box;
-  appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  appearance: none;
   transition: border-color 0.2s;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -699,9 +699,9 @@ body[data-theme="light"] .btn-primary:disabled {
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
@@ -853,6 +853,7 @@ body[data-theme="light"] .summary-container {
   justify-content: space-between;
   padding: 8px 12px;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -1214,7 +1215,7 @@ body[data-theme="light"] .section.settings-toggle {
   background: transparent !important;
 }
 
-/* Переопределить .section для панелей - критично для Grid */
+/* Override .section for panels - critical for Grid */
 .settings-panel,
 .stats-panel {
   padding: 0 !important;
@@ -1244,7 +1245,6 @@ body[data-theme="light"] .section.settings-toggle {
   opacity: 1;
   border: 1px solid rgba(255, 255, 255, 0.1);
   height: auto;
-  min-height: auto;
 }
 
 .settings-panel > .settings-content {
@@ -1323,9 +1323,9 @@ body[data-theme="light"] .settings-panel {
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   box-sizing: border-box;
-  appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  appearance: none;
   transition: border-color 0.2s;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -1512,6 +1512,7 @@ body[data-theme="light"] .custom-model-option.selected {
   flex: 1;
   color: inherit;
   font-size: 14px;
+  -webkit-user-select: none;
   user-select: none;
   white-space: normal;
   word-wrap: break-word;
@@ -1583,9 +1584,9 @@ body[data-theme="light"] .setting-item label {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   width: 100%;
   box-sizing: border-box;
-  appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
+  appearance: none;
   transition: border-color 0.2s;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23ffffff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -2142,7 +2143,6 @@ body[data-theme="light"] .custom-select-options::-webkit-scrollbar-thumb:hover {
   padding: 6px 8px;
   padding-right: 8px;
   height: auto;
-  min-height: auto;
   font-size: 12px;
   font-weight: 500;
   border-radius: 6px;
@@ -2352,7 +2352,6 @@ body[data-theme="light"] .stats-panel {
   opacity: 1;
   border: 1px solid rgba(255, 255, 255, 0.1);
   height: auto;
-  min-height: auto;
 }
 
 body[data-theme="light"] .stats-panel.open {
@@ -2876,6 +2875,116 @@ body[data-theme="light"] .modal-body::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
 }
 
+/* Modal Overlay and Dialog */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+
+.modal-dialog {
+  background: var(--bg-primary);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  max-width: 400px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+body[data-theme="light"] .modal-dialog {
+  background: var(--light-bg-white);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  border: 1px solid var(--border-color);
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: color 0.2s ease;
+}
+
+.modal-close:hover {
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.modal-body p {
+  margin: 0 0 12px 0;
+  line-height: 1.5;
+  font-size: 13px;
+}
+
+.modal-body p:last-child {
+  margin-bottom: 0;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* PDF File Selection Dialog Warning */
+.pdf-file-selection-warning {
+  margin-top: 12px;
+  padding: 10px;
+  background: rgba(255, 193, 7, 0.1);
+  border-left: 3px solid #ffc107;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+body[data-theme="light"] .pdf-file-selection-warning {
+  background: rgba(255, 193, 7, 0.15);
+  border-left-color: #ff9800;
+}
+
 /* Animations */
 .btn-icon-left {
   font-size: 16px;
@@ -2940,8 +3049,8 @@ body[data-theme="light"] .toast {
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.3);
   outline: none;
-  appearance: none;
   -webkit-appearance: none;
+  appearance: none;
   cursor: pointer;
 }
 
@@ -3025,6 +3134,7 @@ body[data-theme="light"] .popup-footer-divider {
   color: rgba(255, 255, 255, 0.6);
   text-decoration: none;
   transition: color 0.2s;
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -3043,6 +3153,7 @@ body[data-theme="light"] .popup-footer-link:hover {
 
 .popup-footer-separator {
   color: rgba(255, 255, 255, 0.3);
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -3055,10 +3166,80 @@ body[data-theme="light"] .popup-footer-separator {
   color: rgba(255, 255, 255, 0.5);
   font-weight: 400;
   letter-spacing: 0.3px;
+  -webkit-user-select: none;
   user-select: none;
 }
 
 body[data-theme="light"] .popup-footer-version {
   color: var(--text-muted);
+}
+
+/* Utility classes for inline styles */
+.hidden {
+  display: none !important;
+}
+
+.margin-bottom-12 {
+  margin-bottom: 12px;
+}
+
+.margin-top-10 {
+  margin-top: 10px;
+}
+
+.clickable {
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.hidden-text-muted {
+  display: none;
+  color: var(--text-muted);
+}
+
+/* Font family classes for font selector preview */
+.font-segoe-ui {
+  font-family: 'Segoe UI', sans-serif;
+}
+
+.font-arial {
+  font-family: Arial, sans-serif;
+}
+
+.font-georgia {
+  font-family: Georgia, serif;
+}
+
+.font-times-new-roman {
+  font-family: 'Times New Roman', serif;
+}
+
+.font-verdana {
+  font-family: Verdana, sans-serif;
+}
+
+.font-tahoma {
+  font-family: Tahoma, sans-serif;
+}
+
+.font-trebuchet-ms {
+  font-family: 'Trebuchet MS', sans-serif;
+}
+
+.font-palatino-linotype {
+  font-family: 'Palatino Linotype', serif;
+}
+
+.font-garamond {
+  font-family: Garamond, serif;
+}
+
+.font-courier-new {
+  font-family: 'Courier New', monospace;
+}
+
+.font-comic-sans-ms {
+  font-family: 'Comic Sans MS', cursive;
 }
 

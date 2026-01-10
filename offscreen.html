@@ -1,19 +1,200 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>ClipAIble TTS Offscreen</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClipAIble Offscreen Document</title>
   <!-- Headers for SharedArrayBuffer support (if needed for ONNX Runtime threading) -->
   <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
   <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
   <!-- NOTE: Import map no longer needed - piper-tts-web.js has been patched -->
   <!-- to use chrome.runtime.getURL() directly for onnxruntime-web import -->
+  
+  <!-- ============================================== -->
+  <!-- PDF.js 2.6.347 (stable legacy version) -->
+  <!-- Downloaded from CDN and saved locally -->
+  <!-- ============================================== -->
+  <!-- CRITICAL: Use local file - CSP does not allow external URLs -->
+  <script src="lib/pdfjs/pdf.min.js"></script>
+  
+  <!-- PDF.js initialization (simple, reliable) -->
+  <script>
+    // CRITICAL: Initialize PDF.js immediately after script load
+    (function() {
+      console.error('[PDF_INIT] ===== LOCAL VERSION INIT =====', {
+        timestamp: Date.now(),
+        hasPdfjsLib: typeof window.pdfjsLib !== 'undefined',
+        hasPDFJS: typeof window.PDFJS !== 'undefined',
+        location: window.location.href
+      });
+      
+      // CRITICAL: Wait for PDF.js to load (script may load asynchronously)
+      let retryCount = 0;
+      const maxRetries = 50; // 5 seconds max
+      
+      function initPdfJs() {
+        // Get PDF.js object (PDF.js 2.6.347 exports as pdfjsLib, 2.0.943 exports as PDFJS)
+        const PDF = window.pdfjsLib || window.PDFJS;
+        
+        if (!PDF) {
+          retryCount++;
+          if (retryCount >= maxRetries) {
+            console.error('[PDF_INIT] ❌ CRITICAL: PDF.js NOT FOUND after retries!', {
+              windowKeys: Object.keys(window).filter(k => k.toLowerCase().includes('pdf')),
+              allWindowKeys: Object.keys(window).slice(0, 50),
+              note: 'PDF.js file may be corrupted or wrong version. Need PDF.js 2.6.347.'
+            });
+            return;
+          }
+          console.error('[PDF_INIT] PDF.js not found yet, retrying...', {
+            retryCount: retryCount,
+            maxRetries: maxRetries,
+            windowKeys: Object.keys(window).filter(k => k.toLowerCase().includes('pdf')),
+            allWindowKeys: Object.keys(window).slice(0, 30)
+          });
+          // Retry after 100ms
+          setTimeout(initPdfJs, 100);
+          return;
+        }
+        
+        console.error('[PDF_INIT] ✅ PDF.js loaded', {
+          version: PDF.version || '2.6.347',
+          hasGetDocument: typeof PDF.getDocument === 'function',
+          pdfKeys: Object.keys(PDF).slice(0, 20)
+        });
+        
+        // CRITICAL: Configure worker for offscreen document
+        // PDF.js 2.6.347: MUST set disableWorker BEFORE any getDocument calls
+        if (PDF.GlobalWorkerOptions) {
+          // CRITICAL: DO NOT set workerSrc - it may cause PDF.js to try loading worker
+          // Even with disableWorker=true, setting workerSrc can cause issues
+          // PDF.GlobalWorkerOptions.workerSrc = ...; // DO NOT SET
+          
+          // CRITICAL: Disable worker for offscreen document (origin null)
+          // PDF.js 2.6.347 has disableWorker option
+          if (PDF.GlobalWorkerOptions.disableWorker !== undefined) {
+            PDF.GlobalWorkerOptions.disableWorker = true;
+            console.error('[PDF_INIT] ✅ Worker disabled via GlobalWorkerOptions.disableWorker');
+          } else {
+            // Fallback: set workerPort to null
+            PDF.GlobalWorkerOptions.workerPort = null;
+            console.error('[PDF_INIT] ✅ Worker disabled via workerPort = null');
+          }
+          
+          // CRITICAL: Ensure workerSrc is NOT set (empty string or undefined)
+          // Setting workerSrc can cause PDF.js to attempt worker loading even with disableWorker=true
+          PDF.GlobalWorkerOptions.workerSrc = '';
+          
+          console.error('[PDF_INIT] GlobalWorkerOptions configured', {
+            workerSrc: PDF.GlobalWorkerOptions.workerSrc || 'empty (correct)',
+            disableWorker: PDF.GlobalWorkerOptions.disableWorker,
+            workerPort: PDF.GlobalWorkerOptions.workerPort
+          });
+        }
+        
+        // CRITICAL: Patch Worker constructor to prevent SecurityError
+        const OriginalWorker = self.Worker || window.Worker;
+        if (OriginalWorker) {
+          const PatchedWorker = function(...args) {
+            console.error('[PDF_INIT] ❌ Worker constructor BLOCKED:', args[0]);
+            throw new Error('Worker is disabled in offscreen document (origin null).');
+          };
+          
+          Object.setPrototypeOf(PatchedWorker, OriginalWorker);
+          self.Worker = PatchedWorker;
+          window.Worker = PatchedWorker;
+          self.Worker._patched = true;
+          window.Worker._patched = true;
+          
+          // Freeze to prevent overwriting
+          try {
+            Object.defineProperty(self, 'Worker', {
+              value: PatchedWorker,
+              writable: false,
+              configurable: false
+            });
+            Object.defineProperty(window, 'Worker', {
+              value: PatchedWorker,
+              writable: false,
+              configurable: false
+            });
+          } catch (e) {
+            console.error('[PDF_INIT] ⚠️ Failed to freeze Worker:', e);
+          }
+          
+          // CRITICAL: Verify patch works
+          try {
+            new Worker('data:,');
+            console.error('[PDF_INIT] ❌ CRITICAL: Worker patch FAILED - Worker was created!');
+          } catch (error) {
+            if (error.message.includes('Worker is disabled')) {
+              console.error('[PDF_INIT] ✅ Worker patch VERIFIED - Worker creation blocked');
+            } else {
+              console.error('[PDF_INIT] ⚠️ Worker patch verification - unexpected error:', error.message);
+            }
+          }
+          
+          console.error('[PDF_INIT] ✅ Worker constructor patched', {
+            selfWorkerPatched: self.Worker._patched === true,
+            windowWorkerPatched: window.Worker._patched === true,
+            selfWorkerType: typeof self.Worker,
+            windowWorkerType: typeof window.Worker
+          });
+        } else {
+          console.error('[PDF_INIT] ⚠️ Worker constructor not found - cannot patch');
+        }
+        
+        // Store in multiple locations for compatibility
+        window.PDFJS = PDF;
+        window.pdfjsLib = PDF;
+        self.PDFJS = PDF;
+        self.pdfjsLib = PDF;
+        
+        console.error('[PDF_INIT] ✅ PDF.js initialization complete', {
+          version: PDF.version || '2.6.347',
+          storedInWindow: true,
+          storedInSelf: true,
+          hasGetDocument: typeof PDF.getDocument === 'function',
+          disableWorker: PDF.GlobalWorkerOptions?.disableWorker,
+          workerPort: PDF.GlobalWorkerOptions?.workerPort
+        });
+        
+        // CRITICAL: Set global flag for bundle to know PDF.js is ready
+        window.__PDF_READY__ = true;
+        self.__PDF_READY__ = true;
+        
+        console.error('[PDF_INIT] ✅ __PDF_READY__ flag set - bundle can now use PDF.js');
+      }
+      
+      // Start initialization (with retry logic)
+      initPdfJs();
+    })();
+  </script>
 </head>
 <body>
-  <!-- Empty body - scripts load separately -->
-  <!-- Use bundled version (NOT a module) - all dependencies resolved at build time -->
-  <script src="dist/offscreen-bundle.js"></script>
-  <!-- PDF.js will be loaded dynamically via import() in scripts/offscreen/pdf/extract.js -->
+  <!-- Bundle loads AFTER PDF.js is configured -->
+  <!-- CRITICAL: Bundle must load AFTER PDF.js initialization -->
+  <script>
+    // CRITICAL: Test if script tag executes
+    console.error('[HTML] About to load bundle...', Date.now());
+    window.addEventListener('error', (e) => {
+      console.error('[HTML] Script error:', e.message, e.filename, e.lineno);
+    });
+  </script>
+  <script src="dist/offscreen-bundle.js?v=2026-01-09-v7" onerror="console.error('[HTML] Bundle failed to load!')" onload="console.error('[HTML] Bundle loaded successfully!', Date.now())"></script>
+  <!-- PDF.js is now loaded globally and will be accessed via window.PDFJS or window.pdfjsLib -->
+  <script>
+    // CRITICAL: Test if bundle executed
+    console.error('[HTML] After bundle script tag', Date.now());
+    setTimeout(() => {
+      console.error('[HTML] 1 second after bundle load', Date.now());
+      if (typeof window.offscreenReady !== 'undefined') {
+        console.error('[HTML] window.offscreenReady =', window.offscreenReady);
+      } else {
+        console.error('[HTML] window.offscreenReady is undefined!');
+      }
+    }, 1000);
+  </script>
 </body>
 </html>
 

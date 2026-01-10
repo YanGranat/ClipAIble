@@ -1,34 +1,59 @@
 // @ts-check
 // Configuration constants for ClipAIble extension
 
+/**
+ * @readonly
+ * @const {import('../types.js').Config}
+ */
 export const CONFIG = {
   // Content processing
   CHUNK_SIZE: 50000,              // Characters per chunk for AI extraction
   CHUNK_OVERLAP: 3000,            // Overlap between chunks to avoid cut-off content
-  MAX_HTML_FOR_ANALYSIS: 480000,  // Max chars to send to AI for selector analysis (reduced to account for system prompt ~15k + user prompt prefix ~5k)
+  MAX_HTML_FOR_ANALYSIS: 450000,  // Max chars to send to AI for selector analysis (reduced to account for system prompt ~17k + user prompt prefix ~5k + API overhead ~3k, total ~475k max)
   TRANSLATION_CHUNK_SIZE: 20000,  // Characters per translation batch
   
   // Timeouts
-  API_TIMEOUT_MS: 30 * 60 * 1000, // 30 minutes timeout for API requests (increased for very long articles and slow networks)
-  STATE_EXPIRY_MS: 2 * 60 * 60 * 1000, // 2 hours - stale state threshold (increased for very long operations)
-  STATE_SAVE_INTERVAL: 2000,      // Save state every 2 seconds during processing (ULTRA FREQUENT to keep SW alive)
+  API_TIMEOUT_MS: 120 * 60 * 1000, // 120 minutes (2 hours) timeout for API requests (increased for very long articles, large PDFs, and slow networks)
+  STATE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 7 days - stale state threshold (increased for very long operations like 1000-page PDFs)
+  // NOTE: STATE_SAVE_INTERVAL removed - keep-alive now uses only alarms (every 1 minute)
+  // Alarms can wake up terminated service workers, intervals cannot
+  // This reduces storage load by 90% while maintaining reliability
   
-  // Long-running operations timeouts (for very large articles/audio files)
-  MAX_OPERATION_TIMEOUT_MS: 5 * 60 * 60 * 1000, // 5 hours - initial maximum timeout estimate
-  ABSOLUTE_MAX_OPERATION_TIMEOUT_MS: 24 * 60 * 60 * 1000, // 24 hours - absolute maximum (safety limit for stuck operations)
+  // Long-running operations timeouts (for very large articles/audio files and large PDFs up to 1000 pages)
+  MAX_OPERATION_TIMEOUT_MS: 7 * 24 * 60 * 60 * 1000, // 7 days (168 hours) - initial maximum timeout estimate (supports PDFs up to 1000 pages)
+  ABSOLUTE_MAX_OPERATION_TIMEOUT_MS: 10 * 24 * 60 * 60 * 1000, // 10 days (240 hours) - absolute maximum (safety limit for stuck operations, supports even larger PDFs)
   OFFScreen_TTS_TIMEOUT_BASE: 60 * 1000, // 60 seconds base timeout
   OFFScreen_TTS_TIMEOUT_PER_CHAR: 100, // 100ms per character
-  OFFScreen_TTS_TIMEOUT_MAX: 5 * 60 * 60 * 1000, // 5 hours - initial estimate maximum
+  OFFScreen_TTS_TIMEOUT_MAX: 7 * 24 * 60 * 60 * 1000, // 7 days (168 hours) - initial estimate maximum (supports very long audio generation)
   OFFScreen_TTS_HEARTBEAT_INTERVAL: 30 * 1000, // 30 seconds - heartbeat interval for timeout extension
   OFFScreen_TTS_HEARTBEAT_EXTENSION: 30 * 60 * 1000, // 30 minutes - how much to extend timeout on each heartbeat
   
+  // PDF processing timeouts (for very large PDFs up to 1000 pages)
+  PDF_TAB_LOAD_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes - timeout for tab load (increased from 30 seconds for very large PDFs)
+  PDF_PAGE_LOAD_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes - timeout for page load (increased from 5 seconds for very large PDFs)
+  PDF_PAGE_LOAD_FALLBACK_TIMEOUT_MS: 2 * 60 * 1000, // 2 minutes - fallback timeout for page load (increased from 2 seconds for very large PDFs)
+  PDF_FIRST_PAGE_RENDER_TIMEOUT_MS: 10 * 60 * 1000, // 10 minutes - timeout for first page render (longer for initialization)
+  PDF_RENDER_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes - timeout for PDF page rendering (increased from 60 seconds for 1000-page PDFs)
+  PDF_PARSE_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes - timeout for PDF parsing (increased from 30 seconds for 1000-page PDFs)
+  
+  // Audio cleanup
+  AUDIO_CLEANUP_THRESHOLD_MS: 5 * 60 * 1000, // 5 minutes - threshold for stale audio cleanup
+  
+  // Worker inactivity timeout
+  WORKER_INACTIVITY_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes - timeout for worker inactivity
+  
+  // Offscreen TTS cleanup timeout
+  OFFScreen_TTS_CLEANUP_TIMEOUT_MS: 5 * 60 * 1000, // 5 minutes - timeout for offscreen TTS cleanup (enough time for audio to be used)
+  
   // Keep-alive
   KEEP_ALIVE_INTERVAL: 1,         // Minutes (>=1 min per MV3 requirement)
-  // NOTE: KEEP_ALIVE_PING_INTERVAL removed - unified keep-alive uses STATE_SAVE_INTERVAL (2 seconds) instead
+  // OPTIMIZED: Removed intervals - alarms alone are sufficient and can wake terminated service workers
+  // This reduces storage operations by 90% (from 30+ per minute to 1 per minute)
   
   // State thresholds
   RESET_THRESHOLD_MS: 60 * 1000,        // 1 minute - threshold for resetting state on extension reload
   SUMMARY_STALE_THRESHOLD_MS: 15 * 60 * 1000, // 15 minutes - threshold for stale summary generation flag
+  SUMMARY_TIMEOUT_MS: 10 * 60 * 1000,   // 10 minutes - timeout for summary generation (will abort and show error)
   MAX_UPDATE_QUEUE_SIZE: 100,           // Maximum number of queued state updates (prevents memory leaks)
   
   // Polling
@@ -48,8 +73,8 @@ export const CONFIG = {
   UI_CONTEXT_MENU_DELAY: 50,      // ms - delay for context menu operations
   
   // Storage
-  STORAGE_SAVE_DEBOUNCE: 500,     // ms - debounce for storage saves (background)
-  STORAGE_SAVE_DEBOUNCE_AUDIO: 3000, // ms - debounce for audio storage saves (longer to avoid blocking WASM)
+  STORAGE_SAVE_DEBOUNCE: 5000,    // ms - debounce for storage saves (background) - OPTIMIZED: increased from 500ms to 5s to reduce load
+  STORAGE_SAVE_DEBOUNCE_AUDIO: 3000, // ms - debounce for audio storage saves (longer to avoid blocking WASM operations)
   
   // TTS and Audio
   TTS_DELAY: 200,                 // ms - delay for TTS operations
@@ -80,9 +105,21 @@ export const CONFIG = {
   
   // Logging
   LOG_LEVEL: 0,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: DEBUG for active development)
+  VERBOSE_LOGGING: false,          // Enable verbose logging for detailed debugging (increases log volume significantly)
+  MAX_LOG_DATA_SIZE: 100000,       // Maximum size of data object to log (in characters after JSON.stringify), larger objects will be truncated
+  LOG_COLLECTION_MAX_SIZE: 10000, // OPTIMIZED: Maximum number of logs in memory collection (reduced from 50k to 10k to save memory)
+  
+  // Extension version (synchronized with manifest.json)
+  // This is used as fallback if chrome.runtime.getManifest() fails (extremely rare)
+  // CRITICAL: Must be updated when version changes in manifest.json
+  EXTENSION_VERSION: '3.3.0'
 };
 
-// Language names for translation
+/**
+ * Language names for translation
+ * @readonly
+ * @const {Record<string, string>}
+ */
 export const LANGUAGE_NAMES = {
   'en': 'English',
   'ru': 'Russian',
@@ -97,7 +134,11 @@ export const LANGUAGE_NAMES = {
   'ko': 'Korean'
 };
 
-// "Hello world" examples in different languages for translation prompts
+/**
+ * "Hello world" examples in different languages for translation prompts
+ * @readonly
+ * @const {Record<string, string>}
+ */
 export const HELLO_WORLD_EXAMPLES = {
   'en': 'Hello world',
   'ru': 'Привет мир',
@@ -112,7 +153,11 @@ export const HELLO_WORLD_EXAMPLES = {
   'ko': '안녕하세요 세계'
 };
 
-// Localization strings for PDF metadata
+/**
+ * Localization strings for PDF metadata
+ * @readonly
+ * @const {Record<string, Record<string, string>>}
+ */
 export const PDF_LOCALIZATION = {
   'en': {
     originalArticle: 'Original article',
@@ -236,7 +281,11 @@ export const PDF_LOCALIZATION = {
   }
 };
 
-// Special marker that AI returns when text is already in target language
+/**
+ * Special marker that AI returns when text is already in target language
+ * @readonly
+ * @const {string}
+ */
 export const NO_TRANSLATION_MARKER = '[NO_TRANSLATION_NEEDED]';
 
 // Note: STYLE_PRESETS are defined in popup/popup.js (UI layer)
@@ -393,5 +442,31 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
   
   // Last resort: return as-is (shouldn't happen with proper ISO format from AI)
   return dateStr;
+}
+
+/**
+ * Get extension version from manifest
+ * Falls back to CONFIG.EXTENSION_VERSION if manifest is unavailable (extremely rare)
+ * @returns {string} Extension version (e.g., '3.3.0')
+ */
+export function getExtensionVersion() {
+  try {
+    // chrome.runtime.getManifest() is always available in service worker and popup contexts
+    // It always returns an object (never null/undefined) according to Chrome Extension API
+    // manifest.version may be undefined only if manifest.json is corrupted (extremely rare)
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+      const manifest = chrome.runtime.getManifest();
+      if (manifest && manifest.version) {
+        return manifest.version;
+      }
+    }
+  } catch (error) {
+    // Fallback to config constant if getManifest fails (extremely rare edge case)
+    // This can happen if manifest.json is corrupted or extension context is invalid
+  }
+  
+  // Fallback to config constant (synchronized with manifest.json)
+  // CRITICAL: CONFIG.EXTENSION_VERSION must be updated when version changes in manifest.json
+  return CONFIG.EXTENSION_VERSION;
 }
 

@@ -11,11 +11,14 @@ import { CONFIG } from '../utils/config.js';
 
 /**
  * Start summary generation with proper state management
- * @param {Object} data - Summary generation data
- * @param {Function} startKeepAlive - Function to start keep-alive
- * @param {Function} stopKeepAlive - Function to stop keep-alive
- * @param {Function} sendResponse - Response function (optional, for immediate response)
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string}} data - Summary generation data
+ * @param {function(): void} startKeepAlive - Function to start keep-alive
+ * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
+ * @param {function(import('../types.js').MessageResponse): void} [sendResponse] - Response function (optional, for immediate response)
  * @returns {Promise<void>}
+ * @throws {Error} If contentItems is empty
+ * @throws {Error} If API key is missing
+ * @throws {Error} If summary generation fails
  */
 export async function startSummaryGeneration(data, startKeepAlive, stopKeepAlive, sendResponse = null) {
   const startTime = Date.now();
@@ -24,14 +27,14 @@ export async function startSummaryGeneration(data, startKeepAlive, stopKeepAlive
     // CRITICAL: Check if summary is already generating to prevent race conditions
     const existingState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
     if (existingState.summary_generating && existingState.summary_generating_start_time) {
-      const timeSinceStart = Date.now() - existingState.summary_generating_start_time;
+      const timeSinceStart = Date.now() - Number(existingState.summary_generating_start_time);
       
       // CRITICAL: Check if generation actually started by looking for progress indicators
       // If flag is set but there's no progress, it's likely hung
       const progressCheck = await chrome.storage.local.get(['summary_text', 'summary_saved_timestamp']);
       const hasSummary = !!progressCheck.summary_text;
       const hasRecentSave = progressCheck.summary_saved_timestamp && 
-        (Date.now() - progressCheck.summary_saved_timestamp) < 60000; // Saved in last minute
+        (Date.now() - Number(progressCheck.summary_saved_timestamp)) < 60000; // Saved in last minute
       
       // CRITICAL: Use shorter threshold for "hung" flag detection
       // If flag is set but generation hasn't started in 5 seconds AND no progress, it's likely hung
@@ -147,13 +150,29 @@ export async function startSummaryGeneration(data, startKeepAlive, stopKeepAlive
       });
     }, 30000); // Log every 30 seconds
     
+    // CRITICAL: Add timeout for summary generation to prevent infinite "generating" state
+    const timeoutMs = CONFIG.SUMMARY_TIMEOUT_MS;
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Summary generation timed out after ${Math.round(timeoutMs / 1000 / 60)} minutes`));
+      }, timeoutMs);
+    });
+    
     let result;
     try {
-      result = await generateSummary(data);
+      // Race between summary generation and timeout
+      result = await Promise.race([
+        generateSummary(data),
+        timeoutPromise
+      ]);
     } finally {
-      // CRITICAL: Always clear interval, even if generateSummary throws
+      // CRITICAL: Always clear interval and timeout, even if generateSummary throws or times out
       if (summaryProgressInterval) {
         clearInterval(summaryProgressInterval);
+      }
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     }
     
@@ -202,14 +221,17 @@ export async function startSummaryGeneration(data, startKeepAlive, stopKeepAlive
     
     log('=== SUMMARY GENERATION COMPLETE ===', { timestamp: Date.now() });
   } catch (error) {
+    // CRITICAL: Show error to user when summary generation fails or times out
+    const isTimeout = error.message && error.message.includes('timed out');
     const normalized = await handleError(error, {
       source: 'summaryGeneration',
       errorType: 'abstractGenerationFailed',
       logError: true,
-      createUserMessage: false,
+      createUserMessage: true, // Show error to user
       context: {
         url: data.url || '',
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        isTimeout: isTimeout
       }
     });
     

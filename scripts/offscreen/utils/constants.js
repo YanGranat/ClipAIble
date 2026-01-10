@@ -1,9 +1,14 @@
 // @ts-check
 // Constants for offline TTS (Piper TTS)
 
+// @ts-ignore - Module resolution issue, but file exists at runtime
+import { CONFIG } from '../../utils/config.js';
+
 /**
  * Default voices for each language
  * Medium quality voices verified to exist in piper-tts-web library
+ * @readonly
+ * @const {Record<string, string|null>}
  */
 export const DEFAULT_VOICES = {
   'en': 'en_US-lessac-medium',      // Medium quality for English (verified: exists in library)
@@ -23,6 +28,8 @@ export const DEFAULT_VOICES = {
  * Fallback voices for when primary voice fails with phoneme errors
  * Based on actual available voices from piper-tts-web library
  * CRITICAL: All fallback voices must be medium or high quality (x_low and low are filtered out)
+ * @readonly
+ * @const {Record<string, string|null>}
  */
 export const FALLBACK_VOICES = {
   'en': 'en_US-hfc_female-medium',   // Alternative English voice (verified: exists in library)
@@ -41,8 +48,31 @@ export const FALLBACK_VOICES = {
 /**
  * Worker inactivity timeout (5 minutes)
  * Automatically terminates Worker after inactivity to free memory
+ * @readonly
+ * @const {number}
  */
-export const WORKER_INACTIVITY_TIMEOUT = 5 * 60 * 1000;
+export const WORKER_INACTIVITY_TIMEOUT = CONFIG.WORKER_INACTIVITY_TIMEOUT_MS;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

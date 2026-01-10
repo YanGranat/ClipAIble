@@ -3,7 +3,7 @@
 // This is the proper way to use WASM TTS in Manifest V3
 // Offscreen document has full DOM and WASM support
 
-import { log, logError, logDebug } from '../utils/logging.js';
+import { log, logError, logDebug, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { ttsQueue } from './tts-queue.js';
 import { tSync } from '../locales.js';
@@ -146,6 +146,12 @@ async function setupOffscreenDocument() {
         log('[ClipAIble Offscreen Setup] Waiting for document initialization...');
         await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_SETUP_DELAY));
         
+        // CRITICAL: Additional delay to ensure message listener is registered
+        // Message listener registration happens asynchronously in offscreen.js
+        // We need to wait for it to be ready before sending messages
+        log('[ClipAIble Offscreen Setup] Waiting for message listener registration...');
+        await new Promise(resolve => setTimeout(resolve, 500)); // Additional 500ms for listener registration
+        
         // Verify document is actually ready by checking if it exists
         log('[ClipAIble Offscreen Setup] Starting verification loop...');
         let verified = false;
@@ -233,9 +239,11 @@ async function setupOffscreenDocument() {
 /**
  * Send message to offscreen document with retry logic
  * @param {string} type - Message type
- * @param {Object} data - Message data
- * @param {number} retryCount - Current retry attempt (internal)
- * @returns {Promise} Response from offscreen document
+ * @param {Record<string, any>} data - Message data
+ * @param {number} [retryCount=0] - Current retry attempt (internal)
+ * @returns {Promise<any>} Response from offscreen document
+ * @throws {Error} If message send fails after retries
+ * @throws {Error} If offscreen document is not available
  */
 async function sendToOffscreen(type, data = {}, retryCount = 0) {
   const MAX_RETRIES = 2;
@@ -320,6 +328,81 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
     throw new Error(tSync('errorOffscreenDocumentNotFound', uiLang));
   }
   
+  // CRITICAL: Send PING to verify message listener is registered and ready
+  // This prevents "Receiving end does not exist" errors
+  // PDF offscreen uses the same mechanism - it works reliably
+  log('[ClipAIble SendToOffscreen] Verifying offscreen document is ready with PING...');
+  try {
+    await new Promise((resolve, reject) => {
+      const pingId = `PING_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const pingTimeout = setTimeout(() => {
+        logWarn('[ClipAIble SendToOffscreen] PING timeout - offscreen may not be ready, but continuing anyway');
+        resolve(); // Continue anyway - might work
+      }, 2000); // 2 seconds timeout for ping
+      
+      chrome.runtime.sendMessage(
+        {
+          target: 'offscreen',
+          type: 'PING',
+          data: { pingId }
+        },
+        (response) => {
+          clearTimeout(pingTimeout);
+          if (chrome.runtime.lastError) {
+            const errorMsg = chrome.runtime.lastError.message;
+            if (errorMsg.includes('Receiving end does not exist') || 
+                errorMsg.includes('Could not establish connection')) {
+              logWarn('[ClipAIble SendToOffscreen] PING failed - message listener not ready', {
+                error: errorMsg,
+                retryCount
+              });
+              if (retryCount < MAX_RETRIES) {
+                // Wait a bit and retry
+                setTimeout(() => {
+                  sendToOffscreen(type, data, retryCount + 1).then(resolve).catch(reject);
+                }, RETRY_DELAY);
+                return;
+              } else {
+                reject(new Error(`Offscreen document message listener not ready after ${MAX_RETRIES + 1} attempts: ${errorMsg}`));
+                return;
+              }
+            } else {
+              logWarn('[ClipAIble SendToOffscreen] PING failed with non-connection error, but continuing anyway', {
+                error: errorMsg
+              });
+              resolve(); // Continue anyway for other errors
+              return;
+            }
+          }
+          log('[ClipAIble SendToOffscreen] PING successful - offscreen is ready', {
+            pingId,
+            hasResponse: !!response,
+            responseReady: response?.ready
+          });
+          // Small delay after ping to ensure offscreen is fully ready
+          setTimeout(() => {
+            resolve();
+          }, 50);
+        }
+      );
+    });
+  } catch (error) {
+    if (retryCount < MAX_RETRIES) {
+      log('[ClipAIble SendToOffscreen] PING verification failed, retrying...', {
+        error: error.message,
+        retryCount: retryCount + 1
+      });
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      return sendToOffscreen(type, data, retryCount + 1);
+    } else {
+      logError('[ClipAIble SendToOffscreen] PING verification failed after max retries', {
+        error: error.message,
+        retryCount
+      });
+      throw error;
+    }
+  }
+  
   // Check for unlimitedStorage permission in service worker (where getManifest is available)
   // Pass this to offscreen document to avoid calling getManifest there (it's not available in offscreen)
   const manifest = chrome.runtime.getManifest();
@@ -331,7 +414,7 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
     hasUnlimitedStorage
   };
   
-  log('[ClipAIble SendToOffscreen] Document exists, sending message...', {
+  log('[ClipAIble SendToOffscreen] Document exists and verified ready, sending message...', {
     type,
     messageSize: JSON.stringify({ target: 'offscreen', type, data: dataWithPermissions }).length,
     hasUnlimitedStorage
@@ -794,6 +877,24 @@ export async function findVoice(voiceName = null, language = null) {
 }
 
 /**
+ * Clear all pending cleanup timers
+ * Should be called when offscreen document is closed to prevent orphaned timers
+ */
+export function clearAllPendingCleanup() {
+  let clearedCount = 0;
+  for (const [storageKey, cleanupId] of pendingCleanup.entries()) {
+    clearTimeout(cleanupId);
+    clearedCount++;
+  }
+  pendingCleanup.clear();
+  if (clearedCount > 0) {
+    log('[ClipAIble Offscreen TTS] All pending cleanup timers cleared', {
+      clearedCount
+    });
+  }
+}
+
+/**
  * Manually cleanup stored audio (call after audio is used)
  * @param {string} storageKey - Storage key to cleanup
  */
@@ -829,23 +930,16 @@ export async function cleanupStoredAudio(storageKey) {
  * Convert text to speech using Piper TTS in offscreen document
  * 
  * @param {string} text - Text to convert
- * @param {Object} options - TTS options
- * @param {string} options.voice - Voice ID (optional, auto-select by language)
- * @param {string} options.language - Language code (e.g., 'en', 'ru') (optional)
- * @param {number} options.speed - Speech speed (not directly supported, but kept for compatibility)
- * @param {Function} options.onProgress - Progress callback (optional)
- * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
- */
-/**
- * Convert text to speech using Piper TTS in offscreen document
- * 
- * @param {string} text - Text to convert
- * @param {Object} [options={}] - TTS options
+ * @param {Partial<import('../types.js').TTSOptions> & {onProgress?: (progress: number) => void}} [options={}] - TTS options
  * @param {string} [options.voice] - Voice ID (optional, auto-select by language)
  * @param {string} [options.language] - Language code (e.g., 'en', 'ru') (optional)
  * @param {number} [options.speed] - Speech speed (not directly supported, but kept for compatibility)
- * @param {Function} [options.onProgress] - Progress callback (optional)
+ * @param {function(number): void} [options.onProgress] - Progress callback (optional)
  * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
+ * @throws {Error} If text is empty
+ * @throws {Error} If offscreen document setup fails
+ * @throws {Error} If TTS conversion fails
+ * @throws {Error} If voice is not available
  */
 /**
  * Close offscreen document to force recreation (for voice switching)
@@ -857,6 +951,10 @@ export async function closeOffscreenForVoiceSwitch() {
   });
   
   try {
+    // Clear all pending cleanup timers before closing offscreen document
+    // This prevents orphaned timers from trying to access closed resources
+    clearAllPendingCleanup();
+    
     // Send cleanup message to offscreen document before closing
     // This ensures WASM resources are released before document is destroyed
     try {
@@ -1115,7 +1213,7 @@ export async function textToSpeech(text, options = {}) {
               error: cleanupError.message
             });
           }
-        }, 5 * 60 * 1000); // 5 minutes - enough time for audio to be used
+        }, CONFIG.OFFScreen_TTS_CLEANUP_TIMEOUT_MS);
         
         pendingCleanup.set(response.storageKey, cleanupId);
         
@@ -1126,6 +1224,13 @@ export async function textToSpeech(text, options = {}) {
         
       } else if (response.method === 'indexeddb') {
         // Large audio - retrieve from IndexedDB (fallback when chrome.storage unavailable)
+        logWarn('⚠️ FALLBACK: Using IndexedDB for audio transfer (chrome.storage unavailable)', {
+          reason: 'chrome.storage.local not available in offscreen document',
+          method: 'IndexedDB (fallback)',
+          impact: 'Slower access but supports large files',
+          size: `${(response.size / 1024 / 1024).toFixed(2)} MB`,
+          storageKey: response.storageKey
+        });
         log('[ClipAIble Offscreen TTS] Reading audio from IndexedDB...', {
           storageKey: response.storageKey,
           size: response.size
@@ -1144,7 +1249,7 @@ export async function textToSpeech(text, options = {}) {
             dbRequest.onerror = () => reject(new Error('Failed to open IndexedDB'));
             dbRequest.onsuccess = () => resolve(dbRequest.result);
             dbRequest.onupgradeneeded = (event) => {
-              const db = event.target.result;
+              const db = /** @type {IDBOpenDBRequest} */ (event.target).result;
               if (!db.objectStoreNames.contains(storeName)) {
                 db.createObjectStore(storeName);
               }
@@ -1185,7 +1290,7 @@ export async function textToSpeech(text, options = {}) {
                 cleanupDbRequest.onerror = () => reject(new Error('Failed to open IndexedDB for cleanup'));
                 cleanupDbRequest.onsuccess = () => resolve(cleanupDbRequest.result);
                 cleanupDbRequest.onupgradeneeded = (event) => {
-                  const db = event.target.result;
+                  const db = /** @type {IDBOpenDBRequest} */ (event.target).result;
                   if (!db.objectStoreNames.contains(storeName)) {
                     db.createObjectStore(storeName);
                   }
@@ -1214,7 +1319,7 @@ export async function textToSpeech(text, options = {}) {
                 error: cleanupError.message
               });
             }
-          }, 5 * 60 * 1000); // 5 minutes
+          }, CONFIG.OFFScreen_TTS_CLEANUP_TIMEOUT_MS);
           
           pendingCleanup.set(response.storageKey, cleanupId);
           

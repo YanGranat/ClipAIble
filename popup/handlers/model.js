@@ -26,7 +26,10 @@ export function setupModelHandlers(deps) {
       debouncedSaveSettings(STORAGE_KEYS.MODEL, selectedModel);
       
       const storageResult = await chrome.storage.local.get([STORAGE_KEYS.MODEL_BY_PROVIDER]);
-      const modelsByProvider = storageResult[STORAGE_KEYS.MODEL_BY_PROVIDER] || {};
+      const modelsByProviderRaw = storageResult[STORAGE_KEYS.MODEL_BY_PROVIDER];
+      const modelsByProvider = (modelsByProviderRaw && typeof modelsByProviderRaw === 'object' && !Array.isArray(modelsByProviderRaw)) 
+        ? modelsByProviderRaw 
+        : {};
       await chrome.storage.local.set({
         [STORAGE_KEYS.MODEL_BY_PROVIDER]: {
           ...modelsByProvider,
@@ -53,12 +56,17 @@ export function setupModelHandlers(deps) {
   if (elements.modelSelect) {
     // Use mousedown to intercept before native dropdown opens
     elements.modelSelect.addEventListener('mousedown', async (e) => {
-      const isVisible = elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none';
+      // Check if dropdown is visible (not hidden class and display not none)
+      const isVisible = elements.customModelDropdown && 
+                       !elements.customModelDropdown.classList.contains('hidden') &&
+                       elements.customModelDropdown.style.display !== 'none';
       
       if (isVisible) {
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
+        // CRITICAL: Add 'hidden' class (it has display: none !important)
+        elements.customModelDropdown.classList.add('hidden');
         elements.customModelDropdown.style.display = 'none';
       } else {
         e.preventDefault();
@@ -73,7 +81,9 @@ export function setupModelHandlers(deps) {
 
     // Model select change handler - update custom dropdown if visible
     elements.modelSelect.addEventListener('change', async () => {
-      if (elements.customModelDropdown && elements.customModelDropdown.style.display !== 'none') {
+      if (elements.customModelDropdown && 
+          !elements.customModelDropdown.classList.contains('hidden') &&
+          elements.customModelDropdown.style.display !== 'none') {
         if (settingsModule) {
           await settingsModule.showCustomModelDropdown();
         }
@@ -84,10 +94,11 @@ export function setupModelHandlers(deps) {
   // Close custom dropdown when clicking outside
   document.addEventListener('click', (e) => {
     const dropdownDisplay = elements.customModelDropdown?.style.display;
+    const isHidden = elements.customModelDropdown?.classList.contains('hidden');
     const now = Date.now();
     const timeSinceOpen = now - dropdownOpenTime;
     
-    if (!elements.customModelDropdown || dropdownDisplay === 'none') {
+    if (!elements.customModelDropdown || dropdownDisplay === 'none' || isHidden) {
       return;
     }
     
@@ -105,6 +116,8 @@ export function setupModelHandlers(deps) {
     
     requestAnimationFrame(() => {
       if (elements.customModelDropdown) {
+        // CRITICAL: Add 'hidden' class (it has display: none !important)
+        elements.customModelDropdown.classList.add('hidden');
         elements.customModelDropdown.style.display = 'none';
       }
     });

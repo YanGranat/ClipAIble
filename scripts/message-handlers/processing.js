@@ -9,11 +9,11 @@ import { generatePdfWithDebugger } from '../generation/pdf.js';
 
 /**
  * Handle processArticle request
- * @param {Object} request - Request object
- * @param {Object} sender - Sender object
- * @param {Function} sendResponse - Response function
- * @param {Function} startArticleProcessing - Function to start article processing
- * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {import('../types.js').MessageRequest} request - Request object
+ * @param {import('../types.js').ChromeRuntimeMessageSender} sender - Sender object
+ * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
+ * @param {function(import('../types.js').ProcessingData, Function): Promise<boolean>} startArticleProcessing - Function to start article processing
+ * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
  * @returns {boolean} - Always returns true for async handlers
  */
 export function handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive) {
@@ -56,7 +56,7 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
     title: request.data?.title,
     tabId: request.data?.tabId,
     htmlLength: request.data?.html?.length || 0,
-    htmlFull: request.data?.html || null, // FULL HTML - NO TRUNCATION
+    htmlPreview: request.data?.html ? request.data.html.substring(0, 500) + '...' : null,
     
     // Processing settings
     mode: request.data?.mode,
@@ -66,7 +66,9 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
     
     // AI settings
     model: request.data?.model,
-    apiKey: request.data?.apiKey ? `${request.data.apiKey.substring(0, 10)}...` : null,
+    hasApiKey: !!request.data?.apiKey,
+    apiKeyLength: request.data?.apiKey?.length || 0,
+    apiKeyPrefix: request.data?.apiKey ? (request.data.apiKey.startsWith('sk-') ? 'sk-' : request.data.apiKey.startsWith('AIza') ? 'AIza' : request.data.apiKey.startsWith('xai-') ? 'xai-' : 'other') : null,
     apiProvider: request.data?.apiProvider,
     
     // Translation settings
@@ -169,7 +171,7 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
         source: 'messageHandler',
         errorType: 'contentExtractionFailed',
         logError: true,
-        createUserMessage: false
+        createUserMessage: true, // Use centralized user-friendly message
       });
       
       logError('=== handleProcessArticle: Sending error response ===', {
@@ -207,13 +209,23 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
 
 /**
  * Handle generatePdfDebugger request
- * @param {Object} request - Request object
- * @param {Object} sender - Sender object
- * @param {Function} sendResponse - Response function
- * @param {Function} stopKeepAlive - Function to stop keep-alive
+ * @param {import('../types.js').MessageRequest} request - Request object
+ * @param {import('../types.js').ChromeRuntimeMessageSender} sender - Sender object
+ * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
+ * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
  * @returns {boolean} - Always returns true for async handlers
  */
 export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKeepAlive) {
+  // CRITICAL: Validate request.data before destructuring to prevent crashes
+  if (!request.data || typeof request.data !== 'object') {
+    logError('generatePdfDebugger: Invalid or missing data', {
+      hasData: !!request.data,
+      dataType: typeof request.data
+    });
+    sendResponse({ error: 'generatePdfDebugger requires data object' });
+    return true;
+  }
+  
   const { title, pageMode, contentWidth, contentHeight } = request.data;
   const tabId = sender.tab?.id;
   
@@ -235,7 +247,7 @@ export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKee
         source: 'messageHandler',
         errorType: 'pdfGenerationFailed',
         logError: true,
-        createUserMessage: false
+        createUserMessage: true, // Use centralized user-friendly message
       });
       logError('generatePdfDebugger failed', normalized);
     });

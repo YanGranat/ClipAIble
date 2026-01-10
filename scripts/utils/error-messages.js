@@ -8,11 +8,30 @@ import { logError } from './logging.js';
 /**
  * Generate user-friendly error message with actionable advice
  * @param {string} errorType - Type of error (e.g., 'selectorAnalysisFailed', 'contentExtractionFailed')
- * @param {Object} context - Additional context (error object, details, etc.)
+ * @param {Record<string, any>} [context={}] - Additional context (error object, details, etc.)
  * @returns {Promise<string>} User-friendly error message
+ * @see {@link createUserFriendlyError} For creating error objects with user messages (used by handleError)
  */
 export async function getUserFriendlyError(errorType, context = {}) {
   const uiLang = await getUILanguage();
+  
+  // Handle HTTP errors with status-specific messages
+  if (errorType === 'httpError' && context.statusCode) {
+    const status = context.statusCode;
+    if (status === 401) {
+      return tSync('errorApiKeyInvalid', uiLang);
+    } else if (status === 403) {
+      return tSync('errorApiAccessForbidden', uiLang);
+    } else if (status === 429) {
+      return tSync('errorRateLimit', uiLang);
+    } else if (status === 404 && context.model) {
+      // Model not found
+      return tSync('errorModelNotFound', uiLang).replace('{model}', context.model || 'unknown');
+    } else {
+      // Generic API error with status
+      return tSync('errorApiError', uiLang).replace('{status}', String(status));
+    }
+  }
   
   // Map error types to localization keys
   const errorKeyMap = {
@@ -34,7 +53,37 @@ export async function getUserFriendlyError(errorType, context = {}) {
     'tabNotFound': 'errorTabNotFound',
     'noApiKey': 'errorNoApiKey',
     'invalidFormat': 'errorInvalidFormat',
-    'pageNotReady': 'errorPageNotReady'
+    'pageNotReady': 'errorPageNotReady',
+    // Generation errors
+    'noContentError': 'errorPdfNoContent', // Used for PDF generation
+    'noContentToGenerateEpub': 'errorNoContentToGenerateEpub',
+    'noContentToGenerateMarkdown': 'errorNoContentToGenerateMarkdown',
+    'noContentToGenerateFb2': 'errorNoContentToGenerateFb2',
+    'preparationError': 'errorFailedToPrepareContent',
+    'emptyResultError': 'errorAudioEmptyResult',
+    'noTextError': 'errorNoContentExtracted', // Fallback for audio-prep
+    'splitError': 'errorContentExtractionFailed', // Fallback for audio-prep
+    'stylesLoadError': 'errorPdfGenerationFailed', // Fallback for PDF styles
+    'storageError': 'errorPdfGenerationFailed', // Fallback for PDF storage
+    'tabCreationError': 'errorTabNotFound', // Fallback for PDF tab creation
+    // Translation errors
+    'translateTextFailed': 'errorContentExtractionFailed', // Fallback
+    'translateBatchFailed': 'errorContentExtractionFailed', // Fallback
+    'translateChunkFailed': 'errorContentExtractionFailed', // Fallback
+    'detectImageTextFailed': 'errorImageTranslationFailed',
+    'processImageFailed': 'errorImageTranslationFailed',
+    'detectContentLanguageFailed': 'errorContentExtractionFailed', // Fallback
+    // Summary/Generation errors
+    'noContentForSummary': 'errorNoContentForSummary',
+    'noApiKeyForSummary': 'errorApiKeyRequiredForSummary',
+    'noTextExtractedForSummary': 'errorNoTextExtractedForSummary',
+    // API errors (generic)
+    'httpError': 'errorApiError', // Generic HTTP error, will be replaced with specific message based on status
+    'networkError': 'errorNetwork',
+    'timeoutError': 'errorTimeout',
+    'parseError': 'errorFailedToParseResponse',
+    'invalidJsonError': 'errorInvalidJsonResponse',
+    'apiNoContentError': 'errorNoContentReceived' // API returned no content
   };
   
   const errorKey = errorKeyMap[errorType];
@@ -96,9 +145,11 @@ function getFallbackMessage(errorType) {
 /**
  * Create error object with user-friendly message and error code
  * @param {string} errorType - Type of error
- * @param {Object} context - Additional context
- * @param {string} errorCode - Error code (from ERROR_CODES)
- * @returns {Promise<Object>} Error object with {message, code}
+ * @param {Record<string, any>} [context={}] - Additional context
+ * @param {string} [errorCode] - Error code (from ERROR_CODES)
+ * @returns {Promise<{message: string, code: string}>} Error object with message and code
+ * @see {@link getUserFriendlyError} For generating error messages only
+ * @see {@link handleError} For complete error handling that uses this function
  */
 export async function createUserFriendlyError(errorType, context = {}, errorCode = null) {
   const message = await getUserFriendlyError(errorType, context);
@@ -124,7 +175,37 @@ export async function createUserFriendlyError(errorType, context = {}, errorCode
       'tabNotFound': 'validation_error',
       'noApiKey': 'auth_error',
       'invalidFormat': 'validation_error',
-      'pageNotReady': 'validation_error'
+      'pageNotReady': 'validation_error',
+      // Generation errors
+      'noContentError': 'validation_error',
+      'noContentToGenerateEpub': 'validation_error',
+      'noContentToGenerateMarkdown': 'validation_error',
+      'noContentToGenerateFb2': 'validation_error',
+      'preparationError': 'provider_error',
+      'emptyResultError': 'provider_error',
+      'noTextError': 'validation_error',
+      'splitError': 'provider_error',
+      'stylesLoadError': 'network_error',
+      'storageError': 'provider_error',
+      'tabCreationError': 'validation_error',
+      // Translation errors
+      'translateTextFailed': 'provider_error',
+      'translateBatchFailed': 'provider_error',
+      'translateChunkFailed': 'provider_error',
+      'detectImageTextFailed': 'provider_error',
+      'processImageFailed': 'provider_error',
+      'detectContentLanguageFailed': 'provider_error',
+      // Summary/Generation errors
+      'noContentForSummary': 'validation_error',
+      'noApiKeyForSummary': 'auth_error',
+      'noTextExtractedForSummary': 'validation_error',
+      // API errors (generic)
+      'httpError': 'provider_error', // Will be overridden by status code
+      'networkError': 'network_error',
+      'timeoutError': 'timeout',
+      'parseError': 'parse_error',
+      'invalidJsonError': 'parse_error',
+      'apiNoContentError': 'validation_error' // API returned no content
     };
     
     errorCode = codeMap[errorType] || 'unknown_error';

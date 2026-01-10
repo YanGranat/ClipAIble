@@ -42,9 +42,9 @@ export function setupFormatHandlers(deps) {
   if (elements.mainFormatSelect) {
     elements.mainFormatSelect.addEventListener('change', () => {
       const value = elements.mainFormatSelect.value;
-      requestAnimationFrame(() => {
-        elements.outputFormat.value = value;
-      });
+      // CRITICAL: Sync outputFormat synchronously BEFORE calling updateOutputFormatUI
+      // This ensures updateOutputFormatUI() reads the correct value
+      elements.outputFormat.value = value;
       debouncedSaveSettings(STORAGE_KEYS.OUTPUT_FORMAT, value, () => {
         if (settingsModule) {
           deferAsyncWork(async () => {

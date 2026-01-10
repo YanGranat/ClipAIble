@@ -1,15 +1,20 @@
 // @ts-check
 // HTML builder for PDF generation
 
-import { log, logWarn } from '../utils/logging.js';
-import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle } from '../utils/html.js';
+import { log, logWarn, logDebug, logError } from '../utils/logging.js';
+import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle, markdownToHtml } from '../utils/html.js';
 import { PDF_LOCALIZATION } from '../utils/config.js';
+import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
+import { handleError } from '../utils/error-handler.js';
 
 // Simple cache for localization strings (performance optimization)
+// Limited to prevent unbounded growth
 const l10nCache = new Map();
+const MAX_L10N_CACHE_SIZE = 20; // Maximum cache entries
 
 /**
  * Get localization strings with caching
+ * Limits cache size to prevent memory leaks
  * @param {string} language - Language code
  * @returns {Object} Localization strings object
  */
@@ -18,6 +23,18 @@ function getLocalization(language) {
   if (l10nCache.has(cacheKey)) {
     return l10nCache.get(cacheKey);
   }
+  
+  // Limit cache size - remove oldest entry if cache is full
+  if (l10nCache.size >= MAX_L10N_CACHE_SIZE) {
+    // Remove first (oldest) entry
+    const firstKey = l10nCache.keys().next().value;
+    l10nCache.delete(firstKey);
+    logDebug('[HTML Builder] l10nCache size limit reached, removed oldest entry', {
+      removedKey: firstKey,
+      maxSize: MAX_L10N_CACHE_SIZE
+    });
+  }
+  
   const l10n = PDF_LOCALIZATION[cacheKey] || PDF_LOCALIZATION['auto'];
   l10nCache.set(cacheKey, l10n);
   return l10n;
@@ -71,11 +88,36 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     if (content[i].type === 'subtitle') {
       const item = content[i];
       const idAttr = item.id ? ` id="${escapeAttr(item.id)}"` : '';
-      subtitleHtml = `<p class="standfirst"${idAttr}>${sanitizeHtml(item.text, sourceUrl)}</p>`;
+      const subtitleText = typeof item.text === 'string' ? item.text : (typeof item.text === 'object' && item.text?.text ? item.text.text : String(item.text || ''));
+      subtitleHtml = `<p class="standfirst"${idAttr}>${sanitizeHtml(subtitleText, sourceUrl, { allowFileProtocol: true })}</p>`;
       subtitleIndex = i;
       break;
     }
   }
+  
+  // CRITICAL: Log content items before HTML generation - FULL TEXT (DEBUG only)
+  logDebug('=== BEFORE HTML GENERATION: CONTENT ITEMS (FULL) ===', {
+    totalItems: content.length,
+    title,
+    author,
+    items: content.map((item, idx) => ({
+      index: idx,
+      type: item.type,
+      level: item.level || null,
+      // FULL TEXT - NO TRUNCATION
+      textFull: item.text || item.html || item.src || item.alt || item.caption || '',
+      textLength: (item.text || item.html || item.src || item.alt || item.caption || '').length,
+      textFirstChars: (item.text || item.html || item.src || item.alt || item.caption || '').substring(0, 200),
+      textLastChars: (item.text || item.html || item.src || item.alt || item.caption || '') && (item.text || item.html || item.src || item.alt || item.caption || '').length > 200
+        ? (item.text || item.html || item.src || item.alt || item.caption || '').substring((item.text || item.html || item.src || item.alt || item.caption || '').length - 200)
+        : null,
+      hasId: !!item.id,
+      id: item.id || null
+    }))
+  });
+  
+  // Track failed items for reporting
+  const failedItems = [];
   
   const contentHtml = content.map((item, index) => {
     // Skip first heading if it matches the title (title is already in header)
@@ -89,16 +131,100 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     }
     
     try {
+      // CRITICAL: Ensure item.text is a string, not an object
+      // If item.text is an object, convert it to string or extract text property
+      let itemText = item.text || '';
+      
+      if (typeof itemText === 'object' && itemText !== null) {
+        // If it's an object, try to extract text property or stringify
+        if (itemText.text && typeof itemText.text === 'string') {
+          itemText = itemText.text;
+        } else if (itemText.html && typeof itemText.html === 'string') {
+          itemText = itemText.html;
+        } else {
+          // Last resort: stringify the object (for debugging)
+          logWarn(`Content item at index ${index} has object text, converting to string`, {
+            type: item.type,
+            textType: typeof itemText,
+            textKeys: Object.keys(itemText || {}),
+            textPreview: JSON.stringify(itemText).substring(0, 100)
+          });
+          itemText = JSON.stringify(itemText);
+        }
+      }
+      if (typeof itemText !== 'string') {
+        itemText = String(itemText || '');
+      }
+      
       const idAttr = item.id ? ` id="${escapeAttr(item.id)}"` : '';
       const anchorTag = item.id ? `<a name="${escapeAttr(item.id)}"></a>` : '';
       
       switch (item.type) {
         case 'heading':
           const level = Math.min(Math.max(item.level || 2, 1), 6);
-          return `${anchorTag}<h${level}${idAttr}>${sanitizeHtml(item.text, sourceUrl)}</h${level}>`;
+          
+          // CRITICAL: Log heading before processing - FULL TEXT (DEBUG only)
+          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} BEFORE PROCESSING (FULL) ===`, {
+            index,
+            type: item.type,
+            level: item.level,
+            itemTextFull: itemText,
+            itemTextLength: itemText.length
+          });
+          
+          // CRITICAL: If itemText already contains markdown heading syntax (#), remove it first
+          // parseMarkdownToElements already extracts text without #, but check to be safe
+          let headingText = itemText.trim();
+          
+          // CRITICAL: Log heading text after initial trim - FULL TEXT (DEBUG only)
+          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} AFTER TRIM (FULL) ===`, {
+            index,
+            level,
+            headingTextBeforeClean: headingText,
+            headingTextLength: headingText.length
+          });
+          
+          // Remove any leading # characters and spaces (in case markdown syntax leaked in)
+          headingText = headingText.replace(/^#+\s*/, '').trim();
+          
+          // CRITICAL: Log heading text after cleaning - FULL TEXT (DEBUG only)
+          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} AFTER CLEANING (FULL) ===`, {
+            index,
+            level,
+            headingTextAfterClean: headingText,
+            headingTextLength: headingText.length
+          });
+          
+          // Convert markdown to HTML before sanitizing (for formatting like bold, italic, links)
+          const headingHtml = markdownToHtml(headingText);
+          
+          // CRITICAL: Log heading HTML after markdownToHtml - FULL TEXT (DEBUG only)
+          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} AFTER markdownToHtml (FULL) ===`, {
+            index,
+            level,
+            headingHtmlFull: headingHtml,
+            headingHtmlLength: headingHtml.length
+          });
+          
+          const sanitizedHeadingHtml = sanitizeHtml(headingHtml, sourceUrl, { allowFileProtocol: true });
+          
+          // CRITICAL: Log final heading HTML - FULL TEXT (DEBUG only)
+          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} FINAL HTML (FULL) ===`, {
+            index,
+            level,
+            sanitizedHeadingHtmlFull: sanitizedHeadingHtml,
+            sanitizedHeadingHtmlLength: sanitizedHeadingHtml.length,
+            finalHtml: `${anchorTag}<h${level}${idAttr}>${sanitizedHeadingHtml}</h${level}>`
+          });
+          
+          return `${anchorTag}<h${level}${idAttr}>${sanitizedHeadingHtml}</h${level}>`;
         
         case 'paragraph':
-          return `${anchorTag}<p${idAttr} translate="no" class="notranslate" data-translate="no">${sanitizeHtml(item.text, sourceUrl)}</p>`;
+          // CRITICAL: Check if itemText already contains HTML (from extraction)
+          // If it contains HTML tags, use it directly; otherwise convert markdown to HTML
+          const hasHtmlTags = /<[a-z][\s\S]*>/i.test(itemText);
+          const paragraphHtml = hasHtmlTags ? itemText : markdownToHtml(itemText);
+          return `${anchorTag}<p${idAttr} translate="no" class="notranslate" data-translate="no">${sanitizeHtml(paragraphHtml, sourceUrl, { allowFileProtocol: true })}</p>`;
         
         case 'image':
           if (!item.src || item.src.startsWith('data:image/svg') || item.src.includes('placeholder')) {
@@ -110,35 +236,67 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
             return `<hr class="decorative-separator"${idAttr}>`;
           }
           const captionText = item.caption || item.alt || '';
-          const caption = captionText ? sanitizeHtml(captionText, sourceUrl) : '';
+          // CRITICAL: If caption already contains HTML (from getFormattedHtml), use sanitizeHtml directly
+          // Otherwise, convert markdown to HTML first
+          let caption = '';
+          if (captionText) {
+            // Check if caption already contains HTML tags
+            if (captionText.includes('<') && captionText.includes('>')) {
+              // Already HTML - sanitize directly to preserve links
+              caption = sanitizeHtml(captionText, sourceUrl, { allowFileProtocol: true });
+            } else {
+              // Markdown - convert first, then sanitize
+              caption = sanitizeHtml(markdownToHtml(captionText), sourceUrl, { allowFileProtocol: true });
+            }
+          }
           const altText = (item.alt || '').replace(/<[^>]*>/g, '');
+          // SECURITY NOTE: Inline onerror handler is safe here because:
+          // 1. HTML is generated by us, not from external sources
+          // 2. HTML is already sanitized before this point
+          // 3. onerror contains only static code (hides broken images)
+          // 4. This runs in print.html context where HTML is controlled
           return `${anchorTag}<figure class="article-image"${idAttr}>
             <img src="${escapeAttr(item.src)}" alt="${escapeAttr(altText)}" data-original-src="${escapeAttr(item.src)}" onerror="this.parentElement.style.display='none'">
             ${caption ? `<figcaption>${caption}</figcaption>` : ''}
           </figure>`;
         
         case 'quote':
-          return `${anchorTag}<blockquote${idAttr}>${sanitizeHtml(item.text, sourceUrl)}</blockquote>`;
+          // CRITICAL: Convert markdown to HTML before sanitizing
+          const quoteText = typeof item.text === 'string' ? item.text : (typeof item.text === 'object' && item.text?.text ? item.text.text : String(item.text || ''));
+          const quoteHtml = markdownToHtml(quoteText);
+          return `${anchorTag}<blockquote${idAttr}>${sanitizeHtml(quoteHtml, sourceUrl, { allowFileProtocol: true })}</blockquote>`;
         
         case 'list':
           const tag = item.ordered ? 'ol' : 'ul';
           const items = (item.items || []).map(i => {
             if (typeof i === 'string') {
-              return `<li>${sanitizeHtml(i, sourceUrl)}</li>`;
+              // CRITICAL: Convert markdown to HTML before sanitizing
+              const listItemHtml = markdownToHtml(i);
+              return `<li>${sanitizeHtml(listItemHtml, sourceUrl, { allowFileProtocol: true })}</li>`;
             }
             const liId = i.id ? ` id="${escapeAttr(i.id)}"` : '';
             const liAnchor = i.id ? `<a name="${escapeAttr(i.id)}"></a>` : '';
-            return `<li${liId}>${liAnchor}${sanitizeHtml(i.html, sourceUrl)}</li>`;
+            // CRITICAL: Convert markdown to HTML before sanitizing
+            const listItemHtml = markdownToHtml(i.html || '');
+            return `<li${liId}>${liAnchor}${sanitizeHtml(listItemHtml, sourceUrl, { allowFileProtocol: true })}</li>`;
           }).join('');
           return `${anchorTag}<${tag}${idAttr}>${items}</${tag}>`;
         
         case 'code':
-          return `${anchorTag}<pre${idAttr}><code class="language-${escapeAttr(item.language || 'text')}">${escapeHtml(item.text)}</code></pre>`;
+          const codeText = typeof item.text === 'string' ? item.text : (typeof item.text === 'object' && item.text?.text ? item.text.text : String(item.text || ''));
+          return `${anchorTag}<pre${idAttr}><code class="language-${escapeAttr(item.language || 'text')}">${escapeHtml(codeText)}</code></pre>`;
         
         case 'table':
-          const headers = (item.headers || []).map(h => `<th>${sanitizeHtml(h, sourceUrl)}</th>`).join('');
+          // CRITICAL: Convert markdown to HTML before sanitizing
+          const headers = (item.headers || []).map(h => {
+            const headerHtml = markdownToHtml(h || '');
+            return `<th>${sanitizeHtml(headerHtml, sourceUrl, { allowFileProtocol: true })}</th>`;
+          }).join('');
           const rows = (item.rows || []).map(row => 
-            `<tr>${(row || []).map(cell => `<td>${sanitizeHtml(cell, sourceUrl)}</td>`).join('')}</tr>`
+            `<tr>${(row || []).map(cell => {
+              const cellHtml = markdownToHtml(cell || '');
+              return `<td>${sanitizeHtml(cellHtml, sourceUrl, { allowFileProtocol: true })}</td>`;
+            }).join('')}</tr>`
           ).join('');
           return `${anchorTag}<table${idAttr}><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
         
@@ -157,10 +315,68 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           return '';
       }
     } catch (itemError) {
-      logWarn(`Error processing item at index ${index}`, { error: itemError.message });
+      // Track failed items with detailed context
+      const errorInfo = {
+        index,
+        type: item?.type || 'unknown',
+        error: itemError?.message || String(itemError),
+        errorStack: itemError?.stack,
+        itemPreview: {
+          hasText: !!item?.text,
+          textType: typeof item?.text,
+          textLength: item?.text ? String(item.text).length : 0,
+          hasHtml: !!item?.html,
+          hasSrc: !!item?.src,
+          hasItems: !!item?.items,
+          itemsCount: Array.isArray(item?.items) ? item.items.length : 0
+        }
+      };
+      
+      failedItems.push(errorInfo);
+      
+      logWarn(`Error processing item at index ${index}`, {
+        type: item?.type || 'unknown',
+        error: itemError?.message || String(itemError),
+        errorStack: itemError?.stack,
+        itemPreview: errorInfo.itemPreview
+      });
+      
       return '';
     }
   }).join('\n');
+  
+  // Report failed items if any
+  if (failedItems.length > 0) {
+    const failedCount = failedItems.length;
+    const totalItems = content.length;
+    const failureRateNum = (failedCount / totalItems * 100);
+    const failureRate = failureRateNum.toFixed(1);
+    
+    logWarn(`Failed to process ${failedCount} out of ${totalItems} content items (${failureRate}% failure rate)`, {
+      failedCount,
+      totalItems,
+      failureRate: `${failureRate}%`,
+      failedItems: failedItems.map(f => ({
+        index: f.index,
+        type: f.type,
+        error: f.error
+      }))
+    });
+    
+    // If more than 10% of items failed, log as error (potential data corruption)
+    if (failureRateNum > 10) {
+      logError(`High failure rate in HTML generation: ${failureRate}% of items failed`, {
+        failedCount,
+        totalItems,
+        failureRate: `${failureRate}%`,
+        failedItemsSummary: failedItems.slice(0, 5).map(f => ({
+          index: f.index,
+          type: f.type,
+          error: f.error
+        }))
+      });
+    }
+  }
 
   // Count words in content
   const wordCount = countWords(content, title);
@@ -169,46 +385,45 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   const metaItems = [];
   if (sourceUrl) {
     const cleanSourceUrl = sourceUrl.split('#')[0];
-    // Extract only filename from URL (for local files, show just the filename)
-    // Improved regex-based extraction with URL decoding
-    let displaySource = cleanSourceUrl;
-    try {
-      // Try regex extraction first (more reliable for file:// URLs)
-      const match = cleanSourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
-      if (match) {
-        displaySource = decodeURIComponent(match[1]);
-      } else {
-        // Fallback to URL parsing
-        if (cleanSourceUrl.startsWith('file://')) {
+    const sourceLabel = l10n.source || 'Source';
+    
+    // For local PDF files, show "Source:" label with filename (no link)
+    const isLocalPdf = cleanSourceUrl.startsWith('file://') && cleanSourceUrl.toLowerCase().includes('.pdf');
+    if (isLocalPdf) {
+      // Extract filename from file:// URL
+      let displaySource = cleanSourceUrl;
+      try {
+        const match = cleanSourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
+        if (match) {
+          displaySource = decodeURIComponent(match[1]);
+        } else if (cleanSourceUrl.startsWith('file://')) {
           const urlObj = new URL(cleanSourceUrl);
           const pathParts = urlObj.pathname.split('/').filter(p => p);
           displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || cleanSourceUrl);
-        } else {
-          // For http/https URLs, extract filename from path
-          const urlObj = new URL(cleanSourceUrl);
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          const filename = pathParts[pathParts.length - 1];
-          if (filename && filename.toLowerCase().endsWith('.pdf')) {
-            displaySource = decodeURIComponent(filename);
+        }
+      } catch (e) {
+        const parts = cleanSourceUrl.split('/');
+        const lastPart = parts[parts.length - 1].split('?')[0];
+        if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
+          try {
+            displaySource = decodeURIComponent(lastPart);
+          } catch (e2) {
+            displaySource = lastPart;
           }
         }
       }
-    } catch (e) {
-      // If URL parsing fails, try simple extraction
-      const parts = cleanSourceUrl.split('/');
-      const lastPart = parts[parts.length - 1].split('?')[0];
-      if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
-        try {
-          displaySource = decodeURIComponent(lastPart);
-        } catch (e2) {
-          displaySource = lastPart;
-        }
-      }
+      // Show localized "Source:" label with filename (not hardcoded, uses sourceLabel from localization)
+      metaItems.push(`${escapeHtml(sourceLabel)}: ${escapeHtml(displaySource)}`);
+    } else {
+      // For web pages, show "Source:" label with link (link wraps the label text)
+      metaItems.push(`<a href="${escapeAttr(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceLabel)}</a>`);
     }
-    metaItems.push(`<a href="${escapeAttr(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(displaySource)}</a>`);
   }
-  if (author) {
-    metaItems.push(`<span class="article-author">${escapeHtml(author)}</span>`);
+  // Only show author if it exists and is not empty/anonymous
+  // Use centralized validator to check all language variants
+  const cleanedAuthor = cleanAuthor(author);
+  if (cleanedAuthor) {
+    metaItems.push(`<span class="article-author">${escapeHtml(cleanedAuthor)}</span>`);
   }
   if (publishDate) {
     metaItems.push(`<span class="article-date">${escapeHtml(publishDate)}</span>`);
@@ -232,9 +447,10 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     </div>`;
   }
 
-  // Generate Table of Contents if enabled
+  // Generate Table of Contents if enabled (only if more than 1 heading)
   let tocHtml = '';
-  if (generateToc && headings.length > 0) {
+  if (generateToc && headings.length > 1) {
+    // TOC generation logged in pdf.js
     const tocTitle = l10n.contents || 'Contents';
     tocHtml = `
     <nav class="table-of-contents">
@@ -353,7 +569,7 @@ function countWords(content, title) {
  * Apply custom styles to CSS
  * @param {string} styles - Base CSS styles
  * @param {string} pageMode - 'single' or 'multi'
- * @param {Object} customColors - Custom color settings
+ * @param {{fontFamily?: string, fontSize?: string, bgColor?: string, textColor?: string, headingColor?: string, linkColor?: string}} customColors - Custom color settings
  * @returns {string} Modified CSS
  */
 export function applyCustomStyles(styles, pageMode, customColors) {

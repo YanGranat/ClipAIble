@@ -2,7 +2,7 @@
 
 > **AI驱动的文章提取器** — 将网页上的任何文章保存为PDF、EPUB、FB2、Markdown或音频。支持11种语言翻译。适用于任何网站。
 
-![版本](https://img.shields.io/badge/版本-3.2.4-blue)
+![版本](https://img.shields.io/badge/版本-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-扩展-green)
 ![许可证](https://img.shields.io/badge/许可证-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 ### 🤖 AI驱动的提取
 - **三种模式**：自动（无AI，快速）、AI Selector（快速、可重用）和 AI Extract（彻底）
 - **自动模式**：无需AI创建文档 — 无需API密钥，即时提取
-- **支持多个提供商**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、OpenRouter
+- **支持多个提供商**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、DeepSeek、OpenRouter
+- **PDF内容提取**（v3.3.0）：使用PDF.js库从PDF文件中提取内容
+  - 具有复杂多级分类系统的实验性功能
+  - 从PDF文件中提取文本、图像、结构和元数据
+  - 支持Web和本地PDF文件
+  - 处理多列布局、表格、标题、列表、跨页合并
+  - 注意：该功能是实验性的，对于复杂PDF可能有局限性（扫描的PDF、受密码保护的PDF）
 - **视频支持**：从YouTube/Vimeo视频提取字幕并转换为文章（v3.0.0）
   - 多种提取方法，带后备方案
   - 优先级：手动字幕 > 自动生成 > 翻译
@@ -69,6 +75,12 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 
 
 ### ⚡ 智能功能
+- **PDF内容提取**（v3.3.0）：从PDF文件中提取内容并转换为文章
+  - 使用PDF.js库在offscreen文档中解析
+  - 多级分类系统，实现精确提取
+  - 支持Web和本地PDF文件
+  - 完整的管道集成：翻译、目录、摘要、所有导出格式
+  - 注意：实验性功能，对于复杂PDF可能有局限性
 - **视频支持**：从YouTube/Vimeo视频提取字幕并转换为文章（v3.0.0）
   - 直接提取字幕（不需要YouTube/Vimeo的API密钥）
   - AI处理：移除时间戳，合并段落，修正错误
@@ -95,7 +107,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - **设置导入/导出**：备份和恢复所有设置（API密钥出于安全考虑被排除）
 
 ### 🔒 安全性
-- **API密钥加密**使用AES-256-GCM（OpenAI、Claude、Gemini、ElevenLabs、Qwen、Respeecher）
+- **API密钥加密**使用AES-256-GCM（OpenAI、Claude、Gemini、Grok、DeepSeek、OpenRouter、ElevenLabs、Qwen、Respeecher）
 - **密钥永不导出** — 从设置备份中排除
 - **所有数据本地存储** — 不向第三方发送任何内容
 
@@ -114,10 +126,15 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
   - 文本会在句子/单词边界处智能自动分割
 
 ### 技术约束
-- **Keep-alive要求**：Chrome MV3要求keep-alive间隔至少1分钟。长时间处理任务可能需要几分钟。扩展使用统一的keep-alive机制（每1分钟警报 + 每2秒保存状态）以防止service worker停止。
+- **Keep-alive要求**：Chrome MV3要求keep-alive间隔至少1分钟。长时间处理任务可能需要几分钟。扩展使用统一的keep-alive机制（每1分钟警报）以防止service worker停止。
 - **图像的CORS**：如果网站阻止跨域请求，某些图像可能无法加载。扩展将跳过这些图像。
 - **取消不是即时的**：取消可能需要几秒钟才能完全停止所有后台进程。
-- **Service Worker恢复**：操作在service worker重启后自动恢复（2小时内）。
+- **Service Worker恢复**：如果状态是最近的（< 1分钟），操作在service worker重启后自动恢复。扩展重新加载总是重置状态。
+- **PDF提取限制**（v3.3.0）： 
+  - 扫描的PDF（无文本层）不支持 — OCR尚不可用
+  - 受密码保护的PDF必须在提取前解锁
+  - 非常大的PDF（>100MB）可能由于内存限制而无法工作
+  - 复杂布局（多列、表格）会被提取，但可能需要手动验证
 
 ### 浏览器兼容性
 - **Chrome/Edge/Brave/Arc**：完全支持
@@ -178,6 +195,16 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 5. 复制密钥（以 `sk-ant-...` 开头）
 6. 在**Plans & Billing**中添加积分
 
+### DeepSeek
+
+1. 访问 [platform.deepseek.com](https://platform.deepseek.com/)
+2. 注册或登录
+3. 导航至**API Keys**或访问 [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+4. 点击**"Create API key"**
+5. 复制密钥（以 `sk-...` 开头）
+
+> **注意：** DeepSeek提供DeepSeek-V3.2模型：`deepseek-chat`（非思考模式）和`deepseek-reasoner`（思考模式）。API与OpenAI格式兼容。
+
 ### ElevenLabs（音频）
 
 1. 访问 [ElevenLabs](https://elevenlabs.io/)
@@ -228,6 +255,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 | **Gemini** | 快速提取、图像翻译、音频导出（30种语音） | ✅ (30种语音) | ✅ |
 | **Claude** | 长文章、复杂页面 | ❌ | ❌ |
 | **Grok** | 快速推理任务 | ❌ | ❌ |
+| **DeepSeek** | 高级推理、经济实惠 | ❌ | ❌ |
 | **OpenRouter** | 访问多个模型 | ❌ | ❌ |
 | **ElevenLabs** | 音频导出（9种语音，高质量） | ✅ (9种语音) | ❌ |
 | **Qwen** | 音频导出（49种语音，支持俄语） | ✅ (49种语音) | ❌ |
@@ -282,6 +310,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 | Anthropic | Claude Sonnet 4.5 | 适合长文章 |
 | Google | Gemini 3 Pro | 快速提取，图像翻译 |
 | Grok | Grok 4.1 Fast Reasoning | 快速推理 |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | 高级推理、经济实惠 |
 | OpenRouter | 各种模型 | 访问多个提供商 |
 
 **自定义模型：** 点击模型选择器旁边的**"+"**按钮添加自定义模型（例如，`gpt-4o`、`claude-opus-4.5`）。自定义模型出现在下拉菜单中，可以根据需要隐藏/显示。
@@ -381,6 +410,8 @@ ClipAIble按域名缓存AI生成的选择器：
 | 音频缓慢 | 长文章分成块；观察进度条 |
 | 摘要未生成 | 检查API密钥，确保页面内容已加载，重试 |
 | 摘要生成超时 | 非常长的文章可能需要45分钟；等待或尝试较短的内容 |
+| PDF提取不工作 | 检查PDF是否受密码保护（先解锁）或是否已扫描（OCR尚不支持）。先尝试更简单的PDF。 |
+| PDF内容不完整 | 复杂布局（多列、表格）可能需要手动验证。该功能是实验性的。 |
 
 ---
 
@@ -416,6 +447,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS

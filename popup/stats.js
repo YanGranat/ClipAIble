@@ -8,8 +8,8 @@ import { logError, log } from '../scripts/utils/logging.js';
 /**
  * Initialize stats module with dependencies
  * @param {Object} deps - Dependencies object
- * @param {Function} deps.showToast - Show toast function
- * @returns {Object} Stats functions
+ * @param {function(string, string?): void} deps.showToast - Show toast function
+ * @returns {import('../scripts/types.js').StatsModule} Stats functions
  */
 export function initStats(deps) {
   const { showToast } = deps;
@@ -22,7 +22,7 @@ export function initStats(deps) {
 
   function formatRelativeDate(date) {
     const now = new Date();
-    const diffMs = now - date;
+    const diffMs = now.getTime() - date.getTime();
     const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
     const minutes = Math.floor(diffMs / 60000);
     const hours = Math.floor(diffMs / 3600000);
@@ -86,13 +86,17 @@ export function initStats(deps) {
           const fragment = document.createDocumentFragment();
           const tempDiv = document.createElement('div');
           
+          const langCode = await getUILanguage();
+          const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+          const openOriginalArticleText = locale.openOriginalArticle || UI_LOCALES.en.openOriginalArticle;
+          
           tempDiv.innerHTML = stats.history.map((item, index) => {
             const date = new Date(item.date);
             const dateStr = formatRelativeDate(date);
             const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
             return `
               <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
-                <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="Open original article">
+                <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="${escapeHtml(openOriginalArticleText)}">
                   <div class="history-title">${escapeHtml(item.title)}</div>
                   <div class="history-meta">
                     <span class="history-format">${item.format}</span>
@@ -121,7 +125,7 @@ export function initStats(deps) {
               btn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const index = parseInt(btn.dataset.index);
+                const index = parseInt(/** @type {HTMLButtonElement} */ (btn).dataset.index || '0');
                 // Defer async work
                 setTimeout(async () => {
                   await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', index });
@@ -190,7 +194,7 @@ export function initStats(deps) {
                 btn.addEventListener('click', async (e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  const domain = btn.dataset.domain;
+                  const domain = /** @type {HTMLButtonElement} */ (btn).dataset.domain || '';
                   // Defer async work
                   setTimeout(async () => {
                     const langCode = await getUILanguage();

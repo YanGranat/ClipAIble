@@ -1,6 +1,6 @@
 {
   "name": "clipaible",
-  "version": "3.2.4",
+  "version": "3.3.0",
   "description": "AI-Powered Article Extractor Chrome Extension",
   "type": "module",
   "scripts": {
@@ -11,7 +11,8 @@
     "build:worker:watch": "nodemon --watch src/tts-worker-entry.js --exec 'npm run build:worker'",
     "build:offscreen": "node build-offscreen.js",
     "build:offscreen:watch": "nodemon --watch offscreen.js --exec 'npm run build:offscreen'",
-    "build": "npm run build:offscreen && npm run build:worker",
+    "build:extraction": "node build-extraction.js",
+    "build": "npm run build:extraction && npm run build:offscreen && npm run build:worker",
     "dev": "npm run build:offscreen:watch"
   },
   "devDependencies": {

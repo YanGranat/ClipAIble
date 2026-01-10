@@ -2,7 +2,7 @@
 
 > **Extracteur d'articles alimenté par l'IA** — Enregistrez n'importe quel article du web au format PDF, EPUB, FB2, Markdown ou Audio. Traduction en 11 langues. Fonctionne sur n'importe quel site.
 
-![Version](https://img.shields.io/badge/version-3.2.4-blue)
+![Version](https://img.shields.io/badge/version-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![Licence](https://img.shields.io/badge/licence-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 ### 🤖 Extraction alimentée par l'IA
 - **Trois modes** : Automatique (sans IA, rapide), AI Selector (rapide, réutilisable) et AI Extract (approfondi)
 - **Mode automatique** : Créer des documents sans IA — aucune clé API requise, extraction instantanée
-- **Plusieurs fournisseurs** : OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Plusieurs fournisseurs** : OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
+- **Extraction de contenu PDF** (v3.3.0) : Extraire le contenu des fichiers PDF à l'aide de la bibliothèque PDF.js
+  - Fonction expérimentale avec système de classification multi-niveaux complexe
+  - Extrait le texte, les images, la structure et les métadonnées des fichiers PDF
+  - Prend en charge les fichiers PDF Web et locaux
+  - Gère les mises en page multi-colonnes, tableaux, titres, listes, fusion inter-pages
+  - Note : La fonction est expérimentale et peut avoir des limitations avec les PDF complexes (PDF scannés, PDF protégés par mot de passe)
 - **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v3.0.0)
   - Plusieurs méthodes d'extraction avec replis
   - Priorité : sous-titres manuels > générés automatiquement > traduits
@@ -68,6 +74,12 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 
 
 ### ⚡ Fonctionnalités intelligentes
+- **Extraction de contenu PDF** (v3.3.0) : Extraire le contenu des fichiers PDF et les convertir en articles
+  - Utilise la bibliothèque PDF.js pour l'analyse dans un document offscreen
+  - Système de classification multi-niveaux pour une extraction précise
+  - Prend en charge les fichiers PDF Web et locaux
+  - Intégration complète du pipeline : traduction, table des matières, résumé, tous les formats d'export
+  - Note : Fonction expérimentale, peut avoir des limitations avec les PDF complexes
 - **Support vidéo** : Extraire les sous-titres des vidéos YouTube/Vimeo et les convertir en articles (v3.0.0)
   - Extraction directe des sous-titres (aucune clé API de YouTube/Vimeo requise)
   - Traitement IA : supprime les horodatages, fusionne les paragraphes, corrige les erreurs
@@ -94,7 +106,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 - **Import/Export des paramètres** : Sauvegarde et restauration de tous les paramètres (clés API exclues pour des raisons de sécurité)
 
 ### 🔒 Sécurité
-- **Clés API chiffrées** avec AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
+- **Clés API chiffrées** avec AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **Clés jamais exportées** — exclues de la sauvegarde des paramètres
 - **Toutes les données sont stockées localement** — rien n'est envoyé à des tiers
 
@@ -113,10 +125,15 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
   - Le texte est automatiquement divisé intelligemment aux limites des phrases/mots
 
 ### Contraintes Techniques
-- **Exigence keep-alive**: Chrome MV3 nécessite un intervalle keep-alive d'au moins 1 minute. Les tâches de traitement longues peuvent prendre plusieurs minutes. L'extension utilise un mécanisme unifié de keep-alive (alarme toutes les 1 minute + sauvegarde d'état toutes les 2 secondes) pour empêcher le service worker de s'arrêter.
+- **Exigence keep-alive**: Chrome MV3 nécessite un intervalle keep-alive d'au moins 1 minute. Les tâches de traitement longues peuvent prendre plusieurs minutes. L'extension utilise un mécanisme unifié de keep-alive (alarme toutes les 1 minute) pour empêcher le service worker de s'arrêter.
 - **CORS pour les images**: Certaines images peuvent ne pas se charger si le site Web bloque les requêtes cross-origin. L'extension ignorera ces images.
 - **Annulation non instantanée**: L'annulation peut prendre quelques secondes pour arrêter complètement tous les processus en arrière-plan.
-- **Récupération du Service Worker**: Les opérations reprennent automatiquement après le redémarrage du service worker (dans les 2 heures).
+- **Récupération du Service Worker**: Les opérations reprennent automatiquement après le redémarrage du service worker, si l'état est récent (< 1 minute). Le rechargement de l'extension réinitialise toujours l'état.
+- **Limitations d'extraction PDF** (v3.3.0): 
+  - Les PDF scannés (sans couche de texte) ne sont pas pris en charge — OCR n'est pas encore disponible
+  - Les PDF protégés par mot de passe doivent être déverrouillés avant l'extraction
+  - Les très gros PDF (>100MB) peuvent ne pas fonctionner en raison de limitations de mémoire
+  - Les mises en page complexes (multi-colonnes, tableaux) sont extraites mais peuvent nécessiter une vérification manuelle
 
 ### Compatibilité des Navigateurs
 - **Chrome/Edge/Brave/Arc**: Entièrement pris en charge
@@ -177,6 +194,16 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 5. Copiez la clé (commence par `sk-ant-...`)
 6. Ajoutez des crédits dans **Plans & Billing**
 
+### DeepSeek
+
+1. Allez sur [platform.deepseek.com](https://platform.deepseek.com/)
+2. Inscrivez-vous ou connectez-vous
+3. Accédez à **API Keys** ou allez sur [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+4. Cliquez sur **"Create API key"**
+5. Copiez la clé (commence par `sk-...`)
+
+> **Note:** DeepSeek fournit les modèles DeepSeek-V3.2: `deepseek-chat` (mode non-thinking) et `deepseek-reasoner` (mode thinking). L'API est compatible avec le format OpenAI.
+
 ### ElevenLabs (Audio)
 
 1. Allez sur [ElevenLabs](https://elevenlabs.io/)
@@ -227,6 +254,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 | **Gemini** | Extraction rapide, traduction d'images, export audio (30 voix) | ✅ (30 voix) | ✅ |
 | **Claude** | Articles longs, pages complexes | ❌ | ❌ |
 | **Grok** | Tâches de raisonnement rapides | ❌ | ❌ |
+| **DeepSeek** | Raisonnement avancé, rentable | ❌ | ❌ |
 | **OpenRouter** | Accès à plusieurs modèles | ❌ | ❌ |
 | **ElevenLabs** | Export audio (9 voix, haute qualité) | ✅ (9 voix) | ❌ |
 | **Qwen** | Export audio (49 voix, support russe) | ✅ (49 voix) | ❌ |
@@ -281,6 +309,7 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 | Anthropic | Claude Sonnet 4.5 | Excellent pour les articles longs |
 | Google | Gemini 3 Pro | Extraction rapide, traduction d'images |
 | Grok | Grok 4.1 Fast Reasoning | Raisonnement rapide |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | Raisonnement avancé, rentable |
 | OpenRouter | Divers modèles | Accès à plusieurs fournisseurs |
 
 **Modèles personnalisés :** Cliquez sur le bouton **"+"** à côté du sélecteur de modèles pour ajouter des modèles personnalisés (par exemple, `gpt-4o`, `claude-opus-4.5`). Les modèles personnalisés apparaissent dans le menu déroulant et peuvent être masqués/affichés selon les besoins.
@@ -380,6 +409,8 @@ ClipAIble met en cache les sélecteurs générés par l'IA par domaine :
 | Audio lent | Articles longs divisés en morceaux ; surveillez la barre de progression |
 | Résumé non généré | Vérifiez la clé API, assurez-vous que le contenu de la page est chargé, réessayez |
 | Timeout de génération de résumé | Les articles très longs peuvent prendre jusqu'à 45 minutes ; attendez ou essayez avec un contenu plus court |
+| L'extraction PDF ne fonctionne pas | Vérifiez si le PDF est protégé par mot de passe (déverrouillez d'abord) ou s'il est scanné (OCR n'est pas encore pris en charge). Essayez d'abord avec des PDF plus simples. |
+| Contenu PDF incomplet | Les mises en page complexes (multi-colonnes, tableaux) peuvent nécessiter une vérification manuelle. La fonction est expérimentale. |
 
 ---
 
@@ -415,6 +446,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS
@@ -423,10 +455,20 @@ clipaible/
 │   │   ├── tts.js      # Routeur TTS
 │   │   └── index.js    # Routeur API
 │   ├── extraction/     # Extraction de contenu
+│   │   ├── automatic.js # Extraction automatique (sans IA) - extractAutomaticallyInlined()
+│   │   ├── pdf.js      # Extraction de contenu PDF (v3.3.0) - point d'entrée
 │   │   ├── prompts.js  # Prompts IA
 │   │   ├── html-utils.js # Utilitaires HTML
 │   │   ├── video-subtitles.js # Extraction de sous-titres YouTube/Vimeo
-│   │   └── video-processor.js # Traitement de sous-titres IA
+│   │   ├── video-processor.js # Traitement de sous-titres IA
+│   │   └── modules/    # Fonctions d'aide modulaires pour l'extraction automatique
+│   │       ├── utils.js # Utilitaires de base
+│   │       ├── content-finder.js # Recherche de contenu
+│   │       ├── element-filter.js # Filtrage d'éléments
+│   │       ├── image-processor.js # Traitement d'images
+│   │       ├── metadata-extractor.js # Extraction de métadonnées
+│   │       ├── content-cleaner.js # Nettoyage de contenu
+│   │       └── builder.js # Inlining au moment de la construction
 │   ├── translation/    # Traduction et détection de langue
 │   ├── generation/     # PDF, EPUB, FB2, MD, Audio
 │   ├── cache/          # Mise en cache des sélecteurs

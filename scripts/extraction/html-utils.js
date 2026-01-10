@@ -54,6 +54,7 @@ export function trimHtmlForAnalysis(html, maxLength = CONFIG.MAX_HTML_FOR_ANALYS
     trimmed = trimmed.substring(0, maxLength - structureSummary.length) + structureSummary + '\n... [truncated for analysis]';
   }
   
+  
   log('trimHtmlForAnalysis result', { outputLength: trimmed.length });
   return trimmed;
 }

@@ -84,6 +84,10 @@ export function initApiKeys(deps) {
       labelKey = 'openrouterApiKey';
       placeholderKey = 'enterOpenRouterApiKey';
       placeholderText = 'sk-or-...';
+    } else if (provider === 'deepseek') {
+      labelKey = 'deepseekApiKey';
+      placeholderKey = 'enterDeepSeekApiKey';
+      placeholderText = 'sk-...';
     }
     
     if (labelKey && elements.apiKeyLabel) {
@@ -136,6 +140,8 @@ export function initApiKeys(deps) {
           keysToSave[STORAGE_KEYS.GROK_API_KEY] = elements.apiKey.dataset.encrypted;
         } else if (provider === 'openrouter') {
           keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = elements.apiKey.dataset.encrypted;
+        } else if (provider === 'deepseek') {
+          keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = elements.apiKey.dataset.encrypted;
         }
       } else if (!apiKey.startsWith('****')) {
         // New key provided, validate and encrypt
@@ -204,6 +210,21 @@ export function initApiKeys(deps) {
           }
           try {
             keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = await encryptApiKey(apiKey);
+          } catch (error) {
+            const failedToEncryptText = await t('failedToEncryptApiKey');
+            showToast(failedToEncryptText, 'error');
+            logError('Encryption error', error);
+            return;
+          }
+        } else if (provider === 'deepseek') {
+          // DeepSeek API keys start with 'sk-'
+          if (!apiKey.startsWith('sk-')) {
+            const invalidDeepSeekKeyText = await t('invalidDeepSeekKeyFormat');
+            showToast(invalidDeepSeekKeyText, 'error');
+            return;
+          }
+          try {
+            keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
             showToast(failedToEncryptText, 'error');

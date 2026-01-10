@@ -84,6 +84,7 @@ export function formatTime(seconds) {
 
 /**
  * Escape HTML to prevent XSS attacks
+ * @deprecated Use escapeHtmlUtil from scripts/utils/html.js directly instead. This wrapper is kept for backward compatibility.
  * @param {string} text - Text to escape
  * @returns {string} Escaped HTML string
  */

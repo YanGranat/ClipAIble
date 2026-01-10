@@ -2,7 +2,7 @@
 
 > **Extrator de artigos com IA** — Salve qualquer artigo da web como PDF, EPUB, FB2, Markdown ou Áudio. Tradução para 11 idiomas. Funciona em qualquer site.
 
-![Versão](https://img.shields.io/badge/versão-3.2.4-blue)
+![Versão](https://img.shields.io/badge/versão-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extensão-green)
 ![Licença](https://img.shields.io/badge/licença-MIT-brightgreen)
 
@@ -29,7 +29,13 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 ### 🤖 Extração com IA
 - **Três modos**: Automático (sem IA, rápido), AI Selector (rápido, reutilizável) e AI Extract (abrangente)
 - **Modo automático**: Criar documentos sem IA — nenhuma chave API necessária, extração instantânea
-- **Vários provedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, OpenRouter
+- **Vários provedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
+- **Extração de conteúdo PDF** (v3.3.0): Extrair conteúdo de arquivos PDF usando a biblioteca PDF.js
+  - Funcionalidade experimental com sistema de classificação multi-nível complexo
+  - Extrai texto, imagens, estrutura e metadados de arquivos PDF
+  - Suporta arquivos PDF web e locais
+  - Lida com layouts multi-coluna, tabelas, cabeçalhos, listas, fusão entre páginas
+  - Nota: A funcionalidade é experimental e pode ter limitações com PDFs complexos (PDFs digitalizados, PDFs protegidos por senha)
 - **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v3.0.0)
   - Múltiplos métodos de extração com fallbacks
   - Prioridade: legendas manuais > geradas automaticamente > traduzidas
@@ -69,6 +75,12 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 
 
 ### ⚡ Recursos inteligentes
+- **Extração de conteúdo PDF** (v3.3.0): Extrair conteúdo de arquivos PDF e convertê-los em artigos
+  - Usa a biblioteca PDF.js para análise em um documento offscreen
+  - Sistema de classificação multi-nível para extração precisa
+  - Suporta arquivos PDF web e locais
+  - Integração completa do pipeline: tradução, índice, resumo, todos os formatos de exportação
+  - Nota: Funcionalidade experimental, pode ter limitações com PDFs complexos
 - **Suporte a vídeo**: Extrair legendas de vídeos YouTube/Vimeo e convertê-las em artigos (v3.0.0)
   - Extração direta de legendas (nenhuma chave API do YouTube/Vimeo necessária)
   - Processamento IA: remove timestamps, mescla parágrafos, corrige erros
@@ -95,7 +107,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 - **Importar/Exportar configurações**: Backup e restauração de todas as configurações (chaves API excluídas por segurança)
 
 ### 🔒 Segurança
-- **Chaves API criptografadas** com AES-256-GCM (OpenAI, Claude, Gemini, ElevenLabs, Qwen, Respeecher)
+- **Chaves API criptografadas** com AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **Chaves nunca exportadas** — excluídas do backup de configurações
 - **Todos os dados são armazenados localmente** — nada é enviado a terceiros
 
@@ -114,10 +126,15 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
   - O texto é automaticamente dividido de forma inteligente nos limites de frases/palavras
 
 ### Restrições Técnicas
-- **Requisito keep-alive**: Chrome MV3 requer um intervalo keep-alive de pelo menos 1 minuto. Tarefas de processamento longas podem levar vários minutos. A extensão usa mecanismo unificado de keep-alive (alarme a cada 1 minuto + salvamento de estado a cada 2 segundos) para evitar que o service worker pare.
+- **Requisito keep-alive**: Chrome MV3 requer um intervalo keep-alive de pelo menos 1 minuto. Tarefas de processamento longas podem levar vários minutos. A extensão usa mecanismo unificado de keep-alive (alarme a cada 1 minuto) para evitar que o service worker pare.
 - **CORS para imagens**: Algumas imagens podem não carregar se o site bloquear solicitações cross-origin. A extensão ignorará essas imagens.
 - **Cancelamento não instantâneo**: O cancelamento pode levar alguns segundos para parar completamente todos os processos em segundo plano.
-- **Recuperação do Service Worker**: Operações retomam automaticamente após reinicialização do service worker (dentro de 2 horas).
+- **Recuperação do Service Worker**: Operações retomam automaticamente após reinicialização do service worker, se o estado for recente (< 1 minuto). O recarregamento da extensão sempre redefine o estado.
+- **Limitações de extração PDF** (v3.3.0): 
+  - PDFs digitalizados (sem camada de texto) não são suportados — OCR ainda não está disponível
+  - PDFs protegidos por senha devem ser desbloqueados antes da extração
+  - PDFs muito grandes (>100MB) podem não funcionar devido a limitações de memória
+  - Layouts complexos (multi-coluna, tabelas) são extraídos mas podem exigir verificação manual
 
 ### Compatibilidade do Navegador
 - **Chrome/Edge/Brave/Arc**: Totalmente suportado
@@ -178,6 +195,16 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 5. Copie a chave (começa com `sk-ant-...`)
 6. Adicione créditos em **Plans & Billing**
 
+### DeepSeek
+
+1. Vá para [platform.deepseek.com](https://platform.deepseek.com/)
+2. Registre-se ou faça login
+3. Navegue para **API Keys** ou vá para [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
+4. Clique em **"Create API key"**
+5. Copie a chave (começa com `sk-...`)
+
+> **Nota:** DeepSeek fornece modelos DeepSeek-V3.2: `deepseek-chat` (modo non-thinking) e `deepseek-reasoner` (modo thinking). A API é compatível com o formato OpenAI.
+
 ### ElevenLabs (Áudio)
 
 1. Vá para [ElevenLabs](https://elevenlabs.io/)
@@ -228,6 +255,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 | **Gemini** | Extração rápida, tradução de imagens, exportação de áudio (30 vozes) | ✅ (30 vozes) | ✅ |
 | **Claude** | Artigos longos, páginas complexas | ❌ | ❌ |
 | **Grok** | Tarefas de raciocínio rápido | ❌ | ❌ |
+| **DeepSeek** | Raciocínio avançado, econômico | ❌ | ❌ |
 | **OpenRouter** | Acesso a múltiplos modelos | ❌ | ❌ |
 | **ElevenLabs** | Exportação de áudio (9 vozes, alta qualidade) | ✅ (9 vozes) | ❌ |
 | **Qwen** | Exportação de áudio (49 vozes, suporte russo) | ✅ (49 vozes) | ❌ |
@@ -282,6 +310,7 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 | Anthropic | Claude Sonnet 4.5 | Excelente para artigos longos |
 | Google | Gemini 3 Pro | Extração rápida, tradução de imagens |
 | Grok | Grok 4.1 Fast Reasoning | Raciocínio rápido |
+| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | Raciocínio avançado, econômico |
 | OpenRouter | Vários modelos | Acesso a múltiplos provedores |
 
 **Modelos personalizados:** Clique no botão **"+"** ao lado do seletor de modelos para adicionar modelos personalizados (por exemplo, `gpt-4o`, `claude-opus-4.5`). Modelos personalizados aparecem no menu suspenso e podem ser ocultados/exibidos conforme necessário.
@@ -416,6 +445,7 @@ clipaible/
 │   │   ├── claude.js   # Anthropic Claude
 │   │   ├── gemini.js   # Google Gemini
 │   │   ├── grok.js     # Grok
+│   │   ├── deepseek.js # DeepSeek
 │   │   ├── openrouter.js # OpenRouter
 │   │   ├── elevenlabs.js # ElevenLabs TTS
 │   │   ├── google-tts.js # Google Gemini 2.5 TTS

@@ -12,7 +12,7 @@
   --font-family-code: 'Consolas', 'Monaco', 'Courier New', monospace;
 
   /* === FONT SIZES === */
-  --font-size-base: 31px;
+  --font-size-base: 30px;
   --font-size-h1: 62px;
   --font-size-h2: 49px;
   --font-size-h3: 40px;
@@ -160,6 +160,10 @@ p {
 a {
   color: var(--color-link) !important;
   text-decoration: none;
+  /* CRITICAL: Break long URLs to prevent PDF width expansion */
+  word-break: break-all;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 a:hover {
@@ -465,6 +469,10 @@ th {
   a {
     color: #6cacff !important;
     text-decoration: none;
+    /* CRITICAL: Break long URLs to prevent PDF width expansion */
+    word-break: break-all !important;
+    overflow-wrap: break-word !important;
+    hyphens: auto !important;
   }
   
   /* Internal anchor links - ensure they work in PDF */
