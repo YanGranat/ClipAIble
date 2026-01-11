@@ -27,7 +27,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 ## 🚀 Características
 
 ### 🤖 Extracción con IA
-- **Tres modos**: Automático (sin IA, rápido), AI Selector (rápido, reutilizable) y AI Extract (exhaustivo)
+- **Dos modos**: Automático (sin IA, rápido), AI Selector (rápido, reutilizable)
 - **Modo automático**: Crear documentos sin IA — no se requieren claves API, extracción instantánea
 - **Varios proveedores**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
 - **Extracción de contenido PDF** (v3.3.0): Extraer contenido de archivos PDF usando la biblioteca PDF.js
@@ -48,17 +48,12 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 
 ### 🎧 Exportación de audio
 - **5 proveedores TTS**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
-- **100+ voces**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher (inglés y ucraniano)
-- **Regulación de velocidad**: 0.5x a 2.0x (solo OpenAI/ElevenLabs; Google/Qwen/Respeecher usan velocidad fija)
+- **Regulación de velocidad**: 0.25x a 4.0x (solo OpenAI/ElevenLabs; Google/Qwen/Respeecher usan velocidad fija)
 - **Soporte de formatos**: MP3 (OpenAI/ElevenLabs) o WAV (Google/Qwen/Respeecher)
 - **Pronunciación multilingüe**: Pronunciación correcta para cada idioma
-- **Soporte de idioma ucraniano**: Voces ucranianas dedicadas vía Respeecher (10 voces)
+- **Soporte de idioma ucraniano**: Voces ucranianas dedicadas vía Respeecher
 - **Limpieza inteligente de texto**: La IA elimina URL, código y contenido no vocal
-- **Características específicas del proveedor**:
-  - **ElevenLabs**: Selección de modelo (v2, v3, Turbo v2.5), selección de formato, configuraciones avanzadas de voz
-  - **Google Gemini 2.5 TTS**: Selección de modelo (pro/flash), 30 voces, límite de 24k caracteres
-  - **Qwen**: 49 voces incluyendo voz rusa (Alek), límite de 600 caracteres
-  - **Respeecher**: Parámetros de muestreo avanzados (temperature, repetition_penalty, top_p)
+- **Características específicas del proveedor**: Selección de modelo, opciones de formato y configuraciones avanzadas disponibles para cada proveedor
 
 ### 🌍 Traducción
 - **11 idiomas**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
@@ -107,7 +102,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 - **Importar/Exportar configuración**: Respaldo y restauración de toda la configuración (claves API excluidas por seguridad)
 
 ### 🔒 Seguridad
-- **Claves API encriptadas** con AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
+- **Claves API encriptadas** con encriptación estándar (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **Claves nunca exportadas** — excluidas de la copia de seguridad de configuración
 - **Todos los datos se almacenan localmente** — nada se envía a terceros
 
@@ -203,7 +198,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 4. Haz clic en **"Create API key"**
 5. Copia la clave (comienza con `sk-...`)
 
-> **Nota:** DeepSeek proporciona modelos DeepSeek-V3.2: `deepseek-chat` (modo non-thinking) y `deepseek-reasoner` (modo thinking). La API es compatible con el formato OpenAI.
+> **Nota:** DeepSeek proporciona modelos DeepSeek-V3.2 con modos thinking y non-thinking.
 
 ### ElevenLabs (Audio)
 
@@ -213,7 +208,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 4. Crea una clave API
 5. Copia la clave
 
-> **Nota:** ElevenLabs proporciona 9 voces premium con TTS de alta calidad. Soporta regulación de velocidad (0.25-4.0x) y selección de formato (MP3 alta calidad por defecto: mp3_44100_192). Modelos: Multilingual v2, v3 (por defecto), Turbo v2.5. Configuraciones avanzadas de voz disponibles (stability, similarity, style, speaker boost).
+> **Nota:** ElevenLabs proporciona TTS de alta calidad con regulación de velocidad y selección de formato.
 
 ### Google Gemini 2.5 TTS (Audio)
 
@@ -225,7 +220,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 6. Habilita **Generative Language API** en [Google Cloud Console](https://console.cloud.google.com/)
 7. (Opcional) Habilita facturación si es requerido para tu modelo
 
-> **Nota:** Google Gemini 2.5 TTS proporciona 30 voces. Puedes usar la misma clave API de Gemini o configurar una clave API de Google TTS dedicada. Formato WAV fijo a 24kHz. Modelos: `gemini-2.5-pro-preview-tts` (principal) o `gemini-2.5-flash-preview-tts` (más rápido).
+> **Nota:** Google Gemini 2.5 TTS. Puedes usar la misma clave API de Gemini o configurar una clave API de Google TTS dedicada.
 
 ### Qwen3-TTS-Flash (Audio)
 
@@ -235,7 +230,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 4. Crea una clave API
 5. Copia la clave (comienza con `sk-...`)
 
-> **Nota:** Qwen3-TTS-Flash proporciona 49 voces, incluyendo una voz rusa dedicada (Alek). Formato WAV fijo a 24kHz.
+> **Nota:** Qwen3-TTS-Flash incluye una voz rusa dedicada (Alek).
 
 ### Respeecher (Audio - Inglés y Ucraniano)
 
@@ -245,26 +240,7 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 4. Crea una clave API
 5. Copia la clave
 
-> **Nota:** Respeecher admite inglés y ucraniano con voces ucranianas dedicadas. Formato WAV fijo a 22.05kHz.
-
-### ¿Cuál elegir?
-
-| Proveedor | Mejor para | Audio | Traducción de imágenes |
-|-----------|------------|-------|------------------------|
-| **OpenAI** | Uso general, exportación de audio, transcripción de video | ✅ (11 voces) | ❌ |
-| **Gemini** | Extracción rápida, traducción de imágenes, exportación de audio (30 voces) | ✅ (30 voces) | ✅ |
-| **Claude** | Artículos largos, páginas complejas | ❌ | ❌ |
-| **Grok** | Tareas de razonamiento rápido | ❌ | ❌ |
-| **DeepSeek** | Razonamiento avanzado, rentable | ❌ | ❌ |
-| **OpenRouter** | Acceso a múltiples modelos | ❌ | ❌ |
-| **ElevenLabs** | Exportación de audio (9 voces, alta calidad) | ✅ (9 voces) | ❌ |
-| **Qwen** | Exportación de audio (49 voces, soporte ruso) | ✅ (49 voces) | ❌ |
-| **Respeecher** | Exportación de audio (idioma ucraniano) | ✅ (14 voces) | ❌ |
-
-**Recomendación:** 
-- **Para extracción**: Comienza con OpenAI o Gemini (rápido y confiable)
-- **Para audio**: OpenAI para uso general, ElevenLabs para alta calidad, Google Gemini 2.5 TTS para 30 voces, Qwen para ruso, Respeecher para ucraniano
-- **Para traducción de imágenes**: Requiere clave API de Gemini
+> **Nota:** Respeecher admite inglés y ucraniano con voces ucranianas dedicadas.
 
 ---
 
@@ -297,46 +273,10 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 |------|-----------|------------|
 | **Automático** | ⚡⚡ Instantáneo | Artículos simples, no se requiere clave API |
 | **AI Selector** | ⚡ Rápido | La mayoría de sitios, blogs, noticias |
-| **AI Extract** | 🐢 Exhaustivo | Páginas complejas, Notion, SPAs |
-
-### Modelos de IA
-
-| Proveedor | Modelo | Notas |
-|-----------|--------|-------|
-| OpenAI | GPT-5.2 | Última, razonamiento medio (por defecto) |
-| OpenAI | GPT-5.2-high | Mejorada, razonamiento alto |
-| OpenAI | GPT-5.1 | Equilibrado |
-| OpenAI | GPT-5.1 (high) | Mejor calidad, razonamiento alto |
-| Anthropic | Claude Sonnet 4.5 | Excelente para artículos largos |
-| Google | Gemini 3 Pro | Extracción rápida, traducción de imágenes |
-| Grok | Grok 4.1 Fast Reasoning | Razonamiento rápido |
-| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | Razonamiento avanzado, rentable |
-| OpenRouter | Varios modelos | Acceso a múltiples proveedores |
-
-**Modelos personalizados:** Haz clic en el botón **"+"** junto al selector de modelos para agregar modelos personalizados (por ejemplo, `gpt-4o`, `claude-opus-4.5`). Los modelos personalizados aparecen en el menú desplegable y pueden ocultarse/mostrarse según sea necesario.
-
-### Voces de audio
-
-**OpenAI (11 voces) :** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
-
-**ElevenLabs (9 voces) :** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
-
-**Google Gemini 2.5 TTS (30 voces) :** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
-
-**Qwen3-TTS-Flash (49 voces) :** Incluyendo Elias (predeterminado), Alek (ruso) y voces para 10 idiomas
-
-**Respeecher (14 voces) :** 4 inglesas (Samantha, Neve, Gregory, Vincent) + 10 voces ucranianas
 
 ### Preajustes de estilo (PDF)
 
-| Preajuste | Fondo | Texto |
-|-----------|-------|-------|
-| Oscuro | `#303030` | `#b9b9b9` |
-| Claro | `#f8f9fa` | `#343a40` |
-| Sepia | `#faf4e8` | `#5d4e37` |
-| Alto contraste | `#000000` | `#ffffff` |
-
-**Colores personalizados:** Personaliza fondo, texto, encabezados y enlaces con selectores de color. Botones de reinicio individuales (↺) para cada color, o **"Restablecer todo por defecto"** para restaurar todos los estilos.
+4 preajustes disponibles: Oscuro, Claro, Sepia, Alto contraste. Personaliza colores para fondo, texto, encabezados y enlaces.
 
 ---
 
@@ -404,7 +344,7 @@ ClipAIble almacena en caché los selectores generados por IA por dominio:
 
 | Problema | Solución |
 |----------|----------|
-| Contenido vacío | Prueba el modo **AI Extract** |
+| Contenido vacío | Prueba el modo **AI Selector** |
 | Clave API inválida | Verifica el formato de la clave (sk-..., AIza..., sk-ant-...) |
 | Imágenes faltantes | Algunos sitios bloquean cross-origin; imágenes pequeñas filtradas |
 | Audio lento | Artículos largos divididos en fragmentos; observa la barra de progreso |
@@ -414,78 +354,6 @@ ClipAIble almacena en caché los selectores generados por IA por dominio:
 | Contenido PDF incompleto | Los diseños complejos (multi-columna, tablas) pueden requerir verificación manual. La función es experimental. |
 
 ---
-
-## 🏗️ Arquitectura
-
-```
-clipaible/
-├── manifest.json       # Configuración de extensión
-├── popup/              # Interfaz (HTML, CSS, JS)
-│   ├── popup.js       # Orquestación principal (2841 líneas)
-│   ├── core.js        # Lógica de negocio (203 líneas)
-│   ├── handlers.js    # Manejadores de eventos (1991 líneas)
-│   ├── ui.js          # Gestión de interfaz
-│   ├── stats.js       # Visualización de estadísticas
-│   └── settings.js    # Gestión de configuración
-├── scripts/
-│   ├── background.js   # Service worker (2525 líneas, reducido de 3705)
-│   ├── content.js      # Content script para YouTube
-│   ├── locales.js      # Localización UI (11 idiomas)
-│   ├── message-handlers/ # Módulos de manejadores de mensajes (v3.2.1+)
-│   │   ├── index.js    # Enrutador de mensajes
-│   │   ├── utils.js    # Utilidades de manejadores
-│   │   ├── simple.js   # Manejadores simples
-│   │   ├── stats.js    # Manejadores de estadísticas
-│   │   ├── cache.js    # Manejadores de caché
-│   │   ├── settings.js # Manejadores de configuración
-│   │   ├── processing.js # Manejadores de procesamiento
-│   │   ├── video.js    # Manejadores de video/subtítulos
-│   │   ├── summary.js  # Ayudante de generación de resúmenes
-│   │   └── complex.js  # Manejadores complejos
-│   ├── api/            # Proveedores AI & TTS
-│   │   ├── openai.js   # OpenAI (modelos GPT)
-│   │   ├── claude.js   # Anthropic Claude
-│   │   ├── gemini.js   # Google Gemini
-│   │   ├── grok.js     # Grok
-│   │   ├── deepseek.js # DeepSeek
-│   │   ├── openrouter.js # OpenRouter
-│   │   ├── elevenlabs.js # ElevenLabs TTS
-│   │   ├── google-tts.js # Google Gemini 2.5 TTS
-│   │   ├── qwen.js     # Qwen3-TTS-Flash
-│   │   ├── respeecher.js # Respeecher TTS
-│   │   ├── tts.js      # Enrutador TTS
-│   │   └── index.js    # Enrutador API
-│   ├── extraction/     # Extracción de contenido
-│   │   ├── automatic.js # Extracción automática (sin IA) - extractAutomaticallyInlined()
-│   │   ├── pdf.js      # Extracción de contenido PDF (v3.3.0) - punto de entrada
-│   │   ├── prompts.js  # Prompts IA
-│   │   ├── html-utils.js # Utilidades HTML
-│   │   ├── video-subtitles.js # Extracción de subtítulos YouTube/Vimeo
-│   │   ├── video-processor.js # Procesamiento de subtítulos IA
-│   │   └── modules/    # Funciones auxiliares modulares para extracción automática
-│   │       ├── utils.js # Utilidades básicas
-│   │       ├── content-finder.js # Búsqueda de contenido
-│   │       ├── element-filter.js # Filtrado de elementos
-│   │       ├── image-processor.js # Procesamiento de imágenes
-│   │       ├── metadata-extractor.js # Extracción de metadatos
-│   │       ├── content-cleaner.js # Limpieza de contenido
-│   │       └── builder.js # Inlining en tiempo de compilación
-│   ├── translation/    # Traducción y detección de idioma
-│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
-│   ├── cache/          # Caché de selectores
-│   ├── stats/          # Estadísticas de uso
-│   ├── settings/       # Importar/Exportar configuración
-│   ├── state/          # Gestión del estado de procesamiento
-│   └── utils/          # Configuración, encriptación, utilidades
-│       ├── video.js    # Detección de plataforma de video
-│       ├── validation.js # Utilidades de validación
-│       └── api-error-handler.js # Manejo común de errores API
-├── print/              # Renderizado PDF
-├── config/             # Estilos
-├── lib/                # JSZip
-├── docs/               # Archivos README localizados
-└── memory-bank/        # Documentación del proyecto
-```
 
 ---
 
@@ -500,27 +368,13 @@ clipaible/
 
 ## 📋 Permisos
 
-ClipAIble requiere los siguientes permisos para funcionar. Todos los permisos se usan solo para los propósitos indicados:
+ClipAIble requiere permisos para:
+- Leer la página actual para extraer contenido
+- Guardar tu configuración y archivos generados localmente
+- Hacer llamadas API a proveedores IA/TTS que configuras
+- Acceder a sitios web solo cuando los guardas explícitamente
 
-| Permiso | Por qué |
-|---------|--------|
-| `activeTab` | Leer la página actual para extraer contenido cuando haces clic en el icono de la extensión o usas el menú contextual. La extensión solo accede a la pestaña que estás viendo actualmente. |
-| `storage` | Guardar tu configuración (claves API, preferencias de estilo, selección de idioma) y estadísticas localmente en tu navegador. Tus datos nunca salen de tu dispositivo. |
-| `scripting` | Inyectar el script de extracción de contenido en páginas web. Este script encuentra y extrae el contenido del artículo (texto, imágenes, encabezados) del DOM de la página. |
-| `downloads` | Guardar los archivos generados (PDF, EPUB, FB2, Markdown, Audio) en tu computadora. Sin este permiso, la extensión no puede descargar archivos. |
-| `debugger` | **Solo generación PDF** — Usa la funcionalidad integrada print-to-PDF de Chrome para generar PDFs de alta calidad con diseño de página y estilo adecuados. El depurador se adjunta solo durante la generación PDF y se desvincula inmediatamente después de completarse. Esta es la única forma de generar PDFs con estilo personalizado en extensiones de Chrome. |
-| `alarms` | Mantener el service worker en segundo plano activo durante operaciones largas (artículos grandes, traducción). Chrome Manifest V3 suspende los service workers después de 30 segundos, pero el procesamiento de artículos puede tomar varios minutos. Usa mecanismo unificado de keep-alive (alarma cada 1 minuto + guardado de estado cada 2 segundos) según las reglas MV3. |
-| `contextMenus` | Agregar opciones "Guardar con ClipAIble" (PDF/EPUB/FB2/MD/Audio) al menú contextual de clic derecho en páginas web. |
-| `notifications` | Mostrar notificaciones de escritorio al usar la función "Guardar" del menú contextual. Te notifica si hay un error (por ejemplo, clave API faltante). |
-| `unlimitedStorage` | Almacenar el caché de selectores y datos de impresión temporales localmente. Esto permite extracciones repetidas más rápidas sin volver a llamar a la IA (modo offline). |
-
-### Permisos de host
-
-| Permiso | Por qué |
-|---------|--------|
-| `<all_urls>` | Extraer contenido de cualquier sitio web que visites. La extensión necesita: 1) Leer el HTML de la página para encontrar el contenido del artículo, 2) Descargar imágenes incrustadas en artículos, 3) Hacer llamadas API a proveedores IA/TTS (OpenAI, Google, Anthropic, ElevenLabs, Qwen, Respeecher). La extensión solo accede a páginas que guardas explícitamente — no navega por la web por sí sola. |
-
-**Nota de seguridad:** Todas las claves API están encriptadas usando AES-256-GCM y se almacenan solo localmente. Las claves nunca se exportan ni se transmiten a ningún servidor, excepto a los proveedores IA que configuras.
+**Nota de seguridad:** Todas las claves API están encriptadas y se almacenan solo localmente. Las claves nunca se exportan ni se transmiten a ningún servidor, excepto a los proveedores IA que configuras.
 
 Ver [PERMISSIONS.md](PERMISSIONS.md) para detalles.
 

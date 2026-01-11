@@ -452,8 +452,10 @@ function contentItemToMarkdown(item) {
     
     if (!hasLines) {
       // Fallback to simple formatting if no lines/items available
+      // CRITICAL: Use item.html if available to preserve links, otherwise use item.text
       logDebug(`[Markdown] formatTextWithFragments - FALLBACK to simple formatting (no lines)`);
-      return formatText(item?.text || '', item?.isBold, item?.isItalic, item?.isUnderlined);
+      const sourceText = item?.html || item?.text || '';
+      return formatText(sourceText, item?.isBold, item?.isItalic, item?.isUnderlined);
     }
     
     // Process each line separately, then join with spaces

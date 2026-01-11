@@ -2994,8 +2994,33 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
       }
     }
     
-    // Find and extract content
-    const mainContent = findMainContent();
+    // Special handling for Twitter/X long-form articles
+    let mainContent = null;
+    const twitterArticle = document.querySelector('article[data-testid="tweet"]');
+    const twitterReadView = document.querySelector('div[data-testid="twitterArticleReadView"]');
+    
+    if (twitterArticle || twitterReadView) {
+      // Twitter/X long-form article detected - use the container directly
+      const container = twitterReadView || twitterArticle;
+      if (container) {
+        // Check if container has substantial text content
+        const textLength = container.textContent?.trim().length || 0;
+        if (textLength > 100) {
+          mainContent = container;
+          console.log('[ClipAIble] Twitter/X article detected', {
+            hasTweet: !!twitterArticle,
+            hasReadView: !!twitterReadView,
+            textLength: textLength,
+            containerTag: container.tagName
+          });
+        }
+      }
+    }
+    
+    // If Twitter/X extraction didn't work, use standard method
+    if (!mainContent) {
+      mainContent = findMainContent();
+    }
     
     // CRITICAL: Log mainContent finding for debugging
     if (enableDebugInfo) {
@@ -3153,6 +3178,509 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     // IMPORTANT: Add main title to addedHeadings immediately to prevent duplicates
     if (mainTitleText) {
       addedHeadings.add(mainTitleText);
+    }
+    
+    // Special handling for Twitter/X long-form articles
+    // Check if this is a Twitter/X page and has long-form article content
+    const isTwitterUrl = baseUrl && (baseUrl.includes('x.com/') || baseUrl.includes('twitter.com/'));
+    const hasTwitterArticle = document.querySelector('article[data-testid="tweet"]') !== null;
+    const hasTwitterReadView = document.querySelector('div[data-testid="twitterArticleReadView"]') !== null;
+    
+    // CRITICAL LOGGING: Log all check variables
+    if (debugInfo) {
+      debugInfo.extractionLogs.push({
+        type: 'TWITTER_X_CHECK',
+        message: 'Checking if this is Twitter/X article',
+        data: {
+          baseUrl: baseUrl,
+          isTwitterUrl: isTwitterUrl,
+          hasTwitterArticle: hasTwitterArticle,
+          hasTwitterReadView: hasTwitterReadView,
+          mainContentFound: !!mainContent,
+          mainContentTag: mainContent ? mainContent.tagName : null,
+          mainContentDataTestId: mainContent ? mainContent.getAttribute('data-testid') : null
+        }
+      });
+    }
+    console.log('[ClipAIble] Twitter/X check:', {
+      baseUrl,
+      isTwitterUrl,
+      hasTwitterArticle,
+      hasTwitterReadView,
+      mainContentFound: !!mainContent,
+      mainContentTag: mainContent ? mainContent.tagName : null
+    });
+    
+    // Simplified check: if Twitter/X URL and has article/readView, use special logic
+    const isTwitterXArticle = isTwitterUrl && (hasTwitterArticle || hasTwitterReadView);
+    
+    if (debugInfo) {
+      debugInfo.extractionLogs.push({
+        type: 'TWITTER_X_DECISION',
+        message: isTwitterXArticle ? 'Twitter/X article detected - using special logic' : 'Not a Twitter/X article - using standard extraction',
+        data: {
+          isTwitterXArticle: isTwitterXArticle,
+          reason: !isTwitterUrl ? 'Not Twitter/X URL' : (!hasTwitterArticle && !hasTwitterReadView) ? 'No Twitter article/readView found' : 'All checks passed'
+        }
+      });
+    }
+    
+    if (isTwitterXArticle && mainContent) {
+      console.log('[ClipAIble] Processing Twitter/X article with special logic');
+      if (debugInfo) {
+        debugInfo.extractionLogs.push({
+          type: 'TWITTER_X_PROCESSING_START',
+          message: 'Starting Twitter/X special extraction logic'
+        });
+      }
+      
+      // Find the actual twitterArticleReadView container
+      // Always search in document first, then fallback to mainContent
+      let twitterContainer = document.querySelector('div[data-testid="twitterArticleReadView"]');
+      let containerSource = 'document_querySelector';
+      
+      if (!twitterContainer) {
+        // Fallback: try to find it inside article
+        const article = document.querySelector('article[data-testid="tweet"]');
+        if (article) {
+          twitterContainer = article.querySelector('div[data-testid="twitterArticleReadView"]');
+          containerSource = 'article_querySelector';
+        }
+      }
+      if (!twitterContainer && mainContent) {
+        // Last fallback: check if mainContent contains it
+        const readViewInMain = mainContent.querySelector('div[data-testid="twitterArticleReadView"]');
+        if (readViewInMain) {
+          twitterContainer = readViewInMain;
+          containerSource = 'mainContent_querySelector';
+        } else {
+          twitterContainer = mainContent;
+          containerSource = 'mainContent_fallback';
+        }
+      }
+      if (!twitterContainer) {
+        // Final fallback: use article itself
+        twitterContainer = document.querySelector('article[data-testid="tweet"]');
+        containerSource = 'article_fallback';
+      }
+      
+      if (debugInfo) {
+        debugInfo.extractionLogs.push({
+          type: 'TWITTER_X_CONTAINER_SEARCH',
+          message: twitterContainer ? 'Twitter/X container found' : 'Twitter/X container NOT found',
+          data: {
+            found: !!twitterContainer,
+            containerSource: containerSource,
+            tagName: twitterContainer ? twitterContainer.tagName : null,
+            dataTestId: twitterContainer ? twitterContainer.getAttribute('data-testid') : null,
+            textLength: twitterContainer ? twitterContainer.textContent?.trim().length || 0 : 0,
+            className: twitterContainer ? (twitterContainer.className || '').substring(0, 100) : null
+          }
+        });
+      }
+      
+      if (!twitterContainer) {
+        console.warn('[ClipAIble] Twitter/X article detected but container not found, falling back to standard extraction');
+        if (debugInfo) {
+          debugInfo.extractionLogs.push({
+            type: 'TWITTER_X_FALLBACK',
+            message: 'Container not found - falling back to standard extraction'
+          });
+        }
+        // Continue with standard extraction below
+      } else {
+        console.log('[ClipAIble] Twitter/X container found', {
+          tagName: twitterContainer.tagName,
+          dataTestId: twitterContainer.getAttribute('data-testid'),
+          textLength: twitterContainer.textContent?.trim().length || 0,
+          source: containerSource
+        });
+        
+        // Twitter/X uses Draft.js editor - content is organized in blocks with data-offset-key
+        // Find the main content area (DraftEditor container)
+        const mainContentDiv = Array.from(twitterContainer.children).find(div => {
+          const text = div.textContent?.trim() || '';
+          return text.length > 1000 && div.querySelector('.DraftEditor-root');
+        }) || twitterContainer;
+        
+        // Extract headings (h1, h2, h3 with specific classes)
+        const headings = Array.from(mainContentDiv.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
+        
+        // Extract images (exclude tracking pixels and decorative images)
+        const images = Array.from(mainContentDiv.querySelectorAll('img')).filter((img) => {
+          const src = (img.src || img.getAttribute('src') || '');
+          const alt = (img.alt || img.getAttribute('alt') || '');
+          return src && !src.includes('data:image') && !src.includes('1x1') && alt !== 'Изображение';
+        });
+        
+        // Extract Draft.js content blocks (div[data-offset-key])
+        // These are the actual content units - each block represents a paragraph or heading
+        const allBlocks = Array.from(mainContentDiv.querySelectorAll('div[data-offset-key]'));
+        
+        // Group blocks by data-offset-key to remove duplicates
+        // Draft.js creates multiple divs with same key - we need to pick the right one
+        const uniqueBlocks = new Map();
+        allBlocks.forEach(block => {
+          const key = block.getAttribute('data-offset-key');
+          if (!key) return;
+          
+          if (!uniqueBlocks.has(key)) {
+            // First occurrence - use it
+            uniqueBlocks.set(key, block);
+          } else {
+            // Duplicate found - choose the better one
+            const existing = uniqueBlocks.get(key);
+            // Prefer the one that is NOT a child of the other (the parent/container)
+            const existingIsParent = existing.contains(block) && existing !== block;
+            const blockIsParent = block.contains(existing) && block !== existing;
+            
+            if (blockIsParent) {
+              // Current block is parent - use it
+              uniqueBlocks.set(key, block);
+            } else if (!existingIsParent) {
+              // Neither is parent - prefer the one with more specific class (longform-unstyled is wrapper, public-DraftStyleDefault is content)
+              const existingHasDraft = existing.className && existing.className.includes('public-DraftStyleDefault');
+              const blockHasDraft = block.className && block.className.includes('public-DraftStyleDefault');
+              
+              if (blockHasDraft && !existingHasDraft) {
+                uniqueBlocks.set(key, block);
+              }
+              // Otherwise keep existing
+            }
+            // If existing is parent, keep it
+          }
+        });
+        
+        const contentBlocks = Array.from(uniqueBlocks.values());
+        
+        // Helper to check if element should be excluded
+        const shouldExclude = (element) => {
+          const text = element.textContent?.trim() || '';
+          const textLower = text.toLowerCase();
+          
+          // Exclude statistics (views count)
+          if (text === '1 млн' || text === '1,1 млн' || text.match(/^\d+[\s,.]*(тыс|млн|k|m)$/i)) {
+            return true;
+          }
+          
+          // Exclude Premium promotional content
+          if (textLower.includes('хотите опубликовать') || textLower.includes('перейти на premium')) {
+            return true;
+          }
+          
+          // Check for Premium links
+          const premiumLinks = element.querySelectorAll('a[href*="premium"], a[href*="Premium"]');
+          if (premiumLinks.length > 0) {
+            const hasPremiumHref = Array.from(premiumLinks).some(link => {
+              const href = (link.getAttribute('href') || '').toLowerCase();
+              return href.includes('/i/premium') || href.includes('/premium_sign_up');
+            });
+            if (hasPremiumHref) return true;
+          }
+          
+          // Exclude analytics links
+          const analyticsLinks = element.querySelectorAll('a[href*="/analytics"]');
+          if (analyticsLinks.length > 0) return true;
+          
+          return false;
+        };
+        
+        // Filter out excluded blocks
+        const validBlocks = contentBlocks.filter(block => !shouldExclude(block));
+        
+        if (debugInfo) {
+          debugInfo.extractionLogs.push({
+            type: 'TWITTER_X_ELEMENTS_FOUND',
+            message: 'Elements found in Twitter/X container',
+            data: {
+              headingsCount: headings.length,
+              imagesCount: images.length,
+              allBlocksCount: allBlocks.length,
+              uniqueBlocksCount: contentBlocks.length,
+              validBlocksCount: validBlocks.length,
+              headings: headings.map(h => ({
+                tag: h.tagName,
+                text: h.textContent?.trim().substring(0, 50) || '',
+                className: h.className || ''
+              })),
+              sampleBlocks: validBlocks.slice(0, 5).map(b => ({
+                text: b.textContent?.trim().substring(0, 50) || '',
+                length: b.textContent?.trim().length || 0,
+                hasLink: b.querySelector('a') !== null
+              }))
+            }
+          });
+        }
+        console.log('[ClipAIble] Twitter/X elements found:', {
+          headings: headings.length,
+          images: images.length,
+          allBlocks: allBlocks.length,
+          uniqueBlocks: contentBlocks.length,
+          validBlocks: validBlocks.length
+        });
+        
+        // Combine all elements and sort by DOM position
+        const allContentElements = [...headings, ...images, ...validBlocks];
+        allContentElements.sort((a, b) => {
+          const pos = a.compareDocumentPosition(b);
+          if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+          if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+          return 0;
+        });
+        
+        // Process elements in DOM order - Twitter/X special handling using Draft.js blocks
+        let processedCount = 0;
+        let excludedCount = 0;
+        let skippedCount = 0;
+        let addedCount = 0;
+        
+        // Initialize image deduplication set
+        const addedImageUrls = new Set();
+        
+        // Process all elements in DOM order (headings, images, blocks)
+        for (const elem of allContentElements) {
+          processedCount++;
+          const tagName = elem.tagName ? elem.tagName.toLowerCase() : '';
+          
+          // Process headings (separate h1, h2, h3 elements, not inside blocks)
+          if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3') {
+            const text = elem.textContent?.trim() || '';
+            if (text && text.length > 3) {
+              const normalizedText = text.toLowerCase().trim();
+              if (mainTitleText && normalizedText === mainTitleText) {
+                skippedCount++;
+                continue;
+              }
+              if (addedHeadings.has(normalizedText)) {
+                skippedCount++;
+                continue;
+              }
+              addedHeadings.add(normalizedText);
+              
+              let level = 2; // Default
+              if (elem.classList.contains('longform-header-one')) level = 1;
+              else if (elem.classList.contains('longform-header-two')) level = 2;
+              else if (elem.classList.contains('longform-header-three')) level = 3;
+              
+              content.push({
+                type: 'heading',
+                level: level,
+                text: text,
+                id: elem.id || null
+              });
+              addedCount++;
+            } else {
+              skippedCount++;
+            }
+            continue;
+          }
+          
+          // Process images
+          if (tagName === 'img') {
+            if (elem.closest('figure')) {
+              skippedCount++;
+              continue;
+            }
+            const src = extractBestImageUrl(elem);
+            if (src && !isTrackingPixel(elem) && !isDecorativeImage(elem)) {
+              const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+              const ns = normalizeImageUrl(absoluteSrc);
+              if (!addedImageUrls.has(ns)) {
+                const altText = (elem.alt || (elem.getAttribute ? elem.getAttribute('alt') : '') || '');
+                const isGenericAlt = ['изображение', 'image', 'photo', 'picture', 'img', 'фото', 'картинка'].includes(altText.toLowerCase().trim());
+                content.push({
+                  type: 'image',
+                  src: absoluteSrc,
+                  alt: isGenericAlt ? '' : altText,
+                  id: elem.id || null
+                });
+                addedImageUrls.add(ns);
+                addedCount++;
+              } else {
+                skippedCount++;
+              }
+            } else {
+              skippedCount++;
+            }
+            continue;
+          }
+          
+          // Process Draft.js content blocks (div[data-offset-key])
+          if (tagName === 'div' && elem.getAttribute('data-offset-key')) {
+            const block = elem;
+            const text = block.textContent?.trim() || '';
+            const html = block.innerHTML;
+            
+            // Skip empty blocks
+            if (!text || text.length === 0) {
+              skippedCount++;
+              continue;
+            }
+            
+            // Check if this block contains a heading (h1, h2, h3 with longform classes)
+            const heading = block.querySelector('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three');
+            if (heading) {
+              const headingText = heading.textContent?.trim() || '';
+              if (headingText && headingText.length > 3) {
+                const normalizedText = headingText.toLowerCase().trim();
+                if (mainTitleText && normalizedText === mainTitleText) {
+                  skippedCount++;
+                  continue;
+                }
+                // If heading was already added (from separate headings processing), skip this block
+                // Blocks with headings are usually just the heading text, so we skip them
+                if (addedHeadings.has(normalizedText)) {
+                  skippedCount++;
+                  continue;
+                }
+                // Heading not yet added - add it now
+                addedHeadings.add(normalizedText);
+                
+                let level = 2;
+                if (heading.classList.contains('longform-header-one')) level = 1;
+                else if (heading.classList.contains('longform-header-two')) level = 2;
+                else if (heading.classList.contains('longform-header-three')) level = 3;
+                
+                content.push({
+                  type: 'heading',
+                  level: level,
+                  text: headingText,
+                  id: heading.id || null
+                });
+                addedCount++;
+                
+                // Check if there's text after the heading in this block
+                // If the block text is just the heading, skip the block
+                const blockTextOnly = text.replace(headingText, '').trim();
+                if (blockTextOnly.length === 0) {
+                  // Block contains only heading, skip it
+                  skippedCount++;
+                  continue;
+                }
+                // Block has text after heading - process it as paragraph below
+              }
+            }
+            
+            // Check if this block contains an image
+            const img = block.querySelector('img');
+            if (img && !img.closest('figure')) {
+              const src = extractBestImageUrl(img);
+              if (src && !isTrackingPixel(img) && !isDecorativeImage(img)) {
+                const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+                const ns = normalizeImageUrl(absoluteSrc);
+                if (!addedImageUrls.has(ns)) {
+                  const altText = (img.alt || (img.getAttribute ? img.getAttribute('alt') : '') || '');
+                  const isGenericAlt = ['изображение', 'image', 'photo', 'picture', 'img', 'фото', 'картинка'].includes(altText.toLowerCase().trim());
+                  content.push({
+                    type: 'image',
+                    src: absoluteSrc,
+                    alt: isGenericAlt ? '' : altText,
+                    id: img.id || null
+                  });
+                  addedImageUrls.add(ns);
+                  addedCount++;
+                  continue;
+                }
+              }
+            }
+            
+            // Process as paragraph - use innerHTML to preserve links
+            // Get original text if translated
+            const originalText = getOriginalTextIfTranslated(block);
+            const finalText = originalText || html;
+            const finalHtml = originalText ? originalText : html;
+            
+            // Only add if text is substantial (more than just whitespace/formatting)
+            const textClean = text.replace(/\s+/g, ' ').trim();
+            if (textClean.length > 0) {
+              content.push({
+                type: 'paragraph',
+                text: finalText,
+                html: finalHtml
+              });
+              addedCount++;
+            } else {
+              skippedCount++;
+            }
+          }
+        }
+        
+        // Log processing statistics
+        if (debugInfo) {
+          debugInfo.extractionLogs.push({
+            type: 'TWITTER_X_PROCESSING_STATS',
+            message: 'Twitter/X element processing statistics',
+            data: {
+              totalElements: allContentElements.length,
+              processedCount: processedCount,
+              excludedCount: excludedCount,
+              skippedCount: skippedCount,
+              addedCount: addedCount,
+              finalContentCount: content.length
+            }
+          });
+        }
+        console.log('[ClipAIble] Twitter/X processing stats:', {
+          total: allContentElements.length,
+          processed: processedCount,
+          excluded: excludedCount,
+          skipped: skippedCount,
+          added: addedCount,
+          final: content.length
+        });
+        
+        // If we extracted content, return it
+        if (debugInfo) {
+          const contentTypes = content.reduce((acc, item) => {
+            acc[item.type] = (acc[item.type] || 0) + 1;
+            return acc;
+          }, {});
+          debugInfo.contentTypes = contentTypes;
+          debugInfo.extractionLogs.push({
+            type: 'TWITTER_X_EXTRACTION_COMPLETE',
+            message: `Twitter/X extraction complete: ${content.length} items extracted`,
+            data: {
+              contentItemsCount: content.length,
+              contentTypes: contentTypes,
+              headingsCount: content.filter(c => c.type === 'heading').length,
+              paragraphsCount: content.filter(c => c.type === 'paragraph').length,
+              imagesCount: content.filter(c => c.type === 'image').length,
+              totalTextLength: content.reduce((sum, item) => sum + (item.text?.length || 0), 0)
+            }
+          });
+        }
+        console.log('[ClipAIble] Twitter/X extraction complete:', {
+          items: content.length,
+          types: content.reduce((acc, item) => {
+            acc[item.type] = (acc[item.type] || 0) + 1;
+            return acc;
+          }, {})
+        });
+        
+        if (content.length > 0) {
+          return {
+            title: metadata.title,
+            author: metadata.author,
+            publishDate: metadata.publishDate,
+            content: content,
+            debugInfo: debugInfo
+          };
+        } else {
+          if (debugInfo) {
+            debugInfo.extractionLogs.push({
+              type: 'TWITTER_X_NO_CONTENT',
+              message: 'No content extracted from Twitter/X container - falling back to standard extraction',
+              data: {
+                headingsFound: headings.length,
+                imagesFound: images.length,
+                validBlocksFound: validBlocks.length,
+                allContentElementsCount: allContentElements.length
+              }
+            });
+          }
+          console.warn('[ClipAIble] Twitter/X extraction returned 0 items, falling back to standard extraction');
+        }
+      }
     }
     
     if (!mainContent) {

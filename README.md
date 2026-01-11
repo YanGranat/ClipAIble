@@ -4,7 +4,7 @@
 
 **🌍 Translations:** [Русский](docs/README.ru.md) | [Українська](docs/README.ua.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md) | [Español](docs/README.es.md) | [Italiano](docs/README.it.md) | [Português](docs/README.pt.md) | [中文](docs/README.zh.md) | [日本語](docs/README.ja.md) | [한국어](docs/README.ko.md)
 
-![Version](https://img.shields.io/badge/version-3.3.0-blue) ![Refactoring](https://img.shields.io/badge/refactoring-completed-green)
+![Version](https://img.shields.io/badge/version-3.3.0-blue)
 ![Chrome](https://img.shields.io/badge/Chrome-Extension-green)
 ![License](https://img.shields.io/badge/license-MIT-brightgreen)
 
@@ -29,7 +29,7 @@ All formats support **translation to 11 languages** — even translating text on
 ## 🚀 Features
 
 ### 🤖 AI-Powered Extraction
-- **Three modes**: Automatic (no AI, fast), AI Selector (fast, reusable), and AI Extract (thorough)
+- **Two modes**: Automatic (no AI, fast), AI Selector (fast, reusable)
 - **Automatic mode**: Create documents without AI — no API keys required, instant extraction
 - **Multiple providers**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
 - **PDF content extraction** (v3.3.0): Extract content from PDF files using PDF.js library
@@ -43,25 +43,17 @@ All formats support **translation to 11 languages** — even translating text on
   - Priority: manual subtitles > auto-generated > translated
   - AI processing: removes timestamps, merges paragraphs, fixes errors
 - **Smart detection**: Finds main article content, removes unnecessary elements automatically
-- **Enhanced fallback strategies**: 6 different strategies for reliable content extraction
-- **Preserves structure**: Headings, images, code blocks, tables, footnotes
-- **Selector caching**: Independent settings for using and enabling cache
+- **Preserves structure**: Headings, images, code blocks, tables
 
 ### 🎧 Audio Export
-- **6 TTS providers**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher, Piper TTS (offline)
-- **150+ voices**: 11 OpenAI + 9 ElevenLabs + 30 Google Gemini + 49 Qwen + 14 Respeecher + 50+ Piper TTS (offline) (9 languages)
-- **Speed adjustment**: 0.5x to 2.0x (OpenAI/ElevenLabs only; Google/Qwen/Respeecher/Piper TTS (offline) use fixed speed)
+- **6 TTS providers**: OpenAI TTS (`gpt-4o-mini-tts`), ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash (`qwen3-tts-flash-2025-11-27`), Respeecher, Piper TTS (offline)
+- **Speed adjustment**: 0.25x to 4.0x (OpenAI/ElevenLabs only; Google/Qwen/Respeecher/Piper TTS (offline) use fixed speed)
 - **Format support**: MP3 (OpenAI/ElevenLabs) or WAV (Google/Qwen/Respeecher/Piper TTS (offline))
 - **Multi-language pronunciation**: Correct pronunciation for each language
-- **Ukrainian language support**: Dedicated Ukrainian voices via Respeecher (10 voices) and Piper TTS (offline)
-- **Piper TTS (offline)**: Works completely offline, no API keys required, 50+ voices across 9 languages (English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese)
+- **Ukrainian language support**: Dedicated Ukrainian voices via Respeecher
+- **Piper TTS (offline)**: Works completely offline, no API keys required, multiple voices across 8 languages (English, Russian, German, French, Spanish, Italian, Portuguese, Chinese)
 - **Smart text cleanup**: AI removes URLs, code, and non-speech content
-- **Provider-specific features**:
-  - **ElevenLabs**: Model selection (v2, v3, Turbo v2.5), format selection, advanced voice settings
-  - **Google Gemini 2.5 TTS**: Model selection (pro/flash), 30 voices, 24k char limit
-  - **Qwen**: 49 voices including Russian voice (Alek), 600 char limit
-  - **Respeecher**: Advanced sampling parameters (temperature, repetition_penalty, top_p)
-  - **Piper TTS (offline)**: No API keys required, voice models cached locally, works completely offline
+- **Provider-specific features**: Model selection, format options, and advanced settings available for each provider
 
 ### 🌍 Translation
 - **11 languages**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
@@ -119,21 +111,8 @@ All formats support **translation to 11 languages** — even translating text on
 ## ⚠️ Known Limitations
 
 ### File Formats
-- **WAV format** (Google/Qwen/Respeecher): Files can be very large (10-50MB+ for long articles). MP3 format (OpenAI/ElevenLabs) provides smaller file sizes.
-- **Character limits per request**: 
-  - OpenAI TTS: 4096 characters
-  - ElevenLabs: 5000 characters
-  - Google Gemini 2.5 TTS: 24000 characters
-  - Qwen TTS: 600 characters
-  - Respeecher TTS: 450 characters
-  - Piper TTS (offline): 50000 characters
-  - Text is automatically split intelligently at sentence/word boundaries
-
-### Technical Constraints
-- **Keep-alive requirement**: Chrome MV3 requires keep-alive interval of at least 1 minute. Long processing tasks may take several minutes. Extension uses unified keep-alive mechanism (alarm every 1 minute) to prevent service worker from dying.
-- **CORS for images**: Some images may fail to load if the website blocks cross-origin requests. The extension will skip these images.
-- **Cancel not instant**: Cancellation may take a few seconds to fully stop all background processes.
-- **Service Worker recovery**: Operations automatically resume after service worker restart if state is recent (< 1 minute). Extension reload always resets state.
+- **WAV format** (Google/Qwen/Respeecher): Files can be very large for long articles. MP3 format (OpenAI/ElevenLabs) provides smaller file sizes.
+- **Text splitting**: Long articles are automatically split intelligently at sentence/word boundaries
 - **PDF extraction limitations** (v3.3.0): 
   - Scanned PDFs (no text layer) are not supported — OCR is not available yet
   - Password-protected PDFs must be unlocked before extraction
@@ -170,17 +149,9 @@ All formats support **translation to 11 languages** — even translating text on
 
 ## 🔑 Getting API Keys
 
-> **💡 New in v3.1.0**: You can now use ClipAIble without any API keys! Automatic mode works instantly using local algorithms. API keys are only needed for AI-powered features (translation, abstract generation, AI Extract mode).
+> **💡 Tip**: You can use ClipAIble without any API keys! Automatic mode works instantly using local algorithms. API keys are only needed for AI-powered features (translation, abstract generation, AI Selector mode).
 > 
-> **💡 New in v3.2.0**: Piper TTS (offline) - Generate audio completely offline with 50+ voices across 9 languages, no API keys required!
-> 
-> **💡 Fixed in v3.2.1**: Popup UI updates correctly after audio generation, voice switching works properly for offline TTS.
-> 
-> **💡 New in v3.3.0**: PDF content extraction - Added experimental support for extracting content from PDF files. Previous: DeepSeek provider integration, performance optimizations, Google Translate interference fix.
-
-> **💡 New in v3.2.3**: Code duplication & magic numbers refactoring - centralized all timeouts/delays in CONFIG, extracted common handler patterns, eliminated ~30% handler code duplication. Improved maintainability and consistency.
-
-> **💡 New in v3.2.2**: Long functions refactoring - refactored 6 major functions, eliminated ~500+ lines of duplicate code, improved modularity and maintainability. Background.js refactoring - reduced from 3705 to 1932 lines.
+> **💡 Tip**: Piper TTS (offline) - Generate audio completely offline across 8 languages, no API keys required!
 
 ### OpenAI (GPT models + Audio)
 
@@ -191,7 +162,7 @@ All formats support **translation to 11 languages** — even translating text on
 5. Copy the key (starts with `sk-...`)
 6. Add billing at **Settings → Billing** (required for API usage)
 
-> **Note:** OpenAI key is required for Audio export (TTS). Other formats work with any provider.
+> **Note:** OpenAI key is required for Audio export (TTS). Uses `gpt-4o-mini-tts` model. Other formats work with any provider.
 
 ### Google Gemini
 
@@ -201,7 +172,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **"Create API key"**
 5. Copy the key (starts with `AIza...`)
 
-> **Tip:** Gemini also enables image text translation feature and Google Gemini 2.5 TTS (30 voices). For TTS, you can use the same Gemini API key or set a dedicated Google TTS API key. Requires Generative Language API enabled in Google Cloud Console.
+> **Tip:** Gemini also enables image text translation feature and Google Gemini 2.5 TTS. For TTS, you can use the same Gemini API key or set a dedicated Google TTS API key. Requires Generative Language API enabled in Google Cloud Console.
 
 ### Anthropic Claude
 
@@ -220,7 +191,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Click **"Create API key"**
 5. Copy the key (starts with `sk-...`)
 
-> **Note:** DeepSeek provides DeepSeek-V3.2 models: `deepseek-chat` (non-thinking mode) and `deepseek-reasoner` (thinking mode). API is compatible with OpenAI format.
+> **Note:** DeepSeek provides DeepSeek-V3.2 models with thinking and non-thinking modes.
 
 ### ElevenLabs (Audio)
 
@@ -230,7 +201,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Create an API key
 5. Copy the key
 
-> **Note:** ElevenLabs provides 9 premium voices with high-quality TTS. Supports speed control (0.25-4.0x) and format selection (MP3 high quality default: mp3_44100_192). Models: Multilingual v2, v3 (default), Turbo v2.5. Advanced voice settings available (stability, similarity, style, speaker boost).
+> **Note:** ElevenLabs provides high-quality TTS with speed control and format selection.
 
 ### Google Gemini 2.5 TTS (Audio)
 
@@ -242,7 +213,7 @@ All formats support **translation to 11 languages** — even translating text on
 6. Enable **Generative Language API** in [Google Cloud Console](https://console.cloud.google.com/)
 7. (Optional) Enable billing if required for your model
 
-> **Note:** Google Gemini 2.5 TTS provides 30 voices. You can use the same Gemini API key or set a dedicated Google TTS API key. Fixed WAV format at 24kHz. Models: `gemini-2.5-pro-preview-tts` (primary) or `gemini-2.5-flash-preview-tts` (faster).
+> **Note:** Google Gemini 2.5 TTS. You can use the same Gemini API key or set a dedicated Google TTS API key.
 
 ### Qwen3-TTS-Flash (Audio)
 
@@ -252,7 +223,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Create an API key
 5. Copy the key (starts with `sk-...`)
 
-> **Note:** Qwen3-TTS-Flash provides 49 voices including a dedicated Russian voice (Alek). Fixed WAV format at 24kHz.
+> **Note:** Qwen3-TTS-Flash includes a dedicated Russian voice (Alek).
 
 ### Respeecher (Audio - English & Ukrainian)
 
@@ -262,27 +233,7 @@ All formats support **translation to 11 languages** — even translating text on
 4. Create an API key
 5. Copy the key
 
-> **Note:** Respeecher supports English and Ukrainian languages with dedicated Ukrainian voices. Fixed WAV format at 22.05kHz.
-
-### Which to choose?
-
-| Provider | Best For | Audio | Image Translation |
-|----------|----------|-------|-------------------|
-| **OpenAI** | General use, Audio export | ✅ (11 voices) | ❌ |
-| **Gemini** | Fast extraction, Image translation, Audio export (30 voices) | ✅ (30 voices) | ✅ |
-| **Claude** | Long articles, Complex pages | ❌ | ❌ |
-| **Grok** | Fast reasoning tasks | ❌ | ❌ |
-| **DeepSeek** | Advanced reasoning, Cost-effective | ❌ | ❌ |
-| **OpenRouter** | Access to multiple models | ❌ | ❌ |
-| **ElevenLabs** | Audio export (9 voices, high quality) | ✅ (9 voices) | ❌ |
-| **Qwen** | Audio export (49 voices, Russian support) | ✅ (49 voices) | ❌ |
-| **Respeecher** | Audio export (Ukrainian language) | ✅ (14 voices) | ❌ |
-| **Piper TTS (offline)** | Audio export (offline, no API keys) | ✅ (50+ voices) | ❌ |
-
-**Recommendation:** 
-- **For extraction**: Start with OpenAI or Gemini (fast and reliable)
-- **For audio**: OpenAI for general use, ElevenLabs for high quality, Google Gemini 2.5 TTS for 30 voices, Qwen for Russian, Respeecher for Ukrainian, Piper TTS (offline) for offline use (no API keys)
-- **For image translation**: Requires Gemini API key
+> **Note:** Respeecher supports English and Ukrainian languages with dedicated Ukrainian voices.
 
 ---
 
@@ -315,47 +266,12 @@ All formats support **translation to 11 languages** — even translating text on
 |------|-------|----------|
 | **Automatic** | ⚡⚡ Instant | Simple articles, no API key needed |
 | **AI Selector** | ⚡ Fast | Most sites, blogs, news |
-| **AI Extract** | 🐢 Thorough | Complex pages, Notion, SPAs |
 
-### AI Models
 
-| Provider | Model | Notes |
-|----------|-------|-------|
-| OpenAI | GPT-5.2 | Latest, medium reasoning (default) |
-| OpenAI | GPT-5.2-high | Enhanced, high reasoning |
-| OpenAI | GPT-5.1 | Balanced |
-| OpenAI | GPT-5.1 (high) | Best quality, high reasoning |
-| Anthropic | Claude Sonnet 4.5 | Great for long articles |
-| Google | Gemini 3 Pro Preview | Fast extraction, image translation |
-| Grok | Grok 4.1 Fast Reasoning | Fast reasoning tasks |
-| OpenRouter | Various models | Access to multiple providers |
-
-**Custom Models:** Click the **"+"** button next to model selector to add custom models (e.g., `gpt-4o`, `claude-opus-4.5`). Custom models appear in dropdown and can be hidden/shown as needed.
-
-### Audio Voices
-
-**OpenAI (11 voices):** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
-
-**ElevenLabs (9 voices):** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
-
-**Google Gemini 2.5 TTS (30 voices):** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
-
-**Qwen3-TTS-Flash (49 voices):** Including Elias (default), Alek (Russian), and voices for 10 languages
-
-**Respeecher (14 voices):** 4 English (Samantha, Neve, Gregory, Vincent) + 10 Ukrainian voices
-
-**Piper TTS (offline) (50+ voices):** English (GB/US), Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese
 
 ### Style Presets (PDF)
 
-| Preset | Background | Text |
-|--------|------------|------|
-| Dark | `#303030` | `#b9b9b9` |
-| Light | `#f8f9fa` | `#343a40` |
-| Sepia | `#faf4e8` | `#5d4e37` |
-| High Contrast | `#000000` | `#ffffff` |
-
-**Custom Colors:** Customize background, text, headings, and links with color pickers. Individual reset buttons (↺) for each color, or **"Reset All to Default"** to restore all styles.
+4 presets available: Dark, Light, Sepia, High Contrast. Customize colors for background, text, headings, and links.
 
 ---
 
@@ -423,7 +339,7 @@ ClipAIble caches AI-generated selectors by domain:
 
 | Problem | Solution |
 |---------|----------|
-| Empty content | Try **AI Extract** mode |
+| Empty content | Try **AI Selector** mode |
 | Invalid API key | Check key format (sk-..., AIza..., sk-ant-...) |
 | Images missing | Some sites block cross-origin; small images filtered |
 | Audio slow | Long articles split into chunks; watch progress bar |
@@ -434,124 +350,11 @@ ClipAIble caches AI-generated selectors by domain:
 
 ---
 
-## 🏗️ Architecture
-
-```
-clipaible/
-├── manifest.json       # Extension config
-├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # Main orchestration (1279 lines)
-│   ├── constants.js   # Constants (STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS)
-│   ├── core.js        # Business logic facade (207 lines)
-│   ├── handlers.js    # Event handlers facade (479 lines)
-│   ├── handlers/      # Handler sub-modules (8 modules: api-keys, panels, format, style, model, audio, summary, theme, tts-keys)
-│   ├── utils/         # Popup utilities (5 modules: init-helpers, dom-helpers, format-helpers, settings-helpers, timer-helpers)
-│   ├── ui.js          # UI management
-│   ├── stats.js       # Statistics display
-│   └── settings.js    # Settings management
-├── scripts/
-│   ├── background.js   # Service worker (1094 lines, reduced from 3705)
-│   ├── content.js      # Content script for YouTube
-│   ├── locales.js      # UI localization (11 languages)
-│   ├── message-handlers/ # Message handler modules (v3.2.1+)
-│   │   ├── index.js    # Message router
-│   │   ├── utils.js    # Handler utilities
-│   │   ├── simple.js   # Simple handlers
-│   │   ├── stats.js    # Statistics handlers
-│   │   ├── cache.js    # Cache handlers
-│   │   ├── settings.js # Settings handlers
-│   │   ├── processing.js # Processing handlers
-│   │   ├── video.js    # Video/subtitle handlers
-│   │   ├── summary.js  # Summary generation helper
-│   │   └── complex.js  # Complex handlers
-│   ├── processing/     # Processing modules (v3.2.3+)
-│   │   ├── modes.js    # Processing modes (processWithoutAI, processWithExtractMode, getSelectorsFromAI)
-│   │   ├── video.js    # Video processing (processVideoPage)
-│   │   ├── pdf.js      # PDF page processing (v3.3.0) - processPdfPage, processPdfPageWithAI
-│   │   └── quicksave.js # Quick save processing (prepareQuickSaveData)
-│   ├── initialization/ # Initialization module (v3.2.3+)
-│   │   └── index.js    # API key migration, default settings initialization
-│   ├── api/            # AI & TTS providers
-│   │   ├── openai.js   # OpenAI (GPT models)
-│   │   ├── claude.js   # Anthropic Claude
-│   │   ├── gemini.js   # Google Gemini
-│   │   ├── grok.js     # Grok
-│   │   ├── openrouter.js # OpenRouter
-│   │   ├── elevenlabs.js # ElevenLabs TTS
-│   │   ├── google-tts.js # Google Gemini 2.5 TTS
-│   │   ├── qwen.js     # Qwen3-TTS-Flash
-│   │   ├── respeecher.js # Respeecher TTS
-│   │   ├── tts.js      # TTS router
-│   │   └── index.js    # API router
-│   ├── extraction/     # Content extraction
-│   │   ├── automatic.js # Automatic extraction (no AI) - extractAutomaticallyInlined()
-│   │   ├── pdf.js      # PDF content extraction (v3.3.0) - entry point
-│   │   ├── prompts.js  # AI prompts
-│   │   ├── html-utils.js # HTML utilities
-│   │   ├── video-subtitles.js # YouTube/Vimeo subtitle extraction
-│   │   ├── video-processor.js # AI subtitle processing
-│   │   └── modules/    # Modular helper functions for automatic extraction
-│   │       ├── utils.js # Basic utilities
-│   │       ├── content-finder.js # Content finding
-│   │       ├── element-filter.js # Element filtering
-│   │       ├── image-processor.js # Image processing
-│   │       ├── metadata-extractor.js # Metadata extraction
-│   │       ├── content-cleaner.js # Content cleaning
-│   │       └── builder.js # Build-time inlining
-│   ├── translation/    # Translation & language detection
-│   │   ├── index.js    # Module facade (re-exports)
-│   │   ├── text.js     # Text translation
-│   │   ├── images.js   # Image translation
-│   │   ├── detection.js # Language detection
-│   │   └── generation.js # Abstract/summary generation
-│   ├── generation/     # PDF, EPUB, FB2, MD, Audio
-│   │   ├── factory.js  # Document generator factory
-│   │   ├── pdf.js      # PDF generation
-│   │   ├── epub.js     # EPUB generation
-│   │   ├── fb2.js      # FB2 generation
-│   │   ├── markdown.js # Markdown generation
-│   │   └── audio.js    # Audio generation
-│   ├── cache/          # Selector caching
-│   ├── stats/          # Usage statistics
-│   ├── settings/       # Settings import/export
-│   ├── state/          # Processing state management
-│   └── utils/          # Config, encryption, helpers
-│       ├── html.js     # HTML utilities (title cleaning, sanitization)
-│       ├── video.js    # Video platform detection
-│       ├── validation.js # Validation utilities
-│       ├── api-error-handler.js # Common API error handling
-│       ├── pipeline-helpers.js # Pipeline utilities (v3.2.3+) - handleProcessingResult, handleProcessingError, handleTranslation, handleAbstractGeneration
-│       ├── processing-helpers.js # Processing utilities (v3.2.3+) - validateAndInitializeProcessing, handleVideoPageProcessing, handleQuickSave helpers
-│       ├── settings-helpers.js # Settings utilities (v3.2.3+) - determineProviderAndModel, getVoiceFromSettings
-│       ├── context-menu.js # Context menu utilities (v3.2.3+)
-│       ├── voice-validator.js # Voice validation utilities
-│       └── api-key-manager.js # API key management utilities
-├── scripts/offscreen/  # Offscreen document modules (v3.3.0)
-│   ├── pdf/            # PDF extraction modules - complex multi-level classification system
-│   │   ├── extract.js  # Main coordinator - entry point
-│   │   ├── core/       # Core algorithms (clustering, line-grouping, text-collation)
-│   │   ├── classifiers/ # Element classifiers (paragraph, heading, list, table, image, formula)
-│   │   ├── analyzers/  # Context and metrics analyzers (metrics, context, structure, gap-analysis)
-│   │   ├── processors/ # Processing processors (grouping, merging, post-processing, cross-page)
-│   │   └── utils/      # Utilities (array-helpers, text-helpers, font-detection, image-extraction)
-│   ├── audio/          # Audio utilities
-│   ├── tts/            # TTS modules
-│   ├── worker/         # Worker modules
-│   └── utils/          # Offscreen utilities
-├── print/              # PDF rendering
-├── config/             # Styles
-├── lib/                # JSZip (includes PDF.js for PDF extraction)
-├── docs/               # Localized README files
-├── offscreen.js        # Offscreen document for PDF processing and offline TTS (3752 lines, refactored from 4967)
-└── memory-bank/        # Project documentation
-```
-
 ---
 
 ## 🔐 Security & Privacy
 
-- **Encryption**: AES-256-GCM via Web Crypto API
-- **Key derivation**: PBKDF2, 100,000 iterations
+- **Encryption**: API keys encrypted with industry-standard encryption
 - **No tracking**: No analytics, no remote logging
 - **Local only**: All data stays in your browser
 
@@ -559,27 +362,13 @@ clipaible/
 
 ## 📋 Permissions
 
-ClipAIble requires the following permissions to function. All permissions are used only for the stated purposes:
+ClipAIble requires permissions to:
+- Read the current page to extract content
+- Save your settings and generated files locally
+- Make API calls to AI/TTS providers you configure
+- Access websites only when you explicitly save them
 
-| Permission | Why |
-|------------|-----|
-| `activeTab` | Read the current page to extract content when you click the extension icon or use the context menu. The extension only accesses the tab you're currently viewing. |
-| `storage` | Save your settings (API keys, style preferences, language selection) and statistics locally in your browser. Your data never leaves your device. |
-| `scripting` | Inject the content extraction script into web pages. This script finds and extracts the article content (text, images, headings) from the page DOM. |
-| `downloads` | Save the generated files (PDF, EPUB, FB2, Markdown, Audio) to your computer. Without this permission, the extension cannot download files. |
-| `debugger` | **PDF generation only** - Uses Chrome's built-in print-to-PDF functionality to generate high-quality PDFs with proper page layout and styling. The debugger is attached only during PDF generation and immediately detached after completion. This is the only way to generate PDFs with custom styling in Chrome extensions. |
-| `alarms` | Keep the background service worker alive during long operations (large articles, translation). Chrome's Manifest V3 suspends service workers after 30 seconds, but article processing can take several minutes. Uses unified keep-alive mechanism (alarm every 1 minute) per MV3 rules. |
-| `contextMenus` | Add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/Audio) to the right-click context menu on web pages. |
-| `notifications` | Show desktop notifications when using the context menu "Save" feature. Notifies you if there's an error (e.g., missing API key). |
-| `unlimitedStorage` | Store selector cache and temporary print data locally. This enables faster repeat extractions without calling AI again (offline mode). |
-
-### Host Permissions
-
-| Permission | Why |
-|------------|-----|
-| `<all_urls>` | Extract content from any website you visit. The extension needs to: 1) Read the page HTML to find article content, 2) Download images embedded in articles, 3) Make API calls to AI/TTS providers (OpenAI, Google, Anthropic, ElevenLabs, Qwen, Respeecher). The extension only accesses pages you explicitly save - it does not browse the web on its own. |
-
-**Security Note:** All API keys are encrypted using AES-256-GCM and stored locally only. Keys are never exported or transmitted to any server except the AI providers you configure.
+**Security Note:** All API keys are encrypted and stored locally only. Keys are never exported or transmitted to any server except the AI providers you configure.
 
 See [PERMISSIONS.md](PERMISSIONS.md) for more details.
 

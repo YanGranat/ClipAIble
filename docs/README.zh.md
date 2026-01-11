@@ -27,7 +27,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 ## 🚀 功能
 
 ### 🤖 AI驱动的提取
-- **三种模式**：自动（无AI，快速）、AI Selector（快速、可重用）和 AI Extract（彻底）
+- **两种模式**：自动（无AI，快速）、AI Selector（快速、可重用）
 - **自动模式**：无需AI创建文档 — 无需API密钥，即时提取
 - **支持多个提供商**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、DeepSeek、OpenRouter
 - **PDF内容提取**（v3.3.0）：使用PDF.js库从PDF文件中提取内容
@@ -49,16 +49,16 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 ### 🎧 音频导出
 - **5个TTS提供商**：OpenAI TTS、ElevenLabs、Google Gemini 2.5 TTS、Qwen3-TTS-Flash、Respeecher
 - **100+种语音**：11种OpenAI + 9种ElevenLabs + 30种Google Gemini + 49种Qwen + 14种Respeecher（英语和乌克兰语）
-- **速度调节**：0.5x 至 2.0x（仅OpenAI/ElevenLabs；Google/Qwen/Respeecher使用固定速度）
+- **速度调节**：0.25x 至 4.0x（仅OpenAI/ElevenLabs；Google/Qwen/Respeecher使用固定速度）
 - **格式支持**：MP3（OpenAI/ElevenLabs）或 WAV（Google/Qwen/Respeecher）
 - **多语言发音**：每种语言正确的发音
-- **乌克兰语支持**：通过Respeecher提供专用乌克兰语音（10种语音）
+- **乌克兰语支持**：通过Respeecher提供专用乌克兰语音
 - **智能文本清理**：AI移除URL、代码和非语音内容
 - **提供商特定功能**：
-  - **ElevenLabs**：模型选择（v2、v3、Turbo v2.5）、格式选择、高级语音设置
-  - **Google Gemini 2.5 TTS**：模型选择（pro/flash）、30种语音、24k字符限制
-  - **Qwen**：49种语音，包括俄语语音（Alek），600字符限制
-  - **Respeecher**：高级采样参数（temperature、repetition_penalty、top_p）
+  - **ElevenLabs**：模型选择、格式选择、高级语音设置
+  - **Google Gemini 2.5 TTS**：多种语音可用
+  - **Qwen**：包括俄语语音（Alek）
+  - **Respeecher**：高级采样参数
 
 ### 🌍 翻译
 - **11种语言**：EN、RU、UA、DE、FR、ES、IT、PT、ZH、JA、KO
@@ -107,7 +107,7 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 - **设置导入/导出**：备份和恢复所有设置（API密钥出于安全考虑被排除）
 
 ### 🔒 安全性
-- **API密钥加密**使用AES-256-GCM（OpenAI、Claude、Gemini、Grok、DeepSeek、OpenRouter、ElevenLabs、Qwen、Respeecher）
+- **API密钥加密**（OpenAI、Claude、Gemini、Grok、DeepSeek、OpenRouter、ElevenLabs、Qwen、Respeecher）
 - **密钥永不导出** — 从设置备份中排除
 - **所有数据本地存储** — 不向第三方发送任何内容
 
@@ -297,44 +297,15 @@ ClipAIble 使用人工智能智能地从任何网页提取文章内容 — 移�
 |------|------|--------|
 | **自动** | ⚡⚡ 即时 | 简单文章，无需API密钥 |
 | **AI Selector** | ⚡ 快速 | 大多数网站、博客、新闻 |
-| **AI Extract** | 🐢 彻底 | 复杂页面、Notion、SPA |
-
-### AI模型
-
-| 提供商 | 模型 | 备注 |
-|--------|------|------|
-| OpenAI | GPT-5.2 | 最新，中等推理（默认） |
-| OpenAI | GPT-5.2-high | 增强，高推理 |
-| OpenAI | GPT-5.1 | 平衡 |
-| OpenAI | GPT-5.1 (high) | 最佳质量，高推理 |
-| Anthropic | Claude Sonnet 4.5 | 适合长文章 |
-| Google | Gemini 3 Pro | 快速提取，图像翻译 |
-| Grok | Grok 4.1 Fast Reasoning | 快速推理 |
-| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | 高级推理、经济实惠 |
-| OpenRouter | 各种模型 | 访问多个提供商 |
-
-**自定义模型：** 点击模型选择器旁边的**"+"**按钮添加自定义模型（例如，`gpt-4o`、`claude-opus-4.5`）。自定义模型出现在下拉菜单中，可以根据需要隐藏/显示。
-
-### 音频语音
-
-**OpenAI（11种语音）：** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
-
-**ElevenLabs（9种语音）：** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
-
-**Google Gemini 2.5 TTS（30种语音）：** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
-
-**Qwen3-TTS-Flash（49种语音）：** 包括 Elias（默认）、Alek（俄语）以及10种语言的语音
-
-**Respeecher（14种语音）：** 4种英语（Samantha, Neve, Gregory, Vincent）+ 10种乌克兰语音
 
 ### 样式预设（PDF）
 
-| 预设 | 背景 | 文本 |
-|------|------|------|
-| 深色 | `#303030` | `#b9b9b9` |
-| 浅色 | `#f8f9fa` | `#343a40` |
-| 棕褐色 | `#faf4e8` | `#5d4e37` |
-| 高对比度 | `#000000` | `#ffffff` |
+| 预设 | 描述 |
+|------|------|
+| 深色 | 深色背景，浅色文本 |
+| 浅色 | 浅色背景，深色文本 |
+| 棕褐色 | 柔和的棕褐色主题 |
+| 高对比度 | 最大对比度以提高可读性 |
 
 **自定义颜色：** 使用颜色选择器自定义背景、文本、标题和链接。每个颜色都有单独的重置按钮（↺），或**"全部重置为默认"**以恢复所有样式。
 
@@ -404,7 +375,7 @@ ClipAIble按域名缓存AI生成的选择器：
 
 | 问题 | 解决方案 |
 |------|----------|
-| 内容为空 | 尝试**AI Extract**模式 |
+| 内容为空 | 尝试**AI Selector**模式 |
 | 无效的API密钥 | 检查密钥格式（sk-...、AIza...、sk-ant-...） |
 | 缺少图片 | 某些网站阻止跨域；小图片被过滤 |
 | 音频缓慢 | 长文章分成块；观察进度条 |
@@ -414,68 +385,6 @@ ClipAIble按域名缓存AI生成的选择器：
 | PDF内容不完整 | 复杂布局（多列、表格）可能需要手动验证。该功能是实验性的。 |
 
 ---
-
-## 🏗️ 架构
-
-```
-clipaible/
-├── manifest.json       # 扩展配置
-├── popup/              # 界面（HTML、CSS、JS）
-│   ├── popup.js       # 主要编排（2841行）
-│   ├── core.js        # 业务逻辑（203行）
-│   ├── handlers.js    # 事件处理器（1991行）
-│   ├── ui.js          # 界面管理
-│   ├── stats.js       # 统计显示
-│   └── settings.js    # 设置管理
-├── scripts/
-│   ├── background.js   # Service worker (2525行，从3705减少)
-│   ├── content.js      # YouTube内容脚本
-│   ├── locales.js      # UI本地化（11种语言）
-│   ├── message-handlers/ # 消息处理器模块（v3.2.1+）
-│   │   ├── index.js    # 消息路由器
-│   │   ├── utils.js    # 处理器工具
-│   │   ├── simple.js   # 简单处理器
-│   │   ├── stats.js    # 统计处理器
-│   │   ├── cache.js    # 缓存处理器
-│   │   ├── settings.js # 设置处理器
-│   │   ├── processing.js # 处理处理器
-│   │   ├── video.js    # 视频/字幕处理器
-│   │   ├── summary.js  # 摘要生成助手
-│   │   └── complex.js  # 复杂处理器
-│   ├── api/            # AI和TTS提供商
-│   │   ├── openai.js   # OpenAI（GPT模型）
-│   │   ├── claude.js   # Anthropic Claude
-│   │   ├── gemini.js   # Google Gemini
-│   │   ├── grok.js     # Grok
-│   │   ├── deepseek.js # DeepSeek
-│   │   ├── openrouter.js # OpenRouter
-│   │   ├── elevenlabs.js # ElevenLabs TTS
-│   │   ├── google-tts.js # Google Gemini 2.5 TTS
-│   │   ├── qwen.js     # Qwen3-TTS-Flash
-│   │   ├── respeecher.js # Respeecher TTS
-│   │   ├── tts.js      # TTS路由器
-│   │   └── index.js    # API路由器
-│   ├── extraction/     # 内容提取
-│   │   ├── prompts.js  # AI提示
-│   │   ├── html-utils.js # HTML工具
-│   │   ├── video-subtitles.js # YouTube/Vimeo字幕提取
-│   │   └── video-processor.js # AI字幕处理
-│   ├── translation/    # 翻译和语言检测
-│   ├── generation/     # PDF、EPUB、FB2、MD、音频
-│   ├── cache/          # 选择器缓存
-│   ├── stats/          # 使用统计
-│   ├── settings/       # 设置导入/导出
-│   ├── state/          # 处理状态管理
-│   └── utils/          # 配置、加密、工具
-│       ├── video.js    # 视频平台检测
-│       ├── validation.js # 验证工具
-│       └── api-error-handler.js # 通用API错误处理
-├── print/              # PDF渲染
-├── config/             # 样式
-├── lib/                # JSZip
-├── docs/               # 本地化README文件
-└── memory-bank/        # 项目文档
-```
 
 ---
 
@@ -490,27 +399,30 @@ clipaible/
 
 ## 📋 权限
 
-ClipAIble需要以下权限才能正常工作。所有权限仅用于所述目的：
+ClipAIble需要以下权限才能正常工作：
 
 | 权限 | 原因 |
 |------|------|
-| `activeTab` | 当您点击扩展图标或使用上下文菜单时，读取当前页面以提取内容。扩展仅访问您当前正在查看的标签页。 |
-| `storage` | 在浏览器中本地保存您的设置（API密钥、样式偏好、语言选择）和统计信息。您的数据永远不会离开您的设备。 |
-| `scripting` | 将内容提取脚本注入到网页中。此脚本从页面DOM中查找并提取文章内容（文本、图像、标题）。 |
-| `downloads` | 将生成的文件（PDF、EPUB、FB2、Markdown、音频）保存到您的计算机。没有此权限，扩展无法下载文件。 |
-| `debugger` | **仅用于PDF生成** — 使用Chrome的内置print-to-PDF功能生成具有适当页面布局和样式的高质量PDF。调试器仅在PDF生成期间附加，完成后立即分离。这是在Chrome扩展中生成具有自定义样式的PDF的唯一方法。 |
-| `alarms` | 在长时间操作（大文章、翻译）期间保持后台service worker处于活动状态。Chrome Manifest V3会在30秒后暂停service worker，但文章处理可能需要几分钟。使用统一的keep-alive机制（每1分钟警报 + 每2秒保存状态）根据MV3规则。 |
-| `contextMenus` | 在网页上的右键上下文菜单中添加"使用ClipAIble保存"选项（PDF/EPUB/FB2/MD/音频）。 |
-| `notifications` | 使用上下文菜单"保存"功能时显示桌面通知。如果有错误（例如，缺少API密钥），会通知您。 |
-| `unlimitedStorage` | 本地存储选择器缓存和临时打印数据。这可以在不再次调用AI的情况下实现更快的重复提取（离线模式）。 |
+| `activeTab` | 读取当前页面以提取内容 |
+| `storage` | 本地保存设置和统计信息 |
+| `scripting` | 注入内容提取脚本 |
+| `downloads` | 保存生成的文件 |
+| `debugger` | 生成高质量PDF |
+| `alarms` | 在长时间操作期间保持service worker活动 |
+| `contextMenus` | 添加上下文菜单选项 |
+| `notifications` | 显示桌面通知 |
+| `unlimitedStorage` | 存储选择器缓存 |
+| `webNavigation` | 从Chrome PDF查看器获取原始PDF URL |
+| `pageCapture` | 保留用于未来的PDF捕获功能 |
+| `offscreen` | 创建offscreen文档用于PDF提取和离线TTS |
 
 ### 主机权限
 
 | 权限 | 原因 |
 |------|------|
-| `<all_urls>` | 从您访问的任何网站提取内容。扩展需要：1) 读取页面HTML以查找文章内容，2) 下载嵌入在文章中的图像，3) 向AI/TTS提供商（OpenAI、Google、Anthropic、ElevenLabs、Qwen、Respeecher）发出API调用。扩展仅访问您明确保存的页面 — 它不会自行浏览网络。 |
+| `<all_urls>` | 从任何网站提取内容并向AI/TTS提供商发出API调用 |
 
-**安全说明：** 所有API密钥均使用AES-256-GCM加密，仅本地存储。密钥永远不会导出或传输到任何服务器，除了您配置的AI提供商。
+**安全说明：** 所有API密钥均加密并仅本地存储。密钥永远不会导出或传输到任何服务器，除了您配置的AI提供商。
 
 详见 [PERMISSIONS.md](PERMISSIONS.md)。
 

@@ -27,7 +27,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 ## 🚀 기능
 
 ### 🤖 AI 기반 추출
-- **세 가지 모드**: 자동 (AI 없음, 빠름), AI Selector (빠름, 재사용 가능) 및 AI Extract (철저함)
+- **두 가지 모드**: 자동 (AI 없음, 빠름), AI Selector (빠름, 재사용 가능)
 - **자동 모드**: AI 없이 문서 생성 — API 키 불필요, 즉시 추출
 - **여러 제공업체 지원**: OpenAI GPT (GPT-5.2, GPT-5.2-high, GPT-5.1), Google Gemini, Anthropic Claude, Grok, DeepSeek, OpenRouter
 - **PDF 콘텐츠 추출** (v3.3.0): PDF.js 라이브러리를 사용하여 PDF 파일에서 콘텐츠 추출
@@ -48,17 +48,17 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 
 ### 🎧 오디오 내보내기
 - **5개의 TTS 제공업체**: OpenAI TTS, ElevenLabs, Google Gemini 2.5 TTS, Qwen3-TTS-Flash, Respeecher
-- **100개 이상의 음성**: 11개 OpenAI + 9개 ElevenLabs + 30개 Google Gemini + 49개 Qwen + 14개 Respeecher (영어 및 우크라이나어)
-- **속도 조절**: 0.5x ~ 2.0x (OpenAI/ElevenLabs만; Google/Qwen/Respeecher는 고정 속도 사용)
+- **여러 음성**: OpenAI, ElevenLabs, Google Gemini, Qwen, Respeecher
+- **속도 조절**: 0.25x ~ 4.0x (OpenAI/ElevenLabs만; Google/Qwen/Respeecher는 고정 속도 사용)
 - **형식 지원**: MP3 (OpenAI/ElevenLabs) 또는 WAV (Google/Qwen/Respeecher)
 - **다국어 발음**: 각 언어에 맞는 올바른 발음
-- **우크라이나어 지원**: Respeecher를 통한 전용 우크라이나어 음성 (10개 음성)
+- **우크라이나어 지원**: Respeecher를 통한 전용 우크라이나어 음성
 - **지능형 텍스트 정리**: AI가 URL, 코드 및 비음성 콘텐츠 제거
 - **제공업체별 기능**:
-  - **ElevenLabs**: 모델 선택 (v2, v3, Turbo v2.5), 형식 선택, 고급 음성 설정
-  - **Google Gemini 2.5 TTS**: 모델 선택 (pro/flash), 30개 음성, 24k 문자 제한
-  - **Qwen**: 러시아어 음성 (Alek)을 포함한 49개 음성, 600자 제한
-  - **Respeecher**: 고급 샘플링 매개변수 (temperature, repetition_penalty, top_p)
+  - **ElevenLabs**: 모델 선택, 형식 선택, 고급 음성 설정
+  - **Google Gemini 2.5 TTS**: 여러 음성 사용 가능
+  - **Qwen**: 러시아어 음성 (Alek) 포함
+  - **Respeecher**: 고급 샘플링 매개변수
 
 ### 🌍 번역
 - **11개 언어**: EN, RU, UA, DE, FR, ES, IT, PT, ZH, JA, KO
@@ -107,7 +107,7 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 - **설정 가져오기/내보내기**: 모든 설정의 백업 및 복원 (보안을 위해 API 키 제외)
 
 ### 🔒 보안
-- **API 키 암호화** AES-256-GCM (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
+- **API 키 암호화** (OpenAI, Claude, Gemini, Grok, DeepSeek, OpenRouter, ElevenLabs, Qwen, Respeecher)
 - **키는 내보내지 않음** — 설정 백업에서 제외
 - **모든 데이터 로컬** — 제3자에게 전송되지 않음
 
@@ -297,44 +297,15 @@ ClipAIble은 인공지능을 사용하여 모든 웹페이지에서 기사 콘�
 |------|------|-----------|
 | **자동** | ⚡⚡ 즉시 | 간단한 기사, API 키 불필요 |
 | **AI Selector** | ⚡ 빠름 | 대부분의 사이트, 블로그, 뉴스 |
-| **AI Extract** | 🐢 철저함 | 복잡한 페이지, Notion, SPA |
-
-### AI 모델
-
-| 제공업체 | 모델 | 참고 |
-|----------|------|------|
-| OpenAI | GPT-5.2 | 최신, 중간 추론 (기본값) |
-| OpenAI | GPT-5.2-high | 향상됨, 높은 추론 |
-| OpenAI | GPT-5.1 | 균형 |
-| OpenAI | GPT-5.1 (high) | 최고 품질, 높은 추론 |
-| Anthropic | Claude Sonnet 4.5 | 긴 기사에 적합 |
-| Google | Gemini 3 Pro | 빠른 추출, 이미지 번역 |
-| Grok | Grok 4.1 Fast Reasoning | 빠른 추론 |
-| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | 고급 추론, 비용 효율적 |
-| OpenRouter | 다양한 모델 | 여러 제공업체 액세스 |
-
-**사용자 정의 모델:** 모델 선택기 옆의 **"+"** 버튼을 클릭하여 사용자 정의 모델을 추가합니다 (예: `gpt-4o`, `claude-opus-4.5`). 사용자 정의 모델은 드롭다운 메뉴에 나타나며 필요에 따라 숨기기/표시할 수 있습니다.
-
-### 오디오 음성
-
-**OpenAI（11개 음성）：** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
-
-**ElevenLabs（9개 음성）：** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
-
-**Google Gemini 2.5 TTS（30개 음성）：** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
-
-**Qwen3-TTS-Flash（49개 음성）：** Elias（기본값）, Alek（러시아어）및 10개 언어의 음성 포함
-
-**Respeecher（14개 음성）：** 4개 영어（Samantha, Neve, Gregory, Vincent）+ 10개 우크라이나어 음성
 
 ### 스타일 사전 설정 (PDF)
 
-| 사전 설정 | 배경 | 텍스트 |
-|-----------|------|--------|
-| 다크 | `#303030` | `#b9b9b9` |
-| 라이트 | `#f8f9fa` | `#343a40` |
-| 세피아 | `#faf4e8` | `#5d4e37` |
-| 고대비 | `#000000` | `#ffffff` |
+| 사전 설정 | 설명 |
+|-----------|------|
+| 다크 | 다크 배경, 라이트 텍스트 |
+| 라이트 | 라이트 배경, 다크 텍스트 |
+| 세피아 | 부드러운 세피아 테마 |
+| 고대비 | 가독성을 위한 최대 대비 |
 
 **사용자 정의 색상:** 색상 선택기로 배경, 텍스트, 제목 및 링크를 사용자 정의합니다. 각 색상에 대한 개별 재설정 버튼 (↺) 또는 **"모두 기본값으로 재설정"**으로 모든 스타일을 복원합니다.
 
@@ -404,7 +375,7 @@ ClipAIble은 도메인별로 AI 생성 선택자를 캐시합니다:
 
 | 문제 | 해결 방법 |
 |------|-----------|
-| 빈 콘텐츠 | **AI Extract** 모드 시도 |
+| 빈 콘텐츠 | **AI Selector** 모드 시도 |
 | 잘못된 API 키 | 키 형식 확인 (sk-..., AIza..., sk-ant-...) |
 | 이미지 누락 | 일부 사이트는 cross-origin 차단; 작은 이미지 필터링 |
 | 느린 오디오 | 긴 기사는 청크로 분할; 진행 표시줄 관찰 |
@@ -414,68 +385,6 @@ ClipAIble은 도메인별로 AI 생성 선택자를 캐시합니다:
 | PDF 콘텐츠가 불완전함 | 복잡한 레이아웃 (다중 열, 테이블)은 수동 검증이 필요할 수 있습니다. 기능은 실험적입니다. |
 
 ---
-
-## 🏗️ 아키텍처
-
-```
-clipaible/
-├── manifest.json       # 확장 프로그램 구성
-├── popup/              # UI (HTML, CSS, JS)
-│   ├── popup.js       # 메인 오케스트레이션 (2841줄)
-│   ├── core.js        # 비즈니스 로직 (203줄)
-│   ├── handlers.js    # 이벤트 핸들러 (1991줄)
-│   ├── ui.js          # UI 관리
-│   ├── stats.js       # 통계 표시
-│   └── settings.js    # 설정 관리
-├── scripts/
-│   ├── background.js   # Service worker (2525줄, 3705에서 감소)
-│   ├── content.js      # YouTube용 콘텐츠 스크립트
-│   ├── locales.js      # UI 현지화 (11개 언어)
-│   ├── message-handlers/ # 메시지 핸들러 모듈 (v3.2.1+)
-│   │   ├── index.js    # 메시지 라우터
-│   │   ├── utils.js    # 핸들러 유틸리티
-│   │   ├── simple.js   # 간단한 핸들러
-│   │   ├── stats.js    # 통계 핸들러
-│   │   ├── cache.js    # 캐시 핸들러
-│   │   ├── settings.js # 설정 핸들러
-│   │   ├── processing.js # 처리 핸들러
-│   │   ├── video.js    # 비디오/자막 핸들러
-│   │   ├── summary.js  # 요약 생성 도우미
-│   │   └── complex.js  # 복잡한 핸들러
-│   ├── api/            # AI & TTS 제공업체
-│   │   ├── openai.js   # OpenAI (GPT 모델)
-│   │   ├── claude.js   # Anthropic Claude
-│   │   ├── gemini.js   # Google Gemini
-│   │   ├── grok.js     # Grok
-│   │   ├── deepseek.js # DeepSeek
-│   │   ├── openrouter.js # OpenRouter
-│   │   ├── elevenlabs.js # ElevenLabs TTS
-│   │   ├── google-tts.js # Google Gemini 2.5 TTS
-│   │   ├── qwen.js     # Qwen3-TTS-Flash
-│   │   ├── respeecher.js # Respeecher TTS
-│   │   ├── tts.js      # TTS 라우터
-│   │   └── index.js    # API 라우터
-│   ├── extraction/     # 콘텐츠 추출
-│   │   ├── prompts.js  # AI 프롬프트
-│   │   ├── html-utils.js # HTML 유틸리티
-│   │   ├── video-subtitles.js # YouTube/Vimeo 자막 추출
-│   │   └── video-processor.js # AI 자막 처리
-│   ├── translation/    # 번역 및 언어 감지
-│   ├── generation/     # PDF, EPUB, FB2, MD, 오디오
-│   ├── cache/          # 선택자 캐싱
-│   ├── stats/          # 사용 통계
-│   ├── settings/       # 설정 가져오기/내보내기
-│   ├── state/          # 처리 상태 관리
-│   └── utils/          # 구성, 암호화, 유틸리티
-│       ├── video.js    # 비디오 플랫폼 감지
-│       ├── validation.js # 검증 유틸리티
-│       └── api-error-handler.js # 공통 API 오류 처리
-├── print/              # PDF 렌더링
-├── config/             # 스타일
-├── lib/                # JSZip
-├── docs/               # 현지화된 README 파일
-└── memory-bank/        # 프로젝트 문서
-```
 
 ---
 
@@ -490,27 +399,30 @@ clipaible/
 
 ## 📋 권한
 
-ClipAIble은 기능하기 위해 다음 권한이 필요합니다. 모든 권한은 명시된 목적에만 사용됩니다:
+ClipAIble은 기능하기 위해 다음 권한이 필요합니다:
 
 | 권한 | 이유 |
 |------|------|
-| `activeTab` | 확장 프로그램 아이콘을 클릭하거나 컨텍스트 메뉴를 사용할 때 현재 페이지를 읽어 콘텐츠를 추출합니다. 확장 프로그램은 현재 보고 있는 탭에만 액세스합니다. |
-| `storage` | 설정(API 키, 스타일 기본 설정, 언어 선택) 및 통계를 브라우저에 로컬로 저장합니다. 데이터는 디바이스를 떠나지 않습니다. |
-| `scripting` | 콘텐츠 추출 스크립트를 웹 페이지에 주입합니다. 이 스크립트는 페이지 DOM에서 기사 콘텐츠(텍스트, 이미지, 제목)를 찾아 추출합니다. |
-| `downloads` | 생성된 파일(PDF, EPUB, FB2, Markdown, 오디오)을 컴퓨터에 저장합니다. 이 권한이 없으면 확장 프로그램이 파일을 다운로드할 수 없습니다. |
-| `debugger` | **PDF 생성 전용** — Chrome의 내장 print-to-PDF 기능을 사용하여 적절한 페이지 레이아웃과 스타일로 고품질 PDF를 생성합니다. 디버거는 PDF 생성 중에만 연결되고 완료 후 즉시 분리됩니다. 이것은 Chrome 확장 프로그램에서 사용자 정의 스타일의 PDF를 생성하는 유일한 방법입니다. |
-| `alarms` | 긴 작업(큰 기사, 번역) 중에 백그라운드 service worker를 활성 상태로 유지합니다. Chrome Manifest V3는 30초 후 service worker를 일시 중지하지만 기사 처리에는 몇 분이 걸릴 수 있습니다. 통합된 keep-alive 메커니즘 (1분마다 알람 + 2초마다 상태 저장)을 MV3 규칙에 따라 사용합니다. |
-| `contextMenus` | 웹 페이지의 우클릭 컨텍스트 메뉴에 "ClipAIble로 저장" 옵션(PDF/EPUB/FB2/MD/오디오)을 추가합니다. |
-| `notifications` | 컨텍스트 메뉴의 "저장" 기능을 사용할 때 데스크톱 알림을 표시합니다. 오류가 있는 경우(예: API 키 누락) 알림을 표시합니다. |
-| `unlimitedStorage` | 선택자 캐시 및 임시 인쇄 데이터를 로컬에 저장합니다. 이를 통해 AI를 다시 호출하지 않고 더 빠른 반복 추출이 가능합니다(오프라인 모드). |
+| `activeTab` | 현재 페이지를 읽어 콘텐츠를 추출 |
+| `storage` | 설정 및 통계를 로컬로 저장 |
+| `scripting` | 콘텐츠 추출 스크립트를 주입 |
+| `downloads` | 생성된 파일을 저장 |
+| `debugger` | 고품질 PDF 생성 |
+| `alarms` | 긴 작업 중에 service worker를 활성 상태로 유지 |
+| `contextMenus` | 컨텍스트 메뉴에 옵션 추가 |
+| `notifications` | 데스크톱 알림 표시 |
+| `unlimitedStorage` | 선택자 캐시 저장 |
+| `webNavigation` | Chrome PDF 뷰어에서 원본 PDF URL 가져오기 |
+| `pageCapture` | 향후 PDF 캡처 기능을 위해 예약됨 |
+| `offscreen` | PDF 추출 및 오프라인 TTS를 위한 offscreen 문서 생성 |
 
 ### 호스트 권한
 
 | 권한 | 이유 |
 |------|------|
-| `<all_urls>` | 방문하는 모든 웹사이트에서 콘텐츠를 추출합니다. 확장 프로그램은 다음을 수행해야 합니다: 1) 기사 콘텐츠를 찾기 위해 페이지 HTML 읽기, 2) 기사에 포함된 이미지 다운로드, 3) AI/TTS 제공업체(OpenAI, Google, Anthropic, ElevenLabs, Qwen, Respeecher)에 API 호출 수행. 확장 프로그램은 명시적으로 저장하는 페이지에만 액세스합니다 — 자체적으로 웹을 탐색하지 않습니다. |
+| `<all_urls>` | 모든 웹사이트에서 콘텐츠를 추출하고 AI/TTS 제공업체에 API 호출 수행 |
 
-**보안 참고:** 모든 API 키는 AES-256-GCM을 사용하여 암호화되며 로컬에만 저장됩니다. 키는 구성한 AI 제공업체를 제외하고 서버로 내보내지거나 전송되지 않습니다.
+**보안 참고:** 모든 API 키는 암호화되며 로컬에만 저장됩니다. 키는 구성한 AI 제공업체를 제외하고 서버로 내보내지거나 전송되지 않습니다.
 
 자세한 내용은 [PERMISSIONS.md](PERMISSIONS.md)를 참조하세요.
 

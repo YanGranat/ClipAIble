@@ -18,7 +18,7 @@ RETURN JSON:
   "author": "actual author name text ONLY (without prefixes like 'от', 'by', 'автор:', 'written by', 'von'), or empty string if not found. NEVER return 'anonymous', 'анонимный', 'анонімний', '(anonymous)', 'unknown', 'N/A', or any placeholder - only return empty string if author is not found",
   "publishDate": "date in ISO format ONLY (YYYY-MM-DD, YYYY-MM, or YYYY) - MUST convert any format to ISO, or empty string if not found",
   "toc": "selector for Table of Contents element (list with internal links to article sections), or empty string",
-  "exclude": ["selectors for non-content: nav, ads, comments, related, author bio"],
+  "exclude": ["selectors for non-content: nav, ads, comments, related, author bio, recommended articles sections and their images"],
   "detectedLanguage": "ISO 639-1 two-letter language code of the MAIN article content (e.g., 'en', 'ru', 'ua', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko'). Analyze the actual article text content (not UI elements, navigation, or comments) and determine the language. Return ONLY the 2-letter code, nothing else. If uncertain, return 'en' as default."
 }
 
@@ -252,6 +252,8 @@ CRITICAL - LANGUAGE DETECTION:
 - DO NOT analyze navigation menus, buttons, or UI text - only the article content itself
 - Example: If article title and paragraphs are in Russian, return "ru" even if site UI is in English
 
+For Twitter/X long-form articles, use article[data-testid="tweet"] or div[data-testid="twitterArticleReadView"] as content selector - text is in span elements, not tweetText.
+
 Return ONLY valid JSON.`;
 
 /**
@@ -309,6 +311,7 @@ OTHER REQUIREMENTS:
 - EXCLUDE comment listings, vote counts, user handles, "New Comment", "Submit", and any sidebar link lists pointing to other posts.
 - CRITICAL - ARTICLE BOUNDARY: The "content" selector must ONLY include the CURRENT article, not related articles or posts. If you see the article ends with a conclusion, and then there's a new heading or block of text that starts a different topic/story (e.g., article about "Bayesian Judo" ends, then text about "Carl Sagan" begins), that is a DIFFERENT article - exclude it. The article ends when you see: comments section, series navigation, related articles, or content that clearly belongs to another post.
 - CRITICAL - MULTIPLE ARTICLES ON PAGE: Some pages display multiple articles (main article + related articles, author's other posts, series posts with full text). You must identify which container holds ONLY the current article (the one with the page's main title) and exclude all other article containers. If you see multiple <article> elements or multiple content containers, add selectors for all OTHER articles to "exclude" array. Only the main article (matching the page title) should be in "content" selector.
+- CRITICAL - IMAGES FROM RECOMMENDED ARTICLES: When excluding related/recommended articles, also exclude ALL IMAGES from those sections. Images from "Recommended from Medium", "You might also like", "Related posts", or similar sections must NOT be included in the main article content. These images belong to other articles and should be completely excluded from the extraction.
 - CRITICAL - USE PAGE TITLE TO IDENTIFY MAIN ARTICLE:
   * The page title (provided in the prompt) is the PRIMARY identifier for the main article
   * If page title is "Bayesian Judo", then ONLY content about "Bayesian Judo" is the main article
@@ -347,6 +350,7 @@ CRITICAL RULES:
 4. Keep: article title, paragraphs, headings, images, quotes, lists, code blocks, tables.
 5. CRITICAL - NO HALLUCINATIONS: Extract ONLY text that is ACTUALLY PRESENT in the provided HTML. Do NOT add content from your training data, even if you know about related articles or topics. If you see a link to another article (e.g., "Previous post: Belief in Belief"), do NOT extract content from that article - it's not in the HTML. Only extract text that you can see in the HTML provided to you.
 6. CRITICAL - ARTICLE BOUNDARY: Extract ONLY the CURRENT article that matches the page title. The page title (provided in the user prompt) tells you which article is the main article. If the page title is "Bayesian Judo", then ONLY extract content about "Bayesian Judo" that is ACTUALLY IN THE HTML. If you see content about other topics (e.g., "Belief in Belief", "Carl Sagan", "dragon in garage"), that is a DIFFERENT article - DO NOT extract it. Stop extracting when you see: comments section, series navigation ("Next post", "Previous post", "Part of the sequence"), related articles, or content that clearly belongs to another post. Use the page title as the PRIMARY identifier - if content doesn't match the page title, it's NOT the main article.
+7. For Twitter/X long-form articles, extract text from all span elements inside article[data-testid="tweet"] or div[data-testid="twitterArticleReadView"] - the text may be split across multiple spans, not in a single tweetText element.
 
 TRANSLATION NOTICES - DO NOT EXTRACT (CRITICAL):
 - Skip any paragraph or element that says the article was "automatically translated", "tradotto automaticamente", "traduit automatiquement", "переведено автоматически"
@@ -424,6 +428,7 @@ CRITICAL RULES:
 4. KEEP: article text, headings, images (with full URLs), quotes, lists, code blocks
 5. CRITICAL - NO HALLUCINATIONS: Extract ONLY text that is ACTUALLY PRESENT in the provided HTML chunk. Do NOT add content from your training data, even if you know about related articles or topics. If you see a link to another article (e.g., "Previous post: Belief in Belief"), do NOT extract content from that article - it's not in the HTML. Only extract text that you can see in the HTML chunk provided to you. If the page title is "Bayesian Judo" and you see a link to "Belief in Belief", that link is NOT the article content - it's just navigation. Do NOT extract any text about "Carl Sagan", "dragon in garage", "Dennett", or any other topics that are NOT actually present in the HTML text content. Before extracting any paragraph, verify that its text is actually visible in the HTML chunk - if you're not 100% certain it's in the HTML, DO NOT extract it.
 6. CRITICAL - ARTICLE BOUNDARY: Extract ONLY the CURRENT article that matches the page title. The page title (provided in the user prompt) tells you which article is the main article. If the page title is "Bayesian Judo", then ONLY extract content about "Bayesian Judo" that is ACTUALLY IN THE HTML. If you see content about other topics (e.g., "Belief in Belief", "Carl Sagan", "dragon in garage"), that is a DIFFERENT article - DO NOT extract it. Stop extracting when you see: comments section, series navigation ("Next post", "Previous post", "Part of the sequence"), related articles, or content that clearly belongs to another post. Use the page title as the PRIMARY identifier - if content doesn't match the page title, it's NOT the main article.
+7. For Twitter/X long-form articles, extract text from all span elements inside article[data-testid="tweet"] or div[data-testid="twitterArticleReadView"] - the text may be split across multiple spans, not in a single tweetText element.
 
 TRANSLATION NOTICES - DO NOT EXTRACT (CRITICAL):
 - Skip any paragraph or element that says the article was "automatically translated", "tradotto automaticamente", "traduit automatiquement", "переведено автоматически"

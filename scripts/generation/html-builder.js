@@ -235,7 +235,18 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           if (isSeparator) {
             return `<hr class="decorative-separator"${idAttr}>`;
           }
-          const captionText = item.caption || item.alt || '';
+          // Don't use generic alt text as caption fallback (e.g., "Image", "Photo")
+          const isGenericAltText = (alt) => {
+            if (!alt || !alt.trim()) return false;
+            const lowerAlt = alt.trim().toLowerCase();
+            const genericTexts = [
+              'изображение', 'image', 'photo', 'picture', 'img', 'фото', 'картинка',
+              'imagen', 'imagem', 'immagine', 'bild', 'afbeelding', '画像', '이미지',
+              'image:', 'photo:', 'picture:', 'изображение:', 'фото:', 'картинка:'
+            ];
+            return genericTexts.includes(lowerAlt);
+          };
+          const captionText = item.caption || (item.alt && !isGenericAltText(item.alt) ? item.alt : '');
           // CRITICAL: If caption already contains HTML (from getFormattedHtml), use sanitizeHtml directly
           // Otherwise, convert markdown to HTML first
           let caption = '';

@@ -1180,6 +1180,83 @@ export function extractFromPageInlined(selectors, baseUrl) {
         let hiddenCount = 0;
         for (let i = 0; i < result.elements.length; i++) {
           const el = result.elements[i];
+          
+          // Special handling for Twitter/X long-form articles
+          const isTwitterContainer = el.getAttribute('data-testid') === 'twitterArticleReadView' || 
+                                     (el.closest('article[data-testid="tweet"]') && el.tagName.toLowerCase() === 'div');
+          if (isTwitterContainer) {
+            // Process elements in DOM order: find all headings and paragraphs with Twitter/X classes
+            // Use querySelectorAll to get all elements, then filter by class
+            const headings = Array.from(el.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
+            const paragraphs = Array.from(el.querySelectorAll('.longform-unstyled, .longform-blockquote'));
+            
+            // Also check for substantial span elements (leaf spans with text)
+            const allSpans = Array.from(el.querySelectorAll('span'));
+            const textSpans = allSpans.filter(span => {
+              const text = span.textContent?.trim() || '';
+              return text.length > 50 && !span.querySelector('span'); // Leaf spans with substantial text
+            });
+            
+            // Combine all elements and sort by DOM position
+            const allContentElements = [...headings, ...paragraphs, ...textSpans];
+            allContentElements.sort((a, b) => {
+              const pos = a.compareDocumentPosition(b);
+              if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+              if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+              return 0;
+            });
+            
+            // Process in order
+            for (const elem of allContentElements) {
+              if (shouldExclude(elem)) continue;
+              try {
+                const style = window.getComputedStyle(elem);
+                if (style.display === 'none' || style.visibility === 'hidden') continue;
+              } catch (e) {}
+              
+              const className = elem.className || '';
+              const text = elem.textContent?.trim() || '';
+              const tagName = elem.tagName.toLowerCase();
+              
+              // Process headings
+              if (tagName === 'h1' && className.includes('longform-header-one')) {
+                if (text && text.length > 3) {
+                  const html = getFormattedHtml(elem);
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'heading', level: 1, text: html, id: elemId });
+                }
+              } else if (tagName === 'h2' && className.includes('longform-header-two')) {
+                if (text && text.length > 3) {
+                  const html = getFormattedHtml(elem);
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'heading', level: 2, text: html, id: elemId });
+                }
+              } else if (tagName === 'h3' && className.includes('longform-header-three')) {
+                if (text && text.length > 3) {
+                  const html = getFormattedHtml(elem);
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'heading', level: 3, text: html, id: elemId });
+                }
+              }
+              // Process paragraphs
+              else if (className.includes('longform-unstyled') || className.includes('longform-blockquote')) {
+                if (text && text.length > 20) {
+                  const html = getFormattedHtml(elem);
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'paragraph', text: html, id: elemId });
+                }
+              }
+              // Process substantial span elements
+              else if (tagName === 'span' && text.length > 50 && !elem.querySelector('span')) {
+                if (text && text.length > 20) {
+                  const html = getFormattedHtml(elem);
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'paragraph', text: html, id: elemId });
+                }
+              }
+            }
+            continue; // Skip normal processing for Twitter container
+          }
           const elementInfo = {
             index: i,
             total: result.elements.length,
@@ -1286,6 +1363,83 @@ export function extractFromPageInlined(selectors, baseUrl) {
       let hiddenCount = 0;
       for (let i = 0; i < result.elements.length; i++) {
         const el = result.elements[i];
+        
+        // Special handling for Twitter/X long-form articles
+        const isTwitterContainer = el.getAttribute('data-testid') === 'twitterArticleReadView' || 
+                                   (el.closest('article[data-testid="tweet"]') && el.tagName.toLowerCase() === 'div');
+        if (isTwitterContainer) {
+          // Process elements in DOM order: find all headings and paragraphs with Twitter/X classes
+          // Use querySelectorAll to get all elements, then filter by class
+          const headings = Array.from(el.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
+          const paragraphs = Array.from(el.querySelectorAll('.longform-unstyled, .longform-blockquote'));
+          
+          // Also check for substantial span elements (leaf spans with text)
+          const allSpans = Array.from(el.querySelectorAll('span'));
+          const textSpans = allSpans.filter(span => {
+            const text = span.textContent?.trim() || '';
+            return text.length > 50 && !span.querySelector('span'); // Leaf spans with substantial text
+          });
+          
+          // Combine all elements and sort by DOM position
+          const allContentElements = [...headings, ...paragraphs, ...textSpans];
+          allContentElements.sort((a, b) => {
+            const pos = a.compareDocumentPosition(b);
+            if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+            if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+            return 0;
+          });
+          
+          // Process in order
+          for (const elem of allContentElements) {
+            if (shouldExclude(elem)) continue;
+            try {
+              const style = window.getComputedStyle(elem);
+              if (style.display === 'none' || style.visibility === 'hidden') continue;
+            } catch (e) {}
+            
+            const className = elem.className || '';
+            const text = elem.textContent?.trim() || '';
+            const tagName = elem.tagName.toLowerCase();
+            
+            // Process headings
+            if (tagName === 'h1' && className.includes('longform-header-one')) {
+              if (text && text.length > 3) {
+                const html = getFormattedHtml(elem);
+                const elemId = getAnchorId(elem);
+                content.push({ type: 'heading', level: 1, text: html, id: elemId });
+              }
+            } else if (tagName === 'h2' && className.includes('longform-header-two')) {
+              if (text && text.length > 3) {
+                const html = getFormattedHtml(elem);
+                const elemId = getAnchorId(elem);
+                content.push({ type: 'heading', level: 2, text: html, id: elemId });
+              }
+            } else if (tagName === 'h3' && className.includes('longform-header-three')) {
+              if (text && text.length > 3) {
+                const html = getFormattedHtml(elem);
+                const elemId = getAnchorId(elem);
+                content.push({ type: 'heading', level: 3, text: html, id: elemId });
+              }
+            }
+            // Process paragraphs
+            else if (className.includes('longform-unstyled') || className.includes('longform-blockquote')) {
+              if (text && text.length > 20) {
+                const html = getFormattedHtml(elem);
+                const elemId = getAnchorId(elem);
+                content.push({ type: 'paragraph', text: html, id: elemId });
+              }
+            }
+            // Process substantial span elements
+            else if (tagName === 'span' && text.length > 50 && !elem.querySelector('span')) {
+              if (text && text.length > 20) {
+                const html = getFormattedHtml(elem);
+                const elemId = getAnchorId(elem);
+                content.push({ type: 'paragraph', text: html, id: elemId });
+              }
+            }
+          }
+          continue; // Skip normal processing for Twitter container
+        }
         const elementInfo = {
           index: i,
           total: result.elements.length,

@@ -27,7 +27,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 ## 🚀 機能
 
 ### 🤖 AI駆動の抽出
-- **3つのモード**：自動（AIなし、高速）、AI Selector（高速、再利用可能）とAI Extract（徹底的）
+- **2つのモード**：自動（AIなし、高速）、AI Selector（高速、再利用可能）
 - **自動モード**：AIなしでドキュメントを作成 — APIキー不要、即座に抽出
 - **複数のプロバイダー**：OpenAI GPT（GPT-5.2、GPT-5.2-high、GPT-5.1）、Google Gemini、Anthropic Claude、Grok、DeepSeek、OpenRouter
 - **PDFコンテンツ抽出**（v3.3.0）：PDF.jsライブラリを使用してPDFファイルからコンテンツを抽出
@@ -48,17 +48,17 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 
 ### 🎧 音声エクスポート
 - **5つのTTSプロバイダー**：OpenAI TTS、ElevenLabs、Google Gemini 2.5 TTS、Qwen3-TTS-Flash、Respeecher
-- **100以上の音声**：11のOpenAI + 9のElevenLabs + 30のGoogle Gemini + 49のQwen + 14のRespeecher（英語とウクライナ語）
-- **速度調整**：0.5xから2.0x（OpenAI/ElevenLabsのみ；Google/Qwen/Respeecherは固定速度）
+- **複数の音声**：OpenAI、ElevenLabs、Google Gemini、Qwen、Respeecher
+- **速度調整**：0.25xから4.0x（OpenAI/ElevenLabsのみ；Google/Qwen/Respeecherは固定速度）
 - **フォーマットサポート**：MP3（OpenAI/ElevenLabs）またはWAV（Google/Qwen/Respeecher）
 - **多言語発音**：各言語の正しい発音
-- **ウクライナ語サポート**：Respeecher経由で専用のウクライナ語音声（10音声）
+- **ウクライナ語サポート**：Respeecher経由で専用のウクライナ語音声
 - **インテリジェントなテキストクリーンアップ**：AIがURL、コード、非音声コンテンツを削除
 - **プロバイダー固有の機能**：
-  - **ElevenLabs**：モデル選択（v2、v3、Turbo v2.5）、フォーマット選択、高度な音声設定
-  - **Google Gemini 2.5 TTS**：モデル選択（pro/flash）、30音声、24k文字制限
-  - **Qwen**：ロシア語音声（Alek）を含む49音声、600文字制限
-  - **Respeecher**：高度なサンプリングパラメータ（temperature、repetition_penalty、top_p）
+  - **ElevenLabs**：モデル選択、フォーマット選択、高度な音声設定
+  - **Google Gemini 2.5 TTS**：複数の音声が利用可能
+  - **Qwen**：ロシア語音声（Alek）を含む
+  - **Respeecher**：高度なサンプリングパラメータ
 
 ### 🌍 翻訳
 - **11言語**：EN、RU、UA、DE、FR、ES、IT、PT、ZH、JA、KO
@@ -107,7 +107,7 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 - **設定のインポート/エクスポート**：すべての設定のバックアップと復元（セキュリティのためAPIキーは除外）
 
 ### 🔒 セキュリティ
-- **APIキー暗号化** AES-256-GCM（OpenAI、Claude、Gemini、Grok、DeepSeek、OpenRouter、ElevenLabs、Qwen、Respeecher）
+- **APIキー暗号化**（OpenAI、Claude、Gemini、Grok、DeepSeek、OpenRouter、ElevenLabs、Qwen、Respeecher）
 - **キーはエクスポートされない** — 設定バックアップから除外
 - **すべてのデータはローカルに保存** — 第三者に送信されない
 
@@ -297,44 +297,15 @@ ClipAIbleは人工知能を使用して、任意のウェブページから記�
 |--------|------|-----------|
 | **自動** | ⚡⚡ 即座 | シンプルな記事、APIキー不要 |
 | **AI Selector** | ⚡ 高速 | ほとんどのサイト、ブログ、ニュース |
-| **AI Extract** | 🐢 徹底的 | 複雑なページ、Notion、SPA |
-
-### AIモデル
-
-| プロバイダー | モデル | 備考 |
-|-------------|--------|------|
-| OpenAI | GPT-5.2 | 最新、中程度の推論（デフォルト） |
-| OpenAI | GPT-5.2-high | 強化、高推論 |
-| OpenAI | GPT-5.1 | バランス型 |
-| OpenAI | GPT-5.1 (high) | 最高品質、高推論 |
-| Anthropic | Claude Sonnet 4.5 | 長い記事に最適 |
-| Google | Gemini 3 Pro | 高速抽出、画像翻訳 |
-| Grok | Grok 4.1 Fast Reasoning | 高速推論 |
-| DeepSeek | DeepSeek-V3.2 (chat/reasoner) | 高度な推論、コスト効率 |
-| OpenRouter | 各種モデル | 複数のプロバイダーへのアクセス |
-
-**カスタムモデル：** モデルセレクターの横の**"+"**ボタンをクリックしてカスタムモデルを追加します（例：`gpt-4o`、`claude-opus-4.5`）。カスタムモデルはドロップダウンメニューに表示され、必要に応じて非表示/表示できます。
-
-### 音声音声
-
-**OpenAI（11音声）：** nova, alloy, echo, fable, onyx, shimmer, coral, sage, ash, ballad, verse
-
-**ElevenLabs（9音声）：** Rachel, Domi, Bella, Antoni, Elli, Josh, Arnold, Adam, Sam
-
-**Google Gemini 2.5 TTS（30音声）：** Callirrhoe, Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalhague, Laomedeia, Achernar, Alnilam, Chedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat
-
-**Qwen3-TTS-Flash（49音声）：** Elias（デフォルト）、Alek（ロシア語）を含む、10言語の音声
-
-**Respeecher（14音声）：** 4英語（Samantha, Neve, Gregory, Vincent）+ 10ウクライナ語音声
 
 ### スタイルプリセット（PDF）
 
-| プリセット | 背景 | テキスト |
-|------------|------|---------|
-| ダーク | `#303030` | `#b9b9b9` |
-| ライト | `#f8f9fa` | `#343a40` |
-| セピア | `#faf4e8` | `#5d4e37` |
-| 高コントラスト | `#000000` | `#ffffff` |
+| プリセット | 説明 |
+|------------|------|
+| ダーク | ダーク背景、ライトテキスト |
+| ライト | ライト背景、ダークテキスト |
+| セピア | 柔らかいセピアテーマ |
+| 高コントラスト | 可読性のための最大コントラスト |
 
 **カスタムカラー：** カラーセレクターで背景、テキスト、見出し、リンクをカスタマイズします。各色に個別のリセットボタン（↺）、または**"すべてをデフォルトにリセット"**ですべてのスタイルを復元します。
 
@@ -404,7 +375,7 @@ ClipAIbleはドメインごとにAI生成セレクターをキャッシュ：
 
 | 問題 | 解決策 |
 |------|--------|
-| コンテンツが空 | **AI Extract**モードを試す |
+| コンテンツが空 | **AI Selector**モードを試す |
 | 無効なAPIキー | キー形式を確認（sk-...、AIza...、sk-ant-...） |
 | 画像が欠落 | 一部のサイトはクロスオリジンをブロック；小さな画像はフィルタリング |
 | 音声が遅い | 長い記事はチャンクに分割；プログレスバーを監視 |
@@ -415,74 +386,11 @@ ClipAIbleはドメインごとにAI生成セレクターをキャッシュ：
 
 ---
 
-## 🏗️ アーキテクチャ
-
-```
-clipaible/
-├── manifest.json       # 拡張機能設定
-├── popup/              # UI（HTML、CSS、JS）
-│   ├── popup.js       # メインオーケストレーション（2841行）
-│   ├── core.js        # ビジネスロジック（203行）
-│   ├── handlers.js    # イベントハンドラー（1991行）
-│   ├── ui.js          # UI管理
-│   ├── stats.js       # 統計表示
-│   └── settings.js    # 設定管理
-├── scripts/
-│   ├── background.js   # Service worker (2525行、3705から削減)
-│   ├── content.js      # YouTube用コンテンツスクリプト
-│   ├── locales.js      # UIローカライゼーション（11言語）
-│   ├── message-handlers/ # メッセージハンドラーモジュール（v3.2.1+）
-│   │   ├── index.js    # メッセージルーター
-│   │   ├── utils.js    # ハンドラーユーティリティ
-│   │   ├── simple.js   # シンプルハンドラー
-│   │   ├── stats.js    # 統計ハンドラー
-│   │   ├── cache.js    # キャッシュハンドラー
-│   │   ├── settings.js # 設定ハンドラー
-│   │   ├── processing.js # 処理ハンドラー
-│   │   ├── video.js    # 動画/字幕ハンドラー
-│   │   ├── summary.js  # 要約生成ヘルパー
-│   │   └── complex.js  # 複雑なハンドラー
-│   ├── api/            # AI & TTSプロバイダー
-│   │   ├── openai.js   # OpenAI（GPTモデル）
-│   │   ├── claude.js   # Anthropic Claude
-│   │   ├── gemini.js   # Google Gemini
-│   │   ├── grok.js     # Grok
-│   │   ├── deepseek.js # DeepSeek
-│   │   ├── openrouter.js # OpenRouter
-│   │   ├── elevenlabs.js # ElevenLabs TTS
-│   │   ├── google-tts.js # Google Gemini 2.5 TTS
-│   │   ├── qwen.js     # Qwen3-TTS-Flash
-│   │   ├── respeecher.js # Respeecher TTS
-│   │   ├── tts.js      # TTSルーター
-│   │   └── index.js    # APIルーター
-│   ├── extraction/     # コンテンツ抽出
-│   │   ├── prompts.js  # AIプロンプト
-│   │   ├── html-utils.js # HTMLユーティリティ
-│   │   ├── video-subtitles.js # YouTube/Vimeo字幕抽出
-│   │   └── video-processor.js # AI字幕処理
-│   ├── translation/    # 翻訳と言語検出
-│   ├── generation/     # PDF、EPUB、FB2、MD、音声
-│   ├── cache/          # セレクターキャッシュ
-│   ├── stats/          # 使用統計
-│   ├── settings/       # 設定のインポート/エクスポート
-│   ├── state/          # 処理状態管理
-│   └── utils/          # 設定、暗号化、ヘルパー
-│       ├── video.js    # 動画プラットフォーム検出
-│       ├── validation.js # 検証ユーティリティ
-│       └── api-error-handler.js # 共通APIエラーハンドリング
-├── print/              # PDFレンダリング
-├── config/             # スタイル
-├── lib/                # JSZip
-├── docs/               # ローカライズされたREADMEファイル
-└── memory-bank/        # プロジェクトドキュメント
-```
-
 ---
 
 ## 🔐 セキュリティとプライバシー
 
-- **暗号化**：Web Crypto API経由のAES-256-GCM
-- **キー導出**：PBKDF2、100,000イテレーション
+- **暗号化**：APIキーは標準的な暗号化で暗号化されます
 - **追跡なし**：分析なし、リモートロギングなし
 - **ローカルのみ**：すべてのデータはブラウザに残ります
 
@@ -490,27 +398,30 @@ clipaible/
 
 ## 📋 権限
 
-ClipAIbleは機能するために以下の権限が必要です。すべての権限は記載された目的にのみ使用されます：
+ClipAIbleは機能するために以下の権限が必要です：
 
 | 権限 | 理由 |
 |------|------|
-| `activeTab` | 拡張機能アイコンをクリックするか、コンテキストメニューを使用するときに、現在のページを読み取ってコンテンツを抽出します。拡張機能は、現在表示しているタブにのみアクセスします。 |
-| `storage` | 設定（APIキー、スタイル設定、言語選択）と統計をブラウザにローカルに保存します。データはデバイスから離れることはありません。 |
-| `scripting` | コンテンツ抽出スクリプトをウェブページに注入します。このスクリプトは、ページのDOMから記事のコンテンツ（テキスト、画像、見出し）を見つけて抽出します。 |
-| `downloads` | 生成されたファイル（PDF、EPUB、FB2、Markdown、音声）をコンピューターに保存します。この権限がないと、拡張機能はファイルをダウンロードできません。 |
-| `debugger` | **PDF生成のみ** — Chromeの組み込みprint-to-PDF機能を使用して、適切なページレイアウトとスタイルで高品質なPDFを生成します。デバッガーはPDF生成中にのみアタッチされ、完了後すぐにデタッチされます。これは、Chrome拡張機能でカスタムスタイルのPDFを生成する唯一の方法です。 |
-| `alarms` | 長時間の操作（大きな記事、翻訳）中にバックグラウンドのservice workerをアクティブに保ちます。Chrome Manifest V3は30秒後にservice workerを一時停止しますが、記事の処理には数分かかる場合があります。統一されたkeep-aliveメカニズム（1分ごとにアラーム + 2秒ごとに状態保存）をMV3ルールに従って使用します。 |
-| `contextMenus` | ウェブページの右クリックコンテキストメニューに「ClipAIbleで保存」オプション（PDF/EPUB/FB2/MD/音声）を追加します。 |
-| `notifications` | コンテキストメニューの「保存」機能を使用するときにデスクトップ通知を表示します。エラーがある場合（例：APIキーがない場合）に通知します。 |
-| `unlimitedStorage` | セレクターキャッシュと一時的な印刷データをローカルに保存します。これにより、AIを再度呼び出すことなく、より高速な繰り返し抽出が可能になります（オフラインモード）。 |
+| `activeTab` | 現在のページを読み取ってコンテンツを抽出 |
+| `storage` | 設定と統計をローカルに保存 |
+| `scripting` | コンテンツ抽出スクリプトを注入 |
+| `downloads` | 生成されたファイルを保存 |
+| `debugger` | 高品質なPDFを生成 |
+| `alarms` | 長時間の操作中にservice workerをアクティブに保つ |
+| `contextMenus` | コンテキストメニューにオプションを追加 |
+| `notifications` | デスクトップ通知を表示 |
+| `unlimitedStorage` | セレクターキャッシュを保存 |
+| `webNavigation` | Chrome PDFビューアーから元のPDF URLを取得 |
+| `pageCapture` | 将来のPDFキャプチャ機能用に予約 |
+| `offscreen` | PDF抽出とオフラインTTS用のoffscreenドキュメントを作成 |
 
 ### ホスト権限
 
 | 権限 | 理由 |
 |------|------|
-| `<all_urls>` | 訪問する任意のウェブサイトからコンテンツを抽出します。拡張機能は以下を実行する必要があります：1) 記事のコンテンツを見つけるためにページのHTMLを読み取る、2) 記事に埋め込まれた画像をダウンロードする、3) AI/TTSプロバイダー（OpenAI、Google、Anthropic、ElevenLabs、Qwen、Respeecher）にAPI呼び出しを行う。拡張機能は、明示的に保存するページにのみアクセスします — 独自にウェブを閲覧することはありません。 |
+| `<all_urls>` | 任意のウェブサイトからコンテンツを抽出し、AI/TTSプロバイダーにAPI呼び出しを行う |
 
-**セキュリティに関する注意：** すべてのAPIキーはAES-256-GCMを使用して暗号化され、ローカルにのみ保存されます。キーは、設定したAIプロバイダーを除き、サーバーにエクスポートまたは送信されることはありません。
+**セキュリティに関する注意：** すべてのAPIキーは暗号化され、ローカルにのみ保存されます。キーは、設定したAIプロバイダーを除き、サーバーにエクスポートまたは送信されることはありません。
 
 詳細は [PERMISSIONS.md](PERMISSIONS.md) を参照。
 
