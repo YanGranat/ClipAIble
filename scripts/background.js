@@ -352,22 +352,10 @@ try {
 // extractFromPageInlined remains here (must be inline for chrome.scripting.executeScript)
 
 /**
- * Inlined extraction function for chrome.scripting.executeScript
- * This runs in the page's main world context
+ * Extraction function for chrome.scripting.executeScript (page context)
  * 
- * CRITICAL: DO NOT REFACTOR OR SPLIT THIS FUNCTION!
- * 
- * This function is ~724 lines long and MUST remain as a single, monolithic function.
- * It is injected as a complete code block via chrome.scripting.executeScript into
- * the page's main world context where ES modules and imports are NOT available.
- * 
- * Reasons why this function cannot be split:
- * 1. It runs in page context (not service worker) where imports don't work
- * 2. chrome.scripting.executeScript requires a single function reference
- * 3. All helper functions must be defined inside this function (no external dependencies)
- * 4. Breaking it into smaller functions would require complex code generation/inlining
- * 
- * See systemPatterns.md "Design Decisions" section for more details.
+ * Runs in MAIN world where ES modules are unavailable.
+ * All helpers must be defined inside this function.
  * 
  * @param {{content?: string, title?: string, author?: string, exclude?: string, [key: string]: string|undefined}} selectors - Selectors object from AI
  * @param {string} baseUrl - Base URL for resolving relative URLs

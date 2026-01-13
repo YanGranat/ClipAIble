@@ -2,9 +2,9 @@
 // Automatic content extraction without AI
 // Uses heuristics and DOM analysis to extract article content
 
-// Note: This function uses modular helper functions that are inlined at build time
-// All modules are in scripts/extraction/extractor/ and are assembled by builder.js
-// The function runs in page context via executeScript where imports are not available
+// GENERATED FILE - DO NOT EDIT DIRECTLY
+// Source: scripts/extraction/extractor/
+// Build: npm run build-extraction
 
 /**
  * Inlined automatic extraction function for chrome.scripting.executeScript
