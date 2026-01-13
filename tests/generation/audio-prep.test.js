@@ -7,7 +7,8 @@ import { contentToPlainText, splitTextIntoChunks, basicCleanup, AUDIO_CONFIG } f
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
   logError: vi.fn(),
-  logWarn: vi.fn()
+  logWarn: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 // Mock stripHtml function (used internally in audio-prep.js)

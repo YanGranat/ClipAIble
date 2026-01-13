@@ -80,6 +80,7 @@ import { handleQuickSave } from './background/quicksave.js';
 import { initLogging } from './background/logging.js';
 import { initPortListener } from './background/port-listener.js';
 import { initOrchestration } from './background/orchestration.js';
+import { initPopupConnectionListener } from './background/popup-connection.js';
 import { 
   setError,
   setResult,
@@ -188,6 +189,10 @@ const portListenerModule = initPortListener({
 
 // Initialize port listener for offscreen logging
 portListenerModule();
+
+// Initialize popup connection listener (tracks whether popup is open)
+// Used for completion notifications when popup is closed.
+initPopupConnectionListener();
 
 // Initialize orchestration module with DI (must be after keep-alive module)
 const orchestrationModule = initOrchestration({

@@ -6,7 +6,9 @@ import { buildHtmlForPdf, applyCustomStyles } from '../../scripts/generation/htm
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
-  logWarn: vi.fn()
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 vi.mock('../../scripts/utils/html.js', () => ({
@@ -30,16 +32,21 @@ vi.mock('../../scripts/utils/html.js', () => ({
     return String(html || '').replace(/<script[^>]*>.*?<\/script>/gi, '');
   }),
   adjustColorBrightness: vi.fn((color, amount) => color),
-  cleanTitle: vi.fn((title) => title?.trim() || '')
+  cleanTitle: vi.fn((title) => title?.trim() || ''),
+  markdownToHtml: vi.fn((md) => String(md || ''))
 }));
 
-vi.mock('../../scripts/utils/config.js', () => ({
-  PDF_LOCALIZATION: {
-    en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
-    ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' },
-    auto: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' }
-  }
-}));
+vi.mock('../../scripts/utils/config.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    PDF_LOCALIZATION: {
+      en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
+      ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' },
+      auto: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' }
+    }
+  };
+});
 
 describe('generation/html-builder', () => {
   beforeEach(() => {

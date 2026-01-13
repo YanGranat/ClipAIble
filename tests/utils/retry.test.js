@@ -100,11 +100,13 @@ describe('retry', () => {
       const fn = vi.fn().mockRejectedValue(error);
       
       const promise = callWithRetry(fn, { maxRetries: 2 });
+      // Attach rejection handler before advancing timers to avoid unhandled rejection warnings.
+      const assertion = expect(promise).rejects.toMatchObject({ status: 500, message: 'Server error' });
       
       // Fast-forward through all retry delays (with jitter)
       await vi.advanceTimersByTimeAsync(150 + 250);
       
-      await expect(promise).rejects.toMatchObject({ status: 500, message: 'Server error' });
+      await assertion;
       expect(fn).toHaveBeenCalledTimes(3); // Initial + 2 retries
     }, 10000);
 
@@ -157,8 +159,8 @@ describe('retry', () => {
       
       const promise = callWithRetry(fn);
       
-      // Fast-forward through 5 seconds (5000ms) + some buffer for jitter
-      await vi.advanceTimersByTimeAsync(5500);
+      // Fast-forward through 5 seconds (5000ms) + jitter (up to +20%)
+      await vi.advanceTimersByTimeAsync(6500);
       
       const result = await promise;
       
@@ -187,10 +189,12 @@ describe('retry', () => {
       const fn = vi.fn().mockRejectedValue(error);
       
       const promise = callWithRetry(fn, { maxRetries: 2 });
+      // Attach rejection handler before advancing timers to avoid unhandled rejection warnings.
+      const assertion = expect(promise).rejects.toMatchObject({ status: 500, message: 'Server error' });
       
       await vi.advanceTimersByTimeAsync(150 + 250);
       
-      await expect(promise).rejects.toMatchObject({ status: 500, message: 'Server error' });
+      await assertion;
       expect(fn).toHaveBeenCalledTimes(3);
     }, 10000);
   });

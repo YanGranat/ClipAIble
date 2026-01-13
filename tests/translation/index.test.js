@@ -174,10 +174,14 @@ describe('translation/index', () => {
 
       // Mock setTimeout to avoid actual delays in tests
       vi.useFakeTimers();
+      // Make retry jitter deterministic (callWithRetry adds ±20% jitter)
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
       const resultPromise = translateBatch(['Hello', 'Goodbye'], 'French', 'test-key', 'gpt-4');
-      await vi.advanceTimersByTimeAsync(2000);
+      // Base delay is CONFIG.TRANSLATION_RETRY_DELAYS[0] (usually 2000ms) + jitter (now 0)
+      await vi.advanceTimersByTimeAsync(2100);
       const result = await resultPromise;
       vi.useRealTimers();
+      randomSpy.mockRestore();
 
       // translateBatch with multiple texts retries on network error
       expect(result).toEqual(['Bonjour', 'Au revoir']);

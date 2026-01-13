@@ -67,6 +67,25 @@ let settingsSaveTimer = null;
 let isSavingSettings = false;
 import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils/timer-helpers.js';
 
+// Long-lived port to signal to service worker that popup is open.
+// This enables completion notifications when popup is closed.
+/** @type {chrome.runtime.Port|null} */
+let popupOpenPort = null;
+
+function connectPopupOpenPort() {
+  try {
+    if (popupOpenPort) return;
+    if (!chrome?.runtime?.connect) return;
+    popupOpenPort = chrome.runtime.connect({ name: 'clipaible_popup' });
+    popupOpenPort.onDisconnect.addListener(() => {
+      popupOpenPort = null;
+    });
+  } catch (e) {
+    // Non-critical: notifications will still work, but may show even if popup is open.
+    logWarn('Failed to connect popup open port', e);
+  }
+}
+
 // Module references (replaces window.*Module pattern)
 let uiModuleRef = null;
 let statsModuleRef = null;
@@ -389,6 +408,7 @@ function applyTheme() {
 // Initialize popup
 async function init() {
   log('popup.js: init() started');
+  connectPopupOpenPort();
   
   try {
     // Initialize DOM elements
@@ -1081,6 +1101,17 @@ async function saveVoiceBeforeClose() {
 window.addEventListener('beforeunload', saveVoiceBeforeClose);
 window.addEventListener('unload', saveVoiceBeforeClose);
 window.addEventListener('pagehide', saveVoiceBeforeClose);
+
+// Best-effort: explicitly disconnect popup port on close.
+window.addEventListener('beforeunload', () => {
+  try {
+    popupOpenPort?.disconnect();
+  } catch {
+    // Ignore errors on unload.
+  } finally {
+    popupOpenPort = null;
+  }
+});
 
 // Cleanup timers on popup close
 window.addEventListener('beforeunload', () => {

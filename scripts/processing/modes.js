@@ -363,6 +363,20 @@ export async function processWithoutAI(data) {
     });
     logError('Automatic extraction script execution failed', scriptError);
     const uiLang = await getUILanguageCached();
+    
+    // Handle common "tab closed" / "no tab" scenarios with a user-friendly message.
+    // This is important on MV3 because executeScript failures can be caused by tab lifecycle.
+    const lastErrorMsg = chrome?.runtime?.lastError?.message || '';
+    const scriptErrorMsg = scriptError instanceof Error ? scriptError.message : String(scriptError || '');
+    const combinedMsg = `${lastErrorMsg} ${scriptErrorMsg}`.toLowerCase();
+    if (
+      combinedMsg.includes('no tab with id') ||
+      combinedMsg.includes('tab was closed') ||
+      combinedMsg.includes('invalid tab id') ||
+      combinedMsg.includes('receiving end does not exist')
+    ) {
+      throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
+    }
     const errorMsg = scriptError instanceof Error ? scriptError.message : 'Unknown error';
     throw new Error(tSync('errorExtractionExecutionFailed', uiLang).replace('{error}', errorMsg));
   }

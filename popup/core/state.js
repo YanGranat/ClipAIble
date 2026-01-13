@@ -147,20 +147,18 @@ export function initState(deps) {
       if (isDone && state.status === statusDoneText) {
         // Get saved format from state or current selection
         const savedFormat = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
-        const formatNames = {
-          pdf: await t('saveAsPdf'),
-          epub: await t('saveAsEpub'),
-          fb2: await t('saveAsFb2'),
-          markdown: await t('saveAsMarkdown'),
-          audio: await t('saveAsAudio')
+        const formatKeyMap = {
+          pdf: 'formatPdf',
+          epub: 'formatEpub',
+          fb2: 'formatFb2',
+          markdown: 'formatMarkdown',
+          audio: 'formatAudio'
         };
-        const formatName = formatNames[savedFormat] || formatNames.pdf;
-        // Extract format name without "Save as" prefix using localized value
-        const contextMenuSaveAsText = await t('contextMenuSaveAs');
-        // Remove localized "Save as" prefix if present (with space after it)
-        const formatNameOnly = formatName.replace(new RegExp(`^${contextMenuSaveAsText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+`, 'i'), '');
-        const savedText = await t('savedSuccessfully');
-        const successMessage = `${formatNameOnly} ${savedText}`;
+        const formatKey = formatKeyMap[savedFormat] || 'formatPdf';
+        const formatLabel = await t(formatKey);
+
+        const messageTemplate = await t('notificationReady');
+        const successMessage = messageTemplate.replace('{format}', formatLabel);
         setStatus('ready', successMessage);
         setProgress(0, false); // Hide progress bar immediately
       } else {

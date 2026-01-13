@@ -6,7 +6,9 @@ import { detectContentLanguage } from '../../scripts/translation/detection.js';
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
-  logWarn: vi.fn()
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 vi.mock('../../scripts/api/index.js', () => ({

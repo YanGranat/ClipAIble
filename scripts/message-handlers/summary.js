@@ -6,8 +6,10 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { handleError } from '../utils/error-handler.js';
 import { getProcessingState } from '../state/processing.js';
 import { generateSummary } from '../translation/index.js';
-import { getUILanguage } from '../locales.js';
+import { getUILanguage, tSync } from '../locales.js';
 import { CONFIG } from '../utils/config.js';
+import { isPopupOpen } from '../background/popup-connection.js';
+import { createNotification } from '../background/notifications.js';
 
 /**
  * Start summary generation with proper state management
@@ -196,6 +198,26 @@ export async function startSummaryGeneration(data, startKeepAlive, stopKeepAlive
         summaryLength: result.summary?.length || 0,
         timestamp: Date.now()
       });
+
+      // Show summary completion notification only if popup is closed.
+      // Summary generation can be long-running, and user may switch to other tasks.
+      try {
+        if (isPopupOpen()) {
+          log('Summary completion notification skipped (popup is open)', { timestamp: Date.now() });
+        } else {
+          const uiLang = await getUILanguage();
+          const message = tSync('notificationSummaryReady', uiLang);
+          log('Showing summary completion notification (popup is closed)', {
+            timestamp: Date.now(),
+            messageLength: message.length
+          });
+          await createNotification(message);
+        }
+      } catch (notifError) {
+        logWarn('Failed to show summary completion notification (non-critical)', {
+          error: notifError?.message || String(notifError)
+        });
+      }
     } catch (storageError) {
       logError('Failed to save summary to storage', storageError);
       // Still clear flag even if save failed

@@ -48,6 +48,7 @@ vi.mock('../../scripts/state/processing.js', () => ({
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
   logError: vi.fn(),
+  logWarn: vi.fn(),
   logDebug: vi.fn()
 }));
 

@@ -13,6 +13,8 @@ import { completeProcessing, setError } from '../../state/processing.js';
 import { handleError } from '../error-handler.js';
 import { detectContentLanguage, generateSummary, generateAbstract } from '../../translation/index.js';
 import { CONFIG } from '../config.js';
+import { isPopupOpen } from '../../background/popup-connection.js';
+import { createNotification } from '../../background/notifications.js';
 
 // Cache for UI language to avoid repeated async calls
 let cachedUILang = null;
@@ -117,6 +119,41 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     processingStartTimeRef.current = null;
   }
   await completeProcessing(stopKeepAlive);
+
+  // Show completion notification only if popup is closed.
+  // This is useful for long operations when user switches to other tasks.
+  try {
+    if (isPopupOpen()) {
+      log('Completion notification skipped (popup is open)', { timestamp: Date.now() });
+      return;
+    }
+
+    const uiLang = await getUILanguageCached();
+    const savedFormat = data.outputFormat || getProcessingState().outputFormat || 'pdf';
+    const formatKeyMap = {
+      pdf: 'formatPdf',
+      epub: 'formatEpub',
+      fb2: 'formatFb2',
+      markdown: 'formatMarkdown',
+      audio: 'formatAudio'
+    };
+    const formatKey = formatKeyMap[savedFormat] || 'formatPdf';
+    const formatLabel = tSync(formatKey, uiLang);
+
+    const messageTemplate = tSync('notificationReady', uiLang);
+    const message = messageTemplate.replace('{format}', formatLabel);
+
+    log('Showing completion notification (popup is closed)', {
+      timestamp: Date.now(),
+      outputFormat: savedFormat,
+      message
+    });
+    await createNotification(message);
+  } catch (notifError) {
+    logWarn('Failed to show completion notification (non-critical)', {
+      error: notifError?.message || String(notifError)
+    });
+  }
 }
 
 /**

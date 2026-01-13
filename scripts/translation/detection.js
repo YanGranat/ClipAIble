@@ -96,11 +96,10 @@ export function detectLanguageByCharacters(text) {
     timestamp: Date.now()
   });
   
-  if (!text || text.length < 50) {
-    log('⚠️ LANGUAGE DETECTION: Text too short for character-based detection, using default', { 
-      detectedLanguage: 'en', 
-      reason: 'text too short or empty',
-      textLength: text?.length || 0
+  if (!text || text.length === 0) {
+    log('⚠️ LANGUAGE DETECTION: Empty text, using default', {
+      detectedLanguage: 'en',
+      reason: 'empty text'
     });
     return 'en';
   }
@@ -116,6 +115,18 @@ export function detectLanguageByCharacters(text) {
   const japaneseMatch = text.match(/[\u3040-\u309f\u30a0-\u30ff]/g) || [];
   const koreanMatch = text.match(/[\uac00-\ud7af]/g) || [];
   const arabicMatch = text.match(/[\u0600-\u06ff]/g) || [];
+
+  // For short texts, use simple script detection (more reliable than thresholds).
+  // This improves detection for titles/headings/metadata.
+  if (text.length < 50) {
+    if (chineseMatch.length > 0) return 'zh';
+    if (japaneseMatch.length > 0) return 'ja';
+    if (koreanMatch.length > 0) return 'ko';
+    if (arabicMatch.length > 0) return 'ar';
+    if (ukrainianMatch.length > 0) return 'ua';
+    if (cyrillicMatch.length > 0) return 'ru';
+    return 'en';
+  }
   
   const totalLetters = cyrillicMatch.length + latinMatch.length + chineseMatch.length + 
                        japaneseMatch.length + koreanMatch.length + arabicMatch.length;

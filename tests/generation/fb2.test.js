@@ -6,7 +6,9 @@ import { generateFb2 } from '../../scripts/generation/fb2.js';
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
-  logError: vi.fn()
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 vi.mock('../../scripts/utils/html.js', () => ({
@@ -30,6 +32,7 @@ vi.mock('../../scripts/utils/config.js', () => ({
     en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
     ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' }
   },
+  getExtensionVersion: vi.fn(() => '3.3.0'),
   formatDateForDisplay: vi.fn((date, lang) => {
     if (!date) return '';
     return new Date(date).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US');

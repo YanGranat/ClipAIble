@@ -59,6 +59,7 @@ vi.mock('../../scripts/locales.js', () => ({
   tSync: vi.fn((key) => {
     const translations = {
       statusCancelled: 'Cancelled',
+      statusDone: 'Done!',
       statusTranslatingContent: 'Translating content...',
       statusAnalyzingImages: 'Analyzing images...',
       statusTranslatingText: 'Translating text...',
@@ -68,6 +69,14 @@ vi.mock('../../scripts/locales.js', () => ({
     };
     return translations[key] || key;
   })
+}));
+
+vi.mock('../../scripts/background/popup-connection.js', () => ({
+  isPopupOpen: vi.fn(() => true) // Default: skip completion notifications in unit tests
+}));
+
+vi.mock('../../scripts/background/notifications.js', () => ({
+  createNotification: vi.fn(async () => {})
 }));
 
 vi.mock('../../scripts/stats/index.js', () => ({
@@ -142,7 +151,7 @@ describe('utils/pipeline-helpers', () => {
       const { recordSave } = await import('../../scripts/stats/index.js');
       
       const stopKeepAlive = vi.fn();
-      const processingStartTimeRef = { processingStartTime: Date.now() - 1000 };
+      const processingStartTimeRef = { current: Date.now() - 1000 };
       
       await finalizeProcessing(
         { title: 'Test', url: 'https://example.com', outputFormat: 'pdf' },
@@ -152,14 +161,14 @@ describe('utils/pipeline-helpers', () => {
       
       expect(recordSave).toHaveBeenCalled();
       expect(mocks.mockCompleteProcessing).toHaveBeenCalledWith(stopKeepAlive);
-      expect(processingStartTimeRef.processingStartTime).toBeNull();
+      expect(processingStartTimeRef.current).toBeNull();
     });
 
     it('should handle missing processingStartTime', async () => {
       const { recordSave } = await import('../../scripts/stats/index.js');
       
       const stopKeepAlive = vi.fn();
-      const processingStartTimeRef = { processingStartTime: null };
+      const processingStartTimeRef = { current: null };
       
       await finalizeProcessing(
         { title: 'Test', url: 'https://example.com', outputFormat: 'pdf' },
@@ -244,7 +253,7 @@ describe('utils/pipeline-helpers', () => {
       
       expect(translateContent).not.toHaveBeenCalled();
       expect(mocks.mockUpdateState).toHaveBeenCalledWith(
-        expect.objectContaining({ stage: 'generating', progress: 60 })
+        expect.objectContaining({ currentStage: 'generating', progress: 60 })
       );
     });
 
@@ -310,16 +319,17 @@ describe('utils/pipeline-helpers', () => {
   describe('handleAbstractGeneration', () => {
     it('should skip abstract if not enabled', async () => {
       const generateAbstract = vi.fn();
+      const resultObj = { content: [] };
       
-      const result = await handleAbstractGeneration(
+      await handleAbstractGeneration(
         { generateAbstract: false },
-        { content: [] },
+        resultObj,
         generateAbstract,
         mocks.mockUpdateState
       );
       
       expect(generateAbstract).not.toHaveBeenCalled();
-      expect(result).toBe('');
+      expect(resultObj.abstract).toBeUndefined();
     });
 
     it('should skip abstract for audio format', async () => {
@@ -337,30 +347,31 @@ describe('utils/pipeline-helpers', () => {
 
     it('should generate abstract when enabled', async () => {
       const generateAbstract = vi.fn().mockResolvedValue('Test abstract');
+      const resultObj = { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' };
       
-      const result = await handleAbstractGeneration(
+      await handleAbstractGeneration(
         { generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
-        { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' },
+        resultObj,
         generateAbstract,
         mocks.mockUpdateState
       );
       
       expect(generateAbstract).toHaveBeenCalled();
-      expect(result).toBe('Test abstract');
+      expect(resultObj.abstract).toBe('Test abstract');
     });
 
     it('should handle abstract generation errors', async () => {
       const generateAbstract = vi.fn().mockRejectedValue(new Error('API error'));
+      const resultObj = { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' };
       
-      const result = await handleAbstractGeneration(
+      await handleAbstractGeneration(
         { generateAbstract: true, apiKey: 'key', model: 'gpt-4', outputFormat: 'pdf' },
-        { content: [{ type: 'paragraph', text: 'Text' }], title: 'Test' },
+        resultObj,
         generateAbstract,
         mocks.mockUpdateState
       );
       
-      // Should return empty string on error
-      expect(result).toBe('');
+      expect(resultObj.abstract).toBeUndefined();
     });
   });
 

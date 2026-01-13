@@ -6,7 +6,9 @@ import { generateEpub } from '../../scripts/generation/epub.js';
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
-  logError: vi.fn()
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 vi.mock('../../scripts/utils/html.js', () => ({
@@ -59,7 +61,8 @@ vi.mock('../../scripts/locales.js', () => ({
   getUILanguage: vi.fn(() => Promise.resolve('en')),
   tSync: vi.fn((key) => {
     const translations = {
-      stageLoadingImages: 'Loading images...'
+      stageLoadingImages: 'Loading images...',
+      statusDone: 'Done!'
     };
     return translations[key] || key;
   })

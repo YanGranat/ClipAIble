@@ -13,7 +13,8 @@ import {
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
   logError: vi.fn(),
-  logWarn: vi.fn()
+  logWarn: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 vi.mock('../../scripts/utils/config.js', () => ({
@@ -38,7 +39,14 @@ vi.mock('../../scripts/state/processing.js', () => ({
 }));
 
 vi.mock('../../scripts/api/index.js', () => ({
-  callAI: vi.fn()
+  callAI: vi.fn(),
+  getProviderFromModel: vi.fn((model) => {
+    if (String(model || '').includes('claude')) return 'claude';
+    if (String(model || '').includes('gemini')) return 'gemini';
+    if (String(model || '').includes('grok')) return 'grok';
+    if (String(model || '').includes('deepseek')) return 'deepseek';
+    return 'openai';
+  })
 }));
 
 vi.mock('../../scripts/utils/retry.js', () => ({
@@ -108,6 +116,7 @@ vi.mock('../../scripts/locales.js', () => ({
       'errorInvalidSelectors': 'Invalid selectors',
       'errorInvalidSelectorsExclude': 'Invalid selectors exclude',
       'errorScriptExecutionFailed': 'Script execution failed: {error}',
+      'errorScriptError': 'Script error: {error}',
       'errorScriptEmptyResults': 'Script returned empty results',
       'errorScriptNoResult': 'Script returned no result',
       'statusExtractingContent': 'Extracting content',
@@ -670,11 +679,13 @@ describe('processing/modes', () => {
         title: 'Title',
         tabId: 1
       });
+      // Attach rejection handler before advancing timers to avoid unhandled rejection warnings.
+      const assertion = expect(promise).rejects.toThrow();
 
       // Advance timers to trigger timeout
       await vi.advanceTimersByTimeAsync(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT + 1000);
 
-      await expect(promise).rejects.toThrow();
+      await assertion;
       
       vi.useRealTimers();
     }, 10000);

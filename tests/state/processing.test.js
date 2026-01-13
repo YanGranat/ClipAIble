@@ -202,7 +202,9 @@ describe('processing state', () => {
       const stopKeepAlive = vi.fn();
       await startProcessing(startKeepAlive);
       await cancelProcessing(stopKeepAlive);
-      expect(isCancelled()).toBe(true);
+      // cancelProcessing resets state back to idle after cleanup.
+      // isCancelled() is intended for in-flight cancellation checks, not a persistent flag.
+      expect(isCancelled()).toBe(false);
     });
   });
 

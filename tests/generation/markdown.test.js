@@ -6,7 +6,9 @@ import { generateMarkdown } from '../../scripts/generation/markdown.js';
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(),
-  logWarn: vi.fn()
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logDebug: vi.fn()
 }));
 
 vi.mock('../../scripts/utils/html.js', () => ({
