@@ -3,396 +3,30 @@
 // Uses heuristics and DOM analysis to extract article content
 
 // Note: This function uses modular helper functions that are inlined at build time
-// All modules are in scripts/extraction/modules/ and are assembled by builder.js
+// All modules are in scripts/extraction/extractor/ and are assembled by builder.js
 // The function runs in page context via executeScript where imports are not available
 
 /**
  * Inlined automatic extraction function for chrome.scripting.executeScript
  * This runs in the page's main world context
  * 
- * CRITICAL: DO NOT REFACTOR OR SPLIT THIS FUNCTION!
- * 
- * This function is ~4084 lines long and MUST remain as a single, monolithic function.
- * It is injected as a complete code block via chrome.scripting.executeScript into
- * the page's main world context where ES modules and imports are NOT available.
- * 
- * Reasons why this function cannot be split:
- * 1. It runs in page context (not service worker) where imports don't work
- * 2. chrome.scripting.executeScript requires a single function reference
- * 3. Helper functions are inlined at build time from modules (see scripts/extraction/modules/)
- * 4. The inlining process (builder.js) assembles all modules into this single function
- * 5. Breaking it into smaller functions would break the build process
- * 
- * The function uses modular helper functions that are inlined at build time.
- * All modules are in scripts/extraction/modules/ and are assembled by builder.js.
- * The function runs in page context via executeScript where imports are not available.
- * 
- * See systemPatterns.md "Design Decisions" section for more details.
- * 
  * @param {string} baseUrl - Base URL for resolving relative URLs
  * @param {boolean} enableDebugInfo - Whether to collect debug information (default: false)
  * @returns {Promise<Object>} Extraction result with content, title, author, publishDate, debugInfo
  */
 export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
-  // Collect debug info to return to service worker (only if enabled)
-  // Performance optimization: skip debug info collection when LOG_LEVEL > DEBUG
-  // CRITICAL: ALL logs must be in debugInfo to be visible in service worker
-  // Initialize debugInfo FIRST so we can add logs to it
-  const debugInfo = enableDebugInfo ? {
-    foundElements: 0,
-    filteredElements: 0,
-    imageCount: 0,
-    excludedImageCount: 0,
-    processedCount: 0,
-    skippedCount: 0,
-    contentTypes: {},
-    // Store all console.log data here so it's visible in service worker
-    extractionLogs: [],
-    // Page information for service worker logging
-    pageInfo: {
-      url: window.location.href,
-      title: document.title,
-      baseUrl: baseUrl,
-      documentLang: document.documentElement.lang,
-      documentXmlLang: document.documentElement.getAttribute('xml:lang'),
-      bodyClasses: document.body.className,
-      bodyLang: document.body.lang,
-      hasGoogleTranslate: !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element'),
-      isTranslated: document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl'),
-      timestamp: Date.now()
-    },
-    // Meta tags
-    metaTags: (() => {
-      const metaTags = {};
-      document.querySelectorAll('meta').forEach(meta => {
-        const name = meta.getAttribute('name') || meta.getAttribute('property') || meta.getAttribute('http-equiv');
-        if (name) {
-          metaTags[name] = meta.getAttribute('content');
-        }
-      });
-      return metaTags;
-    })(),
-    // Document structure
-    documentStructure: {
-      hasArticle: !!document.querySelector('article'),
-      hasMain: !!document.querySelector('main'),
-      hasHeader: !!document.querySelector('header'),
-      hasFooter: !!document.querySelector('footer'),
-      hasNav: !!document.querySelector('nav'),
-      hasAside: !!document.querySelector('aside'),
-      allParagraphsCount: document.querySelectorAll('p').length,
-      allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
-      allImagesCount: document.querySelectorAll('img').length
-    },
-    // Main content - FULL TEXT AND HTML - NO TRUNCATION
-    mainContentPreview: (() => {
-      const mainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
-      return {
-        hasMain: !!mainContent,
-        mainTagName: mainContent?.tagName,
-        mainClassName: mainContent?.className,
-        mainId: mainContent?.id,
-        mainTextLength: mainContent?.textContent?.length || 0,
-        mainTextFull: mainContent?.textContent || null, // FULL TEXT - NO TRUNCATION
-        mainHTMLFull: mainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
-        childCount: mainContent?.children?.length || 0
-      };
-    })(),
-    // FULL document HTML - NO TRUNCATION
-    documentHTMLFull: document.documentElement.outerHTML || null, // FULL HTML - NO TRUNCATION
-    bodyHTMLFull: document.body?.innerHTML || null, // FULL HTML - NO TRUNCATION
-    // Google Translate state - will be populated after check
-    googleTranslateState: null,
-    firstParagraphCheck: null
-  } : null;
-  
-  // Log start (this will appear in page console, not service worker)
-  // CRITICAL: This runs in MAIN world where modules are not available
-  // console.log is acceptable here as logging module cannot be imported
+  // Log extraction start
   try {
     console.log('[ClipAIble] extractAutomaticallyInlined: START', { baseUrl, enableDebugInfo, timestamp: Date.now() });
-    
-    // CRITICAL: Log the ACTUAL HTML that the extraction script sees on the page
-    // This is what we're working with - may be different from what user sees!
-    const actualDocumentHTML = document.documentElement.outerHTML;
-    const actualBodyHTML = document.body.innerHTML;
-    const actualMainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
-    const actualFirstParagraph = document.querySelector('main p, article p, [role="main"] p, #content p');
-    
-    console.log('[ClipAIble] === ACTUAL HTML ON PAGE (WHAT EXTRACTION SCRIPT SEES) ===', {
-      documentHTMLLength: actualDocumentHTML.length,
-      documentHTMLFull: actualDocumentHTML, // FULL HTML - NO TRUNCATION
-      bodyHTMLLength: actualBodyHTML.length,
-      bodyHTMLFull: actualBodyHTML, // FULL HTML - NO TRUNCATION
-      hasMainContent: !!actualMainContent,
-      mainContentHTMLFull: actualMainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
-      hasFirstParagraph: !!actualFirstParagraph,
-      firstParagraphTextContent: actualFirstParagraph?.textContent || null, // FULL TEXT - NO TRUNCATION
-      firstParagraphInnerHTML: actualFirstParagraph?.innerHTML || null, // FULL HTML - NO TRUNCATION
-      firstParagraphHasDataOriginalText: actualFirstParagraph?.hasAttribute('data-original-text') || false,
-      firstParagraphDataOriginalText: actualFirstParagraph?.getAttribute('data-original-text') || null, // FULL TEXT - NO TRUNCATION
-      timestamp: Date.now()
-    });
-    
-    // DETAILED LOGGING: Page information
-    const pageInfoLog = {
-      url: window.location.href,
-      title: document.title,
-      baseUrl: baseUrl,
-      documentLang: document.documentElement.lang,
-      documentXmlLang: document.documentElement.getAttribute('xml:lang'),
-      bodyClasses: document.body.className,
-      bodyLang: document.body.lang,
-      hasGoogleTranslate: !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element'),
-      isTranslated: document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl'),
-      timestamp: Date.now()
-    };
-    
-    console.log('[ClipAIble] === PAGE INFORMATION ===', pageInfoLog);
-    
-    // Store in debugInfo for service worker
-    if (debugInfo) {
-      debugInfo.extractionLogs.push({ type: 'PAGE_INFORMATION', data: pageInfoLog });
-    }
-    
-    // Log meta tags
-    const metaTags = {};
-    document.querySelectorAll('meta').forEach(meta => {
-      const name = meta.getAttribute('name') || meta.getAttribute('property') || meta.getAttribute('http-equiv');
-      if (name) {
-        metaTags[name] = meta.getAttribute('content');
-      }
-    });
-    console.log('[ClipAIble] === META TAGS ===', metaTags);
-    
-    // Log HTML structure with FULL content - NO TRUNCATION
-    const mainContent = document.querySelector('main, article, [role="main"], #content, #main-content');
-    console.log('[ClipAIble] === MAIN CONTENT (FULL - NO TRUNCATION) ===', {
-      hasMain: !!mainContent,
-      mainTagName: mainContent?.tagName,
-      mainClassName: mainContent?.className,
-      mainId: mainContent?.id,
-      mainTextLength: mainContent?.textContent?.length || 0,
-      mainTextFull: mainContent?.textContent || null, // FULL TEXT - NO TRUNCATION
-      mainHTMLFull: mainContent?.innerHTML || null, // FULL HTML - NO TRUNCATION
-      childCount: mainContent?.children?.length || 0
-    });
-    
-    // Log FULL document HTML - NO TRUNCATION
-    console.log('[ClipAIble] === DOCUMENT HTML (FULL - NO TRUNCATION) ===', {
-      documentHTMLFull: document.documentElement.outerHTML || null, // FULL HTML - NO TRUNCATION
-      documentHTMLLength: document.documentElement.outerHTML?.length || 0,
-      bodyHTMLFull: document.body?.innerHTML || null, // FULL HTML - NO TRUNCATION
-      bodyHTMLLength: document.body?.innerHTML?.length || 0
-    });
-    
-    // Log document structure
-    console.log('[ClipAIble] === DOCUMENT STRUCTURE ===', {
-      hasArticle: !!document.querySelector('article'),
-      hasMain: !!document.querySelector('main'),
-      hasHeader: !!document.querySelector('header'),
-      hasFooter: !!document.querySelector('footer'),
-      hasNav: !!document.querySelector('nav'),
-      hasAside: !!document.querySelector('aside'),
-      allParagraphsCount: document.querySelectorAll('p').length,
-      allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
-      allImagesCount: document.querySelectorAll('img').length
-    });
   } catch (e) {
-    console.error('[ClipAIble] Failed to log page information', e);
+    // Console might not be available
   }
   
-  // CRITICAL: Initialize content array - must be declared before use
-  const content = [];
-  
-  // Helper function to wait for content to load (for SPAs)
-  // This makes automatic mode work with dynamically loaded content
-  async function waitForContentLoad() {
-    const MAX_WAIT_TIME = 5000; // 5 seconds max wait
-    const CHECK_INTERVAL = 200; // Check every 200ms
-    const MIN_CONTENT_LENGTH = 500; // Minimum content length to consider loaded
-    
-    // Check if content is already loaded
-    function hasContent() {
-      const article = document.querySelector('article');
-      const main = document.querySelector('main');
-      const contentSelectors = [
-        '[role="main"]',
-        '.article-content', '.post-content', '.entry-content',
-        '#content', '#main-content', '#article-content',
-        // SPA-specific selectors
-        '#root', '#app', '#__next', '[data-reactroot]', '[ng-app]', '[data-vue-app]',
-        '.notion-page-content', '.notion-page', // Notion
-        '[class*="article"]', '[class*="content"]'
-      ];
-      
-      // Check semantic HTML
-      if (article && article.textContent.trim().length >= MIN_CONTENT_LENGTH) {
-        return true;
-      }
-      if (main && main.textContent.trim().length >= MIN_CONTENT_LENGTH) {
-        return true;
-      }
-      
-      // Check common content selectors
-      for (const selector of contentSelectors) {
-        try {
-          const el = document.querySelector(selector);
-          if (el && el.textContent.trim().length >= MIN_CONTENT_LENGTH) {
-            return true;
-          }
-        } catch (e) {
-          // Invalid selector, continue
-        }
-      }
-      
-      // Check for substantial paragraphs (indicator of loaded content)
-      const paragraphs = document.querySelectorAll('p');
-      let totalTextLength = 0;
-      for (const p of Array.from(paragraphs).slice(0, 10)) {
-        totalTextLength += (p.textContent || '').trim().length;
-      }
-      if (totalTextLength >= MIN_CONTENT_LENGTH) {
-        return true;
-      }
-      
-      return false;
-    }
-    
-    // If content is already loaded, return immediately
-    if (hasContent()) {
-      return;
-    }
-    
-    // Wait for content to load using polling
-    const startTime = Date.now();
-    while (Date.now() - startTime < MAX_WAIT_TIME) {
-      await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL));
-      if (hasContent()) {
-        // Additional short wait to ensure content is fully rendered
-        await new Promise(resolve => setTimeout(resolve, 300));
-        return;
-      }
-    }
-    
-    // Timeout reached, continue anyway (page might have minimal content)
-  }
-  
-  // CRITICAL: Check if Google Translate has modified the page
-  // Log information about Google Translate state for debugging
-  // Store in debugInfo so it's visible in service worker logs
-  let googleTranslateState = null;
-  let firstParagraphCheck = null;
-  
-  try {
-    const hasGoogleTranslateWidget = !!document.querySelector('.goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element');
-    const isTranslated = document.body.classList.contains('translated-ltr') || document.body.classList.contains('translated-rtl');
-    const hasOriginalTextAttrs = document.querySelectorAll('[data-original-text]').length > 0;
-    const hasGtOrigAttrs = document.querySelectorAll('[data-gt-orig-display]').length > 0;
-    
-    googleTranslateState = {
-      hasGoogleTranslateWidget,
-      isTranslated,
-      hasOriginalTextAttrs,
-      hasGtOrigAttrs,
-      originalTextAttrsCount: document.querySelectorAll('[data-original-text]').length,
-      gtOrigAttrsCount: document.querySelectorAll('[data-gt-orig-display]').length,
-      bodyClasses: document.body.className,
-      timestamp: Date.now()
-    };
-    
-    console.log('[ClipAIble] === GOOGLE TRANSLATE STATE CHECK ===', googleTranslateState);
-    
-    // Store in debugInfo for service worker
-    if (debugInfo) {
-      debugInfo.extractionLogs.push({ type: 'GOOGLE_TRANSLATE_STATE', data: googleTranslateState });
-    }
-    
-    // Check first paragraph for Google Translate attributes
-    const firstP = document.querySelector('main p, article p, [role="main"] p, #content p');
-    if (firstP) {
-      const hasOriginalText = firstP.hasAttribute('data-original-text');
-      const hasGtOrig = firstP.hasAttribute('data-gt-orig-display');
-      const originalText = firstP.getAttribute('data-original-text');
-      const currentText = firstP.textContent;
-      
-      firstParagraphCheck = {
-        hasOriginalTextAttr: hasOriginalText,
-        hasGtOrigAttr: hasGtOrig,
-        originalTextFull: originalText || null, // FULL TEXT - NO TRUNCATION
-        currentTextFull: currentText || null, // FULL TEXT - NO TRUNCATION
-        elementHTMLFull: firstP.innerHTML || null, // FULL HTML - NO TRUNCATION
-        textsMatch: originalText === currentText,
-        timestamp: Date.now()
-      };
-      
-      console.log('[ClipAIble] === FIRST PARAGRAPH CHECK (FULL TEXT) ===', firstParagraphCheck);
-      
-      // Store in debugInfo for service worker
-      if (debugInfo) {
-        debugInfo.extractionLogs.push({ type: 'FIRST_PARAGRAPH_CHECK', data: firstParagraphCheck });
-      }
-    }
-    
-    // Store in debugInfo so it's visible in service worker logs
-    if (debugInfo) {
-      debugInfo.googleTranslateState = googleTranslateState;
-      debugInfo.firstParagraphCheck = firstParagraphCheck;
-    }
-  } catch (e) {
-    console.error('[ClipAIble] Failed to check Google Translate state', e);
-    googleTranslateState = { error: String(e) };
-    if (debugInfo) {
-      debugInfo.googleTranslateState = googleTranslateState;
-    }
-  }
-  
-  // Helper function to get original text from Google Translate attributes
-  // Google Translate stores original text in data-original-text attribute
-  function getOriginalTextIfTranslated(element) {
-    if (!element) return null;
-    
-    // Check if element has data-original-text attribute (Google Translate stores original text here)
-    const originalText = element.getAttribute('data-original-text');
-    if (originalText && originalText.trim()) {
-      const currentText = element.textContent || element.innerText || '';
-      // If original text differs from current text, element was translated
-      if (originalText.trim() !== currentText.trim()) {
-        return originalText.trim();
-      }
-    }
-    
-    // Check child elements for data-original-text
-    const childWithOriginal = element.querySelector('[data-original-text]');
-    if (childWithOriginal) {
-      const childOriginal = childWithOriginal.getAttribute('data-original-text');
-      if (childOriginal && childOriginal.trim()) {
-        return childOriginal.trim();
-      }
-    }
-    
-    return null;
-  }
-  
-  // Wait for dynamic content to load (SPAs, React, Vue, Angular apps)
-  // This makes automatic mode work with dynamically loaded content
-  try {
-    await waitForContentLoad();
-  } catch (e) {
-    // Continue even if waiting fails - page might already be loaded
-    try {
-      console.log('[ClipAIble] waitForContentLoad completed or skipped', { error: e?.message });
-    } catch (logErr) {
-      // Even console.log failed - this is extremely rare, nothing we can do
-      // This catch prevents the outer catch from being swallowed
-    }
-  }
-  
-  try {
+
+
     // ============================================
     // INLINED CONSTANTS AND PATTERNS
-    // (Generated from scripts/extraction/constants/ and scripts/extraction/patterns/)
-    // (Cannot use imports in executeScript context)
+    // (Generated from scripts/extraction/extractor/constants.js)
     // ============================================
     
     // Content thresholds
@@ -418,7 +52,7 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     const MIN_CONTENT_SCORE = 10;
     const GOOD_ENOUGH_SCORE = 100;
     
-    // Navigation patterns (contains) - used in isExcluded and isNavigationParagraph
+    // Navigation patterns (contains)
     const NAV_PATTERNS_CONTAINS = [
       /previous\s+post/i,
       /next\s+post/i,
@@ -635,7 +269,7 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
       /주제/i
     ];
     
-    // Navigation patterns (starts with) - used in isNavigationParagraph
+    // Navigation patterns (starts with)
     const NAV_PATTERNS_STARTS_WITH = [
       /^next:/i,
       /^read more/i,
@@ -856,4922 +490,2904 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
       /^주제/i
     ];
     
-    // Paywall patterns (all languages flattened)
+    // Paywall patterns (flattened)
     const PAYWALL_PATTERNS = [
-      'keep reading',
-      'subscribe',
-      'sign up',
-      'try 30 days',
-      'already have an account',
-      'start free trial',
-      'get access to print and digital',
-      'subscribe for full access',
-      'free articles this month',
-      'subscribe for less than',
-      'subscribe or log in to access',
-      'connect to your subscription',
-      'you\'ve read one',
-      'you\'ve read your',
-      'you\'ve reached your free',
-      'чтобы прочитать целиком',
-      'купите подписку',
-      'платный журнал',
-      'я уже подписчик',
-      'подписка предоставлена',
-      'оформить подписку',
-      'чтобы читать далее',
-      'подпишитесь чтобы',
-      'чтобы продолжить',
-      'щоб прочитати цілком',
-      'купити підписку',
-      'платний журнал',
-      'я вже передплатник',
-      'підписка надана',
-      'оформити підписку',
-      'щоб читати далі',
-      'підпишіться щоб',
-      'щоб продовжити',
-      'um weiterzulesen',
-      'abonnement kaufen',
-      'bezahltes magazin',
-      'ich bin bereits abonnent',
-      'abonnement bereitgestellt',
-      'abonnement abschließen',
-      'um weiter zu lesen',
-      'abonnieren um',
-      'um fortzufahren',
-      'pour lire en entier',
-      'acheter un abonnement',
-      'magazine payant',
-      'je suis déjà abonné',
-      'abonnement fourni',
-      's\'abonner',
-      'pour continuer à lire',
-      'abonnez-vous pour',
-      'pour continuer',
-      'para leer completo',
-      'comprar suscripción',
-      'revista de pago',
-      'ya soy suscriptor',
-      'suscripción proporcionada',
-      'suscribirse',
-      'para seguir leyendo',
-      'suscríbete para',
-      'para continuar',
-      'per leggere completo',
-      'acquista abbonamento',
-      'rivista a pagamento',
-      'sono già abbonato',
-      'abbonamento fornito',
-      'abbonarsi',
-      'per continuare a leggere',
-      'abbonati per',
-      'per continuare',
-      'para ler completo',
-      'comprar assinatura',
-      'revista paga',
-      'já sou assinante',
-      'assinatura fornecida',
-      'assinar',
-      'para continuar lendo',
-      'assine para',
-      'para continuar',
-      '阅读全文',
-      '购买订阅',
-      '付费杂志',
-      '我已经是订阅者',
-      '已提供订阅',
-      '订阅',
-      '继续阅读',
-      '订阅以',
-      '继续',
-      '全文を読む',
-      '購読を購入',
-      '有料雑誌',
-      '既に購読者です',
-      '購読が提供されました',
-      '購読する',
-      '続きを読む',
-      '購読して',
-      '続ける',
-      '전체 읽기',
-      '구독 구매',
-      '유료 잡지',
-      '이미 구독자입니다',
-      '구독 제공됨',
-      '구독하기',
-      '계속 읽기',
-      '구독하여',
-      '계속'
+          "keep reading",
+          "subscribe",
+          "sign up",
+          "try 30 days",
+          "already have an account",
+          "start free trial",
+          "get access to print and digital",
+          "subscribe for full access",
+          "free articles this month",
+          "subscribe for less than",
+          "subscribe or log in to access",
+          "connect to your subscription",
+          "you've read one",
+          "you've read your",
+          "you've reached your free",
+          "чтобы прочитать целиком",
+          "купите подписку",
+          "платный журнал",
+          "я уже подписчик",
+          "подписка предоставлена",
+          "оформить подписку",
+          "чтобы читать далее",
+          "подпишитесь чтобы",
+          "чтобы продолжить",
+          "щоб прочитати цілком",
+          "купити підписку",
+          "платний журнал",
+          "я вже передплатник",
+          "підписка надана",
+          "оформити підписку",
+          "щоб читати далі",
+          "підпишіться щоб",
+          "щоб продовжити",
+          "um weiterzulesen",
+          "abonnement kaufen",
+          "bezahltes magazin",
+          "ich bin bereits abonnent",
+          "abonnement bereitgestellt",
+          "abonnement abschließen",
+          "um weiter zu lesen",
+          "abonnieren um",
+          "um fortzufahren",
+          "pour lire en entier",
+          "acheter un abonnement",
+          "magazine payant",
+          "je suis déjà abonné",
+          "abonnement fourni",
+          "s'abonner",
+          "pour continuer à lire",
+          "abonnez-vous pour",
+          "pour continuer",
+          "para leer completo",
+          "comprar suscripción",
+          "revista de pago",
+          "ya soy suscriptor",
+          "suscripción proporcionada",
+          "suscribirse",
+          "para seguir leyendo",
+          "suscríbete para",
+          "para continuar",
+          "per leggere completo",
+          "acquista abbonamento",
+          "rivista a pagamento",
+          "sono già abbonato",
+          "abbonamento fornito",
+          "abbonarsi",
+          "per continuare a leggere",
+          "abbonati per",
+          "per continuare",
+          "para ler completo",
+          "comprar assinatura",
+          "revista paga",
+          "já sou assinante",
+          "assinatura fornecida",
+          "assinar",
+          "para continuar lendo",
+          "assine para",
+          "para continuar",
+          "阅读全文",
+          "购买订阅",
+          "付费杂志",
+          "我已经是订阅者",
+          "已提供订阅",
+          "订阅",
+          "继续阅读",
+          "订阅以",
+          "继续",
+          "全文を読む",
+          "購読を購入",
+          "有料雑誌",
+          "既に購読者です",
+          "購読が提供されました",
+          "購読する",
+          "続きを読む",
+          "購読して",
+          "続ける",
+          "전체 읽기",
+          "구독 구매",
+          "유료 잡지",
+          "이미 구독자입니다",
+          "구독 제공됨",
+          "구독하기",
+          "계속 읽기",
+          "구독하여",
+          "계속"
     ];
     
-    // Related articles patterns (all languages flattened)
+    // Related articles patterns (flattened)
     const RELATED_PATTERNS = [
-      'new and best',
-      'first page',
-      'recommend',
-      'read also',
-      'similar articles',
-      'related articles',
-      'other articles',
-      'more on topic',
-      'on topic',
-      'новое и лучшее',
-      'первая полоса',
-      'рекомендуем',
-      'читайте также',
-      'похожие статьи',
-      'связанные статьи',
-      'другие статьи',
-      'ещё по теме',
-      'по теме',
-      'нове і краще',
-      'перша смуга',
-      'рекомендуємо',
-      'читайте також',
-      'схожі статті',
-      'пов\'язані статті',
-      'інші статті',
-      'ще за темою',
-      'за темою',
-      'neu und besser',
-      'erste seite',
-      'empfehlen',
-      'lesen sie auch',
-      'ähnliche artikel',
-      'verwandte artikel',
-      'andere artikel',
-      'mehr zum thema',
-      'zum thema',
-      'nouveau et mieux',
-      'première page',
-      'recommandons',
-      'lisez aussi',
-      'articles similaires',
-      'articles connexes',
-      'autres articles',
-      'plus sur le sujet',
-      'sur le sujet',
-      'nuevo y mejor',
-      'primera página',
-      'recomendamos',
-      'lee también',
-      'artículos similares',
-      'artículos relacionados',
-      'otros artículos',
-      'más sobre el tema',
-      'sobre el tema',
-      'nuovo e migliore',
-      'prima pagina',
-      'consigliamo',
-      'leggi anche',
-      'articoli simili',
-      'articoli correlati',
-      'altri articoli',
-      'altro sull\'argomento',
-      'sull\'argomento',
-      'novo e melhor',
-      'primeira página',
-      'recomendamos',
-      'leia também',
-      'artigos similares',
-      'artigos relacionados',
-      'outros artigos',
-      'mais sobre o tema',
-      'sobre o tema',
-      '最新和最佳',
-      '头版',
-      '推荐',
-      '也阅读',
-      '相似文章',
-      '相关文章',
-      '其他文章',
-      '更多主题',
-      '主题',
-      '新しくて最高',
-      '第一面',
-      'おすすめ',
-      'こちらも読む',
-      '類似記事',
-      '関連記事',
-      'その他の記事',
-      'トピックの詳細',
-      'トピック',
-      '새로운 것과 최고',
-      '첫 페이지',
-      '추천',
-      '또한 읽기',
-      '유사한 기사',
-      '관련 기사',
-      '다른 기사',
-      '주제에 대해 더',
-      '주제'
+          "new and best",
+          "first page",
+          "recommend",
+          "read also",
+          "similar articles",
+          "related articles",
+          "other articles",
+          "more on topic",
+          "on topic",
+          "новое и лучшее",
+          "первая полоса",
+          "рекомендуем",
+          "читайте также",
+          "похожие статьи",
+          "связанные статьи",
+          "другие статьи",
+          "ещё по теме",
+          "по теме",
+          "нове і краще",
+          "перша смуга",
+          "рекомендуємо",
+          "читайте також",
+          "схожі статті",
+          "пов'язані статті",
+          "інші статті",
+          "ще за темою",
+          "за темою",
+          "neu und besser",
+          "erste seite",
+          "empfehlen",
+          "lesen sie auch",
+          "ähnliche artikel",
+          "verwandte artikel",
+          "andere artikel",
+          "mehr zum thema",
+          "zum thema",
+          "nouveau et mieux",
+          "première page",
+          "recommandons",
+          "lisez aussi",
+          "articles similaires",
+          "articles connexes",
+          "autres articles",
+          "plus sur le sujet",
+          "sur le sujet",
+          "nuevo y mejor",
+          "primera página",
+          "recomendamos",
+          "lee también",
+          "artículos similares",
+          "artículos relacionados",
+          "otros artículos",
+          "más sobre el tema",
+          "sobre el tema",
+          "nuovo e migliore",
+          "prima pagina",
+          "consigliamo",
+          "leggi anche",
+          "articoli simili",
+          "articoli correlati",
+          "altri articoli",
+          "altro sull'argomento",
+          "sull'argomento",
+          "novo e melhor",
+          "primeira página",
+          "recomendamos",
+          "leia também",
+          "artigos similares",
+          "artigos relacionados",
+          "outros artigos",
+          "mais sobre o tema",
+          "sobre o tema",
+          "最新和最佳",
+          "头版",
+          "推荐",
+          "也阅读",
+          "相似文章",
+          "相关文章",
+          "其他文章",
+          "更多主题",
+          "主题",
+          "新しくて最高",
+          "第一面",
+          "おすすめ",
+          "こちらも読む",
+          "類似記事",
+          "関連記事",
+          "その他の記事",
+          "トピックの詳細",
+          "トピック",
+          "새로운 것과 최고",
+          "첫 페이지",
+          "추천",
+          "또한 읽기",
+          "유사한 기사",
+          "관련 기사",
+          "다른 기사",
+          "주제에 대해 더",
+          "주제"
     ];
     
     // Course ad patterns
     const COURSE_AD_PATTERNS = [
-      'video + ux training',
-      'get video',
-      'video training',
-      'video course',
-      'measure ux & design impact',
-      'money-back-guarantee',
-      'money back guarantee',
-      'get the video course',
-      'get video + ux training',
-      'use the code',
-      'save 20%',
-      'save 20% off'
+          "video + ux training",
+          "get video",
+          "video training",
+          "video course",
+          "measure ux & design impact",
+          "money-back-guarantee",
+          "money back guarantee",
+          "get the video course",
+          "get video + ux training",
+          "use the code",
+          "save 20%",
+          "save 20% off"
     ];
     
     // Excluded classes
     const EXCLUDED_CLASSES = [
-      'nav',
-      'navigation',
-      'menu',
-      'sidebar',
-      'footer',
-      'header',
-      'ad',
-      'advertisement',
-      'ads',
-      'sponsor',
-      'sponsored',
-      'advert',
-      'comment',
-      'comments',
-      'discussion',
-      'thread',
-      'disqus',
-      'related',
-      'related-posts',
-      'related-articles',
-      'related-articles__title',
-      'recommended',
-      'also-in',
-      'article-section-title',
-      'entry-wrapper',
-      'c-accordion',
-      'accordion',
-      'social',
-      'share',
-      'share-buttons',
-      'share-menu',
-      'author-bio',
-      'author-info',
-      'about-author',
-      'translation-notice',
-      'translation-badge',
-      'post-navigation',
-      'post-nav',
-      'prev',
-      'next',
-      'previous',
-      'read-more',
-      'readmore',
-      'keep-reading',
-      'subscribe',
-      'paywall',
-      'gate',
-      'newsletter',
-      'newsletter-signup',
-      'subscribe-box',
-      'support',
-      'donate',
-      'donation',
-      'corrections',
-      'correction',
-      'you-might-also-like',
-      'you-may-also-like',
-      'more-in',
-      'next-article',
-      'previous-article',
-      'article-nav',
-      'comment-section',
-      'comments-section',
-      'view-comments',
-      'add-comment',
-      'book-cta',
-      'course-cta',
-      'product-cta',
-      'course-ad',
-      'product-ad',
-      'content-tabs',
-      'content-tab',
-      'book-cta__inverted',
-      'book-cta__col',
-      'useful-resources',
-      'further-reading',
-      'resources-section',
-      'component-share-buttons',
-      'aria-font-adjusts',
-      'font-adjust'
+          "nav",
+          "navigation",
+          "menu",
+          "sidebar",
+          "footer",
+          "header",
+          "ad",
+          "advertisement",
+          "ads",
+          "sponsor",
+          "sponsored",
+          "advert",
+          "comment",
+          "comments",
+          "discussion",
+          "thread",
+          "disqus",
+          "related",
+          "related-posts",
+          "related-articles",
+          "related-articles__title",
+          "recommended",
+          "also-in",
+          "article-section-title",
+          "entry-wrapper",
+          "c-accordion",
+          "accordion",
+          "social",
+          "share",
+          "share-buttons",
+          "share-menu",
+          "author-bio",
+          "author-info",
+          "about-author",
+          "translation-notice",
+          "translation-badge",
+          "post-navigation",
+          "post-nav",
+          "prev",
+          "next",
+          "previous",
+          "read-more",
+          "readmore",
+          "keep-reading",
+          "subscribe",
+          "paywall",
+          "gate",
+          "newsletter",
+          "newsletter-signup",
+          "subscribe-box",
+          "support",
+          "donate",
+          "donation",
+          "corrections",
+          "correction",
+          "you-might-also-like",
+          "you-may-also-like",
+          "more-in",
+          "next-article",
+          "previous-article",
+          "article-nav",
+          "comment-section",
+          "comments-section",
+          "view-comments",
+          "add-comment",
+          "book-cta",
+          "course-cta",
+          "product-cta",
+          "course-ad",
+          "product-ad",
+          "content-tabs",
+          "content-tab",
+          "book-cta__inverted",
+          "book-cta__col",
+          "useful-resources",
+          "further-reading",
+          "resources-section",
+          "component-share-buttons",
+          "aria-font-adjusts",
+          "font-adjust"
     ];
     
     // Paywall classes
     const PAYWALL_CLASSES = [
-      'freebie-message',
-      'subscribe-text',
-      'message--freebie',
-      'subscribe-',
-      'paywall',
-      'subscription',
-      'freebie',
-      'article-limit',
-      'access-message'
+          "freebie-message",
+          "subscribe-text",
+          "message--freebie",
+          "subscribe-",
+          "paywall",
+          "subscription",
+          "freebie",
+          "article-limit",
+          "access-message"
     ];
+    
+    // Logo patterns
+    const LOGO_PATTERNS = [
+          "logo",
+          "brand",
+          "icon",
+          "badge",
+          "watermark",
+          "sprite",
+          "spacer",
+          "blank",
+          "clear",
+          "pixel",
+          "youtube",
+          "facebook",
+          "twitter",
+          "instagram",
+          "linkedin",
+          "pinterest",
+          "rss",
+          "social-media",
+          "social-icon",
+          "share-icon",
+          "share-button",
+          "youtube-white-logo",
+          "youtube-logo",
+          "yt-logo",
+          "facebook-logo",
+          "twitter-logo",
+          "instagram-logo",
+          "arrow",
+          "chevron",
+          "bullet",
+          "dot",
+          "gradient",
+          "bg",
+          "background",
+          "shadow",
+          "border",
+          "divider",
+          "line",
+          "separator",
+          "spinner",
+          "loader",
+          "loading",
+          "placeholder",
+          "default",
+          "avatar",
+          "user",
+          "profile",
+          "gravatar",
+          "data:image/gif;base64,r0lgodlh",
+          "data:image/png;base64,i"
+    ];
+    
+    // Standfirst selectors (used by standfirst.js)
+    const STANDFIRST_SELECTORS = [
+      '.standfirst', '.subtitle', '.deck', '.lede', '.intro', '.article__subhead',
+      '[class*="standfirst"]', '[class*="subtitle"]', '[class*="deck"]',
+      '[class*="intro"]', '[class*="summary"]', '[class*="subhead"]'
+    ];
+    
+    // Candidate element selector (used by parse.js)
+    const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table';
+    
+    // CONSTANTS object (used by runExtraction)
+    const CONSTANTS = {
+      EXCLUDED_CLASSES,
+      PAYWALL_CLASSES,
+      NAVIGATION_PATTERNS_CONTAINS: NAV_PATTERNS_CONTAINS,
+      NAV_PATTERNS_STARTS_WITH,
+      COURSE_AD_PATTERNS,
+      PAYWALL_PATTERNS,
+      LOGO_PATTERNS
+    };
     
     // ============================================
     // END OF INLINED CONSTANTS
     // ============================================
-    
-    // ============================================
-    // INLINED MODULE FUNCTIONS
-    // Functions from scripts/extraction/modules/
-    // ============================================
-    
-    // Utils module functions
-    function toAbsoluteUrl(url, baseUrl) {
-      if (!url) return '';
-      if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
-      try { 
-        return new URL(url, baseUrl).href; 
-      } catch (e) { 
-        // Invalid URL format - fallback to original (graceful degradation)
-        // This is expected for malformed URLs from page content
-        return url; 
-      }
+
+
+// ============================================
+// INLINED EXTRACTOR MODULES
+// Generated from scripts/extraction/extractor/
+// ============================================
+
+// --- DOM Utils ---
+function compareDomOrder(a, b) {
+  const position = a.compareDocumentPosition(b);
+  if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
+    return -1;
+  }
+  if (position & Node.DOCUMENT_POSITION_PRECEDING) {
+    return 1;
+  }
+  return 0;
+}
+
+function getTextContent(element) {
+  return (element.textContent || "").trim().replace(/\s+/g, " ");
+}
+
+function hasParentOfType(element, tagName, maxDepth = 5) {
+  let current = element.parentElement;
+  let depth = 0;
+  const upperTag = tagName.toUpperCase();
+  while (current && depth < maxDepth) {
+    if (current.tagName === upperTag) {
+      return true;
     }
-    
-    function isFootnoteLink(element) {
-      if (element.tagName.toLowerCase() !== 'a') return false;
-      const href = element.getAttribute('href') || '';
-      if (href === '#' || (href.startsWith('#') && href.length > 1) || href.includes('#note')) {
-        const text = element.textContent.trim();
-        if (/^[\d\s]+$/.test(text) || /^[←→↑↓↗↘↩]+$/.test(text) || text.toLowerCase().includes('open these')) {
-          return true;
-        }
-        const img = element.querySelector('img');
-        if (img && (img.alt === '↩' || img.src.includes('emoji') || String(img.className || '').includes('emoji'))) {
-          return true;
-        }
-      }
-      return false;
+    current = current.parentElement;
+    depth++;
+  }
+  return false;
+}
+
+function isElementVisible(win, element) {
+  const style = safeGetComputedStyle(win, element);
+  if (!style)
+    return true;
+  if (style.display === "none")
+    return false;
+  if (style.visibility === "hidden")
+    return false;
+  const rect = element.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0)
+    return false;
+  return true;
+}
+
+function isInViewport(element) {
+  const rect = element.getBoundingClientRect();
+  return rect.top < window.innerHeight && rect.bottom > 0 && rect.left < window.innerWidth && rect.right > 0;
+}
+
+function normalizeImageUrl(url) {
+  if (!url)
+    return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.origin + parsed.pathname;
+  } catch (e) {
+    return url.split("?")[0].split("#")[0];
+  }
+}
+
+function safeClosest(element, selector) {
+  try {
+    return element.closest(selector);
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeGetComputedStyle(win, element) {
+  try {
+    return win.getComputedStyle(element);
+  } catch (e) {
+    return null;
+  }
+}
+
+function toAbsoluteUrl(url, baseUrl) {
+  if (!url)
+    return "";
+  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
+    return url;
+  }
+  try {
+    return new URL(url, baseUrl).href;
+  } catch (e) {
+    return url;
+  }
+}
+
+// --- Text Utils ---
+function calculateReadingTime(text, wordsPerMinute = 200) {
+  const wordCount = text.trim().split(/\s+/).length;
+  return Math.ceil(wordCount / wordsPerMinute);
+}
+
+function cleanHeadingText(text) {
+  if (!text)
+    return "";
+  return text.replace(/\uFFFC/g, "").replace(/<OBJ>/gi, "").replace(/<\/OBJ>/gi, "").replace(/\[OBJ\]/gi, "").replace(/OBJ/g, "").replace(/<[^>]+>/g, "").replace(/\s*#\s*$/, "").replace(/\s+/g, " ").trim();
+}
+
+function containsPaywallContent(text, paywallPatterns) {
+  const lowerText = text.toLowerCase();
+  return paywallPatterns.some((pattern) => lowerText.includes(pattern.toLowerCase()));
+}
+
+function containsRelatedContent(text, relatedPatterns) {
+  const lowerText = text.toLowerCase();
+  return relatedPatterns.some((pattern) => lowerText.includes(pattern.toLowerCase()));
+}
+
+function countSentences(text) {
+  const matches = text.match(/[.!?]+(?:\s|$)/g);
+  return matches ? matches.length : 0;
+}
+
+function isNumericHeading(text) {
+  const cleaned = text.trim();
+  return /^\d+\.?\s*$/.test(cleaned);
+}
+
+function looksLikeArticleStarter(text) {
+  const lowerText = text.toLowerCase().trim();
+  const commonStarters = [
+    "the",
+    "a",
+    "an",
+    "in",
+    "on",
+    "when",
+    "where",
+    "why",
+    "how",
+    "what",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "there",
+    "he",
+    "she",
+    "they",
+    "we",
+    "i",
+    "you",
+    "if",
+    "as",
+    "for",
+    "with",
+    "by",
+    "from",
+    "at",
+    "to",
+    "of",
+    "after",
+    "before",
+    "during",
+    "since",
+    "until",
+    "while",
+    "although",
+    "though"
+  ];
+  const firstWord = lowerText.split(/\s+/)[0];
+  return commonStarters.includes(firstWord);
+}
+
+function looksLikeDate(text) {
+  const trimmed = text.trim();
+  if (trimmed.length > 50)
+    return false;
+  const datePatterns = [
+    /^\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}$/,
+    // 12/31/2024
+    /^\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2}$/,
+    // 2024-12-31
+    /^[a-z]+\s+\d{1,2},?\s+\d{4}$/i,
+    // January 15, 2024
+    /^\d{1,2}\s+[a-z]+\s+\d{4}$/i,
+    // 15 January 2024
+    /^[a-z]+\s+\d{4}$/i,
+    // January 2024
+    /^\d{1,2}(st|nd|rd|th)\s+[a-z]+\s+\d{4}$/i
+    // 15th January 2024
+  ];
+  return datePatterns.some((pattern) => pattern.test(trimmed));
+}
+
+function looksLikeMetadata(text, maxLength = 100) {
+  const trimmed = text.trim();
+  if (trimmed.length > maxLength)
+    return false;
+  const metadataPatterns = [
+    /^by\s+/i,
+    // "By Author Name"
+    /^written\s+by/i,
+    // "Written by..."
+    /^edited\s+by/i,
+    // "Edited by..."
+    /^\d+\s+min(utes?)?\s+read/i,
+    // "5 min read"
+    /^\d+\s+words?$/i,
+    // "1234 words"
+    /^updated?:?\s*/i,
+    // "Updated: ..."
+    /^published:?\s*/i,
+    // "Published: ..."
+    /^posted:?\s*/i
+    // "Posted: ..."
+  ];
+  return metadataPatterns.some((pattern) => pattern.test(trimmed));
+}
+
+function normalizeHeadingForDedup(text) {
+  return stripObjMarkers(text).toLowerCase().trim();
+}
+
+function stripObjMarkers(text) {
+  if (!text)
+    return "";
+  return text.replace(/\uFFFC/g, "").replace(/\s*OBJ\s*/gi, " ").replace(/\s*\[OBJ\]\s*/gi, " ").replace(/<\/?OBJ>/gi, "").replace(/\s+/g, " ").trim();
+}
+
+function truncateText(text, maxLength) {
+  if (!text || text.length <= maxLength)
+    return text;
+  return text.slice(0, maxLength - 3) + "...";
+}
+
+// --- Debug ---
+function collectDocumentStructure(doc) {
+  return {
+    hasArticle: !!doc.querySelector("article"),
+    hasMain: !!doc.querySelector("main"),
+    hasHeader: !!doc.querySelector("header"),
+    hasFooter: !!doc.querySelector("footer"),
+    hasNav: !!doc.querySelector("nav"),
+    hasAside: !!doc.querySelector("aside"),
+    allParagraphsCount: doc.querySelectorAll("p").length,
+    allHeadingsCount: doc.querySelectorAll("h1, h2, h3, h4, h5, h6").length,
+    allImagesCount: doc.querySelectorAll("img").length
+  };
+}
+
+function collectMainContentPreview(doc) {
+  const mainContent = doc.querySelector('main, article, [role="main"], #content, #main-content');
+  return {
+    hasMain: !!mainContent,
+    mainTagName: mainContent?.tagName,
+    mainClassName: mainContent?.className,
+    mainId: mainContent?.id,
+    mainTextLength: mainContent?.textContent?.length || 0,
+    mainTextFull: mainContent?.textContent || null,
+    mainHTMLFull: mainContent?.innerHTML || null,
+    childCount: mainContent?.children?.length || 0
+  };
+}
+
+function collectMetaTags(doc) {
+  const metaTags = {};
+  doc.querySelectorAll("meta").forEach((meta) => {
+    const name = meta.getAttribute("name") || meta.getAttribute("property") || meta.getAttribute("http-equiv");
+    if (name) {
+      metaTags[name] = meta.getAttribute("content") || "";
     }
-    
-    function isIcon(element) {
-      const tagName = element.tagName.toLowerCase();
-      if (tagName === 'svg') return true;
-      const className = String(element.className || '').toLowerCase();
-      const id = (element.id || '').toLowerCase();
-      if (className.includes('icon-') || className.includes('icon') || id.includes('icon')) {
+  });
+  return metaTags;
+}
+
+function collectPageInfo(win, doc, baseUrl) {
+  return {
+    url: win.location.href,
+    title: doc.title,
+    baseUrl,
+    documentLang: doc.documentElement.lang,
+    documentXmlLang: doc.documentElement.getAttribute("xml:lang"),
+    bodyClasses: doc.body.className,
+    bodyLang: doc.body.lang,
+    hasGoogleTranslate: !!doc.querySelector(".goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element"),
+    isTranslated: doc.body.classList.contains("translated-ltr") || doc.body.classList.contains("translated-rtl"),
+    timestamp: Date.now()
+  };
+}
+
+function createDebugInfo(win, doc, baseUrl) {
+  return {
+    foundElements: 0,
+    filteredElements: 0,
+    imageCount: 0,
+    excludedImageCount: 0,
+    processedCount: 0,
+    skippedCount: 0,
+    contentTypes: {},
+    extractionLogs: [],
+    pageInfo: collectPageInfo(win, doc, baseUrl),
+    metaTags: collectMetaTags(doc),
+    documentStructure: collectDocumentStructure(doc),
+    mainContentPreview: collectMainContentPreview(doc),
+    documentHTMLFull: doc.documentElement.outerHTML || null,
+    bodyHTMLFull: doc.body?.innerHTML || null,
+    googleTranslateState: null,
+    firstParagraphCheck: null
+  };
+}
+
+function errorToConsoleSafe(...args) {
+  try {
+    console.error(...args);
+  } catch (e) {
+  }
+}
+
+function incrementContentType(debugInfo, contentType) {
+  if (!debugInfo)
+    return;
+  debugInfo.contentTypes[contentType] = (debugInfo.contentTypes[contentType] || 0) + 1;
+}
+
+function logExtractionStart(baseUrl, enableDebugInfo) {
+  logToConsoleSafe("[ClipAIble] extractAutomaticallyInlined: START", {
+    baseUrl,
+    enableDebugInfo,
+    timestamp: Date.now()
+  });
+}
+
+function logHtmlState(doc) {
+  const actualMainContent = doc.querySelector('main, article, [role="main"], #content, #main-content');
+  const actualFirstParagraph = doc.querySelector('main p, article p, [role="main"] p, #content p');
+  logToConsoleSafe("[ClipAIble] === ACTUAL HTML ON PAGE ===", {
+    documentHTMLLength: doc.documentElement.outerHTML.length,
+    hasMainContent: !!actualMainContent,
+    mainContentHTMLLength: actualMainContent?.innerHTML?.length || 0,
+    hasFirstParagraph: !!actualFirstParagraph,
+    firstParagraphText: actualFirstParagraph?.textContent?.substring(0, 200) || null,
+    firstParagraphHasDataOriginalText: actualFirstParagraph?.hasAttribute("data-original-text") || false,
+    timestamp: Date.now()
+  });
+}
+
+function logToConsoleSafe(...args) {
+  try {
+    console.log(...args);
+  } catch (e) {
+  }
+}
+
+function pushDebugLog(debugInfo, type, data) {
+  if (!debugInfo)
+    return;
+  debugInfo.extractionLogs.push({ type, data });
+}
+
+function pushDebugMessage(debugInfo, type, message, data) {
+  if (!debugInfo)
+    return;
+  debugInfo.extractionLogs.push({ type, message, data });
+}
+
+// --- SPA ---
+function isSpaPage(doc) {
+  const spaIndicators = [
+    "#root",
+    // React
+    "#__next",
+    // Next.js
+    "#app",
+    // Vue
+    "[ng-app]",
+    // Angular
+    "[data-reactroot]",
+    // React
+    "[data-vue-app]",
+    // Vue
+    ".notion-app-inner"
+    // Notion
+  ];
+  for (const selector of spaIndicators) {
+    try {
+      if (doc.querySelector(selector)) {
         return true;
       }
-      if (tagName === 'span' || tagName === 'i' || tagName === 'em' || tagName === 'sup') {
-        const text = element.textContent.trim();
-        if (text.length <= 3 && /[←→↑↓↗↘◀▶▲▼↩]/.test(text)) {
-          return true;
-        }
-        if (tagName === 'sup' && text.toLowerCase().includes('open these')) {
-          return true;
-        }
-      }
-      if (tagName === 'img') {
-        const alt = (element.alt || '').trim();
-        const src = (element.src || '').toLowerCase();
-        if (alt === '↩' || /[←→↑↓↗↘↩]/.test(alt) || (src.includes('emoji') && alt.includes('arrow'))) {
-          return true;
-        }
-      }
-      return false;
+    } catch (e) {
     }
-    
-    function normalizeImageUrl(url) {
-      if (!url) return '';
+  }
+  return false;
+}
+
+async function waitForContentLoad(doc) {
+  const MAX_WAIT_TIME = 5e3;
+  const CHECK_INTERVAL = 200;
+  const MIN_CONTENT_LENGTH = 500;
+  const SETTLE_DELAY = 300;
+  const contentSelectors = [
+    // Semantic HTML
+    '[role="main"]',
+    // Common content classes
+    ".article-content",
+    ".post-content",
+    ".entry-content",
+    "#content",
+    "#main-content",
+    "#article-content",
+    // SPA framework roots
+    "#root",
+    "#app",
+    "#__next",
+    "[data-reactroot]",
+    "[ng-app]",
+    "[data-vue-app]",
+    // Notion specific
+    ".notion-page-content",
+    ".notion-page",
+    // Generic patterns
+    '[class*="article"]',
+    '[class*="content"]'
+  ];
+  function hasContent() {
+    const article = doc.querySelector("article");
+    const main = doc.querySelector("main");
+    if (article && (article.textContent || "").trim().length >= MIN_CONTENT_LENGTH) {
+      return true;
+    }
+    if (main && (main.textContent || "").trim().length >= MIN_CONTENT_LENGTH) {
+      return true;
+    }
+    for (const selector of contentSelectors) {
       try {
-        const urlObj = new URL(url);
-        return urlObj.origin + urlObj.pathname;
-      } catch (e) {
-        return url.split('?')[0].split('#')[0];
-      }
-    }
-    
-    // Image processor module functions (inlined)
-    function isPlaceholderUrlModule(url) {
-      if (!url) return true;
-      if (url.startsWith('data:image')) {
-        if (url.includes('1x1') || url.includes('transparent') || url.length < 100) {
+        const el = doc.querySelector(selector);
+        if (el && (el.textContent || "").trim().length >= MIN_CONTENT_LENGTH) {
           return true;
-        }
-      }
-      const placeholderPatterns = ['placeholder', 'spacer', 'blank', '1x1', 'pixel.gif'];
-      const urlLower = url.toLowerCase();
-      return placeholderPatterns.some(pattern => urlLower.includes(pattern));
-    }
-    
-    function getBestSrcsetUrlModule(srcset, isPlaceholderUrl) {
-      if (!srcset) return null;
-      const sources = srcset.split(',').map(s => s.trim());
-      let bestUrl = null;
-      let bestSize = 0;
-      for (const source of sources) {
-        const parts = source.trim().split(/\s+/);
-        if (parts.length < 1) continue;
-        const url = parts[0];
-        if (isPlaceholderUrl(url)) continue;
-        if (parts.length > 1) {
-          const descriptor = parts[1];
-          if (descriptor.endsWith('x')) {
-            const multiplier = parseFloat(descriptor);
-            if (multiplier > bestSize) {
-              bestSize = multiplier;
-              bestUrl = url;
-            }
-          } else if (descriptor.endsWith('w')) {
-            const width = parseInt(descriptor);
-            if (width > bestSize) {
-              bestSize = width;
-              bestUrl = url;
-            }
-          }
-        } else {
-          if (!bestUrl) bestUrl = url;
-        }
-      }
-      return bestUrl;
-    }
-    
-    function extractBestImageUrlModule(imgElement, isPlaceholderUrl, getBestSrcsetUrl) {
-      if (!imgElement) return null;
-      let src = null;
-      if (imgElement.currentSrc && imgElement.currentSrc.length > 0 && !isPlaceholderUrl(imgElement.currentSrc)) {
-        src = imgElement.currentSrc;
-      }
-      if (!src) {
-        const imgSrc = imgElement.src || imgElement.getAttribute('src');
-        if (imgSrc && imgSrc.length > 0 && !isPlaceholderUrl(imgSrc)) {
-          src = imgSrc;
-        }
-      }
-      if (!src) {
-        const srcset = imgElement.getAttribute('srcset');
-        if (srcset) {
-          src = getBestSrcsetUrl(srcset);
-        }
-      }
-      if (!src) {
-        const picture = imgElement.closest('picture');
-        if (picture) {
-          for (const source of picture.querySelectorAll('source[srcset]')) {
-            const srcset = source.getAttribute('srcset');
-            if (srcset) {
-              const candidate = getBestSrcsetUrl(srcset);
-              if (candidate) {
-                src = candidate;
-                break;
-              }
-            }
-          }
-        }
-      }
-      if (!src) {
-        const dataAttrs = ['data-src', 'data-lazy-src', 'data-original', 'data-lazy', 
-                           'data-full-src', 'data-high-res', 'data-srcset', 'data-original-src'];
-        for (const attr of dataAttrs) {
-          const val = imgElement.getAttribute(attr);
-          if (val && !val.includes('data:') && !isPlaceholderUrl(val)) {
-            if (attr === 'data-srcset') {
-              src = getBestSrcsetUrl(val);
-            } else {
-              src = val;
-            }
-            if (src) break;
-          }
-        }
-      }
-      if (!src) {
-        const parentLink = imgElement.closest('a[href]');
-        if (parentLink) {
-          const href = parentLink.getAttribute('href');
-          if (href && (href.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i) || href.includes('image'))) {
-            src = href;
-          }
-        }
-      }
-      return src;
-    }
-    
-    function isTrackingPixelModule(img) {
-      try {
-        const style = window.getComputedStyle(img);
-        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-          const naturalWidth = img.naturalWidth || 0;
-          const naturalHeight = img.naturalHeight || 0;
-          const cssWidth = parseInt(style.width) || img.width || 0;
-          const cssHeight = parseInt(style.height) || img.height || 0;
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            if (naturalWidth <= 3 && naturalHeight <= 3) return true;
-          } else if (cssWidth > 0 && cssHeight > 0) {
-            if (cssWidth <= 3 && cssHeight <= 3) return true;
-          }
         }
       } catch (e) {
-        // getComputedStyle may fail on some image elements (e.g., SVG in some browsers)
-        // This is expected - continue with other checks (graceful degradation)
       }
-      const naturalWidth = img.naturalWidth || 0;
-      const naturalHeight = img.naturalHeight || 0;
-      const cssWidth = img.width || 0;
-      const cssHeight = img.height || 0;
-      if (naturalWidth > 0 && naturalHeight > 0) {
-        if (naturalWidth <= 3 && naturalHeight <= 3) return true;
-      } else if (cssWidth > 0 && cssHeight > 0) {
-        if (cssWidth <= 1 && cssHeight <= 1) return true;
-      }
-      const src = (img.src || '').toLowerCase();
-      const trackingPatterns = ['pixel', 'tracking', 'beacon', 'analytics', 'facebook.com/tr', 'doubleclick', 'googleads'];
-      return trackingPatterns.some(pattern => src.includes(pattern));
     }
-    
-    function isDecorativeImageModule(img, constants) {
-      if (!img) return false;
-      const { LOGO_PATTERNS } = constants;
-      const src = (img.src || '').toLowerCase();
-      const alt = (img.alt || '').toLowerCase();
-      const className = String(img.className || '').toLowerCase();
-      const id = (img.id || '').toLowerCase();
-      if (className.includes('headshot') || id.includes('headshot') ||
-          className.includes('author-photo') || className.includes('author-image') ||
-          className.includes('author-avatar') || id.includes('author-photo') ||
-          id.includes('author-image') || id.includes('author-avatar') ||
-          className.includes('byline-thumbnail') || className.includes('byline-thumb') ||
-          className.includes('contributor-thumbnail') || className.includes('contributor-thumb') ||
-          className.includes('rich-byline') || className.includes('wp-post-image') ||
-          id.includes('byline-thumbnail') || id.includes('contributor-thumbnail')) {
-        return true;
+    const paragraphs = doc.querySelectorAll("p");
+    let totalTextLength = 0;
+    const paragraphArray = Array.from(paragraphs).slice(0, 10);
+    for (const p of paragraphArray) {
+      totalTextLength += (p.textContent || "").trim().length;
+    }
+    if (totalTextLength >= MIN_CONTENT_LENGTH) {
+      return true;
+    }
+    return false;
+  }
+  if (hasContent()) {
+    return;
+  }
+  const startTime = Date.now();
+  while (Date.now() - startTime < MAX_WAIT_TIME) {
+    await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL));
+    if (hasContent()) {
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_DELAY));
+      return;
+    }
+  }
+}
+
+async function waitForElement(doc, selector, timeout = 5e3) {
+  const CHECK_INTERVAL = 100;
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeout) {
+    try {
+      const element = doc.querySelector(selector);
+      if (element) {
+        return element;
       }
-      let checkParent = img.parentElement;
-      for (let i = 0; i < 5 && checkParent; i++) {
-        const parentClass = String(checkParent.className || '').toLowerCase();
-        const parentId = (checkParent.id || '').toLowerCase();
-        const parentTag = checkParent.tagName.toLowerCase();
-        if (parentClass.includes('contributor') || parentClass.includes('contributors') ||
-            parentClass.includes('byline') || parentClass.includes('author-info') ||
-            parentClass.includes('author-bio') || parentClass.includes('author-meta') ||
-            parentId.includes('contributor') || parentId.includes('contributors') ||
-            parentId.includes('byline') || parentId.includes('author-info') ||
-            parentTag === 'address' || parentClass.includes('vcard')) {
-          const naturalWidth = img.naturalWidth || img.width || 0;
-          const naturalHeight = img.naturalHeight || img.height || 0;
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            if (naturalWidth <= 150 && naturalHeight <= 150) {
-              return true;
-            }
-          } else {
-            const cssWidth = parseInt(img.style.width) || img.width || 0;
-            const cssHeight = parseInt(img.style.height) || img.height || 0;
-            if (cssWidth > 0 && cssHeight > 0 && cssWidth <= 150 && cssHeight <= 150) {
-              return true;
-            }
-          }
-          if (!alt || alt.length === 0) {
-            return true;
-          }
-        }
-        checkParent = checkParent.parentElement;
-      }
-      if (!alt || alt.length === 0) {
-        let parent = img.parentElement;
-        for (let i = 0; i < 5 && parent; i++) {
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('contributor') || parentClass.includes('contributors') ||
-              parentClass.includes('byline') || parentClass.includes('author-info') ||
-              parentClass.includes('author-bio') || parentClass.includes('author-meta') ||
-              parentId.includes('contributor') || parentId.includes('byline')) {
-            const naturalWidth = img.naturalWidth || img.width || 0;
-            const naturalHeight = img.naturalHeight || img.height || 0;
-            if (naturalWidth > 0 && naturalHeight > 0) {
-              if (naturalWidth <= 150 && naturalHeight <= 150) {
-                return true;
-              }
-            } else {
-              const cssWidth = parseInt(img.style.width) || img.width || 0;
-              const cssHeight = parseInt(img.style.height) || img.height || 0;
-              if (cssWidth > 0 && cssHeight > 0 && cssWidth <= 150 && cssHeight <= 150) {
-                return true;
-              }
-            }
-          }
-          parent = parent.parentElement;
-        }
-      } else if (alt.length > 0 && alt.length < 100) {
-        const namePattern = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/;
-        if (namePattern.test(alt.trim())) {
-          if (className.includes('headshot') || id.includes('headshot') ||
-              className.includes('byline-thumbnail') || className.includes('contributor-thumbnail')) {
-            return true;
-          }
-          let parent = img.parentElement;
-          for (let i = 0; i < 5 && parent; i++) {
-            const parentClass = String(parent.className || '').toLowerCase();
-            const parentId = (parent.id || '').toLowerCase();
-            const parentTag = parent.tagName.toLowerCase();
-            if (parentClass.includes('author') || parentId.includes('author') ||
-                parentClass.includes('byline') || parentId.includes('byline') ||
-                parentClass.includes('headshot') || parentId.includes('headshot') ||
-                parentClass.includes('contributor') || parentId.includes('contributor') ||
-                parentTag === 'address' || parentClass.includes('vcard') ||
-                parentClass.includes('author-info') || parentClass.includes('author-bio')) {
-              return true;
-            }
-            parent = parent.parentElement;
-          }
-          const naturalWidth = img.naturalWidth || img.width || 0;
-          const naturalHeight = img.naturalHeight || img.height || 0;
-          if (naturalWidth > 0 && naturalHeight > 0) {
-            if ((naturalWidth <= 250 && naturalHeight <= 250) && 
-                (naturalWidth === naturalHeight || Math.abs(naturalWidth - naturalHeight) < 50)) {
-              return true;
-            }
-          }
-        }
-      }
-      const naturalWidth = img.naturalWidth || img.width || 0;
-      const naturalHeight = img.naturalHeight || img.height || 0;
-      if (naturalWidth > 0 && naturalHeight > 0) {
-        if ((naturalWidth <= 250 && naturalHeight <= 250) && 
-            (naturalWidth === naturalHeight || Math.abs(naturalWidth - naturalHeight) < 50)) {
-          let parent = img.parentElement;
-          for (let i = 0; i < 3 && parent; i++) {
-            const parentClass = String(parent.className || '').toLowerCase();
-            const parentId = (parent.id || '').toLowerCase();
-            if (parentClass.includes('author') || parentId.includes('author') ||
-                parentClass.includes('byline') || parentId.includes('byline')) {
-              return true;
-            }
-            parent = parent.parentElement;
-          }
-        }
-      }
-      let checkParentForFacepile = img.parentElement;
-      for (let i = 0; i < 6 && checkParentForFacepile; i++) {
-        const parentClass = String(checkParentForFacepile.className || '').toLowerCase();
-        const parentId = (checkParentForFacepile.id || '').toLowerCase();
-        const parentText = checkParentForFacepile.textContent || '';
-        if (parentClass.includes('facepile') || parentId.includes('facepile') ||
-            parentClass.includes('likes') || parentClass.includes('restacks') ||
-            parentClass.includes('engagement') || parentClass.includes('reactions') ||
-            parentText.includes('Likes') || parentText.includes('Restacks') ||
-            parentText.includes('likes') || parentText.includes('restacks')) {
-          const naturalWidth = img.naturalWidth || img.width || 0;
-          const naturalHeight = img.naturalHeight || img.height || 0;
-          const cssWidth = parseInt(img.style.width) || img.width || 0;
-          const cssHeight = parseInt(img.style.height) || img.height || 0;
-          if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 100 && naturalHeight <= 100) ||
-              (cssWidth > 0 && cssHeight > 0 && cssWidth <= 100 && cssHeight <= 100)) {
-            return true;
-          }
-        }
-        checkParentForFacepile = checkParentForFacepile.parentElement;
-      }
-      if (alt && (alt.includes("'s avatar") || alt.includes("'s avatar") || 
-                  alt.includes(' avatar') || alt === 'avatar' || alt.endsWith('avatar'))) {
-        const naturalWidth = img.naturalWidth || img.width || 0;
-        const naturalHeight = img.naturalHeight || img.height || 0;
-        const cssWidth = parseInt(img.style.width) || img.width || 0;
-        const cssHeight = parseInt(img.style.height) || img.height || 0;
-        if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) ||
-            (cssWidth > 0 && cssHeight > 0 && cssWidth <= 50 && cssHeight <= 50)) {
-          return true;
-        }
-        if (alt.toLowerCase().includes("'s avatar") || alt.toLowerCase().endsWith(' avatar')) {
-          return true;
-        }
-      }
-      if (LOGO_PATTERNS.some(pattern => src.includes(pattern))) {
-        return true;
-      }
-      if (alt && (alt.includes('logo') || alt.includes('icon') || alt.includes('brand') || 
-                  alt.includes('social') || alt.includes('share') || alt.includes('button'))) {
-        if (alt.length > 30 && (alt.includes('photo') || alt.includes('image') || alt.includes('picture'))) {
+    } catch (e) {
+      return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, CHECK_INTERVAL));
+  }
+  return null;
+}
+
+// --- Translate ---
+function checkFirstParagraph(doc) {
+  const firstP = doc.querySelector('main p, article p, [role="main"] p, #content p');
+  if (!firstP)
+    return null;
+  const hasOriginalText = firstP.hasAttribute("data-original-text");
+  const hasGtOrig = firstP.hasAttribute("data-gt-orig-display");
+  const originalText = firstP.getAttribute("data-original-text");
+  const currentText = firstP.textContent;
+  return {
+    hasOriginalTextAttr: hasOriginalText,
+    hasGtOrigAttr: hasGtOrig,
+    originalTextFull: originalText || null,
+    currentTextFull: currentText || null,
+    elementHTMLFull: firstP.innerHTML || null,
+    textsMatch: originalText === currentText,
+    timestamp: Date.now()
+  };
+}
+
+function detectGoogleTranslateState(doc) {
+  try {
+    const hasGoogleTranslateWidget = !!doc.querySelector(
+      ".goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element"
+    );
+    const isTranslated = doc.body.classList.contains("translated-ltr") || doc.body.classList.contains("translated-rtl");
+    const originalTextElements = doc.querySelectorAll("[data-original-text]");
+    const gtOrigElements = doc.querySelectorAll("[data-gt-orig-display]");
+    return {
+      hasGoogleTranslateWidget,
+      isTranslated,
+      hasOriginalTextAttrs: originalTextElements.length > 0,
+      hasGtOrigAttrs: gtOrigElements.length > 0,
+      originalTextAttrsCount: originalTextElements.length,
+      gtOrigAttrsCount: gtOrigElements.length,
+      bodyClasses: doc.body.className,
+      timestamp: Date.now()
+    };
+  } catch (e) {
+    return {
+      hasGoogleTranslateWidget: false,
+      isTranslated: false,
+      hasOriginalTextAttrs: false,
+      hasGtOrigAttrs: false,
+      originalTextAttrsCount: 0,
+      gtOrigAttrsCount: 0,
+      bodyClasses: "",
+      timestamp: Date.now(),
+      error: String(e)
+    };
+  }
+}
+
+function extractOriginalTexts(container) {
+  const originalTexts = /* @__PURE__ */ new Map();
+  const translatedElements = container.querySelectorAll("[data-original-text]");
+  for (const el of translatedElements) {
+    const originalText = el.getAttribute("data-original-text");
+    if (originalText && originalText.trim()) {
+      originalTexts.set(el, originalText.trim());
+    }
+  }
+  return originalTexts;
+}
+
+function getOriginalTextIfTranslated(element) {
+  if (!element)
+    return null;
+  const originalText = element.getAttribute("data-original-text");
+  if (originalText && originalText.trim()) {
+    const currentText = element.textContent || element.innerText || "";
+    if (originalText.trim() !== currentText.trim()) {
+      return originalText.trim();
+    }
+  }
+  const childWithOriginal = element.querySelector("[data-original-text]");
+  if (childWithOriginal) {
+    const childOriginal = childWithOriginal.getAttribute("data-original-text");
+    if (childOriginal && childOriginal.trim()) {
+      return childOriginal.trim();
+    }
+  }
+  return null;
+}
+
+function isPageTranslated(doc) {
+  if (doc.body.classList.contains("translated-ltr") || doc.body.classList.contains("translated-rtl")) {
+    return true;
+  }
+  if (doc.querySelector(".goog-te-banner-frame, .goog-te-menu-frame, #google_translate_element")) {
+    return true;
+  }
+  if (doc.querySelectorAll("[data-original-text]").length > 0) {
+    return true;
+  }
+  return false;
+}
+
+function processTranslatedElement(element) {
+  const originalText = getOriginalTextIfTranslated(element);
+  return {
+    element,
+    wasTranslated: !!originalText,
+    originalText
+  };
+}
+
+// --- Filters ---
+function isExcluded(win, element, constants) {
+  const {
+    EXCLUDED_CLASSES: EXCLUDED_CLASSES2,
+    PAYWALL_CLASSES: PAYWALL_CLASSES2,
+    NAV_PATTERNS_CONTAINS,
+    COURSE_AD_PATTERNS: COURSE_AD_PATTERNS2
+  } = constants;
+  const tagName = element.tagName.toLowerCase();
+  const className = String(element.className || "").toLowerCase();
+  const id = (element.id || "").toLowerCase();
+  const isSemanticContainer = tagName === "article" || tagName === "main";
+  const isImageOrFigure = tagName === "img" || tagName === "figure";
+  const style = safeGetComputedStyle(win, element);
+  if (!style) {
+    return false;
+  }
+  if (isImageOrFigure) {
+    if (style.display === "none" || style.visibility === "hidden") {
+      const hasLazySrc = element.hasAttribute("data-src") || element.hasAttribute("data-lazy-src") || element.hasAttribute("data-original") || element.hasAttribute("data-srcset");
+      if (hasLazySrc)
+        return false;
+      if (tagName === "figure") {
+        const img = element.querySelector("img");
+        if (img && (img.hasAttribute("data-src") || img.hasAttribute("data-lazy-src"))) {
           return false;
         }
+      }
+      return true;
+    }
+  } else {
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+      return true;
+    }
+  }
+  if (tagName === "iframe") {
+    const iframeElement = (
+      /** @type {HTMLIFrameElement} */
+      element
+    );
+    const src = (iframeElement.src || "").toLowerCase();
+    const adPatterns = ["ad", "ads", "advertisement", "doubleclick", "googleads", "pubmatic"];
+    if (adPatterns.some((pattern) => src.includes(pattern))) {
+      return true;
+    }
+    return true;
+  }
+  if (isFootnoteLink(element))
+    return true;
+  if (isIcon(element))
+    return true;
+  if (tagName === "aside" || element.getAttribute("role") === "complementary") {
+    return true;
+  }
+  const text = element.textContent || "";
+  const textLower = text.toLowerCase();
+  const textTrimmed = text.trim();
+  if (element.querySelector && element.querySelector('input[type="email"]')) {
+    const hasNewsletterText = textLower.includes("newsletter") || textLower.includes("subscribe") || textLower.includes("signup");
+    if (hasNewsletterText)
+      return true;
+    const isInNavArea = safeClosest(element, "nav, aside, .sidebar, footer, header") !== null;
+    if (isInNavArea)
+      return true;
+  }
+  const adClasses = ["book-cta", "course-cta", "product-cta", "course-ad", "product-ad"];
+  if (adClasses.some((adClass) => className.includes(adClass) || id.includes(adClass))) {
+    return true;
+  }
+  if (PAYWALL_CLASSES2.some((paywallClass) => className.includes(paywallClass) || id.includes(paywallClass))) {
+    return true;
+  }
+  const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
+  const hasPrice = pricePattern.test(text);
+  const isCourseAd = COURSE_AD_PATTERNS2.some((pattern) => textLower.includes(pattern));
+  if (hasPrice && isCourseAd) {
+    return true;
+  }
+  const role = element.getAttribute("role") || "";
+  if (role === "tab" || role === "tabpanel" || safeClosest(element, '[role="tablist"]') !== null) {
+    return true;
+  }
+  if (!isSemanticContainer && !isImageOrFigure) {
+    const isParagraphOrHeading = tagName === "p" || tagName.match(/^h[1-6]$/);
+    if (isParagraphOrHeading) {
+      if (textTrimmed.length < 200 && NAV_PATTERNS_CONTAINS.some((pattern) => pattern.test(text))) {
         return true;
       }
-      if (className.includes('logo') || className.includes('icon') || className.includes('brand') ||
-          className.includes('social') || className.includes('share') || className.includes('button') ||
-          id.includes('logo') || id.includes('icon') || id.includes('brand') ||
-          id.includes('social') || id.includes('share') || id.includes('button')) {
+    } else {
+      if (NAV_PATTERNS_CONTAINS.some((pattern) => pattern.test(text))) {
         return true;
       }
-      if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
-        if (!className.includes('author-avatar') && !className.includes('profile-pic') &&
-            !className.includes('author') && !id.includes('author') &&
-            !className.includes('headshot') && !id.includes('headshot') &&
-            (src.includes('icon') || src.includes('logo') || src.includes('social') || 
-             alt.includes('icon') || alt.includes('logo') || alt.includes('social'))) {
-          return true;
-        }
-      }
-      try {
-        const style = window.getComputedStyle(img);
-        if (style.backgroundImage !== 'none' && style.backgroundImage.includes(src)) {
-          return true;
-        }
-      } catch (e) {
-        // getComputedStyle may fail on some image elements (e.g., SVG in some browsers)
-        // This is expected - continue with other checks (graceful degradation)
-      }
-      if ((naturalWidth > 0 && naturalHeight > 0 && naturalWidth < 100 && naturalHeight < 100) &&
-          !alt && !img.closest('figure') && !img.closest('a')) {
-        let parent = img.parentElement;
-        for (let i = 0; i < 3 && parent; i++) {
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('social') || parentClass.includes('share') || 
-              parentClass.includes('icon') || parentClass.includes('logo') ||
-              parentId.includes('social') || parentId.includes('share') ||
-              parentId.includes('icon') || parentId.includes('logo')) {
-            return true;
-          }
-          parent = parent.parentElement;
-        }
-      }
-      return false;
     }
-    
-    function getImageCaptionModule(img) {
-      const figure = img.closest('figure');
-      if (figure) {
-        const figcaption = figure.querySelector('figcaption');
-        if (figcaption) return figcaption.textContent.trim();
-      }
-      const ariaLabel = img.getAttribute('aria-label');
-      if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
-      const title = img.getAttribute('title');
-      if (title && title.trim() && title !== img.alt) return title.trim();
-      const nextSibling = img.nextElementSibling;
-      if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
-        return nextSibling.textContent.trim();
-      }
-      const parent = img.parentElement;
-      if (parent) {
-        const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption, [class*="caption"]');
-        if (captionEl) {
-          const captionText = captionEl.textContent.trim();
-          if (captionText && captionText !== img.alt) return captionText;
-        }
-      }
-      return '';
+  }
+  if (textLower.includes("sign up to our newsletter") || textLower.includes("newsletter") && textLower.includes("subscribe")) {
+    return true;
+  }
+  if (textLower.includes("powered by salesforce") || textLower.includes("marketing cloud")) {
+    return true;
+  }
+  for (const excluded of EXCLUDED_CLASSES2) {
+    const pattern = new RegExp(`\\b${excluded}\\b`);
+    if (pattern.test(className) || pattern.test(id) || className === excluded || className.startsWith(excluded + "-") || className.endsWith("-" + excluded)) {
+      return true;
     }
-    
-    // Content finder module functions (inlined)
-    function isLikelyContentContainerModule(element) {
-      const className = String(element.className || '').toLowerCase();
-      const id = (element.id || '').toLowerCase();
-      const contentIndicators = [
-        'article', 'content', 'post', 'entry', 'main', 'story', 'text'
-      ];
-      for (const indicator of contentIndicators) {
-        if (className.includes(indicator) || id.includes(indicator)) {
-          return true;
-        }
+  }
+  if (!isSemanticContainer) {
+    let parent = element.parentElement;
+    let iterations = 0;
+    const maxIterations = 50;
+    while (parent && parent !== document.body && iterations < maxIterations) {
+      iterations++;
+      const parentClass = String(parent.className || "").toLowerCase();
+      const parentId = (parent.id || "").toLowerCase();
+      const parentTag = parent.tagName.toLowerCase();
+      const clearAdIndicators = [/\bad\b/, /\badvertisement\b/, /\bsponsor\b/];
+      const isClearAd = clearAdIndicators.some(
+        (indicator) => indicator.test(parentClass) || indicator.test(parentId)
+      );
+      if (isClearAd || parentTag === "aside") {
+        return true;
       }
-      return false;
+      parent = parent.parentElement;
     }
-    
-    function calculateContentScoreModule(element, isLikelyContentContainer) {
-      const paragraphs = element.querySelectorAll('p');
-      const headings = element.querySelectorAll('h1, h2, h3, h4, h5, h6');
-      const links = element.querySelectorAll('a');
-      const text = element.textContent || '';
-      const textLength = text.length;
-      let score = paragraphs.length * 10;
-      score += headings.length * 5;
-      score += Math.min(textLength / 100, 50);
-      const linkDensity = paragraphs.length > 0 
-        ? links.length / Math.max(paragraphs.length, 1)
-        : links.length / Math.max(textLength / 100, 1);
-      if (linkDensity > 1.0) {
-        score *= 0.5;
-      } else if (linkDensity > 0.7) {
-        score *= 0.75;
-      } else if (linkDensity > 0.5) {
+  }
+  return false;
+}
+
+function isFootnoteLink(element) {
+  if (element.tagName.toLowerCase() !== "a")
+    return false;
+  const href = element.getAttribute("href") || "";
+  if (href === "#" || href.startsWith("#") && href.length > 1 || href.includes("#note")) {
+    const text = (element.textContent || "").trim();
+    if (/^[\d\s]+$/.test(text) || /^[←→↑↓↗↘↩]+$/.test(text) || text.toLowerCase().includes("open these")) {
+      return true;
+    }
+    const img = element.querySelector("img");
+    if (img && (img.alt === "\u21A9" || img.src.includes("emoji") || String(img.className || "").includes("emoji"))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isIcon(element) {
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === "svg")
+    return true;
+  const className = String(element.className || "").toLowerCase();
+  const id = (element.id || "").toLowerCase();
+  if (className.includes("icon-") || className.includes("icon") || id.includes("icon")) {
+    return true;
+  }
+  if (tagName === "span" || tagName === "i" || tagName === "em" || tagName === "sup") {
+    const text = (element.textContent || "").trim();
+    if (text.length <= 3 && /[←→↑↓↗↘◀▶▲▼↩]/.test(text)) {
+      return true;
+    }
+    if (tagName === "sup" && text.toLowerCase().includes("open these")) {
+      return true;
+    }
+  }
+  if (tagName === "img") {
+    const imgElement = (
+      /** @type {HTMLImageElement} */
+      element
+    );
+    const alt = (imgElement.alt || "").trim();
+    const src = (imgElement.src || "").toLowerCase();
+    if (alt === "\u21A9" || /[←→↑↓↗↘↩]/.test(alt) || src.includes("emoji") && alt.includes("arrow")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isNavigationParagraph(text, navPatternsStartsWith, paywallPatterns) {
+  const textTrimmed = text.trim();
+  const textLength = textTrimmed.length;
+  if (textLength > 200) {
+    return false;
+  }
+  const linkCount = (textTrimmed.match(/<a\s+/gi) || []).length;
+  const textWithoutLinks = textTrimmed.replace(/<[^>]+>/g, "").trim();
+  const linkDensity = textWithoutLinks.length > 0 ? linkCount / (textWithoutLinks.length / 50) : linkCount;
+  if (linkCount >= 2 && textLength < 100) {
+    return true;
+  }
+  if (navPatternsStartsWith.some((pattern) => pattern.test(textTrimmed))) {
+    return true;
+  }
+  const textLower = text.toLowerCase();
+  if (paywallPatterns.some((pattern) => textLower.includes(pattern.toLowerCase()))) {
+    return true;
+  }
+  return false;
+}
+
+function isWidget(win, element) {
+  const style = safeGetComputedStyle(win, element);
+  if (!style)
+    return false;
+  const position = style.position;
+  if (position !== "fixed" && position !== "absolute")
+    return false;
+  const rect = element.getBoundingClientRect();
+  if (rect.width > 400 || rect.height > 400)
+    return false;
+  const paragraphs = element.querySelectorAll("p");
+  if (paragraphs.length > 2)
+    return false;
+  return true;
+}
+
+function shouldSkipStronglyExcluded(element) {
+  const className = String(element.className || "").toLowerCase();
+  const id = (element.id || "").toLowerCase();
+  const strongPatterns = [/\bad\b/, /\bads\b/, /\bsponsor\b/];
+  for (const pattern of strongPatterns) {
+    if (pattern.test(className) || pattern.test(id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// --- Discover ---
+function calculateContentScore(win, element) {
+  const paragraphs = element.querySelectorAll("p");
+  const headings = element.querySelectorAll("h1, h2, h3, h4, h5, h6");
+  const links = element.querySelectorAll("a");
+  const text = element.textContent || "";
+  const textLength = text.length;
+  let score = paragraphs.length * 10;
+  score += headings.length * 5;
+  score += Math.min(textLength / 100, 50);
+  try {
+    const rect = element.getBoundingClientRect();
+    const viewportWidth = win.innerWidth || document.documentElement.clientWidth;
+    const viewportHeight = win.innerHeight || document.documentElement.clientHeight;
+    if (viewportWidth > 0 && viewportHeight > 0) {
+      const centerX = viewportWidth / 2;
+      const centerY = viewportHeight / 2;
+      const elementCenterX = rect.left + rect.width / 2;
+      const elementCenterY = rect.top + rect.height / 2;
+      const distanceFromCenter = Math.sqrt(
+        Math.pow(elementCenterX - centerX, 2) + Math.pow(elementCenterY - centerY, 2)
+      );
+      const maxDistance = Math.sqrt(Math.pow(viewportWidth, 2) + Math.pow(viewportHeight, 2));
+      const normalizedDistance = maxDistance > 0 ? distanceFromCenter / maxDistance : 0;
+      if (normalizedDistance < 0.3)
+        score += 10;
+      else if (normalizedDistance < 0.5)
+        score += 5;
+      else if (normalizedDistance > 0.8)
         score *= 0.9;
+      const isVisible = rect.top < viewportHeight && rect.bottom > 0 && rect.left < viewportWidth && rect.right > 0;
+      if (isVisible)
+        score += 5;
+    }
+  } catch (e) {
+  }
+  const id = (element.id || "").toLowerCase();
+  const className = String(element.className || "").toLowerCase();
+  if (id === "root" || id === "app" || id === "__next" || className.includes("notion-page") || element.hasAttribute("data-reactroot")) {
+    if (textLength >= 500)
+      score += 50;
+  }
+  let navigationLinkLength = 0;
+  let totalLinkTextLength = 0;
+  for (const link of Array.from(links)) {
+    const linkText = (link.textContent || "").trim();
+    if (linkText.length > 2 && linkText.length < 200) {
+      totalLinkTextLength += linkText.length;
+      if (!link.closest("p")) {
+        navigationLinkLength += linkText.length;
       }
-      const commaCount = (text.match(/,/g) || []).length;
-      if (commaCount > 10) {
-        score *= 1.2;
-      } else if (commaCount > 5) {
-        score *= 1.1;
+    }
+  }
+  const linkDensity = textLength > 0 ? navigationLinkLength / textLength : 0;
+  if (linkDensity > 0.3)
+    score *= 0.4;
+  else if (linkDensity > 0.2)
+    score *= 0.6;
+  else if (linkDensity > 0.1)
+    score *= 0.8;
+  const contentLinkRatio = totalLinkTextLength > 0 ? (totalLinkTextLength - navigationLinkLength) / totalLinkTextLength : 0;
+  if (contentLinkRatio > 0.7 && links.length > 0) {
+    score *= 1.1;
+  }
+  const commaCount = (text.match(/,/g) || []).length;
+  if (commaCount > 10)
+    score *= 1.2;
+  else if (commaCount > 5)
+    score *= 1.1;
+  const sentenceCount = (text.match(/[.!?]+\s+/g) || []).length;
+  if (sentenceCount > 5)
+    score += Math.min(sentenceCount * 2, 30);
+  const tagName = element.tagName.toLowerCase();
+  if (tagName === "article")
+    score *= 2;
+  else if (tagName === "main")
+    score *= 1.5;
+  else if (tagName === "section" && paragraphs.length >= 3)
+    score *= 1.2;
+  if (isLikelyContentContainer(element))
+    score += 100;
+  if (textLength < 100)
+    score *= 0.5;
+  else if (textLength < 200)
+    score *= 0.8;
+  const lists = element.querySelectorAll("ul, ol");
+  if (lists.length > paragraphs.length * 3 && paragraphs.length < 3) {
+    score *= 0.6;
+  }
+  const textLower = text.toLowerCase();
+  if (textLower.includes("get the latest") && textLower.includes("inbox") || textLower.includes("salesforce marketing cloud")) {
+    score -= 1e3;
+  }
+  const emailInputs = element.querySelectorAll('input[type="email"]');
+  if (emailInputs.length > 0) {
+    const hasNewsletterText = textLower.includes("newsletter") || textLower.includes("subscribe");
+    if (hasNewsletterText)
+      score -= 1e3;
+    else
+      score -= 50;
+  }
+  const images = element.querySelectorAll("img");
+  if (images.length > 0 && images.length < 20) {
+    score += Math.min(images.length * 3, 20);
+  }
+  let longParagraphs = 0;
+  for (const p of Array.from(paragraphs)) {
+    if ((p.textContent || "").trim().length > 200) {
+      longParagraphs++;
+    }
+  }
+  if (longParagraphs > 3)
+    score += longParagraphs * 5;
+  return score;
+}
+
+function findMainContent(win, doc, isExcluded2) {
+  const spaSelectors = [
+    "#root",
+    "#app",
+    "#__next",
+    "[data-reactroot]",
+    "[ng-app]",
+    ".notion-page-content",
+    ".notion-page"
+  ];
+  for (const selector of spaSelectors) {
+    try {
+      const spaRoot = doc.querySelector(selector);
+      if (spaRoot) {
+        const spaText = (spaRoot.textContent || "").trim();
+        if (spaText.length >= 500) {
+          const specificContent = spaRoot.querySelector('article, main, [role="main"], .article-content, .post-content');
+          if (specificContent && (specificContent.textContent || "").trim().length >= 500) {
+            if (!isExcluded2(specificContent))
+              return specificContent;
+          }
+          if (!isExcluded2(spaRoot) || isLikelyContentContainer(spaRoot)) {
+            return spaRoot;
+          }
+        }
       }
-      const sentenceCount = (text.match(/[.!?]+\s+/g) || []).length;
-      if (sentenceCount > 5) {
-        score += Math.min(sentenceCount * 2, 30);
+    } catch (e) {
+    }
+  }
+  const article = doc.querySelector("article");
+  if (article) {
+    const articleText = (article.textContent || "").trim();
+    if (articleText.length > 500) {
+      const isRelatedArticle = article.querySelector(".gc__image-placeholder") !== null || article.closest("aside, .related, .sidebar") !== null;
+      if (!isRelatedArticle && !isExcluded2(article)) {
+        return article;
       }
-      const tagName = element.tagName.toLowerCase();
-      if (tagName === 'article') {
-        score *= 2.0;
-      } else if (tagName === 'main') {
-        score *= 1.5;
-      } else if (tagName === 'section' && paragraphs.length >= 3) {
-        score *= 1.2;
+    }
+  }
+  const main = doc.querySelector("main");
+  if (main) {
+    const mainText = (main.textContent || "").trim();
+    if (mainText.length > 100) {
+      const specificContent = main.querySelector(".wysiwyg, .article-content, .post-content");
+      if (specificContent && (specificContent.textContent || "").trim().length > 500) {
+        if (!isExcluded2(specificContent))
+          return specificContent;
       }
-      if (isLikelyContentContainer(element)) {
-        score += 100;
+      if (!isExcluded2(main))
+        return main;
+    }
+  }
+  const contentSelectors = [
+    '[role="main"]',
+    ".article-content",
+    ".post-content",
+    ".entry-content",
+    ".content",
+    ".post-body",
+    ".article-body",
+    ".entry-body",
+    "#content",
+    "#main-content",
+    "#article-content",
+    ".wp-block-post-content",
+    ".entry",
+    ".post",
+    ".prose",
+    ".article-text",
+    ".story-body",
+    ".wysiwyg",
+    ".wysiwyg--all-content"
+  ];
+  for (const selector of contentSelectors) {
+    try {
+      const element = doc.querySelector(selector);
+      if (element) {
+        const elementText = (element.textContent || "").trim();
+        if (elementText.length > 100) {
+          if (isLikelyContentContainer(element) || !isExcluded2(element)) {
+            return element;
+          }
+        }
       }
-      if (textLength < 100) {
-        score *= 0.5;
-      } else if (textLength < 200) {
-        score *= 0.8;
+    } catch (e) {
+    }
+  }
+  const candidates = Array.from(doc.querySelectorAll("div, article, main, section"));
+  let bestCandidate = null;
+  let maxScore = 0;
+  for (const candidate of candidates) {
+    if (!isLikelyContentContainer(candidate) && isExcluded2(candidate))
+      continue;
+    const candidateText = (candidate.textContent || "").trim();
+    if (candidateText.length < 100)
+      continue;
+    const score = calculateContentScore(win, candidate);
+    if (score > 100)
+      return candidate;
+    if (score > maxScore) {
+      maxScore = score;
+      bestCandidate = candidate;
+    }
+  }
+  return bestCandidate && maxScore > 0 ? bestCandidate : null;
+}
+
+function hasSubstantialContent(element) {
+  const text = (element.textContent || "").trim();
+  const paragraphs = element.querySelectorAll("p");
+  return text.length > 100 && (paragraphs.length >= 1 || text.length > 300);
+}
+
+function isLikelyContentContainer(element) {
+  const className = String(element.className || "").toLowerCase();
+  const id = (element.id || "").toLowerCase();
+  const contentIndicators = [
+    "article",
+    "content",
+    "post",
+    "entry",
+    "main",
+    "story",
+    "text"
+  ];
+  for (const indicator of contentIndicators) {
+    if (className.includes(indicator) || id.includes(indicator)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// --- Metadata ---
+function extractAuthorFromUrl(url) {
+  if (!url)
+    return null;
+  try {
+    const profileMatch = url.match(/\/(?:profile|author)\/([^\/\?]+)/i);
+    if (profileMatch) {
+      const slug = profileMatch[1];
+      const parts = slug.split(/[-_]/);
+      if (parts.length > 1) {
+        const name2 = parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join(" ");
+        if (name2.length > 2 && name2.length < 100)
+          return name2;
       }
-      const lists = element.querySelectorAll('ul, ol');
-      if (lists.length > paragraphs.length * 3 && paragraphs.length < 3) {
-        score *= 0.6;
-      } else if (lists.length > paragraphs.length * 2 && paragraphs.length < 5) {
-        score *= 0.8;
+      const camelCaseMatch = slug.match(/^([a-z]+)([A-Z][a-z]*)$/);
+      if (camelCaseMatch) {
+        const name2 = [
+          camelCaseMatch[1].charAt(0).toUpperCase() + camelCaseMatch[1].slice(1).toLowerCase(),
+          camelCaseMatch[2].charAt(0).toUpperCase() + camelCaseMatch[2].slice(1).toLowerCase()
+        ].join(" ");
+        if (name2.length > 2 && name2.length < 100)
+          return name2;
       }
-      const textLower = text.toLowerCase();
-      if (textLower.includes('get the latest') && textLower.includes('inbox') ||
-          textLower.includes('email powered by') ||
-          textLower.includes('salesforce marketing cloud') ||
-          textLower.includes('marketing cloud')) {
-        score -= 1000;
-      }
-      const emailInputs = element.querySelectorAll('input[type="email"]');
-      if (emailInputs.length > 0) {
-        const hasNewsletterText = textLower.includes('newsletter') || 
-                                textLower.includes('subscribe') ||
-                                textLower.includes('get the latest') ||
-                                textLower.includes('inbox') ||
-                                textLower.includes('marketing cloud');
-        if (hasNewsletterText) {
-          score -= 1000;
+      const name = slug.charAt(0).toUpperCase() + slug.slice(1).toLowerCase();
+      if (name.length > 2 && name.length < 100)
+        return name;
+    }
+  } catch (e) {
+  }
+  return null;
+}
+
+function extractMetadata(doc, baseUrl) {
+  const metadata = {
+    title: "",
+    author: "",
+    publishDate: ""
+  };
+  const h1InArticle = doc.querySelector("article h1");
+  if (h1InArticle && isValidArticleTitle(h1InArticle)) {
+    metadata.title = cleanHeadingText(h1InArticle.textContent || "");
+  }
+  if (!metadata.title) {
+    const h1InMain = doc.querySelector("main h1");
+    if (h1InMain && isValidArticleTitle(h1InMain)) {
+      metadata.title = cleanHeadingText(h1InMain.textContent || "");
+    }
+  }
+  if (!metadata.title) {
+    const firstH1 = doc.querySelector("h1");
+    if (firstH1 && isValidArticleTitle(firstH1)) {
+      metadata.title = cleanHeadingText(firstH1.textContent || "");
+    }
+  }
+  if (!metadata.title) {
+    metadata.title = doc.title || "";
+  }
+  const authorSelectors = [
+    'meta[name="author"]',
+    'meta[name="citation_author"]',
+    'meta[property="article:author"]',
+    '[rel="author"]',
+    ".author",
+    ".byline",
+    ".meta-author",
+    '[itemprop="author"]',
+    'a[rel="author"]',
+    'a[href*="/author/"]',
+    'a[href*="/profile/"]'
+  ];
+  for (const selector of authorSelectors) {
+    try {
+      const element = doc.querySelector(selector);
+      if (element) {
+        let authorText = "";
+        if (element.tagName === "META") {
+          authorText = element.getAttribute("content") || "";
         } else {
-          score -= 50;
+          authorText = (element.textContent || "").trim();
         }
-      }
-      if (textLower.includes('marketing cloud') || textLower.includes('salesforce')) {
-        score -= 500;
-      }
-      const images = element.querySelectorAll('img');
-      if (images.length > 0 && images.length < 20) {
-        score += Math.min(images.length * 3, 20);
-      }
-      let longParagraphs = 0;
-      for (const p of paragraphs) {
-        if (p.textContent.trim().length > 200) {
-          longParagraphs++;
-        }
-      }
-      if (longParagraphs > 3) {
-        score += longParagraphs * 5;
-      }
-      return score;
-    }
-    
-    function hasSubstantialContentModule(element) {
-      const text = element.textContent.trim();
-      const paragraphs = element.querySelectorAll('p');
-      const headings = element.querySelectorAll('h1, h2, h3, h4, h5, h6');
-      
-      // More lenient: accept if has paragraphs OR substantial text OR headings
-      // This helps with sites like LessWrong where content might be in non-standard containers
-      return (text.length > 100 && (paragraphs.length >= 1 || text.length > 300)) ||
-             (paragraphs.length >= 3) || // At least 3 paragraphs
-             (headings.length >= 1 && paragraphs.length >= 1); // At least 1 heading and 1 paragraph
-    }
-    
-    // Helper function to check if element is a widget (Intercom, chat, etc.)
-    // Must be defined at module level to be accessible in emergency fallback
-    function isWidget(element) {
-      if (!element) return false;
-      const className = String(element.className || '').toLowerCase();
-      const id = (element.id || '').toLowerCase();
-      const tagName = element.tagName.toLowerCase();
-      
-      // Check for widget indicators
-      const widgetPatterns = [
-        'intercom', 'widget', 'chat', 'support', 'popup', 'modal',
-        'notification', 'banner', 'overlay', 'sidebar-widget',
-        'floating', 'fixed', 'sticky-widget'
-      ];
-      
-      // Check class and id
-      for (const pattern of widgetPatterns) {
-        if (className.includes(pattern) || id.includes(pattern)) {
-          return true;
-        }
-      }
-      
-      // Check for common widget attributes
-      if (element.hasAttribute('data-widget') || 
-          element.hasAttribute('data-intercom') ||
-          element.hasAttribute('data-chat')) {
-        return true;
-      }
-      
-      // Check if element is positioned fixed/absolute and small (likely widget)
-      try {
-        const style = window.getComputedStyle(element);
-        if ((style.position === 'fixed' || style.position === 'absolute') &&
-            (parseInt(style.width) < 500 || parseInt(style.height) < 500)) {
-          // But exclude if it has substantial content (paragraphs)
-          const paragraphs = element.querySelectorAll('p');
-          if (paragraphs.length < 3) {
-            return true;
-          }
-        }
-      } catch (e) {
-        // Ignore style errors
-      }
-      
-      return false;
-    }
-    
-    function findMainContentModule(isExcluded, isLikelyContentContainer, calculateContentScore) {
-      // Strategy 1: Try semantic HTML elements first (most reliable)
-      const article = document.querySelector('article');
-      if (article && !isWidget(article)) {
-        const articleScore = calculateContentScore(article);
-        // For article, be more lenient - if it has paragraphs, use it even if score is low
-        const hasParagraphs = article.querySelectorAll('p').length > 0;
-        if ((articleScore > 0 || hasParagraphs) && hasSubstantialContentModule(article)) {
-          return article;
-        }
-      }
-      const main = document.querySelector('main');
-      if (main && !isWidget(main)) {
-        const mainScore = calculateContentScore(main);
-        // For main, be more lenient - if it has paragraphs, use it even if score is low
-        const hasParagraphs = main.querySelectorAll('p').length > 0;
-        if ((mainScore > 0 || hasParagraphs) && hasSubstantialContentModule(main)) {
-          return main;
-        }
-      }
-      
-      // Strategy 2: Try role="main" or role="article"
-      const roleMain = document.querySelector('[role="main"], [role="article"]');
-      if (roleMain && !isWidget(roleMain)) {
-        const roleScore = calculateContentScore(roleMain);
-        const hasParagraphs = roleMain.querySelectorAll('p').length > 0;
-        if ((roleScore > 0 || hasParagraphs) && hasSubstantialContentModule(roleMain)) {
-          return roleMain;
-        }
-      }
-      
-      // Strategy 3: Try common content IDs/classes
-      const commonSelectors = [
-        '#content', '#main-content', '#article-content', '#post-content',
-        '.content', '.main-content', '.article-content', '.post-content',
-        '.entry-content', '.article-body', '.post-body'
-      ];
-      for (const selector of commonSelectors) {
-        try {
-          const element = document.querySelector(selector);
-          if (element && !isExcluded(element) && !isWidget(element)) {
-            const score = calculateContentScore(element);
-            const hasParagraphs = element.querySelectorAll('p').length > 0;
-            if ((score > 0 || hasParagraphs) && hasSubstantialContentModule(element)) {
-              return element;
-            }
-          }
-        } catch (e) {
-          // Invalid selector, continue
-        }
-      }
-      
-      // Strategy 3.5: Try to find content containers by class patterns (for sites like LessWrong)
-      // Look for containers with class names that suggest content areas
-      const contentClassPatterns = [
-        /tableofcontents/i, /toc/i, /layout/i, /article/i, /post/i,
-        /content/i, /main/i, /body/i, /entry/i, /story/i
-      ];
-      const allDivs = Array.from(document.querySelectorAll('div'));
-      for (const div of allDivs) {
-        if (isExcluded(div) || isWidget(div)) continue;
-        const className = String(div.className || '').toLowerCase();
-        const paragraphs = div.querySelectorAll('p');
-        const textLength = div.textContent.trim().length;
-        
-        // Check if class name matches content patterns and has substantial content
-        const matchesPattern = contentClassPatterns.some(pattern => pattern.test(className));
-        if (matchesPattern && paragraphs.length >= 10 && textLength > 5000) {
-          // This looks like a content container
-          if (hasSubstantialContentModule(div)) {
-            return div;
-          }
-        }
-      }
-      
-      // Strategy 4: Find best candidate by score (original logic)
-      let bestElement = null;
-      let bestScore = 0;
-      const candidates = document.querySelectorAll('div, section, article, main');
-      for (const candidate of Array.from(candidates)) {
-        if (isExcluded(candidate) || isWidget(candidate)) continue;
-        const score = calculateContentScore(candidate);
-        const hasParagraphs = candidate.querySelectorAll('p').length > 0;
-        // Be more lenient: accept if has paragraphs even with low score
-        if ((score > bestScore || (hasParagraphs && bestScore === 0)) && hasSubstantialContentModule(candidate)) {
-          bestScore = score;
-          bestElement = candidate;
-        }
-      }
-      
-      // Strategy 5: Last resort - find container with most paragraphs
-      // This is critical for sites like LessWrong that don't use semantic HTML
-      if (!bestElement) {
-        const allContainers = Array.from(document.querySelectorAll('div, section'));
-        let maxParagraphs = 0;
-        let bestContainer = null;
-        let bestTextLength = 0;
-        
-        for (const container of allContainers) {
-          if (isExcluded(container) || isWidget(container)) continue;
-          const paragraphs = container.querySelectorAll('p');
-          const textLength = container.textContent.trim().length;
-          
-          // Prioritize containers with many paragraphs and substantial text
-          // This helps find content containers on sites without semantic HTML
-          if (paragraphs.length >= 10 && textLength > 5000) {
-            // If this container has significantly more paragraphs, prefer it
-            if (paragraphs.length > maxParagraphs + 5 || 
-                (paragraphs.length > maxParagraphs && textLength > bestTextLength * 1.5)) {
-              maxParagraphs = paragraphs.length;
-              bestContainer = container;
-              bestTextLength = textLength;
-            }
-          } else if (paragraphs.length > maxParagraphs && textLength > 500) {
-            // Fallback for smaller content
-            maxParagraphs = paragraphs.length;
-            bestContainer = container;
-            bestTextLength = textLength;
-          }
-        }
-        
-        // Accept if we found a container with substantial content
-        if (bestContainer && maxParagraphs >= 5) {
-          return bestContainer;
-        }
-      }
-      
-      return bestElement;
-    }
-    
-    // Element filter module functions (inlined)
-    function isNavigationParagraphModule(text, NAV_PATTERNS_STARTS_WITH, PAYWALL_PATTERNS) {
-      const textTrimmed = text.trim();
-      const textLength = textTrimmed.length;
-      if (textLength > 200) {
-        return false;
-      }
-      const linkCount = (textTrimmed.match(/<a\s+/gi) || []).length;
-      const textWithoutLinks = textTrimmed.replace(/<[^>]+>/g, '').trim();
-      const linkDensity = textWithoutLinks.length > 0 ? linkCount / (textWithoutLinks.length / 50) : linkCount;
-      if (linkCount >= 2 && textLength < 100) {
-        return true;
-      }
-      if (NAV_PATTERNS_STARTS_WITH.some(pattern => pattern.test(textTrimmed))) {
-        return true;
-      }
-      const textLower = text.toLowerCase();
-      if (PAYWALL_PATTERNS.some(pattern => textLower.includes(pattern))) {
-        return true;
-      }
-      return false;
-    }
-    
-    function isExcludedModule(element, constants, helpers) {
-      const {
-        EXCLUDED_CLASSES,
-        PAYWALL_CLASSES,
-        NAV_PATTERNS_CONTAINS,
-        COURSE_AD_PATTERNS
-      } = constants;
-      
-      const {
-        isFootnoteLink,
-        isIcon
-      } = helpers;
-      
-      const tagName = element.tagName.toLowerCase();
-      const isSemanticContainer = tagName === 'article' || tagName === 'main';
-      const className = String(element.className || '').toLowerCase();
-      const id = (element.id || '').toLowerCase();
-      const isImageOrFigure = tagName === 'img' || tagName === 'figure';
-      
-      // CRITICAL: Exclude widgets (Intercom, chat, support, etc.)
-      const widgetPatterns = [
-        'intercom', 'widget', 'chat', 'support', 'popup', 'modal',
-        'notification', 'banner', 'overlay', 'sidebar-widget',
-        'floating', 'fixed', 'sticky-widget', 'live-chat', 'help-widget'
-      ];
-      for (const pattern of widgetPatterns) {
-        if (className.includes(pattern) || id.includes(pattern)) {
-          return true;
-        }
-      }
-      
-      // Check for widget attributes
-      if (element.hasAttribute('data-widget') || 
-          element.hasAttribute('data-intercom') ||
-          element.hasAttribute('data-chat') ||
-          element.hasAttribute('data-support')) {
-        return true;
-      }
-      
-      let style = null;
-      try {
-        style = window.getComputedStyle(element);
-      } catch (e) {
-        return false;
-      }
-      
-      if (style) {
-        if (isImageOrFigure) {
-          if (style.display === 'none' || style.visibility === 'hidden') {
-            const hasLazySrc = element.hasAttribute('data-src') || 
-                              element.hasAttribute('data-lazy-src') ||
-                              element.hasAttribute('data-original') ||
-                              element.hasAttribute('data-srcset');
-            if (hasLazySrc) {
-              return false;
-            }
-            if (tagName === 'figure') {
-              const img = element.querySelector('img');
-              if (img) {
-                const imgHasLazySrc = img.hasAttribute('data-src') || 
-                                     img.hasAttribute('data-lazy-src') ||
-                                     img.hasAttribute('data-original') ||
-                                     img.hasAttribute('data-srcset');
-                if (imgHasLazySrc) {
-                  return false;
-                }
-              }
-            }
-            return true;
-          }
-        } else {
-          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
-            return true;
-          }
-        }
-      }
-      
-      if (tagName === 'iframe') {
-        const src = (element.src || '').toLowerCase();
-        const adPatterns = ['ad', 'ads', 'advertisement', 'doubleclick', 'googleads', 'pubmatic', 'openx', 'adsystem'];
-        if (adPatterns.some(pattern => src.includes(pattern))) {
-          return true;
-        }
-        const parent = element.parentElement;
-        if (parent) {
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('ad') || parentId.includes('ad') || 
-              parentClass.includes('advertisement') || parentId.includes('advertisement')) {
-            return true;
-          }
-        }
-        return true;
-      }
-      
-      if (isFootnoteLink(element)) return true;
-      if (isIcon(element)) return true;
-      if (tagName === 'aside' || element.getAttribute('role') === 'complementary') {
-        return true;
-      }
-      if (element.querySelector && element.querySelector('input[type="email"]')) {
-        return true;
-      }
-      
-      const adClasses = ['book-cta', 'course-cta', 'product-cta', 'course-ad', 'product-ad'];
-      if (adClasses.some(adClass => className.includes(adClass) || id.includes(adClass))) {
-        return true;
-      }
-      
-      const paywallClasses = [
-        'freebie-message', 'subscribe-text', 'message--freebie', 'subscribe-',
-        'paywall', 'subscription', 'freebie', 'article-limit', 'access-message'
-      ];
-      if (paywallClasses.some(paywallClass => className.includes(paywallClass) || id.includes(paywallClass))) {
-        return true;
-      }
-      
-      const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
-      const text = element.textContent || '';
-      const textLower = text.toLowerCase();
-      const textTrimmed = text.trim();
-      
-      if (isParagraphOrHeading) {
-        if (textTrimmed.length < 100 && 
-            (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed))) {
-          return true;
-        }
-        if (textTrimmed.length < 150 && 
-            (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
-             (/^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)))) {
-          return true;
-        }
-        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 100) {
-          return true;
-        }
-      } else {
-        if (/^\d+[,\s]\d+\s+words?$/i.test(textTrimmed) || /^\d+\s+words?$/i.test(textTrimmed)) {
-          return true;
-        }
-        if (/^original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?$/i.test(textTrimmed) ||
-            /^original\s+article\s*[•·]/i.test(textTrimmed) && /\d+\s*words?/i.test(textTrimmed)) {
-          return true;
-        }
-        if (textTrimmed.toLowerCase().startsWith('edited by') && textTrimmed.length < 200) {
-          return true;
-        }
-      }
-      
-      if (tagName === 'a' && textLower.includes('syndicate this essay')) {
-        return true;
-      }
-      
-      if ((textLower.includes('donate') || textLower.includes('donation')) && 
-          (textLower.includes('support') || textLower.includes('mission') || 
-           textLower.includes('select amount') || textLower.includes('per month'))) {
-        return true;
-      }
-      
-      const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
-      const hasPrice = pricePattern.test(text);
-      const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
-      if (hasPrice && isCourseAd) {
-        return true;
-      }
-      
-      if ((className.includes('summary') || id.includes('summary') || 
-           className.includes('quick-summary') || id.includes('quick-summary')) &&
-          (textLower.includes('measure ux & design impact') || 
-           textLower.includes('use the code') || textLower.includes('save 20%') ||
-           textLower.includes('save') && textLower.includes('off'))) {
-        return true;
-      }
-      
-      if (tagName.match(/^h[1-6]$/)) {
-        const headingText = textLower;
-        if (headingText.startsWith('meet ') && 
-            (headingText.includes('course') || headingText.includes('book') || 
-             headingText.includes('training') || headingText.includes('product') ||
-             headingText.includes('measure ux'))) {
-          let parent = element.parentElement;
-          let nextSibling = element.nextElementSibling;
-          for (let i = 0; i < 3 && (parent || nextSibling); i++) {
-            const checkText = ((parent ? parent.textContent : '') + 
-                             (nextSibling ? nextSibling.textContent : '')).toLowerCase();
-            if (checkText.includes('$') || checkText.includes('price') || 
-                checkText.includes('money-back') || checkText.includes('guarantee') ||
-                checkText.includes('495') || checkText.includes('799') ||
-                checkText.includes('250') || checkText.includes('395')) {
-              return true;
-            }
-            if (parent) parent = parent.parentElement;
-            if (nextSibling) nextSibling = nextSibling.nextElementSibling;
-          }
-        }
-        if (headingText.includes('video') && 
-            (headingText.includes('training') || headingText.includes('course'))) {
-          let parent = element.parentElement;
-          let nextSibling = element.nextElementSibling;
-          for (let i = 0; i < 3 && (parent || nextSibling); i++) {
-            const checkText = ((parent ? parent.textContent : '') + 
-                             (nextSibling ? nextSibling.textContent : '')).toLowerCase();
-            if (checkText.includes('$') || checkText.includes('price') || 
-                checkText.includes('money-back') || checkText.includes('guarantee')) {
-              return true;
-            }
-            if (parent) parent = parent.parentElement;
-            if (nextSibling) nextSibling = nextSibling.nextElementSibling;
-          }
-        }
-        if (headingText.includes('useful resources') || headingText.includes('further reading')) {
-          let nextSibling = element.nextElementSibling;
-          let linkCount = 0;
-          let textLength = 0;
-          for (let i = 0; i < 5 && nextSibling; i++) {
-            const links = nextSibling.querySelectorAll('a');
-            linkCount += links.length;
-            const siblingText = nextSibling.textContent.replace(/<[^>]+>/g, '').trim();
-            textLength += siblingText.length;
-            nextSibling = nextSibling.nextElementSibling;
-          }
-          if (linkCount >= 3 && textLength < 500) {
-            return true;
-          }
-        }
-        if (headingText.trim() === 'tags') {
-          return true;
-        }
-        if (headingText.includes('more from')) {
-          return true;
-        }
-        if (headingText.trim().toLowerCase() === 'related') {
-          return true;
-        }
-        if (headingText.includes('from the archive')) {
-          return true;
-        }
-      }
-      
-      if (tagName === 'hr' || tagName === 'separator' || 
-          element.getAttribute('role') === 'separator' ||
-          className.includes('separator') || id.includes('separator')) {
-        return true;
-      }
-      
-      if (className.includes('share-buttons') || className.includes('component-share-buttons') ||
-          className.includes('aria-font-adjusts') || className.includes('font-adjust') ||
-          id.includes('share-buttons') || id.includes('font-adjust')) {
-        return true;
-      }
-      
-      if (tagName === 'button') {
-        const buttonText = text.trim().toLowerCase();
-        if (buttonText === 'email' || buttonText === 'save' || buttonText === 'post' || 
-            buttonText === 'share' || buttonText.includes('syndicate')) {
-          return true;
-        }
-      }
-      
-      if (tagName === 'a') {
-        const href = (element.getAttribute('href') || '').toLowerCase();
-        const hasImage = element.querySelector('img');
-        const linkText = text.trim();
-        if (href.includes('/essay/') && hasImage && linkText.length > 30) {
-          const parent = element.parentElement;
-          if (parent) {
-            const siblingLinks = parent.querySelectorAll('a[href*="/essay/"]');
-            if (siblingLinks.length >= 2) {
-              return true;
-            }
-          }
-        }
-        const linkText2 = text.trim();
-        if (linkText2.startsWith('[') && linkText2.endsWith(']') && linkText2.length < 50) {
-          return true;
-        }
-      }
-      
-    if (textLower.includes('sign up to our newsletter') || 
-        textLower.includes('join more than') && textLower.includes('newsletter subscribers') ||
-        (textLower.includes('newsletter') && textLower.includes('subscribe') && 
-         element.querySelector('input[type="email"]'))) {
-      return true;
-    }
-    
-    if (/get\s+the\s+latest\s+.+\s+stories?\s+in\s+your\s+inbox/i.test(text)) {
-      return true;
-    }
-    
-    if (textLower.includes('email powered by') ||
-        textLower.includes('powered by salesforce') ||
-        textLower.includes('salesforce marketing cloud') ||
-        textLower.includes('marketing cloud') ||
-        (textLower.includes('privacy notice') && textLower.includes('terms')) ||
-        (textLower.includes('privacy') && textLower.includes('terms') && textLower.includes('conditions'))) {
-      return true;
-    }
-    
-    if (element.querySelector('input[type="email"]') || 
-        element.querySelector('input[name*="email"]') ||
-        element.querySelector('input[id*="email"]')) {
-      if (textLower.includes('newsletter') || textLower.includes('subscribe') ||
-          textLower.includes('signup') || textLower.includes('sign-up') ||
-          textLower.includes('get the latest') || textLower.includes('inbox') ||
-          textLower.includes('marketing cloud')) {
-        return true;
-      }
-    }
-    
-    const navTextPatterns = NAV_PATTERNS_CONTAINS;
-    if (!isSemanticContainer && !isImageOrFigure) {
-        const isParagraphOrHeading2 = tagName === 'p' || tagName.match(/^h[1-6]$/);
-        if (isParagraphOrHeading2) {
-        if (textTrimmed.length < 200 && navTextPatterns.some(pattern => pattern.test(text))) {
-          return true;
-        }
-      } else {
-        if (navTextPatterns.some(pattern => pattern.test(text))) {
-          return true;
-        }
-      }
-    }
-    
-    if (!isImageOrFigure) {
-      if (textLower.includes('email newsletter') || 
-          (textLower.includes('newsletter') && textLower.includes('email')) ||
-          textLower.includes('weekly tips') ||
-          (textLower.includes('trusted by') && textLower.includes('folks'))) {
-        let checkEl = element;
-        for (let i = 0; i < 3 && checkEl; i++) {
-          if (checkEl.querySelector && checkEl.querySelector('input[type="email"]')) {
-            return true;
-          }
-          checkEl = checkEl.parentElement;
-        }
-      }
-    }
-    
-    if (text.includes('$') || text.includes('€') || text.includes('£')) {
-      const adKeywords = ['video', 'training', 'course', 'get', 'buy', 'purchase', 
-                          'money-back', 'guarantee', 'enroll', 'sign up'];
-      const hasAdKeywords = adKeywords.some(keyword => textLower.includes(keyword));
-      if (hasAdKeywords && (text.includes('$') || text.match(/\$\s*\d+/))) {
-        return true;
-      }
-    }
-    
-    if (textLower.startsWith('meet ') && 
-        (textLower.includes('course') || textLower.includes('book') || 
-         textLower.includes('training') || textLower.includes('product'))) {
-      return true;
-    }
-    
-    if (isImageOrFigure) {
-      let hasExcludedClass = false;
-      for (const excluded of EXCLUDED_CLASSES) {
-        const pattern = new RegExp(`\\b${excluded}\\b`);
-        if (pattern.test(className) || pattern.test(id) ||
-            className === excluded || className.startsWith(excluded + '-') || className.endsWith('-' + excluded) ||
-            id === excluded || id.startsWith(excluded + '-') || id.endsWith('-' + excluded)) {
-          hasExcludedClass = true;
+        authorText = authorText.replace(/^by\s+/i, "").trim();
+        if (authorText && !authorText.startsWith("http") && authorText.length < 100) {
+          metadata.author = authorText;
           break;
         }
-      }
-      if (hasExcludedClass) {
-        return true;
-      }
-    } else {
-      for (const excluded of EXCLUDED_CLASSES) {
-        if (className.includes(excluded) || id.includes(excluded)) {
-          return true;
-        }
-      }
-    }
-    
-    if (!isSemanticContainer) {
-      let parent = element.parentElement;
-      if (isImageOrFigure) {
-        let iterations = 0;
-          const maxIterations = 50;
-        while (parent && parent !== document.body && iterations < maxIterations) {
-          iterations++;
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          const parentTag = parent.tagName.toLowerCase();
-          const clearAdIndicators = [
-            /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
-            'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container'
-          ];
-          const isClearAd = clearAdIndicators.some(indicator => {
-            if (typeof indicator === 'string') {
-              return parentClass.includes(indicator) || parentId.includes(indicator);
-            }
-            return indicator.test(parentClass) || indicator.test(parentId);
-          });
-          if (isClearAd || parentTag === 'iframe' || parentTag === 'aside') {
-            return true;
-          }
-          parent = parent.parentElement;
-        }
-      } else {
-          const isParagraphOrHeading3 = tagName === 'p' || tagName.match(/^h[1-6]$/);
-        let iterations = 0;
-          const maxIterations = 50;
-        while (parent && parent !== document.body && iterations < maxIterations) {
-          iterations++;
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          const parentText = parent.textContent || '';
-          const parentTag = parent.tagName.toLowerCase();
-            if (isParagraphOrHeading3) {
-            if (parentTag === 'aside' || parentTag === 'nav' || parentTag === 'footer' || parentTag === 'header') {
-              return true;
-            }
-            const clearAdIndicators = [
-              /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
-              'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container'
-            ];
-            const isClearAd = clearAdIndicators.some(indicator => {
-              if (typeof indicator === 'string') {
-                return parentClass.includes(indicator) || parentId.includes(indicator);
-              }
-              return indicator.test(parentClass) || indicator.test(parentId);
-            });
-            if (isClearAd) {
-              return true;
-            }
-            if (parentTag === 'section' && 
-                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
-              const articleLinks = parent.querySelectorAll('a[href*="/article/"], a[href*="/post/"], a[href*="/essay/"]');
-              if (articleLinks.length >= 2) {
-                return true;
-              }
-            }
-          } else {
-            if (parentTag === 'section' && 
-                (parentClass.includes('related-articles') || parentId.includes('related-articles'))) {
-              return true;
-            }
-            if (navTextPatterns.some(pattern => pattern.test(parentText))) {
-              return true;
-            }
-            if (parentTag === 'aside' && (parentClass.includes('ad') || parentId.includes('ad'))) {
-              return true;
-            }
-            for (const excluded of EXCLUDED_CLASSES) {
-              if (parentClass.includes(excluded) || parentId.includes(excluded)) {
-                return true;
-                }
-              }
-            }
-            parent = parent.parentElement;
-        }
-      }
-    }
-    
-    return false;
-    }
-    
-    // Metadata extractor module functions (inlined)
-    function isValidArticleTitleModule(h1Element) {
-      if (!h1Element || !h1Element.textContent) return false;
-      const text = h1Element.textContent.trim();
-      if (text.length < 5) return false;
-      const siteNamePatterns = ['home', 'about', 'contact', 'blog', 'news', 'archive'];
-      const lowerText = text.toLowerCase();
-      if (siteNamePatterns.some(pattern => lowerText === pattern)) return false;
-        return true;
-      }
-      
-    function extractAuthorFromUrlModule(url) {
-      if (!url) return null;
-      try {
-        const profileMatch = url.match(/\/(?:profile|author)\/([^\/\?]+)/i);
-        if (profileMatch) {
-          const slug = profileMatch[1];
-          const parts = slug.split(/[-_]/);
-          if (parts.length > 1) {
-            const name = parts
-              .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-              .join(' ');
-            if (name.length > 2 && name.length < 100) {
-              return name;
-            }
-          }
-          const singlePart = parts[0];
-          const camelCaseMatch = singlePart.match(/^([a-z]+)([A-Z][a-z]*)$/);
-          if (camelCaseMatch) {
-            const name = [
-              camelCaseMatch[1].charAt(0).toUpperCase() + camelCaseMatch[1].slice(1).toLowerCase(),
-              camelCaseMatch[2].charAt(0).toUpperCase() + camelCaseMatch[2].slice(1).toLowerCase()
-            ].join(' ');
-            if (name.length > 2 && name.length < 100) {
-              return name;
-            }
-          }
-          if (singlePart.length > 6 && /^[a-z]+$/.test(singlePart)) {
-            const commonEndings = ['a', 'ia', 'na', 'ra', 'la', 'sa'];
-            for (const ending of commonEndings) {
-              if (singlePart.endsWith(ending) && singlePart.length > ending.length + 3) {
-                const firstPart = singlePart.slice(0, -ending.length);
-                const secondPart = singlePart.slice(-ending.length);
-                if (firstPart.length >= 3 && firstPart.length <= 15 && 
-                    secondPart.length >= 3 && secondPart.length <= 15) {
-                  const name = [
-                    firstPart.charAt(0).toUpperCase() + firstPart.slice(1),
-                    secondPart.charAt(0).toUpperCase() + secondPart.slice(1)
-                  ].join(' ');
-                  if (name.length > 2 && name.length < 100) {
-                    return name;
-                  }
-                }
-              }
-            }
-            if (singlePart.length > 10) {
-              const mid = Math.floor(singlePart.length / 2);
-              const firstPart = singlePart.slice(0, mid);
-              const secondPart = singlePart.slice(mid);
-              if (firstPart.length >= 3 && secondPart.length >= 3) {
-                const name = [
-                  firstPart.charAt(0).toUpperCase() + firstPart.slice(1),
-                  secondPart.charAt(0).toUpperCase() + secondPart.slice(1)
-                ].join(' ');
-                if (name.length > 2 && name.length < 100) {
-                  return name;
-                }
-              }
-            }
-          }
-          const name = singlePart.charAt(0).toUpperCase() + singlePart.slice(1).toLowerCase();
-          if (name.length > 2 && name.length < 100) {
-            return name;
-          }
-        }
-      } catch (e) {
-        // Continue
-      }
-      return null;
-    }
-    
-    function getMonthNumberModule(monthName) {
-      const months = {
-        'january': '01', 'jan': '01',
-        'february': '02', 'feb': '02',
-        'march': '03', 'mar': '03',
-        'april': '04', 'apr': '04',
-        'may': '05',
-        'june': '06', 'jun': '06',
-        'july': '07', 'jul': '07',
-        'august': '08', 'aug': '08',
-        'september': '09', 'sep': '09', 'sept': '09',
-        'october': '10', 'oct': '10',
-        'november': '11', 'nov': '11',
-        'december': '12', 'dec': '12'
-      };
-      return months[monthName.toLowerCase()] || null;
-    }
-    
-    function parseDateToISOModule(dateStr, getMonthNumber) {
-      if (!dateStr) return null;
-      const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (isoMatch) {
-        return isoMatch[0];
-      }
-      try {
-        const date = new Date(dateStr);
-        if (!isNaN(date.getTime())) {
-          const year = date.getFullYear();
-          const month = String(date.getMonth() + 1).padStart(2, '0');
-          const day = String(date.getDate()).padStart(2, '0');
-          return `${year}-${month}-${day}`;
-        }
-      } catch (e) {
-        // Continue with regex parsing
-      }
-      const ordinalMatch = dateStr.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)\s+(\d{4})/i);
-      if (ordinalMatch) {
-        const day = ordinalMatch[1].padStart(2, '0');
-        const monthName = ordinalMatch[2];
-        const year = ordinalMatch[3];
-        const month = getMonthNumber(monthName);
-        if (month) {
-          return `${year}-${month}-${day}`;
-        }
-      }
-      const monthYearMatch = dateStr.match(/(\w+)\s+(\d{4})/i);
-      if (monthYearMatch) {
-        const monthName = monthYearMatch[1];
-        const year = monthYearMatch[2];
-        const month = getMonthNumber(monthName);
-        if (month) {
-          return `${year}-${month}`;
-        }
-      }
-      const yearMatch = dateStr.match(/^(\d{4})$/);
-      if (yearMatch) {
-        return yearMatch[1];
-      }
-      return null;
-    }
-    
-    // Content cleaner module functions (inlined)
-    function cleanHeadingTextModule(headingText) {
-      if (!headingText) return '';
-      return headingText
-        .replace(/\uFFFC/g, '')
-        .replace(/<OBJ>/g, '')
-        .replace(/<\/OBJ>/g, '')
-        .replace(/<[^>]+>/g, '')
-        .trim();
-    }
-    
-    // Create helper objects for dependency injection
-    const helpers = {
-      isFootnoteLink,
-      isIcon,
-      toAbsoluteUrl: (url) => toAbsoluteUrl(url, baseUrl),
-      normalizeImageUrl
-    };
-    
-    const constantsForModules = {
-      EXCLUDED_CLASSES,
-      PAYWALL_CLASSES,
-      NAV_PATTERNS_CONTAINS,
-      COURSE_AD_PATTERNS,
-      LOGO_PATTERNS: [
-        'logo', 'brand', 'icon', 'badge', 'watermark', 'sprite', 'spacer', 'blank', 'clear', 'pixel',
-        'youtube', 'facebook', 'twitter', 'instagram', 'linkedin', 'pinterest', 'rss',
-        'social-media', 'social-icon', 'share-icon', 'share-button',
-        'youtube-white-logo', 'youtube-logo', 'yt-logo',
-        'facebook-logo', 'twitter-logo', 'instagram-logo',
-        'arrow', 'chevron', 'bullet', 'dot', 'gradient', 'bg', 'background', 'shadow', 'border',
-        'divider', 'line', 'separator', 'spinner', 'loader', 'loading',
-        'placeholder', 'default', 'avatar', 'user', 'profile', 'gravatar',
-        'data:image/gif;base64,r0lgodlh',
-        'data:image/png;base64,i'
-      ]
-    };
-    
-    // Image processor module functions
-    // These are wrappers that call the inlined module functions with dependencies
-    function isPlaceholderUrl(url) {
-      // Module function doesn't need dependencies
-      return isPlaceholderUrlModule(url);
-    }
-    
-    function getBestSrcsetUrl(srcset) {
-      // Module function needs isPlaceholderUrl as dependency
-      return getBestSrcsetUrlModule(srcset, isPlaceholderUrl);
-    }
-    
-    function extractBestImageUrl(imgElement) {
-      // Module function needs isPlaceholderUrl and getBestSrcsetUrl as dependencies
-      return extractBestImageUrlModule(imgElement, isPlaceholderUrl, getBestSrcsetUrl);
-    }
-    
-    function isTrackingPixel(img) {
-      // Module function doesn't need dependencies
-      return isTrackingPixelModule(img);
-    }
-    
-    function isDecorativeImage(img) {
-      // Module function needs constants with LOGO_PATTERNS
-      return isDecorativeImageModule(img, constantsForModules);
-    }
-    
-    function getImageCaption(img) {
-      // Module function doesn't need dependencies
-      return getImageCaptionModule(img);
-    }
-    
-    // Content finder module functions
-    function isLikelyContentContainer(element) {
-      // Module function doesn't need dependencies
-      return isLikelyContentContainerModule(element);
-    }
-    
-    function calculateContentScore(element) {
-      // Module function needs isLikelyContentContainer as dependency
-      return calculateContentScoreModule(element, isLikelyContentContainer);
-    }
-    
-    // Original calculateContentScore implementation removed - using module version above
-    
-    // Use module function for findMainContent
-    // Note: The module function findMainContent is inlined above and takes dependencies as parameters
-    // We create a wrapper that calls it with the correct dependencies
-    // The inlined findMainContent from content-finder.js module expects:
-    // findMainContent(isExcluded, isLikelyContentContainer, calculateContentScore)
-    function findMainContent() {
-      // Call the inlined module function with dependencies
-      // All these functions are inlined from their respective modules
-      return findMainContentModule(isExcluded, isLikelyContentContainer, calculateContentScore);
-    }
-    
-    // Element filter module functions
-    function isExcluded(element) {
-      // Module function needs constants and helpers as dependencies
-      const helpers = {
-        isFootnoteLink: isFootnoteLink,
-        isIcon: isIcon
-      };
-      return isExcludedModule(element, constantsForModules, helpers);
-    }
-    
-    // Original isExcluded implementation removed - using module version above
-    
-    // Extract metadata
-    const metadata = {
-      title: '',
-      author: '',
-      publishDate: ''
-    };
-    
-    // Title - prefer h1 inside article/main, then first h1, then document.title
-    // This avoids picking up site/publication titles that appear before article content
-    // But with fallback for pages without article/main or multi-chapter books
-    let h1 = null;
-    let h1FromArticle = null;
-    const article = document.querySelector('article');
-    const main = document.querySelector('main');
-    
-    // Helper: Check if h1 looks like a valid article title (not site name)
-    function isValidArticleTitle(h1Element) {
-      // Module function doesn't need dependencies
-      return isValidArticleTitleModule(h1Element);
-    }
-    
-    
-    // First try: h1 inside article
-    if (article) {
-      h1FromArticle = article.querySelector('h1');
-      if (h1FromArticle && isValidArticleTitle(h1FromArticle)) {
-        h1 = h1FromArticle;
-      }
-    }
-    
-    // Second try: h1 inside main (if not in article or article h1 was invalid)
-    if (!h1 && main) {
-      const h1FromMain = main.querySelector('h1');
-      if (h1FromMain && isValidArticleTitle(h1FromMain)) {
-        h1 = h1FromMain;
-      }
-    }
-    
-    // Third try: first h1 on page (fallback for pages without article/main or multi-chapter books)
-    // This is safe because:
-    // - Pages without article/main will use this (old behavior preserved)
-    // - Multi-chapter books have h1 OUTSIDE main (as per prompts.js documentation)
-    // - Only used if article/main h1 was not found or invalid
-    if (!h1) {
-      const firstH1 = document.querySelector('h1');
-      if (firstH1 && isValidArticleTitle(firstH1)) {
-        h1 = firstH1;
-      }
-    }
-    
-    // Final fallback: use article/main h1 even if validation failed (better than nothing)
-    if (!h1 && h1FromArticle) {
-      h1 = h1FromArticle;
-    }
-    
-    if (h1 && h1.textContent.trim()) {
-      const h1Text = h1.textContent.trim();
-      // Clean title from OBJ markers and Object Replacement Character (U+FFFC)
-      // Use cleanHeadingText from content-cleaner module
-      metadata.title = cleanHeadingTextModule(h1Text) || h1Text;
-    } else {
-      metadata.title = document.title || '';
-    }
-    
-    // Metadata extractor module functions
-    function extractAuthorFromUrl(url) {
-      // Module function doesn't need dependencies
-      return extractAuthorFromUrlModule(url);
-    }
-    
-    function getMonthNumber(monthName) {
-      // Module function doesn't need dependencies
-      return getMonthNumberModule(monthName);
-    }
-    
-    function parseDateToISO(dateStr) {
-      // Module function needs getMonthNumber as dependency
-      return parseDateToISOModule(dateStr, getMonthNumber);
-    }
-    
-    // Original extractAuthorFromUrl implementation removed - using module version above
-    
-    const authorSelectors = [
-      'meta[name="author"]',
-      'meta[name="citation_author"]', // Noema uses this
-      'meta[property="article:author"]',
-      '[rel="author"]',
-      '.author', '.byline', '.meta-author', '.meta-text.meta-author',
-      '[itemprop="author"]',
-      'a[rel="author"]',
-      'a[href*="/author/"]', // Link to author page
-      'a[href*="/profile/"]' // Link to profile page (The Guardian uses this)
-    ];
-    
-    for (const selector of authorSelectors) {
-      try {
-        const element = document.querySelector(selector);
-        if (element) {
-          // First try to get text content
-          let authorText = element.textContent || element.getAttribute('content') || '';
-          
-          // If text is empty or looks like a URL, try to extract from href
-          if (!authorText.trim() || authorText.includes('http://') || authorText.includes('https://') || authorText.includes('/profile/') || authorText.includes('/author/')) {
-            const href = element.getAttribute('href') || '';
-            if (href) {
-              const extractedName = extractAuthorFromUrl(href);
-              if (extractedName) {
-                metadata.author = extractedName;
-                break;
-              }
-              // If href is a URL, use it for extraction
-              authorText = href;
-            }
-          }
-          
-          if (authorText.trim()) {
-            // If it's still a URL, try to extract name from it
-            if (authorText.includes('/profile/') || authorText.includes('/author/')) {
-              const extractedName = extractAuthorFromUrl(authorText);
-              if (extractedName) {
-                metadata.author = extractedName;
-                break;
-              }
-            }
-            
-            // Otherwise, clean and use the text
-            const cleaned = authorText.trim().replace(/^(от|by|автор:|written by|von|par|por|da|di):\s*/i, '').trim();
-            // Don't use if it's still a URL
-            if (cleaned && !cleaned.includes('http://') && !cleaned.includes('https://') && !cleaned.includes('/profile/') && !cleaned.includes('/author/')) {
-              metadata.author = cleaned;
-              if (metadata.author) break;
-            }
-          }
-        }
-      } catch (e) {
-        // Continue
-      }
-    }
-    
-    // If author not found, try to extract from "By Author Name" pattern in article
-    if (!metadata.author) {
-      try {
-        const article = document.querySelector('article');
-        if (article) {
-          // Look for "By Author Name" pattern in metadata area
-          const metaElements = article.querySelectorAll('.post-author, .meta-wrapper, .byline, [class*="author"]');
-          for (const el of Array.from(metaElements)) {
-            const text = el.textContent || '';
-            // Match "By Author Name" or "Author Name" patterns
-            const byMatch = text.match(/by\s+([A-Z][a-zA-Z\s]+?)(?:\s+September|\s+\d|$)/i);
-            if (byMatch) {
-              const authorName = byMatch[1].trim();
-              if (authorName.length > 2 && authorName.length < 100) {
-                metadata.author = authorName;
-                break;
-              }
-            }
-            // Also check for author link - extract text, not href
-            // Check both /author/ and /profile/ patterns
-            // IMPORTANT: Check ALL author links, not just the first one (first might be image-only)
-            const authorLinks = el.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]');
-            for (const authorLink of Array.from(authorLinks)) {
-              // First try to extract text from link
-              let authorText = authorLink.textContent.trim();
-              
-              // Skip if link contains only an image (no text) - this is common for author profile images
-              if (!authorText && authorLink.querySelector('img')) {
-                continue; // Try next link
-              }
-              
-              // If text is empty or looks like a URL, extract from href
-              if (!authorText || authorText.includes('http://') || authorText.includes('https://') || authorText.includes('/profile/') || authorText.includes('/author/')) {
-                const href = authorLink.getAttribute('href') || '';
-                const extractedName = extractAuthorFromUrl(href);
-                if (extractedName) {
-                  metadata.author = extractedName;
-                  break;
-                }
-                // If extraction failed, try href as fallback
-                if (href) {
-                  const extractedFromHref = extractAuthorFromUrl(href);
-                  if (extractedFromHref) {
-                    metadata.author = extractedFromHref;
-                    break;
-                  }
-                }
-              } else {
-                // Use text content if it looks like a name
-                if (authorText.length > 2 && authorText.length < 100) {
-                  // Remove "By " prefix if present
-                  metadata.author = authorText.replace(/^by\s+/i, '').trim();
-                  if (metadata.author) break;
-                }
-              }
-            }
-            if (metadata.author) break;
-            
-            // Also check for any link with author-like text
-            const allLinks = el.querySelectorAll('a');
-            for (const link of Array.from(allLinks)) {
-              const linkText = link.textContent.trim();
-              // Check if link text looks like an author name (2-4 words, starts with capital)
-              const namePattern = /^[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/;
-              if (namePattern.test(linkText) && linkText.length > 5 && linkText.length < 50) {
-                metadata.author = linkText;
-                break;
-              }
-            }
-            if (metadata.author) break;
-          }
-        }
-      } catch (e) {
-        // Continue if extraction fails
-      }
-    }
-    
-    // Publish date
-    const dateSelectors = [
-      'meta[property="article:published_time"]',
-      'meta[name="datePublished"]',
-      'meta[name="date"]',
-      'meta[name="citation_date"]', // Noema uses this
-      'time[datetime]',
-      'time[pubdate]',
-      '[itemprop="datePublished"]',
-      '.published', '.date', '.meta-date', '.meta-text.meta-date', 'span.meta-date'
-    ];
-    
-    for (const selector of dateSelectors) {
-      try {
-        const element = document.querySelector(selector);
-        if (element) {
-          const dateValue = element.getAttribute('datetime') || element.getAttribute('content') || element.textContent || '';
-          if (dateValue.trim()) {
-            // Try to parse date
-            try {
-              const date = new Date(dateValue);
-              if (!isNaN(date.getTime())) {
-                const year = date.getFullYear();
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                const day = String(date.getDate()).padStart(2, '0');
-                metadata.publishDate = `${year}-${month}-${day}`;
-                break;
-              }
-            } catch (e) {
-              // Try regex patterns for ISO format
-              const isoMatch = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})/);
-              if (isoMatch) {
-                metadata.publishDate = isoMatch[0];
-                break;
-              }
-              // Try to parse "September 15, 2022" format
-              const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
-                                  'july', 'august', 'september', 'october', 'november', 'december'];
-              const monthAbbr = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
-                                 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-              const dateMatch = dateValue.match(/(\w+)\s+(\d+),?\s+(\d{4})/i);
-              if (dateMatch) {
-                const monthName = dateMatch[1].toLowerCase();
-                const day = dateMatch[2].padStart(2, '0');
-                const year = dateMatch[3];
-                let monthIndex = monthNames.indexOf(monthName);
-                if (monthIndex === -1) {
-                  monthIndex = monthAbbr.indexOf(monthName);
-                }
-                if (monthIndex !== -1) {
-                  const month = String(monthIndex + 1).padStart(2, '0');
-                  metadata.publishDate = `${year}-${month}-${day}`;
-                  break;
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        // Continue
-      }
-    }
-    
-    // If date not found in meta tags, try to find it in article text
-    if (!metadata.publishDate) {
-      try {
-        // Look for date pattern in article header/metadata area
-        const article = document.querySelector('article');
-        if (article) {
-          // Check metadata area (usually near author)
-          const metaElements = article.querySelectorAll('.meta-date, .meta-text.meta-date, .post-date, .published-date, [class*="date"]');
-          for (const el of Array.from(metaElements)) {
-            const text = el.textContent.trim();
-            const dateMatch = text.match(/(\w+)\s+(\d+),?\s+(\d{4})/i);
-            if (dateMatch) {
-              const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
-                                  'july', 'august', 'september', 'october', 'november', 'december'];
-              const monthAbbr = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
-                                 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-              const monthName = dateMatch[1].toLowerCase();
-              const day = dateMatch[2].padStart(2, '0');
-              const year = dateMatch[3];
-              let monthIndex = monthNames.indexOf(monthName);
-              if (monthIndex === -1) {
-                monthIndex = monthAbbr.indexOf(monthName);
-              }
-              if (monthIndex !== -1) {
-                const month = String(monthIndex + 1).padStart(2, '0');
-                metadata.publishDate = `${year}-${month}-${day}`;
-                break;
-              }
-            }
-          }
-          
-          // If still not found, search in first few paragraphs for date pattern
-          if (!metadata.publishDate) {
-            const firstElements = article.querySelectorAll('p, span, div, time');
-            for (const el of Array.from(firstElements).slice(0, 20)) {
-              const text = el.textContent.trim();
-              // Look for date pattern like "September 15, 2022" in short text
-              if (text.length < 100) {
-                const dateMatch = text.match(/^(\w+)\s+(\d+),?\s+(\d{4})$/i);
-                if (dateMatch) {
-                  const monthNames = ['january', 'february', 'march', 'april', 'may', 'june',
-                                      'july', 'august', 'september', 'october', 'november', 'december'];
-                  const monthAbbr = ['jan', 'feb', 'mar', 'apr', 'may', 'jun',
-                                     'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-                  const monthName = dateMatch[1].toLowerCase();
-                  const day = dateMatch[2].padStart(2, '0');
-                  const year = dateMatch[3];
-                  let monthIndex = monthNames.indexOf(monthName);
-                  if (monthIndex === -1) {
-                    monthIndex = monthAbbr.indexOf(monthName);
-                  }
-                  if (monthIndex !== -1) {
-                    const month = String(monthIndex + 1).padStart(2, '0');
-                    metadata.publishDate = `${year}-${month}-${day}`;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        // Continue if date parsing fails
-      }
-    }
-    
-    // Special handling for Twitter/X long-form articles
-    let mainContent = null;
-    const twitterArticle = document.querySelector('article[data-testid="tweet"]');
-    const twitterReadView = document.querySelector('div[data-testid="twitterArticleReadView"]');
-    
-    if (twitterArticle || twitterReadView) {
-      // Twitter/X long-form article detected - use the container directly
-      const container = twitterReadView || twitterArticle;
-      if (container) {
-        // Check if container has substantial text content
-        const textLength = container.textContent?.trim().length || 0;
-        if (textLength > 100) {
-          mainContent = container;
-          console.log('[ClipAIble] Twitter/X article detected', {
-            hasTweet: !!twitterArticle,
-            hasReadView: !!twitterReadView,
-            textLength: textLength,
-            containerTag: container.tagName
-          });
-        }
-      }
-    }
-    
-    // If Twitter/X extraction didn't work, use standard method
-    if (!mainContent) {
-      mainContent = findMainContent();
-    }
-    
-    // CRITICAL: Log mainContent finding for debugging
-    if (enableDebugInfo) {
-      const mainContentInfo = {
-        found: !!mainContent,
-        tagName: mainContent?.tagName,
-        id: mainContent?.id,
-        className: mainContent?.className,
-        textLength: mainContent?.textContent?.length || 0,
-        paragraphsCount: mainContent?.querySelectorAll('p').length || 0,
-        headingsCount: mainContent?.querySelectorAll('h1, h2, h3, h4, h5, h6').length || 0,
-        childrenCount: mainContent?.children?.length || 0
-      };
-      console.log('[ClipAIble] === MAIN CONTENT FINDING RESULT ===', mainContentInfo);
-      if (debugInfo) {
-        debugInfo.extractionLogs.push({ type: 'MAIN_CONTENT_FINDING', data: mainContentInfo });
-      }
-    }
-    
-    // Extract featured/hero image BEFORE processing main content
-    // Look for featured image in meta tags first
-    let featuredImage = null;
-    const featuredImageSelectors = [
-      'meta[property="og:image"]',
-      'meta[name="twitter:image"]',
-      'meta[property="article:image"]',
-      'meta[name="image"]',
-      '[itemprop="image"]'
-    ];
-    
-    for (const selector of featuredImageSelectors) {
-      try {
-        const element = document.querySelector(selector);
-        if (element) {
-          const imageUrl = element.getAttribute('content') || element.getAttribute('src') || '';
-          if (imageUrl && !imageUrl.includes('logo') && !imageUrl.includes('icon')) {
-            featuredImage = toAbsoluteUrl(imageUrl, baseUrl);
+        if (element.tagName === "A") {
+          const href = element.getAttribute("href") || "";
+          const extracted = extractAuthorFromUrl(href);
+          if (extracted) {
+            metadata.author = extracted;
             break;
           }
         }
-      } catch (e) {
-        // Continue
       }
+    } catch (e) {
     }
-    
-    // If not found in meta tags, look for large image at the start of article
-    if (!featuredImage && mainContent) {
-      try {
-        // Look for first large image in article (before first paragraph)
-        // Check both inside mainContent and in article header (before mainContent)
-        const article = document.querySelector('article');
-        const searchContainers = article ? [article, mainContent] : [mainContent];
-        
-        for (const container of searchContainers) {
-          const firstElements = Array.from(container.querySelectorAll('img, figure')).slice(0, 10);
-          for (const el of firstElements) {
-            const img = el.tagName.toLowerCase() === 'img' ? el : el.querySelector('img');
-            if (img && img instanceof HTMLImageElement) {
-              const src = extractBestImageUrl(img);
-              if (src && !isTrackingPixel(img) && !isDecorativeImage(img)) {
-                // Check if image is reasonably large (likely featured image)
-                const naturalWidth = img.naturalWidth || img.width || 0;
-                const naturalHeight = img.naturalHeight || img.height || 0;
-                
-                // For lazy-loaded images, dimensions might be 0, so check other indicators
-                const hasLargeDimensions = naturalWidth >= 400 || naturalHeight >= 300;
-                const isInFigure = el.tagName.toLowerCase() === 'figure' || img.closest('figure');
-                const hasCaption = isInFigure && el.querySelector('figcaption');
-                const isFirstImage = firstElements.indexOf(el) === 0;
-                
-                // Accept if:
-                // 1. Has large dimensions, OR
-                // 2. Is in a figure with caption (likely featured), OR
-                // 3. Is the very first image and not decorative
-                if (hasLargeDimensions || (hasCaption && isFirstImage) || (isFirstImage && naturalWidth === 0 && naturalHeight === 0)) {
-                  featuredImage = toAbsoluteUrl(src, baseUrl);
-                  break;
-                }
-              }
-            }
-            if (featuredImage) break;
-          }
-          if (featuredImage) break;
-        }
-      } catch (e) {
-        // Continue
-      }
-    }
-    
-    // Extract standfirst/subtitle/deck (introductory text before main content)
-    let standfirst = null;
-    let standfirstElement = null; // Track the element to exclude it from main content
-    if (mainContent) {
-      try {
-        const standfirstSelectors = [
-          '.standfirst', '.subtitle', '.deck', '.lede', '.intro', '.article__subhead',
-          '[class*="standfirst"]', '[class*="subtitle"]', '[class*="deck"]',
-          '[class*="intro"]', '[class*="summary"]', '[class*="subhead"]'
-        ];
-        
-        for (const selector of standfirstSelectors) {
-          const element = mainContent.querySelector(selector);
-          if (element) {
-            const text = element.textContent.trim();
-            // Standfirst is usually 50-500 characters
-            if (text.length >= 50 && text.length <= 500) {
-              standfirst = text;
-              standfirstElement = element;
-              break;
-            }
-          }
-        }
-        
-        // If not found, look for first paragraph that might be standfirst
-        // Be more conservative: only if it's clearly a subtitle (shorter, no links, specific patterns)
-        if (!standfirst) {
-          const firstP = mainContent.querySelector('p');
-          if (firstP) {
-            const text = firstP.textContent.trim();
-            // More restrictive: standfirst should be shorter (50-200 chars, not 300)
-            // and should not look like regular article content
-            if (text.length >= 50 && text.length <= 200) {
-              const linkCount = firstP.querySelectorAll('a').length;
-              // No links, and should not start with common article opening phrases
-              if (linkCount === 0) {
-                // Check if it doesn't look like regular article content
-                // (e.g., doesn't start with "The", "A", "In", "When", etc. - common article starters)
-                const firstWords = text.split(/\s+/).slice(0, 3).join(' ').toLowerCase();
-                const commonStarters = ['the ', 'a ', 'an ', 'in ', 'on ', 'at ', 'when ', 'where ', 'why ', 'how ', 'what ', 'this ', 'that ', 'these ', 'those '];
-                const looksLikeArticleStart = commonStarters.some(starter => firstWords.startsWith(starter));
-                
-                // Only treat as standfirst if it doesn't look like regular article content
-                if (!looksLikeArticleStart) {
-                  standfirst = text;
-                  standfirstElement = firstP;
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        // Continue
-      }
-    }
-    
-    // Initialize deduplication set early (before fallback, so it's available everywhere)
-    const addedHeadings = new Set();
-    const mainTitleText = metadata.title 
-      ? metadata.title.toLowerCase().trim()
-          .replace(/\s*\[?obj\]?\s*/gi, '')
-          .replace(/\uFFFC/g, '') // Remove Object Replacement Character (U+FFFC)
-          .trim()
-      : '';
-    
-    // IMPORTANT: Add main title to addedHeadings immediately to prevent duplicates
-    if (mainTitleText) {
-      addedHeadings.add(mainTitleText);
-    }
-    
-    // Special handling for Twitter/X long-form articles
-    // Check if this is a Twitter/X page and has long-form article content
-    const isTwitterUrl = baseUrl && (baseUrl.includes('x.com/') || baseUrl.includes('twitter.com/'));
-    const hasTwitterArticle = document.querySelector('article[data-testid="tweet"]') !== null;
-    const hasTwitterReadView = document.querySelector('div[data-testid="twitterArticleReadView"]') !== null;
-    
-    // CRITICAL LOGGING: Log all check variables
-    if (debugInfo) {
-      debugInfo.extractionLogs.push({
-        type: 'TWITTER_X_CHECK',
-        message: 'Checking if this is Twitter/X article',
-        data: {
-          baseUrl: baseUrl,
-          isTwitterUrl: isTwitterUrl,
-          hasTwitterArticle: hasTwitterArticle,
-          hasTwitterReadView: hasTwitterReadView,
-          mainContentFound: !!mainContent,
-          mainContentTag: mainContent ? mainContent.tagName : null,
-          mainContentDataTestId: mainContent ? mainContent.getAttribute('data-testid') : null
-        }
-      });
-    }
-    console.log('[ClipAIble] Twitter/X check:', {
-      baseUrl,
-      isTwitterUrl,
-      hasTwitterArticle,
-      hasTwitterReadView,
-      mainContentFound: !!mainContent,
-      mainContentTag: mainContent ? mainContent.tagName : null
-    });
-    
-    // Simplified check: if Twitter/X URL and has article/readView, use special logic
-    const isTwitterXArticle = isTwitterUrl && (hasTwitterArticle || hasTwitterReadView);
-    
-    if (debugInfo) {
-      debugInfo.extractionLogs.push({
-        type: 'TWITTER_X_DECISION',
-        message: isTwitterXArticle ? 'Twitter/X article detected - using special logic' : 'Not a Twitter/X article - using standard extraction',
-        data: {
-          isTwitterXArticle: isTwitterXArticle,
-          reason: !isTwitterUrl ? 'Not Twitter/X URL' : (!hasTwitterArticle && !hasTwitterReadView) ? 'No Twitter article/readView found' : 'All checks passed'
-        }
-      });
-    }
-    
-    if (isTwitterXArticle && mainContent) {
-      console.log('[ClipAIble] Processing Twitter/X article with special logic');
-      if (debugInfo) {
-        debugInfo.extractionLogs.push({
-          type: 'TWITTER_X_PROCESSING_START',
-          message: 'Starting Twitter/X special extraction logic'
-        });
-      }
-      
-      // Find the actual twitterArticleReadView container
-      // Always search in document first, then fallback to mainContent
-      let twitterContainer = document.querySelector('div[data-testid="twitterArticleReadView"]');
-      let containerSource = 'document_querySelector';
-      
-      if (!twitterContainer) {
-        // Fallback: try to find it inside article
-        const article = document.querySelector('article[data-testid="tweet"]');
-        if (article) {
-          twitterContainer = article.querySelector('div[data-testid="twitterArticleReadView"]');
-          containerSource = 'article_querySelector';
-        }
-      }
-      if (!twitterContainer && mainContent) {
-        // Last fallback: check if mainContent contains it
-        const readViewInMain = mainContent.querySelector('div[data-testid="twitterArticleReadView"]');
-        if (readViewInMain) {
-          twitterContainer = readViewInMain;
-          containerSource = 'mainContent_querySelector';
+  }
+  const dateSelectors = [
+    'meta[property="article:published_time"]',
+    'meta[name="datePublished"]',
+    'meta[name="date"]',
+    'meta[name="citation_date"]',
+    "time[datetime]",
+    "time[pubdate]",
+    '[itemprop="datePublished"]',
+    ".published",
+    ".date",
+    ".meta-date"
+  ];
+  for (const selector of dateSelectors) {
+    try {
+      const element = doc.querySelector(selector);
+      if (element) {
+        let dateValue = "";
+        if (element.tagName === "META") {
+          dateValue = element.getAttribute("content") || "";
+        } else if (element.tagName === "TIME") {
+          dateValue = element.getAttribute("datetime") || element.textContent || "";
         } else {
-          twitterContainer = mainContent;
-          containerSource = 'mainContent_fallback';
+          dateValue = (element.textContent || "").trim();
+        }
+        const parsed = parseDateToISO(dateValue);
+        if (parsed) {
+          metadata.publishDate = parsed;
+          break;
         }
       }
-      if (!twitterContainer) {
-        // Final fallback: use article itself
-        twitterContainer = document.querySelector('article[data-testid="tweet"]');
-        containerSource = 'article_fallback';
-      }
-      
-      if (debugInfo) {
-        debugInfo.extractionLogs.push({
-          type: 'TWITTER_X_CONTAINER_SEARCH',
-          message: twitterContainer ? 'Twitter/X container found' : 'Twitter/X container NOT found',
-          data: {
-            found: !!twitterContainer,
-            containerSource: containerSource,
-            tagName: twitterContainer ? twitterContainer.tagName : null,
-            dataTestId: twitterContainer ? twitterContainer.getAttribute('data-testid') : null,
-            textLength: twitterContainer ? twitterContainer.textContent?.trim().length || 0 : 0,
-            className: twitterContainer ? (twitterContainer.className || '').substring(0, 100) : null
+    } catch (e) {
+    }
+  }
+  return metadata;
+}
+
+function getMonthNumber(monthName) {
+  const months = {
+    "january": "01",
+    "jan": "01",
+    "february": "02",
+    "feb": "02",
+    "march": "03",
+    "mar": "03",
+    "april": "04",
+    "apr": "04",
+    "may": "05",
+    "june": "06",
+    "jun": "06",
+    "july": "07",
+    "jul": "07",
+    "august": "08",
+    "aug": "08",
+    "september": "09",
+    "sep": "09",
+    "sept": "09",
+    "october": "10",
+    "oct": "10",
+    "november": "11",
+    "nov": "11",
+    "december": "12",
+    "dec": "12"
+  };
+  return months[monthName.toLowerCase()] || null;
+}
+
+function isValidArticleTitle(h1Element) {
+  if (!h1Element || !h1Element.textContent)
+    return false;
+  const text = (h1Element.textContent || "").trim();
+  if (text.length < 5)
+    return false;
+  const siteNamePatterns = ["home", "about", "contact", "blog", "news", "archive"];
+  const lowerText = text.toLowerCase();
+  if (siteNamePatterns.some((pattern) => lowerText === pattern))
+    return false;
+  return true;
+}
+
+function parseDateToISO(dateStr) {
+  if (!dateStr)
+    return null;
+  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch)
+    return isoMatch[0];
+  try {
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+  } catch (e) {
+  }
+  const ordinalMatch = dateStr.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)\s+(\d{4})/i);
+  if (ordinalMatch) {
+    const day = ordinalMatch[1].padStart(2, "0");
+    const month = getMonthNumber(ordinalMatch[2]);
+    const year = ordinalMatch[3];
+    if (month)
+      return `${year}-${month}-${day}`;
+  }
+  const monthYearMatch = dateStr.match(/(\w+)\s+(\d{4})/i);
+  if (monthYearMatch) {
+    const month = getMonthNumber(monthYearMatch[1]);
+    const year = monthYearMatch[2];
+    if (month)
+      return `${year}-${month}`;
+  }
+  const yearMatch = dateStr.match(/^(\d{4})$/);
+  if (yearMatch)
+    return yearMatch[1];
+  return null;
+}
+
+// --- Images ---
+function extractBestImageUrl(imgElement) {
+  if (!imgElement)
+    return null;
+  let src = null;
+  if (imgElement.currentSrc && imgElement.currentSrc.length > 0 && !isPlaceholderUrl(imgElement.currentSrc)) {
+    src = imgElement.currentSrc;
+  }
+  if (!src) {
+    const imgSrc = imgElement.src || imgElement.getAttribute("src");
+    if (imgSrc && imgSrc.length > 0 && !isPlaceholderUrl(imgSrc)) {
+      src = imgSrc;
+    }
+  }
+  if (!src) {
+    const srcset = imgElement.getAttribute("srcset");
+    if (srcset) {
+      src = getBestSrcsetUrl(srcset);
+    }
+  }
+  if (!src) {
+    const picture = imgElement.closest("picture");
+    if (picture) {
+      for (const source of Array.from(picture.querySelectorAll("source[srcset]"))) {
+        const srcset = source.getAttribute("srcset");
+        if (srcset) {
+          const candidate = getBestSrcsetUrl(srcset);
+          if (candidate) {
+            src = candidate;
+            break;
           }
-        });
-      }
-      
-      if (!twitterContainer) {
-        console.warn('[ClipAIble] Twitter/X article detected but container not found, falling back to standard extraction');
-        if (debugInfo) {
-          debugInfo.extractionLogs.push({
-            type: 'TWITTER_X_FALLBACK',
-            message: 'Container not found - falling back to standard extraction'
-          });
         }
-        // Continue with standard extraction below
-      } else {
-        console.log('[ClipAIble] Twitter/X container found', {
-          tagName: twitterContainer.tagName,
-          dataTestId: twitterContainer.getAttribute('data-testid'),
-          textLength: twitterContainer.textContent?.trim().length || 0,
-          source: containerSource
-        });
-        
-        // Twitter/X uses Draft.js editor - content is organized in blocks with data-offset-key
-        // Find the main content area (DraftEditor container)
-        const mainContentDiv = Array.from(twitterContainer.children).find(div => {
-          const text = div.textContent?.trim() || '';
-          return text.length > 1000 && div.querySelector('.DraftEditor-root');
-        }) || twitterContainer;
-        
-        // Extract headings (h1, h2, h3 with specific classes)
-        const headings = Array.from(mainContentDiv.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
-        
-        // Extract images (exclude tracking pixels and decorative images)
-        const images = Array.from(mainContentDiv.querySelectorAll('img')).filter((img) => {
-          const src = (img.src || img.getAttribute('src') || '');
-          const alt = (img.alt || img.getAttribute('alt') || '');
-          return src && !src.includes('data:image') && !src.includes('1x1') && alt !== 'Изображение';
-        });
-        
-        // Extract Draft.js content blocks (div[data-offset-key])
-        // These are the actual content units - each block represents a paragraph or heading
-        const allBlocks = Array.from(mainContentDiv.querySelectorAll('div[data-offset-key]'));
-        
-        // Group blocks by data-offset-key to remove duplicates
-        // Draft.js creates multiple divs with same key - we need to pick the right one
-        const uniqueBlocks = new Map();
-        allBlocks.forEach(block => {
-          const key = block.getAttribute('data-offset-key');
-          if (!key) return;
-          
-          if (!uniqueBlocks.has(key)) {
-            // First occurrence - use it
-            uniqueBlocks.set(key, block);
-          } else {
-            // Duplicate found - choose the better one
-            const existing = uniqueBlocks.get(key);
-            // Prefer the one that is NOT a child of the other (the parent/container)
-            const existingIsParent = existing.contains(block) && existing !== block;
-            const blockIsParent = block.contains(existing) && block !== existing;
-            
-            if (blockIsParent) {
-              // Current block is parent - use it
-              uniqueBlocks.set(key, block);
-            } else if (!existingIsParent) {
-              // Neither is parent - prefer the one with more specific class (longform-unstyled is wrapper, public-DraftStyleDefault is content)
-              const existingHasDraft = existing.className && existing.className.includes('public-DraftStyleDefault');
-              const blockHasDraft = block.className && block.className.includes('public-DraftStyleDefault');
-              
-              if (blockHasDraft && !existingHasDraft) {
-                uniqueBlocks.set(key, block);
-              }
-              // Otherwise keep existing
-            }
-            // If existing is parent, keep it
+      }
+    }
+  }
+  if (!src) {
+    const dataAttrs = [
+      "data-src",
+      "data-lazy-src",
+      "data-original",
+      "data-lazy",
+      "data-full-src",
+      "data-high-res",
+      "data-srcset",
+      "data-original-src"
+    ];
+    for (const attr of dataAttrs) {
+      const val = imgElement.getAttribute(attr);
+      if (val && !val.includes("data:") && !isPlaceholderUrl(val)) {
+        if (attr === "data-srcset") {
+          src = getBestSrcsetUrl(val);
+        } else {
+          src = val;
+        }
+        if (src)
+          break;
+      }
+    }
+  }
+  if (!src) {
+    const parentLink = imgElement.closest("a[href]");
+    if (parentLink) {
+      const href = parentLink.getAttribute("href");
+      if (href && (href.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i) || href.includes("image"))) {
+        src = href;
+      }
+    }
+  }
+  return src;
+}
+
+function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
+  const featuredImageSelectors = [
+    'meta[property="og:image"]',
+    'meta[name="twitter:image"]',
+    'meta[property="article:image"]',
+    'meta[name="image"]',
+    '[itemprop="image"]'
+  ];
+  for (const selector of featuredImageSelectors) {
+    try {
+      const element = doc.querySelector(selector);
+      if (element) {
+        const content = element.tagName === "META" ? element.getAttribute("content") : element instanceof HTMLImageElement ? element.src : element.getAttribute("src");
+        if (content) {
+          const absoluteUrl = toAbsoluteUrl(content, baseUrl);
+          const urlLower = absoluteUrl.toLowerCase();
+          if (!logoPatterns.some((pattern) => urlLower.includes(pattern.toLowerCase()))) {
+            return { src: absoluteUrl, alt: "", caption: "" };
           }
-        });
-        
-        const contentBlocks = Array.from(uniqueBlocks.values());
-        
-        // Helper to check if element should be excluded
-        const shouldExclude = (element) => {
-          const text = element.textContent?.trim() || '';
-          const textLower = text.toLowerCase();
-          
-          // Exclude statistics (views count)
-          if (text === '1 млн' || text === '1,1 млн' || text.match(/^\d+[\s,.]*(тыс|млн|k|m)$/i)) {
-            return true;
-          }
-          
-          // Exclude Premium promotional content
-          if (textLower.includes('хотите опубликовать') || textLower.includes('перейти на premium')) {
-            return true;
-          }
-          
-          // Check for Premium links
-          const premiumLinks = element.querySelectorAll('a[href*="premium"], a[href*="Premium"]');
-          if (premiumLinks.length > 0) {
-            const hasPremiumHref = Array.from(premiumLinks).some(link => {
-              const href = (link.getAttribute('href') || '').toLowerCase();
-              return href.includes('/i/premium') || href.includes('/premium_sign_up');
-            });
-            if (hasPremiumHref) return true;
-          }
-          
-          // Exclude analytics links
-          const analyticsLinks = element.querySelectorAll('a[href*="/analytics"]');
-          if (analyticsLinks.length > 0) return true;
-          
-          return false;
+        }
+      }
+    } catch (e) {
+    }
+  }
+  if (mainContent) {
+    const firstParagraph = mainContent.querySelector("p");
+    const images = mainContent.querySelectorAll("img");
+    for (const img of images) {
+      if (firstParagraph && img.compareDocumentPosition(firstParagraph) & Node.DOCUMENT_POSITION_PRECEDING) {
+        break;
+      }
+      const imgElement = (
+        /** @type {HTMLImageElement} */
+        img
+      );
+      const src = extractBestImageUrl(imgElement);
+      if (!src)
+        continue;
+      const naturalWidth = imgElement.naturalWidth || 0;
+      const naturalHeight = imgElement.naturalHeight || 0;
+      if (naturalWidth >= 400 || naturalHeight >= 300 || naturalWidth === 0 && naturalHeight === 0) {
+        const absoluteUrl = toAbsoluteUrl(src, baseUrl);
+        const urlLower = absoluteUrl.toLowerCase();
+        if (logoPatterns.some((pattern) => urlLower.includes(pattern.toLowerCase()))) {
+          continue;
+        }
+        return {
+          src: absoluteUrl,
+          alt: imgElement.alt || "",
+          caption: getImageCaption(imgElement)
         };
-        
-        // Filter out excluded blocks
-        const validBlocks = contentBlocks.filter(block => !shouldExclude(block));
-        
-        if (debugInfo) {
-          debugInfo.extractionLogs.push({
-            type: 'TWITTER_X_ELEMENTS_FOUND',
-            message: 'Elements found in Twitter/X container',
-            data: {
-              headingsCount: headings.length,
-              imagesCount: images.length,
-              allBlocksCount: allBlocks.length,
-              uniqueBlocksCount: contentBlocks.length,
-              validBlocksCount: validBlocks.length,
-              headings: headings.map(h => ({
-                tag: h.tagName,
-                text: h.textContent?.trim().substring(0, 50) || '',
-                className: h.className || ''
-              })),
-              sampleBlocks: validBlocks.slice(0, 5).map(b => ({
-                text: b.textContent?.trim().substring(0, 50) || '',
-                length: b.textContent?.trim().length || 0,
-                hasLink: b.querySelector('a') !== null
-              }))
-            }
-          });
+      }
+    }
+  }
+  return null;
+}
+
+function getBestSrcsetUrl(srcset) {
+  if (!srcset)
+    return null;
+  const sources = srcset.split(",").map((s) => s.trim());
+  let bestUrl = null;
+  let bestSize = 0;
+  for (const source of sources) {
+    const parts = source.trim().split(/\s+/);
+    if (parts.length < 1)
+      continue;
+    const url = parts[0];
+    if (isPlaceholderUrl(url))
+      continue;
+    if (parts.length > 1) {
+      const descriptor = parts[1];
+      if (descriptor.endsWith("x")) {
+        const multiplier = parseFloat(descriptor);
+        if (multiplier > bestSize) {
+          bestSize = multiplier;
+          bestUrl = url;
         }
-        console.log('[ClipAIble] Twitter/X elements found:', {
-          headings: headings.length,
-          images: images.length,
-          allBlocks: allBlocks.length,
-          uniqueBlocks: contentBlocks.length,
-          validBlocks: validBlocks.length
-        });
-        
-        // Combine all elements and sort by DOM position
-        const allContentElements = [...headings, ...images, ...validBlocks];
-        allContentElements.sort((a, b) => {
-          const pos = a.compareDocumentPosition(b);
-          if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-          if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-          return 0;
-        });
-        
-        // Process elements in DOM order - Twitter/X special handling using Draft.js blocks
-        let processedCount = 0;
-        let excludedCount = 0;
-        let skippedCount = 0;
-        let addedCount = 0;
-        
-        // Initialize image deduplication set
-        const addedImageUrls = new Set();
-        
-        // Process all elements in DOM order (headings, images, blocks)
-        for (const elem of allContentElements) {
-          processedCount++;
-          const tagName = elem.tagName ? elem.tagName.toLowerCase() : '';
-          
-          // Process headings (separate h1, h2, h3 elements, not inside blocks)
-          if (tagName === 'h1' || tagName === 'h2' || tagName === 'h3') {
-            const text = elem.textContent?.trim() || '';
-            if (text && text.length > 3) {
-              const normalizedText = text.toLowerCase().trim();
-              if (mainTitleText && normalizedText === mainTitleText) {
-                skippedCount++;
-                continue;
-              }
-              if (addedHeadings.has(normalizedText)) {
-                skippedCount++;
-                continue;
-              }
-              addedHeadings.add(normalizedText);
-              
-              let level = 2; // Default
-              if (elem.classList.contains('longform-header-one')) level = 1;
-              else if (elem.classList.contains('longform-header-two')) level = 2;
-              else if (elem.classList.contains('longform-header-three')) level = 3;
-              
-              content.push({
-                type: 'heading',
-                level: level,
-                text: text,
-                id: elem.id || null
-              });
-              addedCount++;
-            } else {
-              skippedCount++;
-            }
-            continue;
-          }
-          
-          // Process images
-          if (tagName === 'img') {
-            if (elem.closest('figure')) {
-              skippedCount++;
-              continue;
-            }
-            const src = extractBestImageUrl(elem);
-            if (src && !isTrackingPixel(elem) && !isDecorativeImage(elem)) {
-              const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-              const ns = normalizeImageUrl(absoluteSrc);
-              if (!addedImageUrls.has(ns)) {
-                const altText = (elem.alt || (elem.getAttribute ? elem.getAttribute('alt') : '') || '');
-                const isGenericAlt = ['изображение', 'image', 'photo', 'picture', 'img', 'фото', 'картинка'].includes(altText.toLowerCase().trim());
-                content.push({
-                  type: 'image',
-                  src: absoluteSrc,
-                  alt: isGenericAlt ? '' : altText,
-                  id: elem.id || null
-                });
-                addedImageUrls.add(ns);
-                addedCount++;
-              } else {
-                skippedCount++;
-              }
-            } else {
-              skippedCount++;
-            }
-            continue;
-          }
-          
-          // Process Draft.js content blocks (div[data-offset-key])
-          if (tagName === 'div' && elem.getAttribute('data-offset-key')) {
-            const block = elem;
-            const text = block.textContent?.trim() || '';
-            const html = block.innerHTML;
-            
-            // Skip empty blocks
-            if (!text || text.length === 0) {
-              skippedCount++;
-              continue;
-            }
-            
-            // Check if this block contains a heading (h1, h2, h3 with longform classes)
-            const heading = block.querySelector('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three');
-            if (heading) {
-              const headingText = heading.textContent?.trim() || '';
-              if (headingText && headingText.length > 3) {
-                const normalizedText = headingText.toLowerCase().trim();
-                if (mainTitleText && normalizedText === mainTitleText) {
-                  skippedCount++;
-                  continue;
-                }
-                // If heading was already added (from separate headings processing), skip this block
-                // Blocks with headings are usually just the heading text, so we skip them
-                if (addedHeadings.has(normalizedText)) {
-                  skippedCount++;
-                  continue;
-                }
-                // Heading not yet added - add it now
-                addedHeadings.add(normalizedText);
-                
-                let level = 2;
-                if (heading.classList.contains('longform-header-one')) level = 1;
-                else if (heading.classList.contains('longform-header-two')) level = 2;
-                else if (heading.classList.contains('longform-header-three')) level = 3;
-                
-                content.push({
-                  type: 'heading',
-                  level: level,
-                  text: headingText,
-                  id: heading.id || null
-                });
-                addedCount++;
-                
-                // Check if there's text after the heading in this block
-                // If the block text is just the heading, skip the block
-                const blockTextOnly = text.replace(headingText, '').trim();
-                if (blockTextOnly.length === 0) {
-                  // Block contains only heading, skip it
-                  skippedCount++;
-                  continue;
-                }
-                // Block has text after heading - process it as paragraph below
-              }
-            }
-            
-            // Check if this block contains an image
-            const img = block.querySelector('img');
-            if (img && !img.closest('figure')) {
-              const src = extractBestImageUrl(img);
-              if (src && !isTrackingPixel(img) && !isDecorativeImage(img)) {
-                const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-                const ns = normalizeImageUrl(absoluteSrc);
-                if (!addedImageUrls.has(ns)) {
-                  const altText = (img.alt || (img.getAttribute ? img.getAttribute('alt') : '') || '');
-                  const isGenericAlt = ['изображение', 'image', 'photo', 'picture', 'img', 'фото', 'картинка'].includes(altText.toLowerCase().trim());
-                  content.push({
-                    type: 'image',
-                    src: absoluteSrc,
-                    alt: isGenericAlt ? '' : altText,
-                    id: img.id || null
-                  });
-                  addedImageUrls.add(ns);
-                  addedCount++;
-                  continue;
-                }
-              }
-            }
-            
-            // Process as paragraph - use innerHTML to preserve links
-            // Get original text if translated
-            const originalText = getOriginalTextIfTranslated(block);
-            const finalText = originalText || html;
-            const finalHtml = originalText ? originalText : html;
-            
-            // Only add if text is substantial (more than just whitespace/formatting)
-            const textClean = text.replace(/\s+/g, ' ').trim();
-            if (textClean.length > 0) {
-              content.push({
-                type: 'paragraph',
-                text: finalText,
-                html: finalHtml
-              });
-              addedCount++;
-            } else {
-              skippedCount++;
-            }
-          }
+      } else if (descriptor.endsWith("w")) {
+        const width = parseInt(descriptor);
+        if (width > bestSize) {
+          bestSize = width;
+          bestUrl = url;
         }
-        
-        // Log processing statistics
-        if (debugInfo) {
-          debugInfo.extractionLogs.push({
-            type: 'TWITTER_X_PROCESSING_STATS',
-            message: 'Twitter/X element processing statistics',
-            data: {
-              totalElements: allContentElements.length,
-              processedCount: processedCount,
-              excludedCount: excludedCount,
-              skippedCount: skippedCount,
-              addedCount: addedCount,
-              finalContentCount: content.length
-            }
-          });
+      }
+    } else {
+      if (!bestUrl)
+        bestUrl = url;
+    }
+  }
+  return bestUrl;
+}
+
+function getImageCaption(img) {
+  const figure = img.closest("figure");
+  if (figure) {
+    const figcaption = figure.querySelector("figcaption");
+    if (figcaption)
+      return (figcaption.textContent || "").trim();
+  }
+  const ariaLabel = img.getAttribute("aria-label");
+  if (ariaLabel && ariaLabel.trim())
+    return ariaLabel.trim();
+  const title = img.getAttribute("title");
+  if (title && title.trim() && title !== img.alt)
+    return title.trim();
+  const nextSibling = img.nextElementSibling;
+  if (nextSibling && (nextSibling.tagName === "P" || String(nextSibling.className || "").toLowerCase().includes("caption"))) {
+    return (nextSibling.textContent || "").trim();
+  }
+  const parent = img.parentElement;
+  if (parent) {
+    const captionEl = parent.querySelector(".caption, .image-caption, .photo-caption");
+    if (captionEl) {
+      const captionText = (captionEl.textContent || "").trim();
+      if (captionText && captionText !== img.alt)
+        return captionText;
+    }
+  }
+  return "";
+}
+
+function isDecorativeImage(win, img, logoPatterns) {
+  if (!img)
+    return false;
+  const src = (img.src || "").toLowerCase();
+  const alt = (img.alt || "").toLowerCase();
+  const className = String(img.className || "").toLowerCase();
+  const id = (img.id || "").toLowerCase();
+  if (className.includes("headshot") || id.includes("headshot") || className.includes("author-photo") || className.includes("author-image") || className.includes("byline-thumbnail") || className.includes("contributor-thumbnail")) {
+    return true;
+  }
+  let checkParent = img.parentElement;
+  for (let i = 0; i < 5 && checkParent; i++) {
+    const parentClass = String(checkParent.className || "").toLowerCase();
+    const parentId = (checkParent.id || "").toLowerCase();
+    if (parentClass.includes("contributor") || parentClass.includes("byline") || parentClass.includes("author-info") || parentClass.includes("author-bio")) {
+      const naturalWidth2 = img.naturalWidth || img.width || 0;
+      const naturalHeight2 = img.naturalHeight || img.height || 0;
+      if (naturalWidth2 > 0 && naturalHeight2 > 0 && naturalWidth2 <= 150 && naturalHeight2 <= 150) {
+        return true;
+      }
+    }
+    checkParent = checkParent.parentElement;
+  }
+  if (alt && (alt.includes("'s avatar") || alt.includes(" avatar") || alt === "avatar")) {
+    const naturalWidth2 = img.naturalWidth || img.width || 0;
+    const naturalHeight2 = img.naturalHeight || img.height || 0;
+    if (naturalWidth2 > 0 && naturalHeight2 > 0 && naturalWidth2 <= 50 && naturalHeight2 <= 50) {
+      return true;
+    }
+  }
+  if (logoPatterns.some((pattern) => src.includes(pattern.toLowerCase()))) {
+    return true;
+  }
+  if (alt && (alt.includes("logo") || alt.includes("icon") || alt.includes("brand") || alt.includes("social"))) {
+    return true;
+  }
+  if (className.includes("logo") || className.includes("icon") || className.includes("brand") || className.includes("social") || className.includes("share")) {
+    return true;
+  }
+  const naturalWidth = img.naturalWidth || img.width || 0;
+  const naturalHeight = img.naturalHeight || img.height || 0;
+  if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
+    if (src.includes("icon") || src.includes("logo") || src.includes("social")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPlaceholderUrl(url) {
+  if (!url)
+    return true;
+  if (url.startsWith("data:image")) {
+    if (url.includes("1x1") || url.includes("transparent") || url.length < 100) {
+      return true;
+    }
+  }
+  const placeholderPatterns = ["placeholder", "spacer", "blank", "1x1", "pixel.gif"];
+  const urlLower = url.toLowerCase();
+  return placeholderPatterns.some((pattern) => urlLower.includes(pattern));
+}
+
+function isTrackingPixel(win, img) {
+  try {
+    const style = safeGetComputedStyle(win, img);
+    if (style && (style.display === "none" || style.visibility === "hidden" || style.opacity === "0")) {
+      const naturalWidth2 = img.naturalWidth || 0;
+      const naturalHeight2 = img.naturalHeight || 0;
+      if (naturalWidth2 > 0 && naturalHeight2 > 0 && naturalWidth2 <= 3 && naturalHeight2 <= 3) {
+        return true;
+      }
+    }
+  } catch (e) {
+  }
+  const naturalWidth = img.naturalWidth || 0;
+  const naturalHeight = img.naturalHeight || 0;
+  if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 3 && naturalHeight <= 3) {
+    return true;
+  }
+  const src = (img.src || "").toLowerCase();
+  const trackingPatterns = ["pixel", "tracking", "beacon", "analytics", "facebook.com/tr", "doubleclick", "googleads"];
+  return trackingPatterns.some((pattern) => src.includes(pattern));
+}
+
+// --- Standfirst ---
+function extractStandfirst(mainContent) {
+  if (!mainContent) {
+    return { text: null, element: null };
+  }
+  for (const selector of STANDFIRST_SELECTORS) {
+    try {
+      const element = mainContent.querySelector(selector);
+      if (element) {
+        const text = (element.textContent || "").trim();
+        if (text.length >= 50 && text.length <= 500) {
+          return { text, element };
         }
-        console.log('[ClipAIble] Twitter/X processing stats:', {
-          total: allContentElements.length,
-          processed: processedCount,
-          excluded: excludedCount,
-          skipped: skippedCount,
-          added: addedCount,
-          final: content.length
-        });
-        
-        // If we extracted content, return it
-        if (debugInfo) {
-          const contentTypes = content.reduce((acc, item) => {
-            acc[item.type] = (acc[item.type] || 0) + 1;
-            return acc;
-          }, {});
-          debugInfo.contentTypes = contentTypes;
-          debugInfo.extractionLogs.push({
-            type: 'TWITTER_X_EXTRACTION_COMPLETE',
-            message: `Twitter/X extraction complete: ${content.length} items extracted`,
-            data: {
-              contentItemsCount: content.length,
-              contentTypes: contentTypes,
-              headingsCount: content.filter(c => c.type === 'heading').length,
-              paragraphsCount: content.filter(c => c.type === 'paragraph').length,
-              imagesCount: content.filter(c => c.type === 'image').length,
-              totalTextLength: content.reduce((sum, item) => sum + (item.text?.length || 0), 0)
-            }
-          });
+      }
+    } catch (e) {
+    }
+  }
+  for (const selector of STANDFIRST_SELECTORS) {
+    try {
+      const element = document.querySelector(selector);
+      if (element && mainContent.contains(element)) {
+        const text = (element.textContent || "").trim();
+        if (text.length >= 50 && text.length <= 500) {
+          return { text, element };
         }
-        console.log('[ClipAIble] Twitter/X extraction complete:', {
-          items: content.length,
-          types: content.reduce((acc, item) => {
-            acc[item.type] = (acc[item.type] || 0) + 1;
-            return acc;
-          }, {})
-        });
-        
-        if (content.length > 0) {
-          return {
-            title: metadata.title,
-            author: metadata.author,
-            publishDate: metadata.publishDate,
-            content: content,
-            debugInfo: debugInfo
-          };
-        } else {
-          if (debugInfo) {
-            debugInfo.extractionLogs.push({
-              type: 'TWITTER_X_NO_CONTENT',
-              message: 'No content extracted from Twitter/X container - falling back to standard extraction',
-              data: {
-                headingsFound: headings.length,
-                imagesFound: images.length,
-                validBlocksFound: validBlocks.length,
-                allContentElementsCount: allContentElements.length
-              }
-            });
+      }
+    } catch (e) {
+    }
+  }
+  const paragraphs = mainContent.querySelectorAll("p");
+  for (const p of paragraphs) {
+    const text = (p.textContent || "").trim();
+    if (text.length >= 50 && text.length <= 200) {
+      const hasLinks = p.querySelectorAll("a").length > 0;
+      if (!hasLinks && !looksLikeArticleStarter(text)) {
+        const allParagraphs2 = Array.from(paragraphs);
+        const index = allParagraphs2.indexOf(p);
+        if (index <= 2) {
+          const firstWord = text.split(/\s+/)[0].toLowerCase();
+          const commonStarters = ["the", "a", "an", "in", "on", "when", "where", "why", "how"];
+          if (!commonStarters.includes(firstWord)) {
+            return { text, element: p };
           }
-          console.warn('[ClipAIble] Twitter/X extraction returned 0 items, falling back to standard extraction');
         }
       }
     }
-    
-    if (!mainContent) {
-      // CRITICAL: Log that mainContent was not found
-      if (enableDebugInfo) {
-        console.log('[ClipAIble] === MAIN CONTENT NOT FOUND - USING FALLBACK ===', {
-          hasArticle: !!document.querySelector('article'),
-          hasMain: !!document.querySelector('main'),
-          hasRoleMain: !!document.querySelector('[role="main"]'),
-          hasRoleArticle: !!document.querySelector('[role="article"]'),
-          allDivsCount: document.querySelectorAll('div').length,
-          allSectionsCount: document.querySelectorAll('section').length
-        });
-        if (debugInfo) {
-          debugInfo.extractionLogs.push({ 
-            type: 'MAIN_CONTENT_NOT_FOUND', 
-            data: {
-              hasArticle: !!document.querySelector('article'),
-              hasMain: !!document.querySelector('main'),
-              hasRoleMain: !!document.querySelector('[role="main"]'),
-              hasRoleArticle: !!document.querySelector('[role="article"]'),
-              allDivsCount: document.querySelectorAll('div').length,
-              allSectionsCount: document.querySelectorAll('section').length
-            }
-          });
+    const allParagraphs = Array.from(paragraphs);
+    if (allParagraphs.indexOf(p) > 3)
+      break;
+  }
+  return { text: null, element: null };
+}
+
+function isStandfirstText(text, standfirstText) {
+  if (!standfirstText)
+    return false;
+  const normalizedText = text.trim().toLowerCase();
+  const normalizedStandfirst = standfirstText.trim().toLowerCase();
+  if (normalizedText === normalizedStandfirst)
+    return true;
+  if (normalizedText.includes(normalizedStandfirst) || normalizedStandfirst.includes(normalizedText)) {
+    const lengthRatio = Math.min(normalizedText.length, normalizedStandfirst.length) / Math.max(normalizedText.length, normalizedStandfirst.length);
+    if (lengthRatio > 0.8)
+      return true;
+  }
+  return false;
+}
+
+// --- Parse ---
+function collectCandidateElements(mainContent) {
+  return Array.from(mainContent.querySelectorAll(CANDIDATE_SELECTOR));
+}
+
+function deduplicateHeadings(content) {
+  const seenHeadings = /* @__PURE__ */ new Set();
+  return content.filter((item) => {
+    if (item.type !== "heading")
+      return true;
+    const normalized = normalizeHeadingForDedup(item.text || "");
+    if (seenHeadings.has(normalized))
+      return false;
+    seenHeadings.add(normalized);
+    return true;
+  });
+}
+
+function filterCandidateElements(win, allElements, constants, debugInfo) {
+  let excludedImageCount = 0;
+  let excludedByType = {};
+  const filteredElements = allElements.filter((el) => {
+    const tagName = el.tagName.toLowerCase();
+    const isImageOrFigure = tagName === "img" || tagName === "figure";
+    if (isExcluded(win, el, constants)) {
+      if (isImageOrFigure)
+        excludedImageCount++;
+      else
+        excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
+      return false;
+    }
+    return true;
+  });
+  if (debugInfo) {
+    debugInfo.excludedImageCount = excludedImageCount;
+    pushDebugLog(debugInfo, "FILTER_STATS", { excludedByType, excludedImageCount });
+  }
+  return filteredElements;
+}
+
+function handleBlockquote(element) {
+  const text = (element.innerHTML || "").trim();
+  if (!text)
+    return null;
+  return {
+    type: "quote",
+    text
+  };
+}
+
+function handleCode(element) {
+  let text = "";
+  if (element.tagName === "PRE") {
+    const clone = element.cloneNode(true);
+    const brs = (
+      /** @type {HTMLElement} */
+      clone.querySelectorAll("br")
+    );
+    for (const br of brs) {
+      br.replaceWith("\n");
+    }
+    text = /** @type {HTMLElement} */
+    clone.textContent || "";
+  } else {
+    text = (element.textContent || "").trim();
+  }
+  if (!text)
+    return null;
+  const className = element.className || "";
+  const languageMatch = className.match(/language-(\w+)/);
+  const language = languageMatch ? languageMatch[1] : "";
+  return {
+    type: "code",
+    language,
+    text
+  };
+}
+
+function handleFigure(win, element, state, constants, baseUrl) {
+  const img = element.querySelector("img");
+  if (!img)
+    return null;
+  const src = extractBestImageUrl(
+    /** @type {HTMLImageElement} */
+    img
+  );
+  if (!src)
+    return null;
+  if (isTrackingPixel(
+    win,
+    /** @type {HTMLImageElement} */
+    img
+  ))
+    return null;
+  if (isDecorativeImage(
+    win,
+    /** @type {HTMLImageElement} */
+    img,
+    constants.LOGO_PATTERNS || []
+  ))
+    return null;
+  const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+  const normalizedSrc = normalizeImageUrl(absoluteSrc);
+  if (state.processedImages.has(normalizedSrc))
+    return null;
+  state.processedImages.add(normalizedSrc);
+  const figcaption = element.querySelector("figcaption");
+  let caption = figcaption ? (figcaption.textContent || "").trim() : "";
+  if (!caption) {
+    caption = getImageCaption(
+      /** @type {HTMLImageElement} */
+      img
+    );
+  }
+  return {
+    type: "image",
+    src: absoluteSrc,
+    alt: img.alt || "",
+    caption
+  };
+}
+
+function handleHeading(element, state, constants) {
+  if (state.standfirstElement && element === state.standfirstElement)
+    return null;
+  const rawText = element.textContent || "";
+  const cleanedText = cleanHeadingText(rawText);
+  if (isStandfirstText(cleanedText, state.standfirstText))
+    return null;
+  if (isNumericHeading(cleanedText))
+    return null;
+  if (cleanedText.length < 3)
+    return null;
+  const normalizedHeading = normalizeHeadingForDedup(cleanedText);
+  if (normalizedHeading === state.mainTitleText)
+    return null;
+  if (state.addedHeadings.has(normalizedHeading))
+    return null;
+  const lowerText = cleanedText.toLowerCase();
+  if (lowerText.includes("subscribe") || lowerText.includes("sign up") || lowerText.includes("newsletter") || lowerText.includes("promotional")) {
+    return null;
+  }
+  const parent = element.parentElement;
+  if (parent) {
+    const parentClass = String(parent.className || "").toLowerCase();
+    const parentId = (parent.id || "").toLowerCase();
+    if (parentClass.includes("related") || parentId.includes("related")) {
+      return null;
+    }
+  }
+  state.addedHeadings.add(normalizedHeading);
+  const level = parseInt(element.tagName.charAt(1));
+  return {
+    type: "heading",
+    level,
+    text: cleanedText,
+    id: element.id || void 0
+  };
+}
+
+function handleImg(win, element, state, constants, baseUrl) {
+  if (element.closest("figure"))
+    return null;
+  const img = (
+    /** @type {HTMLImageElement} */
+    element
+  );
+  const src = extractBestImageUrl(img);
+  if (!src)
+    return null;
+  if (isTrackingPixel(win, img))
+    return null;
+  if (isDecorativeImage(win, img, constants.LOGO_PATTERNS || []))
+    return null;
+  const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+  const normalizedSrc = normalizeImageUrl(absoluteSrc);
+  if (state.processedImages.has(normalizedSrc))
+    return null;
+  state.processedImages.add(normalizedSrc);
+  return {
+    type: "image",
+    src: absoluteSrc,
+    alt: img.alt || "",
+    caption: getImageCaption(img)
+  };
+}
+
+function handleList(element) {
+  const items = Array.from(element.querySelectorAll("li")).map((li) => (li.textContent || "").trim()).filter((text) => text.length > 0);
+  if (items.length === 0)
+    return null;
+  return {
+    type: "list",
+    ordered: element.tagName === "OL",
+    items
+  };
+}
+
+function handleParagraph(win, element, state, constants) {
+  if (state.standfirstElement && element === state.standfirstElement)
+    return null;
+  const text = (element.textContent || "").trim();
+  if (isStandfirstText(text, state.standfirstText))
+    return null;
+  if (text.length < 5)
+    return null;
+  const lowerText = text.toLowerCase();
+  if (lowerText.startsWith("by ") && text.length < 100)
+    return null;
+  if (lowerText.startsWith("edited by") && text.length < 100)
+    return null;
+  if (/^\d+\s+words?$/i.test(text))
+    return null;
+  if (/^\d+\s+min(utes?)?\s+read$/i.test(text))
+    return null;
+  if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
+    return null;
+  }
+  if (lowerText.includes("newsletter") && lowerText.includes("subscribe")) {
+    return null;
+  }
+  if (lowerText.includes("donate") && (lowerText.includes("support") || lowerText.includes("mission"))) {
+    return null;
+  }
+  const originalText = getOriginalTextIfTranslated(element);
+  const finalText = originalText || sanitizeParagraphHtml(element);
+  return {
+    type: "paragraph",
+    text: finalText,
+    html: finalText
+  };
+}
+
+function handleTable(element) {
+  const tableText = (element.textContent || "").trim();
+  if (tableText.length < 50)
+    return null;
+  const clone = element.cloneNode(true);
+  const allElements = (
+    /** @type {HTMLElement} */
+    clone.querySelectorAll("*")
+  );
+  for (const el of allElements) {
+    el.removeAttribute("style");
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.startsWith("on")) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+  return {
+    type: "paragraph",
+    text: (
+      /** @type {HTMLElement} */
+      clone.outerHTML
+    ),
+    html: (
+      /** @type {HTMLElement} */
+      clone.outerHTML
+    )
+  };
+}
+
+function parseElements(win, elements, state, constants, baseUrl) {
+  const content = [];
+  let processedCount = 0;
+  let skippedCount = 0;
+  for (const element of elements) {
+    const tagName = element.tagName.toLowerCase();
+    if (shouldSkipStronglyExcluded(element)) {
+      skippedCount++;
+      continue;
+    }
+    if (tagName.match(/^h[1-6]$/)) {
+      const item = handleHeading(element, state, constants);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "heading");
+        processedCount++;
+      } else {
+        skippedCount++;
+      }
+    } else if (tagName === "p") {
+      const item = handleParagraph(win, element, state, constants);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "paragraph");
+        processedCount++;
+      } else {
+        skippedCount++;
+      }
+    } else if (tagName === "figure") {
+      const item = handleFigure(win, element, state, constants, baseUrl);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "image");
+        processedCount++;
+      } else {
+        skippedCount++;
+      }
+    } else if (tagName === "img") {
+      const item = handleImg(win, element, state, constants, baseUrl);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "image");
+        processedCount++;
+      } else {
+        skippedCount++;
+      }
+    } else if (tagName === "blockquote") {
+      const item = handleBlockquote(element);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "quote");
+        processedCount++;
+      }
+    } else if (tagName === "pre" || tagName === "code") {
+      const item = handleCode(element);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "code");
+        processedCount++;
+      }
+    } else if (tagName === "ul" || tagName === "ol") {
+      const item = handleList(element);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "list");
+        processedCount++;
+      }
+    } else if (tagName === "table") {
+      const item = handleTable(element);
+      if (item) {
+        content.push(item);
+        incrementContentType(state.debugInfo, "table");
+        processedCount++;
+      }
+    }
+  }
+  if (state.debugInfo) {
+    state.debugInfo.processedCount = processedCount;
+    state.debugInfo.skippedCount = skippedCount;
+  }
+  return content;
+}
+
+function sanitizeParagraphHtml(p) {
+  const clone = p.cloneNode(true);
+  const allElements = clone.querySelectorAll("*");
+  for (const el of allElements) {
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name.startsWith("on")) {
+        el.removeAttribute(attr.name);
+      }
+    }
+    if (isFootnoteLink(el) || isIcon(el)) {
+      el.remove();
+    }
+  }
+  const emptyElements = clone.querySelectorAll("span:empty, div:empty");
+  for (const empty of emptyElements) {
+    empty.remove();
+  }
+  return (
+    /** @type {HTMLElement} */
+    clone.innerHTML.trim()
+  );
+}
+
+function sortElementsInDomOrder(elements) {
+  return [...elements].sort(compareDomOrder);
+}
+
+// --- Fallbacks ---
+function extractEmergencyFallback(win, doc, state, constants, mainContent) {
+  const content = [];
+  if (mainContent) {
+    const elements = mainContent.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
+    for (const element of Array.from(elements).slice(0, 100)) {
+      const tagName = element.tagName.toLowerCase();
+      const text = (element.textContent || "").trim();
+      if (text.length < 10)
+        continue;
+      if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
+        continue;
+      }
+      if (tagName === "p") {
+        const originalText = getOriginalTextIfTranslated(element);
+        content.push({ type: "paragraph", text: originalText || text, html: originalText || element.innerHTML });
+      } else if (tagName.match(/^h[1-6]$/)) {
+        const cleanedText = cleanHeadingText(text);
+        const normalized = normalizeHeadingForDedup(cleanedText);
+        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
+          state.addedHeadings.add(normalized);
+          content.push({ type: "heading", level: parseInt(tagName.charAt(1)), text: cleanedText });
         }
       }
-      
-      // Fallback: try to find any article or main element, even without strict checks
-      const fallbackArticle = document.querySelector('article');
-      const fallbackMain = document.querySelector('main');
-      const fallbackRoleMain = document.querySelector('[role="main"], [role="article"]');
-      const fallbackContent = fallbackArticle || fallbackMain || fallbackRoleMain;
-      
-      if (fallbackContent) {
-        // Use fallback but with less strict extraction
-        const fallbackElements = Array.from(fallbackContent.querySelectorAll('h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table'));
-        if (debugInfo) {
-          debugInfo.foundElements = fallbackElements.length;
-          // CRITICAL: Log fallback elements for debugging
-          const fallbackInfo = {
-            fallbackContentTag: fallbackContent.tagName,
-            fallbackContentId: fallbackContent.id,
-            fallbackContentClass: fallbackContent.className,
-            fallbackElementsCount: fallbackElements.length,
-            fallbackElementsByType: {}
-          };
-          fallbackElements.forEach(el => {
-            const tagName = el.tagName.toLowerCase();
-            fallbackInfo.fallbackElementsByType[tagName] = (fallbackInfo.fallbackElementsByType[tagName] || 0) + 1;
-          });
-          console.log('[ClipAIble] === FALLBACK CONTENT FOUND ===', fallbackInfo);
-          debugInfo.extractionLogs.push({ type: 'FALLBACK_CONTENT_FOUND', data: fallbackInfo });
-        }
-        
-        if (fallbackElements.length > 0) {
-          
-          let excludedCount = 0;
-          let processedCount = 0;
-          
-          // Process fallback elements (simplified)
-          for (const element of fallbackElements.slice(0, 100)) { // Limit to first 100 elements
-            // Skip if element is excluded
-            if (isExcluded(element)) {
-              excludedCount++;
-              continue;
-            }
-            
-            processedCount++;
-            const tagName = element.tagName.toLowerCase();
-            if (tagName.match(/^h[1-6]$/)) {
-              const level = parseInt(tagName.substring(1));
-              const text = element.textContent.trim();
-              if (text && text.length > 3) {
-                // Clean heading text - remove "OBJ" markers and Object Replacement Character
-                const cleanedText = text.replace(/<[^>]+>/g, '').trim()
-                  .replace(/\s*\[?obj\]?\s*/gi, '')
-                  .replace(/\uFFFC/g, '') // Remove Object Replacement Character (U+FFFC)
-                  .trim();
-                
-                // Skip if cleaned heading is empty
-                if (!cleanedText || cleanedText.length < 3) {
-                  continue;
-                }
-                
-                // Normalize for comparison
-                const normalizedText = cleanedText.toLowerCase().trim();
-                
-                // CRITICAL: Check if this is the main title FIRST
-                if (mainTitleText && normalizedText === mainTitleText) {
-                  continue;
-                }
-                
-                // CRITICAL: Check if we've already added this heading (Set lookup is O(1))
-                if (addedHeadings.has(normalizedText)) {
-                  continue;
-                }
-                
-                // Add to set BEFORE pushing to content (prevents duplicates)
-                addedHeadings.add(normalizedText);
-                content.push({
-                  type: 'heading',
-                  level: level,
-                  text: cleanedText,
-                  id: element.id || null
-                });
-              }
-            } else if (tagName === 'p') {
-              const text = element.textContent.trim();
-              if (text && text.length > 10) {
-                // CRITICAL: Check ALL possible Google Translate attributes
-                const hasDataOriginalText = element.hasAttribute('data-original-text');
-                const hasDataGtOrig = element.hasAttribute('data-gt-orig-display');
-                const dataOriginalText = element.getAttribute('data-original-text');
-                const dataGtOrig = element.getAttribute('data-gt-orig-display');
-                const innerHTML = element.innerHTML;
-                
-                // Log EVERY paragraph for debugging - TRUNCATED to avoid huge logs
-                if (enableDebugInfo) {
-                  const paragraphDebugLog = {
-                    elementIndex: content.length,
-                    textContentPreview: text.substring(0, 500) + (text.length > 500 ? '...' : ''),
-                    textContentLength: text.length,
-                    innerHTMLPreview: innerHTML.substring(0, 500) + (innerHTML.length > 500 ? '...' : ''),
-                    innerHTMLLength: innerHTML.length,
-                    hasDataOriginalText: hasDataOriginalText,
-                    hasDataGtOrig: hasDataGtOrig,
-                    dataOriginalTextPreview: dataOriginalText ? (dataOriginalText.substring(0, 500) + (dataOriginalText.length > 500 ? '...' : '')) : null,
-                    dataOriginalTextLength: dataOriginalText ? dataOriginalText.length : 0,
-                    dataGtOrigPreview: dataGtOrig ? (dataGtOrig.substring(0, 500) + (dataGtOrig.length > 500 ? '...' : '')) : null,
-                    dataGtOrigLength: dataGtOrig ? dataGtOrig.length : 0,
-                    allAttributes: Array.from(element.attributes).map(attr => ({ name: attr.name, value: attr.value })),
-                    timestamp: Date.now()
-                  };
-                  
-                  console.log(`[ClipAIble] === PARAGRAPH [${content.length}] EXTRACTION DEBUG ===`, paragraphDebugLog);
-                  
-                  // Store in debugInfo for service worker
-                  if (debugInfo) {
-                    debugInfo.extractionLogs.push({ type: 'PARAGRAPH_EXTRACTION_DEBUG', data: paragraphDebugLog });
-                  }
-                }
-                
-                // CRITICAL: Check if Google Translate modified this element
-                const originalText = getOriginalTextIfTranslated(element);
-                const isTranslated = !!originalText;
-                
-                // Log if we detect translation - FULL TEXT - NO TRUNCATION
-                if (isTranslated && enableDebugInfo) {
-                  const translatedLog = {
-                    elementIndex: content.length,
-                    currentTextFull: text, // FULL TEXT - NO TRUNCATION
-                    originalTextFull: originalText, // FULL TEXT - NO TRUNCATION
-                    elementHTMLFull: innerHTML, // FULL HTML - NO TRUNCATION
-                    timestamp: Date.now()
-                  };
-                  
-                  console.log('[ClipAIble] === PARAGRAPH TRANSLATED BY GOOGLE TRANSLATE (FULL TEXT) ===', translatedLog);
-                  
-                  // Store in debugInfo for service worker
-                  if (debugInfo) {
-                    debugInfo.extractionLogs.push({ type: 'PARAGRAPH_TRANSLATED', data: translatedLog });
-                  }
-                }
-                
-                // CRITICAL: Use original text if available, otherwise use current HTML
-                // If originalText exists, it means Google Translate modified the element
-                // We MUST use originalText to get the original Russian text, not the translated one
-                const finalText = originalText || innerHTML;
-                const finalHtml = originalText ? originalText : innerHTML;
-                
-                // Log what we're using for debugging - FULL TEXT - NO TRUNCATION
-                if (enableDebugInfo) {
-                  const finalDecisionLog = {
-                    elementIndex: content.length,
-                    usingOriginalText: !!originalText,
-                    originalTextFull: originalText || null, // FULL TEXT - NO TRUNCATION
-                    currentTextFull: text, // FULL TEXT - NO TRUNCATION
-                    finalTextFull: finalText, // FULL TEXT - NO TRUNCATION
-                    originalTextLength: originalText?.length || 0,
-                    currentTextLength: text.length,
-                    finalTextLength: finalText.length,
-                    textsMatch: originalText === text,
-                    timestamp: Date.now()
-                  };
-                  
-                  console.log('[ClipAIble] === PARAGRAPH FINAL TEXT DECISION ===', finalDecisionLog);
-                  
-                  // Store in debugInfo for service worker
-                  if (debugInfo) {
-                    debugInfo.extractionLogs.push({ type: 'PARAGRAPH_FINAL_DECISION', data: finalDecisionLog });
-                  }
-                }
-                
-                content.push({
-                  type: 'paragraph',
-                  text: finalText,
-                  html: finalHtml,
-                  _wasTranslated: isTranslated, // Debug flag
-                  _originalTextUsed: !!originalText, // Debug flag - did we use original text?
-                  _textContent: text, // Store original textContent for debugging
-                  _dataOriginalText: dataOriginalText || null // Store data-original-text for debugging
-                });
-              }
-            } else if (tagName === 'img' || tagName === 'figure') {
-              const img = tagName === 'img' ? element : element.querySelector('img');
-              if (img) {
-                const src = extractBestImageUrl(img);
-                const isTracking = src ? isTrackingPixel(img) : false;
-                const isDecorative = src ? isDecorativeImage(img) : false;
-                if (src && !isTracking && !isDecorative) {
-                  const imgElement = img instanceof HTMLImageElement ? img : null;
-                  content.push({
-                    type: 'image',
-                    src: toAbsoluteUrl(src, baseUrl),
-                    alt: imgElement?.alt || '',
-                    caption: getImageCaption(img)
-                  });
-                }
-              }
-            }
-          }
-          
-          if (debugInfo) {
-            debugInfo.processedCount = processedCount;
-            debugInfo.skippedCount = excludedCount;
-          }
-          
-          if (content.length > 0) {
-            // FINAL SAFETY CHECK: Remove any duplicate headings
-            const seenHeadings = new Set();
-            const deduplicatedContent = [];
-            let duplicateCount = 0;
-            
-            for (const item of content) {
-              if (item.type === 'heading' && item.text) {
-                const normalized = item.text.toLowerCase().trim()
-                  .replace(/\s*\[?obj\]?\s*/gi, '')
-                  .replace(/\uFFFC/g, '') // Remove Object Replacement Character (U+FFFC)
-                  .trim();
-                if (seenHeadings.has(normalized)) {
-                  duplicateCount++;
-                  continue;
-                }
-                seenHeadings.add(normalized);
-              }
-              deduplicatedContent.push(item);
-            }
-            
-            if (debugInfo) {
-              const contentTypes = deduplicatedContent.reduce((acc, item) => {
-                acc[item.type] = (acc[item.type] || 0) + 1;
-                return acc;
-              }, {});
-              debugInfo.contentTypes = contentTypes;
-              debugInfo.imageCount = ((contentTypes['image'] || 0));
-            }
-            
-            return {
-              title: metadata.title,
-              author: metadata.author,
-              publishDate: metadata.publishDate,
-              content: deduplicatedContent,
-              debugInfo: debugInfo
-            };
-          }
+    }
+    if (content.length > 0)
+      return content;
+  }
+  const containers = doc.querySelectorAll('article, main, [role="main"]');
+  for (const container of containers) {
+    const elements = container.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
+    for (const element of Array.from(elements).slice(0, 100)) {
+      const tagName = element.tagName.toLowerCase();
+      const text = (element.textContent || "").trim();
+      if (text.length < 10)
+        continue;
+      if (tagName === "p") {
+        const originalText = getOriginalTextIfTranslated(element);
+        content.push({ type: "paragraph", text: originalText || text, html: originalText || element.innerHTML });
+      } else if (tagName.match(/^h[1-6]$/)) {
+        const cleanedText = cleanHeadingText(text);
+        const normalized = normalizeHeadingForDedup(cleanedText);
+        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
+          state.addedHeadings.add(normalized);
+          content.push({ type: "heading", level: parseInt(tagName.charAt(1)), text: cleanedText });
         }
       }
-      
-      // CRITICAL: Last resort fallback - try to find content even if mainContent not found
-      // This is important for sites like LessWrong where structure might be non-standard
-      if (enableDebugInfo) {
-        console.log('[ClipAIble] === LAST RESORT FALLBACK - SEARCHING FOR CONTENT ===', {
-          allParagraphsCount: document.querySelectorAll('p').length,
-          allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
-          hasArticle: !!document.querySelector('article'),
-          hasMain: !!document.querySelector('main'),
-          hasRoleMain: !!document.querySelector('[role="main"]')
-        });
-        if (debugInfo) {
-          debugInfo.extractionLogs.push({ 
-            type: 'LAST_RESORT_FALLBACK', 
-            data: {
-              allParagraphsCount: document.querySelectorAll('p').length,
-              allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
-              hasArticle: !!document.querySelector('article'),
-              hasMain: !!document.querySelector('main'),
-              hasRoleMain: !!document.querySelector('[role="main"]')
-            }
-          });
-        }
+    }
+    if (content.length > 0)
+      return content;
+  }
+  return content.length > 0 ? content : null;
+}
+
+function extractLastResortContainerSearch(win, doc, state, constants, baseUrl) {
+  const allContainers = doc.querySelectorAll("div, section, article, main");
+  let bestContainer = null;
+  let maxParagraphs = 0;
+  let bestTextLength = 0;
+  for (const container of allContainers) {
+    if (isExcluded(win, container, constants))
+      continue;
+    if (isWidget(win, container))
+      continue;
+    const paragraphs = container.querySelectorAll("p");
+    const paragraphCount = paragraphs.length;
+    const textLength = (container.textContent || "").length;
+    if (paragraphCount > maxParagraphs || paragraphCount === maxParagraphs && textLength > bestTextLength) {
+      maxParagraphs = paragraphCount;
+      bestTextLength = textLength;
+      bestContainer = container;
+    }
+  }
+  if (!bestContainer || maxParagraphs < 3)
+    return null;
+  const content = [];
+  const elements = bestContainer.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
+  for (const element of elements) {
+    const tagName = element.tagName.toLowerCase();
+    const text = (element.textContent || "").trim();
+    if (tagName === "p") {
+      if (text.length < 10)
+        continue;
+      if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
+        continue;
       }
-      
-      // Try to find content in any container with substantial paragraphs
-      const allContainers = Array.from(document.querySelectorAll('div, section, article, main'));
-      let bestContainer = null;
-      let maxParagraphs = 0;
-      let bestTextLength = 0;
-      
-      if (enableDebugInfo) {
-        console.log('[ClipAIble] === LAST RESORT: SEARCHING CONTAINERS ===', {
-          totalContainers: allContainers.length
-        });
+      const originalText = getOriginalTextIfTranslated(element);
+      const finalText = originalText || element.innerHTML;
+      content.push({ type: "paragraph", text: finalText, html: finalText });
+    } else if (tagName.match(/^h[1-6]$/)) {
+      const cleanedText = cleanHeadingText(text);
+      const normalized = normalizeHeadingForDedup(cleanedText);
+      if (normalized === state.mainTitleText)
+        continue;
+      if (state.addedHeadings.has(normalized))
+        continue;
+      state.addedHeadings.add(normalized);
+      const level = parseInt(tagName.charAt(1));
+      content.push({ type: "heading", level, text: cleanedText });
+    }
+  }
+  return content.length > 0 ? content : null;
+}
+
+function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
+  const content = [];
+  const allHeadings = doc.querySelectorAll("h1, h2, h3, h4, h5, h6");
+  let headingCount = 0;
+  for (const heading of allHeadings) {
+    if (headingCount >= 50)
+      break;
+    if (isWidget(win, heading))
+      continue;
+    const text = cleanHeadingText(heading.textContent || "");
+    const normalized = normalizeHeadingForDedup(text);
+    if (normalized === state.mainTitleText)
+      continue;
+    if (state.addedHeadings.has(normalized))
+      continue;
+    state.addedHeadings.add(normalized);
+    const level = parseInt(heading.tagName.charAt(1));
+    content.push({ type: "heading", level, text });
+    headingCount++;
+  }
+  const allParagraphs = doc.querySelectorAll("p");
+  let paragraphCount = 0;
+  for (const p of allParagraphs) {
+    if (paragraphCount >= 500)
+      break;
+    if (isExcluded(win, p, constants))
+      continue;
+    if (isWidget(win, p))
+      continue;
+    const text = (p.textContent || "").trim();
+    if (text.length < 10)
+      continue;
+    if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
+      continue;
+    }
+    const originalText = getOriginalTextIfTranslated(p);
+    const finalText = originalText || p.innerHTML;
+    content.push({ type: "paragraph", text: finalText, html: finalText });
+    paragraphCount++;
+  }
+  return content.length > 0 ? content : null;
+}
+
+function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
+  const fallbackArticle = doc.querySelector("article");
+  const fallbackMain = doc.querySelector("main");
+  const fallbackRoleMain = doc.querySelector('[role="main"]');
+  const fallbackContent = fallbackArticle || fallbackMain || fallbackRoleMain;
+  if (!fallbackContent)
+    return null;
+  const fallbackElements = fallbackContent.querySelectorAll("h1, h2, h3, h4, h5, h6, p, img, figure");
+  const elements = Array.from(fallbackElements).slice(0, 100);
+  const content = [];
+  for (const element of elements) {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName.match(/^h[1-6]$/)) {
+      const text = cleanHeadingText(element.textContent || "");
+      const normalized = normalizeHeadingForDedup(text);
+      if (normalized === state.mainTitleText)
+        continue;
+      if (state.addedHeadings.has(normalized))
+        continue;
+      state.addedHeadings.add(normalized);
+      const level = parseInt(tagName.charAt(1));
+      content.push({ type: "heading", level, text });
+    } else if (tagName === "p") {
+      const text = (element.textContent || "").trim();
+      if (text.length < 10)
+        continue;
+      const originalText = getOriginalTextIfTranslated(element);
+      const finalText = originalText || element.innerHTML;
+      content.push({ type: "paragraph", text: finalText, html: finalText });
+    } else if (tagName === "img" || tagName === "figure") {
+      const img = tagName === "figure" ? element.querySelector("img") : element;
+      if (!img)
+        continue;
+      const src = extractBestImageUrl(
+        /** @type {HTMLImageElement} */
+        img
+      );
+      if (!src)
+        continue;
+      if (isTrackingPixel(
+        win,
+        /** @type {HTMLImageElement} */
+        img
+      ))
+        continue;
+      if (isDecorativeImage(
+        win,
+        /** @type {HTMLImageElement} */
+        img,
+        constants.LOGO_PATTERNS || []
+      ))
+        continue;
+      const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+      const normalizedSrc = normalizeImageUrl(absoluteSrc);
+      if (state.processedImages.has(normalizedSrc))
+        continue;
+      state.processedImages.add(normalizedSrc);
+      content.push({
+        type: "image",
+        src: absoluteSrc,
+        alt: (
+          /** @type {HTMLImageElement} */
+          img.alt || ""
+        ),
+        caption: ""
+      });
+    }
+  }
+  return content.length > 0 ? content : null;
+}
+
+function findTwitterContainer(doc, mainContent) {
+  let container = doc.querySelector('div[data-testid="twitterArticleReadView"]');
+  if (container)
+    return { container, source: "twitterArticleReadView" };
+  const article = doc.querySelector('article[data-testid="tweet"]');
+  if (article) {
+    container = article.querySelector('div[data-testid="tweetText"]');
+    if (container)
+      return { container, source: "tweetText" };
+    return { container: article, source: "tweet" };
+  }
+  if (mainContent) {
+    return { container: mainContent, source: "mainContent" };
+  }
+  return { container: null, source: "none" };
+}
+
+function isTwitterXPage(baseUrl, doc) {
+  const isTwitterUrl = baseUrl.includes("x.com/") || baseUrl.includes("twitter.com/");
+  if (!isTwitterUrl)
+    return false;
+  const hasTwitterArticle = !!doc.querySelector('article[data-testid="tweet"]');
+  const hasTwitterReadView = !!doc.querySelector('div[data-testid="twitterArticleReadView"]');
+  return hasTwitterArticle || hasTwitterReadView;
+}
+
+function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
+  if (!isTwitterXPage(baseUrl, doc))
+    return null;
+  const { container, source } = findTwitterContainer(doc, null);
+  if (!container)
+    return null;
+  pushDebugLog(state.debugInfo, "TWITTER_X_CONTAINER", { source });
+  const content = [];
+  const addedImageUrls = /* @__PURE__ */ new Set();
+  const allBlocks = container.querySelectorAll("div[data-offset-key]");
+  const uniqueBlocks = /* @__PURE__ */ new Map();
+  for (const block of allBlocks) {
+    const text = (block.textContent || "").trim();
+    if (!text)
+      continue;
+    if (!uniqueBlocks.has(text) || block.children.length > (uniqueBlocks.get(text)?.children.length || 0)) {
+      uniqueBlocks.set(text, block);
+    }
+  }
+  const contentBlocks = Array.from(uniqueBlocks.values());
+  const validBlocks = contentBlocks.filter((block) => {
+    const text = (block.textContent || "").toLowerCase();
+    if (text.includes("premium") || text.includes("/analytics") || text.includes("/i/premium")) {
+      return false;
+    }
+    if (/^\d+\s*(k|m|тыс|млн)?$/i.test(text)) {
+      return false;
+    }
+    return true;
+  });
+  const headings = container.querySelectorAll("h1.longform-header-one, h2.longform-header-two, h3.longform-header-three");
+  const images = container.querySelectorAll("img");
+  const allElements = [...Array.from(headings), ...Array.from(images), ...validBlocks];
+  allElements.sort(compareDomOrder);
+  for (const element of allElements) {
+    const tagName = element.tagName.toLowerCase();
+    if (tagName.match(/^h[1-3]$/)) {
+      const text = cleanHeadingText(element.textContent || "");
+      const normalized = normalizeHeadingForDedup(text);
+      if (normalized === state.mainTitleText)
+        continue;
+      if (state.addedHeadings.has(normalized))
+        continue;
+      state.addedHeadings.add(normalized);
+      const level = element.classList.contains("longform-header-one") ? 1 : element.classList.contains("longform-header-two") ? 2 : 3;
+      content.push({ type: "heading", level, text, id: element.id || void 0 });
+    } else if (tagName === "img") {
+      if (element.closest("figure"))
+        continue;
+      const img = (
+        /** @type {HTMLImageElement} */
+        element
+      );
+      const src = extractBestImageUrl(img);
+      if (!src)
+        continue;
+      if (isTrackingPixel(win, img))
+        continue;
+      if (isDecorativeImage(win, img, constants.LOGO_PATTERNS || []))
+        continue;
+      const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+      const normalizedSrc = normalizeImageUrl(absoluteSrc);
+      if (addedImageUrls.has(normalizedSrc))
+        continue;
+      addedImageUrls.add(normalizedSrc);
+      let alt = img.alt || "";
+      if (alt.toLowerCase().includes("image"))
+        alt = "";
+      content.push({ type: "image", src: absoluteSrc, alt, caption: "" });
+    } else if (element.hasAttribute("data-offset-key")) {
+      const text = (element.textContent || "").trim();
+      if (!text)
+        continue;
+      const innerHeading = element.querySelector("h1, h2, h3");
+      if (innerHeading) {
+        const headingText = cleanHeadingText(innerHeading.textContent || "");
+        const normalized = normalizeHeadingForDedup(headingText);
+        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
+          state.addedHeadings.add(normalized);
+          content.push({ type: "heading", level: 2, text: headingText });
+        }
+        continue;
       }
-      
-      for (const container of allContainers) {
-        // Skip excluded containers and widgets
-        if (isExcluded(container) || isWidget(container)) continue;
-        
-        const paragraphs = container.querySelectorAll('p');
-        const textLength = container.textContent.trim().length;
-        
-        // Accept if has substantial paragraphs and text
-        // Prioritize containers with many paragraphs (like LessWrong's MultiToCLayout-tableOfContents)
-        // For large content (like LessWrong with 175+ paragraphs), prioritize by paragraph count
-        if (paragraphs.length >= 10 && textLength > 5000) {
-          // Large content container - prioritize by paragraph count
-          if (paragraphs.length > maxParagraphs || 
-              (paragraphs.length === maxParagraphs && textLength > bestTextLength)) {
-            maxParagraphs = paragraphs.length;
-            bestContainer = container;
-            bestTextLength = textLength;
-          }
-        } else if (paragraphs.length > maxParagraphs && textLength > 500) {
-          // Smaller content - standard logic
-          maxParagraphs = paragraphs.length;
-          bestContainer = container;
-          bestTextLength = textLength;
-        }
-      }
-      
-      if (enableDebugInfo) {
-        console.log('[ClipAIble] === LAST RESORT: SEARCH COMPLETE ===', {
-          foundContainer: !!bestContainer,
-          maxParagraphs: maxParagraphs,
-          bestTextLength: bestTextLength,
-          bestContainerInfo: bestContainer ? {
-            tagName: bestContainer.tagName,
-            id: bestContainer.id,
-            className: bestContainer.className
-          } : null
-        });
-      }
-      
-      // If found a good container, extract from it
-      if (bestContainer && maxParagraphs >= 3) {
-        if (enableDebugInfo) {
-          console.log('[ClipAIble] === LAST RESORT: FOUND CONTAINER WITH PARAGRAPHS ===', {
-            tagName: bestContainer.tagName,
-            id: bestContainer.id,
-            className: bestContainer.className,
-            paragraphsCount: maxParagraphs,
-            textLength: bestContainer.textContent.trim().length,
-            headingsCount: bestContainer.querySelectorAll('h1, h2, h3, h4, h5, h6').length
-          });
-          if (debugInfo) {
-            debugInfo.extractionLogs.push({ 
-              type: 'LAST_RESORT_CONTAINER_FOUND', 
-              data: {
-                tagName: bestContainer.tagName,
-                id: bestContainer.id,
-                className: bestContainer.className,
-                paragraphsCount: maxParagraphs,
-                textLength: bestContainer.textContent.trim().length,
-                headingsCount: bestContainer.querySelectorAll('h1, h2, h3, h4, h5, h6').length
-              }
-            });
-          }
-        }
-        
-        const lastResortElements = Array.from(bestContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
-        // Only filter out clearly non-content
-        const filteredLastResort = lastResortElements.filter(el => {
-          const tagName = el.tagName.toLowerCase();
-          if (tagName === 'p') {
-            const text = el.textContent.trim();
-            return !isNavigationParagraph(text) && text.length > 10;
-          }
-          return true;
-        });
-        
-        // Extract from filtered elements
-        for (const el of filteredLastResort.slice(0, 200)) {
-          const tagName = el.tagName.toLowerCase();
-          if (tagName.match(/^h[1-6]$/)) {
-            const level = parseInt(tagName.substring(1));
-            const text = el.textContent.trim();
-            if (text && text.length > 3) {
-              const cleanedText = text.replace(/<[^>]+>/g, '').trim()
-                .replace(/\s*\[?obj\]?\s*/gi, '')
-                .replace(/\uFFFC/g, '')
-                .trim();
-              
-              if (cleanedText && cleanedText.length >= 3) {
-                const normalizedText = cleanedText.toLowerCase().trim();
-                if (mainTitleText && normalizedText === mainTitleText) continue;
-                if (addedHeadings.has(normalizedText)) continue;
-                
-                addedHeadings.add(normalizedText);
-                content.push({
-                  type: 'heading',
-                  level: level,
-                  text: cleanedText,
-                  id: el.id || null
-                });
-              }
-            }
-          } else if (tagName === 'p') {
-            const text = el.textContent.trim();
-            if (text && text.length > 10) {
-              const originalText = getOriginalTextIfTranslated(el);
-              const finalText = originalText || el.innerHTML;
-              const finalHtml = originalText ? originalText : el.innerHTML;
-              
-              content.push({
-                type: 'paragraph',
-                text: finalText,
-                html: finalHtml
-              });
-            }
-          }
-        }
-        
-        if (content.length > 0) {
-          if (debugInfo) {
-            const contentTypes = content.reduce((acc, item) => {
-              acc[item.type] = (acc[item.type] || 0) + 1;
-              return acc;
-            }, {});
-            debugInfo.contentTypes = contentTypes;
-          }
-          
-          return {
-            title: metadata.title,
-            author: metadata.author,
-            publishDate: metadata.publishDate,
-            content: content,
-            debugInfo: debugInfo
-          };
-        }
-      }
-      
-      // ULTIMATE FALLBACK: If still no container found, try to extract directly from all paragraphs
-      // This handles cases where all containers are excluded but paragraphs exist
-      if (!bestContainer && document.querySelectorAll('p').length >= 10) {
-        if (enableDebugInfo) {
-          console.log('[ClipAIble] === ULTIMATE FALLBACK: EXTRACTING FROM ALL PARAGRAPHS ===', {
-            allParagraphsCount: document.querySelectorAll('p').length,
-            allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
-          });
-          if (debugInfo) {
-            debugInfo.extractionLogs.push({ 
-              type: 'ULTIMATE_FALLBACK', 
-              data: {
-                allParagraphsCount: document.querySelectorAll('p').length,
-                allHeadingsCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
-              }
-            });
-          }
-        }
-        
-        // Extract all paragraphs and headings directly from document
-        const allParagraphs = Array.from(document.querySelectorAll('p'));
-        const allHeadings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'));
-        
-        // Filter out navigation and widget paragraphs
-        const filteredParagraphs = allParagraphs.filter(p => {
-          if (isExcluded(p) || isWidget(p)) return false;
-          const text = p.textContent.trim();
-          if (isNavigationParagraph(text)) return false;
-          if (text.length < 10) return false;
-          // Check if paragraph is inside a widget container
-          let parent = p.parentElement;
-          let depth = 0;
-          while (parent && parent !== document.body && depth < 5) {
-            if (isWidget(parent)) return false;
-            parent = parent.parentElement;
-            depth++;
-          }
-          return true;
-        });
-        
-        // Add headings first (in document order)
-        for (const heading of allHeadings.slice(0, 50)) {
-          if (isExcluded(heading) || isWidget(heading)) continue;
-          const text = heading.textContent.trim();
-          if (text.length < 3) continue;
-          
-          // Check if heading is inside a widget container
-          let parent = heading.parentElement;
-          let depth = 0;
-          while (parent && parent !== document.body && depth < 5) {
-            if (isWidget(parent)) break;
-            parent = parent.parentElement;
-            depth++;
-          }
-          if (depth >= 5 && parent !== document.body) continue; // Was inside widget
-          
-          const level = parseInt(heading.tagName.substring(1));
-          const cleanedText = text.replace(/<[^>]+>/g, '').trim()
-            .replace(/\s*\[?obj\]?\s*/gi, '')
-            .replace(/\uFFFC/g, '')
-            .trim();
-          
-          if (cleanedText && cleanedText.length >= 3) {
-            const normalizedText = cleanedText.toLowerCase().trim();
-            if (mainTitleText && normalizedText === mainTitleText) continue;
-            if (addedHeadings.has(normalizedText)) continue;
-            
-            addedHeadings.add(normalizedText);
-            content.push({
-              type: 'heading',
-              level: level,
-              text: cleanedText,
-              id: heading.id || null
-            });
-          }
-        }
-        
-        // Add paragraphs
-        for (const p of filteredParagraphs.slice(0, 500)) {
-          const text = p.textContent.trim();
-          if (text.length < 10) continue;
-          
-          const originalText = getOriginalTextIfTranslated(p);
-          const finalText = originalText || p.innerHTML;
-          const finalHtml = originalText ? originalText : p.innerHTML;
-          
-          content.push({
-            type: 'paragraph',
-            text: finalText,
-            html: finalHtml
-          });
-        }
-        
-        if (content.length > 0) {
-          if (debugInfo) {
-            const contentTypes = content.reduce((acc, item) => {
-              acc[item.type] = (acc[item.type] || 0) + 1;
-              return acc;
-            }, {});
-            debugInfo.contentTypes = contentTypes;
-          }
-          
-          return {
-            title: metadata.title,
-            author: metadata.author,
-            publishDate: metadata.publishDate,
-            content: content,
-            debugInfo: debugInfo
-          };
-        }
-      }
-      
-      // Last resort: return empty result
-      if (enableDebugInfo) {
-        console.log('[ClipAIble] === LAST RESORT: NO CONTAINER FOUND ===', {
-          bestContainer: !!bestContainer,
-          maxParagraphs: maxParagraphs,
-          allParagraphsOnPage: document.querySelectorAll('p').length,
-          allHeadingsOnPage: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
-        });
-        if (debugInfo) {
-          debugInfo.extractionLogs.push({ 
-            type: 'LAST_RESORT_NO_CONTAINER', 
-            data: {
-              bestContainer: !!bestContainer,
-              maxParagraphs: maxParagraphs,
-              allParagraphsOnPage: document.querySelectorAll('p').length,
-              allHeadingsOnPage: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length
-            }
-          });
-        }
-      }
-      
+      const innerImg = element.querySelector("img");
+      if (innerImg)
+        continue;
+      const originalText = getOriginalTextIfTranslated(element);
+      const finalText = originalText || element.innerHTML;
+      content.push({ type: "paragraph", text: finalText, html: finalText });
+    }
+  }
+  pushDebugLog(state.debugInfo, "TWITTER_X_EXTRACTED", { itemCount: content.length });
+  return content.length > 0 ? content : null;
+}
+
+
+
+
+  // Main extraction logic (inlined from runExtraction)
+  const win = window;
+  const doc = document;
+  const debugInfo = enableDebugInfo ? createDebugInfo(win, doc, baseUrl) : null;
+  if (enableDebugInfo) {
+    logExtractionStart(baseUrl, enableDebugInfo);
+    logHtmlState(doc);
+  }
+  try {
+    try {
+      await waitForContentLoad(doc);
+    } catch (e) {
+      pushDebugLog(debugInfo, "WAIT_FOR_CONTENT_SKIPPED", { error: String(e) });
+    }
+    const googleTranslateState = detectGoogleTranslateState(doc);
+    const firstParagraphCheck = checkFirstParagraph(doc);
+    if (debugInfo) {
+      debugInfo.googleTranslateState = googleTranslateState;
+      debugInfo.firstParagraphCheck = firstParagraphCheck;
+      pushDebugLog(debugInfo, "GOOGLE_TRANSLATE_STATE", googleTranslateState);
+    }
+    const constants = {
+      EXCLUDED_CLASSES: CONSTANTS.EXCLUDED_CLASSES,
+      PAYWALL_CLASSES: CONSTANTS.PAYWALL_CLASSES,
+      NAV_PATTERNS_CONTAINS: CONSTANTS.NAVIGATION_PATTERNS_CONTAINS,
+      NAV_PATTERNS_STARTS_WITH: CONSTANTS.NAVIGATION_PATTERNS_STARTS_WITH,
+      COURSE_AD_PATTERNS: CONSTANTS.COURSE_AD_PATTERNS,
+      PAYWALL_PATTERNS: CONSTANTS.PAYWALL_PATTERNS,
+      LOGO_PATTERNS: CONSTANTS.LOGO_PATTERNS
+    };
+    const metadata = extractMetadata(doc, baseUrl);
+    const mainTitleText = normalizeHeadingForDedup(metadata.title);
+    pushDebugLog(debugInfo, "METADATA_EXTRACTED", metadata);
+    const state = {
+      processedImages: /* @__PURE__ */ new Set(),
+      addedHeadings: /* @__PURE__ */ new Set(),
+      mainTitleText,
+      standfirstElement: null,
+      standfirstText: null,
+      content: [],
+      debugInfo
+    };
+    if (mainTitleText) {
+      state.addedHeadings.add(mainTitleText);
+    }
+    const twitterContent = tryExtractTwitterX(win, doc, state, constants, baseUrl);
+    if (twitterContent && twitterContent.length > 0) {
       return {
         title: metadata.title,
         author: metadata.author,
         publishDate: metadata.publishDate,
-        content: [],
-        debugInfo: debugInfo
+        content: deduplicateHeadings(twitterContent),
+        debugInfo
       };
     }
-    
-    // Extract content elements - sort so figures come before standalone images
-    // Also exclude iframe elements and their containers
-    const allElements = Array.from(mainContent.querySelectorAll('h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table'));
-    const imageElements = allElements.filter(el => {
-      const tagName = el.tagName.toLowerCase();
-      return tagName === 'img' || tagName === 'figure';
+    const mainContent = findMainContent(win, doc, (el) => isExcluded(win, el, constants));
+    pushDebugLog(debugInfo, "MAIN_CONTENT_FOUND", {
+      found: !!mainContent,
+      tagName: mainContent?.tagName,
+      className: mainContent?.className,
+      textLength: mainContent?.textContent?.length || 0
     });
-    if (debugInfo) {
-      debugInfo.foundElements = allElements.length;
-      debugInfo.imageCount = imageElements.length;
-    }
-    
-    // Also find "About the Author" and similar sections that might be useful
-    const authorSections = Array.from(mainContent.querySelectorAll('section, div')).filter(el => {
-      const className = String(el.className || '').toLowerCase();
-      const id = (el.id || '').toLowerCase();
-      const text = el.textContent.trim().toLowerCase();
-      return (className.includes('about-author') || className.includes('author-info') || 
-              className.includes('author-bio') || id.includes('about-author') ||
-              text.includes('about the author') || text.includes('about author')) &&
-             !isExcluded(el) && text.length > 50;
-    });
-    
-    // Add author section elements to the list
-    for (const authorSection of authorSections) {
-      const sectionElements = authorSection.querySelectorAll('h1, h2, h3, h4, h5, h6, p');
-      allElements.push(...Array.from(sectionElements));
-    }
-    
-    // Filter out elements that are inside excluded containers (ads, navigation, etc.)
-    // CRITICAL: Since we're already inside mainContent, be VERY lenient
-    // Only exclude elements that are clearly not content (ads, navigation, metadata)
-    let excludedImageCount = 0;
-    let excludedByType = {};
-    let filteredElements = allElements.filter(el => {
-      const tagName = el.tagName.toLowerCase();
-      
-      // STEP 1: Check if element itself is excluded (hidden, tracking pixel, etc.)
-      // This is the most basic check - exclude only if element itself is clearly not content
-      if (tagName === 'figure' || tagName === 'img') {
-        if (isExcluded(el)) {
-          excludedImageCount++;
-          excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
-          return false;
-        }
-      } else {
-        // For paragraphs/headings, only exclude if element itself is clearly not content
-        // Don't exclude based on parent checks - we're already in mainContent
-        if (isExcluded(el)) {
-          excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
-          return false;
-        }
-      }
-      
-      // STEP 2: For elements inside mainContent, only exclude if they're in a clearly separate section
-      // Check for related-articles sections - but only if it's clearly a separate section with multiple links
-      let checkEl = el;
-      let foundRelatedSection = false;
-      while (checkEl && checkEl !== mainContent) {
-        const checkTag = checkEl.tagName.toLowerCase();
-        const checkClass = String(checkEl.className || '').toLowerCase();
-        const checkId = (checkEl.id || '').toLowerCase();
-        
-        // Only exclude if it's a section specifically for related articles
-        // AND it contains multiple article links (clear related articles section)
-        if (checkTag === 'section' && 
-            (checkClass.includes('related-articles') || checkId.includes('related-articles'))) {
-          const articleLinks = checkEl.querySelectorAll('a[href*="/article/"], a[href*="/post/"], a[href*="/essay/"]');
-          // Only exclude if it has multiple article links (clear related articles section)
-          if (articleLinks.length >= 2) {
-            foundRelatedSection = true;
-            break;
-          }
-        }
-        
-        checkEl = checkEl.parentElement;
-      }
-      
-      // For non-image elements, exclude if in clear related articles section
-      if (foundRelatedSection && tagName !== 'figure' && tagName !== 'img') {
-        excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
-          return false;
-        }
-        
-      // STEP 3: For images, check if they're decorative (logos, icons, etc.)
-      if (tagName === 'figure' || tagName === 'img') {
-        const img = tagName === 'img' ? el : el.querySelector('img');
-        if (img && isDecorativeImage(img)) {
-          excludedImageCount++;
-          excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
-          return false;
-        }
-        
-        // For images, check parent for clear ad containers
-      let parent = el.parentElement;
-      let iterations = 0;
-      const maxIterations = 50; // Safety limit to prevent infinite loops
-      while (parent && parent !== mainContent && iterations < maxIterations) {
-        iterations++;
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          const parentTag = parent.tagName.toLowerCase();
-          
-          // Only exclude if parent is clearly an ad (not just any excluded class)
-          const clearAdIndicators = [
-            /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/,
-            'ad-container', 'ad-wrapper', 'ad-box', 'advertisement-container',
-            'ad-banner', 'ad-sidebar', 'ad-header', 'ad-footer'
-          ];
-          const isClearAd = clearAdIndicators.some(indicator => {
-            if (typeof indicator === 'string') {
-              return parentClass.includes(indicator) || parentId.includes(indicator);
-            }
-            return indicator.test(parentClass) || indicator.test(parentId);
-          });
-          
-          // Also exclude if parent is iframe or aside (clear non-content)
-          if (isClearAd || (parentTag === 'iframe' || parentTag === 'aside')) {
-            excludedImageCount++;
-            excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
-            return false;
-          }
-          
-        parent = parent.parentElement;
-        }
-      }
-      
-      // STEP 4: For paragraphs/headings inside mainContent, include them by default
-      // Only exclude if they're in a clearly separate section (already checked above)
-      // Don't check parent elements - we're already in mainContent, so they're likely content
-      
-      return true;
-    });
-    
-    const filteredImageElements = filteredElements.filter(el => {
-      const tagName = el.tagName.toLowerCase();
-      return tagName === 'img' || tagName === 'figure';
-    });
-    if (debugInfo) {
-      debugInfo.filteredElements = filteredElements.length;
-      debugInfo.excludedImageCount = excludedImageCount;
-      debugInfo.filteredImageCount = filteredImageElements.length;
-      debugInfo.excludedByType = excludedByType;
-    }
-    
-    // CRITICAL: If mainContent is found but filteredElements is empty or very small,
-    // use less strict filtering to avoid losing all content
-    // This helps with sites like LessWrong where content might be filtered too aggressively
-    if (mainContent && filteredElements.length < 5 && allElements.length > 10) {
-      // Re-filter with less strict rules - only exclude clearly non-content elements
-      const relaxedFiltered = allElements.filter(el => {
-        const tagName = el.tagName.toLowerCase();
-        
-        // Only exclude if element itself is clearly excluded (hidden, tracking pixel, etc.)
-        if (isExcluded(el)) {
-          return false;
-        }
-        
-        // For paragraphs/headings inside mainContent, be very lenient
-        // Only exclude if clearly navigation or paywall
-        if (tagName === 'p' || tagName.match(/^h[1-6]$/)) {
-          const text = el.textContent.trim();
-          // Only exclude if clearly navigation or paywall
-          if (isNavigationParagraph(text)) {
-            return false;
-          }
-          // Accept all other paragraphs/headings
-          return true;
-        }
-        
-        // For images, use original filtering
-        if (tagName === 'figure' || tagName === 'img') {
-          const img = tagName === 'img' ? el : el.querySelector('img');
-          if (img && isDecorativeImage(img)) {
-            return false;
-          }
-          return true;
-        }
-        
-        // Accept other elements
-        return true;
-      });
-      
-      if (relaxedFiltered.length > filteredElements.length) {
-        if (debugInfo) {
-          debugInfo.relaxedFiltering = true;
-          debugInfo.originalFilteredCount = filteredElements.length;
-          debugInfo.relaxedFilteredCount = relaxedFiltered.length;
-        }
-        filteredElements = relaxedFiltered;
-      }
-    }
-    
-    // Count filtered elements by type for debugging (only if debug enabled)
-    const filteredByType = {};
-    filteredElements.forEach(el => {
-      const tagName = el.tagName.toLowerCase();
-      filteredByType[tagName] = (filteredByType[tagName] || 0) + 1;
-    });
-    if (debugInfo) debugInfo.filteredByType = filteredByType;
-    
-    // Count all elements by type for debugging (only if debug enabled)
-    const allByType = {};
-    allElements.forEach(el => {
-      const tagName = el.tagName.toLowerCase();
-      allByType[tagName] = (allByType[tagName] || 0) + 1;
-    });
-    if (debugInfo) debugInfo.allByType = allByType;
-    
-    // CRITICAL: Maintain original DOM order - don't sort!
-    // Images should appear where they are in the original article, not all at the beginning
-    // Use compareDocumentPosition to maintain DOM order
-    const elements = filteredElements.sort((a, b) => {
-      // Compare document position to maintain DOM order
-      const position = a.compareDocumentPosition(b);
-      if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
-        return -1; // a comes before b
-      }
-      if (position & Node.DOCUMENT_POSITION_PRECEDING) {
-        return 1; // b comes before a
-      }
-      return 0; // Same position (shouldn't happen)
-    });
-    
-    // Track images already processed in figures to avoid duplicates
-    // Note: addedHeadings and mainTitleText are already initialized above (before findMainContent)
-    const processedImages = new Set();
-    
-    // Add featured image at the beginning if found
-    // But only if it's not already in the content (to avoid duplicates)
+    const featuredImage = extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || []);
+    const standfirstResult = extractStandfirst(mainContent);
+    state.standfirstElement = standfirstResult.element;
+    state.standfirstText = standfirstResult.text;
+    let content = [];
     if (featuredImage) {
-      // Normalize URL for comparison
-      const normalizedFeatured = normalizeImageUrl(featuredImage);
-      // Mark it as processed so it won't be added again during element processing
-      processedImages.add(normalizedFeatured);
-      // Add it at the beginning
+      const normalizedFeaturedSrc = normalizeImageUrl(featuredImage.src);
+      state.processedImages.add(normalizedFeaturedSrc);
       content.push({
-        type: 'image',
-        src: featuredImage,
-        alt: '',
-        caption: '',
+        type: "image",
+        src: featuredImage.src,
+        alt: featuredImage.alt,
+        caption: featuredImage.caption,
         isFeatured: true
       });
     }
-    
-    // Add standfirst/subtitle as a subtitle at the beginning if found
-    if (standfirst) {
+    if (state.standfirstText) {
       content.push({
-        type: 'subtitle',
-        text: standfirst,
-        html: `<p class="standfirst">${standfirst}</p>`,
+        type: "subtitle",
+        text: state.standfirstText,
         isStandfirst: true
       });
     }
-    
-    // Element filter module functions
-    function isNavigationParagraph(text) {
-      // Module function needs NAV_PATTERNS_STARTS_WITH and PAYWALL_PATTERNS as dependencies
-      return isNavigationParagraphModule(text, NAV_PATTERNS_STARTS_WITH, PAYWALL_PATTERNS);
-    }
-    
-    let processedCount = 0;
-    let skippedCount = 0;
-    
-    // Safety check: ensure elements is defined
-    if (!elements || !Array.isArray(elements)) {
-      // This is an internal error, not user-facing, so we can keep it in English for debugging
-      throw new Error(`elements is not defined or not an array. filteredElements: ${typeof filteredElements}, mainContent: ${!!mainContent}`);
-    }
-    
-    for (const element of elements) {
-      // Get tag name first - used throughout
-      const tagName = element.tagName.toLowerCase();
-      const isImageOrFigure = tagName === 'img' || tagName === 'figure';
-      
-      // For elements inside main content, only exclude if clearly not content
-      // (e.g., hidden elements or obvious non-content like ads)
-      // For images/figures, be more lenient with visibility checks (lazy loading)
-      // Only skip if clearly hidden AND not a lazy-loaded image
-      if (!isImageOrFigure) {
-        let style;
-        try {
-          style = window.getComputedStyle(element);
-        } catch (e) {
-          // Element might be in iframe or detached, continue processing
-          // Don't skip based on style check failure
-        }
-        if (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')) {
-          skippedCount++;
-          continue;
-        }
-      } else {
-        // For images/figures, be very lenient - only skip if completely hidden
-        // Many images are hidden via opacity for fade-in effects but have valid src
-        let style;
-        try {
-          style = window.getComputedStyle(element);
-        } catch (e) {
-          // Element might be in iframe or detached, continue processing
-          // Don't skip based on style check failure
-        }
-        // Only skip if display is none or visibility is hidden (not opacity)
-        if (style && (style.display === 'none' || style.visibility === 'hidden')) {
-          // Check if it's lazy-loaded - if so, don't skip
-          let hasLazySrc = false;
-          if (tagName === 'figure') {
-            const img = element.querySelector('img');
-            if (img) {
-              hasLazySrc = img.hasAttribute('data-src') || 
-                          img.hasAttribute('data-lazy-src') ||
-                          img.hasAttribute('data-original') ||
-                          img.hasAttribute('data-srcset');
-            }
-          } else {
-            hasLazySrc = element.hasAttribute('data-src') || 
-                        element.hasAttribute('data-lazy-src') ||
-                        element.hasAttribute('data-original') ||
-                        element.hasAttribute('data-srcset');
-          }
-          // Only skip if hidden AND not lazy-loaded
-          if (!hasLazySrc) {
-            skippedCount++;
-            continue;
-          }
-        }
-        // Don't skip images based on opacity alone - they may be hidden for fade-in effects
+    if (mainContent) {
+      const allElements = collectCandidateElements(mainContent);
+      if (debugInfo) {
+        debugInfo.foundElements = allElements.length;
       }
-      
-      // Only exclude if element has strong exclusion indicators
-      // BUT: Don't exclude images/figures unless they're clearly ads
-      const className = String(element.className || '').toLowerCase();
-      const id = (element.id || '').toLowerCase();
-      
-      const strongExclusions = [
-        'ad', 'advertisement', 'ads', 'sponsor', 'sponsored', 'advert',
-        'comment', 'comments', 'disqus',
-        'read-more', 'readmore', 'keep-reading', 'subscribe', 'paywall', 'gate',
-        'newsletter', 'newsletter-signup', 'subscribe-box',
-        'support', 'donate', 'donation',
-        'related', 'recommended', 'also-in', 'you-might-also-like',
-        'next-article', 'previous-article', 'article-nav'
-      ];
-      
-      // For images/figures, only exclude if they're clearly ads
-      // Use word boundaries to avoid false positives (e.g., "lead-article-image" contains "ad" but isn't an ad)
-      if (isImageOrFigure) {
-        // Check for ad-related classes with word boundaries
-        const adPatterns = [
-          /\bad\b/, /\badvertisement\b/, /\bads\b/, /\bsponsor\b/, /\bsponsored\b/, /\badvert\b/
-        ];
-        const hasAdPattern = adPatterns.some(pattern => pattern.test(className) || pattern.test(id));
-        
-        // Also check for specific ad-related class names (whole class names, not substrings)
-        const adClassNames = ['ad', 'advertisement', 'ads', 'sponsor', 'sponsored', 'advert'];
-        const hasAdClass = adClassNames.some(adClass => 
-          className === adClass || 
-          className.startsWith(adClass + '-') || 
-          className.endsWith('-' + adClass) ||
-          className.includes('-' + adClass + '-') ||
-          id === adClass ||
-          id.startsWith(adClass + '-') ||
-          id.endsWith('-' + adClass) ||
-          id.includes('-' + adClass + '-')
-        );
-        
-        if (hasAdPattern || hasAdClass) {
-          skippedCount++;
-          continue;
-        }
-      } else {
-        // For other elements, use normal exclusion logic
-        // But also use word boundaries to avoid false positives
-        const isStronglyExcluded = strongExclusions.some(excl => {
-          // Check for whole word match or class name boundaries
-          const pattern = new RegExp(`\\b${excl}\\b`);
-          return pattern.test(className) || pattern.test(id) ||
-                 className === excl || className.startsWith(excl + '-') || className.endsWith('-' + excl) ||
-                 id === excl || id.startsWith(excl + '-') || id.endsWith('-' + excl);
-        });
-        if (isStronglyExcluded) {
-          skippedCount++;
-          continue;
-        }
+      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo);
+      if (debugInfo) {
+        debugInfo.filteredElements = filteredElements.length;
       }
-      
-      // Check if element is inside an iframe container (likely ad)
-      // BUT: For images/figures, be more careful - only exclude if clearly an ad
-      let parent = element.parentElement;
-      let isInIframeAd = false;
-      if (!isImageOrFigure) {
-        // For non-image elements, use original logic
-        let iterations = 0;
-        const maxIterations = 50; // Safety limit to prevent infinite loops
-        while (parent && parent !== mainContent && iterations < maxIterations) {
-          iterations++;
-          if (parent.tagName.toLowerCase() === 'iframe' || 
-              (parent.querySelector('iframe') && (className.includes('ad') || id.includes('ad')))) {
-            isInIframeAd = true;
-            break;
-          }
-          parent = parent.parentElement;
-        }
-      } else {
-        // For images/figures, only exclude if parent has clear ad indicators (whole words)
-        let iterations = 0;
-        const maxIterations = 50; // Safety limit to prevent infinite loops
-        while (parent && parent !== mainContent && iterations < maxIterations) {
-          iterations++;
-          if (parent.tagName.toLowerCase() === 'iframe') {
-            isInIframeAd = true;
-            break;
-          }
-          // Check parent for ad classes with word boundaries
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          const adPattern = /\b(ad|ads|advertisement|sponsor|sponsored|advert)\b/;
-          if (adPattern.test(parentClass) || adPattern.test(parentId)) {
-            isInIframeAd = true;
-            break;
-          }
-          parent = parent.parentElement;
-        }
-      }
-      if (isInIframeAd) {
-        skippedCount++;
-        continue;
-      }
-      
-      // tagName already declared at the start of loop
-      if (tagName.match(/^h[1-6]$/)) {
-        // Skip if this is the standfirst element (already added at the beginning)
-        if (standfirstElement && (element === standfirstElement || element.contains(standfirstElement) || standfirstElement.contains(element))) {
-          continue;
-        }
-        
-        const level = parseInt(tagName.substring(1));
-        const text = element.textContent.trim();
-        if (text) {
-          // Clean heading text - remove "OBJ" markers, Object Replacement Character, and other artifacts
-          // First get text without HTML to properly detect OBJ
-          const headingTextWithoutHtml = text.replace(/<[^>]+>/g, '').trim();
-          const cleanedHeadingText = headingTextWithoutHtml
-            .replace(/\s*\[?obj\]?\s*/gi, '') // Remove [OBJ] or OBJ markers
-            .replace(/\uFFFC/g, '') // Remove Object Replacement Character (U+FFFC)
-            .replace(/\s*#\s*$/, '') // Remove trailing #
-            .trim();
-          
-          // Skip if cleaned heading is empty or just whitespace
-          if (!cleanedHeadingText || cleanedHeadingText.length < 3) {
-            continue;
-          }
-          
-          // Skip headings that are just numbers (e.g., "1.", "2.", "3.")
-          if (/^\d+\.?\s*$/.test(cleanedHeadingText)) {
-            continue;
-          }
-          
-          // Also skip if text matches standfirst (to avoid duplicates)
-          if (standfirst && cleanedHeadingText === standfirst) {
-            continue;
-          }
-          
-          // Normalize for comparison (lowercase, trimmed)
-          const normalizedHeading = cleanedHeadingText.toLowerCase().trim();
-          
-          // CRITICAL: Check if this is the main title FIRST (before any other checks)
-          if (mainTitleText && normalizedHeading === mainTitleText) {
-            continue;
-          }
-          
-          // CRITICAL: Check if we've already added this exact heading (Set lookup is O(1))
-          if (addedHeadings.has(normalizedHeading)) {
-            continue;
-          }
-          
-          // Skip subscription/promotional headings
-          const headingLower = normalizedHeading;
-          if (headingLower.includes("like what you're reading") ||
-              headingLower.includes('subscribe to') ||
-              headingLower.includes('sign up') ||
-              headingLower.includes('subscribe today')) {
-            continue;
-          }
-          
-          // Skip "By Author" patterns in headings (e.g., "Title. By Author Name")
-          if (headingLower.includes(' by ') && headingLower.split(' by ').length === 2) {
-            const parts = headingLower.split(' by ');
-            const afterBy = parts[1].trim();
-            // If "by" is followed by what looks like a name (2-3 words, capitalized), remove it
-            if (/^[a-z]+(\s+[a-z]+){0,2}$/.test(afterBy) && afterBy.length < 50) {
-              const titlePart = parts[0].trim();
-              if (titlePart.length > 10) {
-                // Use only the title part, skip the "By Author" part
-                const modifiedHeading = cleanedHeadingText.split(/\.?\s+by\s+/i)[0].trim();
-                if (modifiedHeading && modifiedHeading.length >= 3) {
-                  const modifiedNormalized = modifiedHeading.toLowerCase().trim();
-                  if (!addedHeadings.has(modifiedNormalized)) {
-                    addedHeadings.add(modifiedNormalized);
-                    content.push({
-                      type: 'heading',
-                      level: level,
-                      text: modifiedHeading,
-                      id: element.id || null
-                    });
-                    processedCount++;
-                  }
-                }
-                continue;
-              }
-            }
-          }
-          
-          // Skip advertisement headings
-          if (headingLower.startsWith('meet ') && 
-              (headingLower.includes('course') || headingLower.includes('book') || 
-               headingLower.includes('training') || headingLower.includes('product'))) {
-            continue;
-          }
-          
-          // Skip "More from" - related articles section
-          if (headingLower.includes('more from')) {
-            continue;
-          }
-          
-          // Skip headings inside accordion (metadata sections)
-          let checkEl = element;
-          let isInAccordion = false;
-          while (checkEl && checkEl !== mainContent) {
-            const checkClass = String(checkEl.className || '').toLowerCase();
-            if (checkClass.includes('accordion') || checkClass.includes('c-accordion')) {
-              isInAccordion = true;
-              break;
-            }
-            checkEl = checkEl.parentElement;
-          }
-          if (isInAccordion) {
-            continue;
-          }
-          
-          // Skip headings with class "article-section-title" (related articles sections)
-          if (className.includes('article-section-title')) {
-            continue;
-          }
-          
-          // Check if heading is in a related articles section by class
-          let parent = element.parentElement;
-          let isInRelatedSection = false;
-          let iterations = 0;
-          const maxIterations = 50; // Safety limit to prevent infinite loops
-          while (parent && parent !== mainContent && iterations < maxIterations) {
-            iterations++;
-            const parentClass = String(parent.className || '').toLowerCase();
-            const parentId = (parent.id || '').toLowerCase();
-            if (parentClass.includes('related-articles') || parentId.includes('related-articles') ||
-                parentClass.includes('recommended') || parentId.includes('recommended') ||
-                parentClass.includes('related-posts') || parentId.includes('related-posts')) {
-              isInRelatedSection = true;
-              break;
-            }
-            parent = parent.parentElement;
-          }
-          
-          if (isInRelatedSection) {
-            continue;
-          }
-          // Video training headings - check if next sibling contains price
-          let isAdHeading = false;
-          if (headingLower.includes('video') && 
-              (headingLower.includes('training') || headingLower.includes('course'))) {
-            let nextSibling = element.nextElementSibling;
-            for (let i = 0; i < 3 && nextSibling; i++) {
-              const siblingText = nextSibling.textContent || '';
-              if (siblingText.includes('$') || siblingText.includes('price') || 
-                  siblingText.includes('money-back') || siblingText.includes('guarantee')) {
-                isAdHeading = true;
-                break;
-              }
-              nextSibling = nextSibling.nextElementSibling;
-            }
-          }
-          if (isAdHeading) {
-            continue;
-          }
-          
-          // Add to set BEFORE pushing to content (to prevent duplicates)
-          // Set.has() is O(1), so no need for additional array check
-          addedHeadings.add(normalizedHeading);
-          content.push({
-            type: 'heading',
-            level: level,
-            text: cleanedHeadingText,
-            id: element.id || null
-          });
-          processedCount++;
-        }
-      } else if (tagName === 'p') {
-        // Skip if this is the standfirst element (already added at the beginning)
-        if (standfirstElement && (element === standfirstElement || element.contains(standfirstElement) || standfirstElement.contains(element))) {
-          continue;
-        }
-        
-        const text = element.textContent.trim();
-        
-        // Also skip if text matches standfirst (to avoid duplicates)
-        if (standfirst && text === standfirst) {
-          continue;
-        }
-        
-        const textLower = text.toLowerCase();
-        
-        // Exclude paragraphs that are author metadata (e.g., "by Pankaj Mishra")
-        // Only if it's very short, starts with "by", and contains mostly just author name/link
-        if (textLower.startsWith('by ') && text.length < 100) {
-          const links = element.querySelectorAll('a');
-          const linkText = Array.from(links).map(a => a.textContent.trim()).join(' ');
-          const nonLinkText = text.replace(/<[^>]+>/g, '').trim();
-          
-          // If paragraph is mostly just "by" + author name/link, exclude it
-          if (links.length <= 1 && nonLinkText.length < 50 && 
-              (nonLinkText.toLowerCase().startsWith('by ') && 
-               nonLinkText.split(/\s+/).length <= 5)) {
-            continue;
-          }
-        }
-        
-        // Exclude "Edited by" metadata paragraphs
-        if (textLower.startsWith('edited by') && text.length < 200) {
-          continue;
-        }
-        
-        // Exclude word count paragraphs (e.g., "4,500 words", "Original article • 3,617 words")
-        if (/^\d+[,\s]\d+\s+words?$/i.test(text) || /^\d+\s+words?$/i.test(text)) {
-          continue;
-        }
-        
-        // Exclude metadata lines with "Original article" and word count (check anywhere in text)
-        const textWithoutHtml = text.replace(/<[^>]+>/g, '').trim();
-        if (/original\s+article\s*[•·]\s*\d+[,\s]?\d*\s*words?/i.test(textWithoutHtml) ||
-            (/original\s+article\s*[•·]/i.test(textWithoutHtml) && /\d+\s*words?/i.test(textWithoutHtml))) {
-          continue;
-        }
-        
-        // Also exclude if it's a short paragraph that contains "Original article" and word count
-        if (textWithoutHtml.length < 100 && 
-            /original\s+article/i.test(textWithoutHtml) && 
-            /\d+\s*words?/i.test(textWithoutHtml)) {
-          continue;
-        }
-        
-        // Exclude "Original article • Author • Date • words" pattern
-        if (/original\s+article\s*[•·]\s*[^•·]+\s*[•·]\s*\w+\s+\d+[,\s]?\d*\s*[•·]\s*\d+[,\s]?\d*\s*words?/i.test(textWithoutHtml)) {
-          continue;
-        }
-        
-        // Exclude paragraphs inside accordion (metadata sections)
-        let checkElAccordion = element;
-        let isInAccordion = false;
-        while (checkElAccordion && checkElAccordion !== mainContent) {
-          const checkClass = (checkElAccordion.className || '').toLowerCase();
-          if (checkClass.includes('accordion') || checkClass.includes('c-accordion')) {
-            isInAccordion = true;
-            break;
-          }
-          checkElAccordion = checkElAccordion.parentElement;
-        }
-        if (isInAccordion) {
-          continue;
-        }
-        
-        // Exclude subscription prompts
-        if (textLower.includes("like what you're reading") ||
-            (textLower.includes('subscribe') && textLower.includes('atavist'))) {
-          continue;
-        }
-        
-        // Exclude editor/credits metadata
-        if (textLower.startsWith('editor:') || 
-            textLower.startsWith('art director:') ||
-            textLower.startsWith('copy editor:') ||
-            textLower.startsWith('fact checker:') ||
-            textLower.startsWith('illustrator:') ||
-            textLower.startsWith('published in') ||
-            textLower.includes('math editor') ||
-            textLower.includes('science editor') ||
-            textLower.includes('physics editor')) {
-          continue;
-        }
-        
-        // Exclude paragraphs that are just dates (e.g., "December 18, 2025")
-        // Match formats like "Month Day, Year" or "Month Day Year"
-        const dateOnlyPattern = /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2},?\s+\d{4}$/i;
-        if (dateOnlyPattern.test(textWithoutHtml.trim())) {
-          continue;
-        }
-        
-        // Exclude paragraphs inside author metadata sections
-        let checkElAuthor = element;
-        let isInAuthorMetadata = false;
-        while (checkElAuthor && checkElAuthor !== mainContent) {
-          const checkClass = (checkElAuthor.className || '').toLowerCase();
-          if (checkClass.includes('post__title__author-date') ||
-              checkClass.includes('author-date') ||
-              checkClass.includes('byline') ||
-              checkClass.includes('author-meta')) {
-            isInAuthorMetadata = true;
-            break;
-          }
-          checkElAuthor = checkElAuthor.parentElement;
-        }
-        if (isInAuthorMetadata) {
-          continue;
-        }
-        
-        // Exclude paragraphs that contain only "OBJ" or similar object markers
-        if (/^obj\s*$/i.test(textWithoutHtml) || /^\[obj\]\s*$/i.test(textWithoutHtml) ||
-            /^\[object\s+object\]\s*$/i.test(textWithoutHtml)) {
-          continue;
-        }
-        
-        // Clean paragraph text - remove "OBJ" markers that might be embedded
-        let cleanedParagraphText = textWithoutHtml
-          .replace(/\s*\[?obj\]?\s*/gi, '') // Remove [OBJ] or OBJ markers
-          .trim();
-        
-        // Skip if paragraph becomes empty after cleaning
-        if (!cleanedParagraphText || cleanedParagraphText.length < 10) {
-          continue;
-        }
-        
-        // CRITICAL: Exclude newsletter/email signup paragraphs
-        // Check for common newsletter patterns
-        if (textLower.includes('sign up to our newsletter') || 
-            textLower.includes('join more than') && textLower.includes('newsletter subscribers') ||
-            (textLower.includes('newsletter') && textLower.includes('subscribe') && 
-             element.closest('*').querySelector('input[type="email"]'))) {
-          continue;
-        }
-        
-        // Exclude "Get the latest [category] stories in your inbox" pattern
-        if (/get\s+the\s+latest\s+.+\s+stories?\s+in\s+your\s+inbox/i.test(text)) {
-          continue;
-        }
-        
-        // Exclude Salesforce Marketing Cloud and similar email service providers
-        if (textLower.includes('email powered by') ||
-            textLower.includes('powered by salesforce') ||
-            textLower.includes('salesforce marketing cloud') ||
-            textLower.includes('marketing cloud') ||
-            textLower.includes('privacy notice') && textLower.includes('terms') ||
-            (textLower.includes('privacy') && textLower.includes('terms') && textLower.includes('conditions'))) {
-          continue;
-        }
-        
-        // Check if paragraph is inside an email signup form/container
-        let checkParent = element.parentElement;
-        let isInEmailSignup = false;
-        for (let i = 0; i < 5 && checkParent && checkParent !== mainContent; i++) {
-            const parentClass = String(checkParent.className || '').toLowerCase();
-          const parentId = (checkParent.id || '').toLowerCase();
-          const parentTag = checkParent.tagName.toLowerCase();
-          
-          // Check for email input fields
-          if (checkParent.querySelector('input[type="email"]') || 
-              checkParent.querySelector('input[name*="email"]') ||
-              checkParent.querySelector('input[id*="email"]')) {
-            // Check if it's a signup form (not a contact form in article)
-            if (parentClass.includes('newsletter') || parentClass.includes('subscribe') ||
-                parentClass.includes('signup') || parentClass.includes('sign-up') ||
-                parentClass.includes('email-signup') || parentClass.includes('email-sign-up') ||
-                parentId.includes('newsletter') || parentId.includes('subscribe') ||
-                parentId.includes('signup') || parentId.includes('sign-up') ||
-                textLower.includes('inbox') || textLower.includes('get the latest')) {
-              isInEmailSignup = true;
-              break;
-            }
-          }
-          
-          // Check for marketing cloud indicators
-          if (parentClass.includes('marketing-cloud') || parentClass.includes('salesforce') ||
-              parentId.includes('marketing-cloud') || parentId.includes('salesforce')) {
-            isInEmailSignup = true;
-            break;
-          }
-          
-          checkParent = checkParent.parentElement;
-        }
-        if (isInEmailSignup) {
-          continue;
-        }
-        
-        // Exclude donation paragraphs
-        if ((textLower.includes('donate') || textLower.includes('donation')) && 
-            (textLower.includes('support') || textLower.includes('mission') || 
-             textLower.includes('select amount') || textLower.includes('per month'))) {
-          continue;
-        }
-        
-        // Exclude navigation paragraphs
-        if (isNavigationParagraph(text)) {
-          continue;
-        }
-        
-        // Check for course/product advertisements with prices
-        const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
-        const hasPrice = pricePattern.test(text);
-        
-        // Check for course/training advertisement patterns
-        const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
-        
-        // If paragraph contains price and course ad patterns, exclude it
-        if (hasPrice && isCourseAd) {
-          continue;
-        }
-        
-        // Exclude paragraphs that are clearly course/product promotions
-        if (textLower.includes('measure ux & design impact') && 
-            (textLower.includes('code') || textLower.includes('save') || textLower.includes('off'))) {
-          continue;
-        }
-        
-        // Check if paragraph is in a course ad container
-        let parent = element.parentElement;
-        let isInCourseAd = false;
-        let iterations = 0;
-        const maxIterations = 50; // Safety limit to prevent infinite loops
-        while (parent && parent !== mainContent && iterations < maxIterations) {
-          iterations++;
-          const parentClass = String(parent.className || '').toLowerCase();
-          const parentId = (parent.id || '').toLowerCase();
-          if (parentClass.includes('book-cta') || parentClass.includes('course-cta') || 
-              parentClass.includes('product-cta') || parentClass.includes('course-ad') ||
-              parentId.includes('book-cta') || parentId.includes('course-cta')) {
-            isInCourseAd = true;
-            break;
-          }
-          parent = parent.parentElement;
-        }
-        if (isInCourseAd) {
-          continue;
-        }
-        
-        // Check if paragraph contains only footnotes/links to anchors
-        const links = element.querySelectorAll('a');
-        let hasOnlyFootnotes = true;
-        let hasRealContent = false;
-        
-        if (links.length > 0) {
-          for (const link of Array.from(links)) {
-            if (!isFootnoteLink(link)) {
-              hasOnlyFootnotes = false;
-              break;
-            }
-          }
-          // If all links are footnotes, check if there's actual text content beyond them
-          if (hasOnlyFootnotes) {
-            const textWithoutLinks = element.cloneNode(true);
-            if (textWithoutLinks instanceof Element) {
-              // Remove all footnote links
-              const linkElements = textWithoutLinks.querySelectorAll('a');
-              linkElements.forEach(link => {
-                if (isFootnoteLink(link)) {
-                  link.remove();
-                }
-              });
-              // Remove icons and sup elements with arrows
-              const allElements = textWithoutLinks.querySelectorAll('*');
-              allElements.forEach(el => {
-                if (isIcon(el)) {
-                  el.remove();
-                }
-              });
-              const supElements = textWithoutLinks.querySelectorAll('sup');
-              supElements.forEach(sup => {
-                const supText = sup.textContent.trim();
-                if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
-                  sup.remove();
-                }
-              });
-            }
-            const remainingText = textWithoutLinks instanceof Element ? textWithoutLinks.textContent.trim() : '';
-            hasRealContent = remainingText.length > 10; // At least 10 chars of non-link text
-          }
-        } else {
-          hasRealContent = true; // No links, so it's real content
-        }
-        
-        // Exclude if paragraph only contains footnotes
-        if (hasOnlyFootnotes && !hasRealContent) {
-          continue;
-        }
-        
-        // Exclude if paragraph contains navigation text (already checked in isNavigationParagraph, but double-check)
-        if (NAV_PATTERNS_CONTAINS.some(pattern => pattern.test(text))) {
-          continue;
-        }
-        
-        // Exclude paragraphs that are clearly paywall/subscription prompts (all 11 languages)
-        // textLower already declared above
-        if (PAYWALL_PATTERNS.some(pattern => textLower.includes(pattern))) {
-          continue;
-        }
-        
-        // Exclude paragraphs that are clearly related articles sections (all 11 languages)
-        if (RELATED_PATTERNS.some(pattern => textLower.includes(pattern))) {
-          continue;
-        }
-        
-        // Include paragraphs with meaningful content (at least 5 characters)
-        // This helps capture short but important paragraphs
-        if (text && text.length >= 5) {
-          // Clean HTML: remove footnotes, icons, and OBJ markers in one pass
-          const htmlClone = element.cloneNode(true);
-          
-          // Single-pass TreeWalker for efficient cleaning
-          const walker = document.createTreeWalker(
-            htmlClone,
-            NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
-            {
-              acceptNode: (node) => {
-                if (node.nodeType === Node.ELEMENT_NODE && node instanceof Element) {
-                  const element = node;
-                  const tagName = element.tagName.toLowerCase();
-                  
-                  // Remove footnote links
-                  if (tagName === 'a' && isFootnoteLink(element)) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  
-                  // Remove icons
-                  if (isIcon(element)) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  
-                  // Remove sup elements with arrows
-                  if (tagName === 'sup') {
-                    const supText = element.textContent.trim();
-                    if ((supText.length <= 3 && /[←→↑↓↗↘↩]/.test(supText)) || supText.toLowerCase().includes('open these')) {
-                      return NodeFilter.FILTER_REJECT;
-                    }
-                  }
-                  
-                  // Remove object/embed elements
-                  if (tagName === 'object' || tagName === 'embed') {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  
-                  // Remove elements that contain only "OBJ" text
-                  const elText = element.textContent.trim();
-                  if (/^obj\s*$/i.test(elText) || /^\[obj\]\s*$/i.test(elText)) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  
-                  // Clean attributes in the same pass
-                  element.removeAttribute('style');
-                  const safeAttributes = ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel'];
-                  for (const attr of Array.from(element.attributes)) {
-                    if (attr.name.startsWith('on') || !safeAttributes.includes(attr.name.toLowerCase())) {
-                      element.removeAttribute(attr.name);
-                    }
-                  }
-                  
-                  // Remove empty spans and divs
-                  if ((tagName === 'span' || tagName === 'div') && !element.textContent.trim() && !element.querySelector('img')) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                } else if (node.nodeType === Node.TEXT_NODE) {
-                  // Clean OBJ markers from text nodes
-                  const text = node.textContent.trim();
-                  if (/^obj\s*$/i.test(text) || /^\[obj\]\s*$/i.test(text)) {
-                    return NodeFilter.FILTER_REJECT;
-                  }
-                  // Remove OBJ markers from text content
-                  if (node.textContent && /obj/i.test(node.textContent)) {
-                    node.textContent = node.textContent.replace(/\s*\[?obj\]?\s*/gi, '');
-                  }
-                }
-                return NodeFilter.FILTER_ACCEPT;
-              }
-            }
-          );
-          
-          // Process all nodes
-          const nodesToProcess = [];
-          let currentNode;
-          while (currentNode = walker.nextNode()) {
-            nodesToProcess.push(currentNode);
-          }
-          
-          // Get cleaned text to check if there's still meaningful content
-          const cleanedText = htmlClone instanceof Element ? htmlClone.textContent.trim().replace(/\s*\[?obj\]?\s*/gi, '').trim() : '';
-          
-          // Only add if there's still meaningful content after cleaning
-          if (cleanedText && cleanedText.length >= 5) {
-            // Final cleanup: remove any remaining OBJ markers from HTML
-            let cleanedHtml = htmlClone instanceof Element ? htmlClone.innerHTML
-              .replace(/\s*\[?obj\]?\s*/gi, '') // Remove any remaining OBJ markers
-              .replace(/<[^>]*>\s*\[?obj\]?\s*<\/[^>]*>/gi, '') // Remove empty tags with OBJ
-              .trim() : '';
-            
-            // Only add if HTML is not empty after all cleaning
-            if (cleanedHtml && cleanedHtml.length > 0) {
-              content.push({
-                type: 'paragraph',
-                text: cleanedHtml,
-                html: cleanedHtml
-              });
-              processedCount++;
-            }
-          }
-        }
-      } else if (tagName === 'figure') {
-        // Handle figure elements (images with captions) - process before standalone img
-        const img = element.querySelector('img');
-        if (img) {
-          const src = extractBestImageUrl(img);
-          if (src) {
-            const isTracking = isTrackingPixel(img);
-            const isDecorative = isDecorativeImage(img);
-            if (!isTracking && !isDecorative) {
-              const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-              // Normalize URL for comparison to avoid duplicates with different query params
-              const normalizedSrc = normalizeImageUrl(absoluteSrc);
-              // Skip if already processed (e.g., as featured image)
-              if (processedImages.has(normalizedSrc)) {
-                continue;
-              }
-              // Mark this image as processed
-              processedImages.add(normalizedSrc);
-              
-              // Extract caption from figcaption or other elements
-              let caption = '';
-              const figcaption = element.querySelector('figcaption');
-              if (figcaption) {
-                caption = figcaption.textContent.trim();
-              } else {
-                // Look for caption in other text elements (p, div, span with caption-like classes)
-                const captionSelectors = ['p', 'div', 'span'];
-                for (const selector of captionSelectors) {
-                  const captionEl = element.querySelector(selector);
-                  if (captionEl) {
-                    const captionText = captionEl.textContent.trim();
-                    const className = (captionEl.className || '').toLowerCase();
-                    // Check if it looks like a caption
-                    if (captionText && (className.includes('caption') || className.includes('credit') || className.includes('credit'))) {
-                      caption = captionText;
-                      break;
-                    }
-                  }
-                }
-                // If still no caption, try to extract from all text (excluding img alt)
-                if (!caption) {
-                  const allText = element.textContent.trim();
-                  const imgAlt = img.alt || '';
-                  if (allText && allText !== imgAlt) {
-                    // Remove img alt from text to get caption
-                    caption = allText.replace(imgAlt, '').trim();
-                    // Clean up common prefixes
-                    caption = caption.replace(/^(image|photo|picture|credit|source)[:\s]*/i, '').trim();
-                  }
-                }
-              }
-              
-              content.push({
-                type: 'image',
-                src: absoluteSrc,
-                alt: img.alt || caption || '',
-                caption: caption
-              });
-              processedCount++;
-            }
-          }
-        }
-      } else if (tagName === 'img') {
-        // Skip images that are already inside a figure (processed above)
-        const src = extractBestImageUrl(element);
-        const isTracking = src ? isTrackingPixel(element) : false;
-        const isDecorative = src ? isDecorativeImage(element) : false;
-        if (src && !isTracking && !isDecorative) {
-          const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-          // Normalize URL for comparison to avoid duplicates
-          const normalizedSrc = normalizeImageUrl(absoluteSrc);
-          // Skip if already processed (e.g., as featured image or in a figure)
-          if (processedImages.has(normalizedSrc)) {
-            continue;
-          }
-          // Check if this img is inside a figure that we'll process
-          const parentFigure = element.closest('figure');
-          if (parentFigure) {
-            continue; // Will be processed when we encounter the figure
-          }
-          const imgElement = element instanceof HTMLImageElement ? element : null;
-          content.push({
-            type: 'image',
-            src: absoluteSrc,
-            alt: imgElement?.alt || '',
-            caption: getImageCaption(element)
-          });
-          processedImages.add(normalizedSrc);
-          processedCount++;
-        }
-      } else if (tagName === 'blockquote') {
-        const text = element.textContent.trim();
-        if (text) {
-          content.push({
-            type: 'quote',
-            text: element.innerHTML
-          });
-        }
-      } else if (tagName === 'pre' || tagName === 'code') {
-        // For code blocks, preserve HTML structure to maintain line breaks
-        // Replace <br> with newlines, preserve <div> structure
-        let codeText = '';
-        if (tagName === 'pre') {
-          // For <pre>, preserve innerHTML but clean it up
-          const html = element.innerHTML;
-          // Replace <br> and <br/> with newlines
-          codeText = html.replace(/<br\s*\/?>/gi, '\n');
-          // Replace closing tags followed by opening tags with newlines (for syntax highlighting spans)
-          codeText = codeText.replace(/<\/[^>]+>\s*<[^>]+>/g, '');
-          // Remove all remaining HTML tags but preserve text
-          codeText = codeText.replace(/<[^>]+>/g, '');
-          // Decode HTML entities
-          const tempDiv = document.createElement('div');
-          tempDiv.innerHTML = codeText;
-          codeText = tempDiv.textContent || tempDiv.innerText || codeText;
-        } else {
-          // For inline <code>, use textContent
-          codeText = element.textContent.trim();
-        }
-        
-        if (codeText) {
-          const language = (element.className || '').match(/language-(\w+)/)?.[1] || '';
-          content.push({
-            type: 'code',
-            language: language,
-            text: codeText
-          });
-        }
-      } else if (tagName === 'ul' || tagName === 'ol') {
-        const items = Array.from(element.querySelectorAll('li')).map(li => li.textContent.trim()).filter(Boolean);
-        if (items.length > 0) {
-          content.push({
-            type: 'list',
-            ordered: tagName === 'ol',
-            items: items
-          });
-        }
-      } else if (tagName === 'table') {
-        // Extract table content - tables can be part of article content (e.g., ProPublica)
-        // Check if table is inside an excluded container
-        let parent = element.parentElement;
-        let isInExcludedContainer = false;
-        let iterations = 0;
-        const maxIterations = 50; // Safety limit to prevent infinite loops
-        while (parent && parent !== mainContent && iterations < maxIterations) {
-          iterations++;
-          if (isExcluded(parent)) {
-            isInExcludedContainer = true;
-            break;
-          }
-          parent = parent.parentElement;
-        }
-        
-        if (!isInExcludedContainer) {
-          // Check table structure: should have at least 2 rows and 2 columns
-          const rows = element.querySelectorAll('tr');
-          const rowCount = rows.length;
-          let maxColCount = 0;
-          
-          for (const row of Array.from(rows)) {
-            const cells = row.querySelectorAll('td, th');
-            maxColCount = Math.max(maxColCount, cells.length);
-          }
-          
-          // Include table if it has meaningful structure (2+ rows and 2+ cols) OR substantial text
-          const tableText = element.textContent.trim();
-          const hasStructure = rowCount >= 2 && maxColCount >= 2;
-          const hasSubstantialText = tableText.length >= 50;
-          
-          if (hasStructure || hasSubstantialText) {
-            // Clean table HTML: remove inline styles, scripts, event handlers
-            const tableClone = element.cloneNode(true);
-            if (tableClone instanceof Element) {
-              const allElements = tableClone.querySelectorAll('*');
-              
-              // Remove dangerous attributes
-              for (const el of Array.from(allElements)) {
-                // Remove style attributes
-                el.removeAttribute('style');
-                // Remove event handlers
-                for (const attr of Array.from(el.attributes)) {
-                  if (attr.name.startsWith('on')) {
-                    el.removeAttribute(attr.name);
-                  }
-                }
-              }
-              
-              const tableHtml = tableClone.outerHTML;
-              content.push({
-                type: 'paragraph', // Treat table as special paragraph
-                text: tableHtml,
-                html: tableHtml
-              });
-            }
-          }
-        }
-      }
-    } // End of for (const element of elements) loop
-    
-    const contentTypes = content.reduce((acc, item) => {
-        acc[item.type] = (acc[item.type] || 0) + 1;
-        return acc;
-    }, {});
-    if (debugInfo) {
-      debugInfo.contentTypes = contentTypes;
-      debugInfo.processedCount = processedCount;
-      debugInfo.skippedCount = skippedCount;
-      debugInfo.finalImageCount = ((contentTypes['image'] || 0));
+      const sortedElements = sortElementsInDomOrder(filteredElements);
+      const parsedContent = parseElements(win, sortedElements, state, constants, baseUrl);
+      content.push(...parsedContent);
     } else {
-      // Skip expensive contentTypes calculation if debug is disabled
-      // This is a performance optimization - contentTypes is only used for debug logging
+      pushDebugLog(debugInfo, "MAIN_CONTENT_MISSING_FALLBACK", {});
+      const fallbackContent = extractWhenMainContentMissing(win, doc, state, constants, baseUrl);
+      if (fallbackContent) {
+        content.push(...fallbackContent);
+      }
     }
-    
-    // Final check: if no content extracted, try to extract at least something
-    // CRITICAL: This is important for sites like LessWrong where content might be filtered too aggressively
+    if (content.length === 0 || content.length === 1 && content[0].type === "image") {
+      pushDebugLog(debugInfo, "LAST_RESORT_FALLBACK", {});
+      const lastResortContent = extractLastResortContainerSearch(win, doc, state, constants, baseUrl);
+      if (lastResortContent) {
+        content.push(...lastResortContent);
+      }
+    }
+    if (content.length === 0 || content.length === 1 && content[0].type === "image") {
+      pushDebugLog(debugInfo, "ULTIMATE_FALLBACK", {});
+      const ultimateContent = extractUltimateFallbackAllParagraphs(win, doc, state, constants);
+      if (ultimateContent) {
+        content.push(...ultimateContent);
+      }
+    }
     if (content.length === 0) {
-      console.log('[ClipAIble] ⚠️ FALLBACK: No content extracted - using emergency fallback strategies (less strict filtering)', {
-        reason: 'Primary extraction returned empty content',
-        method: 'emergency fallback with multiple strategies',
-        impact: 'May include more navigation/noise but ensures some content is extracted',
-        strategies: 'Multiple fallback strategies will be tried'
-      });
-      
-      // Emergency fallback: try multiple strategies with less strict filtering
-      let emergencyElements = [];
-      
-      // Strategy 1: Use mainContent if available (most reliable)
-      if (mainContent) {
-        console.log('[ClipAIble] ⚠️ FALLBACK Strategy 1: Using mainContent with relaxed filtering');
-        // Get all paragraphs and headings from mainContent without filtering
-        emergencyElements = Array.from(mainContent.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
-        // Only filter out clearly non-content (navigation, paywall)
-        emergencyElements = emergencyElements.filter(el => {
-          const tagName = el.tagName.toLowerCase();
-          if (tagName === 'p') {
-            const text = el.textContent.trim();
-            // Only exclude if clearly navigation or paywall
-            return !isNavigationParagraph(text) && text.length > 10;
-          }
-          // Accept all headings
-          return true;
-        });
-      }
-      
-      // Strategy 2: If no elements from mainContent, try article/main
-      if (emergencyElements.length === 0) {
-        const article = document.querySelector('article');
-        const main = document.querySelector('main');
-        const roleMain = document.querySelector('[role="main"], [role="article"]');
-        const container = article || main || roleMain;
-        if (container) {
-          emergencyElements = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
-          // Only filter out clearly non-content
-          emergencyElements = emergencyElements.filter(el => {
-            const tagName = el.tagName.toLowerCase();
-            if (tagName === 'p') {
-              const text = el.textContent.trim();
-              return !isNavigationParagraph(text) && text.length > 10;
-            }
-            return true;
-          });
-        }
-      }
-      
-      // Strategy 3: Try common content selectors
-      if (emergencyElements.length === 0) {
-        const commonSelectors = [
-          '#content', '#main-content', '#article-content', '#post-content',
-          '.content', '.main-content', '.article-content', '.post-content',
-          '.entry-content', '.article-body', '.post-body'
-        ];
-        for (const selector of commonSelectors) {
-          try {
-            const container = document.querySelector(selector);
-            if (container) {
-              emergencyElements = Array.from(container.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
-              if (emergencyElements.length > 0) {
-                // Only filter out clearly non-content
-                emergencyElements = emergencyElements.filter(el => {
-                  const tagName = el.tagName.toLowerCase();
-                  if (tagName === 'p') {
-                    const text = el.textContent.trim();
-                    return !isNavigationParagraph(text) && text.length > 10;
-                  }
-                  return true;
-                });
-                if (emergencyElements.length > 0) break;
-              }
-            }
-          } catch (e) {
-            // Invalid selector, continue
-          }
-        }
-      }
-      
-      // Strategy 4: Last resort - find largest container with paragraphs
-      if (emergencyElements.length === 0) {
-        const allContainers = Array.from(document.querySelectorAll('div, section, article, main'));
-        let bestContainer = null;
-        let maxParagraphs = 0;
-        
-        for (const container of allContainers) {
-          // Skip excluded containers
-          if (isExcluded(container)) continue;
-          
-          const paragraphs = container.querySelectorAll('p');
-          const textLength = container.textContent.trim().length;
-          
-          // Accept if has substantial paragraphs and text
-          if (paragraphs.length > maxParagraphs && textLength > 500) {
-            maxParagraphs = paragraphs.length;
-            bestContainer = container;
-          }
-        }
-        
-        if (bestContainer && maxParagraphs >= 3) {
-          emergencyElements = Array.from(bestContainer.querySelectorAll('p, h1, h2, h3, h4, h5, h6'));
-          // Only filter out clearly non-content
-          emergencyElements = emergencyElements.filter(el => {
-            const tagName = el.tagName.toLowerCase();
-            if (tagName === 'p') {
-              const text = el.textContent.trim();
-              return !isNavigationParagraph(text) && text.length > 10;
-            }
-            return true;
-          });
-        }
-      }
-      
-      // Extract from emergency elements (no filtering, just extract)
-      for (const el of emergencyElements.slice(0, 100)) {
-        const tagName = el.tagName.toLowerCase();
-        const text = el.textContent.trim();
-        if (text && text.length > 5) {
-          if (tagName.match(/^h[1-6]$/)) {
-            // Clean and normalize heading - remove "OBJ" markers and Object Replacement Character
-            const cleanedText = text.replace(/<[^>]+>/g, '').trim()
-              .replace(/\s*\[?obj\]?\s*/gi, '')
-              .replace(/\uFFFC/g, '') // Remove Object Replacement Character (U+FFFC)
-              .trim();
-            
-            if (!cleanedText || cleanedText.length < 3) {
-              continue;
-            }
-            
-            const normalizedText = cleanedText.toLowerCase().trim();
-            
-            // CRITICAL: Check if this is the main title
-            if (mainTitleText && normalizedText === mainTitleText) {
-              continue;
-            }
-            
-            // CRITICAL: Check if we've already added this heading (Set lookup is O(1))
-            if (addedHeadings.has(normalizedText)) {
-              continue;
-            }
-            
-            // Add to set BEFORE pushing to content (prevents duplicates)
-            addedHeadings.add(normalizedText);
-            content.push({
-              type: 'heading',
-              level: parseInt(tagName.substring(1)),
-              text: cleanedText,
-              id: el.id || null
-            });
-          } else if (tagName === 'p') {
-            // CRITICAL: Check if Google Translate modified this element
-            const originalText = getOriginalTextIfTranslated(el);
-            const isTranslated = !!originalText;
-            
-            // Log if we detect translation - FULL TEXT - NO TRUNCATION
-            if (isTranslated && enableDebugInfo) {
-              console.log('[ClipAIble] === EMERGENCY PARAGRAPH TRANSLATED BY GOOGLE TRANSLATE (FULL TEXT) ===', {
-                currentTextFull: el.textContent, // FULL TEXT - NO TRUNCATION
-                originalTextFull: originalText, // FULL TEXT - NO TRUNCATION
-                elementHTMLFull: el.innerHTML, // FULL HTML - NO TRUNCATION
-                timestamp: Date.now()
-              });
-            }
-            
-            // Use original text if available, otherwise use current HTML
-            const finalText = originalText || el.innerHTML;
-            const finalHtml = originalText ? originalText : el.innerHTML;
-            
-            content.push({
-              type: 'paragraph',
-              text: finalText,
-              html: finalHtml,
-              _wasTranslated: isTranslated // Debug flag
-            });
-          }
-        }
+      pushDebugLog(debugInfo, "EMERGENCY_FALLBACK", {});
+      const emergencyContent = extractEmergencyFallback(win, doc, state, constants, mainContent);
+      if (emergencyContent) {
+        content.push(...emergencyContent);
       }
     }
-    
-    // FINAL SAFETY CHECK: Remove any duplicate headings that might have slipped through
-    const seenHeadings = new Set();
-    const deduplicatedContent = [];
-    let duplicateCount = 0;
-    
-    for (const item of content) {
-      if (item.type === 'heading' && item.text) {
-        const normalized = item.text.toLowerCase().trim().replace(/\s*\[?obj\]?\s*/gi, '').trim();
-        if (seenHeadings.has(normalized)) {
-          duplicateCount++;
-          continue;
-        }
-        seenHeadings.add(normalized);
-      }
-      deduplicatedContent.push(item);
-    }
-    
+    content = deduplicateHeadings(content);
     if (debugInfo) {
-      debugInfo.duplicateHeadingsRemoved = duplicateCount;
-      
-      const finalContentTypes = deduplicatedContent.reduce((acc, item) => {
-        acc[item.type] = (acc[item.type] || 0) + 1;
-        return acc;
-      }, {});
-      debugInfo.finalContentTypes = finalContentTypes;
-    } else {
-      // Skip expensive finalContentTypes calculation if debug is disabled
-      // This is a performance optimization - finalContentTypes is only used for debug logging
+      const contentTypes = {};
+      for (const item of content) {
+        contentTypes[item.type] = (contentTypes[item.type] || 0) + 1;
+      }
+      debugInfo.contentTypes = contentTypes;
     }
-    
-    const result = {
+    pushDebugLog(debugInfo, "EXTRACTION_COMPLETE", { itemCount: content.length });
+    return {
       title: metadata.title,
       author: metadata.author,
       publishDate: metadata.publishDate,
-      content: deduplicatedContent,
-      debugInfo: debugInfo
+      content,
+      debugInfo
     };
-    
-    // DETAILED LOGGING: Log extracted content (this will appear in page console)
-    // CRITICAL: This runs in MAIN world where modules are not available
-    // console.log is acceptable here as logging module cannot be imported
-    try {
-      console.log('[ClipAIble] extractAutomaticallyInlined: SUCCESS', {
-        contentLength: deduplicatedContent.length,
-        title: metadata.title,
-        timestamp: Date.now()
-      });
-      
-      // Log first 10 content items with FULL text
-      if (deduplicatedContent && deduplicatedContent.length > 0) {
-        console.log('[ClipAIble] EXTRACTED CONTENT (FIRST 10):', 
-          deduplicatedContent.slice(0, 10).map((item, idx) => ({
-            index: idx,
-            type: item.type,
-            text: (item.text || item.html || '').substring(0, 200), // First 200 chars
-            fullTextLength: (item.text || item.html || '').length
-          }))
-        );
-        
-        // Log last 5 items to check for Google Translate widget
-        if (deduplicatedContent.length > 10) {
-          console.log('[ClipAIble] EXTRACTED CONTENT (LAST 5):', 
-            deduplicatedContent.slice(-5).map((item, idx) => ({
-              index: deduplicatedContent.length - 5 + idx,
-              type: item.type,
-              text: (item.text || item.html || '').substring(0, 200), // First 200 chars
-              fullTextLength: (item.text || item.html || '').length
-            }))
-          );
-        }
-      }
-    } catch (e) {
-      // Non-critical debug logging failed - continue normally (graceful degradation)
-      // This is expected if console.log is unavailable or blocked
-    }
-    
-    return result;
   } catch (error) {
-    // Log error (this will appear in page console, not service worker)
-    // CRITICAL: This runs in MAIN world where modules are not available
-    // console.error is acceptable here as logging module cannot be imported
-    try {
-      console.error('[ClipAIble] extractAutomaticallyInlined: ERROR', {
-        error: error.message,
-        errorStack: error.stack,
-        timestamp: Date.now()
-      });
-    } catch (e) {
-      // Even console.error failed - this is extremely rare, nothing we can do
-      // This catch prevents the outer catch from being swallowed
-    }
-    
-    // Return minimal result on error with error info
+    const err = error instanceof Error ? error : new Error(String(error));
+    pushDebugLog(debugInfo, "EXTRACTION_ERROR", {
+      message: err.message,
+      stack: err.stack
+    });
     return {
-      title: document.title || '',
-      author: '',
-      publishDate: '',
+      title: doc.title || "",
+      author: "",
+      publishDate: "",
       content: [],
-      debugInfo: debugInfo,
-      error: error.message,
-      errorStack: error.stack
+      debugInfo,
+      error: err.message,
+      errorStack: err.stack
     };
-  } // end try-catch
-} // end extractAutomaticallyInlined
-
+  }
+}
