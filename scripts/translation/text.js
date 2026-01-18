@@ -570,78 +570,94 @@ Rules:
     if (provider === 'openai') {
       const response = await callWithRetry(
         async () => {
-          const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${decryptedApiKey}`
-            },
-            body: JSON.stringify({
-              model: modelName,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-              ],
-              response_format: { type: 'json_object' },
-              // Translation quality is priority #1 - never reduce quality for cost savings
-              // reasoning_effort: 'high' ensures best translation quality
-              reasoning_effort: 'high'
-            })
-          });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONFIG.TRANSLATION_API_TIMEOUT_MS);
           
-          if (!fetchResponse.ok) {
-            // Don't retry on authentication errors (401, 403)
-            if ([401, 403].includes(fetchResponse.status)) {
-              let errorData = {};
-              try {
-                errorData = await fetchResponse.json();
-              } catch (e) {
-                // If JSON parse fails, use empty object
-                errorData = {};
+          try {
+            const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${decryptedApiKey}`
+              },
+              body: JSON.stringify({
+                model: modelName,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                response_format: { type: 'json_object' },
+                // Translation quality is priority #1 - never reduce quality for cost savings
+                // reasoning_effort: 'high' ensures best translation quality
+                reasoning_effort: 'high'
+              }),
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeout);
+            
+            if (!fetchResponse.ok) {
+              // Don't retry on authentication errors (401, 403)
+              if ([401, 403].includes(fetchResponse.status)) {
+                let errorData = {};
+                try {
+                  errorData = await fetchResponse.json();
+                } catch (e) {
+                  // If JSON parse fails, use empty object
+                  errorData = {};
+                }
+                
+                const httpError = new Error(`Translation API error: HTTP ${fetchResponse.status}`);
+                // @ts-ignore - Adding status to error
+                httpError.status = fetchResponse.status;
+                // @ts-ignore
+                httpError.response = fetchResponse;
+                const normalized = await handleError(httpError, {
+                  source: 'translation',
+                  errorType: 'apiError',
+                  logError: true,
+                  createUserMessage: false,
+                  context: {
+                    operation: 'translateBatch',
+                    provider: 'openai',
+                    model: modelName,
+                    statusCode: fetchResponse.status,
+                    errorData
+                  }
+                });
+                
+                const uiLang = await getUILanguage();
+                const userMessage = tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status));
+                const error = new Error(userMessage);
+                // @ts-ignore
+                error.code = normalized.code;
+                // @ts-ignore
+                error.status = fetchResponse.status;
+                // @ts-ignore
+                error.originalError = normalized.originalError;
+                // @ts-ignore
+                error.context = normalized.context;
+                throw error;
               }
               
-              const httpError = new Error(`Translation API error: HTTP ${fetchResponse.status}`);
-              // @ts-ignore - Adding status to error
-              httpError.status = fetchResponse.status;
-              // @ts-ignore
-              httpError.response = fetchResponse;
-              const normalized = await handleError(httpError, {
-                source: 'translation',
-                errorType: 'apiError',
-                logError: true,
-                createUserMessage: false,
-                context: {
-                  operation: 'translateBatch',
-                  provider: 'openai',
-                  model: modelName,
-                  statusCode: fetchResponse.status,
-                  errorData
-                }
-              });
-              
-              const uiLang = await getUILanguage();
-              const userMessage = tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status));
-              const error = new Error(userMessage);
-              // @ts-ignore
-              error.code = normalized.code;
-              // @ts-ignore
+              // For retryable errors, throw error with status for retry logic
+              /** @type {Error & {status?: number, response?: Response}} */
+              const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
-              // @ts-ignore
-              error.originalError = normalized.originalError;
-              // @ts-ignore
-              error.context = normalized.context;
+              error.response = fetchResponse;
               throw error;
             }
             
-            // For retryable errors, throw error with status for retry logic
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
+            return fetchResponse;
+          } catch (e) {
+            clearTimeout(timeout);
+            if (e.name === 'AbortError') {
+              const timeoutError = new Error('Translation API request timeout');
+              timeoutError.name = 'TimeoutError';
+              throw timeoutError;
+            }
+            throw e;
           }
-          
-          return fetchResponse;
         },
         {
           maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -675,40 +691,56 @@ Rules:
     } else if (provider === 'claude') {
       const response = await callWithRetry(
         async () => {
-          const fetchResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Api-Key': decryptedApiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify({
-              model: modelName,
-              max_tokens: 32000,
-              system: systemPrompt,
-              messages: [
-                { role: 'user', content: userPrompt }
-              ]
-            })
-          });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONFIG.TRANSLATION_API_TIMEOUT_MS);
           
-          if (!fetchResponse.ok) {
-            // Don't retry on authentication errors (401, 403)
-            if ([401, 403].includes(fetchResponse.status)) {
-              const uiLang = await getUILanguage();
-              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+          try {
+            const fetchResponse = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Api-Key': decryptedApiKey,
+                'anthropic-version': '2023-06-01',
+                'anthropic-dangerous-direct-browser-access': 'true'
+              },
+              body: JSON.stringify({
+                model: modelName,
+                max_tokens: 32000,
+                system: systemPrompt,
+                messages: [
+                  { role: 'user', content: userPrompt }
+                ]
+              }),
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeout);
+            
+            if (!fetchResponse.ok) {
+              // Don't retry on authentication errors (401, 403)
+              if ([401, 403].includes(fetchResponse.status)) {
+                const uiLang = await getUILanguage();
+                throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+              }
+              
+              // For retryable errors, throw error with status for retry logic
+              /** @type {Error & {status?: number, response?: Response}} */
+              const error = new Error(`HTTP ${fetchResponse.status}`);
+              error.status = fetchResponse.status;
+              error.response = fetchResponse;
+              throw error;
             }
             
-            // For retryable errors, throw error with status for retry logic
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
+            return fetchResponse;
+          } catch (e) {
+            clearTimeout(timeout);
+            if (e.name === 'AbortError') {
+              const timeoutError = new Error('Translation API request timeout');
+              timeoutError.name = 'TimeoutError';
+              throw timeoutError;
+            }
+            throw e;
           }
-          
-          return fetchResponse;
         },
         {
           maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -742,34 +774,50 @@ Rules:
       const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
       const response = await callWithRetry(
         async () => {
-          const fetchResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': decryptedApiKey
-            },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: combinedPrompt }] }],
-              generationConfig: { responseMimeType: 'application/json' }
-            })
-          });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONFIG.TRANSLATION_API_TIMEOUT_MS);
           
-          if (!fetchResponse.ok) {
-            // Don't retry on authentication errors (401, 403)
-            if ([401, 403].includes(fetchResponse.status)) {
-              const uiLang = await getUILanguage();
-              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+          try {
+            const fetchResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': decryptedApiKey
+              },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: combinedPrompt }] }],
+                generationConfig: { responseMimeType: 'application/json' }
+              }),
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeout);
+            
+            if (!fetchResponse.ok) {
+              // Don't retry on authentication errors (401, 403)
+              if ([401, 403].includes(fetchResponse.status)) {
+                const uiLang = await getUILanguage();
+                throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+              }
+              
+              // For retryable errors, throw error with status for retry logic
+              /** @type {Error & {status?: number, response?: Response}} */
+              const error = new Error(`HTTP ${fetchResponse.status}`);
+              error.status = fetchResponse.status;
+              error.response = fetchResponse;
+              throw error;
             }
             
-            // For retryable errors, throw error with status for retry logic
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
+            return fetchResponse;
+          } catch (e) {
+            clearTimeout(timeout);
+            if (e.name === 'AbortError') {
+              const timeoutError = new Error('Translation API request timeout');
+              timeoutError.name = 'TimeoutError';
+              throw timeoutError;
+            }
+            throw e;
           }
-          
-          return fetchResponse;
         },
         {
           maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -802,38 +850,54 @@ Rules:
     } else if (provider === 'grok') {
       const response = await callWithRetry(
         async () => {
-          const fetchResponse = await fetch('https://api.x.ai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${decryptedApiKey}`
-            },
-            body: JSON.stringify({
-              model: modelName,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-              ],
-              response_format: { type: 'json_object' }
-            })
-          });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONFIG.TRANSLATION_API_TIMEOUT_MS);
           
-          if (!fetchResponse.ok) {
-            // Don't retry on authentication errors (401, 403)
-            if ([401, 403].includes(fetchResponse.status)) {
-              const uiLang = await getUILanguage();
-              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+          try {
+            const fetchResponse = await fetch('https://api.x.ai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${decryptedApiKey}`
+              },
+              body: JSON.stringify({
+                model: modelName,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                response_format: { type: 'json_object' }
+              }),
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeout);
+            
+            if (!fetchResponse.ok) {
+              // Don't retry on authentication errors (401, 403)
+              if ([401, 403].includes(fetchResponse.status)) {
+                const uiLang = await getUILanguage();
+                throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+              }
+              
+              // For retryable errors, throw error with status for retry logic
+              /** @type {Error & {status?: number, response?: Response}} */
+              const error = new Error(`HTTP ${fetchResponse.status}`);
+              error.status = fetchResponse.status;
+              error.response = fetchResponse;
+              throw error;
             }
             
-            // For retryable errors, throw error with status for retry logic
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
+            return fetchResponse;
+          } catch (e) {
+            clearTimeout(timeout);
+            if (e.name === 'AbortError') {
+              const timeoutError = new Error('Translation API request timeout');
+              timeoutError.name = 'TimeoutError';
+              throw timeoutError;
+            }
+            throw e;
           }
-          
-          return fetchResponse;
         },
         {
           maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -866,38 +930,54 @@ Rules:
     } else if (provider === 'deepseek') {
       const response = await callWithRetry(
         async () => {
-          const fetchResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${decryptedApiKey}`
-            },
-            body: JSON.stringify({
-              model: modelName,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-              ],
-              response_format: { type: 'json_object' }
-            })
-          });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONFIG.TRANSLATION_API_TIMEOUT_MS);
           
-          if (!fetchResponse.ok) {
-            // Don't retry on authentication errors (401, 403)
-            if ([401, 403].includes(fetchResponse.status)) {
-              const uiLang = await getUILanguage();
-              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+          try {
+            const fetchResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${decryptedApiKey}`
+              },
+              body: JSON.stringify({
+                model: modelName,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                response_format: { type: 'json_object' }
+              }),
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeout);
+            
+            if (!fetchResponse.ok) {
+              // Don't retry on authentication errors (401, 403)
+              if ([401, 403].includes(fetchResponse.status)) {
+                const uiLang = await getUILanguage();
+                throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+              }
+              
+              // For retryable errors, throw error with status for retry logic
+              /** @type {Error & {status?: number, response?: Response}} */
+              const error = new Error(`HTTP ${fetchResponse.status}`);
+              error.status = fetchResponse.status;
+              error.response = fetchResponse;
+              throw error;
             }
             
-            // For retryable errors, throw error with status for retry logic
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
+            return fetchResponse;
+          } catch (e) {
+            clearTimeout(timeout);
+            if (e.name === 'AbortError') {
+              const timeoutError = new Error('Translation API request timeout');
+              timeoutError.name = 'TimeoutError';
+              throw timeoutError;
+            }
+            throw e;
           }
-          
-          return fetchResponse;
         },
         {
           maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -930,40 +1010,56 @@ Rules:
     } else if (provider === 'openrouter') {
       const response = await callWithRetry(
         async () => {
-          const fetchResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${decryptedApiKey}`,
-              'HTTP-Referer': 'https://github.com/clipaiable',
-              'X-Title': 'ClipAIble'
-            },
-            body: JSON.stringify({
-              model: modelName,
-              messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-              ],
-              response_format: { type: 'json_object' }
-            })
-          });
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONFIG.TRANSLATION_API_TIMEOUT_MS);
           
-          if (!fetchResponse.ok) {
-            // Don't retry on authentication errors (401, 403)
-            if ([401, 403].includes(fetchResponse.status)) {
-              const uiLang = await getUILanguage();
-              throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+          try {
+            const fetchResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${decryptedApiKey}`,
+                'HTTP-Referer': 'https://github.com/clipaiable',
+                'X-Title': 'ClipAIble'
+              },
+              body: JSON.stringify({
+                model: modelName,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                response_format: { type: 'json_object' }
+              }),
+              signal: controller.signal
+            });
+            
+            clearTimeout(timeout);
+            
+            if (!fetchResponse.ok) {
+              // Don't retry on authentication errors (401, 403)
+              if ([401, 403].includes(fetchResponse.status)) {
+                const uiLang = await getUILanguage();
+                throw new Error(tSync('errorApiAuthentication', uiLang).replace('{status}', String(fetchResponse.status)));
+              }
+              
+              // For retryable errors, throw error with status for retry logic
+              /** @type {Error & {status?: number, response?: Response}} */
+              const error = new Error(`HTTP ${fetchResponse.status}`);
+              error.status = fetchResponse.status;
+              error.response = fetchResponse;
+              throw error;
             }
             
-            // For retryable errors, throw error with status for retry logic
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
+            return fetchResponse;
+          } catch (e) {
+            clearTimeout(timeout);
+            if (e.name === 'AbortError') {
+              const timeoutError = new Error('Translation API request timeout');
+              timeoutError.name = 'TimeoutError';
+              throw timeoutError;
+            }
+            throw e;
           }
-          
-          return fetchResponse;
         },
         {
           maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,

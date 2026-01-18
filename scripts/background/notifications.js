@@ -61,7 +61,7 @@ export function initNotifications(deps) {
 }
 
 // Backward compatibility: export createNotification directly for modules that haven't been refactored yet
-// TODO: Remove this after all modules use DI
+// Note: Can be removed after all modules migrate to dependency injection
 import { log, logError, logWarn } from '../utils/logging.js';
 import { getUILanguage, tSync } from '../locales.js';
 

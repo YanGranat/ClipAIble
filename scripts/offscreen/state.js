@@ -18,6 +18,7 @@ class OffscreenState {
     this.ttsWorkerInitPromise = null;
     this.workerInactivityTimeout = null;
     this.useWorker = true; // Enabled: Using esbuild bundle
+    this.activePredictCalls = 0; // Track active predict calls to prevent termination during processing
   }
 
   // TTS Module management
@@ -116,6 +117,19 @@ class OffscreenState {
     this.useWorker = value;
   }
 
+  // Active predict calls tracking (prevents Worker termination during processing)
+  getActivePredictCalls() {
+    return this.activePredictCalls || 0;
+  }
+
+  incrementActivePredictCalls() {
+    this.activePredictCalls = (this.activePredictCalls || 0) + 1;
+  }
+
+  decrementActivePredictCalls() {
+    this.activePredictCalls = Math.max(0, (this.activePredictCalls || 0) - 1);
+  }
+
   /**
    * Cleanup all TTS resources to prevent memory leaks
    * Should be called when offscreen document is closing or when switching voices
@@ -134,10 +148,13 @@ class OffscreenState {
     // Terminate TTS Worker if exists
     if (this.ttsWorker) {
       try {
-        log('[ClipAIble Offscreen] Terminating TTS Worker during cleanup');
+        log('[ClipAIble Offscreen] Terminating TTS Worker during cleanup', {
+          activePredictCalls: this.getActivePredictCalls()
+        });
         this.ttsWorker.terminate();
         this.ttsWorker = null;
         this.clearTTSWorkerInitPromise();
+        this.activePredictCalls = 0; // Reset counter on cleanup
       } catch (error) {
         logError('[ClipAIble Offscreen] Failed to terminate TTS Worker', error);
       }

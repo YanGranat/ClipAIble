@@ -11,7 +11,7 @@ export const SELECTOR_SYSTEM_PROMPT = `You are an expert web scraper. Your task:
 RETURN JSON:
 {
   "articleContainer": "selector for outermost article wrapper",
-  "content": "selector for the FULL article body - must include ALL headings (h2, h3) AND paragraphs together",
+  "content": "selector for the FULL article body - must include ALL headings (h2, h3) AND paragraphs together. NEVER use :first-child, :first-of-type, or :nth-child(1) - the selector must match the ENTIRE container with ALL content, not just one element.",
   "title": "selector for MAIN title of the entire page/book (NOT chapter titles)",
   "subtitle": "selector for subtitle/deck text below title, or empty string",
   "heroImage": "selector for main featured image, or empty string",
@@ -309,6 +309,7 @@ OTHER REQUIREMENTS:
 - Check for internal links (href="#...") - their target sections must NOT be in exclude!
 - EXCLUDE navigation blocks linking to other posts (e.g., "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs to other articles).
 - EXCLUDE comment listings, vote counts, user handles, "New Comment", "Submit", and any sidebar link lists pointing to other posts.
+- CRITICAL - COMMENTS AND THEIR CONTENT: The "content" selector must NOT include any content from comments sections. Comments contain replies, user avatars, emoji images, and other user-generated content that is NOT part of the main article. Exclude the entire comments section container, not individual comments.
 - CRITICAL - ARTICLE BOUNDARY: The "content" selector must ONLY include the CURRENT article, not related articles or posts. If you see the article ends with a conclusion, and then there's a new heading or block of text that starts a different topic/story (e.g., article about "Bayesian Judo" ends, then text about "Carl Sagan" begins), that is a DIFFERENT article - exclude it. The article ends when you see: comments section, series navigation, related articles, or content that clearly belongs to another post.
 - CRITICAL - MULTIPLE ARTICLES ON PAGE: Some pages display multiple articles (main article + related articles, author's other posts, series posts with full text). You must identify which container holds ONLY the current article (the one with the page's main title) and exclude all other article containers. If you see multiple <article> elements or multiple content containers, add selectors for all OTHER articles to "exclude" array. Only the main article (matching the page title) should be in "content" selector.
 - CRITICAL - IMAGES FROM RECOMMENDED ARTICLES: When excluding related/recommended articles, also exclude ALL IMAGES from those sections. Images from "Recommended from Medium", "You might also like", "Related posts", or similar sections must NOT be included in the main article content. These images belong to other articles and should be completely excluded from the extraction.

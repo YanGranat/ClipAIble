@@ -1,6 +1,6 @@
 // @ts-check
 // Cross-page context analyzer - analyzes context across pages
-// TODO: Implement cross-page context analysis
+// Note: Placeholder for future enhancement (cross-page analysis)
 
 /**
  * Analyze cross-page context
@@ -11,11 +11,8 @@
  * @returns {Object} Cross-page context
  */
 export function analyzeCrossPageContext(element, previousPageElements, nextPageElements) {
-  // TODO: Implement:
-  // - Continuation detection
-  // - Page break handling
-  // - Cross-page paragraph merging hints
-  
+  // Placeholder implementation
+  // Future: continuation detection, page break handling, cross-page paragraph merging
   return {
     mightContinue: false,
     previousPageEnd: previousPageElements.length > 0 ? previousPageElements[previousPageElements.length - 1] : null,

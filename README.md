@@ -135,9 +135,14 @@ All formats support **translation to 11 languages** — even translating text on
 ### Option 2: Manual Installation (Developer Mode)
 
 1. **Clone** this repository
-2. Open Chrome → `chrome://extensions/`
-3. Enable **Developer mode**
-4. Click **Load unpacked** → select the folder
+2. **Install dependencies and build:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Open Chrome → `chrome://extensions/`
+4. Enable **Developer mode**
+5. Click **Load unpacked** → select the folder
 
 ### Requirements
 
@@ -347,8 +352,6 @@ ClipAIble caches AI-generated selectors by domain:
 | Summary generation timeout | Very long articles may take up to 45 minutes; wait or try with shorter content |
 | PDF extraction fails | Check if PDF is password-protected (unlock first) or scanned (OCR not supported). Try with simpler PDFs first. |
 | PDF content incomplete | Complex layouts (multi-column, tables) may require manual review. Feature is experimental. |
-
----
 
 ---
 

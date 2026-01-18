@@ -1,6 +1,6 @@
 // @ts-check
 // Formula classifier - determines if element is a mathematical formula
-// TODO: Implement formula detection algorithms
+// Note: Placeholder for future enhancement (mathematical formula detection)
 
 /**
  * Classify element as formula
@@ -9,13 +9,8 @@
  * @returns {Object} Classification result
  */
 export function classifyFormula(element) {
-  // TODO: Implement multiple algorithms:
-  // - Mathematical symbol detection
-  // - LaTeX pattern detection
-  // - Special font detection (math fonts)
-  // - Position analysis (centered, isolated)
-  
-  // Placeholder
+  // Placeholder implementation
+  // Future algorithms: mathematical symbol detection, LaTeX patterns, math fonts, position analysis
   return {
     type: 'not-formula',
     confidence: 0.0,

@@ -147,9 +147,14 @@ Tutti i formati supportano la **traduzione in 11 lingue** — persino la traduzi
 ### Opzione 2: Installazione manuale (Modalità sviluppatore)
 
 1. **Clona** questo repository
-2. Apri Chrome → `chrome://extensions/`
-3. Abilita la **Modalità sviluppatore**
-4. Fai clic su **Carica estensione non compressa** → seleziona la cartella
+2. **Installa le dipendenze e compila:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Apri Chrome → `chrome://extensions/`
+4. Abilita la **Modalità sviluppatore**
+5. Fai clic su **Carica estensione non compressa** → seleziona la cartella
 
 ### Requisiti
 

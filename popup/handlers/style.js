@@ -86,6 +86,41 @@ export function setupStyleHandlers(deps) {
     });
   }
 
+  // Sync native select (hidden input) changes with custom select
+  if (elements.fontFamily) {
+    elements.fontFamily.addEventListener('change', () => {
+      const value = elements.fontFamily.value || '';
+      // Find option in custom select
+      const options = elements.fontFamilyOptions.querySelectorAll('.custom-select-option');
+      options.forEach(opt => {
+        opt.classList.remove('selected');
+        const optValue = opt.dataset.value || '';
+        if (optValue === value) {
+          opt.classList.add('selected');
+          elements.fontFamilyValue.textContent = opt.textContent;
+          // Apply font family style
+          if (opt.classList.contains('font-segoe-ui')) {
+            elements.fontFamilyValue.style.fontFamily = 'Segoe UI, sans-serif';
+          } else if (opt.classList.contains('font-arial')) {
+            elements.fontFamilyValue.style.fontFamily = 'Arial, sans-serif';
+          } else if (opt.classList.contains('font-georgia')) {
+            elements.fontFamilyValue.style.fontFamily = 'Georgia, serif';
+          } else if (opt.classList.contains('font-times-new-roman')) {
+            elements.fontFamilyValue.style.fontFamily = 'Times New Roman, serif';
+          } else if (opt.classList.contains('font-verdana')) {
+            elements.fontFamilyValue.style.fontFamily = 'Verdana, sans-serif';
+          } else if (opt.classList.contains('font-tahoma')) {
+            elements.fontFamilyValue.style.fontFamily = 'Tahoma, sans-serif';
+          } else if (opt.classList.contains('font-trebuchet-ms')) {
+            elements.fontFamilyValue.style.fontFamily = 'Trebuchet MS, sans-serif';
+          } else {
+            elements.fontFamilyValue.style.fontFamily = opt.style.fontFamily || '';
+          }
+        }
+      });
+    });
+  }
+
   if (elements.fontFamilyOptions) {
     elements.fontFamilyOptions.addEventListener('click', async (e) => {
       const option = e.target.closest('.custom-select-option');

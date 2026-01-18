@@ -472,6 +472,9 @@ export function initSettings(deps) {
       if (result[STORAGE_KEYS.FONT_FAMILY]) {
         const fontFamily = String(result[STORAGE_KEYS.FONT_FAMILY]);
         elements.fontFamily.value = fontFamily;
+        // Trigger change event to sync custom select
+        elements.fontFamily.dispatchEvent(new Event('change', { bubbles: true }));
+        // Also call setCustomSelectValue directly as fallback
         setCustomSelectValue(fontFamily);
       }
       

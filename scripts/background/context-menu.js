@@ -421,7 +421,7 @@ export function initContextMenu(deps) {
 }
 
 // Backward compatibility: export functions directly for modules that haven't been refactored yet
-// TODO: Remove this after all modules use DI
+// Note: Can be removed after all modules migrate to dependency injection
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { handleError } from '../utils/error-handler.js';

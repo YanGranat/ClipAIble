@@ -98,12 +98,13 @@ export async function generateEpub(data, updateState) {
   zip.file('META-INF/container.xml', generateContainerXml());
   
   // 3. Collect headings for TOC (preserve original IDs for internal links)
+  // Include all headings starting from level 1 (same as PDF/Markdown)
   if (generateToc) {
     log('📑 Collecting headings for EPUB table of contents');
   }
   const headings = [];
   content.forEach((item, index) => {
-    if (item.type === 'heading' && item.level >= 2) {
+    if (item.type === 'heading' && item.level >= 1) {
       const text = stripHtml(item.text || '');
       if (text) {
         // Use original id from page (e.g. "TradRevi") or generate fallback
@@ -344,14 +345,85 @@ function generateNavXhtml(title, headings, generateToc, language = 'en') {
   
   let tocHtml = '';
   if (generateToc && headings.length > 1) {
+    // Build nested TOC structure based on heading hierarchy (same logic as PDF)
+    const minLevel = Math.min(...headings.map(h => h.level));
+    
+    log('EPUB TOC: Starting nested structure generation', {
+      headingsCount: headings.length,
+      minLevel
+    });
+    
+    let tocListHtml = '      <ol>';
+    let prevLevel = null;
+    let hasOpenLi = false;
+    
+    headings.forEach((h, index) => {
+      const level = h.level;
+      const nextHeading = headings[index + 1];
+      const nextLevel = nextHeading ? nextHeading.level : minLevel - 1;
+      
+      if (prevLevel !== null) {
+        // Close previous <li> and nested lists if going up or staying at same level
+        if (level <= prevLevel) {
+          // First close the <li> of previous heading (if it's still open)
+          if (hasOpenLi) {
+            tocListHtml += '</li>';
+            hasOpenLi = false;
+          }
+          // Then close nested <ol> tags and their parent <li> tags
+          const levelsToClose = prevLevel - level;
+          if (levelsToClose > 0) {
+            for (let i = 0; i < levelsToClose; i++) {
+              tocListHtml += '</ol></li>';
+            }
+            hasOpenLi = false;
+          }
+        }
+        
+        // Open nested lists if going down (must be inside previous open <li>)
+        if (level > prevLevel) {
+          const listsToOpen = level - prevLevel;
+          for (let i = 0; i < listsToOpen; i++) {
+            tocListHtml += '<ol>';
+          }
+        }
+      }
+      
+      // Add list item
+      tocListHtml += `\n        <li><a href="content.xhtml#${escapeXml(h.id)}">${escapeXml(h.text)}</a>`;
+      hasOpenLi = true;
+      
+      // Determine if we should close <li> now
+      if (nextLevel <= level) {
+        // Next heading is same or higher level - close <li>
+        tocListHtml += '</li>';
+        hasOpenLi = false;
+      }
+      // If nextLevel > level, keep <li> open for nested list
+      
+      prevLevel = level;
+    });
+    
+    // Close remaining open <li> and lists
+    if (hasOpenLi) {
+      tocListHtml += '</li>';
+    }
+    // Close all open nested <ol> tags and their parent <li> tags
+    const finalPrevLevel = prevLevel;
+    if (finalPrevLevel !== null && finalPrevLevel > minLevel) {
+      for (let i = finalPrevLevel; i > minLevel; i--) {
+        tocListHtml += '</ol></li>';
+      }
+    }
+    tocListHtml += '\n      </ol>'; // Close root list
+    
+    log('EPUB TOC: Nested structure generated', {
+      htmlLength: tocListHtml.length,
+      preview: tocListHtml.substring(0, 300)
+    });
+    
     tocHtml = `    <nav epub:type="toc" id="toc">
-      <h2>${escapeXml(contentsLabel)}</h2>
-      <ol>
-${headings.map(h => {
-  const indent = '        '.repeat(h.level - 1);
-  return `${indent}<li><a href="content.xhtml#${h.id}">${escapeXml(h.text)}</a></li>`;
-}).join('\n')}
-      </ol>
+      <h2>${escapeXml(contentsLabel)}</h2>${tocListHtml}
     </nav>`;
   } else {
     tocHtml = `    <nav epub:type="toc" id="toc">
@@ -598,9 +670,40 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       // Use embedded path if available, otherwise original src
       const src = item._epubSrc || item.src || item.base64 || '';
       const alt = escapeXml(item.alt || '');
-      const caption = item.caption ? sanitizeHtmlForXhtml(item.caption, sourceUrl) : '';
-      if (!src) return '';
       
+      // Check if caption is generic (e.g., "image3", "image1", "photo2", etc.)
+      const isGenericCaption = (caption) => {
+        if (!caption || !caption.trim()) return false;
+        const lowerCaption = caption.trim().toLowerCase();
+        
+        // Check if it matches pattern: generic word + optional number (e.g., "image3", "photo1", "img2")
+        // Pattern: word (image, photo, etc.) optionally followed by digits
+        const genericPattern = /^(image|photo|picture|img|изображение|фото|картинка|зображення|фотографія|bild|foto|abbildung|imagen|immagine|imagem|图像|图片|照片|画像|写真|이미지|사진|그림)\d*$/i;
+        if (genericPattern.test(lowerCaption)) {
+          return true;
+        }
+        
+        // Also check against generic texts list
+        const genericTexts = [
+          'image', 'photo', 'picture', 'img', 'image:', 'photo:', 'picture:', 'img:',
+          'изображение', 'фото', 'картинка', 'изображение:', 'фото:', 'картинка:',
+          'зображення', 'фотографія', 'картинка', 'зображення:', 'фотографія:', 'картинка:',
+          'bild', 'foto', 'abbildung', 'bild:', 'foto:', 'abbildung:',
+          'image', 'photo', 'image:', 'photo:',
+          'imagen', 'foto', 'imagen:', 'foto:',
+          'immagine', 'foto', 'immagine:', 'foto:',
+          'imagem', 'foto', 'imagem:', 'foto:',
+          '图像', '图片', '照片', '图像:', '图片:', '照片:',
+          '画像', '写真', '画像:', '写真:',
+          '이미지', '사진', '그림', '이미지:', '사진:', '그림:'
+        ];
+        return genericTexts.includes(lowerCaption);
+      };
+      
+      const captionText = item.caption || '';
+      const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl) : '';
+      if (!src) return '';
+
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
       let figureHtml = `    <figure${idAttr}><img src="${src}" alt="${alt}"/>`;
       if (caption) {
@@ -735,6 +838,112 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '') {
     result = convertInternalLinks(result, sourceUrl);
   }
   
+  // CRITICAL: Remove inline style attributes that set colors (especially from links)
+  // This ensures EPUB styles control link colors, not inline styles from source page
+  // Remove style="color: ..." from all elements
+  result = result.replace(/\s*style\s*=\s*["'][^"']*color\s*:[^"']*["']/gi, '');
+  // Also remove style attributes that only contain color (clean up empty style="")
+  result = result.replace(/\s*style\s*=\s*["']\s*["']/gi, '');
+  
+  // CRITICAL: Process closing block tags - replace with <br> to preserve line breaks
+  // Then remove <br> before inline elements to prevent unwanted line breaks
+  // This matches the logic in sanitizeHtml for PDF generation
+  const allowedTags = ['a', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'ins', 'code', 'br', 'sub', 'sup', 'mark', 'small', 'span', 'abbr', 'cite', 'q', 'time', 'dfn', 'kbd', 'var', 'samp'];
+  
+  // CRITICAL: First, properly extract and clean up links
+  // Extract link text and href, then reconstruct clean <a> tags
+  // This prevents link attributes from leaking into text content
+  result = result.replace(/<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (match, href, linkText) => {
+    // Clean link text - remove any HTML tags and attributes that might have leaked
+    const cleanText = linkText
+      .replace(/<[^>]+>/g, '') // Remove all HTML tags
+      .replace(/&nbsp;/g, ' ') // Replace &nbsp; with space
+      .trim();
+    // Escape XML entities in link text
+    const escapedText = cleanText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+    // Return clean link tag with only href attribute
+    return `<a href="${escapeXml(href)}">${escapedText}</a>`;
+  });
+  
+  // CRITICAL: Handle orphaned <a> tags without href (they should have been processed above, but handle edge cases)
+  // Remove <a> tags without href to prevent unclosed tags
+  result = result.replace(/<a\s+[^>]*>(?!.*href)/gi, (match) => {
+    // Check if this tag has href attribute
+    const hasHref = /href\s*=\s*["']/i.test(match);
+    if (!hasHref) {
+      // No href - remove the opening tag (but keep the content)
+      return '';
+    }
+    return match;
+  });
+  
+  // CRITICAL: Remove orphaned closing </a> tags that don't have matching opening tags
+  // This prevents malformed HTML
+  result = result.replace(/<\/a>/gi, (match, offset) => {
+    // Check if there's a matching opening <a> tag before this closing tag
+    const beforeText = result.substring(0, offset);
+    const openingTags = (beforeText.match(/<a\s+[^>]*>/gi) || []).length;
+    const closingTags = (beforeText.match(/<\/a>/gi) || []).length;
+    if (openingTags <= closingTags) {
+      // No matching opening tag - remove this closing tag
+      return '';
+    }
+    return match;
+  });
+  
+  // Replace closing block tags with <br>
+  result = result.replace(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi, (match, tagName) => {
+    const tag = tagName.toLowerCase();
+    
+    // Keep allowed inline tags (but links are already processed above)
+    if (allowedTags.includes(tag)) {
+      if (match.startsWith('</')) return `</${tag}>`;
+      // For opening tags, preserve href and other allowed attributes
+      if (tag === 'a') {
+        // This should not happen after link processing above, but handle it anyway
+        const hrefMatch = match.match(/href\s*=\s*["']([^"']+)["']/i);
+        if (hrefMatch) {
+          return `<a href="${escapeXml(hrefMatch[1])}">`;
+        }
+        // CRITICAL: If no href, add href="#" to prevent unclosed tags
+        return '<a href="#">';
+      }
+      return match;
+    }
+    
+    // For non-allowed tags:
+    // Opening tags: remove completely
+    // Closing block tags: replace with <br> to preserve line breaks
+    if (match.startsWith('</')) {
+      const blockTags = ['p', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+      if (blockTags.includes(tag)) {
+        return '<br>';
+      }
+    }
+    return '';
+  });
+  
+  // Clean up multiple <br> tags
+  result = result.replace(/(<br\s*\/?>\s*)+/gi, '<br/>');
+  result = result.replace(/^(\s*<br\s*\/?\s*>)+/gi, '');
+  result = result.replace(/(\s*<br\s*\/?\s*>)+$/gi, '');
+  
+  // CRITICAL: Remove <br> tags that appear before inline elements
+  // This prevents unwanted line breaks when block tags are converted to <br>
+  // but the next element is inline (e.g., <a>CLAUDE.md</a><br/><span> should become <a>CLAUDE.md</a><span>)
+  // Inline tags that should not have <br> before them
+  // CRITICAL: Order matters - longer tags first to avoid partial matches (e.g., 'strong' before 's')
+  const inlineTagPattern = '(a|span|strong|code|mark|small|abbr|cite|time|dfn|kbd|samp|del|ins|sub|sup|em|var|b|i|u|s|q)';
+  // Remove <br> before opening inline tag (most common case: </div><br/><span> or </a><br/><span>)
+  // Pattern: <br/> followed by whitespace and opening inline tag
+  // CRITICAL: Use capturing group to preserve the full tag name, not just first letter
+  result = result.replace(new RegExp(`<br\\s*\\/?>\\s*<(${inlineTagPattern})(?:\\s|>|\\b)`, 'gi'), '<$1');
+  
   // Decode &nbsp; to regular space before escaping
   result = result.replace(/&nbsp;/gi, ' ');
   
@@ -748,7 +957,66 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '') {
   // Escape special XML entities (but not in existing tags)
   result = result.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
   
-  return result;
+  // CRITICAL: Ensure all opening tags have matching closing tags (stack-based approach)
+  // This prevents unclosed tags from affecting subsequent text (e.g., unclosed <a> makes all text blue)
+  const allowedTagsForCheck = ['b', 'strong', 'em', 'i', 'u', 's', 'del', 'ins', 'code', 'mark', 'small', 'span', 'a'];
+  const tagStack = [];
+  let processedResult = '';
+  let i = 0;
+  
+  while (i < result.length) {
+    // Check for opening tag
+    const openMatch = result.substring(i).match(/^<([a-z][a-z0-9]*)\b[^>]*>/i);
+    if (openMatch) {
+      const tag = openMatch[1].toLowerCase();
+      if (allowedTagsForCheck.includes(tag)) {
+        // Self-closing tags like <br/> don't need closing
+        if (tag !== 'br') {
+          tagStack.push(tag);
+        }
+        processedResult += openMatch[0];
+        i += openMatch[0].length;
+        continue;
+      }
+    }
+    
+    // Check for closing tag
+    const closeMatch = result.substring(i).match(/^<\/([a-z][a-z0-9]*)>/i);
+    if (closeMatch) {
+      const tag = closeMatch[1].toLowerCase();
+      if (allowedTagsForCheck.includes(tag)) {
+        // Find matching opening tag in stack
+        const stackIndex = tagStack.lastIndexOf(tag);
+        if (stackIndex >= 0) {
+          // Close all tags between stackIndex+1 and end (these are nested tags that need to be closed first)
+          for (let j = tagStack.length - 1; j > stackIndex; j--) {
+            processedResult += `</${tagStack[j]}>`;
+          }
+          // Remove the matching tag and all tags after it from stack
+          tagStack.length = stackIndex;
+          processedResult += closeMatch[0];
+        } else {
+          // Orphaned closing tag - ignore it (don't add to result)
+        }
+        i += closeMatch[0].length;
+        continue;
+      }
+    }
+    
+    // Regular character
+    processedResult += result[i];
+    i++;
+  }
+  
+  // Close any remaining open tags
+  while (tagStack.length > 0) {
+    const remainingTag = tagStack.pop();
+    processedResult += `</${remainingTag}>`;
+  }
+  
+  result = processedResult;
+  
+  return result.trim();
 }
 
 /**

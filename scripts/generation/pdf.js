@@ -239,18 +239,27 @@ export async function generatePdf(data, updateState) {
       log(`📑 Collecting headings for table of contents`);
     }
     const headings = [];
+    const cleanedTitle = cleanTitle(title || '');
     const contentWithIds = content.map((item, index) => {
-      if (item.type === 'heading' && item.level >= 2) {
-        const text = item.text ? item.text.replace(/<[^>]*>/g, '').trim() : '';
-        const id = item.id || `toc-heading-${index}`;
-        headings.push({ text, level: item.level, id });
-        return { ...item, id };
+      if (item.type === 'heading') {
+        // Skip the first heading if it matches the title (title is already in header)
+        const firstItemIsTitle = index === 0 && 
+          item.level === 1 &&
+          cleanedTitle && 
+          (item.text || '').replace(/<[^>]*>/g, '').trim() === cleanedTitle;
+        
+        // Include all headings in TOC, except the title heading
+        if (!firstItemIsTitle) {
+          const text = item.text ? item.text.replace(/<[^>]*>/g, '').trim() : '';
+          if (text) {
+            const id = item.id || `toc-heading-${index}`;
+            headings.push({ text, level: item.level, id });
+            return { ...item, id };
+          }
+        }
       }
       return item;
     });
-    
-    // Clean title from soft hyphens and special characters
-    const cleanedTitle = cleanTitle(title || '');
     
     const htmlContent = buildHtmlForPdf(
       contentWithIds,

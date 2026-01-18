@@ -31,6 +31,10 @@ export async function ensureVoiceDownloaded({
 }) {
   // Check if voice is already stored
   if (!state.getTTSWorker()) {
+    // Reset useWorker flag if it was set to false due to inactivity timeout
+    if (!state.shouldUseWorker()) {
+      state.setUseWorker(true);
+    }
     await initTTSWorker();
   }
   if (!state.getTTSWorker()) {
@@ -121,6 +125,10 @@ async function verifyVoiceStored({ voiceId, messageId, getStoredWithWorker, init
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (!state.getTTSWorker()) {
+      // Reset useWorker flag if it was set to false due to inactivity timeout
+      if (!state.shouldUseWorker()) {
+        state.setUseWorker(true);
+      }
       await initTTSWorker();
     }
     
@@ -164,7 +172,11 @@ async function testModelIntegrity({
   try {
     log(`[ClipAIble TTS] Testing model integrity`, { messageId, voiceId });
     
-    if (!state.shouldUseWorker() || !state.getTTSWorker()) {
+    if (!state.getTTSWorker()) {
+      // Reset useWorker flag if it was set to false due to inactivity timeout
+      if (!state.shouldUseWorker()) {
+        state.setUseWorker(true);
+      }
       await initTTSWorker();
     }
     

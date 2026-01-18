@@ -152,9 +152,14 @@ Todos os formatos suportam **tradução para 11 idiomas** — até mesmo traduç
 ### Opção 2: Instalação manual (Modo desenvolvedor)
 
 1. **Clone** este repositório
-2. Abra Chrome → `chrome://extensions/`
-3. Ative o **Modo do desenvolvedor**
-4. Clique em **Carregar sem compactação** → selecione a pasta
+2. **Instale as dependências e compile:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Abra Chrome → `chrome://extensions/`
+4. Ative o **Modo do desenvolvedor**
+5. Clique em **Carregar sem compactação** → selecione a pasta
 
 ### Requisitos
 

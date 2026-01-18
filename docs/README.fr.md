@@ -146,9 +146,14 @@ Tous les formats prennent en charge la **traduction en 11 langues** — même la
 ### Option 2 : Installation manuelle (Mode développeur)
 
 1. **Clonez** ce dépôt
-2. Ouvrez Chrome → `chrome://extensions/`
-3. Activez le **Mode développeur**
-4. Cliquez sur **Charger l'extension non empaquetée** → sélectionnez le dossier
+2. **Installez les dépendances et compilez:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Ouvrez Chrome → `chrome://extensions/`
+4. Activez le **Mode développeur**
+5. Cliquez sur **Charger l'extension non empaquetée** → sélectionnez le dossier
 
 ### Prérequis
 

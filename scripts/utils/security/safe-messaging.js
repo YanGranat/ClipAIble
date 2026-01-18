@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Safe messaging utilities to prevent "Unchecked runtime.lastError" spam
  * Wraps chrome.runtime.sendMessage and chrome.tabs.sendMessage with proper error handling

@@ -61,10 +61,24 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
     delays: CONFIG.RETRY_DELAYS,
     retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
   };
-  const parsed = await callWithRetry(
+  const rawResponse = await callWithRetry(
     () => callAI(systemPrompt, userPrompt, apiKey, model, true),
     retryOptions
   );
+  
+  // DETAILED LOGGING: Log full AI response
+  // Using logDebug for detailed logging (service worker context)
+  logDebug('=== FULL AI RESPONSE (SELECTORS) ===', {
+    url,
+    title,
+    model,
+    rawResponse: rawResponse, // FULL RESPONSE - NO TRUNCATION
+    rawResponseType: typeof rawResponse,
+    rawResponseLength: rawResponse ? JSON.stringify(rawResponse).length : 0,
+    timestamp: Date.now()
+  });
+  
+  const parsed = rawResponse;
   log('Parsed selectors', parsed);
   
   return parsed;
@@ -303,24 +317,6 @@ export async function processWithoutAI(data) {
         });
       }
       
-      // CRITICAL: Log extraction logs summary (not full logs to reduce size)
-      if (debugInfo.extractionLogs && Array.isArray(debugInfo.extractionLogs)) {
-        const logTypes = debugInfo.extractionLogs.reduce((acc, log) => {
-          const type = log.type || 'unknown';
-          acc[type] = (acc[type] || 0) + 1;
-          return acc;
-        }, {});
-        log('=== EXTRACTION LOGS SUMMARY (FROM PAGE) ===', {
-          totalLogs: debugInfo.extractionLogs.length,
-          logTypes,
-          note: 'Full logs removed to reduce log size'
-        });
-        
-        // Also log each log separately for better visibility
-        debugInfo.extractionLogs.forEach((logEntry, idx) => {
-          log(`=== EXTRACTION LOG [${idx}]: ${logEntry.type} ===`, logEntry.data);
-        });
-      }
     }
     
     // DETAILED LOGGING: Log full extraction result
@@ -995,7 +991,13 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
       func: extractFromPageInlined,
       args: [selectors, baseUrl]
     });
-    log('Script executed', { resultsLength: results?.length });
+    log('Script executed', { 
+      resultsLength: results?.length,
+      firstResult: results?.[0],
+      firstResultKeys: results?.[0] ? Object.keys(results[0]) : [],
+      hasResult: !!(results?.[0] && 'result' in results[0]),
+      resultValue: results?.[0]?.result
+    });
   } catch (scriptError) {
     logError('Script execution failed', scriptError);
     
@@ -1021,28 +1023,41 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   }
 
   if (!results || !results[0]) {
+    logError('Script execution returned no results', {
+      hasResults: !!results,
+      resultsLength: results?.length,
+      firstResult: results?.[0],
+      tabId
+    });
     const uiLang = await getUILanguage();
     throw new Error(tSync('errorScriptEmptyResults', uiLang));
   }
   
+  // Log what we received from script execution
+  log('Script execution result structure', {
+    resultsLength: results.length,
+    firstResultKeys: results[0] ? Object.keys(results[0]) : [],
+    hasResult: !!(results[0] && 'result' in results[0]),
+    resultType: results[0]?.result ? typeof results[0].result : 'undefined',
+    resultKeys: results[0]?.result ? Object.keys(results[0].result) : []
+  });
+  
   /** @type {import('../types.js').InjectionResult} */
   const injectionResult = results[0].result;
+  
+  // Additional check: if result is undefined, log full structure
+  if (!injectionResult) {
+    logError('injectionResult is null/undefined after extraction', {
+      resultsStructure: results,
+      firstResult: results[0],
+      tabId
+    });
+  }
   
   // Log extraction debug info if available
   // Note: background.js returns debugInfo as 'debug' property
   const debugInfo = injectionResult?.debug || injectionResult?.debugInfo;
   if (debugInfo) {
-    // Log detailed logs if available
-    if (debugInfo.detailedLogs && debugInfo.detailedLogs.length > 0) {
-      log('=== DETAILED EXTRACTION LOGS ===', {
-        totalLogs: debugInfo.detailedLogs.length,
-        logsByType: debugInfo.detailedLogs.reduce((acc, log) => {
-          acc[log.type] = (acc[log.type] || 0) + 1;
-          return acc;
-        }, {}),
-        allLogs: debugInfo.detailedLogs
-      });
-    }
     
     if (debugInfo.extractionDebug) {
       log('=== EXTRACTION DEBUG INFO ===', {
@@ -1231,6 +1246,22 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     });
   } else {
     log('No subtitle debug info available');
+  }
+  
+  // CRITICAL: Deduplicate content to remove duplicates from Twitter/X processing
+  // This ensures that div.longform-unstyled and div.public-DraftStyleDefault-block duplicates are removed
+  if (injectionResult.content && injectionResult.content.length > 0) {
+    const originalCount = injectionResult.content.length;
+    injectionResult.content = deduplicateContent(injectionResult.content);
+    const duplicatesRemoved = originalCount - injectionResult.content.length;
+    if (duplicatesRemoved > 0) {
+      log('✅ Deduplication applied to selector mode content', {
+        originalCount,
+        deduplicatedCount: injectionResult.content.length,
+        duplicatesRemoved,
+        duplicateRate: `${Math.round((duplicatesRemoved / originalCount) * 100)}%`
+      });
+    }
   }
   
   return injectionResult;

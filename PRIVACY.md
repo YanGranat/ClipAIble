@@ -1,6 +1,6 @@
 # Privacy Policy for ClipAIble
 
-**Last updated:** December 2025
+**Last updated:** January 2026
 
 ## Overview
 
@@ -38,6 +38,9 @@ When you use ClipAIble, article content is sent **only** to the AI provider YOU 
 | OpenAI | If you use GPT models or OpenAI TTS | [openai.com/privacy](https://openai.com/privacy) |
 | Google | If you use Gemini models or image translation (Gemini Vision) | [policies.google.com](https://policies.google.com/privacy) |
 | Anthropic | If you use Claude models | [anthropic.com/privacy](https://www.anthropic.com/privacy) |
+| DeepSeek | If you use DeepSeek models | [platform.deepseek.com/privacy](https://platform.deepseek.com/privacy) |
+| Grok (xAI) | If you use Grok models | [x.ai/legal/privacy-policy](https://x.ai/legal/privacy-policy) |
+| OpenRouter | If you use OpenRouter models | [openrouter.ai/privacy](https://openrouter.ai/privacy) |
 | ElevenLabs | If you use ElevenLabs TTS | [elevenlabs.io/privacy](https://elevenlabs.io/privacy) |
 | Qwen (DashScope) | If you use Qwen TTS | [dashscope.aliyun.com/](https://dashscope.aliyun.com/) |
 | Respeecher | If you use Respeecher TTS | [respeecher.com/privacy-policy](https://www.respeecher.com/privacy-policy) |

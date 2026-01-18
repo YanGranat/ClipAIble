@@ -148,9 +148,14 @@ Alle Formate unterstützen **Übersetzung in 11 Sprachen** — sogar Übersetzun
 ### Option 2: Manuelle Installation (Entwicklermodus)
 
 1. **Klonen** Sie dieses Repository
-2. Öffnen Sie Chrome → `chrome://extensions/`
-3. Aktivieren Sie den **Entwicklermodus**
-4. Klicken Sie auf **Entpackte Erweiterung laden** → wählen Sie den Ordner
+2. **Installieren Sie Abhängigkeiten und bauen Sie:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Öffnen Sie Chrome → `chrome://extensions/`
+4. Aktivieren Sie den **Entwicklermodus**
+5. Klicken Sie auf **Entpackte Erweiterung laden** → wählen Sie den Ordner
 
 ### Anforderungen
 

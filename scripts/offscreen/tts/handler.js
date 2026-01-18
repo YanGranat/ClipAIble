@@ -164,7 +164,10 @@ async function initializeTTS(messageId, context) {
     hasWorker: context.state.hasTTSWorker()
   });
   
-  if (context.state.shouldUseWorker()) {
+  // If Worker doesn't exist, try to create it (even if useWorker was set to false due to inactivity timeout)
+  if (!context.state.hasTTSWorker()) {
+    // Reset useWorker flag to allow recreation after inactivity timeout
+    context.state.setUseWorker(true);
     await context.initTTSWorker();
     
     if (!context.state.getTTSWorker()) {
@@ -172,7 +175,12 @@ async function initializeTTS(messageId, context) {
     }
     
     log(`[ClipAIble TTS] Worker initialized`, { messageId });
+  } else if (context.state.shouldUseWorker()) {
+    // Worker exists and is enabled, just verify it's still valid
+    log(`[ClipAIble TTS] Worker already exists`, { messageId });
   } else {
-    throw new Error('Web Worker must be enabled for TTS');
+    // Worker exists but useWorker is false - this shouldn't happen, but handle it
+    log(`[ClipAIble TTS] Worker exists but useWorker is false, resetting`, { messageId });
+    context.state.setUseWorker(true);
   }
 }

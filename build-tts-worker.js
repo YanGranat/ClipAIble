@@ -1,3 +1,4 @@
+// @ts-check
 // Build script for TTS Worker bundle using esbuild
 // This creates a self-contained worker bundle that includes all dependencies
 // without requiring import maps

@@ -1,6 +1,6 @@
 // @ts-check
 // Subheading classifier - determines heading level
-// TODO: Implement multiple algorithms for subheading detection
+// Note: Basic implementation, future enhancement planned (outline matching, numbering patterns)
 
 import { DEFAULT_METRICS } from '../constants.js';
 
@@ -13,13 +13,8 @@ import { DEFAULT_METRICS } from '../constants.js';
  * @returns {Object} Classification result with level
  */
 export function classifySubheading(element, metrics, context) {
-  // TODO: Implement multiple algorithms:
-  // - Font size relative to main headings
-  // - Numbering patterns (1.1, 1.2, etc.)
-  // - Context (after main heading)
-  // - Outline matching
-  
-  // Placeholder: simple font size based classification
+  // Simple font size based classification
+  // Future: relative font size, numbering patterns (1.1, 1.2), context analysis, outline matching
   const fontSize = element.fontSize || 0;
   const baseFontSize = metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE;
   const ratio = baseFontSize > 0 ? fontSize / baseFontSize : 1;

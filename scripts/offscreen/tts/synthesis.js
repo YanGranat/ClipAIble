@@ -172,8 +172,12 @@ async function synthesizeStreaming({
       break;
     }
     
-    // Validate voice before predict
+    // Validate voice before predict - use ensureTTSWorker to handle recreation after timeout
     if (!state.getTTSWorker()) {
+      // Reset useWorker flag if it was set to false due to inactivity timeout
+      if (!state.shouldUseWorker()) {
+        state.setUseWorker(true);
+      }
       await initTTSWorker();
     }
     
@@ -237,6 +241,10 @@ async function synthesizeSinglePass({
   log(`[ClipAIble TTS] Single-pass synthesis`, { messageId, voiceId, textLength: text.length });
   
   if (!state.getTTSWorker()) {
+    // Reset useWorker flag if it was set to false due to inactivity timeout
+    if (!state.shouldUseWorker()) {
+      state.setUseWorker(true);
+    }
     await initTTSWorker();
   }
   if (!state.getTTSWorker()) {
@@ -332,6 +340,10 @@ async function tryFallbackVoice({
   
   // Ensure fallback is downloaded
   if (!state.getTTSWorker()) {
+    // Reset useWorker flag if it was set to false due to inactivity timeout
+    if (!state.shouldUseWorker()) {
+      state.setUseWorker(true);
+    }
     await initTTSWorker();
   }
   

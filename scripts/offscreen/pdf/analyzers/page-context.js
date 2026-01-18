@@ -1,6 +1,6 @@
 // @ts-check
 // Page context analyzer - analyzes context within a page
-// TODO: Implement page-level context analysis
+// Note: Basic implementation, future enhancement planned (column detection, header/footer)
 
 /**
  * Analyze page context
@@ -10,12 +10,8 @@
  * @returns {Object} Page context
  */
 export function analyzePageContext(pageElements, pageNum) {
-  // TODO: Implement:
-  // - Page layout analysis
-  // - Column detection
-  // - Header/footer detection
-  // - Page-specific metrics
-  
+  // Basic page context analysis
+  // Future: column detection, header/footer detection, page-specific metrics
   return {
     pageNum,
     elementCount: pageElements.length,

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * PDF.js 2.0.943 initialization script
  * Must be loaded AFTER pdf.min.js but BEFORE module scripts

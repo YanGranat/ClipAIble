@@ -14,6 +14,7 @@ import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
+import { buildTocStructure, renderTocAsFb2 } from './toc-builder.js';
 
 /**
  * Generate FB2 file from content
@@ -46,21 +47,50 @@ export async function generateFb2(data, updateState) {
   } = data;
   
   // Collect headings for TOC and sections
+  // Include all headings starting from level 1 (same as PDF/Markdown/EPUB)
   if (generateToc) {
     log('📑 Collecting headings for FB2 table of contents');
   }
   const headings = [];
+  const allHeadings = [];
   (content || []).forEach((item, index) => {
-    if (item.type === 'heading' && item.level >= 2) {
+    // Log ALL heading items for debugging
+    if (item.type === 'heading') {
       const text = stripHtml(item.text || '');
-      if (text) {
-        headings.push({ text, level: item.level, index });
+      allHeadings.push({
+        index,
+        level: item.level,
+        text: text.substring(0, 50),
+        textLength: text.length,
+        id: item.id || 'no-id',
+        rawText: item.text?.substring(0, 100) || ''
+      });
+      
+      if (item.level >= 1 && text) {
+        headings.push({ 
+          text, 
+          level: item.level, 
+          index,
+          id: item.id || `heading-${index}` // Include id for TOC links
+        });
       }
     }
   });
   
+  log('FB2: All heading items found in content', {
+    totalHeadings: allHeadings.length,
+    headingsForToc: headings.length,
+    allHeadings: allHeadings,
+    headingsForTocDetails: headings.map(h => ({
+      index: h.index,
+      level: h.level,
+      text: h.text.substring(0, 50),
+      id: h.id
+    }))
+  });
+  
   log('=== FB2 GENERATION START ===');
-  log('Input', { title, author, contentItems: content?.length, generateToc });
+  log('Input', { title, author, contentItems: content?.length, generateToc, headingsCount: headings.length });
   
   if (!content || content.length === 0) {
     // Normalize error with context for better logging and error tracking
@@ -493,12 +523,52 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   // Generate Table of Contents section if enabled (only if more than 1 heading)
   if (generateToc && headings.length > 1) {
     const contentsLabel = l10n.contents || 'Contents';
+    
+    // Build TOC structure using universal builder
+    // Headings already have id from collection step
+    const tocStructure = buildTocStructure(headings);
+    
+    // Count total items in structure (including nested)
+    function countItems(items) {
+      let count = 0;
+      for (const item of items) {
+        count++;
+        if (item.children && item.children.length > 0) {
+          count += countItems(item.children);
+        }
+      }
+      return count;
+    }
+    
+    log('FB2 TOC: Generating table of contents', {
+      headingsCount: headings.length,
+      minLevel: tocStructure.minLevel,
+      structureItemsCount: tocStructure.items.length,
+      totalItemsInStructure: countItems(tocStructure.items),
+      structurePreview: JSON.stringify(tocStructure.items.map(item => ({
+        text: item.text?.substring(0, 30),
+        level: item.level,
+        hasChildren: !!(item.children && item.children.length > 0),
+        childrenCount: item.children?.length || 0
+      }))).substring(0, 500),
+      headings: headings.map((h, idx) => ({
+        index: idx,
+        level: h.level,
+        text: h.text?.substring(0, 50) || '',
+        id: h.id,
+        indent: h.level - tocStructure.minLevel
+      }))
+    });
+    
+    // Render TOC as FB2 XML with proper hierarchical indentation
+    const tocXml = renderTocAsFb2(tocStructure.items, escapeXml);
+    
     bodyContent += `
     <section>
       <title><p>${escapeXml(contentsLabel)}</p></title>
-${headings.map(h => `      <p>${'  '.repeat(h.level - 2)}• ${escapeXml(h.text)}</p>`).join('\n')}
+${tocXml}
     </section>`;
-    // TOC generation logged at start
+    // TOC generation logged above
   }
   
   // Split content into sections by headings (excluding subtitle)
@@ -517,61 +587,164 @@ ${headings.map(h => `      <p>${'  '.repeat(h.level - 2)}• ${escapeXml(h.text)
 
 /**
  * Split content into sections based on headings
+ * CRITICAL: Creates nested sections for proper hierarchy in FB2 readers
+ * H1 creates top-level sections, H2+ create nested sections within parent sections
  */
 function splitIntoSections(content, headings) {
+  
   if (headings.length === 0) {
     // No headings - single section with all content
-    return [{ title: null, items: content }];
+    log('FB2 splitIntoSections: No headings found, returning single section');
+    return [{ title: null, items: content, level: 0, nestedSections: [] }];
   }
   
-  const sections = [];
-  let currentSection = { title: null, items: [] };
+  const topLevelSections = [];
+  const sectionStack = []; // Stack for nested sections: [{section, level}, ...]
+  
+  log('FB2 splitIntoSections: Starting', {
+    contentLength: content.length,
+    headingsCount: headings.length,
+    headingsPreview: headings.slice(0, 5).map(h => ({ level: h.level, text: h.text.substring(0, 30) }))
+  });
   
   for (let i = 0; i < content.length; i++) {
     const item = content[i];
     
-    if (item.type === 'heading' && item.level >= 2) {
-      // Start new section
-      if (currentSection.items.length > 0 || currentSection.title) {
-        sections.push(currentSection);
+    if (item.type === 'heading') {
+      const headingLevel = item.level || 1;
+      const headingText = stripHtml(item.text || '');
+      
+      log('FB2 splitIntoSections: Processing heading', {
+        index: i,
+        level: headingLevel,
+        text: headingText.substring(0, 50),
+        id: item.id || 'no-id',
+        stackDepth: sectionStack.length,
+        stackLevels: sectionStack.map(s => s.level)
+      });
+      
+      // Pop stack until we find the correct parent level
+      // Parent level must be less than current level
+      while (sectionStack.length > 0 && sectionStack[sectionStack.length - 1].level >= headingLevel) {
+        const popped = sectionStack.pop();
+        log('FB2 splitIntoSections: Popped section from stack', {
+          level: popped.level,
+          title: popped.section.title?.substring(0, 50),
+          reason: `current heading level ${headingLevel} <= stack level ${popped.level}`
+        });
       }
-      currentSection = { 
-        title: stripHtml(item.text || ''), 
-        level: item.level,
-        id: item.id || null, // Preserve original id for internal links
-        items: [] 
+      
+      // Create new section
+      const newSection = {
+        title: headingText,
+        level: headingLevel,
+        id: item.id || null,
+        items: [],
+        nestedSections: []
       };
+      
+      if (sectionStack.length === 0) {
+        // Top-level section (H1 or first heading)
+        topLevelSections.push(newSection);
+        log('FB2 splitIntoSections: Created top-level section', {
+          level: headingLevel,
+          title: headingText.substring(0, 50),
+          id: item.id || 'no-id'
+        });
+      } else {
+        // Nested section - add to parent's nestedSections
+        const parent = sectionStack[sectionStack.length - 1];
+        parent.section.nestedSections.push(newSection);
+        log('FB2 splitIntoSections: Created nested section', {
+          level: headingLevel,
+          title: headingText.substring(0, 50),
+          parentLevel: parent.level,
+          parentTitle: parent.section.title?.substring(0, 50),
+          id: item.id || 'no-id'
+        });
+      }
+      
+      // Push new section onto stack
+      sectionStack.push({ section: newSection, level: headingLevel });
+      
     } else {
-      currentSection.items.push(item);
+      // Non-heading item: add to current section (top of stack)
+      if (sectionStack.length > 0) {
+        sectionStack[sectionStack.length - 1].section.items.push(item);
+      } else {
+        // No sections yet - create a temporary section for content before first heading
+        if (topLevelSections.length === 0 || topLevelSections[topLevelSections.length - 1].title !== null) {
+          topLevelSections.push({ title: null, items: [], level: 0, nestedSections: [] });
+        }
+        topLevelSections[topLevelSections.length - 1].items.push(item);
+      }
     }
   }
   
-  // Push last section
-  if (currentSection.items.length > 0 || currentSection.title) {
-    sections.push(currentSection);
-  }
+  log('FB2 splitIntoSections: Complete', {
+    topLevelSectionsCount: topLevelSections.length,
+    sections: topLevelSections.map(s => ({
+      title: s.title?.substring(0, 50) || 'null',
+      level: s.level,
+      itemsCount: s.items.length,
+      nestedSectionsCount: s.nestedSections?.length || 0
+    }))
+  });
   
-  return sections;
+  return topLevelSections;
 }
 
 /**
- * Generate FB2 section
+ * Generate FB2 section (recursive for nested sections)
  */
-function generateSection(section, sourceUrl = '') {
+function generateSection(section, sourceUrl = '', indent = 0) {
+  const indentStr = '  '.repeat(indent);
+  
   // Add id attribute to section for internal link targets
   const idAttr = section.id ? ` id="${escapeXml(section.id)}"` : '';
-  let sectionXml = `\n    <section${idAttr}>`;
+  let sectionXml = `\n${indentStr}<section${idAttr}>`;
+  
+  log('FB2 generateSection: Starting', {
+    sectionTitle: section.title?.substring(0, 50) || 'null',
+    sectionLevel: section.level || 'unknown',
+    sectionId: section.id || 'no-id',
+    itemsCount: section.items.length,
+    nestedSectionsCount: section.nestedSections?.length || 0,
+    indent
+  });
   
   if (section.title) {
     sectionXml += `
-      <title><p>${escapeXml(section.title)}</p></title>`;
+${indentStr}  <title><p>${escapeXml(section.title)}</p></title>`;
+    log('FB2 generateSection: Added section title', {
+      title: section.title.substring(0, 50)
+    });
   }
   
+  // Process items (paragraphs, images, etc.)
   for (const item of section.items) {
-    sectionXml += contentItemToFb2(item, sourceUrl);
+    sectionXml += contentItemToFb2(item, sourceUrl, indent + 1);
   }
   
-  sectionXml += '\n    </section>';
+  // Process nested sections recursively
+  if (section.nestedSections && section.nestedSections.length > 0) {
+    log('FB2 generateSection: Processing nested sections', {
+      count: section.nestedSections.length,
+      parentTitle: section.title?.substring(0, 50)
+    });
+    for (const nestedSection of section.nestedSections) {
+      sectionXml += generateSection(nestedSection, sourceUrl, indent + 1);
+    }
+  }
+  
+  sectionXml += `\n${indentStr}</section>`;
+  
+  log('FB2 generateSection: Complete', {
+    sectionTitle: section.title?.substring(0, 50) || 'null',
+    xmlLength: sectionXml.length,
+    indent
+  });
+  
   return sectionXml;
 }
 
@@ -587,47 +760,41 @@ function createFb2Anchor(id) {
 /**
  * Convert content item to FB2 XML
  */
-function contentItemToFb2(item, sourceUrl = '') {
+function contentItemToFb2(item, sourceUrl = '', indent = 1) {
   if (!item || !item.type) return '';
+  
+  // Calculate indentation string
+  const indentStr = '  '.repeat(indent);
   
   // Create anchor for internal link targets
   const anchor = createFb2Anchor(item.id);
   
   switch (item.type) {
     case 'heading': {
-      // Headings within sections become subtitles
-      let text = item.text || '';
-      if (!text) return '';
-      
-      // CRITICAL: Convert markdown to HTML if text contains markdown syntax
-      // Pattern matches: **text**, *text*, `code`, [text](url), __bold__, ~~strikethrough~~
-      const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(text);
-      if (hasMarkdown) {
-        // Convert markdown to HTML first, then strip HTML to get plain text
-        // (FB2 subtitles don't support formatting, so we just get plain text)
-        text = stripHtml(markdownToHtml(text));
-      } else {
-        // If no markdown, just strip HTML
-        text = stripHtml(text);
-      }
-      
-      if (!text) return '';
-      // Add anchor before subtitle if id exists
-      const anchorTag = anchor ? `\n      <p>${anchor}</p>` : '';
-      return `${anchorTag}\n      <subtitle>${escapeXml(text)}</subtitle>`;
+      // CRITICAL: Headings should NOT appear as items in sections
+      // They should have already been used to create sections in splitIntoSections
+      // If a heading appears here, it means it wasn't processed correctly
+      // Log warning and skip it (shouldn't happen in normal flow)
+      log('FB2 contentItemToFb2: WARNING - heading found as item, should have been section title', {
+        level: item.level,
+        text: stripHtml(item.text || '').substring(0, 50),
+        id: item.id || 'no-id'
+      });
+      // Return empty - heading should not be rendered as content item
+      return '';
     }
     
     case 'paragraph': {
       const text = item.text || '';
       if (!text.trim()) return '';
-      return `\n      <p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl)}</p>`;
+      return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl)}</p>`;
     }
     
     case 'quote':
     case 'blockquote': {
       const text = item.text || '';
       if (!text.trim()) return '';
-      return `\n      <cite><p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl)}</p></cite>`;
+      return `\n${indentStr}  <cite><p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl)}</p></cite>`;
     }
     
     case 'code': {
@@ -637,8 +804,8 @@ function contentItemToFb2(item, sourceUrl = '') {
       const firstLine = lines[0] || '';
       const restLines = lines.slice(1);
       // Add anchor to first line
-      let result = `\n      <p>${anchor}<code>${escapeXml(firstLine)}</code></p>`;
-      result += restLines.map(line => `\n      <p><code>${escapeXml(line)}</code></p>`).join('');
+      let result = `\n${indentStr}  <p>${anchor}<code>${escapeXml(firstLine)}</code></p>`;
+      result += restLines.map(line => `\n${indentStr}  <p><code>${escapeXml(line)}</code></p>`).join('');
       return result;
     }
     
@@ -649,7 +816,7 @@ function contentItemToFb2(item, sourceUrl = '') {
         const liId = (typeof li === 'object' && li.id) ? li.id : '';
         const liAnchor = createFb2Anchor(liId);
         const prefix = item.ordered ? `${index + 1}. ` : '• ';
-        return `\n      <p>${liAnchor}${prefix}${convertInlineHtmlToFb2(text, sourceUrl)}</p>`;
+        return `\n${indentStr}  <p>${liAnchor}${prefix}${convertInlineHtmlToFb2(text, sourceUrl)}</p>`;
       }).join('');
     }
     
@@ -661,10 +828,10 @@ function contentItemToFb2(item, sourceUrl = '') {
       const caption = item.caption ? convertInlineHtmlToFb2(item.caption, sourceUrl) : '';
       
       // Add anchor paragraph before image if id exists
-      let imageXml = anchor ? `\n      <p>${anchor}</p>` : '';
-      imageXml += `\n      <image l:href="#${item._fb2Id}" alt="${alt}"/>`;
+      let imageXml = anchor ? `\n${indentStr}  <p>${anchor}</p>` : '';
+      imageXml += `\n${indentStr}  <image l:href="#${item._fb2Id}" alt="${alt}"/>`;
       if (caption) {
-        imageXml += `\n      <p><emphasis>${caption}</emphasis></p>`;
+        imageXml += `\n${indentStr}  <p><emphasis>${caption}</emphasis></p>`;
       }
       return imageXml;
     }
@@ -672,11 +839,11 @@ function contentItemToFb2(item, sourceUrl = '') {
     case 'hr':
     case 'divider':
     case 'separator': {
-      return '\n      <empty-line/>\n      <p>* * *</p>\n      <empty-line/>';
+      return `\n${indentStr}  <empty-line/>\n${indentStr}  <p>* * *</p>\n${indentStr}  <empty-line/>`;
     }
     
     case 'table': {
-      return tableToFb2(item, sourceUrl);
+      return tableToFb2(item, sourceUrl, indent);
     }
     
     case 'subtitle': {
@@ -686,7 +853,7 @@ function contentItemToFb2(item, sourceUrl = '') {
     
     default: {
       if (item.text) {
-        return `\n      <p>${anchor}${convertInlineHtmlToFb2(item.text, sourceUrl)}</p>`;
+        return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(item.text, sourceUrl)}</p>`;
       }
       return '';
     }
@@ -696,17 +863,18 @@ function contentItemToFb2(item, sourceUrl = '') {
 /**
  * Convert table to FB2 (simplified - FB2 doesn't support tables natively)
  */
-function tableToFb2(item, sourceUrl = '') {
+function tableToFb2(item, sourceUrl = '', indent = 1) {
   if (!item.rows || !item.rows.length) return '';
+  const indentStr = '  '.repeat(indent);
   
-  let fb2 = '\n      <empty-line/>';
+  let fb2 = `\n${indentStr}  <empty-line/>`;
   
   for (const row of item.rows) {
     const cells = row.map(cell => stripHtml(cell)).join(' | ');
-    fb2 += `\n      <p>${escapeXml(cells)}</p>`;
+    fb2 += `\n${indentStr}  <p>${escapeXml(cells)}</p>`;
   }
   
-  fb2 += '\n      <empty-line/>';
+  fb2 += `\n${indentStr}  <empty-line/>`;
   return fb2;
 }
 
@@ -810,10 +978,93 @@ function convertInlineHtmlToFb2(html, sourceUrl = '') {
     return `<a l:href="${href}">${cleanLinkText}</a>`;
   });
   
+  // CRITICAL: Handle orphaned <a> tags without href (they should have been processed above, but handle edge cases)
+  // Remove <a> tags without href to prevent unclosed tags
+  result = result.replace(/<a\s+[^>]*>(?!.*href)/gi, (match) => {
+    // Check if this tag has href attribute
+    const hasHref = /href\s*=\s*["']/i.test(match);
+    if (!hasHref) {
+      // No href - remove the opening tag (but keep the content)
+      return '';
+    }
+    return match;
+  });
+  
+  // CRITICAL: Remove orphaned closing </a> tags that don't have matching opening tags
+  // This prevents malformed FB2 XML
+  result = result.replace(/<\/a>/gi, (match, offset) => {
+    // Check if there's a matching opening <a> tag before this closing tag
+    const beforeText = result.substring(0, offset);
+    const openingTags = (beforeText.match(/<a\s+[^>]*>/gi) || []).length;
+    const closingTags = (beforeText.match(/<\/a>/gi) || []).length;
+    if (openingTags <= closingTags) {
+      // No matching opening tag - remove this closing tag
+      return '';
+    }
+    return match;
+  });
+  
   // Remove other HTML tags (but not our converted FB2 tags)
   result = result.replace(/<br\s*\/?>/gi, ' ');
   // Remove HTML tags but preserve FB2 tags (a, strong, emphasis, code, sup, sub, strikethrough)
   result = result.replace(/<(?!\/?(?:a|strong|emphasis|code|sup|sub|strikethrough)\b)[^>]+>/gi, '');
+  
+  // CRITICAL: Ensure all opening tags have matching closing tags (stack-based approach)
+  // This prevents unclosed tags from affecting subsequent text (e.g., unclosed <a> makes all text blue)
+  // FB2 tags: a, strong, emphasis, code, sup, sub, strikethrough
+  const allowedTagsForCheck = ['a', 'strong', 'emphasis', 'code', 'sup', 'sub', 'strikethrough'];
+  const tagStack = [];
+  let processedResult = '';
+  let i = 0;
+  
+  while (i < result.length) {
+    // Check for opening tag
+    const openMatch = result.substring(i).match(/^<([a-z][a-z0-9]*)\b[^>]*>/i);
+    if (openMatch) {
+      const tag = openMatch[1].toLowerCase();
+      if (allowedTagsForCheck.includes(tag)) {
+        tagStack.push(tag);
+        processedResult += openMatch[0];
+        i += openMatch[0].length;
+        continue;
+      }
+    }
+    
+    // Check for closing tag
+    const closeMatch = result.substring(i).match(/^<\/([a-z][a-z0-9]*)>/i);
+    if (closeMatch) {
+      const tag = closeMatch[1].toLowerCase();
+      if (allowedTagsForCheck.includes(tag)) {
+        // Find matching opening tag in stack
+        const stackIndex = tagStack.lastIndexOf(tag);
+        if (stackIndex >= 0) {
+          // Close all tags between stackIndex+1 and end (these are nested tags that need to be closed first)
+          for (let j = tagStack.length - 1; j > stackIndex; j--) {
+            processedResult += `</${tagStack[j]}>`;
+          }
+          // Remove the matching tag and all tags after it from stack
+          tagStack.length = stackIndex;
+          processedResult += closeMatch[0];
+        } else {
+          // Orphaned closing tag - ignore it (don't add to result)
+        }
+        i += closeMatch[0].length;
+        continue;
+      }
+    }
+    
+    // Regular character
+    processedResult += result[i];
+    i++;
+  }
+  
+  // Close any remaining open tags
+  while (tagStack.length > 0) {
+    const remainingTag = tagStack.pop();
+    processedResult += `</${remainingTag}>`;
+  }
+  
+  result = processedResult;
   
   // Escape remaining special characters (but not in tags)
   result = escapeXmlContent(result);

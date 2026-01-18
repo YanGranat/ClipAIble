@@ -3,6 +3,7 @@
 
 import { log } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { stripHtml } from '../utils/html/html.js';
 
 /**
  * Trim HTML for AI analysis - removes noise while preserving structure
@@ -141,29 +142,52 @@ function simpleHash(str) {
  * Uses hash-based deduplication to avoid collisions from similar content.
  * 
  * Strategy:
- * - Creates unique key from: type + length + hash(full content)
+ * - Creates unique key from: type + length + hash(plain text content)
+ * - Uses stripHtml to extract plain text from HTML, so items with same text but different HTML are treated as duplicates
  * - Hash prevents collisions from similar beginnings/endings (unlike prefix-based approach)
  * - Type and length provide additional uniqueness guarantees
  * 
  * @param {Array} content - Content array with items {type, text, src, items, ...}
  * @returns {Array} Deduplicated content array
  */
+/**
+ * Extract plain text from content item for deduplication
+ * Optimized to avoid expensive stripHtml when possible
+ */
+function extractTextForDedup(item) {
+  if (item.text) {
+    // Fast path: if text doesn't contain HTML tags, use as-is
+    if (!/<[^>]+>/.test(item.text)) {
+      return item.text.trim();
+    }
+    // Slow path: strip HTML for items with tags
+    return stripHtml(item.text).trim();
+  }
+  if (item.src) return item.src;
+  if (Array.isArray(item.items)) return item.items.join('|');
+  return '';
+}
+
 export function deduplicateContent(content) {
   log('deduplicateContent', { inputCount: content.length });
   
   const result = [];
   const seen = new Set();
+  const duplicatesFound = [];
 
   for (const item of content) {
     const type = item.type || 'unknown';
-    const textSample = (item.text || '').trim();
-    const srcSample = item.src || '';
-    const listSample = Array.isArray(item.items) ? item.items.join('|') : '';
-    const sample = textSample || srcSample || listSample;
+    const sample = extractTextForDedup(item);
+    
+    // Skip empty items
+    if (!sample) {
+      continue;
+    }
+    
     const lengthPart = sample.length;
     
     // Use hash instead of head/tail to avoid collisions with similar beginnings/endings
-    // Hash is based on full sample, but we also include type and length for better uniqueness
+    // Hash is based on plain text (not HTML), so items with same text but different HTML are treated as duplicates
     // Format: "type:length:hash" ensures uniqueness even for similar content
     const sampleHash = simpleHash(sample);
     const key = `${type}:${lengthPart}:${sampleHash}`;
@@ -171,10 +195,26 @@ export function deduplicateContent(content) {
     if (!seen.has(key)) {
       seen.add(key);
       result.push(item);
+    } else {
+      // Log duplicate for debugging (only first few to avoid log spam)
+      if (duplicatesFound.length < 5) {
+        duplicatesFound.push({
+          type,
+          textPreview: sample.substring(0, 100),
+          textLength: sample.length
+        });
+      }
     }
   }
 
-  log('deduplicateContent result', { outputCount: result.length, removed: content.length - result.length });
+  const removed = content.length - result.length;
+  log('deduplicateContent result', { 
+    outputCount: result.length, 
+    removed,
+    duplicateRate: content.length > 0 ? `${Math.round((removed / content.length) * 100)}%` : '0%',
+    duplicatesPreview: duplicatesFound
+  });
+  
   return result;
 }
 

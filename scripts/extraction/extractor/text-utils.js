@@ -189,3 +189,75 @@ export function truncateText(text, maxLength) {
   if (!text || text.length <= maxLength) return text;
   return text.slice(0, maxLength - 3) + '...';
 }
+
+/**
+ * Check if an element with heading tag is actually a real heading
+ * vs styled text that happens to use heading tags
+ * @param {Element} element - Element with h1-h6 tag
+ * @param {Window} win - Window object for computed styles
+ * @returns {boolean} - True if element is likely a real heading
+ */
+export function isRealHeading(element, win) {
+  if (!element || !win) {
+    // Log when we can't check (shouldn't happen in normal flow)
+    return true; // Default to true if can't check
+  }
+  
+  const text = (element.textContent || '').trim();
+  const cleanedText = cleanHeadingText(text);
+  const tagName = element.tagName?.toLowerCase() || 'unknown';
+  
+  // Check computed styles - this is the most reliable indicator
+  let fontStyle = 'normal';
+  let fontSize = '';
+  let fontWeight = '';
+  let isItalic = false;
+  let result = true;
+  let reason = '';
+  
+  try {
+    const style = win.getComputedStyle(element);
+    fontStyle = style.fontStyle || 'normal';
+    fontSize = style.fontSize || '';
+    fontWeight = style.fontWeight || '';
+    isItalic = (fontStyle === 'italic' || fontStyle === 'oblique');
+    
+    // CRITICAL: If text is italic AND short, it's likely styled text, not a heading
+    // Real headings are rarely italic (except in special cases)
+    // Short italic text (like "Conclusion" or "Biomedicine" in italic) is likely styled text
+    if (isItalic) {
+      // If it's short text (less than 20 chars) and italic, it's likely styled text
+      // Exception: very long italic text might be a heading in italic style
+      if (cleanedText.length < 20) {
+        result = false;
+        reason = `short italic text (${cleanedText.length} chars, italic)`;
+      }
+    }
+    
+    // Additional check: if font-size is very small relative to body, might be styled text
+    // But this is less reliable, so we don't use it as primary check
+  } catch (e) {
+    // If style check fails, continue with other checks
+    reason = `style check failed: ${e.message}`;
+  }
+  
+  // Log the check result for debugging
+  // Note: This function runs in page context, so console.log will be visible in browser console
+  // For service worker visibility, the caller should log via pushDebugLog
+  if (typeof console !== 'undefined' && console.log) {
+    console.log('[isRealHeading]', {
+      tagName,
+      text: cleanedText.substring(0, 50),
+      textLength: cleanedText.length,
+      fontStyle,
+      fontSize,
+      fontWeight,
+      isItalic,
+      result,
+      reason: reason || 'passed all checks'
+    });
+  }
+  
+  // Default: assume it's a real heading if it passed style checks
+  return result;
+}

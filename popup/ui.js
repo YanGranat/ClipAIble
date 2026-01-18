@@ -117,6 +117,55 @@ export function initUI(deps) {
           });
         });
         
+        // Special handling for fontFamily (uses hidden input, not select)
+        if (elements.fontFamily && elements.fontFamilyOptions && elements.fontFamilyValue) {
+          const fontFamilyInput = elements.fontFamily;
+          const currentValue = (fontFamilyInput instanceof HTMLInputElement ? fontFamilyInput.value : '') || '';
+          const options = elements.fontFamilyOptions.querySelectorAll('.custom-select-option');
+          
+          options.forEach(opt => {
+            // Update text from data-i18n if present
+            if (opt.hasAttribute('data-i18n')) {
+              const key = opt.getAttribute('data-i18n');
+              const translation = locale[key] || UI_LOCALES.en[key] || key;
+              updates.push(() => {
+                opt.textContent = translation;
+              });
+            }
+            
+            // Update selected state and displayed value based on current input value
+            const optValue = (opt.dataset.value || '').trim();
+            const compareValue = currentValue.trim();
+            if (optValue === compareValue) {
+              updates.push(() => {
+                // Remove selected from all options first
+                options.forEach(o => o.classList.remove('selected'));
+                // Add selected to matching option
+                opt.classList.add('selected');
+                elements.fontFamilyValue.textContent = opt.textContent;
+                // Apply font family style
+                if (opt.classList.contains('font-segoe-ui')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Segoe UI, sans-serif';
+                } else if (opt.classList.contains('font-arial')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Arial, sans-serif';
+                } else if (opt.classList.contains('font-georgia')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Georgia, serif';
+                } else if (opt.classList.contains('font-times-new-roman')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Times New Roman, serif';
+                } else if (opt.classList.contains('font-verdana')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Verdana, sans-serif';
+                } else if (opt.classList.contains('font-tahoma')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Tahoma, sans-serif';
+                } else if (opt.classList.contains('font-trebuchet-ms')) {
+                  elements.fontFamilyValue.style.fontFamily = 'Trebuchet MS, sans-serif';
+                } else {
+                  elements.fontFamilyValue.style.fontFamily = opt.style.fontFamily || '';
+                }
+              });
+            }
+          });
+        }
+        
         // Collect title updates
         document.querySelectorAll('[data-i18n-title]').forEach(element => {
           const key = element.getAttribute('data-i18n-title');

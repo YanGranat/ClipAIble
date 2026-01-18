@@ -147,9 +147,14 @@ ClipAIble utiliza inteligencia artificial para extraer inteligentemente el conte
 ### Opción 2: Instalación manual (Modo desarrollador)
 
 1. **Clona** este repositorio
-2. Abre Chrome → `chrome://extensions/`
-3. Habilita el **Modo de desarrollador**
-4. Haz clic en **Cargar extensión sin empaquetar** → selecciona la carpeta
+2. **Instala dependencias y compila:**
+   ```bash
+   npm install
+   npm run build
+   ```
+3. Abre Chrome → `chrome://extensions/`
+4. Habilita el **Modo de desarrollador**
+5. Haz clic en **Cargar extensión sin empaquetar** → selecciona la carpeta
 
 ### Requisitos
 

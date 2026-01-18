@@ -1,6 +1,6 @@
 // @ts-check
 // Merging processor - handles merging of related elements
-// TODO: Implement advanced merging algorithms
+// Note: Placeholder for future enhancement (advanced merging algorithms)
 
 /**
  * Merge related elements
@@ -9,11 +9,7 @@
  * @returns {Array} Merged elements
  */
 export function mergeElements(elements) {
-  // TODO: Implement:
-  // - Split heading merging
-  // - List item grouping
-  // - Related paragraph merging
-  
+  // Placeholder - future: split heading merging, list item grouping, related paragraph merging
   return elements;
 }
 

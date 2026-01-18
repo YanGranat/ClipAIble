@@ -131,10 +131,31 @@ export function logDebug(message, data = null) {
   if (!shouldLog(LOG_LEVELS.DEBUG)) return;
   
   const timestamp = getTimestamp();
+  const fullMessage = `${LOG_PREFIX} [${timestamp}] DEBUG: ${message}`;
+  
   if (data !== null) {
-    console.log(`${LOG_PREFIX} [${timestamp}] DEBUG: ${message}`, data);
+    console.log(fullMessage, data);
   } else {
-    console.log(`${LOG_PREFIX} [${timestamp}] DEBUG: ${message}`);
+    console.log(fullMessage);
+  }
+  
+  // CRITICAL: Add to unlimited log collection if available (so logs are saved to file)
+  // Only in service worker context - offscreen logs should use criticalLog() or logToServiceWorker()
+  try {
+    // Type assertion: addLogToCollection is added dynamically to self in service worker (background.js line 1073)
+    // Property 'addLogToCollection' does not exist on type 'ServiceWorkerGlobalScope', but is added dynamically
+    // Using ServiceWorkerWithLogging type to properly type the extended service worker
+    if (typeof self !== 'undefined') {
+      /** @type {import('../../types.js').ServiceWorkerWithLogging} */
+      const selfWithLogging = self;
+      // Check if addLogToCollection exists and is a function
+      // addLogToCollection is added dynamically in service worker (background.js line 1073)
+      if (typeof selfWithLogging.addLogToCollection === 'function') {
+        selfWithLogging.addLogToCollection(fullMessage, data, 'debug');
+      }
+    }
+  } catch (e) {
+    // Ignore - addLogToCollection may not be available in all contexts
   }
 }
 

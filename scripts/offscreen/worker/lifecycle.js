@@ -8,6 +8,7 @@ import { WORKER_INACTIVITY_TIMEOUT } from '../utils/constants.js';
 /**
  * Reset Worker inactivity timer
  * Automatically terminates Worker after 5 minutes of inactivity to free memory
+ * CRITICAL: Does NOT terminate if there are active predict calls (processing in progress)
  */
 export function resetWorkerInactivityTimer() {
   state.clearWorkerInactivityTimeout();
@@ -18,9 +19,12 @@ export function resetWorkerInactivityTimer() {
   
   const timeout = setTimeout(() => {
     const worker = state.getTTSWorker();
-    if (worker) {
+    // CRITICAL: Don't terminate Worker if there are active predict calls
+    // This prevents termination during long PDF processing with multiple chunks
+    if (worker && state.getActivePredictCalls() === 0) {
       log('[ClipAIble Offscreen] Terminating TTS Worker due to inactivity', {
         timeout: WORKER_INACTIVITY_TIMEOUT,
+        activePredictCalls: state.getActivePredictCalls(),
         timestamp: Date.now()
       });
       worker.terminate();
@@ -28,6 +32,14 @@ export function resetWorkerInactivityTimer() {
       state.clearTTSWorkerInitPromise(); // Clear promise cache for recreation
       state.setUseWorker(false);
       state.clearWorkerInactivityTimeout();
+    } else if (worker && state.getActivePredictCalls() > 0) {
+      log('[ClipAIble Offscreen] Worker termination skipped - active processing in progress', {
+        activePredictCalls: state.getActivePredictCalls(),
+        timeout: WORKER_INACTIVITY_TIMEOUT,
+        timestamp: Date.now()
+      });
+      // Reset timer to check again later
+      resetWorkerInactivityTimer();
     }
   }, WORKER_INACTIVITY_TIMEOUT);
   

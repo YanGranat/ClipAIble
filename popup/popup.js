@@ -339,6 +339,46 @@ async function applyLocalization() {
     });
   });
   
+  // Special handling for fontFamily (uses hidden input, not select)
+  if (elements.fontFamily && elements.fontFamilyOptions && elements.fontFamilyValue) {
+    const currentValue = elements.fontFamily.value || '';
+    const options = elements.fontFamilyOptions.querySelectorAll('.custom-select-option');
+    options.forEach(opt => {
+      // Update text from data-i18n if present
+      if (opt.hasAttribute('data-i18n')) {
+        const key = opt.getAttribute('data-i18n');
+        const translation = locale[key] || UI_LOCALES.en[key] || key;
+        opt.textContent = translation;
+      }
+      // Update selected state and displayed value
+      const optValue = opt.dataset.value || '';
+      if (optValue === currentValue) {
+        opt.classList.add('selected');
+        elements.fontFamilyValue.textContent = opt.textContent;
+        // Apply font family style
+        if (opt.classList.contains('font-segoe-ui')) {
+          elements.fontFamilyValue.style.fontFamily = 'Segoe UI, sans-serif';
+        } else if (opt.classList.contains('font-arial')) {
+          elements.fontFamilyValue.style.fontFamily = 'Arial, sans-serif';
+        } else if (opt.classList.contains('font-georgia')) {
+          elements.fontFamilyValue.style.fontFamily = 'Georgia, serif';
+        } else if (opt.classList.contains('font-times-new-roman')) {
+          elements.fontFamilyValue.style.fontFamily = 'Times New Roman, serif';
+        } else if (opt.classList.contains('font-verdana')) {
+          elements.fontFamilyValue.style.fontFamily = 'Verdana, sans-serif';
+        } else if (opt.classList.contains('font-tahoma')) {
+          elements.fontFamilyValue.style.fontFamily = 'Tahoma, sans-serif';
+        } else if (opt.classList.contains('font-trebuchet-ms')) {
+          elements.fontFamilyValue.style.fontFamily = 'Trebuchet MS, sans-serif';
+        } else {
+          elements.fontFamilyValue.style.fontFamily = opt.style.fontFamily || '';
+        }
+      } else {
+        opt.classList.remove('selected');
+      }
+    });
+  }
+  
   // Update select options for language selector (header version - short codes)
   if (elements.uiLanguageSelect) {
     // Keep short codes (EN, RU, etc.) for header selector
@@ -647,15 +687,74 @@ async function resetAllStyles() {
 
 // Set custom font select value programmatically
 function setCustomSelectValue(value) {
+  if (!elements.fontFamilyOptions || !elements.fontFamilyValue) {
+    logWarn('setCustomSelectValue: elements not initialized', { 
+      hasOptions: !!elements.fontFamilyOptions, 
+      hasValue: !!elements.fontFamilyValue 
+    });
+    return;
+  }
+  
   const options = elements.fontFamilyOptions.querySelectorAll('.custom-select-option');
+  let found = false;
+  const compareValue = (value || '').trim();
+  
+  logDebug('setCustomSelectValue: setting font family', { 
+    value, 
+    compareValue, 
+    optionsCount: options.length,
+    availableValues: Array.from(options).map(o => ({ value: o.dataset.value || '', text: o.textContent }))
+  });
+  
   options.forEach(opt => {
     opt.classList.remove('selected');
-    if (opt.dataset.value === value) {
+    // Match by exact value or empty string for default
+    const optValue = (opt.dataset.value || '').trim();
+    if (optValue === compareValue) {
       opt.classList.add('selected');
-      elements.fontFamilyValue.textContent = opt.textContent;
-      elements.fontFamilyValue.style.fontFamily = opt.style.fontFamily;
+      const optionText = opt.textContent || '';
+      elements.fontFamilyValue.textContent = optionText;
+      logDebug('setCustomSelectValue: found matching option', { 
+        optValue, 
+        optionText,
+        hasFontClass: opt.classList.length > 1
+      });
+      
+      // Apply font family style if option has font class
+      if (opt.classList.contains('font-segoe-ui')) {
+        elements.fontFamilyValue.style.fontFamily = 'Segoe UI, sans-serif';
+      } else if (opt.classList.contains('font-arial')) {
+        elements.fontFamilyValue.style.fontFamily = 'Arial, sans-serif';
+      } else if (opt.classList.contains('font-georgia')) {
+        elements.fontFamilyValue.style.fontFamily = 'Georgia, serif';
+      } else if (opt.classList.contains('font-times-new-roman')) {
+        elements.fontFamilyValue.style.fontFamily = 'Times New Roman, serif';
+      } else if (opt.classList.contains('font-verdana')) {
+        elements.fontFamilyValue.style.fontFamily = 'Verdana, sans-serif';
+      } else if (opt.classList.contains('font-tahoma')) {
+        elements.fontFamilyValue.style.fontFamily = 'Tahoma, sans-serif';
+      } else if (opt.classList.contains('font-trebuchet-ms')) {
+        elements.fontFamilyValue.style.fontFamily = 'Trebuchet MS, sans-serif';
+      } else {
+        elements.fontFamilyValue.style.fontFamily = opt.style.fontFamily || '';
+      }
+      found = true;
     }
   });
+  
+  // If value not found, reset to default
+  if (!found && value) {
+    logWarn('setCustomSelectValue: font family value not found', { 
+      value, 
+      compareValue,
+      availableValues: Array.from(options).map(o => ({ value: o.dataset.value || '', text: o.textContent }))
+    });
+    // Reset to default
+    setCustomSelectValue('');
+  } else if (!found && !value) {
+    // Empty value is default - this is OK
+    logDebug('setCustomSelectValue: setting to default (empty value)');
+  }
 }
 
 // Universal function to convert native select to custom-select

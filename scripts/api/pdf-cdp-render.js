@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * CDP-based PDF Page Rendering
  * 

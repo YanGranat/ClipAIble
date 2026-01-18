@@ -19,7 +19,9 @@
   "include": [
     "scripts/**/*.js",
     "popup/**/*.js",
-    "print/**/*.js"
+    "print/**/*.js",
+    "src/**/*.js",
+    "offscreen.js"
   ],
   "exclude": [
     "node_modules",

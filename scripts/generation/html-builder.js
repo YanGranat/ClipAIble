@@ -163,59 +163,16 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
         case 'heading':
           const level = Math.min(Math.max(item.level || 2, 1), 6);
           
-          // CRITICAL: Log heading before processing - FULL TEXT (DEBUG only)
-          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} BEFORE PROCESSING (FULL) ===`, {
-            index,
-            type: item.type,
-            level: item.level,
-            itemTextFull: itemText,
-            itemTextLength: itemText.length
-          });
-          
           // CRITICAL: If itemText already contains markdown heading syntax (#), remove it first
           // parseMarkdownToElements already extracts text without #, but check to be safe
           let headingText = itemText.trim();
           
-          // CRITICAL: Log heading text after initial trim - FULL TEXT (DEBUG only)
-          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} AFTER TRIM (FULL) ===`, {
-            index,
-            level,
-            headingTextBeforeClean: headingText,
-            headingTextLength: headingText.length
-          });
-          
           // Remove any leading # characters and spaces (in case markdown syntax leaked in)
           headingText = headingText.replace(/^#+\s*/, '').trim();
           
-          // CRITICAL: Log heading text after cleaning - FULL TEXT (DEBUG only)
-          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} AFTER CLEANING (FULL) ===`, {
-            index,
-            level,
-            headingTextAfterClean: headingText,
-            headingTextLength: headingText.length
-          });
-          
           // Convert markdown to HTML before sanitizing (for formatting like bold, italic, links)
           const headingHtml = markdownToHtml(headingText);
-          
-          // CRITICAL: Log heading HTML after markdownToHtml - FULL TEXT (DEBUG only)
-          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} AFTER markdownToHtml (FULL) ===`, {
-            index,
-            level,
-            headingHtmlFull: headingHtml,
-            headingHtmlLength: headingHtml.length
-          });
-          
           const sanitizedHeadingHtml = sanitizeHtml(headingHtml, sourceUrl, { allowFileProtocol: true });
-          
-          // CRITICAL: Log final heading HTML - FULL TEXT (DEBUG only)
-          logDebug(`=== HTML BUILDER: HEADING ITEM ${index} FINAL HTML (FULL) ===`, {
-            index,
-            level,
-            sanitizedHeadingHtmlFull: sanitizedHeadingHtml,
-            sanitizedHeadingHtmlLength: sanitizedHeadingHtml.length,
-            finalHtml: `${anchorTag}<h${level}${idAttr}>${sanitizedHeadingHtml}</h${level}>`
-          });
           
           return `${anchorTag}<h${level}${idAttr}>${sanitizedHeadingHtml}</h${level}>`;
         
@@ -224,7 +181,9 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           // If it contains HTML tags, use it directly; otherwise convert markdown to HTML
           const hasHtmlTags = /<[a-z][\s\S]*>/i.test(itemText);
           const paragraphHtml = hasHtmlTags ? itemText : markdownToHtml(itemText);
-          return `${anchorTag}<p${idAttr} translate="no" class="notranslate" data-translate="no">${sanitizeHtml(paragraphHtml, sourceUrl, { allowFileProtocol: true })}</p>`;
+          const sanitizedParagraphHtml = sanitizeHtml(paragraphHtml, sourceUrl, { allowFileProtocol: true });
+          
+          return `${anchorTag}<p${idAttr} translate="no" class="notranslate" data-translate="no">${sanitizedParagraphHtml}</p>`;
         
         case 'image':
           if (!item.src || item.src.startsWith('data:image/svg') || item.src.includes('placeholder')) {
@@ -236,21 +195,83 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
             return `<hr class="decorative-separator"${idAttr}>`;
           }
           // Don't use generic alt text as caption fallback (e.g., "Image", "Photo")
+          // Supports all 11 languages: en, ru, ua, de, fr, es, it, pt, zh, ja, ko
           const isGenericAltText = (alt) => {
             if (!alt || !alt.trim()) return false;
             const lowerAlt = alt.trim().toLowerCase();
+            
+            // Comprehensive list of generic image alt texts in all supported languages
+            // English (en)
+            const english = ['image', 'photo', 'picture', 'img', 'image:', 'photo:', 'picture:', 'img:'];
+            
+            // Russian (ru)
+            const russian = ['изображение', 'фото', 'картинка', 'изображение:', 'фото:', 'картинка:'];
+            
+            // Ukrainian (ua)
+            const ukrainian = ['зображення', 'фотографія', 'картинка', 'зображення:', 'фотографія:', 'картинка:'];
+            
+            // German (de)
+            const german = ['bild', 'foto', 'abbildung', 'bild:', 'foto:', 'abbildung:'];
+            
+            // French (fr)
+            const french = ['image', 'photo', 'image:', 'photo:'];
+            
+            // Spanish (es)
+            const spanish = ['imagen', 'foto', 'imagen:', 'foto:'];
+            
+            // Italian (it)
+            const italian = ['immagine', 'foto', 'immagine:', 'foto:'];
+            
+            // Portuguese (pt)
+            const portuguese = ['imagem', 'foto', 'imagem:', 'foto:'];
+            
+            // Chinese (zh)
+            const chinese = ['图像', '图片', '照片', '图像:', '图片:', '照片:'];
+            
+            // Japanese (ja)
+            const japanese = ['画像', '写真', '画像:', '写真:'];
+            
+            // Korean (ko)
+            const korean = ['이미지', '사진', '그림', '이미지:', '사진:', '그림:'];
+            
             const genericTexts = [
-              'изображение', 'image', 'photo', 'picture', 'img', 'фото', 'картинка',
-              'imagen', 'imagem', 'immagine', 'bild', 'afbeelding', '画像', '이미지',
-              'image:', 'photo:', 'picture:', 'изображение:', 'фото:', 'картинка:'
+              ...english,
+              ...russian,
+              ...ukrainian,
+              ...german,
+              ...french,
+              ...spanish,
+              ...italian,
+              ...portuguese,
+              ...chinese,
+              ...japanese,
+              ...korean
             ];
+            
             return genericTexts.includes(lowerAlt);
           };
+          
+          // Check if caption is generic (e.g., "image3", "image1", "photo2", etc.)
+          const isGenericCaption = (caption) => {
+            if (!caption || !caption.trim()) return false;
+            const lowerCaption = caption.trim().toLowerCase();
+            
+            // Check if it matches pattern: generic word + optional number (e.g., "image3", "photo1", "img2")
+            // Pattern: word (image, photo, etc.) optionally followed by digits
+            const genericPattern = /^(image|photo|picture|img|изображение|фото|картинка|зображення|фотографія|bild|foto|abbildung|imagen|immagine|imagem|图像|图片|照片|画像|写真|이미지|사진|그림)\d*$/i;
+            if (genericPattern.test(lowerCaption)) {
+              return true;
+            }
+            
+            // Also check against the same generic texts list
+            return isGenericAltText(caption);
+          };
+          
           const captionText = item.caption || (item.alt && !isGenericAltText(item.alt) ? item.alt : '');
           // CRITICAL: If caption already contains HTML (from getFormattedHtml), use sanitizeHtml directly
           // Otherwise, convert markdown to HTML first
           let caption = '';
-          if (captionText) {
+          if (captionText && !isGenericCaption(captionText)) {
             // Check if caption already contains HTML tags
             if (captionText.includes('<') && captionText.includes('>')) {
               // Already HTML - sanitize directly to preserve links
@@ -354,7 +375,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
       
       return '';
     }
-  }).join('\n');
+  }).filter(html => html.trim().length > 0).join('\n');
   
   // Report failed items if any
   if (failedItems.length > 0) {
@@ -463,22 +484,177 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   if (generateToc && headings.length > 1) {
     // TOC generation logged in pdf.js
     const tocTitle = l10n.contents || 'Contents';
+    
+    // Build nested TOC structure based on heading hierarchy
+    // Find minimum level to normalize (usually 2, but could be 1)
+    const minLevel = Math.min(...headings.map(h => h.level));
+    
+    log('=== TOC GENERATION START ===', {
+      headingsCount: headings.length,
+      minLevel,
+      headings: headings.map((h, idx) => ({
+        index: idx,
+        level: h.level,
+        text: h.text?.substring(0, 50) || '',
+        id: h.id || ''
+      }))
+    });
+    
+    // Build nested structure using proper HTML nesting
+    // Track previous level and properly manage <ul> and <li> tags
+    let tocListHtml = '<ul class="toc-list">';
+    let prevLevel = null; // Track previous heading level (null for first item)
+    let hasOpenLi = false; // Track if there's an open <li> tag
+    const stepLogs = []; // Log each step for debugging
+    
+    headings.forEach((h, index) => {
+      const level = h.level;
+      const nextHeading = headings[index + 1];
+      const nextLevel = nextHeading ? nextHeading.level : minLevel - 1;
+      const stepLog = {
+        index,
+        heading: h.text?.substring(0, 50) || '',
+        level,
+        prevLevel,
+        nextLevel,
+        hasOpenLiBefore: hasOpenLi,
+        htmlBefore: tocListHtml.substring(Math.max(0, tocListHtml.length - 200))
+      };
+      
+      if (prevLevel !== null) {
+        // Close previous <li> and nested lists if going up or staying at same level
+        if (level <= prevLevel) {
+          stepLog.action = 'going_up_or_same';
+          // First close the <li> of previous heading (if it's still open)
+          // NOTE: Previous <li> might already be closed if nextLevel <= prevLevel was true in previous iteration
+          if (hasOpenLi) {
+            tocListHtml += '</li>';
+            hasOpenLi = false;
+            stepLog.closedLi = true;
+          }
+          // Then close nested <ul> tags (one for each level we're going up)
+          const levelsToClose = prevLevel - level;
+          stepLog.levelsToClose = levelsToClose;
+          if (levelsToClose > 0) {
+            // Close nested lists and their parent <li> tags
+            // Example: going from H2 to H1: close </ul></li> (close nested list and parent H1's <li>)
+            // For each level we go up, we close: </ul></li>
+            for (let i = 0; i < levelsToClose; i++) {
+              tocListHtml += '</ul></li>';
+              stepLog.closedUlCount = (stepLog.closedUlCount || 0) + 1;
+              stepLog.closedLiCount = (stepLog.closedLiCount || 0) + 1;
+            }
+            // After closing nested lists, hasOpenLi should be false (all parent <li> are closed)
+            hasOpenLi = false;
+          }
+          // NOTE: For same level (level === prevLevel), previous <li> is already closed above
+          // (if hasOpenLi was true) or was closed in previous iteration (if nextLevel <= prevLevel)
+          // So we don't need to close it again here
+        }
+        
+        // Open nested lists if going down (must be inside previous open <li>)
+        if (level > prevLevel) {
+          stepLog.action = 'going_down';
+          // Open nested lists for each level between previous and current
+          // Number of lists to open = level - prevLevel
+          // These must be opened inside the previous open <li>
+          const listsToOpen = level - prevLevel;
+          stepLog.listsToOpen = listsToOpen;
+          for (let i = 0; i < listsToOpen; i++) {
+            tocListHtml += '<ul class="toc-list">';
+          }
+        }
+      } else {
+        stepLog.action = 'first_item';
+      }
+      
+      // Add list item
+      tocListHtml += `<li><a href="#${escapeAttr(h.id)}">${escapeHtml(h.text)}</a>`;
+      hasOpenLi = true;
+      stepLog.addedLi = true;
+      
+      // Determine if we should close <li> now
+      if (nextLevel <= level) {
+        // Next heading is same or higher level - close <li>
+        tocListHtml += '</li>';
+        hasOpenLi = false;
+        stepLog.closedLiAfter = true;
+      } else {
+        stepLog.keptLiOpen = true;
+      }
+      // If nextLevel > level, keep <li> open for nested list
+      
+      stepLog.htmlAfter = tocListHtml.substring(Math.max(0, tocListHtml.length - 200));
+      stepLog.hasOpenLiAfter = hasOpenLi;
+      stepLogs.push(stepLog);
+      
+      prevLevel = level;
+    });
+    
+    // Close remaining open <li> and lists
+    // CRITICAL: Close in reverse order - first close open <li>, then close nested lists with their parent <li> tags
+    if (hasOpenLi) {
+      tocListHtml += '</li>';
+      hasOpenLi = false;
+      log('TOC: Closing remaining open <li>');
+    }
+    // Close all open nested <ul> tags and their parent <li> tags
+    // Example: if finalPrevLevel=3, minLevel=1, we need to close:
+    // - </ul></li> for level 3 (nested list + parent H2's <li>)
+    // - </ul></li> for level 2 (nested list + parent H1's <li>)
+    const finalPrevLevel = prevLevel;
+    if (finalPrevLevel !== null && finalPrevLevel > minLevel) {
+      const remainingLevels = finalPrevLevel - minLevel;
+      log('TOC: Closing remaining nested lists', { remainingLevels, prevLevel: finalPrevLevel, minLevel });
+      for (let i = finalPrevLevel; i > minLevel; i--) {
+        tocListHtml += '</ul></li>';
+      }
+    }
+    tocListHtml += '</ul>'; // Close root list
+    
+    log('=== TOC GENERATION COMPLETE ===', {
+      finalHtmlLength: tocListHtml.length,
+      finalHtmlPreview: tocListHtml.substring(0, 500),
+      finalHtmlEnd: tocListHtml.substring(Math.max(0, tocListHtml.length - 500)),
+      stepLogs: stepLogs.slice(0, 10) // First 10 steps for brevity
+    });
+    
+    // Log full HTML structure for debugging
+    const ulOpenCount = (tocListHtml.match(/<ul[^>]*>/g) || []).length;
+    const ulCloseCount = (tocListHtml.match(/<\/ul>/g) || []).length;
+    const liOpenCount = (tocListHtml.match(/<li[^>]*>/g) || []).length;
+    const liCloseCount = (tocListHtml.match(/<\/li>/g) || []).length;
+    
+    log('=== TOC FULL HTML STRUCTURE ===', {
+      fullHtml: tocListHtml,
+      htmlLength: tocListHtml.length,
+      ulOpenCount,
+      ulCloseCount,
+      liOpenCount,
+      liCloseCount,
+      ulBalanced: ulOpenCount === ulCloseCount,
+      liBalanced: liOpenCount === liCloseCount,
+      structureCheck: {
+        hasNestedLists: tocListHtml.includes('</ul><ul'),
+        hasProperNesting: tocListHtml.match(/<ul[^>]*>.*<ul[^>]*>/g) !== null
+      }
+    });
+    
+    // Also log as debug for detailed inspection
+    logDebug('=== TOC FULL HTML (DEBUG) ===', {
+      fullHtml: tocListHtml
+    });
+    
     tocHtml = `
     <nav class="table-of-contents">
       <h2 class="toc-title">${tocTitle}</h2>
-      <ul class="toc-list">
-        ${headings.map(h => {
-          const indent = h.level - 2;
-          const indentClass = indent > 0 ? ` class="toc-level-${indent}"` : '';
-          return `<li${indentClass}><a href="#${escapeAttr(h.id)}">${escapeHtml(h.text)}</a></li>`;
-        }).join('\n        ')}
-      </ul>
+      ${tocListHtml}
     </nav>`;
   }
 
   const docLang = language || 'en';
 
-  return `<!DOCTYPE html>
+  const finalHtml = `<!DOCTYPE html>
 <html lang="${docLang}" translate="no" class="notranslate" data-translate="no">
 <head>
   <meta charset="UTF-8">
@@ -503,6 +679,21 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   </article>
 </body>
 </html>`;
+  
+  // DETAILED LOGGING: Log final HTML before returning
+  // Using logDebug for service worker context
+  logDebug('=== FINAL HTML FOR PDF (buildHtmlForPdf) ===', {
+    title: cleanedTitle,
+    author: author,
+    sourceUrl: sourceUrl,
+    finalHtml: finalHtml, // FULL HTML - NO TRUNCATION
+    finalHtmlLength: finalHtml.length,
+    contentItemsCount: content.length,
+    contentHtmlLength: contentHtml.length,
+    timestamp: Date.now()
+  });
+  
+  return finalHtml;
 }
 
 /**

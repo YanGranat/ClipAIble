@@ -1,3 +1,4 @@
+// @ts-check
 // Print page script - prepares content and signals background for PDF generation
 
 import { getLargeData, removeLargeData } from '../scripts/utils/storage.js';

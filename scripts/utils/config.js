@@ -14,6 +14,7 @@ export const CONFIG = {
   
   // Timeouts
   API_TIMEOUT_MS: 120 * 60 * 1000, // 120 minutes (2 hours) timeout for API requests (increased for very long articles, large PDFs, and slow networks)
+  TRANSLATION_API_TIMEOUT_MS: 7 * 24 * 60 * 60 * 1000, // 7 days (168 hours) - timeout for translation API requests (supports very large documents and slow networks)
   STATE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 7 days - stale state threshold (increased for very long operations like 1000-page PDFs)
   // NOTE: STATE_SAVE_INTERVAL removed - keep-alive now uses only alarms (every 1 minute)
   // Alarms can wake up terminated service workers, intervals cannot

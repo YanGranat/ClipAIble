@@ -74,9 +74,9 @@ assets/
 # Cursor rules (personal settings)
 .cursorrules
 
-
+# Backup files
 *.backup
 *.bak
 
-
+# Source maps
 *.map

@@ -3,7 +3,7 @@
 // Converts DOM elements to content items
 
 import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl } from './dom-utils.js';
-import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isNumericHeading } from './text-utils.js';
+import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isNumericHeading, isRealHeading } from './text-utils.js';
 import { isFootnoteLink, isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded } from './filters.js';
 import { extractBestImageUrl, isTrackingPixel, isDecorativeImage, getImageCaption } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
@@ -57,7 +57,6 @@ export function filterCandidateElements(win, allElements, constants, debugInfo) 
   
   if (debugInfo) {
     debugInfo.excludedImageCount = excludedImageCount;
-    pushDebugLog(debugInfo, 'FILTER_STATS', { excludedByType, excludedImageCount });
   }
   
   return filteredElements;
@@ -97,12 +96,23 @@ export function parseElements(win, elements, state, constants, baseUrl) {
     
     // Handle by tag type
     if (tagName.match(/^h[1-6]$/)) {
+      const textPreview = (element.textContent || '').trim().substring(0, 50);
+      
+      // Check if element is actually a real heading (not just styled text)
+      const isReal = isRealHeading(element, win);
+      
+      if (!isReal) {
+        skippedCount++;
+        continue;
+      }
+      
       const item = handleHeading(element, state, constants);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, 'heading');
         processedCount++;
       } else {
+        // Log why heading was rejected by handleHeading
         skippedCount++;
       }
     } else if (tagName === 'p') {

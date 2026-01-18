@@ -14,7 +14,7 @@ export {
   determineHeadingLevel
 } from './heading-hierarchy.js';
 
-// TODO: Not yet implemented - placeholders for future features
+// Note: Placeholder modules for future enhancement
 export { analyzeContext } from './context.js';
 export { analyzePageContext } from './page-context.js';
 export { analyzeCrossPageContext } from './cross-page-context.js';

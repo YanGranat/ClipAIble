@@ -388,6 +388,22 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
     // Continue initialization even if applyLocalization fails
   }
   
+  // CRITICAL: After localization, restore fontFamily selection
+  // Localization may have overwritten the selected value, so we need to restore it
+  // Get elements directly from DOM since they're already initialized
+  try {
+    const fontFamilyInput = document.getElementById('fontFamily');
+    if (fontFamilyInput && fontFamilyInput instanceof HTMLInputElement) {
+      const fontFamilyValue = fontFamilyInput.value || '';
+      if (fontFamilyValue) {
+        log('finalizeInitialization: restoring fontFamily selection after localization', { fontFamilyValue });
+        setCustomSelectValue(fontFamilyValue);
+      }
+    }
+  } catch (error) {
+    logWarn('Failed to restore fontFamily selection after localization', error);
+  }
+  
   try {
     uiModule.applyTheme();
   } catch (error) {

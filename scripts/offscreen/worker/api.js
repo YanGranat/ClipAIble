@@ -29,15 +29,22 @@ export async function predictWithWorker(text, voiceId) {
   // Ensure Worker is initialized before use
   const worker = await ensureTTSWorker();
   
+  // CRITICAL: Increment active predict calls to prevent Worker termination during processing
+  state.incrementActivePredictCalls();
+  
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
     let timeout = setTimeout(() => {
+      // CRITICAL: Decrement active predict calls on timeout
+      state.decrementActivePredictCalls();
+      
       const timeoutError = new Error('TTS Worker predict timeout (60s)');
       logError('[ClipAIble Offscreen] predictWithWorker timeout', {
         callId: id,
         textLength: text?.length,
         voiceId,
+        activePredictCalls: state.getActivePredictCalls(),
         duration: Date.now() - requestStartTime
       });
       // Cleanup handler before rejecting
@@ -63,6 +70,9 @@ export async function predictWithWorker(text, voiceId) {
           // Convert ArrayBuffer back to Blob
           const blob = new Blob([event.data.data], { type: 'audio/wav' });
           
+          // CRITICAL: Decrement active predict calls on success
+          state.decrementActivePredictCalls();
+          
           log('[ClipAIble Offscreen] === predictWithWorker SUCCESS ===', {
             callId: id,
             textLength: text?.length,
@@ -72,10 +82,14 @@ export async function predictWithWorker(text, voiceId) {
             requestDuration,
             totalDuration,
             workerDuration: event.data.duration,
+            activePredictCalls: state.getActivePredictCalls(),
             timestamp: handlerTime
           });
           resolve(blob);
         } else if (event.data.type === 'ERROR') {
+          // CRITICAL: Decrement active predict calls on error
+          state.decrementActivePredictCalls();
+          
           const error = new Error(event.data.error || 'Worker predict failed');
           logError('[ClipAIble Offscreen] === predictWithWorker ERROR ===', {
             callId: id,
@@ -85,6 +99,7 @@ export async function predictWithWorker(text, voiceId) {
             errorStack: event.data.stack,
             requestDuration,
             totalDuration,
+            activePredictCalls: state.getActivePredictCalls(),
             timestamp: handlerTime
           });
           reject(error);
@@ -96,6 +111,9 @@ export async function predictWithWorker(text, voiceId) {
     
     // Handle worker errors during predict
     const errorHandler = (error) => {
+      // CRITICAL: Decrement active predict calls on worker error
+      state.decrementActivePredictCalls();
+      
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;
@@ -111,6 +129,7 @@ export async function predictWithWorker(text, voiceId) {
         errorFilename: error.filename,
         errorLineno: error.lineno,
         errorColno: error.colno,
+        activePredictCalls: state.getActivePredictCalls(),
         duration: Date.now() - requestStartTime
       });
       reject(workerError);

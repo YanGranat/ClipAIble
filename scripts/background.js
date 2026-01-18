@@ -398,6 +398,12 @@ export function extractFromPageInlined(selectors, baseUrl) {
   };
   
   // Helper functions
+  function escapeHtml(text) {
+    if (!text) return '';
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+    return String(text).replace(/[&<>"']/g, c => map[c]);
+  }
+  
   function toAbsoluteUrl(url) {
     if (!url) return '';
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
@@ -418,7 +424,16 @@ export function extractFromPageInlined(selectors, baseUrl) {
       // CRITICAL: window is only available in page context, not in service worker
       // This function runs in page context via executeScript, so window is safe here
       const baseUrl = (typeof window !== 'undefined' && window.location) ? window.location.href : '';
-      return new URL(url, baseUrl || 'http://localhost').pathname.toLowerCase(); 
+      const urlObj = new URL(url, baseUrl || 'http://localhost');
+      // For Vercel image optimization URLs, include the 'url' query parameter in normalization
+      // This ensures different images with same pathname but different query params are treated as unique
+      const urlParam = urlObj.searchParams.get('url');
+      if (urlParam) {
+        // Include the 'url' parameter value in normalization for Vercel image URLs
+        return (urlObj.pathname + '?url=' + urlParam).toLowerCase();
+      }
+      // For other URLs, include full pathname and search (query params) to distinguish different images
+      return (urlObj.pathname + urlObj.search).toLowerCase(); 
     } catch { 
       return url.toLowerCase(); 
     }
@@ -441,75 +456,117 @@ export function extractFromPageInlined(selectors, baseUrl) {
     };
     
     if (isInfoboxDiv(element) || tagName === 'aside' || tagName === 'details') {
-      debugInfo.detailedLogs.push({
-        type: 'shouldExclude',
-        element: elementInfo,
-        result: false,
-        reason: 'Infobox/aside/details - always include'
-      });
       return false;
     }
     
     if (!selectors.exclude) {
-      debugInfo.detailedLogs.push({
-        type: 'shouldExclude',
-        element: elementInfo,
-        result: false,
-        reason: 'No exclude selectors'
-      });
       return false;
     }
     
-    // NO FALLBACKS - only check exclude selectors determined by AI
-    // CRITICAL: Only check if element itself matches the selector, NOT if it's inside a matching parent
-    // If we check closest(), we might exclude content elements that are inside excluded containers
-    // For example: div#postContent should NOT be excluded even if it's inside div.MultiToCLayout-tableOfContents
-    // The exclude selectors should match the element itself, not its parents
+    // Check if element itself matches exclude selector
     for (const selector of selectors.exclude) {
       try {
         const matches = element.matches(selector);
         if (matches) {
           elementInfo.matches.push(selector);
-          debugInfo.detailedLogs.push({
-            type: 'shouldExclude',
-            element: elementInfo,
-            result: true,
-            reason: 'Element itself matches exclude selector',
-            matchedSelector: selector,
-            matches: true
-          });
           return true;
         }
       } catch (e) {
         // Invalid selector from AI - skip it (graceful degradation)
-        debugInfo.detailedLogs.push({
-          type: 'shouldExclude',
-          element: elementInfo,
-          selector: selector,
-          error: e.message,
-          reason: 'Invalid selector - skipped'
-        });
       }
     }
     
-    debugInfo.detailedLogs.push({
-      type: 'shouldExclude',
-      element: elementInfo,
-      result: false,
-      reason: 'No exclude selectors matched'
-    });
+    // CRITICAL: Also check if element is INSIDE an excluded container
+    // This allows AI to return exclude selectors for containers (e.g., ".ke.je.u.kg" for promo banner)
+    // and we'll exclude all elements inside those containers
+    // This is safe because:
+    // 1. AI determines exclude selectors, so if it says a container should be excluded, everything inside should be excluded
+    // 2. Semantic containers (article, main) are already handled at the start of this function
+    // 3. We only check closest() if the element itself doesn't match (already checked above)
+    for (const selector of selectors.exclude) {
+      try {
+        const closestExcluded = element.closest(selector);
+        if (closestExcluded && closestExcluded !== element) {
+          elementInfo.closest.push(selector);
+          return true;
+        }
+      } catch (e) {
+        // Invalid selector - skip it
+      }
+    }
+    
     return false;
   }
   
   function getFormattedHtml(element) {
     const clone = element.cloneNode(true);
-    clone.querySelectorAll('a[href]').forEach(a => { 
-      a.href = toAbsoluteUrl(a.getAttribute('href'));
-      // CRITICAL: Remove target attribute to prevent it from leaking into text
-      // The target attribute will be added later by sanitizeHtml if needed
-      a.removeAttribute('target');
-      a.removeAttribute('rel');
+    
+    // CRITICAL: Remove data-footnote* attributes that contain HTML-encoded text
+    // These attributes can leak HTML-encoded content (with attributes) into the final text
+    // Example: data-footnote2-content="&lt;a href=&quot;...&quot; target=&quot;_blank&quot;&gt;" can leak "target="_blank"" into text
+    clone.querySelectorAll('*').forEach(el => {
+      Array.from(el.attributes).forEach(attr => {
+        if (attr.name.startsWith('data-footnote')) {
+          el.removeAttribute(attr.name);
+        }
+      });
     });
+    
+    // CRITICAL: Process ALL anchor tags, not just those with href
+    // This ensures all <a> tags are properly handled, even if href is missing or invalid
+    clone.querySelectorAll('a').forEach(a => {
+      const originalHref = a.getAttribute('href');
+      if (originalHref) {
+        // Normalize href to absolute URL
+        // CRITICAL: Use setAttribute instead of a.href property to ensure HTML attribute is preserved
+        // Setting a.href only updates DOM property, not HTML attribute, so it may be lost in innerHTML
+        const normalizedHref = toAbsoluteUrl(originalHref);
+        if (normalizedHref && normalizedHref.trim()) {
+          a.setAttribute('href', normalizedHref);
+        } else {
+          // If toAbsoluteUrl returns empty/invalid, use original href or fallback to #
+          a.setAttribute('href', originalHref || '#');
+        }
+        // CRITICAL: Remove target and rel attributes to prevent them from leaking into text
+        // The target attribute will be added later by sanitizeHtml if needed
+        a.removeAttribute('target');
+        a.removeAttribute('rel');
+      } else {
+        // CRITICAL: If anchor tag has no href, add href="#" to prevent unclosed tags
+        // This ensures all <a> tags have a valid href attribute
+        a.setAttribute('href', '#');
+      }
+    });
+    
+    // CRITICAL: Convert inline divs to spans to prevent line breaks in sanitizeHtml
+    // sanitizeHtml replaces </div> with <br>, which breaks inline structure
+    // For div.public-DraftStyleDefault-block, we need to preserve inline structure
+    clone.querySelectorAll('div').forEach(div => {
+      try {
+        const style = window.getComputedStyle(div);
+        if (style.display === 'inline' || style.display === 'inline-block' || style.display === 'inline-flex') {
+          // Convert inline div to span to preserve inline structure
+          const span = document.createElement('span');
+          Array.from(div.attributes).forEach(attr => {
+            if (attr.name !== 'style' || !attr.value.includes('display')) {
+              span.setAttribute(attr.name, attr.value);
+            }
+          });
+          // Preserve inline styles except display (span is inline by default)
+          if (div.style.cssText) {
+            const inlineStyles = div.style.cssText.replace(/display\s*:\s*[^;]+;?/gi, '').trim();
+            if (inlineStyles) {
+              span.setAttribute('style', inlineStyles);
+            }
+          }
+          span.innerHTML = div.innerHTML;
+          div.parentNode?.replaceChild(span, div);
+        }
+      } catch (e) {
+        // If style check fails, leave div as-is (graceful degradation)
+      }
+    });
+    
     if (selectors.exclude && Array.isArray(selectors.exclude)) {
       selectors.exclude.forEach(sel => { 
         try { 
@@ -520,7 +577,62 @@ export function extractFromPageInlined(selectors, baseUrl) {
         }
       });
     }
-    return clone.innerHTML;
+    
+    // CRITICAL: Convert <font> tags to <span> tags to preserve content (especially footnotes)
+    // <font> is deprecated but still used on old websites (like paulgraham.com for footnotes)
+    // Example: <font color="#999999">[<a href="#f1n"><font color="#999999">1</font></a>]</font> should become <span>[<a href="#f1n"><span>1</span></a>]</span>
+    // CRITICAL: Process recursively to handle nested <font> tags
+    function convertFontToSpan(element) {
+      const fonts = element.querySelectorAll('font');
+      // Process from deepest to shallowest to avoid breaking DOM structure
+      const fontsArray = Array.from(fonts).reverse();
+      fontsArray.forEach(font => {
+        const span = document.createElement('span');
+        // Copy all attributes from font to span (especially color for footnotes)
+        Array.from(font.attributes).forEach(attr => {
+          span.setAttribute(attr.name, attr.value);
+        });
+        span.innerHTML = font.innerHTML;
+        font.parentNode?.replaceChild(span, font);
+      });
+    }
+    // Process all font tags recursively
+    convertFontToSpan(clone);
+    
+    // CRITICAL: Convert inline styles to HTML tags before sanitizeHtml removes style attributes
+    // This preserves formatting (bold/italic) that would otherwise be lost
+    clone.querySelectorAll('span[style]').forEach(span => {
+      const style = span.getAttribute('style') || '';
+      const styleLower = style.toLowerCase();
+      
+      // Check for font-weight: bold
+      if (styleLower.includes('font-weight') && (styleLower.includes('bold') || styleLower.includes('700') || styleLower.includes('800') || styleLower.includes('900'))) {
+        const strong = document.createElement('strong');
+        strong.innerHTML = span.innerHTML;
+        // Copy other attributes except style
+        Array.from(span.attributes).forEach(attr => {
+          if (attr.name !== 'style') {
+            strong.setAttribute(attr.name, attr.value);
+          }
+        });
+        span.parentNode?.replaceChild(strong, span);
+      }
+      // Check for font-style: italic
+      else if (styleLower.includes('font-style') && styleLower.includes('italic')) {
+        const em = document.createElement('em');
+        em.innerHTML = span.innerHTML;
+        // Copy other attributes except style
+        Array.from(span.attributes).forEach(attr => {
+          if (attr.name !== 'style') {
+            em.setAttribute(attr.name, attr.value);
+          }
+        });
+        span.parentNode?.replaceChild(em, span);
+      }
+    });
+    
+    const htmlResult = clone.innerHTML;
+    return htmlResult;
   }
   
   // Image helpers
@@ -612,6 +724,37 @@ export function extractFromPageInlined(selectors, baseUrl) {
       }
     }
     return src;
+  }
+  
+  function getImageCaption(img) {
+    if (!img) return '';
+    // Check for figcaption in figure
+    const figure = img.closest('figure');
+    if (figure) {
+      const figcaption = figure.querySelector('figcaption');
+      if (figcaption) return (figcaption.textContent || '').trim();
+    }
+    // Check aria-label
+    const ariaLabel = img.getAttribute('aria-label');
+    if (ariaLabel && ariaLabel.trim() && !ariaLabel.toLowerCase().includes('image')) return ariaLabel.trim();
+    // Check title
+    const title = img.getAttribute('title');
+    if (title && title.trim() && title !== img.alt) return title.trim();
+    // Check next sibling if it's a paragraph or has caption class
+    const nextSibling = img.nextElementSibling;
+    if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
+      return (nextSibling.textContent || '').trim();
+    }
+    // Check parent container's caption
+    const parent = img.parentElement;
+    if (parent) {
+      const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption, [class*="caption"]');
+      if (captionEl) {
+        const captionText = (captionEl.textContent || '').trim();
+        if (captionText && captionText !== img.alt) return captionText;
+      }
+    }
+    return '';
   }
   
   function extractTocMapping(listElement) {
@@ -785,12 +928,6 @@ export function extractFromPageInlined(selectors, baseUrl) {
     
     if (shouldExclude(element)) {
       debugInfo.elementsExcluded++;
-      debugInfo.detailedLogs.push({
-        type: 'processElement',
-        element: elementInfo,
-        action: 'skipped',
-        reason: 'excluded by shouldExclude'
-      });
       return;
     }
     
@@ -803,39 +940,15 @@ export function extractFromPageInlined(selectors, baseUrl) {
       cssVisibility = style.visibility;
       if (style.display === 'none' || style.visibility === 'hidden') {
         cssHidden = true;
-        debugInfo.detailedLogs.push({
-          type: 'processElement',
-          element: elementInfo,
-          action: 'skipped',
-          reason: 'hidden by CSS',
-          display: cssDisplay,
-          visibility: cssVisibility
-        });
         return;
       }
     } catch (e) {
       // getComputedStyle may fail on some elements (e.g., SVG in some browsers)
       // This is expected - continue processing the element (graceful degradation)
-      debugInfo.detailedLogs.push({
-        type: 'processElement',
-        element: elementInfo,
-        action: 'continue',
-        reason: 'getComputedStyle failed - continuing anyway',
-        error: e.message
-      });
     }
     
     debugInfo.elementsProcessed++;
     const elementId = getAnchorId(element);
-    
-    debugInfo.detailedLogs.push({
-      type: 'processElement',
-      element: elementInfo,
-      action: 'processing',
-      elementId: elementId,
-      cssDisplay: cssDisplay,
-      cssVisibility: cssVisibility
-    });
     
     if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
       const text = element.textContent.trim();
@@ -856,16 +969,6 @@ export function extractFromPageInlined(selectors, baseUrl) {
         debugInfo.headingCount++;
         const headingItem = { type: 'heading', level: parseInt(tagName[1]), text: formattedText, id: headingId };
         content.push(headingItem);
-        debugInfo.detailedLogs.push({
-          type: 'processElement',
-          element: elementInfo,
-          action: 'added',
-          itemType: 'heading',
-          itemLevel: parseInt(tagName[1]),
-          itemId: headingId,
-          textLength: formattedText.replace(/<[^>]+>/g, '').trim().length,
-          contentLength: content.length
-        });
         
         // Track first heading position and insert subtitle immediately after it
         // This ensures subtitle is right after the title, before any other content
@@ -887,32 +990,139 @@ export function extractFromPageInlined(selectors, baseUrl) {
         }
       }
     }
-    else if (tagName === 'p') {
+    else if (tagName === 'p' || tagName === 'font') {
+      // Handle both <p> and <font> elements as paragraphs
+      // <font> is a deprecated HTML tag but still used on some old websites (like paulgraham.com)
+      
+      // CRITICAL: If paragraph contains only an image (common pattern on many websites),
+      // extract the image separately instead of treating it as a paragraph
+      // This ensures images are properly extracted even when wrapped in paragraphs
+      const img = element.querySelector('img');
+      if (img) {
+        // Check if paragraph contains only image (or image in link) with minimal text
+        const textContent = element.textContent?.trim() || '';
+        const hasOnlyImage = textContent.length === 0 || textContent.replace(/\s+/g, '').length === 0;
+        
+        if (hasOnlyImage) {
+          // CRITICAL: Process the image directly instead of skipping
+          // If we just return, the image might not be processed if it's inside a paragraph
+          // that was processed before querySelectorAll('img') runs
+          // Process the image element directly to ensure it's added
+          if (!img.closest('figure') && !img.closest('picture')) {
+            let src = extractBestImageUrl(img);
+            src = toAbsoluteUrl(src);
+            const ns = normalizeImageUrl(src);
+            if (src && !isTrackingPixelOrSpacer(img, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(img, src)) {
+              const imgId = getAnchorId(img);
+              content.push({ type: 'image', src: src, alt: img.alt || '', id: imgId });
+              addedImageUrls.add(ns);
+            }
+          }
+          
+          // Skip the paragraph itself
+          return;
+        }
+      }
+      
       let html = getFormattedHtml(element);
+      
       if (html.trim()) {
         const pt = element.textContent?.trim() || '';
         if (articleAuthor && pt === articleAuthor) return;
         const ct = pt.replace(/[\s\u00A0]/g, '');
         if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) return;
         if (elementId && !element.id && !html.startsWith(`<a id="${elementId}"`)) html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
+        
         content.push({ type: 'paragraph', text: html, id: elementId });
       }
     }
     else if (tagName === 'img') {
       if (element.closest('figure')) return;
+      if (element.closest('picture')) return; // Skip img inside picture - handled separately
+      
       let src = extractBestImageUrl(element);
       src = toAbsoluteUrl(src);
       const ns = normalizeImageUrl(src);
+      
       if (src && !isTrackingPixelOrSpacer(element, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(element, src)) {
         content.push({ type: 'image', src: src, alt: element.alt || '', id: elementId });
         addedImageUrls.add(ns);
       }
     }
-    else if (tagName === 'figure') {
+    else if (tagName === 'picture') {
+      // Handle picture element - extract img from inside picture
+      // CRITICAL: Skip if inside figure (figure handles it with better caption extraction)
+      if (element.closest('figure')) return;
+      
+      let src = null;
+      let alt = '';
+      let imgElement = null;
+      
+      // First, try to find img element inside picture
       const img = element.querySelector('img');
+      if (img) {
+        src = extractBestImageUrl(img, element);
+        alt = img.alt || '';
+        imgElement = img;
+      } else {
+        // If no img, extract from source elements
+        // Check source[srcset] first (most common)
+        const sourcesWithSrcset = element.querySelectorAll('source[srcset]');
+        const sourcesWithSrc = element.querySelectorAll('source[src]');
+        for (const source of sourcesWithSrcset) {
+          const srcset = source.getAttribute('srcset');
+          if (srcset) {
+            const candidate = getBestSrcsetUrl(srcset);
+            if (candidate && !isPlaceholderUrl(candidate)) {
+              src = candidate;
+              break;
+            }
+          }
+        }
+        // Fallback to source[src] if no srcset found
+        if (!src) {
+          for (const source of sourcesWithSrc) {
+            const sourceSrc = source.getAttribute('src');
+            if (sourceSrc && !isPlaceholderUrl(sourceSrc)) {
+              src = sourceSrc;
+              break;
+            }
+          }
+        }
+      }
+      
+      if (src) {
+        src = toAbsoluteUrl(src);
+        const ns = normalizeImageUrl(src);
+        // Use imgElement for filtering if available, otherwise use element
+        const elementForFiltering = imgElement || element;
+        const isTracking = isTrackingPixelOrSpacer(elementForFiltering, src);
+        const isPlaceholder = isPlaceholderUrl(src);
+        const isDuplicate = addedImageUrls.has(ns);
+        const isSmall = isSmallOrAvatarImage(elementForFiltering, src);
+        if (!isTracking && !isPlaceholder && !isDuplicate && !isSmall) {
+          // Extract caption using standard method (if img exists, otherwise try picture element)
+          // getImageCaption works with any element, but prefers img for alt attribute
+          const caption = imgElement ? getImageCaption(imgElement) : (element.getAttribute('aria-label') || element.getAttribute('title') || '');
+          content.push({ 
+            type: 'image', 
+            src: src, 
+            alt: alt, 
+            caption: caption,
+            id: elementId || (imgElement ? imgElement.id : '') || '' 
+          });
+          addedImageUrls.add(ns);
+        }
+      }
+    }
+    else if (tagName === 'figure') {
+      // Handle figure element - can contain img directly or picture>img
+      // CRITICAL: Check for picture first, then fallback to direct img
+      const picture = element.querySelector('picture');
+      const img = picture ? picture.querySelector('img') : element.querySelector('img');
       const figcaption = element.querySelector('figcaption');
       if (img) {
-        let src = extractBestImageUrl(img, element);
+        let src = extractBestImageUrl(img, picture || element);
         src = toAbsoluteUrl(src);
         const ns = normalizeImageUrl(src);
         if (src && !isTrackingPixelOrSpacer(img, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(img, src)) {
@@ -993,6 +1203,54 @@ export function extractFromPageInlined(selectors, baseUrl) {
         footnotesHeaderAdded = true;
       }
       for (const child of element.children) processElement(child);
+    }
+    else {
+      // FALLBACK: Handle any unprocessed element that contains significant text content
+      // This covers:
+      // - Deprecated HTML tags: <font>, <center>, <b>, <i>, <u>, <s>, <strike>, <big>, <small>, <tt>
+      // - Non-standard tags used by some websites
+      // - Block-level elements not explicitly handled: <main>, <header>, <footer>, <nav>, <address>, <fieldset>
+      // - Any other element that contains meaningful content
+      
+      const textContent = element.textContent?.trim() || '';
+      const hasSignificantText = textContent.length >= 20; // Minimum meaningful text length
+      
+      // Check if element is block-level or has block display
+      let isBlockLevel = false;
+      try {
+        const style = window.getComputedStyle(element);
+        const display = style.display;
+        // Block-level displays
+        isBlockLevel = ['block', 'flex', 'grid', 'table', 'list-item'].includes(display) || 
+                       display.startsWith('table-') || 
+                       display === 'flow-root';
+      } catch (e) {
+        // If style check fails, check by tag name (common block elements)
+        const blockTags = ['main', 'header', 'footer', 'nav', 'address', 'fieldset', 'legend', 
+                          'center', 'font', 'big', 'small', 'tt', 'marquee'];
+        isBlockLevel = blockTags.includes(tagName);
+      }
+      
+      // If element has significant text and is block-level, treat as paragraph
+      if (hasSignificantText && isBlockLevel) {
+        let html = getFormattedHtml(element);
+        if (html.trim()) {
+          const pt = textContent;
+          if (articleAuthor && pt === articleAuthor) return;
+          const ct = pt.replace(/[\s\u00A0]/g, '');
+          if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) return;
+          if (elementId && !element.id && !html.startsWith(`<a id="${elementId}"`)) {
+            html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
+          }
+          content.push({ type: 'paragraph', text: html, id: elementId });
+        }
+      } else if (hasSignificantText) {
+        // If element has text but is not block-level, process its children instead
+        // This handles inline elements that might contain block content
+        for (const child of element.children) {
+          processElement(child);
+        }
+      }
     }
   }
   
@@ -1178,26 +1436,62 @@ export function extractFromPageInlined(selectors, baseUrl) {
           const isTwitterContainer = el.getAttribute('data-testid') === 'twitterArticleReadView' || 
                                      (el.closest('article[data-testid="tweet"]') && el.tagName.toLowerCase() === 'div');
           if (isTwitterContainer) {
-            // Process elements in DOM order: find all headings and paragraphs with Twitter/X classes
-            // Use querySelectorAll to get all elements, then filter by class
-            const headings = Array.from(el.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
-            const paragraphs = Array.from(el.querySelectorAll('.longform-unstyled, .longform-blockquote'));
+            // CRITICAL: Process div.public-DraftStyleDefault-block blocks FIRST to avoid duplication
+            // These blocks contain the actual content, and processing spans inside them causes duplication
+            const draftBlocks = Array.from(el.querySelectorAll('div.public-DraftStyleDefault-block'));
             
-            // Also check for substantial span elements (leaf spans with text)
-            const allSpans = Array.from(el.querySelectorAll('span'));
-            const textSpans = allSpans.filter(span => {
-              const text = span.textContent?.trim() || '';
-              return text.length > 50 && !span.querySelector('span'); // Leaf spans with substantial text
+            // Use Map to deduplicate blocks by text content
+            // CRITICAL: Exclude draft blocks that are inside h2/h3 headings (they're already processed as headings)
+            const uniqueBlocks = new Map();
+            for (const block of draftBlocks) {
+              // Skip draft blocks inside headings - these are already processed as headings
+              const parentHeading = block.closest('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three');
+              if (parentHeading) {
+                continue; // Skip - this block is inside a heading, heading will be processed instead
+              }
+              
+              const text = (block.textContent || '').trim();
+              if (!text || text.length < 10) continue;
+              
+              // Use text as key to dedupe - prefer blocks with more children (more complete)
+              if (!uniqueBlocks.has(text) || block.children.length > (uniqueBlocks.get(text)?.children.length || 0)) {
+                uniqueBlocks.set(text, block);
+              }
+            }
+            
+            // Process headings first
+            const headings = Array.from(el.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
+            
+            // CRITICAL: Filter out div.longform-unstyled that contain div.public-DraftStyleDefault-block
+            // These are duplicates - we process draft blocks, not their containers
+            const allLongformUnstyled = Array.from(el.querySelectorAll('.longform-unstyled, .longform-blockquote'));
+            const paragraphs = allLongformUnstyled.filter(div => {
+              // Skip if this div contains a draft block (we'll process the draft block instead)
+              return div.querySelector('div.public-DraftStyleDefault-block') === null;
             });
             
-            // Combine all elements and sort by DOM position
-            const allContentElements = [...headings, ...paragraphs, ...textSpans];
+            // Collect images from the container
+            // Note: We filter basic invalid images here, but full deduplication happens in the processing loop
+            const images = Array.from(el.querySelectorAll('img')).filter(img => {
+              // Skip images inside figure (handled separately if needed)
+              if (img.closest('figure')) return false;
+              // Basic validation - full checks happen in processing loop
+              const src = extractBestImageUrl(img);
+              if (!src) return false;
+              return true;
+            });
+            
+            // Combine: headings, paragraphs (filtered), unique draft blocks, and images
+            const allContentElements = [...headings, ...paragraphs, ...Array.from(uniqueBlocks.values()), ...images];
             allContentElements.sort((a, b) => {
               const pos = a.compareDocumentPosition(b);
               if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
               if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
               return 0;
             });
+            
+            // Track processed elements to avoid duplicates
+            const processedElements = new Set();
             
             // Process in order
             for (const elem of allContentElements) {
@@ -1206,6 +1500,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
                 const style = window.getComputedStyle(elem);
                 if (style.display === 'none' || style.visibility === 'hidden') continue;
               } catch (e) {}
+              
+              // Skip if already processed (prevent duplicates)
+              if (processedElements.has(elem)) continue;
+              processedElements.add(elem);
               
               const className = elem.className || '';
               const text = elem.textContent?.trim() || '';
@@ -1231,20 +1529,90 @@ export function extractFromPageInlined(selectors, baseUrl) {
                   content.push({ type: 'heading', level: 3, text: html, id: elemId });
                 }
               }
-              // Process paragraphs
+              // Process paragraphs (only those that don't contain draft blocks)
               else if (className.includes('longform-unstyled') || className.includes('longform-blockquote')) {
+                // CRITICAL: Skip if this div contains a draft block (already processed above)
+                if (elem.querySelector('div.public-DraftStyleDefault-block')) {
+                  continue; // Skip - draft block will be processed separately
+                }
                 if (text && text.length > 20) {
                   const html = getFormattedHtml(elem);
                   const elemId = getAnchorId(elem);
                   content.push({ type: 'paragraph', text: html, id: elemId });
                 }
               }
-              // Process substantial span elements
-              else if (tagName === 'span' && text.length > 50 && !elem.querySelector('span')) {
-                if (text && text.length > 20) {
+              // Process div.public-DraftStyleDefault-block blocks (Draft.js content blocks)
+              else if (tagName === 'div' && className.includes('public-DraftStyleDefault-block')) {
+                // CRITICAL: Skip draft blocks that are inside h1/h2/h3 headings
+                // These headings are already processed above, and draft block inside them is just the content
+                // If we process both, we get duplicates
+                const parentHeading = elem.closest('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three');
+                if (parentHeading) {
+                  // This draft block is inside a heading - skip it, heading was already processed
+                  continue;
+                }
+                
+                // CRITICAL: If draft block is not inside a real heading, it's always a paragraph
+                // Even if it contains bold text, that's just emphasis within a paragraph, not a heading
+                // Real headings in Twitter/X use h1.longform-header-one, h2.longform-header-two, h3.longform-header-three
+                if (text && text.length > 10) {
                   const html = getFormattedHtml(elem);
                   const elemId = getAnchorId(elem);
                   content.push({ type: 'paragraph', text: html, id: elemId });
+                }
+              }
+              // Process images
+              else if (tagName === 'img') {
+                let src = extractBestImageUrl(elem);
+                src = toAbsoluteUrl(src);
+                const ns = normalizeImageUrl(src);
+                if (src && !isTrackingPixelOrSpacer(elem, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(elem, src)) {
+                  const elemId = getAnchorId(elem);
+                  
+                  // Extract image caption
+                  let caption = '';
+                  // Check for figcaption in figure
+                  const figure = elem.closest('figure');
+                  if (figure) {
+                    const figcaption = figure.querySelector('figcaption');
+                    if (figcaption) caption = (figcaption.textContent || '').trim();
+                  }
+                  // Check aria-label or title
+                  if (!caption) {
+                    const ariaLabel = elem.getAttribute('aria-label');
+                    if (ariaLabel && ariaLabel.trim() && !ariaLabel.toLowerCase().includes('image')) {
+                      caption = ariaLabel.trim();
+                    }
+                  }
+                  if (!caption) {
+                    const title = elem.getAttribute('title');
+                    if (title && title.trim() && title !== elem.alt) {
+                      caption = title.trim();
+                    }
+                  }
+                  // Check next sibling for caption
+                  if (!caption) {
+                    const nextSibling = elem.nextElementSibling;
+                    if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
+                      caption = (nextSibling.textContent || '').trim();
+                    }
+                  }
+                  // Check for caption in parent container
+                  if (!caption) {
+                    const parent = elem.parentElement;
+                    if (parent) {
+                      const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption, [class*="caption"]');
+                      if (captionEl) {
+                        const captionText = (captionEl.textContent || '').trim();
+                        if (captionText && captionText !== elem.alt) {
+                          caption = captionText;
+                        }
+                      }
+                    }
+                  }
+                  
+                  content.push({ type: 'image', src: src, alt: elem.alt || '', caption: caption, id: elemId });
+                  addedImageUrls.add(ns);
                 }
               }
             }
@@ -1259,77 +1627,25 @@ export function extractFromPageInlined(selectors, baseUrl) {
             textContentLength: el.textContent ? el.textContent.trim().length : 0
           };
           
-          debugInfo.detailedLogs.push({
-            type: 'elementProcessing',
-            element: elementInfo,
-            stage: 'before_shouldExclude'
-          });
-          
           if (shouldExclude(el)) {
             excludedCount++;
-            debugInfo.detailedLogs.push({
-              type: 'elementProcessing',
-              element: elementInfo,
-              stage: 'excluded',
-              reason: 'shouldExclude returned true'
-            });
             continue;
           }
           
           // Check if element is hidden
           let isHidden = false;
-          let display = null;
-          let visibility = null;
           try {
             const style = window.getComputedStyle(el);
-            display = style.display;
-            visibility = style.visibility;
             if (style.display === 'none' || style.visibility === 'hidden') {
               isHidden = true;
               hiddenCount++;
-              debugInfo.detailedLogs.push({
-                type: 'elementProcessing',
-                element: elementInfo,
-                stage: 'excluded',
-                reason: 'hidden by CSS',
-                display: display,
-                visibility: visibility
-              });
               continue;
             }
           } catch (e) {
             // getComputedStyle may fail - continue processing
-            debugInfo.detailedLogs.push({
-              type: 'elementProcessing',
-              element: elementInfo,
-              stage: 'css_check_failed',
-              error: e.message,
-              action: 'continuing'
-            });
           }
           
-          debugInfo.detailedLogs.push({
-            type: 'elementProcessing',
-            element: elementInfo,
-            stage: 'calling_processElement',
-            display: display,
-            visibility: visibility
-          });
-          
-          const contentLengthBefore = content.length;
           processElement(el);
-          const contentLengthAfter = content.length;
-          
-          debugInfo.detailedLogs.push({
-            type: 'elementProcessing',
-            element: elementInfo,
-            stage: 'after_processElement',
-            contentItemsAdded: contentLengthAfter - contentLengthBefore,
-            newContentItems: content.slice(contentLengthBefore).map(item => ({
-              type: item.type,
-              textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
-            }))
-          });
         }
         if (excludedCount > 0 || hiddenCount > 0) {
           extractionDebug.strategiesUsed.push({
@@ -1342,8 +1658,29 @@ export function extractFromPageInlined(selectors, baseUrl) {
         }
       } else {
         // Fallback: process all children recursively
-        extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children', reason: 'No content elements found' });
-        for (const child of cont.children) processElement(child);
+        // CRITICAL: When content selector matches container selector, we need to process ALL elements
+        // including nested ones (img, picture, figure) that might be inside paragraphs or other elements
+        extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children recursively', reason: 'No content elements found or content selector matches container' });
+        
+        // Collect all candidate elements from container (not just direct children)
+        // Include <font> for old websites that use deprecated HTML tags
+        const candidateElements = Array.from(cont.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table'));
+        // Filter to only visible elements
+        const visibleElements = candidateElements.filter(isElementVisible);
+        
+        // Sort by DOM order
+        visibleElements.sort((a, b) => {
+          const pos = a.compareDocumentPosition(b);
+          if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+          if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+          return 0;
+        });
+        
+        // Process each element
+        for (const el of visibleElements) {
+          if (shouldExclude(el)) continue;
+          processElement(el);
+        }
       }
     }
   } else if (container) {
@@ -1361,26 +1698,60 @@ export function extractFromPageInlined(selectors, baseUrl) {
         const isTwitterContainer = el.getAttribute('data-testid') === 'twitterArticleReadView' || 
                                    (el.closest('article[data-testid="tweet"]') && el.tagName.toLowerCase() === 'div');
         if (isTwitterContainer) {
-          // Process elements in DOM order: find all headings and paragraphs with Twitter/X classes
-          // Use querySelectorAll to get all elements, then filter by class
+          // Single-pass collection: gather all content elements efficiently
           const headings = Array.from(el.querySelectorAll('h1.longform-header-one, h2.longform-header-two, h3.longform-header-three'));
-          const paragraphs = Array.from(el.querySelectorAll('.longform-unstyled, .longform-blockquote'));
+          const allLongformUnstyled = Array.from(el.querySelectorAll('.longform-unstyled, .longform-blockquote'));
+          const draftBlocks = Array.from(el.querySelectorAll('div.public-DraftStyleDefault-block'));
           
-          // Also check for substantial span elements (leaf spans with text)
-          const allSpans = Array.from(el.querySelectorAll('span'));
-          const textSpans = allSpans.filter(span => {
-            const text = span.textContent?.trim() || '';
-            return text.length > 50 && !span.querySelector('span'); // Leaf spans with substantial text
+          // Build Set of draft blocks inside headings (single pass)
+          const draftBlocksInsideHeadings = new Set();
+          for (const heading of headings) {
+            for (const block of heading.querySelectorAll('div.public-DraftStyleDefault-block')) {
+              draftBlocksInsideHeadings.add(block);
+            }
+          }
+          
+          // Filter paragraphs: exclude those containing draft blocks (we process draft blocks directly)
+          const paragraphs = allLongformUnstyled.filter(div => 
+            !div.querySelector('div.public-DraftStyleDefault-block')
+          );
+          
+          // Deduplicate draft blocks by text content, excluding those inside headings
+          const uniqueBlocks = new Map();
+          for (const block of draftBlocks) {
+            if (draftBlocksInsideHeadings.has(block)) continue;
+            
+            const text = (block.textContent || '').trim();
+            if (!text || text.length < 10) continue;
+            
+            // Prefer blocks with more children (more complete)
+            const existing = uniqueBlocks.get(text);
+            if (!existing || block.children.length > existing.children.length) {
+              uniqueBlocks.set(text, block);
+            }
+          }
+          
+          // Collect images from the container
+          // Note: We filter basic invalid images here, but full deduplication happens in the processing loop
+          const images = Array.from(el.querySelectorAll('img')).filter(img => {
+            // Skip images inside figure (handled separately if needed)
+            if (img.closest('figure')) return false;
+            // Basic validation - full checks happen in processing loop
+            const src = extractBestImageUrl(img);
+            if (!src) return false;
+            return true;
           });
           
-          // Combine all elements and sort by DOM position
-          const allContentElements = [...headings, ...paragraphs, ...textSpans];
+          // Combine and sort by DOM order
+          const allContentElements = [...headings, ...paragraphs, ...Array.from(uniqueBlocks.values()), ...images];
           allContentElements.sort((a, b) => {
             const pos = a.compareDocumentPosition(b);
-            if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-            if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-            return 0;
+            return (pos & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 
+                   (pos & Node.DOCUMENT_POSITION_PRECEDING) ? 1 : 0;
           });
+          
+          // Track processed elements to avoid duplicates
+          const processedElements = new Set();
           
           // Process in order
           for (const elem of allContentElements) {
@@ -1389,6 +1760,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
               const style = window.getComputedStyle(elem);
               if (style.display === 'none' || style.visibility === 'hidden') continue;
             } catch (e) {}
+            
+            // Skip if already processed (prevent duplicates)
+            if (processedElements.has(elem)) continue;
+            processedElements.add(elem);
             
             const className = elem.className || '';
             const text = elem.textContent?.trim() || '';
@@ -1414,20 +1789,86 @@ export function extractFromPageInlined(selectors, baseUrl) {
                 content.push({ type: 'heading', level: 3, text: html, id: elemId });
               }
             }
-            // Process paragraphs
+            // Process paragraphs (only those that don't contain draft blocks)
             else if (className.includes('longform-unstyled') || className.includes('longform-blockquote')) {
+              // CRITICAL: Skip if this div contains a draft block (already processed above)
+              if (elem.querySelector('div.public-DraftStyleDefault-block')) {
+                continue; // Skip - draft block will be processed separately
+              }
               if (text && text.length > 20) {
                 const html = getFormattedHtml(elem);
                 const elemId = getAnchorId(elem);
                 content.push({ type: 'paragraph', text: html, id: elemId });
               }
             }
-            // Process substantial span elements
-            else if (tagName === 'span' && text.length > 50 && !elem.querySelector('span')) {
-              if (text && text.length > 20) {
+            // Process div.public-DraftStyleDefault-block blocks (Draft.js content blocks)
+            else if (tagName === 'div' && className.includes('public-DraftStyleDefault-block')) {
+              // Skip draft blocks inside headings (already processed as headings)
+              if (draftBlocksInsideHeadings.has(elem)) {
+                continue;
+              }
+              
+              // CRITICAL: If draft block is not inside a real heading, it's always a paragraph
+              // Even if it contains bold text, that's just emphasis within a paragraph, not a heading
+              // Real headings in Twitter/X use h1.longform-header-one, h2.longform-header-two, h3.longform-header-three
+              if (text && text.length > 10) {
                 const html = getFormattedHtml(elem);
                 const elemId = getAnchorId(elem);
                 content.push({ type: 'paragraph', text: html, id: elemId });
+              }
+            }
+            // Process images
+            else if (tagName === 'img') {
+              let src = extractBestImageUrl(elem);
+              src = toAbsoluteUrl(src);
+              const ns = normalizeImageUrl(src);
+              if (src && !isTrackingPixelOrSpacer(elem, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(elem, src)) {
+                const elemId = getAnchorId(elem);
+                
+                // Extract image caption
+                let caption = '';
+                // Check for figcaption in figure
+                const figure = elem.closest('figure');
+                if (figure) {
+                  const figcaption = figure.querySelector('figcaption');
+                  if (figcaption) caption = (figcaption.textContent || '').trim();
+                }
+                // Check aria-label or title
+                if (!caption) {
+                  const ariaLabel = elem.getAttribute('aria-label');
+                  if (ariaLabel && ariaLabel.trim() && !ariaLabel.toLowerCase().includes('image')) {
+                    caption = ariaLabel.trim();
+                  }
+                }
+                if (!caption) {
+                  const title = elem.getAttribute('title');
+                  if (title && title.trim() && title !== elem.alt) {
+                    caption = title.trim();
+                  }
+                }
+                // Check next sibling for caption
+                if (!caption) {
+                  const nextSibling = elem.nextElementSibling;
+                  if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
+                    caption = (nextSibling.textContent || '').trim();
+                  }
+                }
+                // Check for caption in parent container
+                if (!caption) {
+                  const parent = elem.parentElement;
+                  if (parent) {
+                    const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption, [class*="caption"]');
+                    if (captionEl) {
+                      const captionText = (captionEl.textContent || '').trim();
+                      if (captionText && captionText !== elem.alt) {
+                        caption = captionText;
+                      }
+                    }
+                  }
+                }
+                
+                content.push({ type: 'image', src: src, alt: elem.alt || '', caption: caption, id: elemId });
+                addedImageUrls.add(ns);
               }
             }
           }
@@ -1442,77 +1883,25 @@ export function extractFromPageInlined(selectors, baseUrl) {
           textContentLength: el.textContent ? el.textContent.trim().length : 0
         };
         
-        debugInfo.detailedLogs.push({
-          type: 'elementProcessing',
-          element: elementInfo,
-          stage: 'before_shouldExclude'
-        });
-        
         if (shouldExclude(el)) {
           excludedCount++;
-          debugInfo.detailedLogs.push({
-            type: 'elementProcessing',
-            element: elementInfo,
-            stage: 'excluded',
-            reason: 'shouldExclude returned true'
-          });
           continue;
         }
         
         // Check if element is hidden
         let isHidden = false;
-        let display = null;
-        let visibility = null;
         try {
           const style = window.getComputedStyle(el);
-          display = style.display;
-          visibility = style.visibility;
           if (style.display === 'none' || style.visibility === 'hidden') {
             isHidden = true;
             hiddenCount++;
-            debugInfo.detailedLogs.push({
-              type: 'elementProcessing',
-              element: elementInfo,
-              stage: 'excluded',
-              reason: 'hidden by CSS',
-              display: display,
-              visibility: visibility
-            });
             continue;
           }
         } catch (e) {
           // getComputedStyle may fail - continue processing
-          debugInfo.detailedLogs.push({
-            type: 'elementProcessing',
-            element: elementInfo,
-            stage: 'css_check_failed',
-            error: e.message,
-            action: 'continuing'
-          });
         }
         
-        debugInfo.detailedLogs.push({
-          type: 'elementProcessing',
-          element: elementInfo,
-          stage: 'calling_processElement',
-          display: display,
-          visibility: visibility
-        });
-        
-        const contentLengthBefore = content.length;
         processElement(el);
-        const contentLengthAfter = content.length;
-        
-        debugInfo.detailedLogs.push({
-          type: 'elementProcessing',
-          element: elementInfo,
-          stage: 'after_processElement',
-          contentItemsAdded: contentLengthAfter - contentLengthBefore,
-          newContentItems: content.slice(contentLengthBefore).map(item => ({
-            type: item.type,
-            textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
-          }))
-        });
       }
       if (excludedCount > 0 || hiddenCount > 0) {
         extractionDebug.strategiesUsed.push({
@@ -1525,8 +1914,29 @@ export function extractFromPageInlined(selectors, baseUrl) {
       }
     } else {
       // Fallback: process all children recursively
-      extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children', reason: 'No content elements found' });
-      Array.from(container.children).forEach(child => processElement(child));
+      // CRITICAL: When content selector matches container selector, we need to process ALL elements
+      // including nested ones (img, picture, figure) that might be inside paragraphs or other elements
+      extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children recursively', reason: 'No content elements found or content selector matches container' });
+      
+      // Collect all candidate elements from container (not just direct children)
+      // Include <font> for old websites that use deprecated HTML tags
+      const candidateElements = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table'));
+      // Filter to only visible elements
+      const visibleElements = candidateElements.filter(isElementVisible);
+      
+      // Sort by DOM order
+      visibleElements.sort((a, b) => {
+        const pos = a.compareDocumentPosition(b);
+        if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+      
+      // Process each element
+      for (const el of visibleElements) {
+        if (shouldExclude(el)) continue;
+        processElement(el);
+      }
     }
   } else {
     extractionDebug.strategiesUsed.push({ strategy: 'error', reason: 'No container found' });
@@ -1635,38 +2045,45 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   
   // Extract hero image if selector provided
-  // Hero image should be added after the title and subtitle (if subtitle exists), not at the very beginning
+  // CRITICAL: Do this AFTER title/subtitle insertion so heroImage appears after them
+  // Hero image should be added at the beginning of content (after title/subtitle if they exist)
   if (selectors.heroImage) {
     try {
       const heroImgEl = document.querySelector(selectors.heroImage);
-      if (heroImgEl && heroImgEl.tagName?.toLowerCase() === 'img') {
-        let heroSrc = extractBestImageUrl(heroImgEl);
-        heroSrc = toAbsoluteUrl(heroSrc);
-        const ns = normalizeImageUrl(heroSrc);
-        if (heroSrc && !isTrackingPixelOrSpacer(heroImgEl, heroSrc) && !isPlaceholderUrl(heroSrc) && !isSmallOrAvatarImage(heroImgEl, heroSrc) && !addedImageUrls.has(ns)) {
-          // Find first heading position
-          let firstHeadingIndex = -1;
-          for (let i = 0; i < content.length; i++) {
-            if (content[i].type === 'heading') {
-              firstHeadingIndex = i;
-              break;
+      if (heroImgEl) {
+        // CRITICAL: If element is not an IMG, find IMG inside it
+        let imgElement = heroImgEl;
+        if (heroImgEl.tagName?.toLowerCase() !== 'img') {
+          const innerImg = heroImgEl.querySelector('img');
+          if (innerImg) {
+            imgElement = innerImg;
+          } else {
+            // If no img found, try to extract image URL from element itself (e.g., background-image)
+            // But for now, skip if no img element found
+            imgElement = null;
+          }
+        }
+        
+        if (imgElement && imgElement.tagName?.toLowerCase() === 'img') {
+          let heroSrc = extractBestImageUrl(imgElement);
+          heroSrc = toAbsoluteUrl(heroSrc);
+          const ns = normalizeImageUrl(heroSrc);
+          if (heroSrc && !isTrackingPixelOrSpacer(imgElement, heroSrc) && !isPlaceholderUrl(heroSrc) && !isSmallOrAvatarImage(imgElement, heroSrc) && !addedImageUrls.has(ns)) {
+            // Find position after title/subtitle (they're at the beginning after unshift)
+            // If subtitle exists, insert after it; if only title exists, insert after title; otherwise at position 0
+            let insertIndex = 0;
+            for (let i = 0; i < content.length; i++) {
+              if (content[i].type === 'subtitle') {
+                insertIndex = i + 1;
+                break;
+              } else if (content[i].type === 'heading' && content[i].level === 1 && insertIndex === 0) {
+                insertIndex = i + 1;
+              }
             }
+            const imageItem = /** @type {ContentItem} */ ({ type: 'image', url: heroSrc, src: heroSrc, alt: (imgElement instanceof HTMLImageElement ? imgElement.alt : '') || '', id: getAnchorId(imgElement) });
+            content.splice(insertIndex, 0, imageItem);
+            addedImageUrls.add(ns);
           }
-          
-          // Determine insert position:
-          // 1. If heading found, check if subtitle is right after it
-          // 2. If subtitle exists at firstHeadingIndex + 1, insert hero image after subtitle
-          // 3. Otherwise, insert hero image after heading (or at position 0 if no heading)
-          let insertIndex = firstHeadingIndex >= 0 ? firstHeadingIndex + 1 : 0;
-          
-          // Check if subtitle is at the position right after heading
-          if (firstHeadingIndex >= 0 && content[firstHeadingIndex + 1]?.type === 'subtitle') {
-            insertIndex = firstHeadingIndex + 2; // Insert after subtitle
-          }
-          
-          const imageItem = /** @type {ContentItem} */ ({ type: 'image', url: heroSrc, src: heroSrc, alt: (heroImgEl instanceof HTMLImageElement ? heroImgEl.alt : '') || '', id: getAnchorId(heroImgEl) });
-          content.splice(insertIndex, 0, imageItem);
-          addedImageUrls.add(ns);
         }
       }
     } catch (e) {
@@ -1678,5 +2095,20 @@ export function extractFromPageInlined(selectors, baseUrl) {
     debugInfo.subtitleDebug = subtitleDebug;
   }
   
-  return { title: articleTitle, author: articleAuthor, content: content, publishDate: publishDate, debug: debugInfo };
+  // CRITICAL: Always return a result object, even if empty
+  // This ensures chrome.scripting.executeScript always gets a valid result
+  const result = { 
+    title: articleTitle || '', 
+    author: articleAuthor || '', 
+    content: content || [], 
+    publishDate: publishDate || '', 
+    debug: debugInfo 
+  };
+  
+  // Validate result before returning
+  if (!result.content || !Array.isArray(result.content)) {
+    result.content = [];
+  }
+  
+  return result;
 }

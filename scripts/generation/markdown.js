@@ -92,10 +92,10 @@ export async function generateMarkdown(data, updateState) {
   
   if (updateState) updateState({ status: 'Building Markdown...', progress: 85 });
   
-  // Collect headings for TOC
+  // Collect headings for TOC (include all levels, starting from level 1)
   const headings = [];
   for (const item of content) {
-    if (item.type === 'heading' && item.level >= 2) {
+    if (item.type === 'heading' && item.level >= 1) {
       const text = stripHtml(item.text || '');
       if (text) {
         headings.push({ text, level: item.level });
@@ -226,13 +226,21 @@ export async function generateMarkdown(data, updateState) {
   if (generateToc && headings.length > 1) {
     log(`📑 Generating table of contents: ${headings.length} headings`);
     const minLevel = Math.min(...headings.map(h => h.level));
-    markdown += `## ${contentsLabel}\n\n`;
-    for (const h of headings) {
-      const indent = '  '.repeat(h.level - minLevel);
-      // Preserve numbering if present in heading text (e.g., "1. Introduction" -> "- 1. Introduction")
-      markdown += `${indent}- ${h.text}\n`;
-    }
-    markdown += '\n---\n\n';
+    
+    // Build nested TOC structure for Markdown
+    // In Markdown, nested lists are created by indentation (2 spaces per level)
+    let tocMarkdown = '';
+    
+    headings.forEach((h) => {
+      const level = h.level;
+      // Calculate indentation: 2 spaces per level difference from minLevel
+      const indent = '  '.repeat(level - minLevel);
+      
+      // Add list item with proper indentation
+      tocMarkdown += `${indent}- ${h.text}\n`;
+    });
+    
+    markdown += `## ${contentsLabel}\n\n${tocMarkdown}\n---\n\n`;
   } else if (metaItems.length > 0 && !generateAbstract) {
     markdown += '---\n\n';
   }
@@ -455,7 +463,10 @@ function contentItemToMarkdown(item) {
       // CRITICAL: Use item.html if available to preserve links, otherwise use item.text
       logDebug(`[Markdown] formatTextWithFragments - FALLBACK to simple formatting (no lines)`);
       const sourceText = item?.html || item?.text || '';
-      return formatText(sourceText, item?.isBold, item?.isItalic, item?.isUnderlined);
+      // CRITICAL: Normalize line breaks - replace newlines with spaces for paragraphs
+      // This prevents text from being split into multiple lines in markdown
+      const normalizedText = sourceText.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+      return formatText(normalizedText, item?.isBold, item?.isItalic, item?.isUnderlined);
     }
     
     // Process each line separately, then join with spaces
@@ -486,7 +497,12 @@ function contentItemToMarkdown(item) {
       
       let formattedItemsCount = 0;
       for (const textItem of sortedItems) {
-        const itemText = textItem.str || '';
+        let itemText = textItem.str || '';
+        if (!itemText) continue;
+        
+        // CRITICAL: Normalize line breaks in item text - replace newlines with spaces
+        // This prevents text from being split into multiple lines in markdown paragraphs
+        itemText = itemText.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
         if (!itemText) continue;
         
         // Add space if there's a gap between items
@@ -767,7 +783,11 @@ function contentItemToMarkdown(item) {
     
     logDebug(`[Markdown] formatTextWithFragments - FINAL: lines=${formattedLines.length}, resultLength=${result.length}, hasFormatting=${result.includes('**') || result.includes('*') || result.includes('__')}`);
     
-    return result || item.text || '';
+    // CRITICAL: Normalize line breaks in final result - replace newlines with spaces
+    // This prevents text from being split into multiple lines in markdown paragraphs
+    const finalResult = result || item.text || '';
+    const normalizedResult = finalResult.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+    return normalizedResult;
   };
   
   switch (item.type) {

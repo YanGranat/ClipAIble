@@ -228,12 +228,28 @@ export async function ensureTTSWorker() {
     return state.getTTSWorker();
   }
   
+  // If Worker was terminated due to inactivity timeout, reset useWorker flag to allow recreation
+  if (!state.shouldUseWorker()) {
+    log('[ClipAIble Offscreen] Worker was terminated, resetting useWorker flag for recreation', {
+      timestamp: Date.now()
+    });
+    state.setUseWorker(true);
+  }
+  
   // Initialize Worker if not already initialized
   await initTTSWorker();
   
   // Verify Worker is available after initialization
-  if (!state.getTTSWorker() || !state.shouldUseWorker()) {
-    throw new Error('TTS Worker is not available. Worker must be initialized before use.');
+  if (!state.getTTSWorker()) {
+    throw new Error('TTS Worker is not available. Worker initialization failed.');
+  }
+  
+  // Ensure useWorker is true after successful initialization
+  if (!state.shouldUseWorker()) {
+    log('[ClipAIble Offscreen] Worker initialized but useWorker is false, resetting', {
+      timestamp: Date.now()
+    });
+    state.setUseWorker(true);
   }
   
   // Reset inactivity timer after initialization

@@ -9,6 +9,6 @@ export { groupLinesIntoElements } from './element-grouper.js';
 export { processPage } from './page-processor.js';
 export { groupConsecutiveListItems } from './list-grouper.js';
 
-// TODO: mergeElements is not yet implemented - placeholder for future features
+// Note: mergeElements is a placeholder for future enhancement
 // export { mergeElements } from './merging.js';
 

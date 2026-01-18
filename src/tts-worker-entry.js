@@ -1,3 +1,4 @@
+// @ts-check
 // TTS Worker Entry Point for esbuild bundle
 // This file will be bundled by esbuild to create a self-contained worker
 // that includes piper-tts-web, but NOT onnxruntime-web (loaded via importScripts)

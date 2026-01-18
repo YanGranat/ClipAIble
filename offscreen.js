@@ -1,3 +1,4 @@
+// @ts-check
 // offscreen.js - Offscreen document for Chrome Extension
 // Handles PDF processing and TTS synthesis in background context
 
@@ -281,24 +282,7 @@ try {
       });
     }
     
-    // Only handle messages targeted to offscreen
-    if (message.target !== 'offscreen') {
-      log('[ClipAIble Offscreen] Message not for offscreen, ignoring', {
-        messageId,
-        target: message.target
-      });
-      return false;
-    }
-    
-    // Ignore messages without type (likely system messages or malformed messages)
-    if (!message.type || typeof message.type !== 'string') {
-      log('[ClipAIble Offscreen] Message without type, ignoring', {
-        messageId,
-        type: message.type,
-        messageKeys: Object.keys(message || {})
-      });
-      return false;
-    }
+    // Note: message.target and message.type already validated above (lines 212-238)
     
     log('[ClipAIble Offscreen] Processing offscreen message', {
       messageId,

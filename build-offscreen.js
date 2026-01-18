@@ -1,3 +1,4 @@
+// @ts-check
 // build-offscreen.js
 // Build script for offscreen.js bundle using esbuild
 // This resolves all module imports at build time, eliminating need for import maps

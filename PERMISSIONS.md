@@ -31,6 +31,15 @@ This document explains why each permission is required by ClipAIble.
 ### `contextMenus`
 **Why needed:** To add "Save with ClipAIble" options (PDF/EPUB/FB2/MD/Audio) to the right-click context menu on web pages.
 
+### `pageCapture`
+**Why needed:** Reserved for future use. May be used to capture full page content for complex single-page applications.
+
+### `offscreen`
+**Why needed:** To create an offscreen document for PDF extraction using PDF.js and offline TTS synthesis using Piper TTS. Offscreen documents allow running complex operations without affecting the visible page.
+
+### `webNavigation`
+**Why needed:** To detect when page navigation completes and handle single-page application (SPA) navigation. Ensures content extraction waits for the page to fully load.
+
 ## Host Permissions
 
 ### `<all_urls>`

@@ -140,6 +140,10 @@ async function findVoiceByNameOrIndex({ requestedVoice, langCode, messageId, get
   
   // Try to find in available voices
   if (!state.getTTSWorker()) {
+    // Reset useWorker flag if it was set to false due to inactivity timeout
+    if (!state.shouldUseWorker()) {
+      state.setUseWorker(true);
+    }
     await initTTSWorker();
   }
   if (!state.getTTSWorker()) {

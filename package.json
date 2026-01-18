@@ -26,10 +26,20 @@
     "article-extractor",
     "pdf",
     "epub",
-    "ai"
+    "fb2",
+    "markdown",
+    "audio",
+    "tts",
+    "ai",
+    "translation"
   ],
-  "author": "",
+  "author": "YanGranat",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YanGranat/ClipAIble"
+  },
+  "homepage": "https://github.com/YanGranat/ClipAIble#readme",
   "dependencies": {
     "@diffusionstudio/piper-wasm": "^1.0.0",
     "@mintplex-labs/piper-tts-web": "^1.0.4",
