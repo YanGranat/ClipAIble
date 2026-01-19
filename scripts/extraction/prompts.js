@@ -230,6 +230,7 @@ NEVER EXCLUDE these (important article content):
 CRITICAL - SUBTITLE SELECTOR:
 - "subtitle" = CSS selector for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content
 - This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
+- IMPORTANT: Words like "Abstract", "Introduction", "Background", "Conclusion" are NOT subtitles - they are section headings (h2, h3) and should be included in the main content, not in subtitle field
 - Look for:
   * Elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
   * First paragraph (<p>) inside article/main that appears right after the title (h1)
@@ -292,6 +293,7 @@ OTHER REQUIREMENTS:
 - CRITICAL - SUBTITLE SELECTOR:
   * Look for introductory text (standfirst/deck/subtitle) that appears AFTER the title (h1) but BEFORE the main article content
   * This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
+  * IMPORTANT: Words like "Abstract", "Introduction", "Background", "Conclusion" are NOT subtitles - they are section headings (h2, h3) and should be included in the main content, not in subtitle field
   * First, check for elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
   * If no such classes exist, look for the FIRST paragraph (<p>) inside article/main that appears right after the title
   * Common selectors: "article > p:first-child", "article p:first-of-type", "article > div > p:first-child"

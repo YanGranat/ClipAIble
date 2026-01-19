@@ -163,15 +163,25 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
         case 'heading':
           const level = Math.min(Math.max(item.level || 2, 1), 6);
           
-          // CRITICAL: If itemText already contains markdown heading syntax (#), remove it first
-          // parseMarkdownToElements already extracts text without #, but check to be safe
+          // CRITICAL: Check if itemText already contains HTML (from extraction)
+          // If it contains HTML tags, use it directly; otherwise convert markdown to HTML
+          const headingHasHtmlTags = /<[a-z][\s\S]*>/i.test(itemText);
+          
           let headingText = itemText.trim();
           
           // Remove any leading # characters and spaces (in case markdown syntax leaked in)
           headingText = headingText.replace(/^#+\s*/, '').trim();
           
-          // Convert markdown to HTML before sanitizing (for formatting like bold, italic, links)
-          const headingHtml = markdownToHtml(headingText);
+          let headingHtml;
+          if (headingHasHtmlTags) {
+            // Already HTML - sanitizeHtml will remove SVG and decorative elements but preserve text content
+            // It will also remove HTML comments like <!--[--> and <!--]--> that we added earlier
+            headingHtml = headingText;
+          } else {
+            // Markdown - convert first, then sanitize
+            headingHtml = markdownToHtml(headingText);
+          }
+          
           const sanitizedHeadingHtml = sanitizeHtml(headingHtml, sourceUrl, { allowFileProtocol: true });
           
           return `${anchorTag}<h${level}${idAttr}>${sanitizedHeadingHtml}</h${level}>`;

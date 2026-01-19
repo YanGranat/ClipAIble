@@ -83,7 +83,12 @@ export function sanitizeHtml(html, sourceUrl = '', options = {}) {
   result = result.replace(/href\s*=\s*["']about:[^"']*["']/gi, 'href="#"');
   result = result.replace(/<(iframe|object|embed|form|input|button)[^>]*>.*?<\/\1>/gi, '');
   result = result.replace(/<(iframe|object|embed|form|input|button)[^>]*>/gi, '');
-  
+  // Remove HTML comments (including Vue.js/Nuxt.js comments like <!--[--> and <!--]-->)
+  // First remove Vue.js/Nuxt.js specific comments
+  result = result.replace(/<!--\[-->/g, '');
+  result = result.replace(/<!--\]-->/g, '');
+  // Then remove all other HTML comments
+  result = result.replace(/<!--[\s\S]*?-->/g, '');
   
   // Process tags - keep allowed, remove others but keep their text content
   result = result.replace(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi, (match, tagName) => {

@@ -370,8 +370,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
     containerSelector: null,
     elementsProcessed: 0,
     elementsExcluded: 0,
-    headingCount: 0,
-    detailedLogs: [] // Add detailed logs array
+    headingCount: 0
   };
   
   const tocMapping = {};
@@ -631,7 +630,32 @@ export function extractFromPageInlined(selectors, baseUrl) {
       }
     });
     
-    const htmlResult = clone.innerHTML;
+    // CRITICAL: Extract text from HTML comments (Vue.js/Nuxt.js pattern: <!--[-->text<!--]-->)
+    // Before returning HTML, extract text from comments and make it visible
+    // This ensures text inside comments is preserved when comments are removed
+    let htmlResult = clone.innerHTML;
+    
+    // Replace Vue.js/Nuxt.js comment pattern: <!--[-->text<!--]-->
+    // This pattern wraps text in comments, we need to extract the text
+    htmlResult = htmlResult.replace(/<!--\[-->/g, '');
+    htmlResult = htmlResult.replace(/<!--\]-->/g, '');
+    // Also handle other HTML comments that might wrap text
+    htmlResult = htmlResult.replace(/<!--([\s\S]*?)-->/g, (match, commentContent) => {
+      // If comment contains text (not just whitespace), preserve it
+      const trimmed = commentContent.trim();
+      return trimmed.length > 0 ? trimmed : '';
+    });
+    
+    // CRITICAL: Ensure all <a> tags are properly closed
+    // Count opening and closing tags
+    const openTags = (htmlResult.match(/<a\b[^>]*>/gi) || []).length;
+    const closeTags = (htmlResult.match(/<\/a>/gi) || []).length;
+    // If there are unclosed tags, close them at the end
+    if (openTags > closeTags) {
+      const missing = openTags - closeTags;
+      htmlResult = htmlResult + '</a>'.repeat(missing);
+    }
+    
     return htmlResult;
   }
   
@@ -787,27 +811,47 @@ export function extractFromPageInlined(selectors, baseUrl) {
   // content selector is for finding content INSIDE containers, not for finding containers themselves
   let containers = [];
   let container = null;
-  const aiSelectors = [selectors.articleContainer, selectors.content].filter(Boolean);
   
-  for (const sel of aiSelectors) {
+  // CRITICAL: Only use articleContainer for finding containers, NOT content selector
+  // content selector is for finding content INSIDE containers, not containers themselves
+  // If we use content selector to find containers, we'll get wrong results (e.g., 9 .wysiwyg elements instead of 1 main#main-content-area)
+  if (selectors.articleContainer) {
     try {
-      const allElements = document.querySelectorAll(sel);
+      const allElements = document.querySelectorAll(selectors.articleContainer);
       if (allElements.length > 1) {
         containers = Array.from(allElements);
         debugInfo.containerFound = true;
-        debugInfo.containerSelector = sel;
+        debugInfo.containerSelector = selectors.articleContainer;
         debugInfo.multipleContainers = true;
         debugInfo.containerCount = containers.length;
-        break;
       } else if (allElements.length === 1) {
         container = allElements[0];
         debugInfo.containerFound = true;
-        debugInfo.containerSelector = sel;
-        break;
+        debugInfo.containerSelector = selectors.articleContainer;
       }
     } catch (e) {
-      // Invalid selector from AI - try next selector (graceful degradation)
-      // This is expected - AI may provide invalid selectors, we try next one
+      // Invalid selector from AI - will try fallback below (graceful degradation)
+    }
+  }
+  
+  // FALLBACK: If articleContainer not found but content selector exists, use parent of content element as container
+  // This is safer than falling back to body, but only if content selector finds exactly one element
+  // Using content selector directly as container is wrong (as shown in aljazeera.com case)
+  if (containers.length === 0 && !container && selectors.content) {
+    try {
+      const contentElements = document.querySelectorAll(selectors.content);
+      if (contentElements.length === 1) {
+        // Use parent of content element as container (more specific than body)
+        const contentElement = contentElements[0];
+        const parent = contentElement.parentElement;
+        if (parent && parent !== document.body && parent !== document.documentElement) {
+          container = parent;
+          debugInfo.containerFound = true;
+          debugInfo.containerSelector = `parent of ${selectors.content}`;
+        }
+      }
+    } catch (e) {
+      // Invalid content selector - will fallback to body (graceful degradation)
     }
   }
   
@@ -828,14 +872,48 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   
   if (container && containers.length === 0) {
-    const articlesInside = container.querySelectorAll('article');
-    if (articlesInside.length > 1) {
-      const visibleArticles = Array.from(articlesInside).filter(isElementVisible);
-      containers = visibleArticles;
-      debugInfo.multipleContainers = true;
-      debugInfo.containerCount = containers.length;
-      debugInfo.filteredHiddenContainers = articlesInside.length - visibleArticles.length;
-      container = null;
+    // CRITICAL FIX: Before splitting container into articles, check if it contains the content element
+    // If the main container contains the content selector, don't split it into articles
+    // This prevents issues where main#main-content-area contains .wysiwyg, but we split it into article elements
+    // that don't contain .wysiwyg (e.g., recommended articles, playlist items)
+    let shouldSplitIntoArticles = true;
+    if (selectors.content) {
+      try {
+        // Normalize content selector: remove container selector prefix if present
+        let normalizedContentSelector = selectors.content;
+        if (selectors.articleContainer && normalizedContentSelector.includes(selectors.articleContainer)) {
+          // Remove container selector from the beginning of content selector
+          normalizedContentSelector = normalizedContentSelector.replace(selectors.articleContainer, '').trim();
+          // Remove leading space or > if present
+          if (normalizedContentSelector.startsWith(' ')) {
+            normalizedContentSelector = normalizedContentSelector.substring(1);
+          }
+          if (normalizedContentSelector.startsWith('>')) {
+            normalizedContentSelector = normalizedContentSelector.substring(1).trim();
+          }
+        }
+        
+        // Check if the main container contains elements matching the normalized content selector
+        const contentInMainContainer = normalizedContentSelector ? container.querySelector(normalizedContentSelector) : null;
+        if (contentInMainContainer && container.contains(contentInMainContainer)) {
+          // Main container contains the content - don't split it
+          shouldSplitIntoArticles = false;
+        }
+      } catch (e) {
+        // Invalid selector, continue with split logic
+      }
+    }
+    
+    if (shouldSplitIntoArticles) {
+      const articlesInside = container.querySelectorAll('article');
+      if (articlesInside.length > 1) {
+        const visibleArticles = Array.from(articlesInside).filter(isElementVisible);
+        containers = visibleArticles;
+        debugInfo.multipleContainers = true;
+        debugInfo.containerCount = containers.length;
+        debugInfo.filteredHiddenContainers = articlesInside.length - visibleArticles.length;
+        container = null;
+      }
     }
   }
   
@@ -1138,9 +1216,28 @@ export function extractFromPageInlined(selectors, baseUrl) {
           // Remove any remaining attribute-like fragments that leaked (target="_blank">, etc.)
           // But only if they're standalone (not inside proper HTML tags)
           // Match pattern like: target="_blank"> or href="..."> at word boundaries
-          captionText = captionText.replace(/(^|\s)([a-zA-Z-]+\s*=\s*["'][^"']*["']\s*>)>/gi, '$1');
+          // CRITICAL: Don't match if it's part of a closing tag like </a>
+          captionText = captionText.replace(/(^|\s)([a-zA-Z-]+\s*=\s*["'][^"']*["']\s*>)>/gi, (match, p1, p2, offset, fullString) => {
+            // Check if this is part of a closing tag (</a>, </span>, etc.)
+            const beforeMatch = fullString.substring(Math.max(0, offset - 10), offset);
+            if (beforeMatch.includes('</')) {
+              return match; // Don't remove if it's part of a closing tag
+            }
+            return p1; // Remove the attribute fragment
+          });
           // Remove any standalone closing > that might be left at start or end
-          captionText = captionText.replace(/^\s*>\s*/, '').replace(/\s*>\s*$/, '');
+          // CRITICAL: Don't remove > from closing tags like </a>
+          captionText = captionText.replace(/^\s*>\s*(?!<\/)/, '').replace(/(?<!<\/)\s*>\s*$/, '');
+          
+          // CRITICAL: Ensure all <a> tags are properly closed
+          // Count opening and closing tags
+          const openTags = (captionText.match(/<a\b[^>]*>/gi) || []).length;
+          const closeTags = (captionText.match(/<\/a>/gi) || []).length;
+          // If there are unclosed tags, close them at the end
+          if (openTags > closeTags) {
+            const missing = openTags - closeTags;
+            captionText = captionText + '</a>'.repeat(missing);
+          }
           content.push({ 
             type: 'image', 
             src: src, 
@@ -1202,7 +1299,66 @@ export function extractFromPageInlined(selectors, baseUrl) {
         content.push({ type: 'heading', level: 2, text: 'Footnotes', id: 'footnotes-section' });
         footnotesHeaderAdded = true;
       }
-      for (const child of element.children) processElement(child);
+      
+      // CRITICAL: Check if this div is actually a paragraph (no direct block-level children)
+      // If it has direct block-level children, it's a container - process children
+      // If it doesn't, it might be a paragraph - check if it should be treated as one
+      const blockTags = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote'];
+      const hasDirectBlockChildren = Array.from(element.children).some(child => {
+        const childTag = child.tagName.toLowerCase();
+        return blockTags.includes(childTag);
+      });
+      
+      if (hasDirectBlockChildren) {
+        // It's a container - process children
+        for (const child of element.children) processElement(child);
+      } else {
+        // It might be a paragraph - check if it has significant text and is block-level
+        const textContent = element.textContent?.trim() || '';
+        const hasSignificantText = textContent.length >= 20;
+        
+        let isBlockLevel = false;
+        try {
+          const style = window.getComputedStyle(element);
+          const display = style.display;
+          isBlockLevel = ['block', 'flex', 'grid', 'table', 'list-item'].includes(display) || 
+                        display.startsWith('table-') || 
+                        display === 'flow-root';
+        } catch (e) {
+          const fallbackBlockTags = ['main', 'header', 'footer', 'nav', 'address', 'fieldset', 'legend', 
+                                     'center', 'font', 'big', 'small', 'tt', 'marquee'];
+          isBlockLevel = fallbackBlockTags.includes(tagName);
+        }
+        
+        if (hasSignificantText && isBlockLevel) {
+          let html = getFormattedHtml(element);
+          // CRITICAL: If getFormattedHtml returns empty string, use textContent as fallback
+          // This ensures div-paragraphs are not lost if getFormattedHtml removes all content
+          if (!html.trim()) {
+            html = textContent;
+          }
+          if (html.trim()) {
+            const pt = textContent;
+            if (articleAuthor && pt === articleAuthor) return;
+            const ct = pt.replace(/[\s\u00A0]/g, '');
+            if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) return;
+            if (elementId && !element.id && !html.startsWith(`<a id="${elementId}"`)) {
+              html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
+            }
+            content.push({ type: 'paragraph', text: html, id: elementId });
+          }
+        } else if (hasSignificantText) {
+          // If element has text but is not block-level, process its children instead
+          for (const child of element.children) {
+            processElement(child);
+          }
+        } else {
+          // No significant text - process children anyway
+          for (const child of element.children) {
+            processElement(child);
+          }
+        }
+      }
     }
     else {
       // FALLBACK: Handle any unprocessed element that contains significant text content
@@ -1645,7 +1801,66 @@ export function extractFromPageInlined(selectors, baseUrl) {
             // getComputedStyle may fail - continue processing
           }
           
-          processElement(el);
+          // CRITICAL: If the found content element is a container (div, section, article),
+          // use aggressive recursive extraction instead of just processing children.
+          // This ensures we capture all nested content, not just direct children.
+          const tagName = el.tagName.toLowerCase();
+          const isContainer = tagName === 'div' || tagName === 'section' || tagName === 'article' || tagName === 'main';
+          
+          if (isContainer) {
+            // Use the same aggressive approach as fallback: find ALL relevant elements inside
+            // CRITICAL: Also include div elements that contain text, as many sites wrap content in divs
+            const candidateElements = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div'));
+            // Filter divs: only include those that contain significant text content and are not containers themselves
+            const filteredCandidates = candidateElements.filter(candidate => {
+              if (candidate.tagName.toLowerCase() === 'div') {
+                // Skip if it's a container (has DIRECT block-level children)
+                // Only check direct children, not nested ones, to allow divs with text
+                // that have nested inline elements or styled divs
+                const blockTags = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote'];
+                const hasDirectBlockChildren = Array.from(candidate.children).some(child => {
+                  const childTag = child.tagName.toLowerCase();
+                  return blockTags.includes(childTag);
+                });
+                if (hasDirectBlockChildren) return false;
+                // Only include if it has significant text content
+                const text = (candidate.textContent || '').trim();
+                return text.length > 20; // Minimum text length
+              }
+              return true; // Include all non-div elements
+            });
+            const visibleElements = filteredCandidates.filter(isElementVisible);
+            
+            // Sort by DOM order
+            visibleElements.sort((a, b) => {
+              const pos = a.compareDocumentPosition(b);
+              if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+              if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+              return 0;
+            });
+            
+            // Process each element
+            let excludedInContainer = 0;
+            for (const candidateEl of visibleElements) {
+              if (shouldExclude(candidateEl)) {
+                excludedInContainer++;
+                continue;
+              }
+              processElement(candidateEl);
+            }
+            extractionDebug.strategiesUsed.push({
+              strategy: 'container_recursive',
+              containerTag: tagName,
+              candidateElements: candidateElements.length,
+              filteredCandidates: filteredCandidates.length,
+              visibleElements: visibleElements.length,
+              excludedInContainer: excludedInContainer,
+              processed: visibleElements.length - excludedInContainer
+            });
+          } else {
+            // Element is not a container, process it directly
+            processElement(el);
+          }
         }
         if (excludedCount > 0 || hiddenCount > 0) {
           extractionDebug.strategiesUsed.push({
@@ -1683,10 +1898,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
         }
       }
     }
-  } else if (container) {
-    const result = findContentElements(container, selectors.content, containerSelector);
-    extractionDebug.strategiesUsed.push(...(result.debug || []));
-    if (result.elements && result.elements.length > 0) {
+    } else if (container) {
+      const result = findContentElements(container, selectors.content, containerSelector);
+      extractionDebug.strategiesUsed.push(...(result.debug || []));
+      if (result.elements && result.elements.length > 0) {
       extractionDebug.contentElementsFound = result.elements.length;
       // Process found elements
       let excludedCount = 0;
@@ -1901,7 +2116,66 @@ export function extractFromPageInlined(selectors, baseUrl) {
           // getComputedStyle may fail - continue processing
         }
         
-        processElement(el);
+          // CRITICAL: If the found content element is a container (div, section, article),
+          // use aggressive recursive extraction instead of just processing children.
+          // This ensures we capture all nested content, not just direct children.
+          const tagName = el.tagName.toLowerCase();
+          const isContainer = tagName === 'div' || tagName === 'section' || tagName === 'article' || tagName === 'main';
+          
+          if (isContainer) {
+            // Use the same aggressive approach as fallback: find ALL relevant elements inside
+            // CRITICAL: Also include div elements that contain text, as many sites wrap content in divs
+            const candidateElements = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div'));
+            // Filter divs: only include those that contain significant text content and are not containers themselves
+            const filteredCandidates = candidateElements.filter(candidate => {
+              if (candidate.tagName.toLowerCase() === 'div') {
+                // Skip if it's a container (has DIRECT block-level children)
+                // Only check direct children, not nested ones, to allow divs with text
+                // that have nested inline elements or styled divs
+                const blockTags = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote'];
+                const hasDirectBlockChildren = Array.from(candidate.children).some(child => {
+                  const childTag = child.tagName.toLowerCase();
+                  return blockTags.includes(childTag);
+                });
+                if (hasDirectBlockChildren) return false;
+                // Only include if it has significant text content
+                const text = (candidate.textContent || '').trim();
+                return text.length > 20; // Minimum text length
+              }
+              return true; // Include all non-div elements
+            });
+            const visibleElements = filteredCandidates.filter(isElementVisible);
+            
+            // Sort by DOM order
+            visibleElements.sort((a, b) => {
+              const pos = a.compareDocumentPosition(b);
+              if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+              if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+              return 0;
+            });
+            
+            // Process each element
+            let excludedInContainer = 0;
+            for (const candidateEl of visibleElements) {
+              if (shouldExclude(candidateEl)) {
+                excludedInContainer++;
+                continue;
+              }
+              processElement(candidateEl);
+            }
+            extractionDebug.strategiesUsed.push({
+              strategy: 'container_recursive',
+              containerTag: tagName,
+              candidateElements: candidateElements.length,
+              filteredCandidates: filteredCandidates.length,
+              visibleElements: visibleElements.length,
+              excludedInContainer: excludedInContainer,
+              processed: visibleElements.length - excludedInContainer
+            });
+          } else {
+            // Element is not a container, process it directly
+            processElement(el);
+          }
       }
       if (excludedCount > 0 || hiddenCount > 0) {
         extractionDebug.strategiesUsed.push({

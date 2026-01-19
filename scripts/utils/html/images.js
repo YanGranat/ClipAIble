@@ -315,27 +315,35 @@ export async function embedImages(html, content, updateState, escapeAttr) {
     }
     
     try {
+      // CRITICAL: Use data-original-src for matching because it contains the original URL
+      // The src attribute may have escaped characters (like &amp;) that don't match the original URL
       const escapedSrc = escapeAttr(img.src);
       const regexSafe = escapedSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`src="${regexSafe}"`, 'g');
-      const beforeLength = result.length;
-      result = result.replace(regex, `src="${base64}"`);
       
-      if (result.length !== beforeLength) {
+      // First, try to find by data-original-src (more reliable - contains original URL)
+      const dataAttrRegex = new RegExp(`data-original-src="${regexSafe}"`, 'g');
+      if (dataAttrRegex.test(result)) {
+        // Found by data-original-src - replace the src attribute while keeping data-original-src
+        result = result.replace(
+          new RegExp(`(src="[^"]*")([^>]*data-original-src="${regexSafe}")`, 'g'),
+          `src="${base64}"$2`
+        );
         embedded++;
-        log(`Image ${index + 1} embedded successfully`);
+        log(`Image ${index + 1} embedded via data-original-src`);
       } else {
-        // Try alternative: search by data-original-src
-        const dataAttrRegex = new RegExp(`data-original-src="${regexSafe}"`, 'g');
-        if (dataAttrRegex.test(result)) {
-          result = result.replace(
-            new RegExp(`src="[^"]*"([^>]*data-original-src="${regexSafe}")`, 'g'),
-            `src="${base64}"$1`
-          );
+        // Fallback: try to find by src attribute (may have escaped characters)
+        const regex = new RegExp(`src="${regexSafe}"`, 'g');
+        const beforeLength = result.length;
+        result = result.replace(regex, `src="${base64}"`);
+        
+        if (result.length !== beforeLength) {
           embedded++;
-          log(`Image ${index + 1} embedded via data-original-src`);
+          log(`Image ${index + 1} embedded successfully`);
         } else {
-          logWarn(`Image ${index + 1} src not found in HTML`, { escapedSrc: escapedSrc.substring(0, 100) });
+          logWarn(`Image ${index + 1} src not found in HTML`, { 
+            escapedSrc: escapedSrc.substring(0, 100),
+            originalSrc: img.src.substring(0, 100)
+          });
           failed++;
         }
       }
