@@ -327,8 +327,8 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
   if (mainContent) {
     const firstParagraph = mainContent.querySelector('p');
     const images = mainContent.querySelectorAll('img');
-    
-    for (const img of images) {
+
+    for (const img of Array.from(images)) {
       // Stop if we passed the first paragraph
       if (firstParagraph && img.compareDocumentPosition(firstParagraph) & Node.DOCUMENT_POSITION_PRECEDING) {
         break;

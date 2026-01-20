@@ -190,9 +190,11 @@ export function hasSubstantialContent(element) {
  * @param {Window} win - Window object
  * @param {Document} doc - Document object
  * @param {function(Element): boolean} isExcluded - Function to check exclusion
+ * @param {Object} [debugInfo] - Debug info object for logging
+ * @param {function} [pushDebugLog] - Function to push debug logs
  * @returns {Element|null} - Main content element
  */
-export function findMainContent(win, doc, isExcluded) {
+export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   // Strategy 0: SPA root containers
   const spaSelectors = [
     '#root', '#app', '#__next', '[data-reactroot]', '[ng-app]',
@@ -224,13 +226,59 @@ export function findMainContent(win, doc, isExcluded) {
     if (articleText.length > 500) {
       const isRelatedArticle = article.querySelector('.gc__image-placeholder') !== null ||
                                article.closest('aside, .related, .sidebar') !== null;
-      if (!isRelatedArticle && !isExcluded(article)) {
+      if (!isRelatedArticle) {
+        // PRIORITY: Always prefer ARTICLE element over other containers
+        // Even if it contains some excludable elements, ARTICLE is the semantic content container
+        // Special handling for Atavist magazine - look for more specific content container
+        const hostname = win.location?.hostname || '';
+        if (hostname.includes('atavist.com') || hostname.includes('magazine.atavist.com')) {
+          // Try to find a more specific container within the article
+          const specificSelectors = [
+            '.entry-content', '.post-content', '.article-body',
+            '[class*="content"]', '[class*="article"]', '[class*="post"]'
+          ];
+          for (const selector of specificSelectors) {
+            const specificElement = article.querySelector(selector);
+            if (specificElement) {
+              const specificText = (specificElement.textContent || '').trim();
+              if (specificText.length > 500) {
+                // For Atavist, we can be less strict about exclusion since we're looking for more specific content
+                const className = String(specificElement.className || '').toLowerCase();
+                const isEntryContent = className.includes('entry-content');
+                if (isEntryContent || !isExcluded(specificElement)) {
+                  return specificElement;
+                }
+              }
+            }
+          }
+        }
         return article;
       }
     }
   }
   
   const main = doc.querySelector('main');
+  // Special handling for Wikipedia
+  const hostname = win.location?.hostname || '';
+  if (hostname.includes('wikipedia.org') || hostname.includes('wikimedia.org')) {
+    // For Wikipedia, find the main content parser output (the one with most content)
+    const parserOutputs = Array.from(doc.querySelectorAll('.mw-parser-output'));
+    let bestParserOutput = null;
+    let maxTextLength = 0;
+
+    for (const parserOutput of parserOutputs) {
+      const textLength = (parserOutput.textContent || '').trim().length;
+      if (textLength > maxTextLength) {
+        maxTextLength = textLength;
+        bestParserOutput = parserOutput;
+      }
+    }
+
+    if (bestParserOutput && maxTextLength > 500) {
+      return bestParserOutput; // Return the parser output with most content
+    }
+  }
+
   if (main) {
     const mainText = (main.textContent || '').trim();
     if (mainText.length > 100) {
@@ -267,8 +315,8 @@ export function findMainContent(win, doc, isExcluded) {
     } catch (e) { }
   }
   
-  // Strategy 3: Score-based search
-  const candidates = Array.from(doc.querySelectorAll('div, article, main, section'));
+  // Strategy 3: Score-based search (including legacy table-based layouts)
+  const candidates = Array.from(doc.querySelectorAll('div, article, main, section, table'));
   
   let bestCandidate = null;
   let maxScore = 0;

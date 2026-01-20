@@ -20,6 +20,9 @@ export function cleanHeadingText(text) {
     .replace(/OBJ/g, '')
     // Remove any remaining HTML tags
     .replace(/<[^>]+>/g, '')
+    // Remove Wikipedia edit section patterns (all languages): [edit], [ред. | ред. код], etc.
+    .replace(/\s*\[[^\]]{1,30}\s*\|\s*[^\]]{1,30}\]\s*$/g, '')
+    .replace(/\s*\[(edit|ред\.?|редагувати|править|editar|modifier|bearbeiten|編集|编辑|편집)[^\]]*\]\s*$/gi, '')
     // Remove trailing # (often from anchor links)
     .replace(/\s*#\s*$/, '')
     // Normalize whitespace
@@ -45,6 +48,47 @@ export function stripObjMarkers(text) {
     // Normalize whitespace
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Clean LaTeX formula from displaystyle wrapper
+ * Converts {\\displaystyle X} to just X for cleaner markdown
+ * @param {string} latex - Raw LaTeX string
+ * @returns {string} - Cleaned LaTeX
+ */
+export function cleanLatexFormula(latex) {
+  if (!latex) return '';
+  return latex
+    // Remove {\\displaystyle ...} wrapper
+    .replace(/^\{\\displaystyle\s*(.+?)\}$/s, '$1')
+    .replace(/\\displaystyle\s*/g, '')
+    // Clean up extra braces
+    .replace(/^\{(.+)\}$/, '$1')
+    .trim();
+}
+
+/**
+ * Check if heading marks end of main content (reference sections)
+ * @param {string} headingText - Heading text to check
+ * @returns {boolean} - True if this marks end of main content
+ */
+export function isEndOfContentSection(headingText) {
+  const text = headingText.toLowerCase().trim();
+  const endSections = [
+    // Russian
+    'см. также', 'примечания', 'литература', 'ссылки', 'источники',
+    'комментарии', 'дополнительная литература', 'сноски',
+    // English  
+    'see also', 'references', 'notes', 'external links', 'further reading',
+    'bibliography', 'sources', 'footnotes', 'citations',
+    // German
+    'siehe auch', 'einzelnachweise', 'literatur', 'weblinks', 'quellen',
+    // French
+    'voir aussi', 'références', 'notes et références', 'liens externes',
+    // Spanish
+    'véase también', 'referencias', 'enlaces externos', 'bibliografía'
+  ];
+  return endSections.includes(text);
 }
 
 /**

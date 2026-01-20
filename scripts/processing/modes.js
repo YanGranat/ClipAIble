@@ -89,10 +89,18 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
  * @param {import('../types.js').ProcessingData} data - Processing data
  * @returns {Promise<Object>} {title, author, content, publishDate, detectedLanguage}
  */
-export async function processWithoutAI(data) {
+/**
+ * Process content without AI (automatic mode)
+ * Can use cached selectors if available and reliable (successCount >= 3)
+ * @param {import('../types.js').ProcessingData} data - Processing data
+ * @param {(selectors: Object, baseUrl: string) => any} [extractFromPageInlined] - Optional extraction function for using cached selectors
+ * @returns {Promise<Object>} {title, author, content, publishDate}
+ */
+export async function processWithoutAI(data, extractFromPageInlined) {
   log('=== processWithoutAI: ENTRY ===', {
     hasData: !!data,
     dataKeys: data ? Object.keys(data) : [],
+    hasExtractFromPageInlined: typeof extractFromPageInlined === 'function',
     timestamp: Date.now()
   });
   
@@ -157,200 +165,271 @@ export async function processWithoutAI(data) {
   // Check if processing was cancelled
   await checkCancellation('automatic extraction');
 
+  // Check for cached selectors first (if extractFromPageInlined is available and cache is enabled)
+  // Use cached selectors if user has enabled cache usage and cached selectors exist
+  let useCachedSelectors = false;
+  let cachedSelectors = null;
+  
+  if (extractFromPageInlined && data.useCache !== false) {
+    try {
+      const cached = await getCachedSelectors(url);
+      if (cached && cached.selectors) {
+        cachedSelectors = cached.selectors;
+        useCachedSelectors = true;
+        log('⚡ Automatic mode: Using cached selectors (improved accuracy)', {
+          domain: url ? new URL(url).hostname : 'unknown',
+          successCount: cached.successCount || 0,
+          willUseSelectors: true
+        });
+        await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
+      }
+    } catch (cacheError) {
+      logWarn('Failed to check cache in automatic mode (non-critical)', cacheError);
+      // Continue with heuristics if cache check fails
+    }
+  }
+
   const uiLangExtracting = await getUILanguage();
   const extractingStatus = tSync('statusExtractingContent', uiLangExtracting);
   updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
 
-  log('=== processWithoutAI: About to execute script ===', {
-    tabId: tabId,
-    url: url,
-    hasExtractAutomaticallyInlined: typeof extractAutomaticallyInlined === 'function',
-    timestamp: Date.now()
-  });
-
-  // Performance optimization: only collect debug info if LOG_LEVEL is DEBUG (0)
-  // This significantly reduces memory and CPU usage in production
-  const enableDebugInfo = CONFIG.LOG_LEVEL === 0; // 0 = DEBUG level
-
-  // Execute automatic extraction in page context with timeout
+  // Use cached selectors if available and reliable, otherwise use heuristics
   let results;
-  try {
-    log('=== processWithoutAI: Creating timeout and script promises ===', {
-      enableDebugInfo: enableDebugInfo,
-      logLevel: CONFIG.LOG_LEVEL,
-      timestamp: Date.now()
-    });
-    
-    // Add timeout to prevent hanging
-    let timeoutId;
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(async () => {
-        logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
-          timeout: CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT,
-          timestamp: Date.now()
-        });
-        const uiLang = await getUILanguage();
-        reject(new Error(tSync('errorExtractionTimeout', uiLang).replace('{seconds}', String(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT / 1000))));
-      }, CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT);
-    });
-    
-    log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {
+  let extractedContent = null;
+  
+  if (useCachedSelectors && cachedSelectors && extractFromPageInlined) {
+    // Use cached selectors for better accuracy
+    log('=== processWithoutAI: Using cached selectors ===', {
       tabId: tabId,
       url: url,
-      enableDebugInfo: enableDebugInfo,
-      timestamp: Date.now()
-    });
-    
-    const scriptPromise = chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      world: 'MAIN',
-      func: extractAutomaticallyInlined,
-      args: [url, enableDebugInfo] // Pass enableDebugInfo flag
-    });
-    
-    log('=== processWithoutAI: Waiting for Promise.race ===', {
       timestamp: Date.now()
     });
     
     try {
-      results = await Promise.race([scriptPromise, timeoutPromise]);
-      // Clear timeout if script completed successfully
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-    } catch (error) {
-      // Clear timeout on error too
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
+      await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
+      extractedContent = await extractContentWithSelectors(tabId, cachedSelectors, url, extractFromPageInlined);
       
-      // Check if error is due to tab being closed
-      if (chrome.runtime.lastError) {
-        const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
-        if (lastError.includes('No tab with id') || lastError.includes('tab was closed') || lastError.includes('Invalid tab ID')) {
-          const uiLang = await getUILanguage();
-          throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
-        }
-      }
+      log('✅ Content extracted using cached selectors', { 
+        title: extractedContent?.title,
+        contentItemsCount: extractedContent?.content?.length || 0
+      });
       
-      // Check if tab is still available
+      // Mark cache success
       try {
-        await chrome.tabs.get(tabId);
-      } catch (tabError) {
-        const uiLang = await getUILanguage();
-        throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
+        await markCacheSuccess(url);
+      } catch (cacheError) {
+        logWarn('Failed to mark cache success (non-critical)', cacheError);
       }
-      
-      throw error;
+    } catch (selectorError) {
+      logWarn('⚠️ Extraction failed with cached selectors, falling back to heuristics', {
+        error: selectorError?.message,
+        willUseHeuristics: true
+      });
+      // Invalidate cache and fall through to heuristics
+      try {
+        await invalidateCache(url);
+      } catch (invalidateError) {
+        logWarn('Failed to invalidate cache (non-critical)', invalidateError);
+      }
+      useCachedSelectors = false;
+      extractedContent = null;
     }
-    
-    log('=== processWithoutAI: Promise.race completed ===', {
-      hasResults: !!results,
-      resultsLength: results?.length,
+  }
+  
+  // If not using cached selectors (or they failed), use heuristics
+  if (!useCachedSelectors || !extractedContent) {
+    log('=== processWithoutAI: Using heuristics (automatic extraction) ===', {
+      tabId: tabId,
+      url: url,
+      hasExtractAutomaticallyInlined: typeof extractAutomaticallyInlined === 'function',
       timestamp: Date.now()
     });
-    
-    log('Automatic extraction executed', { resultsLength: results?.length });
-    
-    // DETAILED LOGGING: Log page information from debugInfo
-    if (results && results[0] && results[0].result && results[0].result.debugInfo) {
-      const debugInfo = results[0].result.debugInfo;
-      
-      if (debugInfo.pageInfo) {
-        log('=== PAGE INFORMATION (FROM EXTRACTION) ===', debugInfo.pageInfo);
-      }
-      
-      if (debugInfo.metaTags) {
-        log('=== META TAGS (FROM EXTRACTION) ===', debugInfo.metaTags);
-      }
-      
-      if (debugInfo.documentStructure) {
-        log('=== DOCUMENT STRUCTURE (FROM EXTRACTION) ===', debugInfo.documentStructure);
-      }
-      
-      if (debugInfo.mainContentPreview) {
-        log('=== MAIN CONTENT PREVIEW (FROM EXTRACTION) ===', debugInfo.mainContentPreview);
-      }
-      
-      if (debugInfo.documentHTMLFull) {
-        log('=== DOCUMENT HTML PREVIEW (FROM EXTRACTION) ===', {
-          documentHTMLPreview: debugInfo.documentHTMLFull.substring(0, 500) + '...',
-          documentHTMLLength: debugInfo.documentHTMLFull?.length || 0
-        });
-      }
-      
-      if (debugInfo.bodyHTMLFull) {
-        const bodyHTMLPreview = debugInfo.bodyHTMLFull.length > 1000 ? debugInfo.bodyHTMLFull.substring(0, 1000) + '...' : debugInfo.bodyHTMLFull;
-        log('=== BODY HTML PREVIEW (FROM EXTRACTION) ===', {
-          bodyHTMLPreview,
-          bodyHTMLLength: debugInfo.bodyHTMLFull?.length || 0
-        });
-      }
-      
-      if (debugInfo.googleTranslateState) {
-        log('=== GOOGLE TRANSLATE STATE (FROM EXTRACTION) ===', debugInfo.googleTranslateState);
-      }
-      
-      if (debugInfo.firstParagraphCheck) {
-        log('=== FIRST PARAGRAPH CHECK (FROM EXTRACTION) ===', debugInfo.firstParagraphCheck);
-      }
-      
-      if (debugInfo.firstParagraphAsSeen) {
-        log('=== FIRST PARAGRAPH AS SEEN BY EXTRACTION SCRIPT ===', debugInfo.firstParagraphAsSeen);
-      }
-      
-      // CRITICAL: Compare HTML from popup vs HTML seen by extraction script
-      // This will show if Google Translate modified DOM before extraction
-      if (data.html && debugInfo.documentHTMLFull) {
-        const popupHTMLPreview = data.html.length > 1000 ? data.html.substring(0, 1000) + '...' : data.html;
-        const extractionHTMLPreview = debugInfo.documentHTMLFull.length > 1000 ? debugInfo.documentHTMLFull.substring(0, 1000) + '...' : debugInfo.documentHTMLFull;
-        log('=== HTML COMPARISON: POPUP vs EXTRACTION SCRIPT ===', {
-          popupHTMLLength: data.html.length,
-          extractionHTMLLength: debugInfo.documentHTMLFull.length,
-          lengthsMatch: data.html.length === debugInfo.documentHTMLFull.length,
-          popupHTMLPreview,
-          extractionHTMLPreview,
-          htmlsMatch: data.html === debugInfo.documentHTMLFull,
-          timestamp: Date.now()
-        });
-      }
-      
-    }
-    
-    // DETAILED LOGGING: Log full extraction result
-    if (results && results[0] && results[0].result) {
-      const extractionResult = results[0].result;
-      log('=== EXTRACTION RESULT DETAILED LOG ===', {
-        title: extractionResult.title,
-        author: extractionResult.author,
-        publishDate: extractionResult.publishDate,
-        detectedLanguage: extractionResult.detectedLanguage,
-        contentItemsCount: extractionResult.content?.length || 0,
+
+    // Performance optimization: only collect debug info if LOG_LEVEL is DEBUG (0)
+    // This significantly reduces memory and CPU usage in production
+    const enableDebugInfo = CONFIG.LOG_LEVEL === 0; // 0 = DEBUG level
+
+    // Execute automatic extraction in page context with timeout
+    try {
+      log('=== processWithoutAI: Creating timeout and script promises ===', {
+        enableDebugInfo: enableDebugInfo,
+        logLevel: CONFIG.LOG_LEVEL,
         timestamp: Date.now()
       });
       
-      // Log content items summary only (no full text to reduce log size)
-      if (extractionResult.content && Array.isArray(extractionResult.content)) {
-        const itemsByType = extractionResult.content.reduce((acc, item) => {
-          acc[item.type] = (acc[item.type] || 0) + 1;
-          return acc;
-        }, {});
-        const totalTextLength = extractionResult.content.reduce((sum, item) => {
-          return sum + ((item.text || item.html || '').length);
-        }, 0);
+      // Add timeout to prevent hanging
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(async () => {
+          logError('=== processWithoutAI: TIMEOUT TRIGGERED ===', {
+            timeout: CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT,
+            timestamp: Date.now()
+          });
+          const uiLang = await getUILanguage();
+          reject(new Error(tSync('errorExtractionTimeout', uiLang).replace('{seconds}', String(CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT / 1000))));
+        }, CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT);
+      });
+      
+      log('=== processWithoutAI: Calling chrome.scripting.executeScript ===', {
+        tabId: tabId,
+        url: url,
+        enableDebugInfo: enableDebugInfo,
+        timestamp: Date.now()
+      });
+      
+      const scriptPromise = chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        world: 'MAIN',
+        func: extractAutomaticallyInlined,
+        args: [url, enableDebugInfo] // Pass enableDebugInfo flag
+      });
+      
+      log('=== processWithoutAI: Waiting for Promise.race ===', {
+        timestamp: Date.now()
+      });
+      
+      try {
+        results = await Promise.race([scriptPromise, timeoutPromise]);
+        // Clear timeout if script completed successfully
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      } catch (error) {
+        // Clear timeout on error too
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
         
-        log('=== EXTRACTED CONTENT ITEMS (SUMMARY) ===', {
-          totalItems: extractionResult.content.length,
-          itemsByType,
-          totalTextLength,
-          avgTextLength: Math.round(totalTextLength / extractionResult.content.length),
-          note: 'Full text logging removed to reduce log size'
-        });
+        // Check if error is due to tab being closed
+        if (chrome.runtime.lastError) {
+          const lastError = chrome.runtime.lastError.message || String(chrome.runtime.lastError);
+          if (lastError.includes('No tab with id') || lastError.includes('tab was closed') || lastError.includes('Invalid tab ID')) {
+            const uiLang = await getUILanguage();
+            throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
+          }
+        }
+        
+        // Check if tab is still available
+        try {
+          await chrome.tabs.get(tabId);
+        } catch (tabError) {
+          const uiLang = await getUILanguage();
+          throw new Error(tSync('errorTabClosedDuringProcessing', uiLang));
+        }
+        
+        throw error;
       }
-    }
-  } catch (scriptError) {
+      
+      log('=== processWithoutAI: Promise.race completed ===', {
+        hasResults: !!results,
+        resultsLength: results?.length,
+        timestamp: Date.now()
+      });
+      
+      log('Automatic extraction executed', { resultsLength: results?.length });
+      
+      // DETAILED LOGGING: Log page information from debugInfo
+      if (results && results[0] && results[0].result && results[0].result.debugInfo) {
+        const debugInfo = results[0].result.debugInfo;
+        
+        if (debugInfo.pageInfo) {
+          log('=== PAGE INFORMATION (FROM EXTRACTION) ===', debugInfo.pageInfo);
+        }
+        
+        if (debugInfo.metaTags) {
+          log('=== META TAGS (FROM EXTRACTION) ===', debugInfo.metaTags);
+        }
+        
+        if (debugInfo.documentStructure) {
+          log('=== DOCUMENT STRUCTURE (FROM EXTRACTION) ===', debugInfo.documentStructure);
+        }
+        
+        if (debugInfo.mainContentPreview) {
+          log('=== MAIN CONTENT PREVIEW (FROM EXTRACTION) ===', debugInfo.mainContentPreview);
+        }
+        
+        if (debugInfo.documentHTMLFull) {
+          log('=== DOCUMENT HTML PREVIEW (FROM EXTRACTION) ===', {
+            documentHTMLPreview: debugInfo.documentHTMLFull.substring(0, 500) + '...',
+            documentHTMLLength: debugInfo.documentHTMLFull?.length || 0
+          });
+          
+        }
+        
+        if (debugInfo.bodyHTMLFull) {
+          const bodyHTMLPreview = debugInfo.bodyHTMLFull.length > 1000 ? debugInfo.bodyHTMLFull.substring(0, 1000) + '...' : debugInfo.bodyHTMLFull;
+          log('=== BODY HTML PREVIEW (FROM EXTRACTION) ===', {
+            bodyHTMLPreview,
+            bodyHTMLLength: debugInfo.bodyHTMLFull?.length || 0
+          });
+          
+        }
+        
+        if (debugInfo.googleTranslateState) {
+          log('=== GOOGLE TRANSLATE STATE (FROM EXTRACTION) ===', debugInfo.googleTranslateState);
+        }
+        
+        if (debugInfo.firstParagraphCheck) {
+          log('=== FIRST PARAGRAPH CHECK (FROM EXTRACTION) ===', debugInfo.firstParagraphCheck);
+        }
+        
+        if (debugInfo.firstParagraphAsSeen) {
+          log('=== FIRST PARAGRAPH AS SEEN BY EXTRACTION SCRIPT ===', debugInfo.firstParagraphAsSeen);
+        }
+        
+        
+        // CRITICAL: Compare HTML from popup vs HTML seen by extraction script
+        // This will show if Google Translate modified DOM before extraction
+        if (data.html && debugInfo.documentHTMLFull) {
+          const popupHTMLPreview = data.html.length > 1000 ? data.html.substring(0, 1000) + '...' : data.html;
+          const extractionHTMLPreview = debugInfo.documentHTMLFull.length > 1000 ? debugInfo.documentHTMLFull.substring(0, 1000) + '...' : debugInfo.documentHTMLFull;
+          log('=== HTML COMPARISON: POPUP vs EXTRACTION SCRIPT ===', {
+            popupHTMLLength: data.html.length,
+            extractionHTMLLength: debugInfo.documentHTMLFull.length,
+            lengthsMatch: data.html.length === debugInfo.documentHTMLFull.length,
+            popupHTMLPreview,
+            extractionHTMLPreview,
+            htmlsMatch: data.html === debugInfo.documentHTMLFull,
+            timestamp: Date.now()
+          });
+        }
+      }
+      
+      // DETAILED LOGGING: Log full extraction result
+      if (results && results[0] && results[0].result) {
+        const extractionResult = results[0].result;
+        log('=== EXTRACTION RESULT DETAILED LOG ===', {
+          title: extractionResult.title,
+          author: extractionResult.author,
+          publishDate: extractionResult.publishDate,
+          detectedLanguage: extractionResult.detectedLanguage,
+          contentItemsCount: extractionResult.content?.length || 0,
+          timestamp: Date.now()
+        });
+        
+        // Log content items summary only (no full text to reduce log size)
+        if (extractionResult.content && Array.isArray(extractionResult.content)) {
+          const itemsByType = extractionResult.content.reduce((acc, item) => {
+            acc[item.type] = (acc[item.type] || 0) + 1;
+            return acc;
+          }, {});
+          const totalTextLength = extractionResult.content.reduce((sum, item) => {
+            return sum + ((item.text || item.html || '').length);
+          }, 0);
+          
+          log('=== EXTRACTED CONTENT ITEMS (SUMMARY) ===', {
+            totalItems: extractionResult.content.length,
+            itemsByType,
+            totalTextLength,
+            avgTextLength: Math.round(totalTextLength / extractionResult.content.length),
+            note: 'Full text logging removed to reduce log size'
+          });
+          
+        }
+      }
+    } catch (scriptError) {
     logError('=== processWithoutAI: Script execution FAILED ===', {
       error: scriptError?.message || String(scriptError),
       errorStack: scriptError?.stack,
@@ -375,56 +454,82 @@ export async function processWithoutAI(data) {
     }
     const errorMsg = scriptError instanceof Error ? scriptError.message : 'Unknown error';
     throw new Error(tSync('errorExtractionExecutionFailed', uiLang).replace('{error}', errorMsg));
+    }
   }
 
-  log('=== processWithoutAI: Validating results ===', {
-    hasResults: !!results,
-    resultsLength: results?.length,
-    hasFirstResult: !!results?.[0],
-    firstResultKeys: results?.[0] ? Object.keys(results[0]) : [],
-    timestamp: Date.now()
-  });
-
-  if (!results || !results[0]) {
-    logError('=== processWithoutAI: Empty results ===', {
-      results: results,
-      timestamp: Date.now()
-    });
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('errorExtractionEmptyResults', uiLang));
-  }
-
-  if (results[0].error) {
-    const error = results[0].error;
-    logError('=== processWithoutAI: Result contains error ===', {
-      error: error,
-      timestamp: Date.now()
-    });
-    logError('Automatic extraction error', error);
-    const uiLang = await getUILanguage();
-    const errorMsg = error && typeof error === 'object' && 'message' in error ? error.message : String(error);
-    throw new Error(tSync('errorExtractionError', uiLang).replace('{error}', errorMsg));
-  }
-
-  /** @type {import('../types.js').InjectionResult} */
-  const automaticResult = results[0].result;
+  // Determine which result to use: cached selectors or heuristics
+  let result;
   
-  if (!automaticResult) {
-    logError('=== processWithoutAI: No result in results[0] ===', {
-      results0Keys: Object.keys(results[0]),
+  if (useCachedSelectors && extractedContent) {
+    // Use result from cached selectors
+    log('=== processWithoutAI: Using result from cached selectors ===', {
+      hasExtractedContent: !!extractedContent,
+      contentItemsCount: extractedContent?.content?.length || 0,
       timestamp: Date.now()
     });
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('errorExtractionNoResult', uiLang));
-  }
-  
-  log('=== processWithoutAI: Results validated successfully ===', {
-    hasResult: !!automaticResult,
-    resultKeys: automaticResult ? Object.keys(automaticResult) : [],
-    timestamp: Date.now()
-  });
+    
+    if (!extractedContent || !extractedContent.content) {
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorNoContentExtracted', uiLang));
+    }
+    
+    if (extractedContent.content.length === 0) {
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorContentEmpty', uiLang));
+    }
+    
+    result = extractedContent;
+  } else {
+    // Use result from heuristics
+    log('=== processWithoutAI: Validating results from heuristics ===', {
+      hasResults: !!results,
+      resultsLength: results?.length,
+      hasFirstResult: !!results?.[0],
+      firstResultKeys: results?.[0] ? Object.keys(results[0]) : [],
+      timestamp: Date.now()
+    });
 
-  const result = automaticResult;
+    if (!results || !results[0]) {
+      logError('=== processWithoutAI: Empty results ===', {
+        results: results,
+        timestamp: Date.now()
+      });
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorExtractionEmptyResults', uiLang));
+    }
+
+    if (results[0].error) {
+      const error = results[0].error;
+      logError('=== processWithoutAI: Result contains error ===', {
+        error: error,
+        timestamp: Date.now()
+      });
+      logError('Automatic extraction error', error);
+      const uiLang = await getUILanguage();
+      const errorMsg = error && typeof error === 'object' && 'message' in error ? error.message : String(error);
+      throw new Error(tSync('errorExtractionError', uiLang).replace('{error}', errorMsg));
+    }
+
+    /** @type {import('../types.js').InjectionResult} */
+    const automaticResult = results[0].result;
+    
+    if (!automaticResult) {
+      logError('=== processWithoutAI: No result in results[0] ===', {
+        results0Keys: Object.keys(results[0]),
+        timestamp: Date.now()
+      });
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorExtractionNoResult', uiLang));
+    }
+    
+    log('=== processWithoutAI: Results validated successfully ===', {
+      hasResult: !!automaticResult,
+      resultKeys: automaticResult ? Object.keys(automaticResult) : [],
+      timestamp: Date.now()
+    });
+
+    result = automaticResult;
+  }
   const imageCount = result.content ? result.content.filter(item => item.type === 'image').length : 0;
   
   // Log debug info if available and LOG_LEVEL is DEBUG (0)
@@ -445,6 +550,14 @@ export async function processWithoutAI(data) {
       contentTypes: result.debugInfo.contentTypes,
       finalContentTypes: result.debugInfo.finalContentTypes,
       duplicateHeadingsRemoved: result.debugInfo.duplicateHeadingsRemoved
+    });
+  }
+
+  // Always log extractionLogs if available (for Wikipedia debugging)
+  if (result.debugInfo?.extractionLogs?.length > 0) {
+    log('Extraction logs', {
+      logCount: result.debugInfo.extractionLogs.length,
+      logs: result.debugInfo.extractionLogs
     });
   }
   
@@ -930,9 +1043,9 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
 /**
  * Extract content using selectors (executes script in page context)
  * @param {number} tabId - Tab ID
- * @param {{title?: string, content?: string, author?: string, date?: string, [key: string]: string|undefined}} selectors - Selectors object from AI
+ * @param {import('../types.js').SelectorResult} selectors - Selectors object from AI
  * @param {string} baseUrl - Base URL for resolving relative links
- * @param {(selectors: Record<string, string|undefined>, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
+ * @param {(selectors: import('../types.js').SelectorResult, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
  * @returns {Promise<import('../types.js').InjectionResult>} Extracted content result
  */
 export async function extractContentWithSelectors(tabId, selectors, baseUrl, extractFromPageInlined) {

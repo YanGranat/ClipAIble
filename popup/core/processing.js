@@ -203,8 +203,20 @@ export function initProcessing(deps) {
     // Get title from various sources
     let pageTitle = document.title;
     const h1 = document.querySelector('h1');
-    if (h1 && h1.textContent.trim()) {
-      pageTitle = h1.textContent.trim();
+    if (h1) {
+      // Clean title from Wikipedia edit section spans
+      const titleMain = h1.querySelector('.mw-page-title-main');
+      if (titleMain) {
+        pageTitle = titleMain.textContent.trim();
+      } else {
+        const clone = h1.cloneNode(true);
+        clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
+        const cleanTitle = clone.textContent.trim();
+        // Only use h1 if it's not just numbers (avoid counters/views on some sites)
+        if (cleanTitle && !/^\d+$/.test(cleanTitle.trim())) {
+          pageTitle = cleanTitle;
+        }
+      }
     }
     
     const images = Array.from(document.querySelectorAll('img')).map(img => ({
@@ -354,8 +366,17 @@ export function initProcessing(deps) {
                 // Get title from various sources
                 let pageTitle = document.title;
                 const h1 = document.querySelector('h1');
-                if (h1 && h1.textContent.trim()) {
-                  pageTitle = h1.textContent.trim();
+                if (h1) {
+                  // Clean title from Wikipedia edit section spans
+                  const titleMain = h1.querySelector('.mw-page-title-main');
+                  if (titleMain) {
+                    pageTitle = titleMain.textContent.trim();
+                  } else {
+                    const clone = h1.cloneNode(true);
+                    clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
+                    const cleanTitle = clone.textContent.trim();
+                    if (cleanTitle) pageTitle = cleanTitle;
+                  }
                 }
                 
                 const images = Array.from(document.querySelectorAll('img')).map(img => ({

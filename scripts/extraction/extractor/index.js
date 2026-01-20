@@ -155,7 +155,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     // Main extraction path
     if (mainContent) {
       // Collect candidate elements
-      const allElements = collectCandidateElements(mainContent);
+      const allElements = collectCandidateElements(mainContent, win);
       
       if (debugInfo) {
         debugInfo.foundElements = allElements.length;

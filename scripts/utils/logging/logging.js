@@ -197,6 +197,118 @@ export function log(message, data = null) {
 }
 
 /**
+ * Log a large string in chunks to avoid console truncation.
+ * Intended for debugging (HTML snapshots, large JSON, etc.).
+ *
+ * Notes:
+ * - This function is safe in service worker and page/offscreen contexts.
+ * - Chunks are logged as plain strings (no objects) to maximize visibility.
+ *
+ * @param {string} label - Human-readable label for grouping.
+ * @param {string} text - Large text to log.
+ * @param {{chunkSize?: number, meta?: any, level?: 'info'|'debug'}} [options]
+ */
+export function logLargeString(label, text, options = {}) {
+  const level = options.level || 'info';
+  const chunkSize = Math.max(256, Math.min(10000, options.chunkSize || 2000));
+  const meta = options.meta || null;
+  
+  const should =
+    level === 'debug'
+      ? shouldLog(LOG_LEVELS.DEBUG)
+      : shouldLog(LOG_LEVELS.INFO);
+  if (!should) return;
+  
+  const safeText = typeof text === 'string' ? text : String(text ?? '');
+  const totalLength = safeText.length;
+  const totalChunks = totalLength === 0 ? 1 : Math.ceil(totalLength / chunkSize);
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const timestamp = getTimestamp();
+  
+  const startMsg = `${LOG_PREFIX} [${timestamp}] === LARGE_LOG_START label=${label} id=${id} len=${totalLength} chunkSize=${chunkSize} chunks=${totalChunks} ===`;
+  console.log(startMsg, meta || '');
+  
+  // Add to unlimited log collection if available (bypasses Chrome console limit)
+  try {
+    if (typeof self !== 'undefined') {
+      /** @type {import('../../types.js').ServiceWorkerWithLogging} */
+      const selfWithLogging = self;
+      if (typeof selfWithLogging.addLogToCollection === 'function') {
+        selfWithLogging.addLogToCollection(startMsg, meta, 'log');
+      }
+    }
+  } catch (e) {
+    // Ignore
+  }
+  
+  if (totalLength === 0) {
+    const emptyMsg = `${LOG_PREFIX} [${timestamp}] === LARGE_LOG_EMPTY label=${label} id=${id} ===`;
+    console.log(emptyMsg);
+    try {
+      if (typeof self !== 'undefined') {
+        /** @type {import('../../types.js').ServiceWorkerWithLogging} */
+        const selfWithLogging = self;
+        if (typeof selfWithLogging.addLogToCollection === 'function') {
+          selfWithLogging.addLogToCollection(emptyMsg, null, 'log');
+        }
+      }
+    } catch (e) {
+    }
+    return;
+  }
+  
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * chunkSize;
+    const chunk = safeText.substring(start, start + chunkSize);
+    const header = `${LOG_PREFIX} [${timestamp}] === LARGE_LOG_CHUNK label=${label} id=${id} ${i + 1}/${totalChunks} offset=${start} len=${chunk.length} ===`;
+    console.log(header);
+    console.log(chunk);
+    
+    try {
+      if (typeof self !== 'undefined') {
+        /** @type {import('../../types.js').ServiceWorkerWithLogging} */
+        const selfWithLogging = self;
+        if (typeof selfWithLogging.addLogToCollection === 'function') {
+          selfWithLogging.addLogToCollection(header, null, 'log');
+          selfWithLogging.addLogToCollection(chunk, null, 'log');
+        }
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+  
+  const endMsg = `${LOG_PREFIX} [${timestamp}] === LARGE_LOG_END label=${label} id=${id} len=${totalLength} chunks=${totalChunks} ===`;
+  console.log(endMsg);
+  try {
+    if (typeof self !== 'undefined') {
+      /** @type {import('../../types.js').ServiceWorkerWithLogging} */
+      const selfWithLogging = self;
+      if (typeof selfWithLogging.addLogToCollection === 'function') {
+        selfWithLogging.addLogToCollection(endMsg, null, 'log');
+      }
+    }
+  } catch (e) {
+  }
+}
+
+/**
+ * Log a large JSON-serializable value as chunked text.
+ * @param {string} label
+ * @param {*} value
+ * @param {{chunkSize?: number, meta?: any, level?: 'info'|'debug'}} [options]
+ */
+export function logLargeJson(label, value, options = {}) {
+  let text;
+  try {
+    text = JSON.stringify(value, null, 2);
+  } catch (e) {
+    text = String(value ?? '');
+  }
+  logLargeString(label, text, options);
+}
+
+/**
  * Log error message with timestamp and optional error details
  * @param {string} message - Error message
  * @param {Error|*} error - Optional error object (will be sanitized)

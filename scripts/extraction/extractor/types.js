@@ -127,6 +127,7 @@
  * @typedef {Object} ExtractionState
  * @property {Set<string>} processedImages - Set of processed image URLs (normalized)
  * @property {Set<string>} addedHeadings - Set of added heading texts (normalized)
+ * @property {Set<string>} addedParagraphs - Set of added paragraph texts (normalized)
  * @property {string} mainTitleText - Main title text (normalized)
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing

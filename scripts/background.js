@@ -311,6 +311,9 @@ try {
     // Create wrapper for processWithSelectorMode that includes extractFromPageInlined
     const processWithSelectorModeWrapper = (data) => processWithSelectorMode(data, extractFromPageInlined);
     
+    // Create wrapper for processWithoutAI that includes extractFromPageInlined (for cached selectors support)
+    const processWithoutAIWrapper = (data) => processWithoutAI(data, extractFromPageInlined);
+    
     // Create wrapper for startArticleProcessing that includes extractFromPageInlined
     const startArticleProcessingWrapperForMessage = (data) => startArticleProcessing(data, extractFromPageInlined);
     
@@ -318,7 +321,7 @@ try {
       startArticleProcessing: startArticleProcessingWrapperForMessage,
       processWithSelectorMode: processWithSelectorModeWrapper,
       processWithExtractMode,
-      processWithoutAI,
+      processWithoutAI: processWithoutAIWrapper,
       stopKeepAlive,
       addLogToCollection,
       exportAllLogsToFile,
@@ -499,6 +502,9 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   function getFormattedHtml(element) {
     const clone = element.cloneNode(true);
+    
+    // Remove Wikipedia edit section spans (all languages use same class)
+    clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
     
     // CRITICAL: Remove data-footnote* attributes that contain HTML-encoded text
     // These attributes can leak HTML-encoded content (with attributes) into the final text
@@ -922,12 +928,28 @@ export function extractFromPageInlined(selectors, baseUrl) {
     debugInfo.containerSelector = 'body';
   }
   
+  // Helper function to extract clean title text from element
+  // Handles Wikipedia-style edit section spans that pollute title text
+  function getCleanTitleText(element) {
+    if (!element) return '';
+    // Wikipedia: check for .mw-page-title-main which contains clean title
+    const titleMain = element.querySelector('.mw-page-title-main');
+    if (titleMain) return titleMain.textContent.trim();
+    // Clone element and remove edit section spans before getting text
+    const clone = element.cloneNode(true);
+    // Remove Wikipedia edit sections (all languages use same class)
+    clone.querySelectorAll('.mw-editsection').forEach(el => el.remove());
+    // Remove any other common edit/action spans
+    clone.querySelectorAll('[class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
+    return clone.textContent.trim();
+  }
+  
   // Get title
   let articleTitle = '';
   if (selectors.title) {
     try { 
       const titleEl = document.querySelector(selectors.title); 
-      if (titleEl) articleTitle = titleEl.textContent.trim(); 
+      if (titleEl) articleTitle = getCleanTitleText(titleEl); 
     } catch (e) {
       // Invalid title selector from AI - fallback to default title extraction (graceful degradation)
       // This is expected - AI may provide invalid selectors, we use fallback below
@@ -937,14 +959,13 @@ export function extractFromPageInlined(selectors, baseUrl) {
     const allArticles = document.querySelectorAll('main article');
     if (allArticles.length > 1) {
       const h1OutsideMain = Array.from(document.querySelectorAll('h1')).find(h1 => !h1.closest('main'));
-      if (h1OutsideMain) articleTitle = h1OutsideMain.textContent.trim();
+      if (h1OutsideMain) articleTitle = getCleanTitleText(h1OutsideMain);
     }
   }
-  if (!articleTitle) { const h1 = document.querySelector('h1'); if (h1) articleTitle = h1.textContent.trim(); }
+  if (!articleTitle) { const h1 = document.querySelector('h1'); if (h1) articleTitle = getCleanTitleText(h1); }
   
-  // Clean title from service data immediately after extraction
+  // Clean title from service data and residual edit patterns
   // Note: cleanTitleFromServiceTokens is not available in page context, so we inline the logic here
-  // This is the only place where we need to clean title in page context
   if (articleTitle && typeof articleTitle === 'string') {
     let cleaned = articleTitle;
     cleaned = cleaned.replace(/budgettoken[_\s]*budget\d*/gi, '');
@@ -952,6 +973,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
     cleaned = cleaned.replace(/token/gi, '');
     cleaned = cleaned.replace(/budget\w+/gi, '');
     cleaned = cleaned.replace(/#+/g, '');
+    // Remove Wikipedia-style edit links that might remain as text: [edit], [ред.], [редагувати], etc.
+    // Pattern matches: [text] or [text | text] at end of string where text is short edit-related words
+    cleaned = cleaned.replace(/\s*\[[^\]]{1,30}\s*\|\s*[^\]]{1,30}\]\s*$/g, '');
+    cleaned = cleaned.replace(/\s*\[(edit|ред\.?|редагувати|править|editar|modifier|bearbeiten|編集|编辑|편집)[^\]]*\]\s*$/gi, '');
     cleaned = cleaned.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
     cleaned = cleaned.replace(/^[_\s-]+|[_\s-]+$/g, '');
     articleTitle = cleaned || articleTitle;

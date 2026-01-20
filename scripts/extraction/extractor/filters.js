@@ -220,8 +220,8 @@ export function isExcluded(win, element, constants) {
   const textLower = text.toLowerCase();
   const textTrimmed = text.trim();
   
-  // Email input = likely newsletter
-  if (element.querySelector && element.querySelector('input[type="email"]')) {
+  // Email input = likely newsletter (skip for semantic containers like article/main)
+  if (!isSemanticContainer && element.querySelector && element.querySelector('input[type="email"]')) {
     const hasNewsletterText = textLower.includes('newsletter') || 
                              textLower.includes('subscribe') ||
                              textLower.includes('signup');
@@ -272,9 +272,9 @@ export function isExcluded(win, element, constants) {
     }
   }
   
-  // Newsletter blocks
-  if (textLower.includes('sign up to our newsletter') || 
-      (textLower.includes('newsletter') && textLower.includes('subscribe'))) {
+  // Newsletter blocks (skip for semantic containers)
+  if (!isSemanticContainer && (textLower.includes('sign up to our newsletter') || 
+      (textLower.includes('newsletter') && textLower.includes('subscribe')))) {
     return true;
   }
   

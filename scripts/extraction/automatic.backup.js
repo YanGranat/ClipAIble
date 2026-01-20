@@ -2653,11 +2653,6 @@ function isStandfirstText(text, standfirstText) {
 // --- Parse ---
 function collectCandidateElements(mainContent, win) {
   const hostname = win?.location?.hostname || "";
-  console.log("[ClipAIble Extraction] collectCandidateElements called", {
-    hostname,
-    mainContentTag: mainContent?.tagName,
-    mainContentClass: mainContent?.className?.substring?.(0, 50)
-  });
   if (hostname.includes("habr.com")) {
     const articleBody = mainContent.querySelector(".article-formatted-body");
     if (articleBody) {
@@ -2670,21 +2665,11 @@ function collectCandidateElements(mainContent, win) {
   }
   if (hostname.includes("nature.com") || hostname.includes("springer.com") || hostname.includes("biomedcentral.com") || hostname.includes("springernature.com")) {
     const cArticleBody = mainContent.querySelector(".c-article-body");
-    console.log("[ClipAIble Extraction] Nature/Springer detected", {
-      hasCArticleBody: !!cArticleBody,
-      textLength: cArticleBody?.textContent?.length || 0,
-      paragraphs: cArticleBody?.querySelectorAll("p")?.length || 0
-    });
     if (cArticleBody) {
       const text = cArticleBody.textContent?.trim() || "";
       const paragraphs = cArticleBody.querySelectorAll("p").length;
       if (text.length > 1e3 && paragraphs > 5) {
-        const elements = Array.from(cArticleBody.querySelectorAll(CANDIDATE_SELECTOR));
-        console.log("[ClipAIble Extraction] Using c-article-body", {
-          elementsCount: elements.length,
-          figures: elements.filter((e) => e.tagName === "FIGURE").length
-        });
-        return elements;
+        return Array.from(cArticleBody.querySelectorAll(CANDIDATE_SELECTOR));
       }
     }
     const articleSections = mainContent.querySelectorAll(".c-article-section__content");
@@ -2830,15 +2815,9 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
     const tagName = el.tagName.toLowerCase();
     const isImageOrFigure = tagName === "img" || tagName === "figure";
     if (isExcluded(win, el, constants)) {
-      if (isImageOrFigure) {
+      if (isImageOrFigure)
         excludedImageCount++;
-        console.log("[ClipAIble Extraction] Excluded image/figure", {
-          tag: tagName,
-          className: el.className?.substring?.(0, 40) || "",
-          parentClass: el.parentElement?.className?.substring?.(0, 40) || "",
-          src: tagName === "img" ? el.src?.substring?.(0, 50) : el.querySelector?.("img")?.src?.substring?.(0, 50)
-        });
-      } else
+      else
         excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
       return false;
     }

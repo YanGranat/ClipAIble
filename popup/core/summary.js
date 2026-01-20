@@ -650,11 +650,30 @@ export function initSummary(deps) {
           log('About to execute script to get page HTML...');
           const htmlResult = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            func: () => ({
-              html: document.documentElement.outerHTML,
-              url: window.location.href,
-              title: document.title
-            })
+            func: () => {
+              // Get clean title - prefer h1 over document.title, but avoid numeric-only h1
+              let pageTitle = document.title;
+              const h1 = document.querySelector('h1');
+              if (h1) {
+                const titleMain = h1.querySelector('.mw-page-title-main');
+                if (titleMain) {
+                  pageTitle = titleMain.textContent.trim();
+                } else {
+                  const clone = h1.cloneNode(true);
+                  clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
+                  const cleanTitle = clone.textContent.trim();
+                  // Only use h1 if it's not just numbers (avoid counters/views on some sites)
+                  if (cleanTitle && !/^\d+$/.test(cleanTitle.trim())) {
+                    pageTitle = cleanTitle;
+                  }
+                }
+              }
+              return {
+                html: document.documentElement.outerHTML,
+                url: window.location.href,
+                title: pageTitle
+              };
+            }
           });
           
           if (!htmlResult || !htmlResult[0] || !htmlResult[0].result) {

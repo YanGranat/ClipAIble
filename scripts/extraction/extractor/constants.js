@@ -160,7 +160,7 @@ export function getInlinedConstantsCode() {
     ];
     
     // Candidate element selector (used by parse.js)
-    const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table';
+    const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table, div';
     
     // CONSTANTS object (used by runExtraction)
     const CONSTANTS = {

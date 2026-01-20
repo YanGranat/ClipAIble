@@ -245,12 +245,12 @@ export async function handleStandardArticleProcessing(
   });
   
   // Call processFunction with appropriate arguments
-  // processWithSelectorMode requires extractFromPageInlined as second argument
+  // processWithSelectorMode and processWithoutAI require extractFromPageInlined as second argument
   let processPromise;
   if (mode === 'selector') {
     processPromise = processWithSelectorMode(data, extractFromPageInlined);
   } else if (mode === 'automatic') {
-    processPromise = processWithoutAI(data);
+    processPromise = processWithoutAI(data, extractFromPageInlined);
   } else {
     processPromise = processWithExtractMode(data);
   }

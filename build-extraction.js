@@ -39,6 +39,14 @@ async function build() {
     // Ensure the output directory exists
     await fs.mkdir(outdir, { recursive: true });
     
+    // CRITICAL: Delete old builder bundle to prevent caching issues
+    try {
+      await fs.unlink(builderBundlePath);
+      console.log('🗑️  Cleared old builder bundle cache');
+    } catch (e) {
+      // File doesn't exist, that's fine
+    }
+    
     // Step 1: Bundle the new extractor builder module and its dependencies
     console.log('📦 Bundling extractor builder module...');
     await esbuild.build({
@@ -54,8 +62,10 @@ async function build() {
     });
     
     // Step 2: Import the bundled builder and generate inlined code
+    // CRITICAL: Add timestamp to bust Node.js module cache
     console.log('🔧 Generating inlined function code...');
-    const builderModule = await import(`file://${builderBundlePath}`);
+    const cacheBuster = `?t=${Date.now()}`;
+    const builderModule = await import(`file://${builderBundlePath}${cacheBuster}`);
     
     // Check if we have the new generateExtractAutomaticallyInlined function
     if (typeof builderModule.generateExtractAutomaticallyInlined === 'function') {
