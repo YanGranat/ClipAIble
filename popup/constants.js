@@ -36,6 +36,11 @@ export const STORAGE_KEYS = {
   TEXT_COLOR: 'pdf_text_color',
   HEADING_COLOR: 'pdf_heading_color',
   LINK_COLOR: 'pdf_link_color',
+  // Custom style settings (separate from current values to preserve user preferences)
+  CUSTOM_BG_COLOR: 'pdf_custom_bg_color',
+  CUSTOM_TEXT_COLOR: 'pdf_custom_text_color',
+  CUSTOM_HEADING_COLOR: 'pdf_custom_heading_color',
+  CUSTOM_LINK_COLOR: 'pdf_custom_link_color',
   THEME: 'popup_theme',
   UI_LANGUAGE: 'ui_language',
   AUDIO_PROVIDER: 'audio_provider',

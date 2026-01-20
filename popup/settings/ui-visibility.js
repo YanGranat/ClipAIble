@@ -37,8 +37,8 @@ export function initUIVisibility(deps) {
   // Show/hide cache option based on mode
   function updateCacheVisibility() {
     const mode = elements.modeSelect.value;
-    // Only show cache option for selector mode
-    elements.useCacheGroup.style.display = mode === 'selector' ? 'flex' : 'none';
+    // Show cache option for both automatic and selector modes
+    elements.useCacheGroup.style.display = (mode === 'automatic' || mode === 'selector') ? 'flex' : 'none';
   }
 
   // Show/hide translation-related UI based on language selection

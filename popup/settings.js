@@ -145,6 +145,10 @@ export function initSettings(deps) {
         STORAGE_KEYS.TEXT_COLOR,
         STORAGE_KEYS.HEADING_COLOR,
         STORAGE_KEYS.LINK_COLOR,
+        STORAGE_KEYS.CUSTOM_BG_COLOR,
+        STORAGE_KEYS.CUSTOM_TEXT_COLOR,
+        STORAGE_KEYS.CUSTOM_HEADING_COLOR,
+        STORAGE_KEYS.CUSTOM_LINK_COLOR,
         STORAGE_KEYS.THEME,
         STORAGE_KEYS.UI_LANGUAGE,
         STORAGE_KEYS.AUDIO_PROVIDER,
@@ -348,7 +352,7 @@ export function initSettings(deps) {
           }
         }
       }
-      
+
       // Load enableCache setting (enable_selector_caching) - INDEPENDENT setting, NO SYNC with useCache
       if (elements.enableCache) {
         const enableCacheValue = result[STORAGE_KEYS.ENABLE_CACHE];
@@ -485,7 +489,7 @@ export function initSettings(deps) {
         elements.fontSize.value = oldToNew[savedSize] || savedSize;
       }
       
-      // Apply colors: if preset is not 'custom', use preset colors; otherwise use saved colors
+      // Apply colors: if preset is not 'custom', use preset colors; otherwise load custom user settings
       if (savedPreset !== 'custom' && STYLE_PRESETS[savedPreset]) {
         // Apply preset colors (always use preset colors, not saved ones)
         const colors = STYLE_PRESETS[savedPreset];
@@ -498,38 +502,66 @@ export function initSettings(deps) {
         elements.linkColor.value = colors.linkColor;
         elements.linkColorText.value = colors.linkColor;
       } else {
-        // Load custom colors from storage (only for 'custom' preset)
-        if (result[STORAGE_KEYS.BG_COLOR]) {
-          const bgColor = String(result[STORAGE_KEYS.BG_COLOR]);
-          elements.bgColor.value = bgColor;
-          elements.bgColorText.value = bgColor;
+        // Load custom user colors from dedicated storage keys (preserve user preferences)
+        // First check if custom settings exist, otherwise migrate from old current values
+        let bgColor = result[STORAGE_KEYS.CUSTOM_BG_COLOR];
+        let textColor = result[STORAGE_KEYS.CUSTOM_TEXT_COLOR];
+        let headingColor = result[STORAGE_KEYS.CUSTOM_HEADING_COLOR];
+        let linkColor = result[STORAGE_KEYS.CUSTOM_LINK_COLOR];
+
+        // Migration: if custom settings don't exist but old current values do, copy them
+        const needsMigration = !bgColor && !textColor && !headingColor && !linkColor;
+        if (needsMigration && (result[STORAGE_KEYS.BG_COLOR] || result[STORAGE_KEYS.TEXT_COLOR] || result[STORAGE_KEYS.HEADING_COLOR] || result[STORAGE_KEYS.LINK_COLOR])) {
+          log('loadSettings: Migrating existing custom colors to dedicated storage keys');
+          const migrationData = {};
+          if (result[STORAGE_KEYS.BG_COLOR]) migrationData[STORAGE_KEYS.CUSTOM_BG_COLOR] = result[STORAGE_KEYS.BG_COLOR];
+          if (result[STORAGE_KEYS.TEXT_COLOR]) migrationData[STORAGE_KEYS.CUSTOM_TEXT_COLOR] = result[STORAGE_KEYS.TEXT_COLOR];
+          if (result[STORAGE_KEYS.HEADING_COLOR]) migrationData[STORAGE_KEYS.CUSTOM_HEADING_COLOR] = result[STORAGE_KEYS.HEADING_COLOR];
+          if (result[STORAGE_KEYS.LINK_COLOR]) migrationData[STORAGE_KEYS.CUSTOM_LINK_COLOR] = result[STORAGE_KEYS.LINK_COLOR];
+
+          try {
+            await chrome.storage.local.set(migrationData);
+            bgColor = migrationData[STORAGE_KEYS.CUSTOM_BG_COLOR];
+            textColor = migrationData[STORAGE_KEYS.CUSTOM_TEXT_COLOR];
+            headingColor = migrationData[STORAGE_KEYS.CUSTOM_HEADING_COLOR];
+            linkColor = migrationData[STORAGE_KEYS.CUSTOM_LINK_COLOR];
+          } catch (error) {
+            logError('Failed to migrate custom colors', error);
+          }
+        }
+
+        // Apply custom colors (or defaults if none exist)
+        if (bgColor) {
+          const bgColorStr = String(bgColor);
+          elements.bgColor.value = bgColorStr;
+          elements.bgColorText.value = bgColorStr;
         } else {
           elements.bgColor.value = DEFAULT_STYLES.bgColor;
           elements.bgColorText.value = DEFAULT_STYLES.bgColor;
         }
-        
-        if (result[STORAGE_KEYS.TEXT_COLOR]) {
-          const textColor = String(result[STORAGE_KEYS.TEXT_COLOR]);
-          elements.textColor.value = textColor;
-          elements.textColorText.value = textColor;
+
+        if (textColor) {
+          const textColorStr = String(textColor);
+          elements.textColor.value = textColorStr;
+          elements.textColorText.value = textColorStr;
         } else {
           elements.textColor.value = DEFAULT_STYLES.textColor;
           elements.textColorText.value = DEFAULT_STYLES.textColor;
         }
-        
-        if (result[STORAGE_KEYS.HEADING_COLOR]) {
-          const headingColor = String(result[STORAGE_KEYS.HEADING_COLOR]);
-          elements.headingColor.value = headingColor;
-          elements.headingColorText.value = headingColor;
+
+        if (headingColor) {
+          const headingColorStr = String(headingColor);
+          elements.headingColor.value = headingColorStr;
+          elements.headingColorText.value = headingColorStr;
         } else {
           elements.headingColor.value = DEFAULT_STYLES.headingColor;
           elements.headingColorText.value = DEFAULT_STYLES.headingColor;
         }
-        
-        if (result[STORAGE_KEYS.LINK_COLOR]) {
-          const linkColor = String(result[STORAGE_KEYS.LINK_COLOR]);
-          elements.linkColor.value = linkColor;
-          elements.linkColorText.value = linkColor;
+
+        if (linkColor) {
+          const linkColorStr = String(linkColor);
+          elements.linkColor.value = linkColorStr;
+          elements.linkColorText.value = linkColorStr;
         } else {
           elements.linkColor.value = DEFAULT_STYLES.linkColor;
           elements.linkColorText.value = DEFAULT_STYLES.linkColor;

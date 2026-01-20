@@ -35,8 +35,9 @@ export function setupStyleHandlers(deps) {
       }
       
       if (preset !== 'custom' && STYLE_PRESETS[preset]) {
+        // Apply preset colors to UI only (don't save to storage to preserve custom user settings)
         const colors = STYLE_PRESETS[preset];
-        
+
         elements.bgColor.value = colors.bgColor;
         elements.bgColorText.value = colors.bgColor;
         elements.textColor.value = colors.textColor;
@@ -45,17 +46,9 @@ export function setupStyleHandlers(deps) {
         elements.headingColorText.value = colors.headingColor;
         elements.linkColor.value = colors.linkColor;
         elements.linkColorText.value = colors.linkColor;
-        
-        try {
-          await chrome.storage.local.set({
-            [STORAGE_KEYS.BG_COLOR]: colors.bgColor,
-            [STORAGE_KEYS.TEXT_COLOR]: colors.textColor,
-            [STORAGE_KEYS.HEADING_COLOR]: colors.headingColor,
-            [STORAGE_KEYS.LINK_COLOR]: colors.linkColor
-          });
-        } catch (error) {
-          logError('Failed to save preset colors', error);
-        }
+
+        // Note: We don't save preset colors to storage anymore to preserve user's custom settings
+        // When switching back to 'custom', loadSettings() will load the user's saved custom colors
       }
     });
   }
@@ -195,83 +188,88 @@ export function setupStyleHandlers(deps) {
     }
   }
 
+
   // Color handlers - sync picker and text input
   if (elements.bgColor) {
-    elements.bgColor.addEventListener('input', () => { 
-      if (elements.bgColorText) elements.bgColorText.value = elements.bgColor.value; 
+    elements.bgColor.addEventListener('input', () => {
+      if (elements.bgColorText) elements.bgColorText.value = elements.bgColor.value;
     });
     elements.bgColor.addEventListener('change', () => {
       setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.BG_COLOR, elements.bgColor.value);
+      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_BG_COLOR, elements.bgColor.value);
     });
   }
   if (elements.bgColorText) {
     elements.bgColorText.addEventListener('change', () => {
       if (/^#[0-9A-Fa-f]{6}$/.test(elements.bgColorText.value)) {
         elements.bgColor.value = elements.bgColorText.value;
-        debouncedSaveSettings(STORAGE_KEYS.BG_COLOR, elements.bgColorText.value);
-      } else { 
-        if (elements.bgColor) elements.bgColorText.value = elements.bgColor.value; 
+        setPresetToCustom();
+        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_BG_COLOR, elements.bgColorText.value);
+      } else {
+        if (elements.bgColor) elements.bgColorText.value = elements.bgColor.value;
       }
     });
   }
 
   if (elements.textColor) {
-    elements.textColor.addEventListener('input', () => { 
-      if (elements.textColorText) elements.textColorText.value = elements.textColor.value; 
+    elements.textColor.addEventListener('input', () => {
+      if (elements.textColorText) elements.textColorText.value = elements.textColor.value;
     });
     elements.textColor.addEventListener('change', () => {
       setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.TEXT_COLOR, elements.textColor.value);
+      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_TEXT_COLOR, elements.textColor.value);
     });
   }
   if (elements.textColorText) {
     elements.textColorText.addEventListener('change', () => {
       if (/^#[0-9A-Fa-f]{6}$/.test(elements.textColorText.value)) {
         elements.textColor.value = elements.textColorText.value;
-        debouncedSaveSettings(STORAGE_KEYS.TEXT_COLOR, elements.textColorText.value);
-      } else { 
-        if (elements.textColor) elements.textColorText.value = elements.textColor.value; 
+        setPresetToCustom();
+        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_TEXT_COLOR, elements.textColorText.value);
+      } else {
+        if (elements.textColor) elements.textColorText.value = elements.textColor.value;
       }
     });
   }
 
   if (elements.headingColor) {
-    elements.headingColor.addEventListener('input', () => { 
-      if (elements.headingColorText) elements.headingColorText.value = elements.headingColor.value; 
+    elements.headingColor.addEventListener('input', () => {
+      if (elements.headingColorText) elements.headingColorText.value = elements.headingColor.value;
     });
     elements.headingColor.addEventListener('change', () => {
       setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.HEADING_COLOR, elements.headingColor.value);
+      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_HEADING_COLOR, elements.headingColor.value);
     });
   }
   if (elements.headingColorText) {
     elements.headingColorText.addEventListener('change', () => {
       if (/^#[0-9A-Fa-f]{6}$/.test(elements.headingColorText.value)) {
         elements.headingColor.value = elements.headingColorText.value;
-        debouncedSaveSettings(STORAGE_KEYS.HEADING_COLOR, elements.headingColorText.value);
-      } else { 
-        if (elements.headingColor) elements.headingColorText.value = elements.headingColor.value; 
+        setPresetToCustom();
+        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_HEADING_COLOR, elements.headingColorText.value);
+      } else {
+        if (elements.headingColor) elements.headingColorText.value = elements.headingColor.value;
       }
     });
   }
 
   if (elements.linkColor) {
-    elements.linkColor.addEventListener('input', () => { 
-      if (elements.linkColorText) elements.linkColorText.value = elements.linkColor.value; 
+    elements.linkColor.addEventListener('input', () => {
+      if (elements.linkColorText) elements.linkColorText.value = elements.linkColor.value;
     });
     elements.linkColor.addEventListener('change', () => {
       setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.LINK_COLOR, elements.linkColor.value);
+      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_LINK_COLOR, elements.linkColor.value);
     });
   }
   if (elements.linkColorText) {
     elements.linkColorText.addEventListener('change', () => {
       if (/^#[0-9A-Fa-f]{6}$/.test(elements.linkColorText.value)) {
         elements.linkColor.value = elements.linkColorText.value;
-        debouncedSaveSettings(STORAGE_KEYS.LINK_COLOR, elements.linkColorText.value);
-      } else { 
-        if (elements.linkColor) elements.linkColorText.value = elements.linkColor.value; 
+        setPresetToCustom();
+        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_LINK_COLOR, elements.linkColorText.value);
+      } else {
+        if (elements.linkColor) elements.linkColorText.value = elements.linkColor.value;
       }
     });
   }
