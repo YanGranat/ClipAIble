@@ -48,7 +48,44 @@ export function setupStyleHandlers(deps) {
         elements.linkColorText.value = colors.linkColor;
 
         // Note: We don't save preset colors to storage anymore to preserve user's custom settings
-        // When switching back to 'custom', loadSettings() will load the user's saved custom colors
+        // When switching back to 'custom', the else block below will load the user's saved custom colors
+      } else if (preset === 'custom') {
+        // Load custom user colors from dedicated storage keys and apply to UI
+        try {
+          const result = await chrome.storage.local.get([
+            STORAGE_KEYS.CUSTOM_BG_COLOR,
+            STORAGE_KEYS.CUSTOM_TEXT_COLOR,
+            STORAGE_KEYS.CUSTOM_HEADING_COLOR,
+            STORAGE_KEYS.CUSTOM_LINK_COLOR
+          ]);
+
+          // Apply custom colors (or defaults if none exist)
+          if (result[STORAGE_KEYS.CUSTOM_BG_COLOR]) {
+            const bgColorStr = String(result[STORAGE_KEYS.CUSTOM_BG_COLOR]);
+            elements.bgColor.value = bgColorStr;
+            elements.bgColorText.value = bgColorStr;
+          }
+
+          if (result[STORAGE_KEYS.CUSTOM_TEXT_COLOR]) {
+            const textColorStr = String(result[STORAGE_KEYS.CUSTOM_TEXT_COLOR]);
+            elements.textColor.value = textColorStr;
+            elements.textColorText.value = textColorStr;
+          }
+
+          if (result[STORAGE_KEYS.CUSTOM_HEADING_COLOR]) {
+            const headingColorStr = String(result[STORAGE_KEYS.CUSTOM_HEADING_COLOR]);
+            elements.headingColor.value = headingColorStr;
+            elements.headingColorText.value = headingColorStr;
+          }
+
+          if (result[STORAGE_KEYS.CUSTOM_LINK_COLOR]) {
+            const linkColorStr = String(result[STORAGE_KEYS.CUSTOM_LINK_COLOR]);
+            elements.linkColor.value = linkColorStr;
+            elements.linkColorText.value = linkColorStr;
+          }
+        } catch (error) {
+          logError('Failed to load custom colors when switching to custom preset', error);
+        }
       }
     });
   }
