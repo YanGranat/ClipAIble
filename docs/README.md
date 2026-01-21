@@ -1,4 +1,4 @@
-# 📚 Documentation Translations
+# Documentation Translations
 
 This directory contains README files translated into different languages.
 
@@ -19,8 +19,10 @@ This directory contains README files translated into different languages.
 
 The main English README is located in the project root: [../README.md](../README.md)
 
+## Technical Documentation
+
+Technical documentation for developers: [technical-overview.md](technical-overview.md)
+
 ---
 
-**Note:** All translations are maintained to match the latest version of the main README. If you find any discrepancies or would like to contribute improvements, please open an issue or pull request.
-
-
+All translations are maintained to match the latest version of the main README.
