@@ -92,7 +92,7 @@ export function setupFormatHandlers(deps) {
   if (elements.translateImages) {
     elements.translateImages.addEventListener('change', () => {
       const value = elements.translateImages.checked;
-      debouncedSaveSettings(STORAGE_KEYS.TRANSLATE_IMAGES, value, async () => {
+      debouncedSaveSettings(STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES, value, async () => {
         if (settingsModule) {
           await settingsModule.updateTranslationVisibility();
         }

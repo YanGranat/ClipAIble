@@ -2,12 +2,17 @@
 // Port connection listener for persistent logging from offscreen documents
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * Initialize port connection listener for offscreen document logging
  * @param {import('../types.js').PortListenerDeps} deps - Dependencies object
  * @returns {function(): void} initPortListener function
  */
 export function initPortListener(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  validateDeps(deps, 'PortListenerDeps', 'port-listener');
+
   const {
     log,
     logError,

@@ -4,6 +4,7 @@
 import { log, logWarn } from '../../scripts/utils/logging.js';
 import { formatTime } from './format-helpers.js';
 import { escapeHtml as escapeHtmlUtil } from '../../scripts/utils/html.js';
+import { ELEMENT_IDS } from '../constants.js';
 
 /**
  * Start the timer display updates
@@ -83,7 +84,7 @@ export function updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elemen
     return;
   }
   const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
-  const timerSpan = document.getElementById('timerDisplay');
+  const timerSpan = document.getElementById(ELEMENT_IDS.TIMER_DISPLAY);
   if (timerSpan) {
     timerSpan.textContent = formatTime(elapsed);
   } else {

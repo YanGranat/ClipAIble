@@ -2,12 +2,17 @@
 // Initialization logic for background service worker
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * Initialize extension initialization module with dependencies
  * @param {import('../types.js').InitializationDeps} deps - Dependencies object
  * @returns {function(): void} initExtension function
  */
 export function initInitialization(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  validateDeps(deps, 'InitializationDeps', 'initialization');
+
   const {
     log,
     logWarn,

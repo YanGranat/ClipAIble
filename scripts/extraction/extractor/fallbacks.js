@@ -255,9 +255,13 @@ export function extractWhenMainContentMissing(win, doc, state, constants, baseUr
       
       const absoluteSrc = toAbsoluteUrl(src, baseUrl);
       const normalizedSrc = normalizeImageUrl(absoluteSrc);
-      
+
       if (state.processedImages.has(normalizedSrc)) continue;
-      state.processedImages.add(normalizedSrc);
+
+      // Prevent memory leaks: limit processed images set size
+      if (state.processedImages.size < 1000) {
+        state.processedImages.add(normalizedSrc);
+      }
       
       content.push({
         type: 'image',

@@ -2,12 +2,18 @@
 // Article processing orchestration for background service worker
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * Initialize orchestration module with dependencies
  * @param {import('../types.js').OrchestrationDependencies} deps - Dependencies object
  * @returns {{startArticleProcessing: function(import('../types.js').ProcessingData, Function): Promise<boolean>, continueProcessingPipeline: function(import('../types.js').ProcessingData, import('../types.js').ExtractionResult, import('../types.js').StopKeepAliveFunction?): Promise<void>}} Orchestration functions
  */
 export function initOrchestration(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  // This function has 28+ parameters - validation is absolutely essential
+  validateDeps(deps, 'OrchestrationDependencies', 'orchestration');
+
   const {
     log,
     logWarn,

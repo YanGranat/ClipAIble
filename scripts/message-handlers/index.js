@@ -97,6 +97,50 @@ const VALID_ACTIONS = [
 ];
 
 /**
+ * Validate message sender origin for privileged actions
+ * @param {any} request - Request object
+ * @param {import('../types.js').ChromeRuntimeMessageSender} sender - Sender object
+ * @returns {boolean} True if sender is trusted for this action
+ */
+function validateMessageOrigin(request, sender) {
+  // Define privileged actions that require origin validation
+  const privilegedActions = [
+    'processArticle',
+    'generateSummary',
+    'extractContentOnly',
+    'generatePdfDebugger',
+    'exportSettings',
+    'importSettings'
+  ];
+
+  if (!privilegedActions.includes(request.action)) {
+    return true; // Not a privileged action, allow
+  }
+
+  // For privileged actions, only allow from this extension itself
+  if (!sender.id || sender.id !== chrome.runtime.id) {
+    logWarn('Rejected privileged action from external sender', {
+      action: request.action,
+      senderId: sender.id,
+      expectedId: chrome.runtime.id
+    });
+    return false;
+  }
+
+  // Additional check: sender URL should be from extension context
+  if (sender.url && !sender.url.startsWith(`chrome-extension://${chrome.runtime.id}`)) {
+    logWarn('Rejected privileged action from invalid sender URL', {
+      action: request.action,
+      senderUrl: sender.url,
+      extensionUrl: `chrome-extension://${chrome.runtime.id}`
+    });
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Validate message structure for security
  * @param {any} request - Request object to validate
  * @returns {boolean} True if message structure is valid
@@ -298,11 +342,22 @@ export function routeMessage(request, sender, sendResponse, deps) {
   
   // SECURITY: Validate message structure before processing
   if (!validateMessageStructure(request)) {
-    logError('Invalid message structure rejected', { 
+    logError('Invalid message structure rejected', {
       requestKeys: request ? Object.keys(request) : [],
       requestType: typeof request
     });
     safeSendResponse({ success: false, error: 'Invalid message structure' });
+    return true;
+  }
+
+  // SECURITY: Validate sender origin for privileged actions
+  if (!validateMessageOrigin(request, sender)) {
+    logError('Invalid message origin rejected', {
+      action: request.action,
+      senderId: sender.id,
+      senderUrl: sender.url
+    });
+    safeSendResponse({ success: false, error: 'Invalid sender origin' });
     return true;
   }
   

@@ -6,6 +6,7 @@
 import { log, logError, logWarn } from '../../scripts/utils/logging.js';
 import { getExtensionVersion } from '../../scripts/utils/config.js';
 import { groupDependencies } from './dependencies.js';
+import { ELEMENT_IDS } from '../constants.js';
 
 /**
  * Initialize all DOM elements
@@ -14,68 +15,68 @@ import { groupDependencies } from './dependencies.js';
  */
 export function initializeDOMElements(elements) {
   // API Provider and Keys
-  elements.apiProviderSelect = document.getElementById('apiProviderSelect');
-  elements.apiKey = document.getElementById('apiKey');
-  elements.apiKeyLabel = document.getElementById('apiKeyLabel');
-  elements.apiKeyInputGroup = document.getElementById('apiKeyInputGroup');
-  elements.toggleApiKey = document.getElementById('toggleApiKey');
-  elements.claudeApiKey = document.getElementById('claudeApiKey');
-  elements.toggleClaudeApiKey = document.getElementById('toggleClaudeApiKey');
-  elements.geminiApiKey = document.getElementById('geminiApiKey');
-  elements.toggleGeminiApiKey = document.getElementById('toggleGeminiApiKey');
-  elements.googleApiKey = document.getElementById('googleApiKey');
-  elements.toggleGoogleApiKey = document.getElementById('toggleGoogleApiKey');
-  elements.googleApiGroup = document.getElementById('googleApiGroup');
-  elements.saveGoogleApiKey = document.getElementById('saveGoogleApiKey');
-  elements.saveApiKey = document.getElementById('saveApiKey');
+  elements.apiProviderSelect = document.getElementById(ELEMENT_IDS.API_PROVIDER_SELECT);
+  elements.apiKey = document.getElementById(ELEMENT_IDS.API_KEY);
+  elements.apiKeyLabel = document.getElementById(ELEMENT_IDS.API_KEY_LABEL);
+  elements.apiKeyInputGroup = document.getElementById(ELEMENT_IDS.API_KEY_INPUT_GROUP);
+  elements.toggleApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_API_KEY);
+  elements.claudeApiKey = document.getElementById(ELEMENT_IDS.CLAUDE_API_KEY);
+  elements.toggleClaudeApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_CLAUDE_API_KEY);
+  elements.geminiApiKey = document.getElementById(ELEMENT_IDS.GEMINI_API_KEY);
+  elements.toggleGeminiApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_GEMINI_API_KEY);
+  elements.googleApiKey = document.getElementById(ELEMENT_IDS.GOOGLE_API_KEY);
+  elements.toggleGoogleApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_GOOGLE_API_KEY);
+  elements.googleApiGroup = document.getElementById(ELEMENT_IDS.GOOGLE_API_GROUP);
+  elements.saveGoogleApiKey = document.getElementById(ELEMENT_IDS.SAVE_GOOGLE_API_KEY);
+  elements.saveApiKey = document.getElementById(ELEMENT_IDS.SAVE_API_KEY);
   
   // Main controls
-  elements.savePdfBtn = document.getElementById('savePdfBtn');
-  elements.saveIcon = document.getElementById('saveIcon');
-  elements.saveText = document.getElementById('saveText');
-  elements.mainFormatSelect = document.getElementById('mainFormatSelect');
-  elements.cancelBtn = document.getElementById('cancelBtn');
+  elements.savePdfBtn = document.getElementById(ELEMENT_IDS.SAVE_PDF_BTN);
+  elements.saveIcon = document.getElementById(ELEMENT_IDS.SAVE_ICON);
+  elements.saveText = document.getElementById(ELEMENT_IDS.SAVE_TEXT);
+  elements.mainFormatSelect = document.getElementById(ELEMENT_IDS.MAIN_FORMAT_SELECT);
+  elements.cancelBtn = document.getElementById(ELEMENT_IDS.CANCEL_BTN);
   
   // Summary
-  elements.generateSummaryBtn = document.getElementById('generateSummaryBtn');
-  elements.summaryContainer = document.getElementById('summaryContainer');
-  elements.summaryToggle = document.getElementById('summaryToggle');
-  elements.summaryContent = document.getElementById('summaryContent');
-  elements.summaryText = document.getElementById('summaryText');
-  elements.summaryCopyBtn = document.getElementById('summaryCopyBtn');
-  elements.summaryDownloadBtn = document.getElementById('summaryDownloadBtn');
-  elements.summaryCloseBtn = document.getElementById('summaryCloseBtn');
+  elements.generateSummaryBtn = document.getElementById(ELEMENT_IDS.GENERATE_SUMMARY_BTN);
+  elements.summaryContainer = document.getElementById(ELEMENT_IDS.SUMMARY_CONTAINER);
+  elements.summaryToggle = document.getElementById(ELEMENT_IDS.SUMMARY_TOGGLE);
+  elements.summaryContent = document.getElementById(ELEMENT_IDS.SUMMARY_CONTENT);
+  elements.summaryText = document.getElementById(ELEMENT_IDS.SUMMARY_TEXT);
+  elements.summaryCopyBtn = document.getElementById(ELEMENT_IDS.SUMMARY_COPY_BTN);
+  elements.summaryDownloadBtn = document.getElementById(ELEMENT_IDS.SUMMARY_DOWNLOAD_BTN);
+  elements.summaryCloseBtn = document.getElementById(ELEMENT_IDS.SUMMARY_CLOSE_BTN);
   
   // Settings and Stats
-  elements.toggleSettings = document.getElementById('toggleSettings');
-  elements.settingsPanel = document.getElementById('settingsPanel');
-  elements.toggleStats = document.getElementById('toggleStats');
-  elements.statsPanel = document.getElementById('statsPanel');
-  elements.clearStatsBtn = document.getElementById('clearStatsBtn');
-  elements.clearCacheBtn = document.getElementById('clearCacheBtn');
-  elements.enableCache = document.getElementById('enableCache');
-  elements.enableStats = document.getElementById('enableStats');
-  elements.exportSettingsBtn = document.getElementById('exportSettingsBtn');
-  elements.importSettingsBtn = document.getElementById('importSettingsBtn');
-  elements.importFileInput = document.getElementById('importFileInput');
+  elements.toggleSettings = document.getElementById(ELEMENT_IDS.TOGGLE_SETTINGS);
+  elements.settingsPanel = document.getElementById(ELEMENT_IDS.SETTINGS_PANEL);
+  elements.toggleStats = document.getElementById(ELEMENT_IDS.TOGGLE_STATS);
+  elements.statsPanel = document.getElementById(ELEMENT_IDS.STATS_PANEL);
+  elements.clearStatsBtn = document.getElementById(ELEMENT_IDS.CLEAR_STATS_BTN);
+  elements.clearCacheBtn = document.getElementById(ELEMENT_IDS.CLEAR_CACHE_BTN);
+  elements.enableCache = document.getElementById(ELEMENT_IDS.ENABLE_CACHE);
+  elements.enableStats = document.getElementById(ELEMENT_IDS.ENABLE_STATS);
+  elements.exportSettingsBtn = document.getElementById(ELEMENT_IDS.EXPORT_SETTINGS_BTN);
+  elements.importSettingsBtn = document.getElementById(ELEMENT_IDS.IMPORT_SETTINGS_BTN);
+  elements.importFileInput = document.getElementById(ELEMENT_IDS.IMPORT_FILE_INPUT);
   
   // Processing options
-  elements.modeSelect = document.getElementById('modeSelect');
-  elements.modeHint = document.getElementById('modeHint');
-  elements.useCache = document.getElementById('useCache');
-  elements.useCacheGroup = document.getElementById('useCacheGroup');
-  elements.modelSelect = document.getElementById('modelSelect');
-  elements.addModelBtn = document.getElementById('addModelBtn');
-  elements.customModelDropdown = document.getElementById('customModelDropdown');
-  elements.customModelOptions = document.getElementById('customModelOptions');
-  elements.outputFormat = document.getElementById('outputFormat');
-  elements.generateToc = document.getElementById('generateToc');
-  elements.generateAbstract = document.getElementById('generateAbstract');
-  elements.pageMode = document.getElementById('pageMode');
-  elements.pageModeGroup = document.getElementById('pageModeGroup');
-  elements.languageSelect = document.getElementById('languageSelect');
-  elements.translateImages = document.getElementById('translateImages');
-  elements.translateImagesGroup = document.getElementById('translateImagesGroup');
+  elements.modeSelect = document.getElementById(ELEMENT_IDS.MODE_SELECT);
+  elements.modeHint = document.getElementById(ELEMENT_IDS.MODE_HINT);
+  elements.useCache = document.getElementById(ELEMENT_IDS.USE_CACHE);
+  elements.useCacheGroup = document.getElementById(ELEMENT_IDS.USE_CACHE_GROUP);
+  elements.modelSelect = document.getElementById(ELEMENT_IDS.MODEL_SELECT);
+  elements.addModelBtn = document.getElementById(ELEMENT_IDS.ADD_MODEL_BTN);
+  elements.customModelDropdown = document.getElementById(ELEMENT_IDS.CUSTOM_MODEL_DROPDOWN);
+  elements.customModelOptions = document.getElementById(ELEMENT_IDS.CUSTOM_MODEL_OPTIONS);
+  elements.outputFormat = document.getElementById(ELEMENT_IDS.OUTPUT_FORMAT);
+  elements.generateToc = document.getElementById(ELEMENT_IDS.GENERATE_TOC);
+  elements.generateAbstract = document.getElementById(ELEMENT_IDS.GENERATE_ABSTRACT);
+  elements.pageMode = document.getElementById(ELEMENT_IDS.PAGE_MODE);
+  elements.pageModeGroup = document.getElementById(ELEMENT_IDS.PAGE_MODE_GROUP);
+  elements.languageSelect = document.getElementById(ELEMENT_IDS.LANGUAGE_SELECT);
+  elements.translateImages = document.getElementById(ELEMENT_IDS.TRANSLATE_IMAGES);
+  elements.translateImagesGroup = document.getElementById(ELEMENT_IDS.TRANSLATE_IMAGES_GROUP);
   
   // Find hint element - it's the <p> with class "setting-hint" inside translateImagesGroup
   const translateImagesHintEl = elements.translateImagesGroup?.querySelector('.setting-hint');
@@ -86,86 +87,86 @@ export function initializeDOMElements(elements) {
   }
   
   // Styles
-  elements.stylePreset = document.getElementById('stylePreset');
-  elements.fontFamily = document.getElementById('fontFamily');
-  elements.fontFamilyContainer = document.getElementById('fontFamilyContainer');
-  elements.fontFamilyTrigger = document.getElementById('fontFamilyTrigger');
-  elements.fontFamilyValue = document.getElementById('fontFamilyValue');
-  elements.fontFamilyOptions = document.getElementById('fontFamilyOptions');
-  elements.fontSize = document.getElementById('fontSize');
-  elements.resetStylesBtn = document.getElementById('resetStylesBtn');
-  elements.bgColor = document.getElementById('bgColor');
-  elements.bgColorText = document.getElementById('bgColorText');
-  elements.textColor = document.getElementById('textColor');
-  elements.textColorText = document.getElementById('textColorText');
-  elements.headingColor = document.getElementById('headingColor');
-  elements.headingColorText = document.getElementById('headingColorText');
-  elements.linkColor = document.getElementById('linkColor');
-  elements.linkColorText = document.getElementById('linkColorText');
+  elements.stylePreset = document.getElementById(ELEMENT_IDS.STYLE_PRESET);
+  elements.fontFamily = document.getElementById(ELEMENT_IDS.FONT_FAMILY);
+  elements.fontFamilyContainer = document.getElementById(ELEMENT_IDS.FONT_FAMILY_CONTAINER);
+  elements.fontFamilyTrigger = document.getElementById(ELEMENT_IDS.FONT_FAMILY_TRIGGER);
+  elements.fontFamilyValue = document.getElementById(ELEMENT_IDS.FONT_FAMILY_VALUE);
+  elements.fontFamilyOptions = document.getElementById(ELEMENT_IDS.FONT_FAMILY_OPTIONS);
+  elements.fontSize = document.getElementById(ELEMENT_IDS.FONT_SIZE);
+  elements.resetStylesBtn = document.getElementById(ELEMENT_IDS.RESET_STYLES_BTN);
+  elements.bgColor = document.getElementById(ELEMENT_IDS.BG_COLOR);
+  elements.bgColorText = document.getElementById(ELEMENT_IDS.BG_COLOR_TEXT);
+  elements.textColor = document.getElementById(ELEMENT_IDS.TEXT_COLOR);
+  elements.textColorText = document.getElementById(ELEMENT_IDS.TEXT_COLOR_TEXT);
+  elements.headingColor = document.getElementById(ELEMENT_IDS.HEADING_COLOR);
+  elements.headingColorText = document.getElementById(ELEMENT_IDS.HEADING_COLOR_TEXT);
+  elements.linkColor = document.getElementById(ELEMENT_IDS.LINK_COLOR);
+  elements.linkColorText = document.getElementById(ELEMENT_IDS.LINK_COLOR_TEXT);
   
   // Status and Progress
   elements.statusDot = document.querySelector('.status-dot');
-  elements.statusText = document.getElementById('statusText');
-  elements.progressContainer = document.getElementById('progressContainer');
-  elements.progressBar = document.getElementById('progressBar');
-  elements.progressText = document.getElementById('progressText');
+  elements.statusText = document.getElementById(ELEMENT_IDS.STATUS_TEXT);
+  elements.progressContainer = document.getElementById(ELEMENT_IDS.PROGRESS_CONTAINER);
+  elements.progressBar = document.getElementById(ELEMENT_IDS.PROGRESS_BAR);
+  elements.progressText = document.getElementById(ELEMENT_IDS.PROGRESS_TEXT);
   
   // Theme and Language
-  elements.themeSelect = document.getElementById('themeSelect');
-  elements.uiLanguageSelect = document.getElementById('uiLanguageSelect');
+  elements.themeSelect = document.getElementById(ELEMENT_IDS.THEME_SELECT);
+  elements.uiLanguageSelect = document.getElementById(ELEMENT_IDS.UI_LANGUAGE_SELECT);
   
   // Audio settings
-  elements.audioProvider = document.getElementById('audioProvider');
-  elements.audioProviderGroup = document.getElementById('audioProviderGroup');
-  elements.elevenlabsApiKey = document.getElementById('elevenlabsApiKey');
-  elements.toggleElevenlabsApiKey = document.getElementById('toggleElevenlabsApiKey');
-  elements.saveElevenlabsApiKey = document.getElementById('saveElevenlabsApiKey');
-  elements.elevenlabsApiKeyGroup = document.getElementById('elevenlabsApiKeyGroup');
-  elements.elevenlabsModel = document.getElementById('elevenlabsModel');
-  elements.elevenlabsModelGroup = document.getElementById('elevenlabsModelGroup');
-  elements.elevenlabsFormat = document.getElementById('elevenlabsFormat');
-  elements.elevenlabsFormatGroup = document.getElementById('elevenlabsFormatGroup');
-  elements.elevenlabsAdvancedGroup = document.getElementById('elevenlabsAdvancedGroup');
-  elements.elevenlabsStability = document.getElementById('elevenlabsStability');
-  elements.elevenlabsStabilityValue = document.getElementById('elevenlabsStabilityValue');
-  elements.elevenlabsSimilarity = document.getElementById('elevenlabsSimilarity');
-  elements.elevenlabsSimilarityValue = document.getElementById('elevenlabsSimilarityValue');
-  elements.elevenlabsStyle = document.getElementById('elevenlabsStyle');
-  elements.elevenlabsStyleValue = document.getElementById('elevenlabsStyleValue');
-  elements.elevenlabsSpeakerBoost = document.getElementById('elevenlabsSpeakerBoost');
-  elements.openaiInstructions = document.getElementById('openaiInstructions');
-  elements.openaiInstructionsGroup = document.getElementById('openaiInstructionsGroup');
-  elements.qwenApiKey = document.getElementById('qwenApiKey');
-  elements.toggleQwenApiKey = document.getElementById('toggleQwenApiKey');
-  elements.saveQwenApiKey = document.getElementById('saveQwenApiKey');
-  elements.qwenApiKeyGroup = document.getElementById('qwenApiKeyGroup');
-  elements.respeecherApiKey = document.getElementById('respeecherApiKey');
-  elements.toggleRespeecherApiKey = document.getElementById('toggleRespeecherApiKey');
-  elements.saveRespeecherApiKey = document.getElementById('saveRespeecherApiKey');
-  elements.respeecherApiKeyGroup = document.getElementById('respeecherApiKeyGroup');
-  elements.respeecherAdvancedGroup = document.getElementById('respeecherAdvancedGroup');
-  elements.respeecherTemperature = document.getElementById('respeecherTemperature');
-  elements.respeecherTemperatureValue = document.getElementById('respeecherTemperatureValue');
-  elements.respeecherRepetitionPenalty = document.getElementById('respeecherRepetitionPenalty');
-  elements.respeecherRepetitionPenaltyValue = document.getElementById('respeecherRepetitionPenaltyValue');
-  elements.respeecherTopP = document.getElementById('respeecherTopP');
-  elements.respeecherTopPValue = document.getElementById('respeecherTopPValue');
-  elements.googleTtsApiKey = document.getElementById('googleTtsApiKey');
-  elements.toggleGoogleTtsApiKey = document.getElementById('toggleGoogleTtsApiKey');
-  elements.saveGoogleTtsApiKey = document.getElementById('saveGoogleTtsApiKey');
-  elements.googleTtsApiKeyGroup = document.getElementById('googleTtsApiKeyGroup');
-  elements.audioVoice = document.getElementById('audioVoice');
-  elements.audioVoiceGroup = document.getElementById('audioVoiceGroup');
-  elements.audioSpeed = document.getElementById('audioSpeed');
-  elements.audioSpeedGroup = document.getElementById('audioSpeedGroup');
-  elements.audioSpeedValue = document.getElementById('audioSpeedValue');
-  elements.audioSpeedNote = document.getElementById('audioSpeedNote');
-  elements.googleTtsModel = document.getElementById('googleTtsModel');
-  elements.googleTtsModelGroup = document.getElementById('googleTtsModelGroup');
-  elements.googleTtsVoice = document.getElementById('googleTtsVoice');
-  elements.googleTtsVoiceGroup = document.getElementById('googleTtsVoiceGroup');
-  elements.googleTtsPrompt = document.getElementById('googleTtsPrompt');
-  elements.googleTtsPromptGroup = document.getElementById('googleTtsPromptGroup');
+  elements.audioProvider = document.getElementById(ELEMENT_IDS.AUDIO_PROVIDER);
+  elements.audioProviderGroup = document.getElementById(ELEMENT_IDS.AUDIO_PROVIDER_GROUP);
+  elements.elevenlabsApiKey = document.getElementById(ELEMENT_IDS.ELEVENLABS_API_KEY);
+  elements.toggleElevenlabsApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_ELEVENLABS_API_KEY);
+  elements.saveElevenlabsApiKey = document.getElementById(ELEMENT_IDS.SAVE_ELEVENLABS_API_KEY);
+  elements.elevenlabsApiKeyGroup = document.getElementById(ELEMENT_IDS.ELEVENLABS_API_KEY_GROUP);
+  elements.elevenlabsModel = document.getElementById(ELEMENT_IDS.ELEVENLABS_MODEL);
+  elements.elevenlabsModelGroup = document.getElementById(ELEMENT_IDS.ELEVENLABS_MODEL_GROUP);
+  elements.elevenlabsFormat = document.getElementById(ELEMENT_IDS.ELEVENLABS_FORMAT);
+  elements.elevenlabsFormatGroup = document.getElementById(ELEMENT_IDS.ELEVENLABS_FORMAT_GROUP);
+  elements.elevenlabsAdvancedGroup = document.getElementById(ELEMENT_IDS.ELEVENLABS_ADVANCED_GROUP);
+  elements.elevenlabsStability = document.getElementById(ELEMENT_IDS.ELEVENLABS_STABILITY);
+  elements.elevenlabsStabilityValue = document.getElementById(ELEMENT_IDS.ELEVENLABS_STABILITY_VALUE);
+  elements.elevenlabsSimilarity = document.getElementById(ELEMENT_IDS.ELEVENLABS_SIMILARITY);
+  elements.elevenlabsSimilarityValue = document.getElementById(ELEMENT_IDS.ELEVENLABS_SIMILARITY_VALUE);
+  elements.elevenlabsStyle = document.getElementById(ELEMENT_IDS.ELEVENLABS_STYLE);
+  elements.elevenlabsStyleValue = document.getElementById(ELEMENT_IDS.ELEVENLABS_STYLE_VALUE);
+  elements.elevenlabsSpeakerBoost = document.getElementById(ELEMENT_IDS.ELEVENLABS_SPEAKER_BOOST);
+  elements.openaiInstructions = document.getElementById(ELEMENT_IDS.OPENAI_INSTRUCTIONS);
+  elements.openaiInstructionsGroup = document.getElementById(ELEMENT_IDS.OPENAI_INSTRUCTIONS_GROUP);
+  elements.qwenApiKey = document.getElementById(ELEMENT_IDS.QWEN_API_KEY);
+  elements.toggleQwenApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_QWEN_API_KEY);
+  elements.saveQwenApiKey = document.getElementById(ELEMENT_IDS.SAVE_QWEN_API_KEY);
+  elements.qwenApiKeyGroup = document.getElementById(ELEMENT_IDS.QWEN_API_KEY_GROUP);
+  elements.respeecherApiKey = document.getElementById(ELEMENT_IDS.RESPEECHER_API_KEY);
+  elements.toggleRespeecherApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_RESPEECHER_API_KEY);
+  elements.saveRespeecherApiKey = document.getElementById(ELEMENT_IDS.SAVE_RESPEECHER_API_KEY);
+  elements.respeecherApiKeyGroup = document.getElementById(ELEMENT_IDS.RESPEECHER_API_KEY_GROUP);
+  elements.respeecherAdvancedGroup = document.getElementById(ELEMENT_IDS.RESPEECHER_ADVANCED_GROUP);
+  elements.respeecherTemperature = document.getElementById(ELEMENT_IDS.RESPEECHER_TEMPERATURE);
+  elements.respeecherTemperatureValue = document.getElementById(ELEMENT_IDS.RESPEECHER_TEMPERATURE_VALUE);
+  elements.respeecherRepetitionPenalty = document.getElementById(ELEMENT_IDS.RESPEECHER_REPETITION_PENALTY);
+  elements.respeecherRepetitionPenaltyValue = document.getElementById(ELEMENT_IDS.RESPEECHER_REPETITION_PENALTY_VALUE);
+  elements.respeecherTopP = document.getElementById(ELEMENT_IDS.RESPEECHER_TOP_P);
+  elements.respeecherTopPValue = document.getElementById(ELEMENT_IDS.RESPEECHER_TOP_P_VALUE);
+  elements.googleTtsApiKey = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_API_KEY);
+  elements.toggleGoogleTtsApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_GOOGLE_TTS_API_KEY);
+  elements.saveGoogleTtsApiKey = document.getElementById(ELEMENT_IDS.SAVE_GOOGLE_TTS_API_KEY);
+  elements.googleTtsApiKeyGroup = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_API_KEY_GROUP);
+  elements.audioVoice = document.getElementById(ELEMENT_IDS.AUDIO_VOICE);
+  elements.audioVoiceGroup = document.getElementById(ELEMENT_IDS.AUDIO_VOICE_GROUP);
+  elements.audioSpeed = document.getElementById(ELEMENT_IDS.AUDIO_SPEED);
+  elements.audioSpeedGroup = document.getElementById(ELEMENT_IDS.AUDIO_SPEED_GROUP);
+  elements.audioSpeedValue = document.getElementById(ELEMENT_IDS.AUDIO_SPEED_VALUE);
+  elements.audioSpeedNote = document.getElementById(ELEMENT_IDS.AUDIO_SPEED_NOTE);
+  elements.googleTtsModel = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_MODEL);
+  elements.googleTtsModelGroup = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_MODEL_GROUP);
+  elements.googleTtsVoice = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_VOICE);
+  elements.googleTtsVoiceGroup = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_VOICE_GROUP);
+  elements.googleTtsPrompt = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_PROMPT);
+  elements.googleTtsPromptGroup = document.getElementById(ELEMENT_IDS.GOOGLE_TTS_PROMPT_GROUP);
   
   // Add themeSelect to elements object for consistency
   if (!elements.themeSelect) {
@@ -208,6 +209,7 @@ export function initializeModules(rawDeps) {
   const setElementDisplay = domHelpers.setElementDisplay;
   const setElementGroupDisplay = domHelpers.setElementGroupDisplay;
   const setDisplayForIds = domHelpers.setDisplayForIds;
+  const setCustomSelectValue = deps.setCustomSelectValue;
   const currentStartTimeRef = stateRefsGroup.currentStartTimeRef;
   const timerIntervalRef = stateRefsGroup.timerIntervalRef;
   const showToast = uiHelpers.showToast;
@@ -215,7 +217,6 @@ export function initializeModules(rawDeps) {
   const DEFAULT_STYLES = config.DEFAULT_STYLES;
   const STYLE_PRESETS = config.STYLE_PRESETS;
   const debouncedSaveSettings = settingsHelpers.debouncedSaveSettings;
-  const setCustomSelectValue = settingsHelpers.setCustomSelectValue;
   const applyTheme = uiHelpers.applyTheme;
   const markdownToHtml = formatHelpers.markdownToHtml;
   const audioVoiceMap = stateRefsGroup.audioVoiceMap;
@@ -357,9 +358,10 @@ export function initializeModules(rawDeps) {
  * Finalize initialization: load settings, apply localization, setup event listeners
  * @param {import('../../scripts/types.js').PopupModules} modules - Initialized modules
  * @param {function(): void} initAllCustomSelects - Function to initialize custom selects
+ * @param {function(string): void} [setCustomSelectValue] - Function to set custom select value
  * @returns {Promise<void>}
  */
-export async function finalizeInitialization(modules, initAllCustomSelects) {
+export async function finalizeInitialization(modules, initAllCustomSelects, setCustomSelectValue) {
   const { settingsModule, uiModule, handlersModule, coreModule } = modules;
   
   // Load settings after modules are initialized
@@ -392,10 +394,10 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   // Localization may have overwritten the selected value, so we need to restore it
   // Get elements directly from DOM since they're already initialized
   try {
-    const fontFamilyInput = document.getElementById('fontFamily');
+    const fontFamilyInput = document.getElementById(ELEMENT_IDS.FONT_FAMILY);
     if (fontFamilyInput && fontFamilyInput instanceof HTMLInputElement) {
       const fontFamilyValue = fontFamilyInput.value || '';
-      if (fontFamilyValue) {
+      if (fontFamilyValue && setCustomSelectValue) {
         log('finalizeInitialization: restoring fontFamily selection after localization', { fontFamilyValue });
         setCustomSelectValue(fontFamilyValue);
       }
@@ -464,7 +466,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
   // Load and display version
   try {
     const version = getExtensionVersion();
-    const versionElement = document.getElementById('versionText');
+    const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
     if (versionElement) {
       versionElement.textContent = `v${version}`;
     }
@@ -474,7 +476,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects) {
     try {
       const manifest = chrome.runtime.getManifest();
       const version = manifest?.version || '3.3.0';
-      const versionElement = document.getElementById('versionText');
+      const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
       if (versionElement) {
         versionElement.textContent = `v${version}`;
       }

@@ -278,9 +278,7 @@ export function sanitizeHtml(html, sourceUrl = '', options = {}) {
                   href = '#';
                 }
               }
-              if (isInternalLink !== false) {
-                isInternalLink = true;
-              }
+              isInternalLink = true;
             }
             
             // Allow valid URL schemes (including file: if allowed)

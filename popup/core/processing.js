@@ -504,7 +504,7 @@ export function initProcessing(deps) {
           googleApiKey = '';
         }
       }
-      const translateImages = elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto';
+      const translateImages = !!(elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto');
 
       log('=== handleSavePdf: About to send processArticle message ===', {
         mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',

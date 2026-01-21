@@ -2,12 +2,17 @@
 // Notification helper for background service worker
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * Initialize notifications module with dependencies
  * @param {import('../types.js').NotificationsDeps} deps - Dependencies object
  * @returns {Object} Notification functions
  */
 export function initNotifications(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  validateDeps(deps, 'NotificationsDeps', 'notifications');
+
   const {
     log,
     logError,

@@ -2,12 +2,17 @@
 // Keep-alive mechanism for background service worker
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * Initialize keep-alive module with dependencies
  * @param {import('../types.js').KeepAliveDeps} deps - Dependencies object
  * @returns {Object} Keep-alive functions
  */
 export function initKeepAlive(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  validateDeps(deps, 'KeepAliveDeps', 'keep-alive');
+
   const {
     log,
     logError,

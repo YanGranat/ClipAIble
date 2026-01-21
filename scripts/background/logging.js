@@ -2,6 +2,8 @@
 // Log collection system for background service worker (bypasses Chrome console 1000 message limit)
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * @typedef {Object} ServiceWorkerGlobalScopeWithLogging
  * @property {function(string, *, 'log'|'error'|'warn'|'debug'?): void} addLogToCollection
@@ -14,6 +16,9 @@
  * @returns {Object} Log collection functions
  */
 export function initLogging(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  validateDeps(deps, 'LoggingDeps', 'logging');
+
   const {
     log,
     logError,

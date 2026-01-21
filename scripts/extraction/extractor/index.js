@@ -132,7 +132,11 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     // Add featured image if found
     if (featuredImage) {
       const normalizedFeaturedSrc = normalizeImageUrl(featuredImage.src);
-      state.processedImages.add(normalizedFeaturedSrc);
+
+      // Prevent memory leaks: limit processed images set size
+      if (state.processedImages.size < 1000) {
+        state.processedImages.add(normalizedFeaturedSrc);
+      }
       
       content.push({
         type: 'image',

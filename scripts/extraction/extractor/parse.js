@@ -277,7 +277,14 @@ export function filterCandidateElements(win, allElements, constants, debugInfo) 
           tag: tagName,
           className: el.className?.substring?.(0, 40) || '',
           parentClass: el.parentElement?.className?.substring?.(0, 40) || '',
-          src: tagName === 'img' ? el.src?.substring?.(0, 50) : el.querySelector?.('img')?.src?.substring?.(0, 50)
+          src: (() => {
+            if (tagName === 'img') {
+              const imgSrc = /** @type {any} */ (el).src;
+              return imgSrc ? imgSrc.substring(0, 50) : '';
+            }
+            const img = el.querySelector?.('img');
+            return img && /** @type {any} */ (img).src ? /** @type {any} */ (img).src.substring(0, 50) : '';
+          })()
         });
       }
       else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -685,11 +692,15 @@ export function handleFigure(win, element, state, constants, baseUrl) {
   
   const absoluteSrc = toAbsoluteUrl(src, baseUrl);
   const normalizedSrc = normalizeImageUrl(absoluteSrc);
-  
+
   // Skip duplicates
   if (state.processedImages.has(normalizedSrc)) return null;
-  state.processedImages.add(normalizedSrc);
-  
+
+  // Prevent memory leaks: limit processed images set size
+  if (state.processedImages.size < 1000) {
+    state.processedImages.add(normalizedSrc);
+  }
+
   // Get caption
   const figcaption = element.querySelector('figcaption');
   let caption = figcaption ? (figcaption.textContent || '').trim() : '';
@@ -728,11 +739,15 @@ export function handleImg(win, element, state, constants, baseUrl) {
   
   const absoluteSrc = toAbsoluteUrl(src, baseUrl);
   const normalizedSrc = normalizeImageUrl(absoluteSrc);
-  
+
   // Skip duplicates
   if (state.processedImages.has(normalizedSrc)) return null;
-  state.processedImages.add(normalizedSrc);
-  
+
+  // Prevent memory leaks: limit processed images set size
+  if (state.processedImages.size < 1000) {
+    state.processedImages.add(normalizedSrc);
+  }
+
   return {
     type: 'image',
     src: absoluteSrc,

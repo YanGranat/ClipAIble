@@ -9,6 +9,7 @@ import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { getProviderFromModel } from '../scripts/api/index.js';
 import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
+import { ELEMENT_IDS, STORAGE_KEYS } from './constants.js';
 
 // Import submodules
 import { initApiKeys } from './settings/api-keys.js';
@@ -137,7 +138,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.GENERATE_ABSTRACT,
         STORAGE_KEYS.PAGE_MODE,
         STORAGE_KEYS.LANGUAGE,
-        STORAGE_KEYS.TRANSLATE_IMAGES,
+        STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES,
         STORAGE_KEYS.STYLE_PRESET,
         STORAGE_KEYS.FONT_FAMILY,
         STORAGE_KEYS.FONT_SIZE,
@@ -149,28 +150,28 @@ export function initSettings(deps) {
         STORAGE_KEYS.CUSTOM_TEXT_COLOR,
         STORAGE_KEYS.CUSTOM_HEADING_COLOR,
         STORAGE_KEYS.CUSTOM_LINK_COLOR,
-        STORAGE_KEYS.THEME,
-        STORAGE_KEYS.UI_LANGUAGE,
+        STORAGE_KEYS.STORAGE_THEME,
+        STORAGE_KEYS.STORAGE_UI_LANGUAGE,
         STORAGE_KEYS.AUDIO_PROVIDER,
-        STORAGE_KEYS.ELEVENLABS_API_KEY,
+        STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY,
         STORAGE_KEYS.ELEVENLABS_MODEL,
         STORAGE_KEYS.ELEVENLABS_STABILITY,
         STORAGE_KEYS.ELEVENLABS_SIMILARITY,
         STORAGE_KEYS.ELEVENLABS_STYLE,
         STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST,
         STORAGE_KEYS.ELEVENLABS_FORMAT,
-        STORAGE_KEYS.QWEN_API_KEY,
-        STORAGE_KEYS.RESPEECHER_API_KEY,
+        STORAGE_KEYS.STORAGE_QWEN_API_KEY,
+        STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY,
         STORAGE_KEYS.RESPEECHER_TEMPERATURE,
         STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY,
         STORAGE_KEYS.RESPEECHER_TOP_P,
-        STORAGE_KEYS.GOOGLE_TTS_API_KEY,
+        STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY,
         STORAGE_KEYS.GOOGLE_TTS_MODEL,
         STORAGE_KEYS.GOOGLE_TTS_VOICE,
         STORAGE_KEYS.GOOGLE_TTS_PROMPT,
         STORAGE_KEYS.OPENAI_INSTRUCTIONS,
         STORAGE_KEYS.AUDIO_VOICE,
-        STORAGE_KEYS.AUDIO_VOICE_MAP,
+        STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP,
         STORAGE_KEYS.AUDIO_SPEED,
         STORAGE_KEYS.SUMMARY_TEXT,
         STORAGE_KEYS.SUMMARY_GENERATING
@@ -451,8 +452,8 @@ export function initSettings(deps) {
         elements.languageSelect.value = String(result[STORAGE_KEYS.LANGUAGE]);
       }
       
-      if (result[STORAGE_KEYS.TRANSLATE_IMAGES]) {
-        elements.translateImages.checked = result[STORAGE_KEYS.TRANSLATE_IMAGES];
+      if (result[STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES] !== undefined) {
+        elements.translateImages.checked = result[STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES];
       }
       
       // Load style preset
@@ -460,7 +461,7 @@ export function initSettings(deps) {
       elements.stylePreset.value = savedPreset;
       
       // Sync custom select display for stylePreset
-      const stylePresetContainer = document.getElementById('stylePresetContainer');
+      const stylePresetContainer = document.getElementById(ELEMENT_IDS.STYLE_PRESET_CONTAINER);
       if (stylePresetContainer) {
         const valueSpan = stylePresetContainer.querySelector('.custom-select-value');
         const selectedOption = stylePresetContainer.querySelector(`[data-value="${savedPreset}"]`);
@@ -568,12 +569,12 @@ export function initSettings(deps) {
         }
       }
       
-      if (result[STORAGE_KEYS.THEME] && elements.themeSelect) {
-        elements.themeSelect.value = String(result[STORAGE_KEYS.THEME]);
+      if (result[STORAGE_KEYS.STORAGE_THEME] && elements.themeSelect) {
+        elements.themeSelect.value = String(result[STORAGE_KEYS.STORAGE_THEME]);
       }
       
-      if (result[STORAGE_KEYS.UI_LANGUAGE] && elements.uiLanguageSelect) {
-        elements.uiLanguageSelect.value = String(result[STORAGE_KEYS.UI_LANGUAGE]);
+      if (result[STORAGE_KEYS.STORAGE_UI_LANGUAGE] && elements.uiLanguageSelect) {
+        elements.uiLanguageSelect.value = String(result[STORAGE_KEYS.STORAGE_UI_LANGUAGE]);
       } else if (elements.uiLanguageSelect) {
         elements.uiLanguageSelect.value = 'en';
       }
@@ -586,13 +587,13 @@ export function initSettings(deps) {
       }
 
       // Load per-provider voice map (backward compatible)
-      if (result[STORAGE_KEYS.AUDIO_VOICE_MAP] && typeof result[STORAGE_KEYS.AUDIO_VOICE_MAP] === 'object' && !Array.isArray(result[STORAGE_KEYS.AUDIO_VOICE_MAP])) {
+      if (result[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP] && typeof result[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP] === 'object' && !Array.isArray(result[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP])) {
         // Ensure audioVoiceMap has 'current' property
         if (!audioVoiceMap || typeof audioVoiceMap !== 'object' || Array.isArray(audioVoiceMap)) {
           logWarn('audioVoiceMap is not properly initialized in loadSettings');
         } else {
           // CRITICAL: Clean up invalid voice values (numeric indices) from storage
-          const loadedMap = result[STORAGE_KEYS.AUDIO_VOICE_MAP];
+          const loadedMap = result[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP];
           
           // CRITICAL: Check format - new format has 'current' property, old format is direct map
           const hasCurrent = loadedMap && typeof loadedMap === 'object' && !Array.isArray(loadedMap) && 'current' in loadedMap;
@@ -664,9 +665,9 @@ export function initSettings(deps) {
       }
       
       // Load and mask ElevenLabs API key
-      if (result[STORAGE_KEYS.ELEVENLABS_API_KEY]) {
+      if (result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]) {
         try {
-          const apiKey = String(result[STORAGE_KEYS.ELEVENLABS_API_KEY] || '');
+          const apiKey = String(result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY] || '');
           const decrypted = await decryptApiKey(apiKey);
           
           // Check if decrypted value is a mask (corrupted data in storage)
@@ -674,7 +675,7 @@ export function initSettings(deps) {
             logWarn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
             elements.elevenlabsApiKey.value = '';
             elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
-            await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
+            await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY);
           } else {
             elements.elevenlabsApiKey.value = maskApiKey(decrypted);
             elements.elevenlabsApiKey.dataset.encrypted = apiKey;
@@ -684,14 +685,14 @@ export function initSettings(deps) {
           // Clear corrupted key - user needs to re-enter
           elements.elevenlabsApiKey.value = '';
           elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
-          await chrome.storage.local.remove(STORAGE_KEYS.ELEVENLABS_API_KEY);
+          await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY);
         }
       }
       
       // Load and mask Qwen API key
-      if (result[STORAGE_KEYS.QWEN_API_KEY] && elements.qwenApiKey) {
+      if (result[STORAGE_KEYS.STORAGE_QWEN_API_KEY] && elements.qwenApiKey) {
         try {
-          const apiKey = String(result[STORAGE_KEYS.QWEN_API_KEY] || '');
+          const apiKey = String(result[STORAGE_KEYS.STORAGE_QWEN_API_KEY] || '');
           const decrypted = await decryptApiKey(apiKey);
           
           // Check if decrypted value is a mask (corrupted data in storage)
@@ -699,7 +700,7 @@ export function initSettings(deps) {
             logWarn('Qwen API key in storage is corrupted (contains mask), clearing...');
             elements.qwenApiKey.value = '';
             elements.qwenApiKey.placeholder = await t('keyCorrupted');
-            await chrome.storage.local.remove(STORAGE_KEYS.QWEN_API_KEY);
+            await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_QWEN_API_KEY);
           } else {
             elements.qwenApiKey.value = maskApiKey(decrypted);
             elements.qwenApiKey.dataset.encrypted = apiKey;
@@ -709,14 +710,14 @@ export function initSettings(deps) {
           // Clear corrupted key - user needs to re-enter
           elements.qwenApiKey.value = '';
           elements.qwenApiKey.placeholder = await t('keyCorrupted');
-          await chrome.storage.local.remove(STORAGE_KEYS.QWEN_API_KEY);
+          await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_QWEN_API_KEY);
         }
       }
       
       // Load and mask Respeecher API key
-      if (result[STORAGE_KEYS.RESPEECHER_API_KEY] && elements.respeecherApiKey) {
+      if (result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY] && elements.respeecherApiKey) {
         try {
-          const apiKey = String(result[STORAGE_KEYS.RESPEECHER_API_KEY] || '');
+          const apiKey = String(result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY] || '');
           const decrypted = await decryptApiKey(apiKey);
           
           // Check if decrypted value is a mask (corrupted data in storage)
@@ -724,7 +725,7 @@ export function initSettings(deps) {
             logWarn('Respeecher API key in storage is corrupted (contains mask), clearing...');
             elements.respeecherApiKey.value = '';
             elements.respeecherApiKey.placeholder = await t('keyCorrupted');
-            await chrome.storage.local.remove(STORAGE_KEYS.RESPEECHER_API_KEY);
+            await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY);
           } else {
             elements.respeecherApiKey.value = maskApiKey(decrypted);
             elements.respeecherApiKey.dataset.encrypted = apiKey;
@@ -734,21 +735,21 @@ export function initSettings(deps) {
           // Clear corrupted key - user needs to re-enter
           elements.respeecherApiKey.value = '';
           elements.respeecherApiKey.placeholder = await t('keyCorrupted');
-          await chrome.storage.local.remove(STORAGE_KEYS.RESPEECHER_API_KEY);
+          await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY);
         }
       }
       
       // Load and mask Google TTS API key
-      if (result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] && elements.googleTtsApiKey) {
+      if (result[STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY] && elements.googleTtsApiKey) {
         try {
-          const apiKey = String(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] || '');
+          const apiKey = String(result[STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY] || '');
           const decrypted = await decryptApiKey(apiKey);
           elements.googleTtsApiKey.value = maskApiKey(decrypted);
           elements.googleTtsApiKey.dataset.encrypted = apiKey;
         } catch (error) {
           logError('Failed to decrypt Google TTS API key', error);
           // Keep the encrypted key in dataset even if decryption fails (same as Gemini key)
-          const apiKey = String(result[STORAGE_KEYS.GOOGLE_TTS_API_KEY] || '');
+          const apiKey = String(result[STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY] || '');
           elements.googleTtsApiKey.value = maskApiKey(apiKey);
           elements.googleTtsApiKey.dataset.encrypted = apiKey;
         }

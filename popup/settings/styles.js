@@ -3,6 +3,7 @@
 // Handles style presets, colors, fonts reset
 
 import { t } from '../../scripts/locales.js';
+import { ELEMENT_IDS, STORAGE_KEYS, DEFAULT_STYLES } from '../constants.js';
 
 /**
  * Initialize styles module
@@ -71,7 +72,7 @@ export function initStyles(deps) {
     
     // Reset style preset to dark (default)
     elements.stylePreset.value = 'dark';
-    const stylePresetContainer = document.getElementById('stylePresetContainer');
+    const stylePresetContainer = document.getElementById(ELEMENT_IDS.STYLE_PRESET_CONTAINER);
     if (stylePresetContainer) {
       const valueSpan = stylePresetContainer.querySelector('.custom-select-value');
       const selectedOption = stylePresetContainer.querySelector('[data-value="dark"]');

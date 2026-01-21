@@ -1661,11 +1661,11 @@ function isExcluded(win, element, constants) {
   if (!isSemanticContainer && !isImageOrFigure) {
     const isParagraphOrHeading = tagName === "p" || tagName.match(/^h[1-6]$/);
     if (isParagraphOrHeading) {
-      if (textTrimmed.length < 200 && NAV_PATTERNS_CONTAINS.some((pattern) => pattern.test(text))) {
+      if (textTrimmed.length < 200 && matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
     } else {
-      if (NAV_PATTERNS_CONTAINS.some((pattern) => pattern.test(text))) {
+      if (matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
     }
@@ -1699,6 +1699,17 @@ function isExcluded(win, element, constants) {
         return true;
       }
       parent = parent.parentElement;
+    }
+  }
+  return false;
+}
+
+// Optimized navigation pattern matching
+function matchesNavigationPattern(text, patterns) {
+  // Use for...of instead of some() for better performance with large arrays
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      return true;
     }
   }
   return false;
@@ -2046,7 +2057,10 @@ function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
     } catch (e) {
     }
   }
-  const candidates = Array.from(doc.querySelectorAll("div, article, main, section, table"));
+  let candidates = Array.from(doc.querySelectorAll("div, article, main, section, table"));
+  if (candidates.length > 500) {
+    candidates = candidates.slice(0, 500);
+  }
   let bestCandidate = null;
   let maxScore = 0;
   for (const candidate of candidates) {
@@ -2653,6 +2667,11 @@ function isStandfirstText(text, standfirstText) {
 // --- Parse ---
 function collectCandidateElements(mainContent, win) {
   const hostname = win?.location?.hostname || "";
+  console.log("[ClipAIble Extraction] collectCandidateElements called", {
+    hostname,
+    mainContentTag: mainContent?.tagName,
+    mainContentClass: mainContent?.className?.substring?.(0, 50)
+  });
   if (hostname.includes("habr.com")) {
     const articleBody = mainContent.querySelector(".article-formatted-body");
     if (articleBody) {
@@ -2665,11 +2684,21 @@ function collectCandidateElements(mainContent, win) {
   }
   if (hostname.includes("nature.com") || hostname.includes("springer.com") || hostname.includes("biomedcentral.com") || hostname.includes("springernature.com")) {
     const cArticleBody = mainContent.querySelector(".c-article-body");
+    console.log("[ClipAIble Extraction] Nature/Springer detected", {
+      hasCArticleBody: !!cArticleBody,
+      textLength: cArticleBody?.textContent?.length || 0,
+      paragraphs: cArticleBody?.querySelectorAll("p")?.length || 0
+    });
     if (cArticleBody) {
       const text = cArticleBody.textContent?.trim() || "";
       const paragraphs = cArticleBody.querySelectorAll("p").length;
       if (text.length > 1e3 && paragraphs > 5) {
-        return Array.from(cArticleBody.querySelectorAll(CANDIDATE_SELECTOR));
+        const elements = Array.from(cArticleBody.querySelectorAll(CANDIDATE_SELECTOR));
+        console.log("[ClipAIble Extraction] Using c-article-body", {
+          elementsCount: elements.length,
+          figures: elements.filter((e) => e.tagName === "FIGURE").length
+        });
+        return elements;
       }
     }
     const articleSections = mainContent.querySelectorAll(".c-article-section__content");
@@ -2815,9 +2844,15 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
     const tagName = el.tagName.toLowerCase();
     const isImageOrFigure = tagName === "img" || tagName === "figure";
     if (isExcluded(win, el, constants)) {
-      if (isImageOrFigure)
+      if (isImageOrFigure) {
         excludedImageCount++;
-      else
+        console.log("[ClipAIble Extraction] Excluded image/figure", {
+          tag: tagName,
+          className: el.className?.substring?.(0, 40) || "",
+          parentClass: el.parentElement?.className?.substring?.(0, 40) || "",
+          src: tagName === "img" ? el.src?.substring?.(0, 50) : el.querySelector?.("img")?.src?.substring?.(0, 50)
+        });
+      } else
         excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
       return false;
     }
@@ -2963,7 +2998,9 @@ function handleFigure(win, element, state, constants, baseUrl) {
   const normalizedSrc = normalizeImageUrl(absoluteSrc);
   if (state.processedImages.has(normalizedSrc))
     return null;
-  state.processedImages.add(normalizedSrc);
+  if (state.processedImages.size < 1e3) {
+    state.processedImages.add(normalizedSrc);
+  }
   const figcaption = element.querySelector("figcaption");
   let caption = figcaption ? (figcaption.textContent || "").trim() : "";
   if (!caption) {
@@ -3039,7 +3076,9 @@ function handleImg(win, element, state, constants, baseUrl) {
   const normalizedSrc = normalizeImageUrl(absoluteSrc);
   if (state.processedImages.has(normalizedSrc))
     return null;
-  state.processedImages.add(normalizedSrc);
+  if (state.processedImages.size < 1e3) {
+    state.processedImages.add(normalizedSrc);
+  }
   return {
     type: "image",
     src: absoluteSrc,
@@ -3520,7 +3559,9 @@ function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
       const normalizedSrc = normalizeImageUrl(absoluteSrc);
       if (state.processedImages.has(normalizedSrc))
         continue;
-      state.processedImages.add(normalizedSrc);
+      if (state.processedImages.size < 1e3) {
+        state.processedImages.add(normalizedSrc);
+      }
       content.push({
         type: "image",
         src: absoluteSrc,
@@ -3728,7 +3769,9 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     let content = [];
     if (featuredImage) {
       const normalizedFeaturedSrc = normalizeImageUrl(featuredImage.src);
-      state.processedImages.add(normalizedFeaturedSrc);
+      if (state.processedImages.size < 1e3) {
+        state.processedImages.add(normalizedFeaturedSrc);
+      }
       content.push({
         type: "image",
         src: featuredImage.src,

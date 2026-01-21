@@ -316,8 +316,13 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   }
   
   // Strategy 3: Score-based search (including legacy table-based layouts)
-  const candidates = Array.from(doc.querySelectorAll('div, article, main, section, table'));
-  
+  let candidates = Array.from(doc.querySelectorAll('div, article, main, section, table'));
+
+  // Prevent performance issues on pages with too many elements
+  if (candidates.length > 500) {
+    candidates = candidates.slice(0, 500);
+  }
+
   let bestCandidate = null;
   let maxScore = 0;
   

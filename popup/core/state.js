@@ -314,8 +314,8 @@ export function initState(deps) {
   // Start polling for state updates
   function startStatePolling() {
     // Clear existing timeout
-    if (stateRefs.statePollingTimeout) {
-      clearTimeout(stateRefs.statePollingTimeout);
+    if (stateRefs.statePollingTimeout.current) {
+      clearTimeout(stateRefs.statePollingTimeout.current);
     }
     
     let pollInterval = 2000; // Default 2s for idle (increased from 1s to reduce load)
@@ -419,7 +419,7 @@ export function initState(deps) {
                   // Continue polling with longer interval to check if SW recovers
                   pollInterval = 5000; // 5 seconds
                   isPolling = false;
-                  stateRefs.statePollingTimeout = setTimeout(poll, pollInterval);
+                  stateRefs.statePollingTimeout.current = setTimeout(poll, pollInterval);
                   return; // Continue polling with storage fallback
                 }
               }
@@ -429,7 +429,7 @@ export function initState(deps) {
           }
           
           // If no valid state in storage, stop polling
-          stateRefs.statePollingTimeout = null;
+          stateRefs.statePollingTimeout.current = null;
           return; // Stop polling
         }
         
@@ -477,7 +477,7 @@ export function initState(deps) {
       }
       
       // Schedule next poll
-      stateRefs.statePollingTimeout = setTimeout(poll, pollInterval);
+      stateRefs.statePollingTimeout.current = setTimeout(poll, pollInterval);
     }
     
     poll();

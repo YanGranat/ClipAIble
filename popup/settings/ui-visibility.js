@@ -3,6 +3,7 @@
 // Handles showing/hiding UI elements based on format, mode, language selection
 
 import { getUILanguage, UI_LOCALES, tSync } from '../../scripts/locales.js';
+import { ELEMENT_IDS } from '../constants.js';
 
 /**
  * Initialize UI visibility module
@@ -204,7 +205,7 @@ export function initUIVisibility(deps) {
     setDisplayForIds(pdfStyleIds, showStyleSettings ? 'block' : 'none');
     
     // PDF settings divider (special handling - it's a .settings-divider, not .setting-item)
-    const pdfSettingsDivider = document.getElementById('pdfSettingsDivider');
+    const pdfSettingsDivider = document.getElementById(ELEMENT_IDS.PDF_SETTINGS_DIVIDER);
     if (pdfSettingsDivider) {
       if (showStyleSettings) {
         pdfSettingsDivider.classList.remove('hidden');

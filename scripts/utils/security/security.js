@@ -52,6 +52,13 @@ export function isValidExternalUrl(url) {
       logWarn('Blocked IPv6 link-local URL', { hostname });
       return false;
     }
+
+    // Block IPv6 Unique Local Addresses (ULA) - RFC 4193 (fc00::/7, fd00::/8)
+    if (hostname.startsWith('[fc') || hostname.startsWith('fc') ||
+        hostname.startsWith('[fd') || hostname.startsWith('fd')) {
+      logWarn('Blocked IPv6 ULA URL', { hostname });
+      return false;
+    }
     
     // Block private network ranges
     if (hostname.startsWith('192.168.') ||

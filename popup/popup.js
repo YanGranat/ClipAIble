@@ -57,7 +57,7 @@ import { initCore } from './core.js';
 import { initHandlers } from './handlers.js';
 import { initializeDOMElements, initializeModules, finalizeInitialization } from './utils/init-helpers.js';
 import { groupDependencies } from './utils/dependencies.js';
-import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS } from './constants.js';
+import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS, ELEMENT_IDS } from './constants.js';
 import { getElement, setElementDisplay, setElementGroupDisplay, setDisplayForIds } from './utils/dom-helpers.js';
 import { markdownToHtml, formatTime, escapeHtml, formatRelativeDate } from './utils/format-helpers.js';
 import { debouncedSaveSettings, saveAudioVoice } from './utils/settings-helpers.js';
@@ -508,7 +508,7 @@ async function init() {
     const modules = /** @type {any} */ (initializeModules)(groupedDeps);
     
     // Finalize initialization: load settings, apply localization, setup event listeners
-    await finalizeInitialization(modules, initAllCustomSelects);
+    await finalizeInitialization(modules, initAllCustomSelects, setCustomSelectValue);
     
     // Store module references for functions that need them (replaces window.*Module pattern)
     uiModuleRef = modules.uiModule;
@@ -557,8 +557,8 @@ async function init() {
             
             // CRITICAL: Also force immediate save (don't wait for debounce)
             // Get current audioVoiceMap from storage to ensure we have latest
-            const storageResult = await chrome.storage.local.get([STORAGE_KEYS.AUDIO_VOICE_MAP]);
-            let currentMap = storageResult[STORAGE_KEYS.AUDIO_VOICE_MAP] || {};
+            const storageResult = await chrome.storage.local.get([STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP]);
+            let currentMap = storageResult[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP] || {};
             
             // CRITICAL: Ensure format is correct (with 'current' property)
             /** @type {{current?: Record<string, string>}} */
@@ -580,7 +580,7 @@ async function init() {
             currentMap = typedCurrentMap;
             
             // Save immediately
-            await chrome.storage.local.set({ [STORAGE_KEYS.AUDIO_VOICE_MAP]: currentMap });
+            await chrome.storage.local.set({ [STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP]: currentMap });
           }
         } catch (error) {
           logError('Error saving voice before close', error);
@@ -595,7 +595,7 @@ async function init() {
     // Use logError for centralized logging (console.error is redundant here)
     logError('CRITICAL: init() failed completely', error);
     // Show error to user
-    const statusText = document.getElementById('statusText');
+    const statusText = document.getElementById(ELEMENT_IDS.STATUS_TEXT);
     if (statusText) {
       const errorText = await t('errorCheckConsole');
       statusText.textContent = errorText;
@@ -657,7 +657,7 @@ async function resetAllStyles() {
   
   // Reset style preset to dark (default)
   elements.stylePreset.value = 'dark';
-  const stylePresetContainer = document.getElementById('stylePresetContainer');
+  const stylePresetContainer = document.getElementById(ELEMENT_IDS.STYLE_PRESET_CONTAINER);
   if (stylePresetContainer) {
     const valueSpan = stylePresetContainer.querySelector('.custom-select-value');
     const selectedOption = stylePresetContainer.querySelector('[data-value="dark"]');
@@ -1253,18 +1253,18 @@ async function loadAndDisplayStats() {
 
 async function displayStats(stats) {
   // Update main counters
-  document.getElementById('statTotal').textContent = stats.totalSaved || 0;
-  document.getElementById('statMonth').textContent = stats.thisMonth || 0;
-  
+  document.getElementById(ELEMENT_IDS.STAT_TOTAL).textContent = stats.totalSaved || 0;
+  document.getElementById(ELEMENT_IDS.STAT_MONTH).textContent = stats.thisMonth || 0;
+
   // Update format counts
-  document.getElementById('formatPdf').textContent = stats.byFormat?.pdf || 0;
-  document.getElementById('formatEpub').textContent = stats.byFormat?.epub || 0;
-  document.getElementById('formatFb2').textContent = stats.byFormat?.fb2 || 0;
-  document.getElementById('formatMarkdown').textContent = stats.byFormat?.markdown || 0;
-  document.getElementById('formatAudio').textContent = stats.byFormat?.audio || 0;
+  document.getElementById(ELEMENT_IDS.FORMAT_PDF).textContent = stats.byFormat?.pdf || 0;
+  document.getElementById(ELEMENT_IDS.FORMAT_EPUB).textContent = stats.byFormat?.epub || 0;
+  document.getElementById(ELEMENT_IDS.FORMAT_FB2).textContent = stats.byFormat?.fb2 || 0;
+  document.getElementById(ELEMENT_IDS.FORMAT_MARKDOWN).textContent = stats.byFormat?.markdown || 0;
+  document.getElementById(ELEMENT_IDS.FORMAT_AUDIO).textContent = stats.byFormat?.audio || 0;
   
   // Update history
-  const historyContainer = document.getElementById('statsHistory');
+  const historyContainer = document.getElementById(ELEMENT_IDS.STATS_HISTORY);
   if (stats.history && stats.history.length > 0) {
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
@@ -1313,13 +1313,13 @@ async function displayStats(stats) {
 // Kept for backward compatibility with existing code
 
 async function displayCacheStats(stats) {
-  const domainsEl = document.getElementById('cacheDomains');
+  const domainsEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS);
   if (domainsEl) {
     domainsEl.textContent = stats.validDomains || 0;
   }
   
   // Display cached domains list
-  const domainsListEl = document.getElementById('cacheDomainsList');
+  const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
   if (domainsListEl && stats.domains) {
     if (stats.domains.length === 0) {
       const noCachedDomainsText = await t('noCachedDomains');

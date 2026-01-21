@@ -4,6 +4,17 @@
 
 import { safeGetComputedStyle, safeClosest } from './dom-utils.js';
 
+// Optimized navigation pattern matching
+function matchesNavigationPattern(text, patterns) {
+  // Use for...of instead of some() for better performance with large arrays
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Check if element is a footnote link (number or arrow that links to #)
  * @param {Element} element - Element to check
@@ -262,11 +273,11 @@ export function isExcluded(win, element, constants) {
     const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
     if (isParagraphOrHeading) {
       // Only exclude if short and matches navigation
-      if (textTrimmed.length < 200 && NAV_PATTERNS_CONTAINS.some(pattern => pattern.test(text))) {
+      if (textTrimmed.length < 200 && matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
     } else {
-      if (NAV_PATTERNS_CONTAINS.some(pattern => pattern.test(text))) {
+      if (matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
     }

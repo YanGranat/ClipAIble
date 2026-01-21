@@ -39,7 +39,7 @@ export function initAudio(deps) {
     audioVoiceMap.current[provider] = voice;
     debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, voice);
     // CRITICAL: Save in correct format { current: { provider: voice } }
-    debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE_MAP, { current: { ...audioVoiceMap.current } });
+    debouncedSaveSettings(STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP, { current: { ...audioVoiceMap.current } });
   }
 
   /**

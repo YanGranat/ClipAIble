@@ -3,15 +3,16 @@
 
 import { logError } from '../../scripts/utils/logging.js';
 import { getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
+import { ELEMENT_IDS } from '../constants.js';
 
 /**
  * Show PDF file selection dialog and wait for user confirmation
  * @returns {Promise<boolean>} true if user clicked OK, false if cancelled
  */
 export async function showPdfFileSelectionDialog() {
-  const modal = document.getElementById('pdfFileSelectionModal');
-  const closeBtn = document.getElementById('pdfFileSelectionModalClose');
-  const okBtn = document.getElementById('pdfFileSelectionModalOk');
+  const modal = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL);
+  const closeBtn = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_CLOSE);
+  const okBtn = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_OK);
   
   if (!modal || !closeBtn || !okBtn) {
     logError('[Popup] PDF file selection modal elements not found');
@@ -22,9 +23,9 @@ export async function showPdfFileSelectionDialog() {
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
   
-  const titleEl = document.getElementById('pdfFileSelectionModalTitle');
-  const messageEl = document.getElementById('pdfFileSelectionModalMessage');
-  const warningEl = document.getElementById('pdfFileSelectionModalWarning');
+  const titleEl = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_TITLE);
+  const messageEl = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_MESSAGE);
+  const warningEl = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_WARNING);
   
   if (titleEl) titleEl.textContent = locale.pdfFileSelectionDialogTitle || UI_LOCALES.en.pdfFileSelectionDialogTitle;
   if (messageEl) messageEl.textContent = locale.pdfFileSelectionDialogMessage || UI_LOCALES.en.pdfFileSelectionDialogMessage;

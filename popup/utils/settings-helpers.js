@@ -1,5 +1,9 @@
 // @ts-check
-// Settings helper functions for popup
+/**
+ * Settings helper functions for popup
+ * Provides debounced settings saving, audio voice management, and UI state updates
+ * Handles complex settings interactions and state synchronization
+ */
 
 import { log, logError } from '../../scripts/utils/logging.js';
 import { CONFIG } from '../../scripts/utils/config.js';
@@ -40,20 +44,22 @@ export function debouncedSaveSettings(key, value, callback = null) {
     
     isSavingSettings = true;
     try {
-      // Log only metadata, not full value to reduce log size
-      const valueSize = typeof value === 'string' ? value.length : 
-                       typeof value === 'object' && value !== null ? JSON.stringify(value).length : 0;
-      const valuePreview = typeof value === 'string' ? (value.length > 100 ? value.substring(0, 100) + '...' : value) :
-                          typeof value === 'object' && value !== null ? `[object with ${Object.keys(value).length} keys]` : value;
-      
-      log('[ClipAIble Popup] Saving setting', {
-        key,
-        valueType: typeof value,
-        valueSize,
-        valuePreview,
-        isObject: typeof value === 'object' && !Array.isArray(value) && value !== null,
-        objectKeys: typeof value === 'object' && !Array.isArray(value) && value !== null ? Object.keys(value) : null
-      });
+      // Log only in DEBUG mode to reduce production noise
+      if (CONFIG.LOG_LEVEL === 0) {
+        const valueSize = typeof value === 'string' ? value.length :
+                         typeof value === 'object' && value !== null ? JSON.stringify(value).length : 0;
+        const valuePreview = typeof value === 'string' ? (value.length > 100 ? value.substring(0, 100) + '...' : value) :
+                            typeof value === 'object' && value !== null ? `[object with ${Object.keys(value).length} keys]` : value;
+
+        log('[ClipAIble Popup] Saving setting', {
+          key,
+          valueType: typeof value,
+          valueSize,
+          valuePreview,
+          isObject: typeof value === 'object' && !Array.isArray(value) && value !== null,
+          objectKeys: typeof value === 'object' && !Array.isArray(value) && value !== null ? Object.keys(value) : null
+        });
+      }
       
       await chrome.storage.local.set({ [key]: value });
       
@@ -97,6 +103,6 @@ export function saveAudioVoice(provider, voice, audioVoiceMap) {
   }
   audioVoiceMap[provider] = voice;
   debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE, voice);
-  debouncedSaveSettings(STORAGE_KEYS.AUDIO_VOICE_MAP, audioVoiceMap);
+  debouncedSaveSettings(STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP, audioVoiceMap);
 }
 

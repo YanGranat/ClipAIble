@@ -27,7 +27,7 @@ export function setupThemeHandlers(deps) {
 
   if (elements.themeSelect) {
     elements.themeSelect.addEventListener('change', () => {
-      debouncedSaveSettings(STORAGE_KEYS.THEME, elements.themeSelect.value, () => {
+      debouncedSaveSettings(STORAGE_KEYS.STORAGE_THEME, elements.themeSelect.value, () => {
         applyTheme();
       });
     });

@@ -4,6 +4,7 @@
 
 import { t, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { logError, log } from '../scripts/utils/logging.js';
+import { ELEMENT_IDS } from './constants.js';
 
 /**
  * Initialize stats module with dependencies
@@ -43,31 +44,31 @@ export function initStats(deps) {
         // Update main counters - batch DOM updates
         const updates = [];
         updates.push(() => {
-          const el = document.getElementById('statTotal');
+          const el = document.getElementById(ELEMENT_IDS.STAT_TOTAL);
           if (el) el.textContent = stats.totalSaved || 0;
         });
         updates.push(() => {
-          const el = document.getElementById('statMonth');
+          const el = document.getElementById(ELEMENT_IDS.STAT_MONTH);
           if (el) el.textContent = stats.thisMonth || 0;
         });
         updates.push(() => {
-          const el = document.getElementById('formatPdf');
+          const el = document.getElementById(ELEMENT_IDS.FORMAT_PDF);
           if (el) el.textContent = stats.byFormat?.pdf || 0;
         });
         updates.push(() => {
-          const el = document.getElementById('formatEpub');
+          const el = document.getElementById(ELEMENT_IDS.FORMAT_EPUB);
           if (el) el.textContent = stats.byFormat?.epub || 0;
         });
         updates.push(() => {
-          const el = document.getElementById('formatFb2');
+          const el = document.getElementById(ELEMENT_IDS.FORMAT_FB2);
           if (el) el.textContent = stats.byFormat?.fb2 || 0;
         });
         updates.push(() => {
-          const el = document.getElementById('formatMarkdown');
+          const el = document.getElementById(ELEMENT_IDS.FORMAT_MARKDOWN);
           if (el) el.textContent = stats.byFormat?.markdown || 0;
         });
         updates.push(() => {
-          const el = document.getElementById('formatAudio');
+          const el = document.getElementById(ELEMENT_IDS.FORMAT_AUDIO);
           if (el) el.textContent = stats.byFormat?.audio || 0;
         });
         
@@ -75,7 +76,7 @@ export function initStats(deps) {
         updates.forEach(update => update());
         
         // Update history - use DocumentFragment for better performance
-        const historyContainer = document.getElementById('statsHistory');
+        const historyContainer = document.getElementById(ELEMENT_IDS.STATS_HISTORY);
         if (!historyContainer) {
           resolve();
           return;
@@ -148,13 +149,13 @@ export function initStats(deps) {
     // Defer all DOM updates to avoid blocking main thread
     return new Promise((resolve) => {
       requestAnimationFrame(async () => {
-        const domainsEl = document.getElementById('cacheDomains');
+        const domainsEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS);
         if (domainsEl) {
           domainsEl.textContent = stats.validDomains || 0;
         }
         
         // Display cached domains list
-        const domainsListEl = document.getElementById('cacheDomainsList');
+        const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
         if (domainsListEl && stats.domains) {
           if (stats.domains.length === 0) {
             const noCachedDomainsText = await t('noCachedDomains');

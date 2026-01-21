@@ -1661,11 +1661,11 @@ function isExcluded(win, element, constants) {
   if (!isSemanticContainer && !isImageOrFigure) {
     const isParagraphOrHeading = tagName === "p" || tagName.match(/^h[1-6]$/);
     if (isParagraphOrHeading) {
-      if (textTrimmed.length < 200 && NAV_PATTERNS_CONTAINS.some((pattern) => pattern.test(text))) {
+      if (textTrimmed.length < 200 && matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
     } else {
-      if (NAV_PATTERNS_CONTAINS.some((pattern) => pattern.test(text))) {
+      if (matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
     }
@@ -1699,6 +1699,17 @@ function isExcluded(win, element, constants) {
         return true;
       }
       parent = parent.parentElement;
+    }
+  }
+  return false;
+}
+
+// Optimized navigation pattern matching
+function matchesNavigationPattern(text, patterns) {
+  // Use for...of instead of some() for better performance with large arrays
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      return true;
     }
   }
   return false;
@@ -2046,7 +2057,10 @@ function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
     } catch (e) {
     }
   }
-  const candidates = Array.from(doc.querySelectorAll("div, article, main, section, table"));
+  let candidates = Array.from(doc.querySelectorAll("div, article, main, section, table"));
+  if (candidates.length > 500) {
+    candidates = candidates.slice(0, 500);
+  }
   let bestCandidate = null;
   let maxScore = 0;
   for (const candidate of candidates) {
@@ -2836,7 +2850,21 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
           tag: tagName,
           className: el.className?.substring?.(0, 40) || "",
           parentClass: el.parentElement?.className?.substring?.(0, 40) || "",
-          src: tagName === "img" ? el.src?.substring?.(0, 50) : el.querySelector?.("img")?.src?.substring?.(0, 50)
+          src: (() => {
+            if (tagName === "img") {
+              const imgSrc = (
+                /** @type {any} */
+                el.src
+              );
+              return imgSrc ? imgSrc.substring(0, 50) : "";
+            }
+            const img = el.querySelector?.("img");
+            return img && /** @type {any} */
+            img.src ? (
+              /** @type {any} */
+              img.src.substring(0, 50)
+            ) : "";
+          })()
         });
       } else
         excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -2984,7 +3012,9 @@ function handleFigure(win, element, state, constants, baseUrl) {
   const normalizedSrc = normalizeImageUrl(absoluteSrc);
   if (state.processedImages.has(normalizedSrc))
     return null;
-  state.processedImages.add(normalizedSrc);
+  if (state.processedImages.size < 1e3) {
+    state.processedImages.add(normalizedSrc);
+  }
   const figcaption = element.querySelector("figcaption");
   let caption = figcaption ? (figcaption.textContent || "").trim() : "";
   if (!caption) {
@@ -3060,7 +3090,9 @@ function handleImg(win, element, state, constants, baseUrl) {
   const normalizedSrc = normalizeImageUrl(absoluteSrc);
   if (state.processedImages.has(normalizedSrc))
     return null;
-  state.processedImages.add(normalizedSrc);
+  if (state.processedImages.size < 1e3) {
+    state.processedImages.add(normalizedSrc);
+  }
   return {
     type: "image",
     src: absoluteSrc,
@@ -3541,7 +3573,9 @@ function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
       const normalizedSrc = normalizeImageUrl(absoluteSrc);
       if (state.processedImages.has(normalizedSrc))
         continue;
-      state.processedImages.add(normalizedSrc);
+      if (state.processedImages.size < 1e3) {
+        state.processedImages.add(normalizedSrc);
+      }
       content.push({
         type: "image",
         src: absoluteSrc,
@@ -3749,7 +3783,9 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     let content = [];
     if (featuredImage) {
       const normalizedFeaturedSrc = normalizeImageUrl(featuredImage.src);
-      state.processedImages.add(normalizedFeaturedSrc);
+      if (state.processedImages.size < 1e3) {
+        state.processedImages.add(normalizedFeaturedSrc);
+      }
       content.push({
         type: "image",
         src: featuredImage.src,

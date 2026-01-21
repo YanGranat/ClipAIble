@@ -158,7 +158,13 @@ export async function getCachedSelectors(url) {
   
   // Update last used timestamp
   entry.lastUsed = Date.now();
-  await saveCache(cache);
+
+  // Only save if it's been more than 5 seconds since last save to reduce I/O
+  const now = Date.now();
+  if (!entry.lastSaved || (now - entry.lastSaved) > 5000) {
+    entry.lastSaved = now;
+    await saveCache(cache);
+  }
   
   const cacheDuration = Date.now() - cacheStartTime;
   const ageMinutes = Math.round((Date.now() - entry.created) / 1000 / 60);

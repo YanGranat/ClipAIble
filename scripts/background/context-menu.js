@@ -2,12 +2,17 @@
 // Context menu and storage change handlers for background service worker
 // Uses dependency injection pattern for better testability and modularity
 
+import { validateDeps } from '../utils/di-validation.js';
+
 /**
  * Initialize context menu module with dependencies
  * @param {import('../types.js').ContextMenuDeps} deps - Dependencies object
  * @returns {Object} Context menu functions
  */
 export function initContextMenu(deps) {
+  // CRITICAL: Validate DI dependencies to prevent runtime errors
+  validateDeps(deps, 'ContextMenuDeps', 'context-menu');
+
   const {
     log,
     logError,

@@ -58,6 +58,12 @@ build/
 # Temporary files
 *.tmp
 *.temp
+temp_*.js
+temp_*.txt
+
+# Debug/test files in root (not in tests/)
+debug-*.js
+test-*.js
 
 # Memory bank (Cursor AI context - internal notes)
 memory-bank/

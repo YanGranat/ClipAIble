@@ -89,8 +89,43 @@ let lastSavedTimestamp = 0;
 let storageSaveCount = 0;
 let lastStorageSaveTime = 0;
 
+/**
+ * Save to chrome storage with retry logic
+ * @param {object} data - Data to save
+ * @param {number} maxRetries - Maximum retry attempts (default: 3)
+ * @returns {Promise<void>}
+ */
+async function saveToStorageWithRetry(data, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await chrome.storage.local.set(data);
+      return; // Success
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries;
+      if (isLastAttempt) {
+        logError('CRITICAL: Failed to save to storage after all retries', {
+          attempt,
+          maxRetries,
+          error: error.message,
+          dataKeys: Object.keys(data)
+        });
+        throw error; // Re-throw on final failure
+      } else {
+        logWarn('Storage save failed, retrying', {
+          attempt,
+          maxRetries,
+          error: error.message,
+          willRetry: true
+        });
+        // Exponential backoff: 100ms, 200ms, 400ms...
+        await new Promise(resolve => setTimeout(resolve, 100 * Math.pow(2, attempt - 1)));
+      }
+    }
+  }
+}
+
 // Force immediate save (bypass debounce) for critical updates
-function forceSaveState() {
+async function forceSaveState() {
   if (storageSaveTimeout) {
     clearTimeout(storageSaveTimeout);
     storageSaveTimeout = null;
@@ -98,11 +133,13 @@ function forceSaveState() {
   if (pendingStorageUpdate) {
     const stateToSave = { ...pendingStorageUpdate, lastUpdate: Date.now() };
     lastSavedTimestamp = stateToSave.lastUpdate;
-    chrome.storage.local.set({ 
-      processingState: stateToSave
-    }).catch(error => {
+    try {
+      await saveToStorageWithRetry({
+        processingState: stateToSave
+      });
+    } catch (error) {
       logWarn('Failed to force save processingState', error);
-    });
+    }
     pendingStorageUpdate = null;
   }
 }
@@ -131,7 +168,7 @@ export async function saveStateToStorageImmediate() {
   lastSavedTimestamp = stateToSave.lastUpdate;
   
   try {
-    await chrome.storage.local.set({ 
+    await saveToStorageWithRetry({
       processingState: stateToSave
     });
     // Clear pending update since we just saved
@@ -301,7 +338,7 @@ function saveStateToStorage(updates) {
       });
     }
     
-    chrome.storage.local.set({ 
+    saveToStorageWithRetry({
       processingState: stateToSave
     }).catch(error => {
       logWarn('Failed to save critical processingState update', error);
@@ -332,7 +369,7 @@ function saveStateToStorage(updates) {
         });
       }
       
-      chrome.storage.local.set({ 
+      saveToStorageWithRetry({
         processingState: stateToSave
       }).catch(error => {
         // Log but don't throw - storage errors shouldn't break processing
@@ -368,11 +405,12 @@ export function updateState(updates) {
   if (isUpdatingState) {
     // Prevent memory leaks by limiting queue size
     if (updateQueue.length >= CONFIG.MAX_UPDATE_QUEUE_SIZE) {
-      logWarn('Update queue full, dropping oldest update', { 
-        queueLength: updateQueue.length, 
-        maxSize: CONFIG.MAX_UPDATE_QUEUE_SIZE 
+      logError('CRITICAL: Update queue overflow - dropping oldest update! This may cause data loss.', {
+        queueLength: updateQueue.length,
+        maxSize: CONFIG.MAX_UPDATE_QUEUE_SIZE,
+        droppedUpdate: updateQueue[0] // Log what we're losing
       });
-      updateQueue.shift(); // Remove oldest update
+      updateQueue.shift(); // Remove oldest update - DATA LOSS
     }
     // Add to queue instead of skipping
     updateQueue.push(updates);
@@ -495,7 +533,7 @@ export async function cancelProcessing(stopKeepAlive) {
  */
 export async function completeProcessing(stopKeepAlive) {
   // Force save any pending state before clearing
-  forceSaveState();
+  await forceSaveState();
   
   processingState.isProcessing = false;
   processingState.progress = 100;
@@ -521,7 +559,7 @@ export async function completeProcessing(stopKeepAlive) {
     lastUpdate: Date.now() 
   };
   lastSavedTimestamp = finalState.lastUpdate;
-  await chrome.storage.local.set({ 
+  await saveToStorageWithRetry({
     processingState: finalState
   });
   
@@ -540,7 +578,7 @@ export async function completeProcessing(stopKeepAlive) {
  */
 export async function setError(error, stopKeepAlive) {
   // Force save any pending state before clearing
-  forceSaveState();
+  await forceSaveState();
   
   processingState.isProcessing = false;
   
@@ -574,7 +612,7 @@ export async function setError(error, stopKeepAlive) {
     ...processingState,
     lastUpdate: Date.now()
   };
-  await chrome.storage.local.set({ processingState: errorState });
+  await saveToStorageWithRetry({ processingState: errorState });
   
   // Wait a bit to ensure popup can read the error state
   // Then remove after delay to allow popup to poll and see the error
@@ -602,7 +640,7 @@ export async function startProcessing(startKeepAlive) {
   // Save previous result to storage before clearing (for summary generation)
   if (processingState.result) {
     try {
-      await chrome.storage.local.set({ lastProcessedResult: processingState.result });
+      await saveToStorageWithRetry({ lastProcessedResult: processingState.result });
     } catch (error) {
       logWarn('Failed to save last processed result', error);
     }
