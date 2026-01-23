@@ -15,6 +15,26 @@ import { getUILanguage, tSync } from '../locales.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
 
+/**
+ * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
+ * This prevents duplicate caption text in Markdown.
+ * 
+ * @param {Array<import('../types.js').ContentItem>} content - Content array
+ * @returns {Array<import('../types.js').ContentItem>} Filtered content array
+ */
+function filterFigureParagraphs(content) {
+  if (!content || !Array.isArray(content)) return content;
+  
+  return content.filter((item, index) => {
+    if (item.type !== 'paragraph') return true;
+    const text = item.text || item.html || '';
+    if (!text.includes('<figure')) return true;
+    const nextItem = content[index + 1];
+    if (!nextItem || nextItem.type !== 'image') return true;
+    return false;
+  });
+}
+
 // Simple cache for localization strings (performance optimization)
 // Limited to prevent unbounded growth
 const l10nCache = new Map();
@@ -92,9 +112,19 @@ export async function generateMarkdown(data, updateState) {
   
   if (updateState) updateState({ status: 'Building Markdown...', progress: 85 });
   
+  // Filter out paragraph elements that contain <figure> HTML when followed by image
+  const filteredContent = filterFigureParagraphs(content);
+  if (filteredContent.length !== content.length) {
+    log('Filtered figure-in-paragraph duplicates', {
+      originalCount: content.length,
+      filteredCount: filteredContent.length,
+      removedCount: content.length - filteredContent.length
+    });
+  }
+  
   // Collect headings for TOC (include all levels, starting from level 1)
   const headings = [];
-  for (const item of content) {
+  for (const item of filteredContent) {
     if (item.type === 'heading' && item.level >= 1) {
       const text = stripHtml(item.text || '');
       if (text) {
@@ -123,9 +153,9 @@ export async function generateMarkdown(data, updateState) {
   // Extract and add subtitle (if present)
   let subtitleText = '';
   let subtitleIndex = -1;
-  for (let i = 0; i < content.length; i++) {
-    if (content[i].type === 'subtitle') {
-      const item = content[i];
+  for (let i = 0; i < filteredContent.length; i++) {
+    if (filteredContent[i].type === 'subtitle') {
+      const item = filteredContent[i];
       subtitleText = stripHtml(item.text || item.html || '');
       if (subtitleText) {
         subtitleIndex = i;
@@ -247,8 +277,8 @@ export async function generateMarkdown(data, updateState) {
   
   // Process content items (skip subtitle - already added)
   let prevItemType = null;
-  for (let i = 0; i < content.length; i++) {
-    const item = content[i];
+  for (let i = 0; i < filteredContent.length; i++) {
+    const item = filteredContent[i];
     if (item.type === 'subtitle') {
       continue;
     }
@@ -327,7 +357,7 @@ export async function generateMarkdown(data, updateState) {
   log('📊 Markdown file generated', {
     size: `${sizeMB} MB`,
     sizeBytes: markdownSize,
-    contentItems: content?.length || 0,
+    contentItems: filteredContent?.length || 0,
     headings: headings.length
   });
   

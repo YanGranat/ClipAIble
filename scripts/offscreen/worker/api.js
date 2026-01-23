@@ -6,6 +6,7 @@ import { state } from '../state.js';
 import { ensureTTSWorker } from './init.js';
 import { resetWorkerInactivityTimer } from './lifecycle.js';
 
+
 /**
  * Execute TTS predict using Web Worker
  * Throws error if worker is not available

@@ -19,6 +19,42 @@ import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 
 /**
+ * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
+ * 
+ * Problem: AI Selector mode may return:
+ * 1. A paragraph with <figure>...<figcaption>caption text</figcaption>...</figure> HTML
+ * 2. Immediately followed by an image element with the same caption
+ * 
+ * When the paragraph is processed, sanitizeHtml strips HTML tags but preserves text from figcaption,
+ * causing the caption to appear twice: once as paragraph text, once as image caption.
+ * 
+ * Solution: Remove paragraph elements that contain <figure> HTML if the next element is an image.
+ * 
+ * @param {Array<import('../types.js').ContentItem>} content - Content array
+ * @returns {Array<import('../types.js').ContentItem>} Filtered content array
+ */
+function filterFigureParagraphs(content) {
+  if (!content || !Array.isArray(content)) return content;
+  
+  return content.filter((item, index) => {
+    // Only check paragraph type
+    if (item.type !== 'paragraph') return true;
+    
+    // Check if paragraph text contains <figure> HTML
+    const text = item.text || item.html || '';
+    if (!text.includes('<figure')) return true;
+    
+    // Check if next element is an image
+    const nextItem = content[index + 1];
+    if (!nextItem || nextItem.type !== 'image') return true;
+    
+    // This paragraph contains <figure> and is followed by image - filter it out
+    // The image element already has the caption, so we don't need this paragraph
+    return false;
+  });
+}
+
+/**
  * Generate PDF from content
  * @param {import('../types.js').ExtendedGenerationData} data - Generation data with PDF-specific options (pageMode, fontFamily, fontSize, bgColor, textColor, headingColor, linkColor)
  * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
@@ -205,9 +241,21 @@ export async function generatePdf(data, updateState) {
     
     log('Building HTML document...');
     
+    // Filter out paragraph elements that contain <figure> HTML when followed by image
+    // This prevents duplicate content: AI Selector mode may return both <figure> HTML as paragraph
+    // AND the same image separately as image type with caption, causing text duplication
+    const filteredContent = filterFigureParagraphs(content);
+    if (filteredContent.length !== content.length) {
+      log('Filtered figure-in-paragraph duplicates', {
+        originalCount: content.length,
+        filteredCount: filteredContent.length,
+        removedCount: content.length - filteredContent.length
+      });
+    }
+    
     // DETAILED LOGGING: Log content before building HTML
     log('=== CONTENT BEFORE BUILDING HTML ===', {
-      contentItemsCount: content?.length || 0,
+      contentItemsCount: filteredContent?.length || 0,
       title,
       author: translatedAuthor,
       date: formattedDate,
@@ -216,13 +264,13 @@ export async function generatePdf(data, updateState) {
     
     // Log ALL content items with FULL text - NO TRUNCATION
     // Log each item separately to ensure full visibility in console
-    if (content && Array.isArray(content)) {
+    if (filteredContent && Array.isArray(filteredContent)) {
       log('=== CONTENT ITEMS FOR HTML (ALL - FULL TEXT) ===', {
-        totalItems: content.length
+        totalItems: filteredContent.length
       });
       
       // Log each item separately for full visibility
-      content.forEach((item, idx) => {
+      filteredContent.forEach((item, idx) => {
         log(`=== CONTENT ITEM FOR HTML [${idx}] ===`, {
           index: idx,
           type: item.type,
@@ -240,7 +288,7 @@ export async function generatePdf(data, updateState) {
     }
     const headings = [];
     const cleanedTitle = cleanTitle(title || '');
-    const contentWithIds = content.map((item, index) => {
+    const contentWithIds = filteredContent.map((item, index) => {
       if (item.type === 'heading') {
         // Skip the first heading if it matches the title (title is already in header)
         const firstItemIsTitle = index === 0 && 

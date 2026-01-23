@@ -17,6 +17,26 @@ import { handleError } from '../utils/error-handler.js';
 import { buildTocStructure, renderTocAsFb2 } from './toc-builder.js';
 
 /**
+ * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
+ * This prevents duplicate caption text in FB2.
+ * 
+ * @param {Array<import('../types.js').ContentItem>} content - Content array
+ * @returns {Array<import('../types.js').ContentItem>} Filtered content array
+ */
+function filterFigureParagraphs(content) {
+  if (!content || !Array.isArray(content)) return content;
+  
+  return content.filter((item, index) => {
+    if (item.type !== 'paragraph') return true;
+    const text = item.text || item.html || '';
+    if (!text.includes('<figure')) return true;
+    const nextItem = content[index + 1];
+    if (!nextItem || nextItem.type !== 'image') return true;
+    return false;
+  });
+}
+
+/**
  * Generate FB2 file from content
  * @param {import('../types.js').GenerationData} data - Generation data
  * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
@@ -46,6 +66,16 @@ export async function generateFb2(data, updateState) {
     generateToc = false, generateAbstract = false, abstract = '', language = 'en'
   } = data;
   
+  // Filter out paragraph elements that contain <figure> HTML when followed by image
+  const filteredContent = filterFigureParagraphs(content);
+  if (filteredContent.length !== (content?.length || 0)) {
+    log('Filtered figure-in-paragraph duplicates', {
+      originalCount: content?.length || 0,
+      filteredCount: filteredContent.length,
+      removedCount: (content?.length || 0) - filteredContent.length
+    });
+  }
+  
   // Collect headings for TOC and sections
   // Include all headings starting from level 1 (same as PDF/Markdown/EPUB)
   if (generateToc) {
@@ -53,7 +83,7 @@ export async function generateFb2(data, updateState) {
   }
   const headings = [];
   const allHeadings = [];
-  (content || []).forEach((item, index) => {
+  (filteredContent || []).forEach((item, index) => {
     // Log ALL heading items for debugging
     if (item.type === 'heading') {
       const text = stripHtml(item.text || '');
@@ -90,7 +120,7 @@ export async function generateFb2(data, updateState) {
   });
   
   log('=== FB2 GENERATION START ===');
-  log('Input', { title, author, contentItems: content?.length, generateToc, headingsCount: headings.length });
+  log('Input', { title, author, contentItems: filteredContent?.length, generateToc, headingsCount: headings.length });
   
   if (!content || content.length === 0) {
     // Normalize error with context for better logging and error tracking
@@ -130,7 +160,7 @@ export async function generateFb2(data, updateState) {
   const docId = generateDocId();
   
   // Collect and embed images for binary section
-  const imageCount = content.filter(item => item.type === 'image').length;
+  const imageCount = filteredContent.filter(item => item.type === 'image').length;
   if (imageCount > 0) {
     log(`🖼️ Loading and embedding ${imageCount} images for FB2`);
   }
@@ -139,7 +169,7 @@ export async function generateFb2(data, updateState) {
     const loadingStatus = tSync('stageLoadingImages', uiLang);
     updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 86 });
   }
-  const images = await collectFb2Images(content, updateState);
+  const images = await collectFb2Images(filteredContent, updateState);
   
   log('Collected', { headings: headings.length, images: images.length });
   if (imageCount > 0) {
@@ -152,7 +182,7 @@ export async function generateFb2(data, updateState) {
   let fb2 = `<?xml version="1.0" encoding="UTF-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
 ${generateDescription(safeTitle, authorParts, langCode, pubDate, sourceUrl, docId)}
-${generateBody(content, safeTitle, authorParts, generateToc, headings, pubDate, sourceUrl, langCode, generateAbstract, abstract)}
+${generateBody(filteredContent, safeTitle, authorParts, generateToc, headings, pubDate, sourceUrl, langCode, generateAbstract, abstract)}
 ${generateBinaries(images)}
 </FictionBook>`;
   
@@ -164,7 +194,7 @@ ${generateBinaries(images)}
   log('📊 FB2 file generated', {
     size: `${sizeMB} MB`,
     sizeBytes: fb2Size,
-    contentItems: content?.length || 0,
+    contentItems: filteredContent?.length || 0,
     images: images.length,
     headings: headings.length
   });

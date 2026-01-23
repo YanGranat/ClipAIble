@@ -373,9 +373,14 @@ blockquote p:last-child {
 
 /* ===== LISTS ===== */
 
-ul, ol {
+ul {
   margin: 0.2em 0;
   padding-left: 1.2em;
+}
+
+ol {
+  margin: 0.2em 0;
+  padding-left: 1.5em;
 }
 
 li {
@@ -478,7 +483,7 @@ th {
     color: #b9b9b9 !important;
     font-size: var(--font-size-base) !important;
     margin: 0 !important;
-    padding: 5mm 5mm 2mm 5mm !important;
+    padding: 5mm 5mm 0 5mm !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     color-adjust: exact !important;

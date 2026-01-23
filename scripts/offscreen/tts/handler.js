@@ -1,7 +1,7 @@
 // @ts-check
 // Main PIPER_TTS handler for offscreen document
 
-import { log, logError } from '../../utils/logging.js';
+import { log, logError, logWarn } from '../../utils/logging.js';
 import { detectLanguage } from '../utils/language-detection.js';
 import { normalizeLanguageCode, getBaseLangCode, selectVoice } from './voice-selection.js';
 import { ensureVoiceDownloaded } from './voice-download.js';
@@ -50,13 +50,55 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
   try {
     // 1. Initialize TTS Worker
     await initializeTTS(messageId, context);
+
+    // 2. Check if we need to restart worker (after large chunk processing)
+    // Large chunks (>5000 chars) can corrupt the worker state
+    const textLength = data.text?.length || 0;
+    if (textLength > 5000) {
+      log(`[ClipAIble TTS] Large text detected (${textLength} chars), checking worker health`, {
+        messageId,
+        textLength
+      });
+
+      // Simple health check - if worker exists, assume it's healthy for large texts
+      // The real issue is that worker gets corrupted AFTER processing, not before
+      // So we check health and restart if needed before processing large texts
+      if (context.state.getTTSWorker()) {
+        try {
+          // Quick test with minimal text
+          const testResult = await context.predictWithWorker('test', 'en_US-lessac-medium');
+          if (testResult) {
+            log(`[ClipAIble TTS] Worker health check passed for large text`, {
+              messageId,
+              textLength
+            });
+          }
+        } catch (healthError) {
+          logWarn(`[ClipAIble TTS] Worker health check failed, restarting worker`, {
+            messageId,
+            textLength,
+            error: healthError.message
+          });
+
+          // Restart worker
+          if (context.state.getTTSWorker()) {
+            context.state.getTTSWorker().terminate();
+            context.state.setTTSWorker(null);
+            context.state.setUseWorker(true);
+          }
+
+          // Re-initialize
+          await initializeTTS(messageId, context);
+        }
+      }
+    }
     
     // 2. Initialize TTS Module (for stored/download operations)
     let tts = context.state.getTTSModule();
     if (!tts) {
       tts = await context.initPiperTTS();
     }
-    
+
     // 3. Detect/normalize language
     if (language === 'auto') {
       language = detectLanguage(text);
@@ -64,7 +106,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
     }
     language = normalizeLanguageCode(language);
     const langCode = getBaseLangCode(language);
-    
+
     // 4. Select voice
     const { voiceId, isFallback } = await selectVoice({
       requestedVoice: voice,
@@ -74,7 +116,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       initTTSWorker: context.initTTSWorker,
       state: context.state
     });
-    
+
     // 5. Ensure voice is downloaded
     const downloadedVoiceId = await ensureVoiceDownloaded({
       voiceId,
@@ -87,7 +129,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       initTTSWorker: context.initTTSWorker,
       state: context.state
     });
-    
+
     // 6. Handle voice switching (clear caches if voice changed)
     const switchResult = await handleVoiceSwitching({
       newVoiceId: downloadedVoiceId,
@@ -97,13 +139,13 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       initPiperTTS: context.initPiperTTS
     });
     tts = switchResult.tts;
-    
+
     // 7. Sanitize text
     const sanitizedText = sanitizeText(text, langCode, messageId);
     if (sanitizedText.length === 0) {
       throw new Error('Text is empty after sanitization');
     }
-    
+
     // 8. Synthesize
     const wavBlob = await synthesizeText({
       text: sanitizedText,
@@ -125,7 +167,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       hasUnlimitedStorage: data.hasUnlimitedStorage || false,
       sendResponse
     });
-    
+
     const totalDuration = Date.now() - requestStart;
     log(`[ClipAIble TTS] Request complete`, {
       messageId,

@@ -1029,9 +1029,39 @@ export function extractFromPageInlined(selectors, baseUrl) {
       textContentPreview: element.textContent ? element.textContent.trim().substring(0, 100) : null
     };
     
-    if (shouldExclude(element)) {
+    // CRITICAL: If element is inside the content element (found by content selector),
+    // don't exclude it even if it's inside an excluded container.
+    // This check must happen BEFORE shouldExclude to prevent exclusion.
+    let isInsideContentElement = false;
+    if (selectors.content) {
+      // Check if this element is inside any element that matches the content selector
+      // We need to find the content element and check if this element is inside it
+      try {
+        const contentElements = document.querySelectorAll(selectors.content);
+        for (const contentEl of contentElements) {
+          if (contentEl.contains(element)) {
+            isInsideContentElement = true;
+            break;
+          }
+        }
+      } catch (e) {
+        // Invalid selector - skip check
+      }
+    }
+    
+    if (!isInsideContentElement && shouldExclude(element)) {
       debugInfo.elementsExcluded++;
       return;
+    }
+    
+    // Debug: log processed elements (first few paragraphs only)
+    if (tagName === 'p' && debugInfo.elementsProcessed < 3) {
+      console.log('[ClipAIble processElement] Processing paragraph', {
+        elementId: element.id,
+        textLength: element.textContent ? element.textContent.trim().length : 0,
+        textPreview: element.textContent ? element.textContent.trim().substring(0, 50) : '',
+        isInsideContentElement: isInsideContentElement
+      });
     }
     
     let cssHidden = false;
@@ -1131,12 +1161,44 @@ export function extractFromPageInlined(selectors, baseUrl) {
       
       if (html.trim()) {
         const pt = element.textContent?.trim() || '';
-        if (articleAuthor && pt === articleAuthor) return;
+        if (articleAuthor && pt === articleAuthor) {
+          // Debug: log why paragraph was skipped
+          if (debugInfo.elementsProcessed < 5) {
+            console.log('[ClipAIble processElement] Paragraph skipped (author match)', {
+              textPreview: pt.substring(0, 50)
+            });
+          }
+          return;
+        }
         const ct = pt.replace(/[\s\u00A0]/g, '');
-        if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) return;
+        if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) {
+          // Debug: log why paragraph was skipped
+          if (debugInfo.elementsProcessed < 5) {
+            console.log('[ClipAIble processElement] Paragraph skipped (separator)', {
+              textPreview: pt.substring(0, 50)
+            });
+          }
+          return;
+        }
         if (elementId && !element.id && !html.startsWith(`<a id="${elementId}"`)) html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
         
         content.push({ type: 'paragraph', text: html, id: elementId });
+        
+        // Debug: log successful addition (first few only)
+        if (debugInfo.elementsProcessed < 5) {
+          console.log('[ClipAIble processElement] Paragraph added to content', {
+            contentLength: content.length,
+            textPreview: pt.substring(0, 50)
+          });
+        }
+      } else {
+        // Debug: log why paragraph was not added
+        if (debugInfo.elementsProcessed < 5) {
+          console.log('[ClipAIble processElement] Paragraph not added (empty html)', {
+            textContent: element.textContent ? element.textContent.trim().substring(0, 50) : '',
+            htmlLength: html.length
+          });
+        }
       }
     }
     else if (tagName === 'img') {
@@ -1808,9 +1870,104 @@ export function extractFromPageInlined(selectors, baseUrl) {
             textContentLength: el.textContent ? el.textContent.trim().length : 0
           };
           
-          if (shouldExclude(el)) {
-            excludedCount++;
-            continue;
+          // CRITICAL: If element was found by content selector, don't exclude it
+          // even if it's inside an excluded container. The content selector explicitly
+          // identifies the main content element, so it should never be excluded.
+          // Since this element was found by findContentElements using the content selector,
+          // it MUST be the content element. We verify this with multiple checks for reliability.
+          let isContentElement = false;
+          if (selectors.content) {
+            try {
+              // Primary check: use matches() for accurate CSS selector matching
+              if (el.matches && el.matches(selectors.content)) {
+                isContentElement = true;
+              }
+            } catch (e) {
+              // matches() may fail for invalid selectors, use fallback
+            }
+            // Fallback checks for common selector types (more reliable than matches for simple selectors)
+            if (!isContentElement) {
+              if (selectors.content.startsWith('#')) {
+                const id = selectors.content.substring(1);
+                if (el.id === id) {
+                  isContentElement = true;
+                }
+              } else if (selectors.content.startsWith('.')) {
+                // Handle single class or multiple classes
+                // For selector like ".class1.class2", split by '.' to get individual classes
+                // For selector like ".class-name", it's a single class with a dash
+                const selectorWithoutDot = selectors.content.substring(1);
+                const classNames = selectorWithoutDot.split('.').filter(c => c.trim());
+                if (classNames.length > 0 && el.classList) {
+                  // Check if element has all classes from selector
+                  // For ".PostsPage-postContent", classNames will be ["PostsPage-postContent"]
+                  // For ".class1.class2", classNames will be ["class1", "class2"]
+                  isContentElement = classNames.every(cn => el.classList.contains(cn));
+                }
+              }
+            }
+            // CRITICAL: If element was found by findContentElements, it's definitely the content element
+            // Since we're iterating over result.elements (from findContentElements),
+            // every element here was found using the content selector, so it must be a content element.
+            // This is a safety net for cases where matches() fails but element was correctly found.
+            // NOTE: We only set this to true if selectors.content exists, to avoid false positives
+            if (!isContentElement && selectors.content) {
+              // Element is in result.elements array from findContentElements(cont, selectors.content)
+              // This means it was explicitly found using the content selector, so it's definitely the content element
+              isContentElement = true;
+            }
+          }
+          
+          // CRITICAL: Log before exclusion check to debug
+          // Use multiple console methods to ensure visibility
+          if (selectors.content) {
+            try {
+              console.log('[ClipAIble extractFromPageInlined] Before exclusion check', {
+                elementId: el.id,
+                elementTag: el.tagName,
+                elementClass: el.className,
+                contentSelector: selectors.content,
+                isContentElement: isContentElement,
+                elementMatchesSelector: el.matches && el.matches(selectors.content),
+                elementInResultElements: true // We're iterating over result.elements
+              });
+              // Also use console.warn for better visibility
+              if (!isContentElement) {
+                console.warn('[ClipAIble] WARNING: Content element not detected!', {
+                  elementId: el.id,
+                  elementClass: el.className,
+                  contentSelector: selectors.content
+                });
+              }
+            } catch (e) {
+              // Console might be blocked
+            }
+          }
+          
+          // CRITICAL: If this is the content element, NEVER exclude it
+          // Skip shouldExclude check entirely for content elements
+          if (!isContentElement) {
+            if (shouldExclude(el)) {
+              // Debug: log why element was excluded
+              console.log('[ClipAIble extractFromPageInlined] Element excluded', {
+                elementId: el.id,
+                elementTag: el.tagName,
+                elementClass: el.className,
+                contentSelector: selectors.content,
+                isContentElement: isContentElement,
+                shouldExcludeResult: shouldExclude(el)
+              });
+              excludedCount++;
+              continue;
+            }
+          } else {
+            // Content element - log that it's protected
+            console.log('[ClipAIble extractFromPageInlined] Content element protected from exclusion', {
+              elementId: el.id,
+              elementTag: el.tagName,
+              elementClass: el.className,
+              contentSelector: selectors.content
+            });
           }
           
           // Check if element is hidden
@@ -1836,6 +1993,18 @@ export function extractFromPageInlined(selectors, baseUrl) {
             // Use the same aggressive approach as fallback: find ALL relevant elements inside
             // CRITICAL: Also include div elements that contain text, as many sites wrap content in divs
             const candidateElements = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div'));
+            
+            // Debug: log candidate elements count
+            if (selectors.content) {
+              const paragraphsCount = candidateElements.filter(c => c.tagName.toLowerCase() === 'p').length;
+              console.log('[ClipAIble] Candidate elements found', {
+                total: candidateElements.length,
+                paragraphs: paragraphsCount,
+                divs: candidateElements.filter(c => c.tagName.toLowerCase() === 'div').length,
+                containerId: el.id
+              });
+            }
+            
             // Filter divs: only include those that contain significant text content and are not containers themselves
             const filteredCandidates = candidateElements.filter(candidate => {
               if (candidate.tagName.toLowerCase() === 'div') {
@@ -1854,6 +2023,17 @@ export function extractFromPageInlined(selectors, baseUrl) {
               }
               return true; // Include all non-div elements
             });
+            
+            // Debug: log filtered candidates count
+            if (selectors.content) {
+              const paragraphsCount = filteredCandidates.filter(c => c.tagName.toLowerCase() === 'p').length;
+              console.log('[ClipAIble] Filtered candidates', {
+                total: filteredCandidates.length,
+                paragraphs: paragraphsCount,
+                divs: filteredCandidates.filter(c => c.tagName.toLowerCase() === 'div').length
+              });
+            }
+            
             const visibleElements = filteredCandidates.filter(isElementVisible);
             
             // Sort by DOM order
@@ -1864,14 +2044,59 @@ export function extractFromPageInlined(selectors, baseUrl) {
               return 0;
             });
             
+            // Debug: log container processing
+            if (selectors.content && visibleElements.length > 0) {
+              console.log('[ClipAIble] Processing container children', {
+                containerId: el.id,
+                containerClass: el.className,
+                containerTag: el.tagName,
+                childrenCount: visibleElements.length,
+                paragraphsCount: visibleElements.filter(c => c.tagName.toLowerCase() === 'p').length,
+                contentSelector: selectors.content
+              });
+            }
+            
             // Process each element
             let excludedInContainer = 0;
+            let processedInContainer = 0;
             for (const candidateEl of visibleElements) {
-              if (shouldExclude(candidateEl)) {
+              // CRITICAL: If candidate element is inside the content element (el),
+              // don't exclude it even if it's inside an excluded container.
+              // The content element itself is protected, so its children should be too.
+              let isInsideContentElement = false;
+              if (selectors.content && el.contains(candidateEl)) {
+                // Candidate is inside the content element, so it's protected
+                isInsideContentElement = true;
+              }
+              
+              if (!isInsideContentElement && shouldExclude(candidateEl)) {
+                // Debug: log why candidate was excluded (only first few to avoid spam)
+                if (selectors.content && excludedInContainer < 5) {
+                  console.log('[ClipAIble] Candidate excluded inside container', {
+                    candidateTag: candidateEl.tagName,
+                    candidateId: candidateEl.id,
+                    candidateClass: candidateEl.className,
+                    isInsideContentElement: isInsideContentElement,
+                    elContainsCandidate: el.contains(candidateEl),
+                    contentSelector: selectors.content
+                  });
+                }
                 excludedInContainer++;
                 continue;
               }
+              
+              // Debug: log protected candidates (first few)
+              if (isInsideContentElement && processedInContainer < 3) {
+                console.log('[ClipAIble] Candidate protected (inside content element)', {
+                  candidateTag: candidateEl.tagName,
+                  candidateId: candidateEl.id,
+                  candidateClass: candidateEl.className,
+                  textPreview: candidateEl.textContent ? candidateEl.textContent.trim().substring(0, 50) : ''
+                });
+              }
+              
               processElement(candidateEl);
+              processedInContainer++;
             }
             extractionDebug.strategiesUsed.push({
               strategy: 'container_recursive',
@@ -2123,9 +2348,95 @@ export function extractFromPageInlined(selectors, baseUrl) {
           textContentLength: el.textContent ? el.textContent.trim().length : 0
         };
         
-        if (shouldExclude(el)) {
-          excludedCount++;
-          continue;
+        // CRITICAL: If element was found by content selector, don't exclude it
+        // even if it's inside an excluded container. The content selector explicitly
+        // identifies the main content element, so it should never be excluded.
+        let isContentElement = false;
+        if (selectors.content) {
+          try {
+            if (el.matches && el.matches(selectors.content)) {
+              isContentElement = true;
+            }
+          } catch (e) {
+            // matches() may fail, use fallback
+          }
+          if (!isContentElement) {
+            if (selectors.content.startsWith('#')) {
+              const id = selectors.content.substring(1);
+              if (el.id === id) {
+                isContentElement = true;
+              }
+            } else if (selectors.content.startsWith('.')) {
+              // Handle single class or multiple classes
+              // For selector like ".class1.class2", split by '.' to get individual classes
+              // For selector like ".class-name", it's a single class with a dash
+              const selectorWithoutDot = selectors.content.substring(1);
+              const classNames = selectorWithoutDot.split('.').filter(c => c.trim());
+              if (classNames.length > 0 && el.classList) {
+                // Check if element has all classes from selector
+                // For ".PostsPage-postContent", classNames will be ["PostsPage-postContent"]
+                // For ".class1.class2", classNames will be ["class1", "class2"]
+                isContentElement = classNames.every(cn => el.classList.contains(cn));
+              }
+            }
+          }
+          // Element is in result.elements from findContentElements, so it's definitely the content element
+          // NOTE: We only set this to true if selectors.content exists, to avoid false positives
+          if (!isContentElement && selectors.content) {
+            isContentElement = true;
+          }
+        }
+        
+        // CRITICAL: Log before exclusion check to debug
+        // Use multiple console methods to ensure visibility
+        if (selectors.content) {
+          try {
+            console.log('[ClipAIble extractFromPageInlined] Before exclusion check (single container)', {
+              elementId: el.id,
+              elementTag: el.tagName,
+              elementClass: el.className,
+              contentSelector: selectors.content,
+              isContentElement: isContentElement,
+              elementMatchesSelector: el.matches && el.matches(selectors.content),
+              elementInResultElements: true // We're iterating over result.elements
+            });
+            // Also use console.warn for better visibility
+            if (!isContentElement) {
+              console.warn('[ClipAIble] WARNING: Content element not detected! (single container)', {
+                elementId: el.id,
+                elementClass: el.className,
+                contentSelector: selectors.content
+              });
+            }
+          } catch (e) {
+            // Console might be blocked
+          }
+        }
+        
+        // CRITICAL: If this is the content element, NEVER exclude it
+        // Skip shouldExclude check entirely for content elements
+        if (!isContentElement) {
+          if (shouldExclude(el)) {
+            // Debug: log why element was excluded
+            console.log('[ClipAIble extractFromPageInlined] Element excluded (single container path)', {
+              elementId: el.id,
+              elementTag: el.tagName,
+              elementClass: el.className,
+              contentSelector: selectors.content,
+              isContentElement: isContentElement,
+              shouldExcludeResult: shouldExclude(el)
+            });
+            excludedCount++;
+            continue;
+          }
+        } else {
+          // Content element - log that it's protected
+          console.log('[ClipAIble extractFromPageInlined] Content element protected from exclusion (single container)', {
+            elementId: el.id,
+            elementTag: el.tagName,
+            elementClass: el.className,
+            contentSelector: selectors.content
+          });
         }
         
         // Check if element is hidden
@@ -2151,6 +2462,18 @@ export function extractFromPageInlined(selectors, baseUrl) {
             // Use the same aggressive approach as fallback: find ALL relevant elements inside
             // CRITICAL: Also include div elements that contain text, as many sites wrap content in divs
             const candidateElements = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div'));
+            
+            // Debug: log candidate elements count
+            if (selectors.content) {
+              const paragraphsCount = candidateElements.filter(c => c.tagName.toLowerCase() === 'p').length;
+              console.log('[ClipAIble] Candidate elements found (single container)', {
+                total: candidateElements.length,
+                paragraphs: paragraphsCount,
+                divs: candidateElements.filter(c => c.tagName.toLowerCase() === 'div').length,
+                containerId: el.id
+              });
+            }
+            
             // Filter divs: only include those that contain significant text content and are not containers themselves
             const filteredCandidates = candidateElements.filter(candidate => {
               if (candidate.tagName.toLowerCase() === 'div') {
@@ -2169,6 +2492,17 @@ export function extractFromPageInlined(selectors, baseUrl) {
               }
               return true; // Include all non-div elements
             });
+            
+            // Debug: log filtered candidates count
+            if (selectors.content) {
+              const paragraphsCount = filteredCandidates.filter(c => c.tagName.toLowerCase() === 'p').length;
+              console.log('[ClipAIble] Filtered candidates (single container)', {
+                total: filteredCandidates.length,
+                paragraphs: paragraphsCount,
+                divs: filteredCandidates.filter(c => c.tagName.toLowerCase() === 'div').length
+              });
+            }
+            
             const visibleElements = filteredCandidates.filter(isElementVisible);
             
             // Sort by DOM order
@@ -2179,14 +2513,59 @@ export function extractFromPageInlined(selectors, baseUrl) {
               return 0;
             });
             
+            // Debug: log container processing
+            if (selectors.content && visibleElements.length > 0) {
+              console.log('[ClipAIble] Processing container children (single container path)', {
+                containerId: el.id,
+                containerClass: el.className,
+                containerTag: el.tagName,
+                childrenCount: visibleElements.length,
+                paragraphsCount: visibleElements.filter(c => c.tagName.toLowerCase() === 'p').length,
+                contentSelector: selectors.content
+              });
+            }
+            
             // Process each element
             let excludedInContainer = 0;
+            let processedInContainer = 0;
             for (const candidateEl of visibleElements) {
-              if (shouldExclude(candidateEl)) {
+              // CRITICAL: If candidate element is inside the content element (el),
+              // don't exclude it even if it's inside an excluded container.
+              // The content element itself is protected, so its children should be too.
+              let isInsideContentElement = false;
+              if (selectors.content && el.contains(candidateEl)) {
+                // Candidate is inside the content element, so it's protected
+                isInsideContentElement = true;
+              }
+              
+              if (!isInsideContentElement && shouldExclude(candidateEl)) {
+                // Debug: log why candidate was excluded (only first few to avoid spam)
+                if (selectors.content && excludedInContainer < 5) {
+                  console.log('[ClipAIble] Candidate excluded inside container (single)', {
+                    candidateTag: candidateEl.tagName,
+                    candidateId: candidateEl.id,
+                    candidateClass: candidateEl.className,
+                    isInsideContentElement: isInsideContentElement,
+                    elContainsCandidate: el.contains(candidateEl),
+                    contentSelector: selectors.content
+                  });
+                }
                 excludedInContainer++;
                 continue;
               }
+              
+              // Debug: log protected candidates (first few)
+              if (isInsideContentElement && processedInContainer < 3) {
+                console.log('[ClipAIble] Candidate protected (inside content element, single)', {
+                  candidateTag: candidateEl.tagName,
+                  candidateId: candidateEl.id,
+                  candidateClass: candidateEl.className,
+                  textPreview: candidateEl.textContent ? candidateEl.textContent.trim().substring(0, 50) : ''
+                });
+              }
+              
               processElement(candidateEl);
+              processedInContainer++;
             }
             extractionDebug.strategiesUsed.push({
               strategy: 'container_recursive',

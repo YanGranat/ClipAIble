@@ -403,6 +403,11 @@ export function parseElements(win, elements, state, constants, baseUrl) {
         processedCount++;
       }
     } else if (tagName === 'pre' || tagName === 'code') {
+      // Skip code inside pre (pre will be processed and contains the code)
+      if (tagName === 'code' && element.closest('pre')) {
+        skippedCount++;
+        continue;
+      }
       const item = handleCode(element);
       if (item) {
         content.push(item);
@@ -519,6 +524,15 @@ export function handleHeading(element, state, constants) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleParagraph(win, element, state, constants) {
+  // Skip if inside blockquote (handled separately)
+  if (element.closest('blockquote')) return null;
+  
+  // Skip if inside figure (except figcaption which is handled by handleFigure)
+  if (element.closest('figure')) return null;
+  
+  // Skip if inside table (table content is handled as a unit)
+  if (element.closest('table')) return null;
+  
   // Skip if standfirst element
   if (state.standfirstElement && element === state.standfirstElement) return null;
   
@@ -811,6 +825,15 @@ export function handleCode(element) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleList(element) {
+  // Skip if inside blockquote (handled separately)
+  if (element.closest('blockquote')) return null;
+  
+  // Skip if inside figure (figure content should be handled as part of the image)
+  if (element.closest('figure')) return null;
+  
+  // Skip if inside table (nested lists in table cells should be part of table)
+  if (element.closest('table')) return null;
+  
   // Check if list is inside navbox, authority-control, sidebar, or sister-box (Wikipedia)
   if (element.closest('.navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .sidebar, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc')) {
     return null;
@@ -840,6 +863,9 @@ export function handleList(element) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleTable(element) {
+  // Skip if inside blockquote (handled separately)
+  if (element.closest('blockquote')) return null;
+  
   const className = String(element.className || '').toLowerCase();
   // Skip navbox and authority-control tables
   if (className.includes('navbox') || className.includes('authority-control')) {
@@ -876,6 +902,18 @@ export function handleTable(element) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleDiv(element, state, constants) {
+  // Skip if inside blockquote (handled separately)
+  if (element.closest('blockquote')) return null;
+  
+  // Skip if inside figure (except figcaption which is handled by handleFigure)
+  // Figure content should be handled as part of the image, not separately
+  if (element.closest('figure') && element.tagName.toLowerCase() !== 'figcaption') {
+    return null;
+  }
+  
+  // Skip if inside table (table content is handled as a unit)
+  if (element.closest('table')) return null;
+  
   const text = (element.textContent || '').trim();
 
   // Skip if matches standfirst text

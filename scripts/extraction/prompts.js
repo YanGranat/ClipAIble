@@ -231,6 +231,7 @@ CRITICAL - SUBTITLE SELECTOR:
 - "subtitle" = CSS selector for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content
 - This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
 - IMPORTANT: Words like "Abstract", "Introduction", "Background", "Conclusion" are NOT subtitles - they are section headings (h2, h3) and should be included in the main content, not in subtitle field
+- CRITICAL: Text that contains links to other documents, references to other articles, or meta-information about the document structure is NOT a subtitle - it is regular paragraph text and should NOT be returned in the subtitle field.
 - Look for:
   * Elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
   * First paragraph (<p>) inside article/main that appears right after the title (h1)
@@ -1019,5 +1020,3 @@ CRITICAL - RESPONSE FORMAT:
 - Return ONLY valid JSON - no code blocks, no markdown formatting, no explanations`;
   }
 }
-
-

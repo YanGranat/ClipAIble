@@ -18,6 +18,26 @@ import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
 
 /**
+ * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
+ * This prevents duplicate caption text in EPUB.
+ * 
+ * @param {Array<import('../types.js').ContentItem>} content - Content array
+ * @returns {Array<import('../types.js').ContentItem>} Filtered content array
+ */
+function filterFigureParagraphs(content) {
+  if (!content || !Array.isArray(content)) return content;
+  
+  return content.filter((item, index) => {
+    if (item.type !== 'paragraph') return true;
+    const text = item.text || item.html || '';
+    if (!text.includes('<figure')) return true;
+    const nextItem = content[index + 1];
+    if (!nextItem || nextItem.type !== 'image') return true;
+    return false;
+  });
+}
+
+/**
  * Generate EPUB file from content
  * @param {import('../types.js').GenerationData} data - Generation data
  * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
@@ -77,6 +97,16 @@ export async function generateEpub(data, updateState) {
   
   if (updateState) updateState({ status: 'Building EPUB structure...', progress: 82 });
   
+  // Filter out paragraph elements that contain <figure> HTML when followed by image
+  const filteredContent = filterFigureParagraphs(content);
+  if (filteredContent.length !== content.length) {
+    log('Filtered figure-in-paragraph duplicates', {
+      originalCount: content.length,
+      filteredCount: filteredContent.length,
+      removedCount: content.length - filteredContent.length
+    });
+  }
+  
   const zip = new JSZip();
   
   // Generate unique identifier for the book
@@ -103,7 +133,7 @@ export async function generateEpub(data, updateState) {
     log('📑 Collecting headings for EPUB table of contents');
   }
   const headings = [];
-  content.forEach((item, index) => {
+  filteredContent.forEach((item, index) => {
     if (item.type === 'heading' && item.level >= 1) {
       const text = stripHtml(item.text || '');
       if (text) {
@@ -115,7 +145,7 @@ export async function generateEpub(data, updateState) {
   });
   
   // 4. Embed images FIRST (sets _epubSrc on items)
-  const imageCount = content.filter(item => item.type === 'image').length;
+  const imageCount = filteredContent.filter(item => item.type === 'image').length;
   if (imageCount > 0) {
     log(`🖼️ Loading and embedding ${imageCount} images for EPUB`);
   }
@@ -124,14 +154,14 @@ export async function generateEpub(data, updateState) {
     const loadingStatus = tSync('stageLoadingImages', uiLang);
     updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 87 });
   }
-  const imageManifest = await embedEpubImages(zip, content, updateState);
+  const imageManifest = await embedEpubImages(zip, filteredContent, updateState);
   if (imageCount > 0) {
     log(`✅ Images embedded: ${imageManifest.length} images added to EPUB`);
   }
   
   // 5. Generate content XHTML (uses _epubSrc for images)
   if (updateState) updateState({ status: 'Converting content...', progress: 90 });
-  const contentXhtml = generateContentXhtml(content, safeTitle, safeAuthor, pubDate, sourceUrl, headings, language, generateAbstract, abstract);
+  const contentXhtml = generateContentXhtml(filteredContent, safeTitle, safeAuthor, pubDate, sourceUrl, headings, language, generateAbstract, abstract);
   zip.file('OEBPS/content.xhtml', contentXhtml);
   
   // 6. Generate TOC navigation (only if more than 1 heading)
@@ -169,7 +199,7 @@ export async function generateEpub(data, updateState) {
   const estimatedSizeMB = (estimatedSize / 1024 / 1024).toFixed(2);
   
   log('📊 EPUB generation metrics', {
-    contentItems: content?.length || 0,
+    contentItems: filteredContent?.length || 0,
     images: imageManifest.length,
     headings: headings.length,
     estimatedSize: `${estimatedSizeMB} MB`,
@@ -190,7 +220,7 @@ export async function generateEpub(data, updateState) {
     sizeBytes: epubBlob.size,
     images: imageManifest.length,
     headings: headings.length,
-    contentItems: content?.length || 0
+    contentItems: filteredContent?.length || 0
   });
   
   // Generate safe filename

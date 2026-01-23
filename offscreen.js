@@ -485,100 +485,8 @@ try {
       const errorTime = Date.now();
       const processingDuration = errorTime - processingStartTime;
       
-      // Enhanced error logging for Piper TTS phoneme index errors
-      const isPhonemeError = error.message && (
-        error.message.includes('indices element out of data bounds') ||
-        error.message.includes('Gather node') ||
-        error.message.includes('phoneme') ||
-        error.message.includes('idx=') ||
-        error.message.includes('inclusive range')
-      );
-      
-      // Check if it's an ONNX Runtime error that might be recoverable with Web Speech API
-      const isOnnxError = error.message && (
-        error.message.includes('No graph was found in the protobuf') ||
-        error.message.includes('Can\'t create a session') ||
-        error.message.includes('Aborted()') ||
-        error.message.includes('ERROR_CODE: 2') ||
-        error.message.includes('ASSERTIONS')
-      );
-      
-      // Try Web Speech API fallback for ONNX Runtime errors
-      // Perplexity recommendation: Use Web Speech API as fallback when Piper TTS fails
-      if (isOnnxError && message.type === 'PIPER_TTS' && message.data && message.data.text) {
-        logWarn(`[ClipAIble Offscreen] ONNX Runtime error detected, attempting Web Speech API fallback for ${messageId}`, {
-          messageId,
-          originalError: error.message,
-          textLength: message.data.text.length
-        });
-        
-        try {
-          const webSpeechAudio = await synthesizeWithWebSpeechAPI(
-            message.data.text,
-            message.data.language || 'en',
-            message.data.speed || 1.0,
-            message.data.pitch || 1.0
-          );
-          
-          if (webSpeechAudio) {
-            log(`[ClipAIble Offscreen] Web Speech API fallback succeeded for ${messageId}`, {
-              messageId,
-              audioSize: webSpeechAudio.byteLength
-            });
-            
-            // Convert to same format as Piper TTS (Uint8Array)
-            const uint8Array = new Uint8Array(webSpeechAudio);
-            
-            // Use same storage logic as Piper TTS
-            const manifest = chrome.runtime.getManifest();
-            const hasUnlimitedStorage = manifest.permissions?.includes('unlimitedStorage') || false;
-            const STORAGE_THRESHOLD = hasUnlimitedStorage 
-              ? 50 * 1024 * 1024
-              : 8 * 1024 * 1024;
-            const MAX_AUDIO_SIZE = hasUnlimitedStorage 
-              ? 100 * 1024 * 1024
-              : 10 * 1024 * 1024;
-            
-            if (uint8Array.length > MAX_AUDIO_SIZE) {
-              throw new Error(`Audio size ${uint8Array.length} exceeds maximum ${MAX_AUDIO_SIZE}`);
-            }
-            
-            if (uint8Array.length < STORAGE_THRESHOLD) {
-              sendResponse({
-                success: true,
-                method: 'inline',
-                audioData: Array.from(uint8Array),
-                messageId
-              });
-            } else {
-              const storageKey = `tts_audio_${messageId}`;
-              await chrome.storage.local.set({
-                [storageKey]: Array.from(uint8Array),
-                [`${storageKey}_meta`]: {
-                  timestamp: Date.now(),
-                  size: uint8Array.length
-                }
-              });
-              
-              sendResponse({
-                success: true,
-                method: 'storage',
-                storageKey,
-                messageId
-              });
-            }
-            
-            return; // Success with fallback
-          }
-        } catch (fallbackError) {
-          logError(`[ClipAIble Offscreen] Web Speech API fallback also failed for ${messageId}`, {
-            messageId,
-            fallbackError: fallbackError.message,
-            originalError: error.message
-          });
-          // Continue to error response below
-        }
-      }
+      // Web Speech API fallback disabled - function not implemented
+      // TODO: Implement Web Speech API fallback for ONNX Runtime errors
       
       logError(`[ClipAIble Offscreen] === ERROR PROCESSING MESSAGE ===`, {
         messageId,
@@ -587,15 +495,7 @@ try {
         errorName: error.name,
         stack: error.stack,
         duration: processingDuration,
-        timestamp: errorTime,
-        isPhonemeError,
-        isOnnxError,
-        ...(isPhonemeError && {
-          suggestion: 'This error usually means the text contains characters that cannot be phonemized by the selected voice model. The text has been sanitized, but some characters may still be incompatible. Try using a different voice or further cleaning the text.'
-        }),
-        ...(isOnnxError && {
-          suggestion: 'ONNX Runtime error - this may be due to memory limitations or WASM initialization issues. Web Speech API fallback was attempted but may have also failed.'
-        })
+        timestamp: errorTime
       });
       
       sendResponse({
