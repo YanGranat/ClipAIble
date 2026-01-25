@@ -186,6 +186,121 @@ async function getFileSize(filePath) {
 }
 
 /**
+ * Build all bundles before creating archive
+ * CRITICAL: Always rebuild bundles to ensure latest code is included
+ */
+async function buildAllBundles() {
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+
+  console.log('🔨 Building all bundles...\n');
+
+  // List of build scripts to run
+  const buildScripts = [
+    { name: 'TTS Worker', script: 'build-tts-worker.js', critical: true },
+    { name: 'Offscreen', script: 'build-offscreen.js', critical: true },
+    { name: 'Extraction', script: 'build-extraction.js', critical: false }
+  ];
+
+  for (const { name, script, critical } of buildScripts) {
+    const scriptPath = path.join(__dirname, script);
+
+    // Check if script exists
+    try {
+      await fs.access(scriptPath);
+    } catch (error) {
+      if (critical) {
+        console.log(`  ❌ CRITICAL: ${script} not found!`);
+        throw new Error(`Critical build script ${script} not found`);
+      } else {
+        console.log(`  ⏭️  Skipped: ${script} (not found, non-critical)\n`);
+        continue;
+      }
+    }
+
+    console.log(`  🔨 Building ${name}...`);
+    try {
+      const { stdout, stderr } = await execAsync(`node "${scriptPath}"`, {
+        cwd: __dirname,
+        maxBuffer: 10 * 1024 * 1024 // 10MB buffer for large outputs
+      });
+
+      if (stdout) {
+        // Only show last few lines of output to avoid clutter
+        const lines = stdout.trim().split('\n');
+        const lastLines = lines.slice(-3).join('\n');
+        console.log(`     ${lastLines}`);
+      }
+      if (stderr && stderr.trim()) {
+        console.error(`     stderr: ${stderr.trim()}`);
+      }
+
+      console.log(`  ✅ ${name} built successfully\n`);
+    } catch (error) {
+      console.error(`  ❌ Failed to build ${name}:`);
+      console.error(`     ${error.message}`);
+      if (error.stdout) console.log(`     stdout: ${error.stdout}`);
+      if (error.stderr) console.error(`     stderr: ${error.stderr}`);
+
+      if (critical) {
+        throw new Error(`Critical build failed: ${name}`);
+      } else {
+        console.log(`     ⚠️  Non-critical build failed, continuing...\n`);
+      }
+    }
+  }
+
+  console.log('✅ All bundles built successfully\n');
+}
+
+/**
+ * Patch manifest.json to remove node_modules references from web_accessible_resources
+ * In production, all files are in lib/, not node_modules/
+ */
+async function patchManifest(tempPath) {
+  console.log('🔧 Patching manifest.json...');
+
+  const manifestPath = path.join(tempPath, 'manifest.json');
+
+  try {
+    // Read manifest.json
+    const manifestContent = await fs.readFile(manifestPath, 'utf-8');
+    const manifest = JSON.parse(manifestContent);
+
+    // Find web_accessible_resources
+    if (manifest.web_accessible_resources && Array.isArray(manifest.web_accessible_resources)) {
+      for (const resourceGroup of manifest.web_accessible_resources) {
+        if (resourceGroup.resources && Array.isArray(resourceGroup.resources)) {
+          const originalCount = resourceGroup.resources.length;
+
+          // Filter out all node_modules/* entries
+          resourceGroup.resources = resourceGroup.resources.filter(resource => {
+            const hasNodeModules = resource.includes('node_modules');
+            if (hasNodeModules) {
+              console.log(`  🗑️  Removed: ${resource}`);
+            }
+            return !hasNodeModules;
+          });
+
+          const removedCount = originalCount - resourceGroup.resources.length;
+          console.log(`  ✅ Removed ${removedCount} node_modules references`);
+          console.log(`  ✅ Kept ${resourceGroup.resources.length} production resources`);
+        }
+      }
+    }
+
+    // Write patched manifest.json back
+    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
+    console.log('✅ manifest.json patched successfully\n');
+
+  } catch (error) {
+    console.error('❌ Failed to patch manifest.json:', error.message);
+    throw error;
+  }
+}
+
+/**
  * Main function
  */
 async function createArchive() {
@@ -194,6 +309,9 @@ async function createArchive() {
   const tempPath = path.join(__dirname, TEMP_DIR);
 
   try {
+    // 0. Build all bundles FIRST to ensure latest code
+    await buildAllBundles();
+
     // 1. Clean up temp directory
     console.log('🧹 Cleaning up temp directory...');
     try {
@@ -268,7 +386,10 @@ async function createArchive() {
     }
     console.log('✅ Piper WASM files copied\n');
 
-    // 5. Verify critical files
+    // 5. Patch manifest.json to remove node_modules references
+    await patchManifest(tempPath);
+
+    // 6. Verify critical files
     console.log('🔍 Verifying critical files...');
     const criticalFiles = [
       'manifest.json',
@@ -296,19 +417,19 @@ async function createArchive() {
     }
     console.log('✅ All critical files verified\n');
 
-    // 6. Create ZIP archive
+    // 7. Create ZIP archive
     await createZip(TEMP_DIR, ARCHIVE_NAME);
 
-    // 7. Get archive size
+    // 8. Get archive size
     const archiveSize = await getFileSize(path.join(__dirname, ARCHIVE_NAME));
     console.log(`\n📊 Archive size: ${archiveSize} MB`);
 
-    // 8. Clean up temp directory
+    // 9. Clean up temp directory
     console.log('\n🧹 Cleaning up temp directory...');
     await fs.rm(tempPath, { recursive: true, force: true });
     console.log('✅ Temp directory removed\n');
 
-    // 9. Success
+    // 10. Success
     console.log('✅ ✅ ✅ Production archive created successfully! ✅ ✅ ✅\n');
     console.log(`📦 Archive: ${ARCHIVE_NAME}`);
     console.log(`📊 Size: ${archiveSize} MB`);

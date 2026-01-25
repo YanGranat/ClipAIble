@@ -160,7 +160,12 @@ export async function extractYouTubeSubtitles(tabId) {
         target: { tabId },
         world: 'MAIN',
         func: extractYouTubeSubtitlesInlined,
-        args: [contentScriptAvailable] // Pass availability flag to injected script
+        args: [
+          contentScriptAvailable,
+          CONFIG.VIDEO_SUBTITLES_WAIT_INTERVAL,
+          CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_1,
+          CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2
+        ]
       }).then(results => {
       
       if (!results || !results[0]) {
@@ -636,8 +641,11 @@ export async function extractYouTubeSubtitles(tabId) {
  * Sends result back via chrome.runtime.sendMessage
  * Fetch and parsing happens here (in page context)
  * @param {boolean} contentScriptAvailable - Whether content script is loaded and responding
+ * @param {number} waitInterval - Wait interval for checking ytInitialPlayerResponse (ms)
+ * @param {number} retryDelay1 - First retry delay for video subtitles (ms)
+ * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
  */
-function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
+function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, retryDelay1, retryDelay2) {
   // CRITICAL: executeScript waits for Promise if function returns Promise
   // Therefore return Promise so executeScript waits for result
   return (async () => {
@@ -820,7 +828,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
         // Wait for ytInitialPlayerResponse to be available (YouTube may load it asynchronously)
       let attempts = 0;
         const maxAttempts = 5; // Reduced from 10 to 5, as this is fallback
-        const waitInterval = CONFIG.VIDEO_SUBTITLES_WAIT_INTERVAL;
+        // waitInterval passed as parameter from CONFIG.VIDEO_SUBTITLES_WAIT_INTERVAL
         let method2Failed = false; // Track if METHOD 2 fetch failed (empty response)
       
         while (!subtitleData && !method2Failed && attempts < maxAttempts) {
@@ -1053,7 +1061,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable) {
               
               if (activeTrack) {
                 activeTrack.mode = 'showing';
-                await new Promise(resolve => setTimeout(resolve, CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_1));
+                await new Promise(resolve => setTimeout(resolve, retryDelay1)); // From CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_1
               }
             }
             
@@ -1340,7 +1348,8 @@ export async function extractVimeoSubtitles(tabId) {
     results = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: extractVimeoSubtitlesInlined
+    func: extractVimeoSubtitlesInlined,
+    args: [CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2]
   });
     log('Vimeo script executed', { 
       hasResults: !!results,
@@ -1401,8 +1410,9 @@ export async function extractVimeoSubtitles(tabId) {
  * Inline function to extract Vimeo subtitles
  * Runs in page context (MAIN world)
  * Returns Promise so executeScript can wait for result
+ * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
  */
-function extractVimeoSubtitlesInlined() {
+function extractVimeoSubtitlesInlined(retryDelay2) {
   return (async () => {
     try {
       // CRITICAL: This runs in MAIN world where modules are not available
@@ -1576,7 +1586,7 @@ function extractVimeoSubtitlesInlined() {
               
               // Try multiple wait times and check for cues
               for (let attempt = 0; attempt < 5; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2));
+                await new Promise(resolve => setTimeout(resolve, retryDelay2)); // From CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2
                 
                 // Force cue loading by accessing cues property
                 try {

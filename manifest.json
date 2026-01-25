@@ -69,6 +69,8 @@
         "scripts/utils/logging.js",
         "scripts/utils/security.js",
         "scripts/utils/config.js",
+        "scripts/offscreen/pdf-init-inline.js",
+        "scripts/offscreen/bundle-check.js",
         "node_modules/@mintplex-labs/piper-tts-web/dist/*",
         "node_modules/@diffusionstudio/piper-wasm/build/*",
         "node_modules/onnxruntime-web/dist/ort.all.min.js",
