@@ -398,8 +398,8 @@ export async function handleAbstractGeneration(
   // CRITICAL: TLDR and article must always be in the same language
   // - If user selected a specific target language (data.language !== 'auto'), use that language
   //   (article is already translated to target language, so TLDR should be in target language too)
-  // - If language is 'auto', use detected source language from result
-  //   (article is in source language, so TLDR should be in source language too)
+  // - If language is 'auto', use UI language for better user experience
+  //   (article stays in source language, but TLDR should be in user's preferred language)
   let abstractLang = data.language || 'auto';
   
   log('🌍 LANGUAGE DETECTION: Determining language for abstract generation', {
@@ -409,15 +409,18 @@ export async function handleAbstractGeneration(
     currentAbstractLang: abstractLang
   });
   
-  // CRITICAL: If language is 'auto', use detected language from result (source language)
-  // Language detection happens BEFORE abstract generation, so result.detectedLanguage is available
-  if (abstractLang === 'auto' && result.detectedLanguage) {
-    abstractLang = result.detectedLanguage;
-    log('🌍 LANGUAGE DETECTION: Using detected source language for abstract', { 
-      detectedLanguage: abstractLang,
-      source: 'result.detectedLanguage',
-      reason: 'Article and TLDR must be in the same language (source language)',
-      method: 'auto mode - using detected source language'
+  // CRITICAL: If language is 'auto', use UI language instead of detected content language
+  // This ensures TLDR is generated in user's preferred language for better readability
+  if (abstractLang === 'auto') {
+    // Get UI language for abstract generation
+    const uiLang = await getUILanguageCached();
+    abstractLang = uiLang;
+    log('🌍 LANGUAGE DETECTION: Using UI language for abstract (auto mode)', { 
+      abstractLanguage: abstractLang,
+      source: 'UI language',
+      reason: 'Better user experience - TLDR in user\'s preferred language',
+      contentLanguage: result.detectedLanguage || 'unknown',
+      note: 'Content stays in original language, only TLDR uses UI language'
     });
   } else if (abstractLang !== 'auto') {
     log('🌍 LANGUAGE DETECTION: Using target language for abstract', {

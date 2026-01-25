@@ -1791,6 +1791,15 @@ function isWidget(win, element) {
   return true;
 }
 
+function matchesNavigationPattern(text, patterns) {
+  for (const pattern of patterns) {
+    if (pattern.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function shouldSkipStronglyExcluded(element) {
   const className = String(element.className || "").toLowerCase();
   const id = (element.id || "").toLowerCase();

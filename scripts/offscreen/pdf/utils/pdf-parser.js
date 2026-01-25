@@ -101,7 +101,7 @@ export async function parsePdfDocument(arrayBuffer) {
   };
   
   log('[PDF v2.0] Loading PDF document with worker disabled...', loadInfo);
-  criticalLog('[PDF v2.0] Starting PDF document load', 'PDF_DOCUMENT_LOAD_START', loadInfo);
+  // criticalLog('[PDF v2.0] Starting PDF document load', 'PDF_DOCUMENT_LOAD_START', loadInfo);
   
   loadingTask = pdfjsLib.getDocument({ 
     data: arrayBuffer,
@@ -114,11 +114,11 @@ export async function parsePdfDocument(arrayBuffer) {
   
   const taskCreatedDuration = Date.now() - taskStart;
   log('[PDF v2.0] Loading task created', { taskDuration: taskCreatedDuration });
-  criticalLog('[PDF v2.0] PDF loading task created', 'PDF_LOADING_TASK_CREATED', {
-    taskDuration: taskCreatedDuration,
-    hasOnPassword: typeof loadingTask.onPassword === 'function',
-    hasPromise: typeof loadingTask.promise === 'object'
-  });
+  // criticalLog('[PDF v2.0] PDF loading task created', 'PDF_LOADING_TASK_CREATED', {
+  //   taskDuration: taskCreatedDuration,
+  //   hasOnPassword: typeof loadingTask.onPassword === 'function',
+  //   hasPromise: typeof loadingTask.promise === 'object'
+  // });
   
   // Handle password-protected PDFs
   loadingTask.onPassword = (callback, reason) => {
@@ -138,10 +138,10 @@ export async function parsePdfDocument(arrayBuffer) {
   });
   
   const parseStartTime = Date.now();
-  criticalLog('[PDF v2.0] Waiting for PDF parse promise...', 'PDF_PARSE_PROMISE_START', {
-    parseStartTime,
-    timeoutMs: PARSE_TIMEOUT_MS
-  });
+  // criticalLog('[PDF v2.0] Waiting for PDF parse promise...', 'PDF_PARSE_PROMISE_START', {
+  //   parseStartTime,
+  //   timeoutMs: PARSE_TIMEOUT_MS
+  // });
   
   try {
     pdf = await Promise.race([parsePromise, timeoutPromise]);
@@ -153,11 +153,11 @@ export async function parsePdfDocument(arrayBuffer) {
   }
   
   const parseDuration = Date.now() - parseStartTime;
-  criticalLog('[PDF v2.0] PDF parse promise resolved', 'PDF_PARSE_PROMISE_RESOLVED', {
-    parseDuration,
-    numPages: pdf.numPages,
-    hasTransport: !!pdf._transport
-  });
+  // criticalLog('[PDF v2.0] PDF parse promise resolved', 'PDF_PARSE_PROMISE_RESOLVED', {
+  //   parseDuration,
+  //   numPages: pdf.numPages,
+  //   hasTransport: !!pdf._transport
+  // });
   
   // CRITICAL: Check Worker status after PDF load (diagnostics)
   // PDF.js internal structure: pdf._transport.worker can be:
@@ -213,10 +213,10 @@ export async function parsePdfDocument(arrayBuffer) {
     loadDuration: Date.now() - taskStart,
     workerStatus: workerStatus,
     disableWorker: pdfjsLib.disableWorker,
-    note: workerStatus.isFakeWorker ? 'Using fake worker (main thread) ✅' : 
-          workerStatus.isRealWorker ? 'Using real Worker (may hang) ⚠️' : 
-          workerStatus.hasWorker ? 'Worker exists but type unclear ⚠️' :
-          'No worker found - may use direct rendering ⚠️'
+    note: workerStatus.isFakeWorker ? 'Using fake worker (main thread) ' : 
+          workerStatus.isRealWorker ? 'Using real Worker (may hang) ' : 
+          workerStatus.hasWorker ? 'Worker exists but type unclear ' :
+          'No worker found - may use direct rendering '
   });
   
   log('[PDF v3] PDF loaded successfully', {

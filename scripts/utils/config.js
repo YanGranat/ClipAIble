@@ -105,7 +105,7 @@ export const CONFIG = {
   DEFAULT_RESPEECHER_VOICE: 'samantha',  // Default Respeecher English voice
   
   // Logging
-  LOG_LEVEL: 0,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: DEBUG for active development)
+  LOG_LEVEL: 3,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: ERROR for production)
   VERBOSE_LOGGING: false,          // Enable verbose logging for detailed debugging (increases log volume significantly)
   MAX_LOG_DATA_SIZE: 100000,       // Maximum size of data object to log (in characters after JSON.stringify), larger objects will be truncated
   LOG_COLLECTION_MAX_SIZE: 10000, // OPTIMIZED: Maximum number of logs in memory collection (reduced from 50k to 10k to save memory)

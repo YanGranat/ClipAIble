@@ -5,7 +5,7 @@
 import { safeGetComputedStyle, safeClosest } from './dom-utils.js';
 
 // Optimized navigation pattern matching
-function matchesNavigationPattern(text, patterns) {
+export function matchesNavigationPattern(text, patterns) {
   // Use for...of instead of some() for better performance with large arrays
   for (const pattern of patterns) {
     if (pattern.test(text)) {

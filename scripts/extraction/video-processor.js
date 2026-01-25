@@ -29,6 +29,7 @@ YOUR TASK:
 7. Structure content logically - if there are clear sections, you can add headings (h2 level)
 8. Preserve the original meaning and tone
 9. Make text flow naturally as if it was written, not spoken
+10. CRITICAL: Preserve the ORIGINAL LANGUAGE of the subtitles - do NOT translate or change language
 
 CRITICAL RULES:
 - DO NOT summarize or paraphrase - keep ALL content
@@ -38,6 +39,7 @@ CRITICAL RULES:
 - If subtitles are very short fragments, merge them into longer paragraphs
 - If speaker changes topic, start a new paragraph
 - If there's a clear section break (long pause, topic change), you can add a heading
+- PRESERVE THE ORIGINAL LANGUAGE - output must be in the same language as input subtitles
 
 OUTPUT FORMAT (JSON):
 {
@@ -71,6 +73,7 @@ YOUR TASK:
    - Fix capitalization
    - Add paragraph breaks where appropriate
    - Only add headings if clear section breaks
+   - CRITICAL: Preserve the ORIGINAL LANGUAGE of the subtitles
 
 CRITICAL:
 - The new content should flow naturally from previous content
@@ -78,6 +81,7 @@ CRITICAL:
 - Maintain consistent style and formatting
 - DO NOT repeat or summarize previous content
 - DO NOT add headings unless there's a clear new section
+- PRESERVE THE ORIGINAL LANGUAGE - output must be in the same language as input subtitles
 
 OUTPUT FORMAT (JSON):
 {

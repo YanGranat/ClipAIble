@@ -7,10 +7,12 @@ import { CONFIG } from '../utils/config.js';
 /**
  * Extract subtitles from YouTube page
  * @param {number} tabId - Tab ID
+ * @param {string} [targetLanguage] - Target language ('auto' or language code like 'en', 'ru')
+ * @param {string} [detectedVideoLanguage] - Detected video language from AI (e.g., 'en', 'ru')
  * @returns {Promise<Object>} {subtitles: Array, metadata: Object}
  */
-export async function extractYouTubeSubtitles(tabId) {
-  log('Extracting YouTube subtitles', { tabId });
+export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', detectedVideoLanguage = 'en') {
+  log('Extracting YouTube subtitles', { tabId, targetLanguage, detectedVideoLanguage });
   
   // Use sendMessage/postMessage for async fetch (no CORS in page context)
   // Injected script will send window.postMessage, content script will forward to background
@@ -66,24 +68,24 @@ export async function extractYouTubeSubtitles(tabId) {
         cleanup();
         
         try {
-        if (message.error) {
+          if (message.error) {
             logError('Error in subtitle extraction', message.error);
-          reject(new Error(message.error));
-        } else if (message.result) {
-          if (!message.result.subtitles || message.result.subtitles.length === 0) {
+            reject(new Error(message.error));
+          } else if (message.result) {
+            if (!message.result.subtitles || message.result.subtitles.length === 0) {
               logError('No subtitles in result');
-            reject(new Error('No subtitles found. Make sure subtitles are enabled for this video.'));
+              reject(new Error('No subtitles found. Make sure subtitles are enabled for this video.'));
+            } else {
+              log('YouTube subtitles extracted successfully', { 
+                count: message.result.subtitles.length,
+                title: message.result.metadata.title 
+              });
+              resolve(message.result);
+            }
           } else {
-            log('YouTube subtitles extracted successfully', { 
-              count: message.result.subtitles.length,
-              title: message.result.metadata.title 
-            });
-            resolve(message.result);
-          }
-        } else {
             logError('No result in message');
-          reject(new Error('Subtitle extraction returned no result'));
-        }
+            reject(new Error('Subtitle extraction returned no result'));
+          }
         } catch (error) {
           logError('Exception while processing result', error);
           reject(error);
@@ -164,7 +166,9 @@ export async function extractYouTubeSubtitles(tabId) {
           contentScriptAvailable,
           CONFIG.VIDEO_SUBTITLES_WAIT_INTERVAL,
           CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_1,
-          CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2
+          CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2,
+          targetLanguage,
+          detectedVideoLanguage
         ]
       }).then(results => {
       
@@ -644,8 +648,10 @@ export async function extractYouTubeSubtitles(tabId) {
  * @param {number} waitInterval - Wait interval for checking ytInitialPlayerResponse (ms)
  * @param {number} retryDelay1 - First retry delay for video subtitles (ms)
  * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
+ * @param {string} targetLanguage - Target language ('auto' or language code like 'en', 'ru')
+ * @param {string} detectedVideoLanguage - Detected video language from AI (e.g., 'en', 'ru')
  */
-function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, retryDelay1, retryDelay2) {
+function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, retryDelay1, retryDelay2, targetLanguage, detectedVideoLanguage) {
   // CRITICAL: executeScript waits for Promise if function returns Promise
   // Therefore return Promise so executeScript waits for result
   return (async () => {
@@ -693,7 +699,17 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       if (!videoId) {
         throw new Error('Could not extract video ID from URL');
       }
-      
+
+      // detectedVideoLanguage is passed as parameter from AI detection in background script
+      // No need to detect here - AI already analyzed video title/description
+
+      console.log('[ClipAIble] Subtitle language selection:', {
+        targetLanguage: targetLanguage,
+        detectedVideoLanguage: detectedVideoLanguage,
+        title: metadata.title,
+        source: 'AI detection from background script'
+      });
+
       // CRITICAL: Check that we are on correct YouTube page
       if (!window.location.hostname.includes('youtube.com')) {
         throw new Error('Not on YouTube page');
@@ -745,15 +761,48 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
         
         if (apiData?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
           const tracks = apiData.captions.playerCaptionsTracklistRenderer.captionTracks;
-          
-          // Select track (priority: manual > auto-generated)
-          let selectedTrack = tracks.find(t => !t.kind || t.kind === '');
-                if (!selectedTrack) {
+
+          // Select track based on targetLanguage and detected video language
+          // Priority:
+          // 1. If targetLanguage !== 'auto': try targetLanguage first (manual > auto)
+          // 2. Fall back to detectedVideoLanguage (manual > auto)
+          // 3. Fall back to any manual > any auto > first
+          let selectedTrack = null;
+
+          if (targetLanguage && targetLanguage !== 'auto') {
+            // Try to find subtitles in target language first
+            selectedTrack = tracks.find(t => (t.languageCode === targetLanguage || t.languageCode?.startsWith(targetLanguage + '-')) && (!t.kind || t.kind === ''));
+            if (!selectedTrack) {
+              selectedTrack = tracks.find(t => (t.languageCode === targetLanguage || t.languageCode?.startsWith(targetLanguage + '-')) && t.kind === 'asr');
+            }
+          }
+
+          // If not found, try detected video language
+          if (!selectedTrack) {
+            selectedTrack = tracks.find(t => (t.languageCode === detectedVideoLanguage || t.languageCode?.startsWith(detectedVideoLanguage + '-')) && (!t.kind || t.kind === ''));
+          }
+          if (!selectedTrack) {
+            selectedTrack = tracks.find(t => (t.languageCode === detectedVideoLanguage || t.languageCode?.startsWith(detectedVideoLanguage + '-')) && t.kind === 'asr');
+          }
+
+          // Final fallback: any manual > any auto > first
+          if (!selectedTrack) {
+            selectedTrack = tracks.find(t => !t.kind || t.kind === '');
+          }
+          if (!selectedTrack) {
             selectedTrack = tracks.find(t => t.kind === 'asr');
-                }
+          }
           if (!selectedTrack && tracks.length > 0) {
             selectedTrack = tracks[0];
-                }
+          }
+
+          console.log('[ClipAIble] Selected subtitle track (Method 1):', {
+            languageCode: selectedTrack?.languageCode,
+            kind: selectedTrack?.kind,
+            name: selectedTrack?.name?.simpleText,
+            targetLanguage: targetLanguage,
+            detectedVideoLanguage: detectedVideoLanguage
+          });
                 
                 if (selectedTrack?.baseUrl) {
                   subtitleUrl = selectedTrack.baseUrl;
@@ -838,15 +887,43 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
         const win = window;
         if (win.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
           const tracks = win.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
-          
-            // Priority: manual > auto-generated > any
-            let selectedTrack = tracks.find(t => !t.kind || t.kind === '');
+
+          // Select track based on targetLanguage and detected video language
+          let selectedTrack = null;
+
+          if (targetLanguage && targetLanguage !== 'auto') {
+            // Try to find subtitles in target language first
+            selectedTrack = tracks.find(t => (t.languageCode === targetLanguage || t.languageCode?.startsWith(targetLanguage + '-')) && (!t.kind || t.kind === ''));
+            if (!selectedTrack) {
+              selectedTrack = tracks.find(t => (t.languageCode === targetLanguage || t.languageCode?.startsWith(targetLanguage + '-')) && t.kind === 'asr');
+            }
+          }
+
+          // If not found, try detected video language
+          if (!selectedTrack) {
+            selectedTrack = tracks.find(t => (t.languageCode === detectedVideoLanguage || t.languageCode?.startsWith(detectedVideoLanguage + '-')) && (!t.kind || t.kind === ''));
+          }
+          if (!selectedTrack) {
+            selectedTrack = tracks.find(t => (t.languageCode === detectedVideoLanguage || t.languageCode?.startsWith(detectedVideoLanguage + '-')) && t.kind === 'asr');
+          }
+
+          // Final fallback: any manual > any auto > first
+          if (!selectedTrack) {
+            selectedTrack = tracks.find(t => !t.kind || t.kind === '');
+          }
           if (!selectedTrack) {
             selectedTrack = tracks.find(t => t.kind === 'asr');
           }
           if (!selectedTrack && tracks.length > 0) {
             selectedTrack = tracks[0];
           }
+
+          console.log('[ClipAIble] Selected subtitle track (Method 2):', {
+            languageCode: selectedTrack?.languageCode,
+            kind: selectedTrack?.kind,
+            targetLanguage: targetLanguage,
+            detectedVideoLanguage: detectedVideoLanguage
+          });
           
             if (selectedTrack?.baseUrl) {
               subtitleUrl = selectedTrack.baseUrl;
@@ -945,15 +1022,43 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
                 
                 if (captionsJson?.playerCaptionsTracklistRenderer?.captionTracks) {
                   const tracks = captionsJson.playerCaptionsTracklistRenderer.captionTracks;
-                  
-                  // Select track
-                  let selectedTrack = tracks.find(t => !t.kind || t.kind === '');
+
+                  // Select track based on targetLanguage and detected video language
+                  let selectedTrack = null;
+
+                  if (targetLanguage && targetLanguage !== 'auto') {
+                    // Try to find subtitles in target language first
+                    selectedTrack = tracks.find(t => (t.languageCode === targetLanguage || t.languageCode?.startsWith(targetLanguage + '-')) && (!t.kind || t.kind === ''));
+                    if (!selectedTrack) {
+                      selectedTrack = tracks.find(t => (t.languageCode === targetLanguage || t.languageCode?.startsWith(targetLanguage + '-')) && t.kind === 'asr');
+                    }
+                  }
+
+                  // If not found, try detected video language
+                  if (!selectedTrack) {
+                    selectedTrack = tracks.find(t => (t.languageCode === detectedVideoLanguage || t.languageCode?.startsWith(detectedVideoLanguage + '-')) && (!t.kind || t.kind === ''));
+                  }
+                  if (!selectedTrack) {
+                    selectedTrack = tracks.find(t => (t.languageCode === detectedVideoLanguage || t.languageCode?.startsWith(detectedVideoLanguage + '-')) && t.kind === 'asr');
+                  }
+
+                  // Final fallback: any manual > any auto > first
+                  if (!selectedTrack) {
+                    selectedTrack = tracks.find(t => !t.kind || t.kind === '');
+                  }
                   if (!selectedTrack) {
                     selectedTrack = tracks.find(t => t.kind === 'asr');
                   }
                   if (!selectedTrack && tracks.length > 0) {
                     selectedTrack = tracks[0];
                   }
+
+                  console.log('[ClipAIble] Selected subtitle track (Method 3):', {
+                    languageCode: selectedTrack?.languageCode,
+                    kind: selectedTrack?.kind,
+                    targetLanguage: targetLanguage,
+                    detectedVideoLanguage: detectedVideoLanguage
+                  });
                   
                   if (selectedTrack?.baseUrl) {
                     subtitleUrl = selectedTrack.baseUrl;
@@ -1267,6 +1372,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       
       // CRITICAL: Try chrome.runtime.sendMessage directly (if available in MAIN world)
       // In some cases chrome.runtime may be available in MAIN world
+      let sendMessageSuccess = false;
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         try {
           chrome.runtime.sendMessage(messageData, (response) => {
@@ -1275,23 +1381,23 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
               sendViaCustomEventWithRetries();
             } else {
               // Success - no need to send via CustomEvent
+              sendMessageSuccess = true;
               return;
             }
           });
         } catch (runtimeError) {
           // chrome.runtime.sendMessage not available in MAIN world (expected)
+          // Will use CustomEvent below
         }
       }
-      
-      // CRITICAL: chrome.storage is NOT available in MAIN world!
-      // Extension APIs are only available in ISOLATED world (content scripts) and background scripts
-      // Therefore we cannot use storage API directly from injected script
-      // The only way is through CustomEvent, which should be listened to by content script
-      // If content script is not loaded, CustomEvent will not be processed
-      // 
-      // Solution: ensure content script loads, or use alternative method
-      // 
-      // Try to use window.postMessage as additional fallback
+
+      // CRITICAL: If chrome.runtime.sendMessage is not available or failed,
+      // MUST use CustomEvent to send result to content script
+      if (!sendMessageSuccess) {
+        sendViaCustomEventWithRetries();
+      }
+
+      // Also try window.postMessage as additional fallback
       // (though it usually doesn't work between MAIN and ISOLATED, but let's try)
       try {
         window.postMessage({
@@ -1338,10 +1444,12 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
 /**
  * Extract subtitles from Vimeo page
  * @param {number} tabId - Tab ID
+ * @param {string} [targetLanguage] - Target language ('auto' or language code like 'en', 'ru')
+ * @param {string} [detectedVideoLanguage] - Detected video language from AI (e.g., 'en', 'ru')
  * @returns {Promise<Object>} {subtitles: Array, metadata: Object}
  */
-export async function extractVimeoSubtitles(tabId) {
-  log('Extracting Vimeo subtitles', { tabId });
+export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', detectedVideoLanguage = 'en') {
+  log('Extracting Vimeo subtitles', { tabId, targetLanguage, detectedVideoLanguage });
   
   let results;
   try {

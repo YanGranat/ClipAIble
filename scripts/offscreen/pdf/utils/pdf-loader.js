@@ -52,13 +52,13 @@ export async function loadPdfJs() {
     
     if (!pdfReady) {
       log('[PDF v2.6] PDF.js not ready yet, waiting for __PDF_READY__ flag...');
-      criticalLogFn('[PDF v2.6] Waiting for PDF.js initialization', 'PDF_WAITING_FOR_READY', {
-        timestamp: Date.now(),
-        hasWindow: typeof window !== 'undefined',
-        hasSelf: typeof self !== 'undefined',
-        windowPDFReady: windowAny?.__PDF_READY__ || false,
-        selfPDFReady: selfAny?.__PDF_READY__ || false
-      });
+      // criticalLogFn('[PDF v2.6] Waiting for PDF.js initialization', 'PDF_WAITING_FOR_READY', {
+      //   timestamp: Date.now(),
+      //   hasWindow: typeof window !== 'undefined',
+      //   hasSelf: typeof self !== 'undefined',
+      //   windowPDFReady: windowAny?.__PDF_READY__ || false,
+      //   selfPDFReady: selfAny?.__PDF_READY__ || false
+      // });
       
       // Wait for __PDF_READY__ flag (max 10 seconds)
       const maxWait = 10000; // 10 seconds
@@ -81,15 +81,6 @@ export async function loadPdfJs() {
       }
     }
     
-    criticalLogFn('[PDF v2.6] Checking for PDF.js in window object', 'PDF_CHECK_GLOBAL', {
-      timestamp: Date.now(),
-      hasPDFJS: typeof windowAny?.PDFJS !== 'undefined',
-      hasWindowPdfjsLib: typeof windowAny?.pdfjsLib !== 'undefined',
-      hasSelfPDFJS: typeof selfAny?.PDFJS !== 'undefined',
-      hasSelfPdfjsLib: typeof selfAny?.pdfjsLib !== 'undefined',
-      pdfReady: pdfReady || windowAny?.__PDF_READY__ || selfAny?.__PDF_READY__ || false
-    });
-
     // Check if PDF.js was loaded via <script> tag in offscreen.html
     // PDF.js 2.6.347 exports as window.pdfjsLib (not window.PDFJS)
     const PDFJS = windowAny?.pdfjsLib || 
@@ -119,17 +110,6 @@ export async function loadPdfJs() {
       throw error;
     }
 
-    criticalLogFn('[PDF v2.6] PDF.js found in global object', 'PDF_FOUND_IN_GLOBAL', {
-      version: PDFJS.version || '2.6.347',
-      hasGetDocument: typeof PDFJS.getDocument === 'function',
-      hasPDFJS: true,
-      disableWorker: PDFJS.disableWorker,
-      source: (windowAny?.PDFJS === PDFJS) ? 'window.PDFJS' :
-             (selfAny?.PDFJS === PDFJS) ? 'self.PDFJS' :
-             (windowAny?.pdfjsLib === PDFJS) ? 'window.pdfjsLib' :
-             'self.pdfjsLib'
-    });
-
     // Verify worker is disabled (should be set in offscreen.html)
     // CRITICAL: Check if disableWorker is set correctly
     // PDF.js 2.6.347 has disableWorker in GlobalWorkerOptions, not directly on PDFJS
@@ -138,12 +118,12 @@ export async function loadPdfJs() {
     
     if (!globalDisableWorker && !directDisableWorker) {
       logWarn('[PDF v2.6] WARNING: disableWorker is false, setting to true now');
-      criticalLogFn('[PDF v2.6] WARNING: disableWorker is false, setting to true', 'PDF_WORKER_NOT_DISABLED', {
-        disableWorkerBefore: globalDisableWorker || directDisableWorker,
-        hasGlobalWorkerOptions: !!PDFJS.GlobalWorkerOptions,
-        globalDisableWorker: globalDisableWorker,
-        directDisableWorker: directDisableWorker
-      });
+      // criticalLogFn('[PDF v2.6] WARNING: disableWorker is false, setting to true', 'PDF_WORKER_NOT_DISABLED', {
+      //   disableWorkerBefore: globalDisableWorker || directDisableWorker,
+      //   hasGlobalWorkerOptions: !!PDFJS.GlobalWorkerOptions,
+      //   globalDisableWorker: globalDisableWorker,
+      //   directDisableWorker: directDisableWorker
+      // });
       
       // Set in both places for compatibility
       if (PDFJS.GlobalWorkerOptions) {
@@ -156,16 +136,16 @@ export async function loadPdfJs() {
 
     // Double check worker status
     const finalDisableWorker = PDFJS.GlobalWorkerOptions?.disableWorker || PDFJS.disableWorker;
-    criticalLogFn('[PDF v2.6] Worker status check', 'PDF_WORKER_STATUS', {
-      disableWorker: finalDisableWorker,
-      globalDisableWorker: PDFJS.GlobalWorkerOptions?.disableWorker,
-      directDisableWorker: PDFJS.disableWorker,
-      hasGlobalWorkerOptions: !!PDFJS.GlobalWorkerOptions,
-      workerSrc: PDFJS.GlobalWorkerOptions?.workerSrc || 'not set',
-      workerPort: PDFJS.GlobalWorkerOptions?.workerPort,
-      version: PDFJS.version || '2.6.347',
-      note: finalDisableWorker ? 'Worker should be disabled ✅' : 'Worker may still be enabled ⚠️'
-    });
+    // criticalLogFn('[PDF v2.6] Worker status check', 'PDF_WORKER_STATUS', {
+    //   disableWorker: finalDisableWorker,
+    //   globalDisableWorker: PDFJS.GlobalWorkerOptions?.disableWorker,
+    //   directDisableWorker: PDFJS.disableWorker,
+    //   hasGlobalWorkerOptions: !!PDFJS.GlobalWorkerOptions,
+    //   workerSrc: PDFJS.GlobalWorkerOptions?.workerSrc || 'not set',
+    //   workerPort: PDFJS.GlobalWorkerOptions?.workerPort,
+    //   version: PDFJS.version || '2.6.347',
+    //   note: finalDisableWorker ? 'Worker should be disabled ' : 'Worker may still be enabled '
+    // });
 
     // Store globally for easy access
     if (selfAny) {
