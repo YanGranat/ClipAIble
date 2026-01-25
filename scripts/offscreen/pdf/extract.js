@@ -3,7 +3,7 @@
 // Modular architecture with multiple classification algorithms
 // Starting with simple proven algorithms, ready for expansion
 
-import { log, logError, criticalLog } from '../../utils/logging.js';
+import { log, logError } from '../../utils/logging.js';
 
 // Core modules
 import { loadPdfDocument } from './core/pdf-loader.js';
@@ -29,11 +29,11 @@ export async function extractPdfContent(url) {
   }
   
   const versionMarker = 'CODE VERSION 2025-12-29-v6';
-  // CRITICAL: Log with ALL available methods using criticalLog
-  // VERSION v6 - Using criticalLog with localStorage and sendMessage
+  // CRITICAL: Log with ALL available methods using log
+  // VERSION v6 - Using log with localStorage and sendMessage
   const startMsg = `[PDF v3] === PDF EXTRACTION START === - ${versionMarker}`;
   const marker = '=== PDF_EXTRACTION_START_MARKER_V6 ===';
-  criticalLog(startMsg, marker, { url, version: 'v6' });
+  log(startMsg, marker, { url, version: 'v6' });
   
   try {
     // Step 1: Load PDF document

@@ -46,9 +46,17 @@ export async function initTTSWorker() {
       // The bundle includes all dependencies (onnxruntime-web, piper-tts-web)
       // and resolves all imports at build time - no import maps needed
       const workerUrl = chrome.runtime.getURL('dist/tts-worker-bundle.js');
-      logDebug('[ClipAIble Offscreen] Loading worker from URL', {
+      log('[ClipAIble Offscreen] === WORKER URL VERIFICATION ===', 'WORKER_INIT_VERIFICATION', {
         workerUrl,
+        workerUrlValid: workerUrl && workerUrl.startsWith('chrome-extension://'),
+        piperWasmBase: chrome.runtime.getURL('lib/piper-wasm/'),
+        piperDataUrl: chrome.runtime.getURL('lib/piper-wasm/piper_phonemize.data'),
+        piperWasmFileUrl: chrome.runtime.getURL('lib/piper-wasm/piper_phonemize.wasm'),
+        piperJsFileUrl: chrome.runtime.getURL('lib/piper-wasm/piper_phonemize.js'),
         hasChromeRuntime: typeof chrome !== 'undefined' && !!chrome.runtime,
+        extensionId: chrome.runtime.id,
+        manifestVersion: chrome.runtime.getManifest?.()?.version || 'unknown',
+        cacheBuster: Date.now(),
         timestamp: Date.now()
       });
       

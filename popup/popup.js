@@ -41,6 +41,8 @@
 // - hideAllAudioFields() is called as final safety check after updateOutputFormatUI()
 // - All audio fields must be hidden when format is not 'audio' (no exceptions)
 
+log('[ClipAIble Popup] Starting imports', { timestamp: Date.now() });
+
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logWarn, logDebug } from '../scripts/utils/logging.js';
@@ -73,16 +75,43 @@ import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils
 let popupOpenPort = null;
 
 function connectPopupOpenPort() {
+  log('[ClipAIble Popup] connectPopupOpenPort called', {
+    timestamp: Date.now(),
+    alreadyHasPort: !!popupOpenPort,
+    hasChromeRuntime: !!chrome?.runtime,
+    hasChromeRuntimeConnect: !!chrome?.runtime?.connect
+  });
+
   try {
-    if (popupOpenPort) return;
-    if (!chrome?.runtime?.connect) return;
+    if (popupOpenPort) {
+      log('[ClipAIble Popup] Port already exists, skipping connection', { timestamp: Date.now() });
+      return;
+    }
+    if (!chrome?.runtime?.connect) {
+      log('[ClipAIble Popup] chrome.runtime.connect not available, skipping', { timestamp: Date.now() });
+      return;
+    }
+
+    log('[ClipAIble Popup] Connecting popup port to service worker', { timestamp: Date.now() });
     popupOpenPort = chrome.runtime.connect({ name: 'clipaible_popup' });
+
+    log('[ClipAIble Popup] Popup port connected successfully', {
+      timestamp: Date.now(),
+      portName: popupOpenPort.name,
+      hasOnDisconnect: typeof popupOpenPort.onDisconnect === 'function'
+    });
+
     popupOpenPort.onDisconnect.addListener(() => {
+      log('[ClipAIble Popup] Popup port disconnected', { timestamp: Date.now() });
       popupOpenPort = null;
     });
   } catch (e) {
     // Non-critical: notifications will still work, but may show even if popup is open.
-    logWarn('Failed to connect popup open port', e);
+    logWarn('[ClipAIble Popup] Failed to connect popup open port', {
+      timestamp: Date.now(),
+      error: e.message,
+      stack: e.stack
+    });
   }
 }
 

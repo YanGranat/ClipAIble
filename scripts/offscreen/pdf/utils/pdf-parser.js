@@ -101,8 +101,8 @@ export async function parsePdfDocument(arrayBuffer) {
   };
   
   log('[PDF v2.0] Loading PDF document with worker disabled...', loadInfo);
-  const { criticalLog } = await import('../../../utils/logging.js');
-  criticalLog('[PDF v2.0] Starting PDF document load', 'PDF_DOCUMENT_LOAD_START', loadInfo);
+  const { log } = await import('../../../utils/logging.js');
+  log('[PDF v2.0] Starting PDF document load', 'PDF_DOCUMENT_LOAD_START', loadInfo);
   
   loadingTask = pdfjsLib.getDocument({ 
     data: arrayBuffer,
@@ -115,7 +115,7 @@ export async function parsePdfDocument(arrayBuffer) {
   
   const taskCreatedDuration = Date.now() - taskStart;
   log('[PDF v2.0] Loading task created', { taskDuration: taskCreatedDuration });
-  criticalLog('[PDF v2.0] PDF loading task created', 'PDF_LOADING_TASK_CREATED', {
+  log('[PDF v2.0] PDF loading task created', 'PDF_LOADING_TASK_CREATED', {
     taskDuration: taskCreatedDuration,
     hasOnPassword: typeof loadingTask.onPassword === 'function',
     hasPromise: typeof loadingTask.promise === 'object'
@@ -139,7 +139,7 @@ export async function parsePdfDocument(arrayBuffer) {
   });
   
   const parseStartTime = Date.now();
-  criticalLog('[PDF v2.0] Waiting for PDF parse promise...', 'PDF_PARSE_PROMISE_START', {
+  log('[PDF v2.0] Waiting for PDF parse promise...', 'PDF_PARSE_PROMISE_START', {
     parseStartTime,
     timeoutMs: PARSE_TIMEOUT_MS
   });
@@ -154,7 +154,7 @@ export async function parsePdfDocument(arrayBuffer) {
   }
   
   const parseDuration = Date.now() - parseStartTime;
-  criticalLog('[PDF v2.0] PDF parse promise resolved', 'PDF_PARSE_PROMISE_RESOLVED', {
+  log('[PDF v2.0] PDF parse promise resolved', 'PDF_PARSE_PROMISE_RESOLVED', {
     parseDuration,
     numPages: pdf.numPages,
     hasTransport: !!pdf._transport
@@ -208,8 +208,8 @@ export async function parsePdfDocument(arrayBuffer) {
     workerInspection: workerInspection
   };
   
-  // Use criticalLog to ensure Worker status reaches background.js
-  criticalLog('[PDF v2.0] PDF loaded successfully', 'PDF_LOADED_WITH_WORKER_STATUS', {
+  // Use log to ensure Worker status reaches background.js
+  log('[PDF v2.0] PDF loaded successfully', 'PDF_LOADED_WITH_WORKER_STATUS', {
     numPages: pdf.numPages,
     loadDuration: Date.now() - taskStart,
     workerStatus: workerStatus,

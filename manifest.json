@@ -51,10 +51,11 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "config/pdf-styles.css", 
-        "print/print.html", 
+        "config/pdf-styles.css",
+        "print/print.html",
         "lib/*",
         "lib/pdfjs/*",
+        "lib/piper-wasm/*",
         "scripts/api/offline-tts-offscreen.js",
         "scripts/api/offline-tts-piper.js",
         "scripts/api/piper-voices-mapping.js",

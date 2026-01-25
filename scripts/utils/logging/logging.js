@@ -455,12 +455,17 @@ export function criticalLog(message, marker = '', data = null) {
   
   // Also use standard log function (with prefix and timestamp)
   try {
-    log(fullMessage, {
-      marker,
-      data: processedData,
-      timestamp,
-      source: typeof window !== 'undefined' ? window.location?.href : 'service-worker'
-    });
+    // Check if log function exists before calling it
+    if (typeof log === 'function') {
+      log(fullMessage, {
+        marker,
+        data: processedData,
+        timestamp,
+        source: typeof window !== 'undefined' ? window.location?.href : 'service-worker'
+      });
+    } else {
+      console.log('[CRITICAL_LOG_FALLBACK] log function not available, using console.log:', fullMessage);
+    }
   } catch (e) {
     // Ignore log function errors
   }

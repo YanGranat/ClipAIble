@@ -25,6 +25,7 @@ scripts/test/
 # IDE
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
 *~

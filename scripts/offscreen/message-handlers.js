@@ -3,7 +3,7 @@
 
 // @ts-check
 
-import { log, logError, criticalLog, logWarn } from '../utils/logging.js';
+import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { extractPdfContent } from './pdf/extract.js';
 import { loadPdfDocument } from './pdf/core/pdf-loader.js';
@@ -20,6 +20,17 @@ import { loadPdfJs } from './pdf/utils/pdf-loader.js';
  */
 export async function handleGetVoices(messageId, initTTSWorker, getVoicesWithWorker, ttsWorker, sendResponse) {
   const voicesStart = Date.now();
+
+  log('[ClipAIble Offscreen] === handleGetVoices STARTED ===', {
+    timestamp: voicesStart,
+    messageId,
+    hasTTSWorker: !!ttsWorker,
+    hasInitTTSWorker: typeof initTTSWorker === 'function',
+    hasGetVoicesWithWorker: typeof getVoicesWithWorker === 'function',
+    hasSendResponse: typeof sendResponse === 'function',
+    CONFIG_VERBOSE_LOGGING: CONFIG?.VERBOSE_LOGGING
+  });
+
   // Only log if verbose (reduces log volume)
   if (CONFIG?.VERBOSE_LOGGING) {
     log(`[ClipAIble Offscreen] GET_VOICES request`, { messageId });
@@ -129,6 +140,7 @@ export async function handleGetVoices(messageId, initTTSWorker, getVoicesWithWor
   // CRITICAL: Log the exact structure being sent
   log(`[ClipAIble Offscreen] GET_VOICES: Sending response for ${messageId}`, {
     messageId,
+    voicesDuration,
     resultCount: result.length,
     sampleResult: result.slice(0, 3).map(v => ({
       id: v.id,
@@ -144,7 +156,16 @@ export async function handleGetVoices(messageId, initTTSWorker, getVoicesWithWor
     firstVoiceIdType: typeof result[0]?.id,
     isFirstVoiceIdValid: result[0]?.id && result[0].id.includes('_') && result[0].id.includes('-')
   });
-  
+
+  log('[ClipAIble Offscreen] === handleGetVoices COMPLETED ===', {
+    timestamp: Date.now(),
+    messageId,
+    totalDuration: voicesDuration,
+    resultCount: result.length,
+    languagesFound: [...new Set(result.map(v => v.language))],
+    qualitiesFound: [...new Set(result.map(v => v.quality))]
+  });
+
   sendResponse({
     success: true,
     voices: result
@@ -226,12 +247,12 @@ export function handlePing(messageId, sendResponse) {
  */
 export async function handleExtractPdf(messageId, data, sendResponse) {
   // CRITICAL: Log function entry IMMEDIATELY with ALL available methods
-  // VERSION v6 - Using criticalLog with localStorage and sendMessage
+  // VERSION v6 - Using log with localStorage and sendMessage
   const handleExtractPdfEntryMsg = `[ClipAIble Offscreen] handleExtractPdf ENTRY messageId=${messageId} pdfUrl=${data?.pdfUrl} - CODE VERSION 2025-12-29-v6`;
   const marker = `=== HANDLE_EXTRACT_PDF_ENTRY_${messageId}_V6 ===`;
   
-  // Use criticalLog which tries ALL available methods
-  criticalLog(handleExtractPdfEntryMsg, marker, { messageId, pdfUrl: data?.pdfUrl, version: 'v6' });
+  // Use log which tries ALL available methods
+  log(handleExtractPdfEntryMsg, marker, { messageId, pdfUrl: data?.pdfUrl, version: 'v6' });
   
   const extractStart = Date.now();
   
@@ -596,7 +617,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
       } : null
     };
     
-    criticalLog(`[ClipAIble Offscreen] GET_PDF_PAGE_DIMENSIONS complete for ${messageId}`, 'PDF_PAGE_DIMENSIONS_RETRIEVED', {
+    log(`[ClipAIble Offscreen] GET_PDF_PAGE_DIMENSIONS complete for ${messageId}`, 'PDF_PAGE_DIMENSIONS_RETRIEVED', {
       messageId,
       pageNum,
       width: dimensions.width,
@@ -639,7 +660,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
  */
 export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
   const startTime = Date.now();
-  criticalLog(`[ClipAIble Offscreen] RENDER_PDF_PAGE_IMAGE request for ${messageId}`, 'RENDER_PDF_PAGE_IMAGE_START', {
+  log(`[ClipAIble Offscreen] RENDER_PDF_PAGE_IMAGE request for ${messageId}`, 'RENDER_PDF_PAGE_IMAGE_START', {
     messageId,
     pdfUrl: data?.pdfUrl,
     pageNum: data?.pageNum,
@@ -650,7 +671,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
   });
   
   try {
-    criticalLog(`[ClipAIble Offscreen] Loading PDF document for ${messageId}...`, 'RENDER_PDF_PAGE_IMAGE_LOAD_START', { 
+    log(`[ClipAIble Offscreen] Loading PDF document for ${messageId}...`, 'RENDER_PDF_PAGE_IMAGE_LOAD_START', { 
       messageId, 
       hasPdfData: !!data.pdfData,
       hasPdfDataRef: !!data.pdfDataRef,
@@ -669,7 +690,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       });
       
       try {
-        criticalLog(`[ClipAIble Offscreen] Starting dynamic import of pdf-storage.js for ${messageId}...`, 'PDF_STORAGE_IMPORT_START', {
+        log(`[ClipAIble Offscreen] Starting dynamic import of pdf-storage.js for ${messageId}...`, 'PDF_STORAGE_IMPORT_START', {
           messageId,
           pdfDataRef: data.pdfDataRef
         });
@@ -680,14 +701,14 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
         // Offscreen document can use dynamic imports (unlike service worker)
         // Use chrome.runtime.getURL() to get the correct extension URL
         const pdfStorageUrl = chrome.runtime.getURL('scripts/api/pdf-storage.js');
-        criticalLog(`[ClipAIble Offscreen] PDF storage URL: ${pdfStorageUrl}`, 'PDF_STORAGE_URL', {
+        log(`[ClipAIble Offscreen] PDF storage URL: ${pdfStorageUrl}`, 'PDF_STORAGE_URL', {
           messageId,
           pdfStorageUrl
         });
         const { getPdfData } = await import(pdfStorageUrl);
         const importDuration = Date.now() - importStart;
         
-        criticalLog(`[ClipAIble Offscreen] pdf-storage.js imported successfully for ${messageId}`, 'PDF_STORAGE_IMPORT_SUCCESS', {
+        log(`[ClipAIble Offscreen] pdf-storage.js imported successfully for ${messageId}`, 'PDF_STORAGE_IMPORT_SUCCESS', {
           messageId,
           importDuration,
           hasGetPdfData: typeof getPdfData === 'function'
@@ -698,21 +719,21 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
         const loadDuration = Date.now() - loadStart;
         
         if (pdfData) {
-          criticalLog(`[ClipAIble Offscreen] PDF data loaded from IndexedDB for ${messageId}`, 'PDF_DATA_LOADED', {
+          log(`[ClipAIble Offscreen] PDF data loaded from IndexedDB for ${messageId}`, 'PDF_DATA_LOADED', {
             messageId,
             size: pdfData.byteLength,
             loadDuration,
             firstBytes: Array.from(new Uint8Array(pdfData).slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')
           });
         } else {
-          criticalLog(`[ClipAIble Offscreen] PDF data not found in IndexedDB for ${messageId}`, 'PDF_DATA_NOT_FOUND', {
+          log(`[ClipAIble Offscreen] PDF data not found in IndexedDB for ${messageId}`, 'PDF_DATA_NOT_FOUND', {
             messageId,
             pdfDataRef: data.pdfDataRef,
             loadDuration
           });
         }
       } catch (storageError) {
-        criticalLog(`[ClipAIble Offscreen] Failed to load PDF data from IndexedDB for ${messageId}`, 'PDF_DATA_LOAD_ERROR', {
+        log(`[ClipAIble Offscreen] Failed to load PDF data from IndexedDB for ${messageId}`, 'PDF_DATA_LOAD_ERROR', {
           messageId,
           error: storageError.message,
           errorStack: storageError.stack,
@@ -778,7 +799,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       }
     }
     
-    criticalLog(`[ClipAIble Offscreen] About to load PDF document for ${messageId}...`, 'PDF_DOCUMENT_LOAD_START', {
+    log(`[ClipAIble Offscreen] About to load PDF document for ${messageId}...`, 'PDF_DOCUMENT_LOAD_START', {
       messageId,
       pdfUrl: data.pdfUrl,
       hasPdfData: !!pdfData,
@@ -789,7 +810,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     const { pdf, numPages } = await loadPdfDocument(data.pdfUrl, pdfData);
     const loadDuration = Date.now() - loadStartTime;
     
-    criticalLog(`[ClipAIble Offscreen] PDF document loaded successfully for ${messageId}`, 'PDF_DOCUMENT_LOADED', {
+    log(`[ClipAIble Offscreen] PDF document loaded successfully for ${messageId}`, 'PDF_DOCUMENT_LOADED', {
       messageId,
       numPages,
       loadDuration,
@@ -861,7 +882,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
         viewport: viewport
       };
     
-    criticalLog(`[ClipAIble Offscreen] Starting page render for ${messageId}...`, 'PDF_PAGE_RENDER_START', { 
+    log(`[ClipAIble Offscreen] Starting page render for ${messageId}...`, 'PDF_PAGE_RENDER_START', { 
       messageId, 
       pageNum,
       canvasWidth: canvas.width,
@@ -890,7 +911,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     const directDisableWorker = pdfjsLib.disableWorker === true;
     const workerDisabled = globalWorkerDisabled || directDisableWorker;
     
-    criticalLog(`[ClipAIble Offscreen] PDF.js worker status check for ${messageId}...`, 'PDF_WORKER_STATUS_CHECK', {
+    log(`[ClipAIble Offscreen] PDF.js worker status check for ${messageId}...`, 'PDF_WORKER_STATUS_CHECK', {
       messageId,
       pageNum,
       hasGlobalWorkerOptions: !!pdfjsLib.GlobalWorkerOptions,
@@ -911,7 +932,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       });
     }
     
-    criticalLog(`[ClipAIble Offscreen] About to call page.render() for ${messageId}...`, 'PDF_PAGE_RENDER_CALL_START', {
+    log(`[ClipAIble Offscreen] About to call page.render() for ${messageId}...`, 'PDF_PAGE_RENDER_CALL_START', {
       messageId,
       pageNum,
       renderContextKeys: Object.keys(renderContext),
@@ -925,7 +946,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       // CRITICAL: Use renderTask to get better control over rendering
       // Try to use getOperatorList first if render hangs (alternative rendering method)
       renderTask = page.render(renderContext);
-      criticalLog(`[ClipAIble Offscreen] renderTask created for ${messageId}`, 'PDF_PAGE_RENDER_TASK_CREATED', {
+      log(`[ClipAIble Offscreen] renderTask created for ${messageId}`, 'PDF_PAGE_RENDER_TASK_CREATED', {
         messageId,
         pageNum,
         hasRenderTask: !!renderTask,
@@ -934,13 +955,13 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       });
       
       const renderPromise = renderTask.promise.then(() => {
-        criticalLog(`[ClipAIble Offscreen] renderTask.promise resolved for ${messageId}`, 'PDF_PAGE_RENDER_PROMISE_RESOLVED', {
+        log(`[ClipAIble Offscreen] renderTask.promise resolved for ${messageId}`, 'PDF_PAGE_RENDER_PROMISE_RESOLVED', {
           messageId,
           pageNum,
           renderDuration: Date.now() - renderStart
         });
       }).catch((error) => {
-        criticalLog(`[ClipAIble Offscreen] renderTask.promise REJECTED for ${messageId}`, 'PDF_PAGE_RENDER_PROMISE_REJECTED', {
+        log(`[ClipAIble Offscreen] renderTask.promise REJECTED for ${messageId}`, 'PDF_PAGE_RENDER_PROMISE_REJECTED', {
           messageId,
           pageNum,
           error: error.message,
@@ -957,7 +978,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       const RENDER_TIMEOUT_MS = CONFIG.PDF_RENDER_TIMEOUT_MS;
       const timeoutPromise = new Promise((_, reject) => {
         setTimeout(() => {
-          criticalLog(`[ClipAIble Offscreen] PDF page render TIMEOUT for ${messageId}`, 'PDF_PAGE_RENDER_TIMEOUT', {
+          log(`[ClipAIble Offscreen] PDF page render TIMEOUT for ${messageId}`, 'PDF_PAGE_RENDER_TIMEOUT', {
             messageId,
             pageNum,
             renderDuration: Date.now() - renderStart,
@@ -967,12 +988,12 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
           if (renderTask && typeof renderTask.cancel === 'function') {
             try {
               renderTask.cancel();
-              criticalLog(`[ClipAIble Offscreen] Render task cancelled for ${messageId}`, 'PDF_PAGE_RENDER_CANCELLED', {
+              log(`[ClipAIble Offscreen] Render task cancelled for ${messageId}`, 'PDF_PAGE_RENDER_CANCELLED', {
                 messageId,
                 pageNum
               });
             } catch (cancelError) {
-              criticalLog(`[ClipAIble Offscreen] Failed to cancel render task for ${messageId}`, 'PDF_PAGE_RENDER_CANCEL_FAILED', {
+              log(`[ClipAIble Offscreen] Failed to cancel render task for ${messageId}`, 'PDF_PAGE_RENDER_CANCEL_FAILED', {
                 messageId,
                 pageNum,
                 error: cancelError.message
@@ -986,7 +1007,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       try {
         await Promise.race([renderPromise, timeoutPromise]);
         
-        criticalLog(`[ClipAIble Offscreen] Page render complete for ${messageId}`, 'PDF_PAGE_RENDER_COMPLETE', {
+        log(`[ClipAIble Offscreen] Page render complete for ${messageId}`, 'PDF_PAGE_RENDER_COMPLETE', {
           messageId,
           pageNum,
           renderDuration: Date.now() - renderStart
@@ -1113,7 +1134,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
  */
 export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
   const startTime = Date.now();
-  criticalLog(`[ClipAIble Offscreen] RENDER_ALL_PDF_PAGES request for ${messageId}`, 'RENDER_ALL_PDF_PAGES_START', {
+  log(`[ClipAIble Offscreen] RENDER_ALL_PDF_PAGES request for ${messageId}`, 'RENDER_ALL_PDF_PAGES_START', {
     messageId,
     pdfUrl: data?.pdfUrl,
     totalPages: data?.totalPages,
@@ -1171,7 +1192,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     }
     
     // CRITICAL: Load PDF document ONCE for all pages
-    criticalLog(`[ClipAIble Offscreen] Loading PDF document ONCE for all pages (${messageId})...`, 'PDF_DOCUMENT_LOAD_START', {
+    log(`[ClipAIble Offscreen] Loading PDF document ONCE for all pages (${messageId})...`, 'PDF_DOCUMENT_LOAD_START', {
       messageId,
       pdfUrl: data.pdfUrl,
       pdfDataSize: pdfData.byteLength
@@ -1184,7 +1205,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     
     const totalPages = data.totalPages || numPages;
     
-    criticalLog(`[ClipAIble Offscreen] PDF document loaded ONCE for ${messageId}`, 'PDF_DOCUMENT_LOADED', {
+    log(`[ClipAIble Offscreen] PDF document loaded ONCE for ${messageId}`, 'PDF_DOCUMENT_LOADED', {
       messageId,
       numPages,
       totalPages,
@@ -1264,8 +1285,8 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
           workerInspection: workerInspection
         };
         
-        // Use criticalLog to ensure Worker status reaches background.js
-        criticalLog(`[ClipAIble Offscreen] PDF.js worker status before render for ${messageId}`, 'PDF_WORKER_STATUS_BEFORE_RENDER', {
+        // Use log to ensure Worker status reaches background.js
+        log(`[ClipAIble Offscreen] PDF.js worker status before render for ${messageId}`, 'PDF_WORKER_STATUS_BEFORE_RENDER', {
           messageId,
           pageNum,
           workerSrc,
@@ -1294,7 +1315,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         const WorkerConstructor2 = typeof self !== 'undefined' ? self.Worker : null;
         const hasWorkerPatch = WorkerConstructor2?._patched === true;
         
-        criticalLog(`[ClipAIble Offscreen] Pre-render Worker status check for page ${pageNum} (${messageId})`, 'PDF_PRE_RENDER_WORKER_CHECK', {
+        log(`[ClipAIble Offscreen] Pre-render Worker status check for page ${pageNum} (${messageId})`, 'PDF_PRE_RENDER_WORKER_CHECK', {
           messageId,
           pageNum,
           workerSrc: workerSrc || 'empty',
@@ -1322,7 +1343,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         });
         
         // CRITICAL: Add immediate diagnostic after render task creation
-        criticalLog(`[ClipAIble Offscreen] Render task created, waiting for promise for page ${pageNum} (${messageId})`, 'PDF_PAGE_RENDER_START', {
+        log(`[ClipAIble Offscreen] Render task created, waiting for promise for page ${pageNum} (${messageId})`, 'PDF_PAGE_RENDER_START', {
           messageId,
           pageNum,
           hasRenderTask: !!renderTask,

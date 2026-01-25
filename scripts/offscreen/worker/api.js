@@ -17,14 +17,23 @@ import { resetWorkerInactivityTimer } from './lifecycle.js';
 export async function predictWithWorker(text, voiceId) {
   const callStartTime = Date.now();
   const callId = 'predict_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-  
-  log('[ClipAIble Offscreen] === predictWithWorker CALL START ===', {
+
+  log('[ClipAIble Offscreen] === predictWithWorker CALL START ===', 'WORKER_PREDICT_START', {
     callId,
     textLength: text?.length,
     voiceId,
+    voiceIdType: typeof voiceId,
+    voiceIdString: String(voiceId || ''),
+    isVoiceIdValid: voiceId && /^\d+$/.test(String(voiceId)) === false && (String(voiceId).includes('_') || String(voiceId).includes('-')),
     hasTTSWorker: state.hasTTSWorker(),
     useWorker: state.shouldUseWorker(),
-    timestamp: callStartTime
+    activePredictCalls: state.getActivePredictCalls(),
+    timestamp: callStartTime,
+    textPreview: text?.substring(0, 100),
+    textWordsCount: text ? text.split(' ').length : 0,
+    workerUrl: state.getTTSWorker() ? 'worker exists' : 'no worker',
+    piperWasmBaseCheck: chrome.runtime.getURL('lib/piper-wasm/'),
+    cacheBuster: Date.now()
   });
   
   // Ensure Worker is initialized before use
@@ -90,18 +99,28 @@ export async function predictWithWorker(text, voiceId) {
         } else if (event.data.type === 'ERROR') {
           // CRITICAL: Decrement active predict calls on error
           state.decrementActivePredictCalls();
-          
+
           const error = new Error(event.data.error || 'Worker predict failed');
           logError('[ClipAIble Offscreen] === predictWithWorker ERROR ===', {
             callId: id,
             textLength: text?.length,
             voiceId,
+            voiceIdType: typeof voiceId,
+            voiceIdString: String(voiceId || ''),
             error: error.message,
             errorStack: event.data.stack,
+            errorName: error.name,
+            errorType: typeof error,
+            hasStack: !!error.stack,
             requestDuration,
             totalDuration,
             activePredictCalls: state.getActivePredictCalls(),
-            timestamp: handlerTime
+            timestamp: handlerTime,
+            workerErrorDetails: {
+              hasErrorInEventData: !!event.data.error,
+              hasStackInEventData: !!event.data.stack,
+              eventDataKeys: Object.keys(event.data)
+            }
           });
           reject(error);
         }
@@ -109,12 +128,21 @@ export async function predictWithWorker(text, voiceId) {
     };
     
     worker.addEventListener('message', handler);
-    
+
     // Handle worker errors during predict
     const errorHandler = (error) => {
+      logError('[ClipAIble Offscreen] Worker error event received', {
+        callId: id,
+        error: error.message,
+        filename: error.filename,
+        lineno: error.lineno,
+        colno: error.colno,
+        timestamp: Date.now()
+      });
+
       // CRITICAL: Decrement active predict calls on worker error
       state.decrementActivePredictCalls();
-      
+
       if (timeout) {
         clearTimeout(timeout);
         timeout = null;

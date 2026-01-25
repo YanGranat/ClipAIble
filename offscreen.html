@@ -181,7 +181,7 @@
       console.error('[HTML] Script error:', e.message, e.filename, e.lineno);
     });
   </script>
-  <script src="dist/offscreen-bundle.js?v=2026-01-09-v7" onerror="console.error('[HTML] Bundle failed to load!')" onload="console.error('[HTML] Bundle loaded successfully!', Date.now())"></script>
+  <script src="dist/offscreen-bundle.js" onerror="console.error('[HTML] Bundle failed to load!')" onload="console.error('[HTML] Bundle loaded successfully!', Date.now())"></script>
   <!-- PDF.js is now loaded globally and will be accessed via window.PDFJS or window.pdfjsLib -->
   <script>
     // CRITICAL: Test if bundle executed

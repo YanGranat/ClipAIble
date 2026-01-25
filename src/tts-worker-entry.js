@@ -3,10 +3,78 @@
 // This file will be bundled by esbuild to create a self-contained worker
 // that includes piper-tts-web, but NOT onnxruntime-web (loaded via importScripts)
 
+// CRITICAL: Import piper-tts-web statically so esbuild bundles it
+import * as piperTTSModule from '@mintplex-labs/piper-tts-web';
+
 const LOG_PREFIX = '[ClipAIble TTS Worker]';
 
-console.log(LOG_PREFIX, 'Worker entry point loaded', {
-  timestamp: Date.now()
+// Worker logging function - CRITICAL: ALWAYS log to console AND send to offscreen
+// Console logs are visible in Chrome DevTools offscreen document console
+function workerLog(message, data = null) {
+  // CRITICAL: Log to console FIRST (visible in DevTools offscreen console)
+  console.log(LOG_PREFIX, message, data);
+
+  // Also send to offscreen document via postMessage (for background log collection)
+  try {
+    self.postMessage({
+      type: 'WORKER_LOG',
+      message: LOG_PREFIX + ' ' + message,
+      data: data,
+      timestamp: Date.now()
+    });
+  } catch (e) {
+    // postMessage failed, but console.log above already worked
+  }
+}
+
+// Worker error logging function - CRITICAL: ALWAYS log to console AND send to offscreen
+function workerLogError(message, data = null) {
+  // CRITICAL: Log to console FIRST (visible in DevTools offscreen console)
+  console.error(LOG_PREFIX, message, data);
+
+  // Also send to offscreen document via postMessage (for background log collection)
+  try {
+    self.postMessage({
+      type: 'WORKER_LOG_ERROR',
+      message: LOG_PREFIX + ' ' + message,
+      data: data,
+      timestamp: Date.now()
+    });
+  } catch (e) {
+    // postMessage failed, but console.error above already worked
+  }
+}
+
+// CRITICAL: Check for piper file caching issues
+workerLog('=== PIPER FILE CACHE CHECK ===', {
+  timestamp: Date.now(),
+  workerUrl: self.location?.href || 'unknown',
+  piperWasmBase: self.location.origin + '/lib/piper-wasm/',
+  expectedPiperDataUrl: self.location.origin + '/lib/piper-wasm/piper_phonemize.data',
+  expectedPiperWasmUrl: self.location.origin + '/lib/piper-wasm/piper_phonemize.wasm',
+  expectedPiperJsUrl: self.location.origin + '/lib/piper-wasm/piper_phonemize.js',
+  cacheBuster: Date.now(),
+  manifestVersion: typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getManifest?.()?.version : 'unknown'
+});
+
+// CRITICAL: Test postMessage immediately
+try {
+  self.postMessage({
+    type: 'WORKER_STARTUP_TEST',
+    message: 'Worker is starting up',
+    timestamp: Date.now()
+  });
+  workerLog('WORKER_STARTUP_TEST message sent successfully');
+} catch (e) {
+  workerLogError('Failed to send WORKER_STARTUP_TEST message', { error: e.message });
+}
+
+workerLog('Worker entry point loaded', {
+  timestamp: Date.now(),
+  workerLocation: self.location?.href,
+  hasSelfOrt: !!self.ort,
+  hasSelfOnnxruntime: !!self.onnxruntime,
+  ortVersion: self.ort?.version || 'unknown'
 });
 
 // CRITICAL: Load ONNX Runtime 1.19.0 on top level using importScripts()
@@ -15,32 +83,107 @@ console.log(LOG_PREFIX, 'Worker entry point loaded', {
 // Calculate ortUrl from self.location.href (Worker script location)
 const workerUrl = new URL(self.location.href);
 // Worker is at: chrome-extension://<EXT_ID>/dist/tts-worker-bundle.js
-// ort.all.min.js is at: chrome-extension://<EXT_ID>/node_modules/onnxruntime-web/dist/ort.all.min.js
 const origin = workerUrl.origin;
-const ortUrl = origin + '/node_modules/onnxruntime-web/dist/ort.all.min.js';
 
-console.log(LOG_PREFIX, 'Worker location:', workerUrl.href);
-console.log(LOG_PREFIX, 'Loading ONNX Runtime 1.19.0 (ort.all.min.js) from:', ortUrl);
+// CRITICAL: Support both development (node_modules) and production (lib) paths
+// Try node_modules first (for development), fallback to lib (for production archive)
+const ortUrlDev = origin + '/node_modules/onnxruntime-web/dist/ort.all.min.js';
+const ortUrlProd = origin + '/lib/ort.all.min.js';
+
+workerLog('Worker location:', { href: workerUrl.href });
+workerLog('Will try to load ONNX Runtime 1.19.0 from:', {
+  devPath: ortUrlDev,
+  prodPath: ortUrlProd
+});
 
 // Load ONNX Runtime synchronously on top level
 // importScripts() works with chrome-extension:// URLs if file is in web_accessible_resources
 // Using ort.all.min.js which includes all backends and may avoid blob URL issues
+let loadedFromProd = false; // Track which path was successful
+
+workerLog('========== ONNX RUNTIME LOADING START ==========', {
+  ortUrlDev,
+  ortUrlProd,
+  timestamp: Date.now()
+});
+
 try {
-  console.log(LOG_PREFIX, 'Loading ONNX Runtime 1.19.0 (ort.all.min.js) via importScripts...');
-  importScripts(ortUrl);
-  
+  // Try development path first (node_modules)
+  try {
+    workerLog('ATTEMPT 1: Trying to load ONNX Runtime from development path (node_modules)...', {
+      url: ortUrlDev,
+      timestamp: Date.now()
+    });
+    importScripts(ortUrlDev);
+    workerLog('✅ ATTEMPT 1 SUCCESS: Loaded ONNX Runtime from development path', {
+      loadedFromProd: false,
+      timestamp: Date.now()
+    });
+    loadedFromProd = false;
+  } catch (devError) {
+    // If dev path fails, try production path (lib)
+    workerLog('❌ ATTEMPT 1 FAILED: Dev path error', {
+      error: devError.message,
+      stack: devError.stack,
+      name: devError.name,
+      attemptedUrl: ortUrlDev,
+      timestamp: Date.now()
+    });
+
+    workerLog('ATTEMPT 2: Trying to load ONNX Runtime from production path (lib)...', {
+      url: ortUrlProd,
+      timestamp: Date.now()
+    });
+
+    try {
+      importScripts(ortUrlProd);
+      workerLog('✅ ATTEMPT 2 SUCCESS: Loaded ONNX Runtime from production path', {
+        loadedFromProd: true,
+        timestamp: Date.now()
+      });
+      loadedFromProd = true;
+    } catch (prodError) {
+      workerLogError('❌ ATTEMPT 2 FAILED: Production path error', {
+        error: prodError.message,
+        stack: prodError.stack,
+        name: prodError.name,
+        attemptedUrl: ortUrlProd,
+        timestamp: Date.now(),
+        '== BOTH PATHS FAILED ==': 'This is a critical error - cannot load ONNX Runtime'
+      });
+      throw prodError;
+    }
+  }
+
   // CRITICAL: Check that ONNX Runtime loaded correctly
   if (!self.ort || !self.ort.env) {
     throw new Error('ONNX Runtime not loaded - ort or ort.env is undefined');
   }
-  
+
   // Make it available globally for piper-tts-web
   self.onnxruntime = self.ort;
-  
+
   // CRITICAL: Configure WASM paths IMMEDIATELY after loading ONNX Runtime
   // Version 1.19.0 supports wasmPaths configuration and multithreading
   // This must be done BEFORE any InferenceSession is created
-  const wasmBasePath = origin + '/node_modules/onnxruntime-web/dist/';
+  // Use the same path where ONNX Runtime was successfully loaded
+  workerLog('========== CONFIGURING WASM PATHS ==========', {
+    loadedFromProd,
+    origin,
+    timestamp: Date.now()
+  });
+
+  const wasmBasePath = loadedFromProd
+    ? origin + '/lib/'
+    : origin + '/node_modules/onnxruntime-web/dist/';
+
+  workerLog('WASM paths calculated', {
+    loadedFromProd,
+    wasmBasePath,
+    isLibPath: wasmBasePath.includes('/lib/'),
+    isNodeModulesPath: wasmBasePath.includes('/node_modules/'),
+    timestamp: Date.now()
+  });
   
   // Initialize wasm config if not exists
   self.ort.env.wasm = self.ort.env.wasm || {};
@@ -81,9 +224,9 @@ try {
   if (self.ort.env && typeof self.ort.env.setExecutionProviders === 'function') {
     try {
       self.ort.env.setExecutionProviders(['wasm']);
-      console.log(LOG_PREFIX, 'Execution providers set to WASM only', {
-        executionProviders: self.ort.env.executionProviders || ['wasm']
-      });
+  workerLog('Execution providers set to WASM only', {
+    executionProviders: self.ort.env.executionProviders || ['wasm']
+  });
     } catch (e) {
       console.warn(LOG_PREFIX, 'Could not set execution providers', {
         error: e.message
@@ -91,7 +234,7 @@ try {
     }
   }
   
-  console.log(LOG_PREFIX, 'ONNX Runtime 1.19.0 configured for Chrome Extension', {
+  workerLog('ONNX Runtime 1.19.0 configured for Chrome Extension', {
     wasmPaths: self.ort.env.wasm.wasmPaths,
     numThreads: self.ort.env.wasm.numThreads, // Must be 1 to avoid blob URL
     simd: self.ort.env.wasm.simd,
@@ -100,74 +243,151 @@ try {
     version: self.ort.version || 'unknown',
     note: 'numThreads=1 avoids blob URL creation (required for Chrome Extension CSP)'
   });
-  
-  console.log(LOG_PREFIX, 'ONNX Runtime 1.19.0 loaded successfully', {
+
+  workerLog('ONNX Runtime 1.19.0 loaded successfully', {
     hasOrt: typeof self.ort !== 'undefined',
     hasEnv: !!self.ort.env,
     hasWasm: !!self.ort.env.wasm,
     timestamp: Date.now()
   });
 } catch (error) {
-  console.error(LOG_PREFIX, 'Failed to load ONNX Runtime 1.19.0', {
+  workerLogError('Failed to load ONNX Runtime 1.19.0', {
     error: error.message,
     stack: error.stack,
-    ortUrl,
+    triedPaths: {
+      dev: ortUrlDev,
+      prod: ortUrlProd
+    },
     timestamp: Date.now()
   });
   // Re-throw - Worker cannot work without ONNX Runtime
   throw new Error(`Failed to load ONNX Runtime 1.19.0: ${error.message}`);
 }
 
-// CRITICAL: Intercept fetch to block CDN requests from piper-tts-web
-// piper-tts-web 1.0.4 has hardcoded CDN URLs for ONNX Runtime 1.18.0
-// We must block these to prevent CSP violations
-// IMPORTANT: Only block REAL CDN requests (http/https), NOT local extension files (chrome-extension://)
-const originalFetch = self.fetch;
-self.fetch = function(url, options) {
-  // Convert URL to string if it's a Request object
-  const urlString = typeof url === 'string' ? url : url.url || String(url);
-  
-  // CRITICAL: Only block REAL CDN requests (http/https), NOT local extension files
-  // Local extension files use chrome-extension:// protocol and should be allowed
-  const isExternalCDN = urlString.startsWith('http://') || urlString.startsWith('https://');
-  
-  // CRITICAL: Allow piper-wasm files from CDN (they're not available locally)
-  // piper-wasm files are required for phonemization and are safe to load from CDN
-  const isPiperWasmFile = urlString.includes('piper-wasm') || 
-                          urlString.includes('piper_phonemize') ||
-                          urlString.endsWith('.data') ||
-                          (urlString.includes('jsdelivr.net') && urlString.includes('piper'));
-  
-  // Block only external CDN requests for ONNX Runtime (NOT piper-wasm)
-  if (isExternalCDN && !isPiperWasmFile && (
-      urlString.includes('cdnjs.cloudflare.com') || 
-      urlString.includes('unpkg.com') ||
-      (urlString.includes('jsdelivr.net') && !urlString.includes('piper')) ||
-      urlString.includes('ort-wasm') ||
-      urlString.includes('onnxruntime-web'))) {
-    console.error(LOG_PREFIX, 'BLOCKED CDN request:', urlString, {
-      reason: 'CDN requests are blocked in Chrome Extension CSP',
-      note: 'ONNX Runtime must be loaded from local extension files',
-      isExternalCDN,
-      timestamp: Date.now()
-    });
-    throw new Error(`CDN request blocked: ${urlString}. Chrome Extension CSP does not allow external CDN requests. Use local ONNX Runtime files instead.`);
-  }
-  
-  // Allow all other requests (including chrome-extension:// local files)
-  // Only log if it's a potentially problematic request
-  if (urlString.includes('ort-wasm') || urlString.includes('onnxruntime')) {
-    console.log(LOG_PREFIX, 'Fetch allowed (ONNX Runtime file):', urlString, {
-      isExternalCDN,
-      isChromeExtension: urlString.startsWith('chrome-extension://'),
-      timestamp: Date.now()
-    });
-  }
-  
-  return originalFetch.call(this, url, options);
-};
+  // CRITICAL: Intercept fetch to block CDN requests from piper-tts-web
+  // piper-tts-web 1.0.4 has hardcoded CDN URLs for ONNX Runtime 1.18.0
+  // We must block these to prevent CSP violations
+  // IMPORTANT: Only block REAL CDN requests (http/https), NOT local extension files (chrome-extension://)
+  const originalFetch = self.fetch;
+  self.fetch = function(url, options) {
+    // Convert URL to string if it's a Request object
+    const urlString = typeof url === 'string' ? url : url.url || String(url);
 
-console.log(LOG_PREFIX, 'CDN fetch interceptor installed', {
+    workerLog('=== FETCH INTERCEPTED ===', {
+      urlString,
+      isRequestObject: typeof url !== 'string',
+      hasOptions: !!options,
+      timestamp: Date.now()
+    });
+
+    // CRITICAL: Only block REAL CDN requests (http/https), NOT local extension files
+    // Local extension files use chrome-extension:// protocol and should be allowed
+    const isExternalCDN = urlString.startsWith('http://') || urlString.startsWith('https://');
+
+    // CRITICAL: Allow piper-wasm files from CDN (they're not available locally)
+    // piper-wasm files are required for phonemization and are safe to load from CDN
+    const isPiperWasmFile = urlString.includes('piper-wasm') ||
+                            urlString.includes('piper_phonemize') ||
+                            urlString.endsWith('.data') ||
+                            (urlString.includes('jsdelivr.net') && urlString.includes('piper'));
+
+    workerLog('Fetch analysis', {
+      urlString,
+      isExternalCDN,
+      isPiperWasmFile,
+      isChromeExtension: urlString.startsWith('chrome-extension://'),
+      isPiperPhonemizeFile: urlString.includes('piper_phonemize'),
+      endsWithData: urlString.endsWith('.data'),
+      endsWithWasm: urlString.endsWith('.wasm'),
+      endsWithJs: urlString.endsWith('.js'),
+      timestamp: Date.now()
+    });
+
+    // Block only external CDN requests for ONNX Runtime (NOT piper-wasm)
+    if (isExternalCDN && !isPiperWasmFile && (
+        urlString.includes('cdnjs.cloudflare.com') ||
+        urlString.includes('unpkg.com') ||
+        (urlString.includes('jsdelivr.net') && !urlString.includes('piper')) ||
+        urlString.includes('ort-wasm') ||
+        urlString.includes('onnxruntime-web'))) {
+      workerLog('BLOCKED CDN request', {
+        urlString,
+        reason: 'CDN requests are blocked in Chrome Extension CSP',
+        note: 'ONNX Runtime must be loaded from local extension files',
+        isExternalCDN,
+        isPiperWasmFile,
+        timestamp: Date.now()
+      });
+      throw new Error(`CDN request blocked: ${urlString}. Chrome Extension CSP does not allow external CDN requests. Use local ONNX Runtime files instead.`);
+    }
+
+    // CRITICAL: Log ALL piper file requests to detect caching issues
+    if (urlString.includes('piper-wasm') || urlString.includes('piper_phonemize') ||
+        urlString.includes('ort-wasm') || urlString.includes('onnxruntime')) {
+      workerLog('=== PIPER/ORT FILE FETCH ===', {
+        urlString,
+        isExternalCDN,
+        isChromeExtension: urlString.startsWith('chrome-extension://'),
+        isPiperWasm: urlString.includes('piper-wasm'),
+        isPiperPhonemize: urlString.includes('piper_phonemize'),
+        isPiperData: urlString.endsWith('.data'),
+        isPiperWasmFile: urlString.endsWith('.wasm'),
+        isPiperJsFile: urlString.endsWith('.js'),
+        fullUrl: urlString,
+        expectedPiperWasmPath: urlString.includes('/lib/piper-wasm/'),
+        cacheBuster: Date.now(),
+        timestamp: Date.now()
+      });
+    }
+
+    workerLog('Proceeding with fetch', {
+      urlString,
+      willCallOriginalFetch: true,
+      timestamp: Date.now()
+    });
+
+    try {
+      const result = originalFetch.call(this, url, options);
+
+      // CRITICAL: Log piper file fetch results
+      if (urlString.includes('piper-wasm') || urlString.includes('piper_phonemize')) {
+        workerLog('=== PIPER FILE FETCH SUCCESS ===', {
+          urlString,
+          hasResult: !!result,
+          resultType: result?.constructor?.name || 'unknown',
+          isResponse: result instanceof Response,
+          status: result?.status,
+          statusText: result?.statusText,
+          headers: result?.headers ? Object.fromEntries(result.headers.entries()) : null,
+          timestamp: Date.now()
+        });
+      }
+
+      return result;
+    } catch (fetchError) {
+      // CRITICAL: Log piper file fetch failures
+      if (urlString.includes('piper-wasm') || urlString.includes('piper_phonemize')) {
+        workerLog('=== PIPER FILE FETCH FAILED ===', {
+          urlString,
+          error: fetchError.message,
+          errorName: fetchError.name,
+          stack: fetchError.stack,
+          isNetworkError: fetchError.message.includes('NetworkError'),
+          timestamp: Date.now()
+        });
+      }
+
+      workerLog('Fetch failed', {
+        urlString,
+        error: fetchError.message,
+        stack: fetchError.stack,
+        timestamp: Date.now()
+      });
+      throw fetchError;
+    }
+  };
+
+workerLog('CDN fetch interceptor installed', {
   note: 'All CDN requests for ONNX Runtime will be blocked',
   timestamp: Date.now()
 });
@@ -176,77 +396,246 @@ console.log(LOG_PREFIX, 'CDN fetch interceptor installed', {
 let piperTTS = null;
 let isInitialized = false;
 
+workerLog('Piper TTS variables initialized', {
+  piperTTS: piperTTS,
+  isInitialized: isInitialized,
+  timestamp: Date.now()
+});
+
 async function initPiperTTS() {
+  workerLog('=== initPiperTTS FUNCTION CALLED ===', {
+    timestamp: Date.now(),
+    alreadyHasPiperTTS: !!piperTTS,
+    alreadyInitialized: isInitialized,
+    hasSelfOrt: !!self.ort,
+    hasSelfOrtEnv: !!(self.ort && self.ort.env),
+    hasSelfOrtEnvWasm: !!(self.ort && self.ort.env && self.ort.env.wasm),
+    ortVersion: self.ort?.version || 'unknown'
+  });
+
   if (piperTTS) {
+    workerLog('initPiperTTS: piperTTS already loaded, returning cached instance', {
+      timestamp: Date.now(),
+      hasPredict: typeof piperTTS.predict === 'function',
+      hasVoices: typeof piperTTS.voices === 'function',
+      hasDownload: typeof piperTTS.download === 'function',
+      hasStored: typeof piperTTS.stored === 'function'
+    });
     return piperTTS;
   }
-  
+
   if (!self.ort) {
+    workerLogError('initPiperTTS: ONNX Runtime not loaded - cannot initialize piper-tts-web', {
+      timestamp: Date.now(),
+      hasSelfOrt: !!self.ort,
+      hasSelfOnnxruntime: !!self.onnxruntime
+    });
     throw new Error('ONNX Runtime not loaded - cannot initialize piper-tts-web');
   }
-  
-  console.log(LOG_PREFIX, 'Loading piper-tts-web...');
-  
+
+  workerLog('initPiperTTS: Starting piper-tts-web import', {
+    timestamp: Date.now(),
+    ortVersion: self.ort.version || 'unknown',
+    ortEnvWasmNumThreads: self.ort?.env?.wasm?.numThreads,
+    ortEnvWasmSimd: self.ort?.env?.wasm?.simd,
+    ortEnvWasmProxy: self.ort?.env?.wasm?.proxy,
+    piperWasmBasePath: self.location.origin + '/lib/piper-wasm/',
+    expectedPiperDataPath: self.location.origin + '/lib/piper-wasm/piper_phonemize.data',
+    expectedPiperWasmPath: self.location.origin + '/lib/piper-wasm/piper_phonemize.wasm'
+  });
+
   try {
-    // Import the module - esbuild will bundle it
-    // It will use self.onnxruntime instead of importing
-    const module = await import('@mintplex-labs/piper-tts-web');
+    // CRITICAL: Use statically imported module (not dynamic import)
+    // Dynamic import doesn't work in production because it tries to load from node_modules
+    // Static import is bundled by esbuild into the worker bundle
+    workerLog('initPiperTTS: Using statically imported piper-tts-web module', {
+      timestamp: Date.now()
+    });
+    const importStartTime = Date.now();
+    const module = piperTTSModule; // Use the statically imported module
+    const importDuration = Date.now() - importStartTime;
+
+    workerLog('initPiperTTS: piper-tts-web import completed', {
+      timestamp: Date.now(),
+      importDuration,
+      moduleType: typeof module,
+      moduleKeys: Object.keys(module),
+      moduleKeysCount: Object.keys(module).length,
+      hasPredict: typeof module.predict === 'function',
+      hasVoices: typeof module.voices === 'function',
+      hasDownload: typeof module.download === 'function',
+      hasStored: typeof module.stored === 'function',
+      hasTtsSession: typeof module.TtsSession === 'function',
+      ttsSessionKeys: module.TtsSession ? Object.keys(module.TtsSession) : [],
+      ttsSessionHasInstance: !!(module.TtsSession && module.TtsSession._instance),
+      wasmLocations: module.TtsSession?.WASM_LOCATIONS || 'not available',
+      defaultWasmPaths: module.TtsSession?.WASM_LOCATIONS ? {
+        onnxWasm: module.TtsSession.WASM_LOCATIONS.onnxWasm,
+        piperData: module.TtsSession.WASM_LOCATIONS.piperData,
+        piperWasm: module.TtsSession.WASM_LOCATIONS.piperWasm
+      } : 'not available'
+    });
+
     piperTTS = module;
-    
+
     // CRITICAL: Re-enforce numThreads=1 after piper-tts-web initialization
     // piper-tts-web may set numThreads in its init() method, we must override it
+    workerLog('initPiperTTS: Checking numThreads before re-enforcement', {
+      timestamp: Date.now(),
+      currentNumThreads: self.ort?.env?.wasm?.numThreads,
+      hasOrt: !!self.ort,
+      hasOrtEnv: !!self.ort.env,
+      hasOrtEnvWasm: !!self.ort.env.wasm
+    });
+
     if (self.ort && self.ort.env && self.ort.env.wasm) {
+      const oldNumThreads = self.ort.env.wasm.numThreads;
       self.ort.env.wasm.numThreads = 1;
-      console.log(LOG_PREFIX, 'Re-enforced numThreads=1 after piper-tts-web load', {
-        numThreads: self.ort.env.wasm.numThreads,
-        note: 'This ensures numThreads stays 1 even if piper-tts-web tries to change it'
+      workerLog('initPiperTTS: Re-enforced numThreads=1 after piper-tts-web load', {
+        timestamp: Date.now(),
+        oldNumThreads,
+        newNumThreads: self.ort.env.wasm.numThreads,
+        note: 'This ensures numThreads stays 1 even if piper-tts-web tries to change it',
+        numThreadsChanged: oldNumThreads !== 1
+      });
+    } else {
+      console.warn(LOG_PREFIX, 'initPiperTTS: Cannot access ort.env.wasm to check numThreads', {
+        timestamp: Date.now(),
+        hasOrt: !!self.ort,
+        hasOrtEnv: !!self.ort?.env,
+        hasOrtEnvWasm: !!self.ort?.env?.wasm
       });
     }
-    
-    console.log(LOG_PREFIX, 'Piper TTS loaded', {
+
+    console.log(LOG_PREFIX, 'initPiperTTS: Piper TTS module assigned and configured', {
+      timestamp: Date.now(),
       hasPredict: typeof module.predict === 'function',
       hasVoices: typeof module.voices === 'function',
       hasDownload: typeof module.download === 'function',
       hasStored: typeof module.stored === 'function',
       moduleKeys: Object.keys(module),
-      numThreadsAfterLoad: self.ort?.env?.wasm?.numThreads
+      numThreadsAfterLoad: self.ort?.env?.wasm?.numThreads,
+      ortVersion: self.ort?.version || 'unknown'
     });
-    
+
     return piperTTS;
   } catch (error) {
-    console.error(LOG_PREFIX, 'Failed to import piper-tts-web', {
+    console.error(LOG_PREFIX, 'initPiperTTS: Failed to import piper-tts-web', {
+      timestamp: Date.now(),
       error: error.message,
-      stack: error.stack
+      stack: error.stack,
+      errorName: error.name,
+      errorType: typeof error
     });
     throw new Error(`Failed to load piper-tts-web: ${error.message}`);
   }
 }
 
+console.log(LOG_PREFIX, 'initPiperTTS function defined', {
+  timestamp: Date.now(),
+  functionExists: typeof initPiperTTS === 'function'
+});
+
 // Message handler
+workerLog('Message event listener registered', {
+  timestamp: Date.now(),
+  hasSelfAddEventListener: typeof self.addEventListener === 'function'
+});
+
+// Add error handler for worker
+self.addEventListener('error', (error) => {
+  workerLogError('=== WORKER ERROR EVENT ===', {
+    timestamp: Date.now(),
+    message: error.message,
+    filename: error.filename,
+    lineno: error.lineno,
+    colno: error.colno,
+    error: error.error
+  });
+});
+
+// Add unhandled rejection handler
+self.addEventListener('unhandledrejection', (event) => {
+  workerLogError('=== WORKER UNHANDLED REJECTION ===', {
+    timestamp: Date.now(),
+    reason: event.reason,
+    reasonType: typeof event.reason,
+    reasonMessage: event.reason?.message,
+    reasonStack: event.reason?.stack
+  });
+  event.preventDefault(); // Prevent default handling
+});
+
 self.addEventListener('message', async (event) => {
+  const messageStartTime = Date.now();
   const { type, id, data } = event.data || {};
-  
+
+  workerLog('=== WORKER MESSAGE RECEIVED ===', {
+    timestamp: messageStartTime,
+    type,
+    id,
+    hasData: !!data,
+    dataKeys: data ? Object.keys(data) : [],
+    dataKeysCount: data ? Object.keys(data).length : 0,
+    eventDataKeys: event.data ? Object.keys(event.data) : [],
+    isInitialized,
+    hasPiperTTS: !!piperTTS,
+    hasSelfOrt: !!self.ort,
+    ortVersion: self.ort?.version || 'unknown'
+  });
+
   // Removed excessive "Message received" logging - too noisy for production
   // Only critical errors and important state changes are logged now
-  
+
   try {
     switch (type) {
       case 'INIT': {
-        console.log(LOG_PREFIX, 'INIT - Loading TTS module...', {
-          timestamp: Date.now()
+        console.log(LOG_PREFIX, '=== INIT MESSAGE HANDLER STARTED ===', {
+          timestamp: Date.now(),
+          id,
+          wasInitialized: isInitialized,
+          hasPiperTTS: !!piperTTS,
+          hasSelfOrt: !!self.ort,
+          ortVersion: self.ort?.version || 'unknown',
+          ortEnvWasmNumThreads: self.ort?.env?.wasm?.numThreads
         });
-        
+
         // ONNX Runtime is already loaded on top level
         // Just need to load piper-tts-web
-        await initPiperTTS();
-        
-        isInitialized = true;
-        console.log(LOG_PREFIX, 'INIT - TTS ready', {
-          timestamp: Date.now()
+        console.log(LOG_PREFIX, 'INIT: Starting piper-tts-web initialization', {
+          timestamp: Date.now(),
+          id
         });
-        self.postMessage({ 
-          type: 'INIT_SUCCESS', 
-          id 
+
+        const initStartTime = Date.now();
+        await initPiperTTS();
+        const initDuration = Date.now() - initStartTime;
+
+        isInitialized = true;
+        console.log(LOG_PREFIX, 'INIT: TTS initialization completed', {
+          timestamp: Date.now(),
+          id,
+          initDuration,
+          isInitialized,
+          hasPiperTTS: !!piperTTS,
+          piperTTSKeys: piperTTS ? Object.keys(piperTTS) : []
+        });
+
+        console.log(LOG_PREFIX, 'INIT: Sending INIT_SUCCESS response', {
+          timestamp: Date.now(),
+          id,
+          messageDuration: Date.now() - messageStartTime
+        });
+
+        self.postMessage({
+          type: 'INIT_SUCCESS',
+          id
+        });
+
+        console.log(LOG_PREFIX, '=== INIT MESSAGE HANDLER COMPLETED ===', {
+          timestamp: Date.now(),
+          id,
+          totalDuration: Date.now() - messageStartTime
         });
         break;
       }
@@ -311,7 +700,7 @@ self.addEventListener('message', async (event) => {
         if (piperTTS && piperTTS.TtsSession) {
           const hasInstance = piperTTS.TtsSession._instance !== null && piperTTS.TtsSession._instance !== undefined;
           const instanceVoiceId = piperTTS.TtsSession._instance?.voiceId;
-          console.log(LOG_PREFIX, '===== TtsSession state before predict() =====', {
+          workerLog('===== TtsSession state before predict() =====', {
             id,
             requestedVoiceId: voiceId,
             requestedVoiceIdType: typeof voiceId,
@@ -331,7 +720,7 @@ self.addEventListener('message', async (event) => {
           
           // CRITICAL: Warn if instance exists with different voice
           if (hasInstance && instanceVoiceId !== voiceId) {
-            console.error(LOG_PREFIX, '🚨 CRITICAL: TtsSession._instance has DIFFERENT voice!', {
+            workerLogError('🚨 CRITICAL: TtsSession._instance has DIFFERENT voice!', {
               id,
               requestedVoice: voiceId,
               instanceVoice: instanceVoiceId,
@@ -341,14 +730,14 @@ self.addEventListener('message', async (event) => {
             });
           }
         } else {
-          console.log(LOG_PREFIX, 'TtsSession not available for checking', {
+          workerLog('TtsSession not available for checking', {
             id,
             hasPiperTTS: !!piperTTS,
             hasTtsSession: !!(piperTTS && piperTTS.TtsSession)
           });
         }
         
-        console.log(LOG_PREFIX, 'Calling piperTTS.predict()', {
+        workerLog('Calling piperTTS.predict()', {
           id,
           textLength: text?.length,
           voiceId,
@@ -370,7 +759,7 @@ self.addEventListener('message', async (event) => {
         
         const duration = Date.now() - startTime;
         
-        console.log(LOG_PREFIX, 'Predict complete', {
+        workerLog('Predict complete', {
           id,
           textLength: text?.length,
           voiceId,
@@ -770,19 +1159,52 @@ self.addEventListener('message', async (event) => {
         throw new Error(`Unknown message type: ${type}`);
     }
   } catch (error) {
-    console.error(LOG_PREFIX, 'Error processing message', {
+    console.error(LOG_PREFIX, '=== MESSAGE HANDLER ERROR ===', {
+      timestamp: Date.now(),
       type,
       id,
+      messageDuration: Date.now() - messageStartTime,
       error: error.message,
-      stack: error.stack
+      errorName: error.name,
+      errorType: typeof error,
+      hasStack: !!error.stack,
+      stackPreview: error.stack?.substring(0, 300),
+      isInitialized,
+      hasPiperTTS: !!piperTTS,
+      hasSelfOrt: !!self.ort
     });
-    
-    self.postMessage({ 
-      type: 'ERROR', 
-      id, 
-      error: error.message || String(error),
-      stack: error.stack
+
+    workerLogError('Error processing message - sending ERROR response', {
+      timestamp: Date.now(),
+      type,
+      id,
+      errorMessage: error.message || String(error),
+      hasStack: !!error.stack
     });
+
+    try {
+      self.postMessage({
+        type: 'ERROR',
+        id,
+        error: error.message || String(error),
+        stack: error.stack
+      });
+
+      workerLogError('=== MESSAGE HANDLER ERROR RESPONSE SENT ===', {
+        timestamp: Date.now(),
+        type,
+        id,
+        totalDuration: Date.now() - messageStartTime
+      });
+    } catch (postError) {
+      workerLogError('=== FAILED TO SEND ERROR RESPONSE ===', {
+        timestamp: Date.now(),
+        type,
+        id,
+        postError: postError.message,
+        originalError: error.message
+      });
+    }
   }
 });
 
@@ -831,8 +1253,30 @@ self.addEventListener('beforeunload', () => {
 });
 
 // Signal that worker is ready
-console.log(LOG_PREFIX, 'Worker ready', {
+console.log(LOG_PREFIX, '=== WORKER INITIALIZATION COMPLETED ===', {
+  timestamp: Date.now(),
+  isInitialized,
+  hasPiperTTS: !!piperTTS,
+  hasSelfOrt: !!self.ort,
+  ortVersion: self.ort?.version || 'unknown',
+  ortEnvWasmNumThreads: self.ort?.env?.wasm?.numThreads,
+  hasSelfOnnxruntime: !!self.onnxruntime,
+  hasFetchInterceptor: typeof self.fetch === 'function',
+  workerUrl: self.location?.href || 'unknown'
+});
+
+console.log(LOG_PREFIX, 'Worker ready - sending WORKER_READY message', {
   timestamp: Date.now()
 });
 
 self.postMessage({ type: 'WORKER_READY' });
+
+console.log(LOG_PREFIX, 'WORKER_READY message sent - worker is fully operational', {
+  timestamp: Date.now(),
+  finalState: {
+    isInitialized,
+    hasPiperTTS: !!piperTTS,
+    hasSelfOrt: !!self.ort,
+    ortVersion: self.ort?.version || 'unknown'
+  }
+});

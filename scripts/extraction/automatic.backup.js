@@ -1704,17 +1704,6 @@ function isExcluded(win, element, constants) {
   return false;
 }
 
-// Optimized navigation pattern matching
-function matchesNavigationPattern(text, patterns) {
-  // Use for...of instead of some() for better performance with large arrays
-  for (const pattern of patterns) {
-    if (pattern.test(text)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function isFootnoteLink(element) {
   if (element.tagName.toLowerCase() !== "a")
     return false;
@@ -2850,7 +2839,21 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
           tag: tagName,
           className: el.className?.substring?.(0, 40) || "",
           parentClass: el.parentElement?.className?.substring?.(0, 40) || "",
-          src: tagName === "img" ? el.src?.substring?.(0, 50) : el.querySelector?.("img")?.src?.substring?.(0, 50)
+          src: (() => {
+            if (tagName === "img") {
+              const imgSrc = (
+                /** @type {any} */
+                el.src
+              );
+              return imgSrc ? imgSrc.substring(0, 50) : "";
+            }
+            const img = el.querySelector?.("img");
+            return img && /** @type {any} */
+            img.src ? (
+              /** @type {any} */
+              img.src.substring(0, 50)
+            ) : "";
+          })()
         });
       } else
         excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -2903,6 +2906,13 @@ function handleCode(element) {
 }
 
 function handleDiv(element, state, constants) {
+  if (element.closest("blockquote"))
+    return null;
+  if (element.closest("figure") && element.tagName.toLowerCase() !== "figcaption") {
+    return null;
+  }
+  if (element.closest("table"))
+    return null;
   const text = (element.textContent || "").trim();
   if (isStandfirstText(text, state.standfirstText))
     return null;
@@ -3088,6 +3098,12 @@ function handleImg(win, element, state, constants, baseUrl) {
 }
 
 function handleList(element) {
+  if (element.closest("blockquote"))
+    return null;
+  if (element.closest("figure"))
+    return null;
+  if (element.closest("table"))
+    return null;
   if (element.closest(".navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .sidebar, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc")) {
     return null;
   }
@@ -3109,6 +3125,12 @@ function handleList(element) {
 }
 
 function handleParagraph(win, element, state, constants) {
+  if (element.closest("blockquote"))
+    return null;
+  if (element.closest("figure"))
+    return null;
+  if (element.closest("table"))
+    return null;
   if (state.standfirstElement && element === state.standfirstElement)
     return null;
   const text = (element.textContent || "").trim();
@@ -3153,6 +3175,8 @@ function handleParagraph(win, element, state, constants) {
 }
 
 function handleTable(element) {
+  if (element.closest("blockquote"))
+    return null;
   const className = String(element.className || "").toLowerCase();
   if (className.includes("navbox") || className.includes("authority-control")) {
     return null;
@@ -3256,6 +3280,10 @@ function parseElements(win, elements, state, constants, baseUrl) {
         processedCount++;
       }
     } else if (tagName === "pre" || tagName === "code") {
+      if (tagName === "code" && element.closest("pre")) {
+        skippedCount++;
+        continue;
+      }
       const item = handleCode(element);
       if (item) {
         content.push(item);

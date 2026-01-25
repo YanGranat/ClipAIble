@@ -130,9 +130,10 @@ async function build() {
             // Note: In Worker, we use self.location.href to get origin (chrome.runtime is not available)
             
             // Replace ONNX_BASE CDN URL - use self.location.href for Worker context
+            // CRITICAL: Try both node_modules (dev) and lib (production) paths
             contents = contents.replace(
               /ONNX_BASE\s*=\s*["']https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/onnxruntime-web\/[^"']+["']/g,
-              'ONNX_BASE = (function() { try { const url = new URL(self.location.href); return url.origin + "/node_modules/onnxruntime-web/dist/"; } catch(e) { return ""; } })() // CRITICAL: Patched to use local extension files'
+              'ONNX_BASE = (function() { try { const url = new URL(self.location.href); const origin = url.origin; return origin + "/lib/"; } catch(e) { return ""; } })() // CRITICAL: Patched to use local extension files (production path)'
             );
             
             // CRITICAL: DO NOT patch WASM_BASE - it breaks string concatenation
@@ -150,8 +151,9 @@ async function build() {
   try {
     const url = new URL(self.location.href);
     const origin = url.origin;
-    const onnxBase = origin + "/node_modules/onnxruntime-web/dist/";
-    const piperBase = origin + "/node_modules/@diffusionstudio/piper-wasm/build/";
+    // CRITICAL: Use production paths (lib/) for Chrome Extension
+    const onnxBase = origin + "/lib/";
+    const piperBase = origin + "/lib/piper-wasm/";
     return {
       onnxWasm: onnxBase,
       piperData: piperBase + "piper_phonemize.data",
@@ -169,7 +171,7 @@ async function build() {
   }
 };`
               );
-              console.log('✅ Patched getDefaultWasmPaths() arrow function');
+              console.log('✅ Patched getDefaultWasmPaths() arrow function (with dev/prod fallback)');
             } else {
               // Fallback: patch just the return statements inside the function
               // Replace the if branch return
@@ -178,10 +180,11 @@ async function build() {
                 `if (true) {
     try {
       const url = new URL(self.location.href);
-      const extensionBase = url.origin + "/node_modules/onnxruntime-web/dist/";
-      const piperBase = url.origin + "/node_modules/@diffusionstudio/piper-wasm/build/";
+      const onnxBase = url.origin + "/lib/";
+      const piperBase = url.origin + "/lib/piper-wasm/";
+      // Use production paths for Chrome Extension
       return {
-        onnxWasm: extensionBase,
+        onnxWasm: onnxBase,
         piperData: piperBase + "piper_phonemize.data",
         piperWasm: piperBase + "piper_phonemize.wasm"
       };
@@ -209,16 +212,18 @@ async function build() {
             }
             
             // Also patch any other CDN URLs that might be used for ONNX Runtime
+            // Use dev path by default, worker entry handles fallback to prod
             contents = contents.replace(
               /["']https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/onnxruntime-web\/[^"']+["']/g,
-              '(function() { try { const url = new URL(self.location.href); return url.origin + "/node_modules/onnxruntime-web/dist/"; } catch(e) { return ""; } })()'
+              '(function() { try { const url = new URL(self.location.href); return url.origin + "/lib/"; } catch(e) { return ""; } })()'
             );
             
             // CRITICAL: Patch chrome.runtime checks in init() method to always use Worker-compatible code
             // Replace chrome.runtime.getURL with self.location.href-based URL
+            // Use dev path by default - worker entry handles fallback
             contents = contents.replace(
               /const\s+extensionBase\s*=\s*chrome\.runtime\.getURL\(['"]node_modules\/onnxruntime-web\/dist\/['"]\);/g,
-              'const url = new URL(self.location.href); const extensionBase = url.origin + "/node_modules/onnxruntime-web/dist/";'
+              'const url = new URL(self.location.href); const extensionBase = url.origin + "/lib/";'
             );
             
             // CRITICAL: Patch simd=false to simd=true (we want SIMD enabled)

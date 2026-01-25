@@ -39,12 +39,25 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
   const requestStart = Date.now();
   const { text, options = {} } = data;
   let { language = 'en', voice = null } = options;
-  
-  log(`[ClipAIble TTS] Request start`, {
+
+  log('[ClipAIble TTS] === handlePiperTTS STARTED ===', 'TTS_HANDLER_START', {
+    timestamp: requestStart,
     messageId,
     textLength: text?.length,
+    textPreview: text?.substring(0, 100),
+    textWordsCount: text ? text.split(' ').length : 0,
     language,
-    voice
+    voice,
+    voiceType: typeof voice,
+    voiceString: String(voice || ''),
+    hasOptions: !!options,
+    optionsKeys: Object.keys(options),
+    hasUnlimitedStorage: data.hasUnlimitedStorage,
+    contextKeys: Object.keys(context),
+    hasInitTTSWorker: typeof context.initTTSWorker === 'function',
+    hasInitPiperTTS: typeof context.initPiperTTS === 'function',
+    hasPredictWithWorker: typeof context.predictWithWorker === 'function',
+    hasState: !!context.state
   });
   
   try {

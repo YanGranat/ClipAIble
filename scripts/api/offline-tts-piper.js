@@ -112,24 +112,46 @@ async function initPiperTTS() {
 
       // Dynamic import - use chrome.runtime.getURL in extension context
       // Use piper-tts-web.js (main entry point) instead of index.js
-      const libUrl = typeof chrome !== 'undefined' && chrome.runtime
-        ? chrome.runtime.getURL('node_modules/@mintplex-labs/piper-tts-web/dist/piper-tts-web.js')
-        : '../../node_modules/@mintplex-labs/piper-tts-web/dist/piper-tts-web.js';
+      // CRITICAL: Try both dev (node_modules) and production (lib) paths
+      let libUrl;
+      let loadedFromLib = false;
 
-      logFn('[ClipAIble] Importing Piper TTS from', libUrl);
-      
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        // Try dev path first, fallback to production
+        try {
+          libUrl = chrome.runtime.getURL('node_modules/@mintplex-labs/piper-tts-web/dist/piper-tts-web.js');
+          logFn('[ClipAIble] Trying dev path:', libUrl);
+          // Test if URL is accessible by attempting to fetch it
+          await fetch(libUrl, { method: 'HEAD' });
+          logFn('[ClipAIble] ✅ Dev path accessible');
+          loadedFromLib = false;
+        } catch (devError) {
+          logFn('[ClipAIble] Dev path failed, using production path (lib)...');
+          libUrl = chrome.runtime.getURL('lib/piper-tts-web.js');
+          logFn('[ClipAIble] Using production path:', libUrl);
+          loadedFromLib = true;
+        }
+      } else {
+        libUrl = '../../node_modules/@mintplex-labs/piper-tts-web/dist/piper-tts-web.js';
+        logFn('[ClipAIble] Using relative path:', libUrl);
+      }
+
       // Set up import map for onnxruntime-web
       // Piper TTS uses dynamic import('onnxruntime-web'), which needs to be mapped
       // We'll create an import map in the document if it doesn't exist
       if (typeof document !== 'undefined' && document.head) {
         let importMap = document.querySelector('script[type="importmap"]');
         if (!importMap) {
-          // Use local version from node_modules instead of CDN
-          // According to package.json, default import is ort.bundle.min.mjs (includes WASM)
-          const onnxRuntimeUrl = typeof chrome !== 'undefined' && chrome.runtime
-            ? chrome.runtime.getURL('node_modules/onnxruntime-web/dist/ort.bundle.min.mjs')
-            : '../../node_modules/onnxruntime-web/dist/ort.bundle.min.mjs';
-          
+          // CRITICAL: Use the same path strategy as for piper-tts-web
+          let onnxRuntimeUrl;
+          if (typeof chrome !== 'undefined' && chrome.runtime) {
+            onnxRuntimeUrl = loadedFromLib
+              ? chrome.runtime.getURL('lib/ort.wasm.min.mjs')
+              : chrome.runtime.getURL('node_modules/onnxruntime-web/dist/ort.wasm.min.mjs');
+          } else {
+            onnxRuntimeUrl = '../../node_modules/onnxruntime-web/dist/ort.wasm.min.mjs';
+          }
+
           importMap = document.createElement('script');
           if (importMap instanceof HTMLScriptElement) {
             importMap.type = 'importmap';
@@ -143,9 +165,12 @@ async function initPiperTTS() {
           }
         }
       }
-      
+
       piperTTSModule = await import(libUrl);
-      logFn('[ClipAIble] Piper TTS imported successfully', { moduleKeys: Object.keys(piperTTSModule) });
+      logFn('[ClipAIble] Piper TTS imported successfully', {
+        moduleKeys: Object.keys(piperTTSModule),
+        loadedFromLib
+      });
       
       // Note: The library will use CDN for WASM files (WASM_BASE, ONNX_BASE)
       // This is fine - WASM files are small and CDN is reliable
