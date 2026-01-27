@@ -206,12 +206,11 @@ Required Chrome permissions:
 - `unlimitedStorage`: Large data handling
 - `scripting`: Content script injection
 - `downloads`: File download triggering
-- `debugger`: Development tools access
+- `debugger`: PDF generation via Chrome DevTools Protocol
 - `alarms`: Background task scheduling
 - `notifications`: User notifications
 - `contextMenus`: Right-click menu integration
-- `pageCapture`: Page content capture
-- `offscreen`: Background DOM operations
+- `offscreen`: Background DOM operations for PDF.js and offline TTS
 - `webNavigation`: Navigation event monitoring
 
 Host permissions: `<all_urls>` for universal content access.
