@@ -2,6 +2,8 @@
 
 AI 驱动的文章提取器。适用于任何网站。
 
+**可在 [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc) 获取**
+
 ## 功能
 
 ClipAIble 从网页中提取文章内容并转换为不同格式：
@@ -18,10 +20,6 @@ ClipAIble 从网页中提取文章内容并转换为不同格式：
 - **图像翻译**：使用 AI 翻译图像上的文本
 - **TLDR 生成**：在文档中创建简短摘要
 - **摘要面板**：在处理后在弹出窗口中显示文章摘要
-
-## 安装
-
-从 [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc) 安装。
 
 ## 使用方法
 

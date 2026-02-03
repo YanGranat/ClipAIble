@@ -2,6 +2,8 @@
 
 Extrator de artigos com IA. Funciona em qualquer site.
 
+**Disponível na [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+
 ## O que faz
 
 ClipAIble extrai conteúdo de artigos de páginas web e converte para diferentes formatos:
@@ -18,10 +20,6 @@ ClipAIble extrai conteúdo de artigos de páginas web e converte para diferentes
 - **Tradução de imagens**: Traduz texto em imagens usando IA
 - **Geração TLDR**: Cria resumos breves dentro dos documentos
 - **Painel summary**: Mostra resumos de artigos no popup após o processamento
-
-## Instalação
-
-Instale do [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc).
 
 ## Como usar
 

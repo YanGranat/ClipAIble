@@ -129,8 +129,7 @@ export async function processVideoPage(data, videoInfo) {
     logWarn('Failed to detect video language via AI, using default', error);
   }
 
-  // Try to extract subtitles
-  // CRITICAL: Pass both target language and AI-detected video language to subtitle extraction
+  log('Extracting subtitles', { platform, tabId, targetLanguage: data.targetLanguage, detectedVideoLanguage });
   try {
     const subtitlesData = platform === 'youtube'
       ? await extractYouTubeSubtitles(tabId, data.targetLanguage, detectedVideoLanguage)

@@ -2,6 +2,8 @@
 
 AI 기반 기사 추출기. 모든 웹사이트에서 작동합니다.
 
+**[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)에서 이용 가능**
+
 ## 기능
 
 ClipAIble은 웹페이지에서 기사 콘텐츠를 추출하여 다양한 형식으로 변환합니다:
@@ -18,10 +20,6 @@ ClipAIble은 웹페이지에서 기사 콘텐츠를 추출하여 다양한 형�
 - **이미지 번역**: AI를 사용하여 이미지의 텍스트 번역
 - **TLDR 생성**: 문서 내에 짧은 요약 생성
 - **요약 패널**: 처리 후 팝업에 기사 요약 표시
-
-## 설치
-
-[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc)에서 설치하세요.
 
 ## 사용 방법
 

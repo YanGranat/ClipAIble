@@ -2,6 +2,8 @@
 
 Розширення для витягу статей за допомогою ШІ. Працює на будь-якому сайті.
 
+**Доступно в [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+
 ## Що воно робить
 
 ClipAIble витягує вміст статей із веб-сторінок і перетворює в різні формати:
@@ -18,10 +20,6 @@ ClipAIble витягує вміст статей із веб-сторінок і
 - **Переклад зображень**: Переклад тексту на зображеннях за допомогою ШІ
 - **Генерація TLDR**: Створює короткі резюме всередині документів
 - **Панель summary**: Показує резюме статей у popup після обробки
-
-## Встановлення
-
-Встановіть із [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc).
 
 ## Як використовувати
 

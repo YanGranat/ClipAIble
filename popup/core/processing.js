@@ -293,6 +293,7 @@ export function initProcessing(deps) {
       // Check if we can inject scripts on this page
       // Use tab.url for initial check, but we'll verify with actual pageData.url later
       if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
+        log('handleSavePdf: pageNotReady - tab URL is restricted', { tabUrl: tab.url });
         const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
           error: { message: 'Cannot extract content from browser internal pages' }
         });
@@ -463,11 +464,15 @@ export function initProcessing(deps) {
         timestamp: Date.now()
       });
       
-      // CRITICAL: Always use URL from pageData (from executeScript result)
-      // This is the actual URL of the page at the moment of button click
-      // tab.url might be outdated or incorrect
-      const actualUrl = pageData.url;
+      // CRITICAL: Always use URL and title from pageData (from executeScript or content script)
+      // Content script returns { html, metadata: { url, title, ... }, images }; executeScript returns { html, url, title, images }
+      if (pageData.metadata && !pageData.url) {
+        pageData.url = pageData.metadata.url;
+        if (pageData.metadata.title) pageData.title = pageData.metadata.title;
+      }
+      const actualUrl = pageData.url || pageData.metadata?.url;
       if (!actualUrl) {
+        log('handleSavePdf: pageNotReady - no URL in page data', { hasPageData: !!pageData, pageDataKeys: pageData ? Object.keys(pageData) : [], hasMetadata: !!pageData?.metadata, metadataKeys: pageData?.metadata ? Object.keys(pageData.metadata) : [] });
         const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
           error: { message: 'No page URL found' }
         });
@@ -475,6 +480,7 @@ export function initProcessing(deps) {
       }
       
       if (actualUrl.startsWith('chrome://') || actualUrl.startsWith('chrome-extension://') || actualUrl.startsWith('edge://') || actualUrl.startsWith('about:')) {
+        log('handleSavePdf: pageNotReady - actual URL is restricted', { actualUrl });
         const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
           error: { message: 'Cannot extract content from browser internal pages' }
         });
@@ -745,7 +751,7 @@ export function initProcessing(deps) {
       // Processing started in background
       // CRITICAL: For audio, defer polling and state check to avoid blocking user interactions
       // Audio generation has long-running WASM operations that should not be interrupted
-      const outputFormat = elements.outputFormat ? /** @type {HTMLSelectElement} */ (elements.outputFormat).value : 'pdf';
+      const outputFormat = (elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf');
       const isAudioFormat = outputFormat === 'audio';
       
       if (isAudioFormat) {
@@ -769,13 +775,16 @@ export function initProcessing(deps) {
       }
 
     } catch (error) {
+      const errMsg = error?.message ?? String(error);
+      const errStack = error?.stack ?? '';
+      const errName = error?.name ?? 'Error';
       logError('=== handleSavePdf: EXCEPTION CAUGHT ===', {
-        error: error?.message || String(error),
-        errorStack: error?.stack,
-        errorName: error?.name,
+        error: errMsg,
+        errorStack: errStack,
+        errorName: errName,
         timestamp: Date.now()
       });
-      logError('Error', error);
+      logError(`handleSavePdf error: ${errName} - ${errMsg}`, { stack: errStack });
       
       // Determine error type and get user-friendly message
       try {

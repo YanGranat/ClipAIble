@@ -2,6 +2,8 @@
 
 AI を活用した記事抽出器。どのウェブサイトでも動作します。
 
+**[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc) で利用可能**
+
 ## 機能
 
 ClipAIble はウェブページから記事コンテンツを抽出し、様々なフォーマットに変換します：
@@ -18,10 +20,6 @@ ClipAIble はウェブページから記事コンテンツを抽出し、様々�
 - **画像翻訳**：AI を使用して画像上のテキストを翻訳
 - **TLDR 生成**：ドキュメント内に短い要約を作成
 - **サマリーパネル**：処理後にポップアップに記事の要約を表示
-
-## インストール
-
-[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc) からインストールしてください。
 
 ## 使用方法
 

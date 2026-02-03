@@ -2,6 +2,8 @@
 
 Расширение для извлечения статей с помощью ИИ. Работает на любом сайте.
 
+**Доступно в [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+
 ## Что оно делает
 
 ClipAIble извлекает содержимое статей из веб-страниц и преобразует в различные форматы:
@@ -18,10 +20,6 @@ ClipAIble извлекает содержимое статей из веб-ст�
 - **Перевод изображений**: Перевод текста на изображениях с помощью ИИ
 - **Генерация TLDR**: Создает краткие резюме внутри документов
 - **Панель summary**: Показывает резюме статей в popup после обработки
-
-## Установка
-
-Установите из [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc).
 
 ## Как использовать
 

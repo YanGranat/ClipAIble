@@ -2,6 +2,8 @@
 
 KI-gestützter Artikel-Extraktor. Funktioniert auf jeder Website.
 
+**Erhältlich im [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+
 ## Was es macht
 
 ClipAIble extrahiert Artikelinhalt von Webseiten und konvertiert ihn in verschiedene Formate:
@@ -18,10 +20,6 @@ ClipAIble extrahiert Artikelinhalt von Webseiten und konvertiert ihn in verschie
 - **Bildübersetzung**: Übersetzt Text auf Bildern mit KI
 - **TLDR Generierung**: Erstellt kurze Zusammenfassungen innerhalb von Dokumenten
 - **Summary Panel**: Zeigt Artikelsummaries im Popup nach der Verarbeitung an
-
-## Installation
-
-Installieren Sie aus dem [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflolc).
 
 ## Verwendung
 

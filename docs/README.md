@@ -1,5 +1,7 @@
 # Documentation Translations
 
+ClipAIble is available on [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc).
+
 This directory contains README files translated into different languages.
 
 ## Available Languages

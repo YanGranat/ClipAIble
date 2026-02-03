@@ -70,9 +70,11 @@ export function initState(deps) {
         }
       }
       
-      // Simple UI update - no special handling needed
-      elements.savePdfBtn.disabled = true;
-      elements.savePdfBtn.style.display = 'none';
+      // Simple UI update - no special handling needed (guard missing elements)
+      if (elements.savePdfBtn) {
+        elements.savePdfBtn.disabled = true;
+        elements.savePdfBtn.style.display = 'none';
+      }
       if (elements.cancelBtn) {
         elements.cancelBtn.classList.remove('hidden');
         elements.cancelBtn.style.display = 'block';
@@ -90,8 +92,10 @@ export function initState(deps) {
       if (isCancelled) {
         // Treat cancellation as ready state, not error
         stopTimerDisplay();
-        elements.savePdfBtn.disabled = false;
-        elements.savePdfBtn.style.display = 'block';
+        if (elements.savePdfBtn) {
+          elements.savePdfBtn.disabled = false;
+          elements.savePdfBtn.style.display = 'block';
+        }
         if (elements.cancelBtn) {
           elements.cancelBtn.classList.add('hidden');
           elements.cancelBtn.style.display = 'none';
@@ -102,8 +106,10 @@ export function initState(deps) {
       } else {
         // Real error - show as error
         stopTimerDisplay();
-        elements.savePdfBtn.disabled = false;
-        elements.savePdfBtn.style.display = 'block';
+        if (elements.savePdfBtn) {
+          elements.savePdfBtn.disabled = false;
+          elements.savePdfBtn.style.display = 'block';
+        }
         if (elements.cancelBtn) {
           elements.cancelBtn.classList.add('hidden');
           elements.cancelBtn.style.display = 'none';
