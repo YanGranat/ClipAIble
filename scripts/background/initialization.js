@@ -56,50 +56,42 @@ export function initInitialization(deps) {
     // Check if this is a fresh start (no active processing) and reset flags
     (async () => {
       try {
-        const result = /** @type {import('../types.js').ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number}} */ (
-          await chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp'])
+        const result = /** @type {import('../types.js').ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number, key_theses_text?: string, key_theses_saved_timestamp?: number, key_theses_generating?: boolean, key_theses_generating_start_time?: number}} */ (
+          await chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp', 'key_theses_text', 'key_theses_saved_timestamp', 'key_theses_generating', 'key_theses_generating_start_time'])
         );
         /** @type {Partial<import('../types.js').ProcessingState>|undefined} */
         const processingState = result.processingState && typeof result.processingState === 'object' ? result.processingState : undefined;
         const hasProcessingState = processingState && processingState.isProcessing === true;
         const hasSummaryGenerating = result.summary_generating;
         const hasSummary = result.summary_text;
-        
-        // CRITICAL: If extension was reloaded, reset all flags AND clear summary completely
+        const hasKeyTheses = result.key_theses_text;
+
+        // CRITICAL: If extension was reloaded, reset all flags AND clear summary/key theses completely
         // We can't distinguish reload from restart, so we ALWAYS reset on service worker start
         // Only restore if state is very recent (< 1 minute) - this handles quick service worker restarts
         const RESET_THRESHOLD = CONFIG.RESET_THRESHOLD_MS;
         
-        // CRITICAL: Always clear summary on extension reload (one of 3 events that must clear summary)
-        // Summary should not persist across extension reloads - user expects clean state
-        if (hasSummary) {
-          const savedTimestamp = result.summary_saved_timestamp;
-          const summaryAge = savedTimestamp && typeof savedTimestamp === 'number' ? (Date.now() - savedTimestamp) : Infinity;
-          
-          log('Extension reloaded - clearing summary (always clear on reload)', {
-            hasSummary: true,
-            savedTimestamp,
-            summaryAge,
-            summaryAgeSeconds: Math.round(summaryAge / 1000)
+        if (hasSummary || hasKeyTheses) {
+          log('Extension reloaded - clearing summary and key theses from storage', {
+            hasSummary,
+            hasKeyTheses,
+            timestamp: Date.now()
           });
-          
           try {
-            await chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp']);
-            log('Summary cleared from storage on extension reload');
+            await chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp', 'key_theses_text', 'key_theses_saved_timestamp']);
+            log('Summary and key theses cleared from storage on extension reload');
           } catch (error) {
             const normalized = await handleError(error, {
               source: 'initialization',
               errorType: 'storageRemoveFailed',
               logError: false,
-              createUserMessage: true, // Use centralized user-friendly message
-              context: { operation: 'removeSummaryText' }
+              createUserMessage: true,
+              context: { operation: 'removeSummaryAndKeyThesesText' }
             });
-            logWarn('Failed to remove summary_text on reload', normalized);
+            logWarn('Failed to remove summary/key theses on reload', normalized);
           }
         } else {
-          log('Extension reloaded - no summary to clear', {
-            hasSummary: false
-          });
+          log('Extension reloaded - no summary or key theses to clear');
         }
         
         if (hasProcessingState && processingState) {
@@ -130,28 +122,27 @@ export function initInitialization(deps) {
           }
         }
         
-        if (hasSummaryGenerating) {
-          // CRITICAL: Always reset summary_generating flag on extension reload
-          // Extension reload means service worker was restarted, so generation cannot continue
-          log('Extension reloaded - resetting summary_generating flag (always reset on reload)', {
-            startTime: result.summary_generating_start_time,
+        if (hasSummaryGenerating || result.key_theses_generating) {
+          log('Extension reloaded - resetting summary and key theses generating flags', {
             timestamp: Date.now()
           });
           try {
             await chrome.storage.local.set({
               summary_generating: false,
-              summary_generating_start_time: null
+              summary_generating_start_time: null,
+              key_theses_generating: false,
+              key_theses_generating_start_time: null
             });
-            log('summary_generating flag cleared on extension reload');
+            log('summary_generating and key_theses_generating flags cleared on extension reload');
           } catch (error) {
             const normalized = await handleError(error, {
               source: 'initialization',
               errorType: 'storageSetFailed',
               logError: false,
-              createUserMessage: true, // Use centralized user-friendly message
-              context: { operation: 'clearSummaryGenerating' }
+              createUserMessage: true,
+              context: { operation: 'clearSummaryAndKeyThesesGenerating' }
             });
-            logWarn('Failed to clear summary_generating on reload', normalized);
+            logWarn('Failed to clear generating flags on reload', normalized);
           }
         }
         

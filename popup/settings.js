@@ -174,7 +174,9 @@ export function initSettings(deps) {
         STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP,
         STORAGE_KEYS.AUDIO_SPEED,
         STORAGE_KEYS.SUMMARY_TEXT,
-        STORAGE_KEYS.SUMMARY_GENERATING
+        STORAGE_KEYS.SUMMARY_GENERATING,
+        STORAGE_KEYS.KEY_THESES_TEXT,
+        STORAGE_KEYS.KEY_THESES_GENERATING
       ]);
       
       log('loadSettings: settings retrieved from storage', { 
@@ -1068,12 +1070,26 @@ export function initSettings(deps) {
           hasHiddenClass: elements.summaryContainer.classList.contains('hidden')
         });
       } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryContainer) {
-        // No summary and not generating - hide container
         elements.summaryContainer.classList.add('hidden');
         elements.summaryContainer.style.display = 'none';
         log('loadSettings: No summary to restore');
       }
-      
+
+      if (result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.generateKeyThesesBtn) {
+        elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
+        elements.generateKeyThesesBtn.disabled = true;
+      }
+      if (result[STORAGE_KEYS.KEY_THESES_TEXT] && !result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.keyThesesText && elements.keyThesesContainer) {
+        const savedTheses = String(result[STORAGE_KEYS.KEY_THESES_TEXT]);
+        elements.keyThesesText.dataset.originalMarkdown = savedTheses;
+        elements.keyThesesText.innerHTML = sanitizeMarkdownHtml(markdownToHtml(savedTheses));
+        elements.keyThesesContainer.classList.remove('hidden');
+        elements.keyThesesContainer.style.display = 'block';
+      } else if (!result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.keyThesesContainer) {
+        elements.keyThesesContainer.classList.add('hidden');
+        elements.keyThesesContainer.style.display = 'none';
+      }
+
       log('loadSettings: completed successfully');
     } catch (error) {
       logError('CRITICAL: loadSettings() failed', error);

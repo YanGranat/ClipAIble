@@ -7,6 +7,7 @@ import { handleError } from '../utils/error-handler.js';
 import { getProcessingState, setError } from '../state/processing.js';
 import { getUILanguage } from '../locales.js';
 import { startSummaryGeneration } from './summary.js';
+import { startKeyThesesGeneration } from './key-theses.js';
 import { CONFIG } from '../utils/config.js';
 import { detectPdfPage, getOriginalPdfUrl } from '../utils/pdf.js';
 import { processPdfPageWithAI, processPdfPage } from '../processing/pdf.js';
@@ -260,17 +261,50 @@ export function handleExtractContentOnly(
     timestamp: Date.now()
   });
   
-  log('Starting content extraction', { mode, url, autoGenerateSummary, timestamp: Date.now() });
-  
-  // CRITICAL: Respond immediately to allow popup to close
-  // Then continue extraction and optionally generate summary in background
-  try {
-    sendResponse({ success: true, extracting: true });
-  } catch (sendError) {
-    logWarn('Failed to send response (channel may be closed)', { error: sendError?.message });
+  log('[extractContentOnly] Starting content extraction', {
+    mode,
+    url: url?.slice?.(0, 60) + (url?.length > 60 ? '...' : ''),
+    autoGenerateSummary,
+    willRespondImmediately: autoGenerateSummary,
+    willWaitForResult: !autoGenerateSummary,
+    timestamp: Date.now()
+  });
+
+  let responseSent = false;
+  const safeSendResponse = (response) => {
+    if (!responseSent) {
+      try {
+        sendResponse(response);
+        responseSent = true;
+        const hasResult = !!response?.result;
+        const hasError = !!response?.error;
+        log('[extractContentOnly] Response sent to popup', {
+          hasResult,
+          hasError,
+          extracting: !!response?.extracting,
+          contentItemsCount: response?.result?.content?.length,
+          timestamp: Date.now()
+        });
+      } catch (e) {
+        logWarn('[extractContentOnly] Failed to send response (channel may be closed)', { error: e?.message });
+      }
+    }
+  };
+
+  // When autoGenerateSummary is true: respond immediately so popup can close; extraction and summary run in background.
+  // When autoGenerateSummary is false: do not respond yet; wait for extraction and send full result (e.g. for key theses).
+  if (autoGenerateSummary) {
+    try {
+      safeSendResponse({ success: true, extracting: true });
+      log('[extractContentOnly] Sent extracting:true (popup may close); extraction will run in background', { timestamp: Date.now() });
+    } catch (sendError) {
+      logWarn('[extractContentOnly] Failed to send immediate response', { error: sendError?.message });
+    }
+  } else {
+    log('[extractContentOnly] autoGenerateSummary=false: not sending immediate response; will send full result when extraction completes', { timestamp: Date.now() });
   }
-  
-  log('=== extractContentOnly: Calling processFunction ===', {
+
+  log('[extractContentOnly] Calling processFunction (extraction started)', {
     mode: mode,
     functionName: processFunction?.name || 'unknown',
     hasTabId: !!tabId,
@@ -295,21 +329,31 @@ export function handleExtractContentOnly(
         outputFormat: /** @type {import('../types.js').ExportFormat} */ ('markdown') // For extractContentOnly, we just need content
       };
       const result = await processFunction(processingData);
-      log('=== extractContentOnly: processFunction completed ===', {
+      log('[extractContentOnly] processFunction completed', {
         hasResult: !!result,
         resultKeys: result ? Object.keys(result) : [],
+        contentItemsCount: result?.content?.length ?? 0,
+        title: result?.title,
         timestamp: Date.now()
       });
-      
-      log('=== extractContentOnly SUCCESS ===', {
-        title: result.title,
-        contentItemsCount: result.content?.length || 0,
-        hasContent: !!result.content,
-        isArray: Array.isArray(result.content),
+
+      log('[extractContentOnly] SUCCESS', {
+        title: result?.title,
+        contentItemsCount: result?.content?.length ?? 0,
+        hasContent: !!result?.content,
+        isArray: Array.isArray(result?.content),
         autoGenerateSummary,
         timestamp: Date.now()
       });
-      
+
+      if (!autoGenerateSummary) {
+        log('[extractContentOnly] Sending full result to popup (autoGenerateSummary=false)', {
+          contentItemsCount: result?.content?.length ?? 0,
+          timestamp: Date.now()
+        });
+        safeSendResponse({ success: true, result });
+      }
+
       // CRITICAL: If autoGenerateSummary is true, automatically start summary generation
       // This allows popup to close and summary will generate in background
       if (autoGenerateSummary && result.content && result.content.length > 0) {
@@ -508,6 +552,13 @@ export function handleExtractContentOnly(
           code: normalized.userCode || normalized.code
         }, stopKeepAlive);
       }
+      if (!autoGenerateSummary) {
+        log('[extractContentOnly] Sending error to popup (extraction failed)', {
+          error: normalized?.message || normalized?.userMessage,
+          timestamp: Date.now()
+        });
+        safeSendResponse({ error: normalized.userMessage || normalized.message || 'Content extraction failed' });
+      }
     }
   })().catch(async error => {
     // Additional protection: catch any errors that might occur in the async IIFE itself
@@ -517,7 +568,13 @@ export function handleExtractContentOnly(
       errorStack: error?.stack,
       timestamp: Date.now()
     });
-    
+    if (!autoGenerateSummary) {
+      log('[extractContentOnly] Unhandled IIFE error: sending error to popup', {
+        error: error?.message || String(error),
+        timestamp: Date.now()
+      });
+      safeSendResponse({ error: error?.message || String(error) || 'Content extraction failed' });
+    }
     // CRITICAL: Clear summary_generating flag if it was set
     // This prevents popup from showing "Generating summary..." forever
     try {
@@ -668,6 +725,55 @@ export function handleGenerateSummary(request, sender, sendResponse, startKeepAl
     }
   })();
   
+  return true;
+}
+
+/**
+ * Handle generateKeyTheses request (same contract as generateSummary)
+ */
+export function handleGenerateKeyTheses(request, sender, sendResponse, startKeepAlive, stopKeepAlive) {
+  log('[generateKeyTheses] REQUEST RECEIVED', {
+    hasData: !!request.data,
+    contentItemsCount: request.data?.contentItems?.length || 0,
+    url: request.data?.url?.slice?.(0, 60) + (request.data?.url?.length > 60 ? '...' : ''),
+    model: request.data?.model,
+    language: request.data?.language,
+    hasApiKey: !!request.data?.apiKey,
+    timestamp: Date.now()
+  });
+
+  let responseSent = false;
+  const safeSendResponse = (response) => {
+    if (!responseSent) {
+      try {
+        sendResponse(response);
+        responseSent = true;
+        log('[generateKeyTheses] Response sent to popup', {
+          started: !!response?.started,
+          error: !!response?.error,
+          timestamp: Date.now()
+        });
+      } catch (sendError) {
+        logError('[generateKeyTheses] Failed to send response', sendError);
+      }
+    }
+  };
+
+  (async () => {
+    try {
+      log('[generateKeyTheses] Calling startKeyThesesGeneration', { timestamp: Date.now() });
+      await startKeyThesesGeneration(request.data, startKeepAlive, stopKeepAlive, safeSendResponse);
+      log('[generateKeyTheses] startKeyThesesGeneration finished (async)', { timestamp: Date.now() });
+    } catch (error) {
+      logError('[generateKeyTheses] startKeyThesesGeneration threw', {
+        error: error?.message,
+        stack: error?.stack?.slice?.(0, 200),
+        timestamp: Date.now()
+      });
+      safeSendResponse({ error: error.message || 'Failed to start key theses generation' });
+    }
+  })();
+
   return true;
 }
 

@@ -52,6 +52,7 @@ import {
 import {
   handleExtractContentOnly,
   handleGenerateSummary,
+  handleGenerateKeyTheses,
   handleLogModelDropdown
 } from './complex.js';
 
@@ -87,7 +88,7 @@ const VALID_ACTIONS = [
   // Video handlers
   'youtubeSubtitlesResult', 'extractYouTubeSubtitlesForSummary',
   // Complex handlers
-  'extractContentOnly', 'generateSummary', 'logModelDropdown',
+  'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'logModelDropdown',
   // TTS Progress
   'TTS_PROGRESS',
   // Log export
@@ -107,6 +108,7 @@ function validateMessageOrigin(request, sender) {
   const privilegedActions = [
     'processArticle',
     'generateSummary',
+    'generateKeyTheses',
     'extractContentOnly',
     'generatePdfDebugger',
     'exportSettings',
@@ -289,7 +291,25 @@ function validateMessageParams(request) {
       return { valid: false, error: 'generateSummary.data.content must be a string' };
     }
   }
-  
+
+  if (action === 'generateKeyTheses') {
+    if (!data || typeof data !== 'object') {
+      return { valid: false, error: 'generateKeyTheses requires data object' };
+    }
+    if (data.url !== undefined && typeof data.url !== 'string') {
+      return { valid: false, error: 'generateKeyTheses.data.url must be a string' };
+    }
+    if (data.apiKey !== undefined && typeof data.apiKey !== 'string') {
+      return { valid: false, error: 'generateKeyTheses.data.apiKey must be a string' };
+    }
+    if (data.model !== undefined && typeof data.model !== 'string') {
+      return { valid: false, error: 'generateKeyTheses.data.model must be a string' };
+    }
+    if (data.content !== undefined && typeof data.content !== 'string') {
+      return { valid: false, error: 'generateKeyTheses.data.content must be a string' };
+    }
+  }
+
   if (action === 'generatePdfDebugger') {
     if (!data || typeof data !== 'object') {
       return { valid: false, error: 'generatePdfDebugger requires data object' };
@@ -372,7 +392,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
   }
   
   // SECURITY: Validate message parameters for critical actions (runtime type checking)
-  const criticalActions = ['processArticle', 'extractContentOnly', 'generateSummary', 'generatePdfDebugger'];
+  const criticalActions = ['processArticle', 'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'generatePdfDebugger'];
   if (criticalActions.includes(request.action)) {
     const paramValidation = validateMessageParams(request);
     if (!paramValidation.valid) {
@@ -544,6 +564,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
       stopKeepAlive
     ),
     'generateSummary': () => handleGenerateSummary(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
+    'generateKeyTheses': () => handleGenerateKeyTheses(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
     'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse),
     
     // TTS Progress handler (from offscreen.js)
@@ -681,9 +702,16 @@ export function routeMessage(request, sender, sendResponse, deps) {
   
   // Get handler for action
   const handler = handlers[request.action];
-  
-  // Skip verbose logging for frequent operations (already defined above)
-  
+
+  if (request.action === 'extractContentOnly' || request.action === 'generateKeyTheses') {
+    log('[routeMessage] Dispatching to handler', {
+      action: request.action,
+      autoGenerateSummary: request.data?.autoGenerateSummary,
+      contentItemsCount: request.data?.contentItems?.length,
+      timestamp: Date.now()
+    });
+  }
+
   if (handler) {
     try {
       const result = handler();

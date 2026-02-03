@@ -11,7 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Archive configuration
-const ARCHIVE_NAME = 'clipaible-3.3.0-production.zip';
+const ARCHIVE_NAME = 'clipaible-3.3.4-production.zip';
 const TEMP_DIR = 'temp-archive';
 
 // Files and folders to include
@@ -304,7 +304,7 @@ async function patchManifest(tempPath) {
  * Main function
  */
 async function createArchive() {
-  console.log('🚀 Creating production archive for ClipAIble 3.3.0\n');
+  console.log('🚀 Creating production archive for ClipAIble 3.3.4\n');
 
   const tempPath = path.join(__dirname, TEMP_DIR);
 

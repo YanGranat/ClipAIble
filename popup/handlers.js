@@ -9,6 +9,7 @@ import { setupStyleHandlers } from './handlers/style.js';
 import { setupModelHandlers } from './handlers/model.js';
 import { setupAudioHandlers } from './handlers/audio.js';
 import { setupSummaryHandlers } from './handlers/summary.js';
+import { setupKeyThesesHandlers } from './handlers/key-theses.js';
 import { setupThemeHandlers } from './handlers/theme.js';
 import { setupTtsKeyHandlers } from './handlers/tts-keys.js';
 import { CONFIG } from '../scripts/utils/config.js';
@@ -96,6 +97,11 @@ export function initHandlers(deps) {
     copySummary,
     downloadSummary,
     closeSummary,
+    handleGenerateKeyTheses,
+    toggleKeyTheses,
+    copyKeyTheses,
+    downloadKeyTheses,
+    closeKeyTheses,
     settingsModule
   } = deps;
 
@@ -246,6 +252,14 @@ export function initHandlers(deps) {
       copySummary,
       downloadSummary,
       closeSummary
+    });
+    setupKeyThesesHandlers({
+      elements,
+      handleGenerateKeyTheses,
+      toggleKeyTheses,
+      copyKeyTheses,
+      downloadKeyTheses,
+      closeKeyTheses
     });
     
     // ============================================

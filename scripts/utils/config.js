@@ -55,6 +55,8 @@ export const CONFIG = {
   RESET_THRESHOLD_MS: 60 * 1000,        // 1 minute - threshold for resetting state on extension reload
   SUMMARY_STALE_THRESHOLD_MS: 15 * 60 * 1000, // 15 minutes - threshold for stale summary generation flag
   SUMMARY_TIMEOUT_MS: 10 * 60 * 1000,   // 10 minutes - timeout for summary generation (will abort and show error)
+  KEY_THESES_STALE_THRESHOLD_MS: 15 * 60 * 1000,
+  KEY_THESES_TIMEOUT_MS: 10 * 60 * 1000,
   MAX_UPDATE_QUEUE_SIZE: 100,           // Maximum number of queued state updates (prevents memory leaks)
   
   // Polling
@@ -113,7 +115,7 @@ export const CONFIG = {
   // Extension version (synchronized with manifest.json)
   // This is used as fallback if chrome.runtime.getManifest() fails (extremely rare)
   // CRITICAL: Must be updated when version changes in manifest.json
-  EXTENSION_VERSION: '3.3.0'
+  EXTENSION_VERSION: '3.3.4'
 };
 
 /**
@@ -448,7 +450,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
 /**
  * Get extension version from manifest
  * Falls back to CONFIG.EXTENSION_VERSION if manifest is unavailable (extremely rare)
- * @returns {string} Extension version (e.g., '3.3.0')
+ * @returns {string} Extension version (e.g., '3.3.4')
  */
 export function getExtensionVersion() {
   try {

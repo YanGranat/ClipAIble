@@ -145,6 +145,25 @@
         </div>
       </div>
 
+      <!-- Key theses Section -->
+      <button id="generateKeyThesesBtn" class="btn btn-summary" data-i18n="generateKeyTheses">Key theses</button>
+      <div id="keyThesesContainer" class="summary-container hidden">
+        <div class="summary-header">
+          <button id="keyThesesToggle" class="summary-toggle">
+            <span class="summary-toggle-icon">▶</span>
+            <span data-i18n="keyTheses">Key theses</span>
+          </button>
+          <div class="summary-actions">
+            <button id="keyThesesCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" title="Copy">📋</button>
+            <button id="keyThesesDownloadBtn" class="btn-icon btn-icon-small" data-i18n-title="download" title="Download">💾</button>
+            <button id="keyThesesCloseBtn" class="btn-icon btn-icon-small" data-i18n-title="close" title="Close">✕</button>
+          </div>
+        </div>
+        <div id="keyThesesContent" class="summary-content">
+          <div id="keyThesesText" class="summary-text"></div>
+        </div>
+      </div>
+
       <!-- Settings & Stats Toggle -->
       <section class="section settings-toggle">
         <button id="toggleSettings" class="btn btn-text">
@@ -685,7 +704,7 @@
       <div class="popup-footer-links">
         <a href="https://github.com/YanGranat/ClipAIble" target="_blank" rel="noopener" class="popup-footer-link" id="githubLink">GitHub</a>
         <span class="popup-footer-separator">•</span>
-        <span class="popup-footer-version" id="versionText">v3.3.0</span>
+        <span class="popup-footer-version" id="versionText">v3.3.4</span>
       </div>
     </footer>
 

@@ -59,6 +59,16 @@ export const ELEMENT_IDS = {
   SUMMARY_CONTENT: 'summaryContent',
   SUMMARY_TEXT: 'summaryText',
 
+  // Key theses
+  GENERATE_KEY_THESES_BTN: 'generateKeyThesesBtn',
+  KEY_THESES_CONTAINER: 'keyThesesContainer',
+  KEY_THESES_TOGGLE: 'keyThesesToggle',
+  KEY_THESES_COPY_BTN: 'keyThesesCopyBtn',
+  KEY_THESES_DOWNLOAD_BTN: 'keyThesesDownloadBtn',
+  KEY_THESES_CLOSE_BTN: 'keyThesesCloseBtn',
+  KEY_THESES_CONTENT: 'keyThesesContent',
+  KEY_THESES_TEXT: 'keyThesesText',
+
   // Settings Toggle
   TOGGLE_SETTINGS: 'toggleSettings',
   TOGGLE_STATS: 'toggleStats',
@@ -280,7 +290,11 @@ export const STORAGE_KEYS = {
 
   // Summary
   SUMMARY_TEXT: 'summary_text',
-  SUMMARY_GENERATING: 'summary_generating'
+  SUMMARY_GENERATING: 'summary_generating',
+
+  // Key theses
+  KEY_THESES_TEXT: 'key_theses_text',
+  KEY_THESES_GENERATING: 'key_theses_generating'
 };
 
 // Default styles

@@ -32,7 +32,7 @@ vi.mock('../../scripts/utils/config.js', () => ({
     en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
     ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' }
   },
-  getExtensionVersion: vi.fn(() => '3.3.0'),
+  getExtensionVersion: vi.fn(() => '3.3.4'),
   formatDateForDisplay: vi.fn((date, lang) => {
     if (!date) return '';
     return new Date(date).toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-US');

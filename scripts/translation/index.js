@@ -10,4 +10,4 @@
 export { translateText, translateBatch, translateContent, translateMetadata } from './text.js';
 export { detectImageText, translateImages } from './images.js';
 export { detectSourceLanguage, detectLanguageByCharacters, detectContentLanguage } from './detection.js';
-export { generateAbstract, generateSummary } from './generation.js';
+export { generateAbstract, generateSummary, generateKeyTheses } from './generation.js';

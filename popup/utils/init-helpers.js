@@ -47,6 +47,16 @@ export function initializeDOMElements(elements) {
   elements.summaryDownloadBtn = document.getElementById(ELEMENT_IDS.SUMMARY_DOWNLOAD_BTN);
   elements.summaryCloseBtn = document.getElementById(ELEMENT_IDS.SUMMARY_CLOSE_BTN);
   
+  // Key theses
+  elements.generateKeyThesesBtn = document.getElementById(ELEMENT_IDS.GENERATE_KEY_THESES_BTN);
+  elements.keyThesesContainer = document.getElementById(ELEMENT_IDS.KEY_THESES_CONTAINER);
+  elements.keyThesesToggle = document.getElementById(ELEMENT_IDS.KEY_THESES_TOGGLE);
+  elements.keyThesesContent = document.getElementById(ELEMENT_IDS.KEY_THESES_CONTENT);
+  elements.keyThesesText = document.getElementById(ELEMENT_IDS.KEY_THESES_TEXT);
+  elements.keyThesesCopyBtn = document.getElementById(ELEMENT_IDS.KEY_THESES_COPY_BTN);
+  elements.keyThesesDownloadBtn = document.getElementById(ELEMENT_IDS.KEY_THESES_DOWNLOAD_BTN);
+  elements.keyThesesCloseBtn = document.getElementById(ELEMENT_IDS.KEY_THESES_CLOSE_BTN);
+  
   // Settings and Stats
   elements.toggleSettings = document.getElementById(ELEMENT_IDS.TOGGLE_SETTINGS);
   elements.settingsPanel = document.getElementById(ELEMENT_IDS.SETTINGS_PANEL);
@@ -342,9 +352,14 @@ export function initializeModules(rawDeps) {
     copySummary: coreModule.copySummary,
     downloadSummary: coreModule.downloadSummary,
     closeSummary: coreModule.closeSummary,
+    handleGenerateKeyTheses: coreModule.handleGenerateKeyTheses,
+    toggleKeyTheses: coreModule.toggleKeyTheses,
+    copyKeyTheses: coreModule.copyKeyTheses,
+    downloadKeyTheses: coreModule.downloadKeyTheses,
+    closeKeyTheses: coreModule.closeKeyTheses,
     settingsModule
   });
-  
+
   return {
     uiModule,
     statsModule,
@@ -444,17 +459,17 @@ export async function finalizeInitialization(modules, initAllCustomSelects, setC
     // Continue initialization even if checkProcessingState fails
   }
   
-  // Check summary status immediately on popup open
-  // This ensures summary is displayed if it was generated while popup was closed
   try {
-    if (coreModule.checkSummaryStatus) {
-      await coreModule.checkSummaryStatus();
-    }
+    if (coreModule.checkSummaryStatus) await coreModule.checkSummaryStatus();
   } catch (error) {
     logError('CRITICAL: checkSummaryStatus() failed in init()', error);
-    // Continue initialization even if checkSummaryStatus fails
   }
-  
+  try {
+    if (coreModule.checkKeyThesesStatus) await coreModule.checkKeyThesesStatus();
+  } catch (error) {
+    logError('CRITICAL: checkKeyThesesStatus() failed in init()', error);
+  }
+
   // Start polling for state updates
   try {
     coreModule.startStatePolling();
@@ -475,13 +490,13 @@ export async function finalizeInitialization(modules, initAllCustomSelects, setC
     // Fallback: try to get from manifest directly
     try {
       const manifest = chrome.runtime.getManifest();
-      const version = manifest?.version || '3.3.0';
+      const version = manifest?.version || '3.3.4';
       const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
       if (versionElement) {
         versionElement.textContent = `v${version}`;
       }
     } catch (fallbackError) {
-      // If all fails, leave default from HTML (v3.3.0)
+      // If all fails, leave default from HTML (v3.3.4)
     }
   }
 }

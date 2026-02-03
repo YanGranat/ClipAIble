@@ -15,6 +15,7 @@
  * @param {Function} deps.stopTimerDisplay - Stop timer display function
  * @param {Function} deps.startTimerDisplay - Start timer display function
  * @param {Function} deps.checkSummaryStatus - Check summary status function
+ * @param {Function} [deps.checkKeyThesesStatus] - Check key theses status function
  * @param {Object} deps.stateRefs - State references object
  * @returns {Object} State functions
  */
@@ -30,6 +31,7 @@ export function initState(deps) {
     stopTimerDisplay,
     startTimerDisplay,
     checkSummaryStatus,
+    checkKeyThesesStatus,
     stateRefs
   } = deps;
 
@@ -394,9 +396,9 @@ export function initState(deps) {
         
         failedAttempts = 0;
         
-        // Check summary generation status from storage
         await checkSummaryStatus();
-        
+        if (checkKeyThesesStatus) await checkKeyThesesStatus();
+
       } catch (error) {
         failedAttempts++;
         const errorMsg = error.message || String(error);
@@ -465,14 +467,15 @@ export function initState(deps) {
           }
         }
         
-        // Check summary status even on errors (defer for audio)
         const isAudioFormat = lastState?.outputFormat === 'audio';
         if (isAudioFormat && lastState?.isProcessing) {
           setTimeout(async () => {
             await checkSummaryStatus();
+            if (checkKeyThesesStatus) await checkKeyThesesStatus();
           }, 0);
         } else {
           await checkSummaryStatus();
+          if (checkKeyThesesStatus) await checkKeyThesesStatus();
         }
         
         // Increase interval on errors

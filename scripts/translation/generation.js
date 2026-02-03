@@ -493,3 +493,225 @@ Generate a summary in Markdown format in ${langName} language:`;
   }
 }
 
+/**
+ * Generate key theses from article content (analytical extraction of main claims)
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string}} data - Same shape as summary
+ * @returns {Promise<{keyTheses: string}>} Markdown string of theses (from JSON theses)
+ * @throws {Error} If content/API/key missing or generation fails
+ */
+export async function generateKeyTheses(data) {
+  const { contentItems, apiKey, model, url, language } = data;
+
+  log('=== KEY THESES GENERATION START ===', {
+    url,
+    contentItemsCount: contentItems?.length || 0,
+    language,
+    model,
+    hasApiKey: !!apiKey,
+    timestamp: Date.now()
+  });
+
+  if (!contentItems || contentItems.length === 0) {
+    const noContentError = new Error('No content provided for key theses generation');
+    const normalized = await handleError(noContentError, {
+      source: 'keyThesesGeneration',
+      errorType: 'noContentForSummary',
+      logError: true,
+      createUserMessage: true,
+      context: { operation: 'validateContent', hasContentItems: !!contentItems, contentItemsLength: contentItems?.length || 0 }
+    });
+    const uiLang = await getUILanguage();
+    /** @type {import('../types.js').ExtendedError} */
+    const err = new Error(normalized.userMessage || tSync('errorNoContentForSummary', uiLang));
+    err.code = normalized.code;
+    err.originalError = normalized.originalError;
+    err.context = normalized.context;
+    throw err;
+  }
+
+  if (!apiKey || !model) {
+    const noApiKeyError = new Error('API key or model not provided for key theses generation');
+    const normalized = await handleError(noApiKeyError, {
+      source: 'keyThesesGeneration',
+      errorType: 'noApiKeyForSummary',
+      logError: true,
+      createUserMessage: true,
+      context: { operation: 'validateApiKey', hasApiKey: !!apiKey, hasModel: !!model }
+    });
+    const uiLang = await getUILanguage();
+    /** @type {import('../types.js').ExtendedError} */
+    const err = new Error(normalized.userMessage || tSync('errorApiKeyRequiredForSummary', uiLang));
+    err.code = normalized.code;
+    err.originalError = normalized.originalError;
+    err.context = normalized.context;
+    throw err;
+  }
+
+  let targetLang = language;
+  if (!targetLang || targetLang === 'auto') {
+    targetLang = await getUILanguage();
+  }
+  const langName = LANGUAGE_NAMES[targetLang] || targetLang;
+
+  let articleText = '';
+  for (const item of contentItems) {
+    if (item.type === 'code' || item.type === 'image') continue;
+    switch (item.type) {
+      case 'heading': {
+        const level = Math.min(Math.max(item.level || 2, 1), 6);
+        const prefix = '#'.repeat(level);
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) articleText += `${prefix} ${text.trim()}\n\n`;
+        break;
+      }
+      case 'paragraph': {
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) articleText += `${text.trim()}\n\n`;
+        break;
+      }
+      case 'quote':
+      case 'blockquote': {
+        const text = stripHtml(item.text || '');
+        if (text && text.trim()) {
+          const quoted = text.trim().split('\n').map(line => `> ${line}`).join('\n');
+          articleText += `${quoted}\n\n`;
+        }
+        break;
+      }
+      case 'list': {
+        const items = item.items || [];
+        const isOrdered = item.ordered || false;
+        items.forEach((listItem, index) => {
+          const prefix = isOrdered ? `${index + 1}.` : '-';
+          let itemText = '';
+          if (typeof listItem === 'string') itemText = listItem.trim();
+          else if (listItem && listItem.html) itemText = stripHtml(listItem.html).trim();
+          else if (listItem && 'text' in listItem && listItem.text && typeof listItem.text === 'string') itemText = stripHtml(listItem.text).trim();
+          if (itemText) articleText += `${prefix} ${itemText}\n`;
+        });
+        articleText += '\n';
+        break;
+      }
+      case 'table': {
+        const headers = item.headers || [];
+        const rows = item.rows || [];
+        if (headers.length > 0) {
+          articleText += 'Table:\n';
+          articleText += `Headers: ${headers.map(h => stripHtml(h || '')).join(' | ')}\n`;
+          rows.forEach((row, index) => {
+            const rowText = (row || []).map(cell => stripHtml(cell || '')).join(' | ');
+            if (rowText) articleText += `Row ${index + 1}: ${rowText}\n`;
+          });
+          articleText += '\n';
+        }
+        break;
+      }
+      default: {
+        if (item.text) {
+          const text = stripHtml(item.text);
+          if (text && text.trim()) articleText += `${text.trim()}\n\n`;
+        }
+        if (item.items && Array.isArray(item.items)) {
+          for (const listItem of item.items) {
+            if (typeof listItem === 'string') articleText += `${listItem.trim()}\n`;
+            else if (listItem && listItem.html) {
+              const text = stripHtml(listItem.html);
+              if (text && text.trim()) articleText += `${text.trim()}\n`;
+            }
+          }
+          articleText += '\n';
+        }
+        break;
+      }
+    }
+  }
+
+  if (!articleText.trim()) {
+    const noTextError = new Error('No text extracted from content for key theses generation');
+    const normalized = await handleError(noTextError, {
+      source: 'keyThesesGeneration',
+      errorType: 'noTextExtractedForSummary',
+      logError: true,
+      createUserMessage: true,
+      context: { operation: 'extractText', contentItemsCount: contentItems?.length || 0, articleTextLength: articleText.length }
+    });
+    const uiLang = await getUILanguage();
+    /** @type {import('../types.js').ExtendedError} */
+    const err = new Error(normalized.userMessage || tSync('errorNoTextExtractedForSummary', uiLang));
+    err.code = normalized.code;
+    err.originalError = normalized.originalError;
+    err.context = normalized.context;
+    throw err;
+  }
+
+  const systemPrompt = `You are an analytical philosopher and expert in rhetoric and logic.
+
+Your task: Analyze the provided content and extract its key theses. Theses may not be stated explicitly; analyze the content deeply to identify what the author(s) or participants actually claim or imply.
+
+Treat "thesis" broadly but aim for crystal-clear analysis and root Subject–Predicate–Object triples where possible.
+
+Instructions:
+1. Study the content carefully. Identify all key claims, theses, ideas, and thoughts that the content advances, argues for, or contains.
+2. Go through the content again; check for omissions; analyze and dissect it thoroughly.
+3. For each thesis provide:
+   - Short formulation: Self-contained assertion, ideally Subject–Predicate–Object. Avoid abstract nominalizations ("attraction", "formation") without concrete participants. Distilled essence, optionally slightly radicalized for clarity. No meta-markers ("the author believes", "the text states").
+   - Expanded formulation: Full academic-style formulation: complete, unambiguous, every word necessary. No filler or bureaucratese.
+
+Output format: You must respond with valid JSON only. No preamble, no explanation, no markdown code fence. Exactly this structure:
+{"theses":[{"short":"...","expanded":"..."},{"short":"...","expanded":"..."}]}
+
+Write all text in ${langName}.`;
+
+  const userPrompt = `URL: ${url || 'Unknown'}
+
+Content:
+
+${articleText}
+
+Output the key theses as JSON only (theses array with short and expanded for each).`;
+
+  try {
+    log('Calling AI for key theses generation', { articleTextLength: articleText.length, timestamp: Date.now() });
+
+    const rawResponse = await callAI(systemPrompt, userPrompt, apiKey, model, true);
+    const content = typeof rawResponse === 'object' && rawResponse !== null && 'content' in rawResponse
+      ? rawResponse.content
+      : (typeof rawResponse === 'string' ? rawResponse : rawResponse);
+
+    let theses = [];
+    const obj = typeof content === 'object' && content !== null ? content : (typeof rawResponse === 'object' && rawResponse !== null ? rawResponse : null);
+    if (obj && Array.isArray(obj.theses)) {
+      theses = obj.theses;
+    } else if (typeof content === 'string' && content.trim()) {
+      try {
+        const parsed = JSON.parse(content.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/m, '$1'));
+        if (Array.isArray(parsed.theses)) theses = parsed.theses;
+      } catch (_) {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed.theses)) theses = parsed.theses;
+      }
+    }
+
+    if (theses.length === 0) {
+      logError('AI returned no valid theses', { contentType: typeof content, timestamp: Date.now() });
+      const uiLang = await getUILanguage();
+      throw new Error(tSync('errorEmptySummary', uiLang));
+    }
+
+    const markdown = theses
+      .map((t, i) => {
+        const short = (t && (t.short ?? t.shortFormulation)) ? String(t.short ?? t.shortFormulation).trim() : '';
+        const expanded = (t && (t.expanded ?? t.expandedFormulation)) ? String(t.expanded ?? t.expandedFormulation).trim() : '';
+        return `${i + 1}. **${short}**: ${expanded}`;
+      })
+      .filter(Boolean)
+      .join('\n\n');
+
+    log('=== KEY THESES GENERATION END ===', { thesesCount: theses.length, timestamp: Date.now() });
+    return { keyTheses: markdown };
+  } catch (error) {
+    logError('=== generateKeyTheses ERROR ===', { error: error?.message, timestamp: Date.now() });
+    throw error;
+  }
+}
+

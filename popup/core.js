@@ -6,6 +6,7 @@
 
 // Import submodules
 import { initSummary } from './core/summary.js';
+import { initKeyTheses } from './core/key-theses.js';
 import { initProcessing } from './core/processing.js';
 import { initState } from './core/state.js';
 
@@ -156,7 +157,24 @@ export function initCore(deps) {
     CONFIG
   });
 
-  // Step 2: Initialize state module (needs checkSummaryStatus from summary)
+  const keyThesesModule = initKeyTheses({
+    elements,
+    STORAGE_KEYS,
+    t,
+    getUILanguage,
+    logError,
+    log,
+    logWarn,
+    showToast,
+    decryptApiKey,
+    getProviderFromModel,
+    detectVideoPlatform,
+    markdownToHtmlFn,
+    sanitizeMarkdownHtml,
+    CONFIG
+  });
+
+  // Step 2: Initialize state module (needs checkSummaryStatus and checkKeyThesesStatus)
   const stateModule = initState({
     elements,
     t,
@@ -168,6 +186,7 @@ export function initCore(deps) {
     stopTimerDisplay,
     startTimerDisplay,
     checkSummaryStatus: summaryModule.checkSummaryStatus,
+    checkKeyThesesStatus: keyThesesModule.checkKeyThesesStatus,
     stateRefs
   });
 
@@ -204,7 +223,15 @@ export function initCore(deps) {
     downloadSummary: summaryModule.downloadSummary,
     closeSummary: summaryModule.closeSummary,
     checkSummaryStatus: summaryModule.checkSummaryStatus,
-    
+
+    // From key theses module
+    handleGenerateKeyTheses: keyThesesModule.handleGenerateKeyTheses,
+    toggleKeyTheses: keyThesesModule.toggleKeyTheses,
+    copyKeyTheses: keyThesesModule.copyKeyTheses,
+    downloadKeyTheses: keyThesesModule.downloadKeyTheses,
+    closeKeyTheses: keyThesesModule.closeKeyTheses,
+    checkKeyThesesStatus: keyThesesModule.checkKeyThesesStatus,
+
     // From state module
     checkProcessingState: stateModule.checkProcessingState,
     startStatePolling: stateModule.startStatePolling,
