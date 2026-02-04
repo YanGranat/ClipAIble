@@ -736,7 +736,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
         }
       }
       
-      // Extract video ID from URL (support watch, shorts, embed)
+      // Extract video ID from URL (support watch, shorts, embed, live)
       let videoId = null;
       const url = new URL(window.location.href);
       if (url.pathname === '/watch') {
@@ -744,6 +744,8 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       } else if (url.pathname.startsWith('/shorts/')) {
         videoId = url.pathname.split('/')[2];
       } else if (url.pathname.startsWith('/embed/')) {
+        videoId = url.pathname.split('/')[2];
+      } else if (url.pathname.startsWith('/live/')) {
         videoId = url.pathname.split('/')[2];
       }
       
