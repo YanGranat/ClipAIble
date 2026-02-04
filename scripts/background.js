@@ -1020,12 +1020,247 @@ export function extractFromPageInlined(selectors, baseUrl) {
     if (!el) return false;
     const style = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
-    return style.display !== 'none' && 
-           style.visibility !== 'hidden' && 
-           rect.width > 0 && 
+    return style.display !== 'none' &&
+           style.visibility !== 'hidden' &&
+           rect.width > 0 &&
            rect.height > 0;
   }
-  
+
+  // Content extraction constants: one place for thresholds to avoid magic numbers and false positives
+  const BLOCK_TAGS = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote'];
+  const MIXED_BODY_MIN_CHARS = 400;
+  const MIN_TEXT_LENGTH = 20;
+  const VISIBILITY_FALLBACK_MIN_TEXT = 30;
+  const CONTENT_CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div';
+
+  function hasDirectBlockChildren(el) {
+    return Array.from(el.children).some(child => BLOCK_TAGS.includes((child.tagName || '').toLowerCase()));
+  }
+
+  function isMixedBodyDiv(el) {
+    if ((el.tagName || '').toLowerCase() !== 'div') return false;
+    const text = (el.textContent || '').trim();
+    return text.length >= MIXED_BODY_MIN_CHARS && hasDirectBlockChildren(el);
+  }
+
+  function filterContentCandidates(candidateElements) {
+    let filtered = candidateElements.filter(candidate => {
+      if ((candidate.tagName || '').toLowerCase() === 'div') {
+        const text = (candidate.textContent || '').trim();
+        if (hasDirectBlockChildren(candidate) && text.length < MIXED_BODY_MIN_CHARS) return false;
+        return text.length > MIN_TEXT_LENGTH;
+      }
+      return true;
+    });
+    filtered = filtered.filter(c => {
+      if ((c.tagName || '').toLowerCase() !== 'div') return true;
+      const text = (c.textContent || '').trim();
+      if (text.length < MIXED_BODY_MIN_CHARS) return true;
+      const hasDescendant = filtered.some(other => other !== c && c.contains(other) && (other.tagName || '').toLowerCase() === 'div' && ((other.textContent || '').trim().length >= MIXED_BODY_MIN_CHARS));
+      return !hasDescendant;
+    });
+    filtered = filtered.filter(c => {
+      const inside = filtered.some(anc => anc !== c && anc.contains(c) && (anc.tagName || '').toLowerCase() === 'div' && ((anc.textContent || '').trim().length >= MIXED_BODY_MIN_CHARS));
+      return !inside;
+    });
+    return filtered;
+  }
+
+  function getVisibleWithFallback(filteredCandidates) {
+    let visible = filteredCandidates.filter(isElementVisible);
+    const textBlockCount = visible.filter(c => ['p', 'div'].includes((c.tagName || '').toLowerCase()) && ((c.textContent || '').trim().length > VISIBILITY_FALLBACK_MIN_TEXT)).length;
+    if (textBlockCount === 0 && filteredCandidates.length > visible.length) {
+      const fallback = filteredCandidates.filter(c => {
+        const tag = (c.tagName || '').toLowerCase();
+        if (tag !== 'p' && tag !== 'div') return false;
+        try {
+          if (window.getComputedStyle(c).display === 'none') return false;
+        } catch (e) { return false; }
+        return ((c.textContent || '').trim().length > VISIBILITY_FALLBACK_MIN_TEXT);
+      });
+      if (fallback.length > 0) {
+        const combined = [...visible];
+        fallback.forEach(node => { if (!combined.includes(node)) combined.push(node); });
+        visible = combined;
+      }
+    }
+    visible.sort((a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+    return visible;
+  }
+
+  function parseMixedContent(container) {
+    const segments = [];
+    const nodes = Array.from(container.childNodes);
+    let i = 0;
+    let currentInline = [];
+
+    function flushParagraph() {
+      if (currentInline.length === 0) return;
+      const wrap = document.createElement('div');
+      currentInline.forEach(n => wrap.appendChild(n.cloneNode(true)));
+      const text = (wrap.textContent || '').trim();
+      if (text.length >= MIN_TEXT_LENGTH) segments.push({ type: 'paragraph', nodes: currentInline.slice() });
+      currentInline = [];
+    }
+
+    while (i < nodes.length) {
+      const node = nodes[i];
+      if (node.nodeType === Node.TEXT_NODE) {
+        currentInline.push(node);
+        i++;
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) {
+        i++;
+        continue;
+      }
+      const tag = (node.tagName || '').toLowerCase();
+      if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+        flushParagraph();
+        segments.push({ type: 'heading', element: node });
+        i++;
+        continue;
+      }
+      if (tag === 'br') {
+        const next = nodes[i + 1];
+        if (next && next.nodeType === Node.ELEMENT_NODE && (next.tagName || '').toLowerCase() === 'br') {
+          flushParagraph();
+          i += 2;
+          continue;
+        }
+        currentInline.push(node);
+        i++;
+        continue;
+      }
+      if (tag === 'div') {
+        const hasBlock = hasDirectBlockChildren(node);
+        const hasImg = node.querySelector && node.querySelector('img');
+        if (hasBlock || hasImg) {
+          flushParagraph();
+          segments.push({ type: 'block', element: node });
+          i++;
+          continue;
+        }
+      }
+      currentInline.push(node);
+      i++;
+    }
+    flushParagraph();
+    return segments;
+  }
+
+  function emitMixedContentSegments(segments) {
+    for (const seg of segments) {
+      if (seg.type === 'heading' && seg.element) {
+        const text = (seg.element.textContent || '').trim();
+        if (!text) continue;
+        const formatted = getFormattedHtml(seg.element);
+        if (!formatted || !formatted.trim()) continue;
+        const headingId = getAnchorId(seg.element) || String(debugInfo.headingCount + 1);
+        debugInfo.headingCount++;
+        content.push({ type: 'heading', level: parseInt((seg.element.tagName || 'h1')[1], 10), text: formatted, id: headingId });
+        continue;
+      }
+      if (seg.type === 'paragraph' && seg.nodes && seg.nodes.length > 0) {
+        const wrap = document.createElement('div');
+        seg.nodes.forEach(n => wrap.appendChild(n.cloneNode(true)));
+        const html = getFormattedHtml(wrap);
+        const text = (wrap.textContent || '').trim();
+        if (!html || !html.trim() || text.length < MIN_TEXT_LENGTH) continue;
+        content.push({ type: 'paragraph', text: html, id: getAnchorId(wrap) || undefined });
+        continue;
+      }
+      if (seg.type === 'block' && seg.element) {
+        processElement(seg.element);
+      }
+    }
+  }
+
+  function processContainerContent(el, logPrefix) {
+    const candidateElements = Array.from(el.querySelectorAll(CONTENT_CANDIDATE_SELECTOR));
+    const filteredCandidates = filterContentCandidates(candidateElements);
+    const paragraphCount = filteredCandidates.filter(c => (c.tagName || '').toLowerCase() === 'p').length;
+    const mixedBodyDivs = filteredCandidates.filter(isMixedBodyDiv);
+
+    if (selectors.content) {
+      console.log('[ClipAIble] Content strategy' + logPrefix, {
+        candidates: candidateElements.length,
+        filtered: filteredCandidates.length,
+        paragraphs: paragraphCount,
+        mixedBodyDivs: mixedBodyDivs.length,
+        containerId: el.id
+      });
+    }
+
+    if (paragraphCount === 0 && mixedBodyDivs.length === 1) {
+      extractionDebug.strategiesUsed.push({
+        strategy: 'container_mixed_content',
+        containerTag: (el.tagName || '').toLowerCase(),
+        candidateElements: candidateElements.length,
+        filteredCandidates: filteredCandidates.length,
+        visibleElements: 0,
+        reason: 'no p tags, single mixed body div'
+      });
+      emitMixedContentSegments(parseMixedContent(mixedBodyDivs[0]));
+      return { candidateElements: candidateElements.length, filteredCandidates: filteredCandidates.length, visibleElements: 0, excludedInContainer: 0, processed: content.length };
+    }
+
+    const visibleElements = getVisibleWithFallback(filteredCandidates);
+    if (selectors.content && visibleElements.length > 0) {
+      console.log('[ClipAIble] Processing container children' + logPrefix, {
+        containerId: el.id,
+        containerClass: el.className,
+        containerTag: el.tagName,
+        childrenCount: visibleElements.length,
+        paragraphsCount: visibleElements.filter(c => (c.tagName || '').toLowerCase() === 'p').length,
+        contentSelector: selectors.content
+      });
+    }
+
+    let excludedInContainer = 0;
+    let processedInContainer = 0;
+    for (const candidateEl of visibleElements) {
+      const isInsideContentElement = !!(selectors.content && el.contains(candidateEl));
+      if (!isInsideContentElement && shouldExclude(candidateEl)) {
+        if (selectors.content && excludedInContainer < 5) {
+          console.log('[ClipAIble] Candidate excluded inside container' + logPrefix, {
+            candidateTag: candidateEl.tagName,
+            candidateId: candidateEl.id,
+            candidateClass: candidateEl.className,
+            isInsideContentElement,
+            contentSelector: selectors.content
+          });
+        }
+        excludedInContainer++;
+        continue;
+      }
+      if (isInsideContentElement && processedInContainer < 3 && selectors.content) {
+        console.log('[ClipAIble] Candidate protected (inside content element)' + logPrefix, {
+          candidateTag: candidateEl.tagName,
+          candidateId: candidateEl.id,
+          textPreview: (candidateEl.textContent || '').trim().substring(0, 50)
+        });
+      }
+      processElement(candidateEl);
+      processedInContainer++;
+    }
+    extractionDebug.strategiesUsed.push({
+      strategy: 'container_recursive',
+      containerTag: (el.tagName || '').toLowerCase(),
+      candidateElements: candidateElements.length,
+      filteredCandidates: filteredCandidates.length,
+      visibleElements: visibleElements.length,
+      excludedInContainer,
+      processed: visibleElements.length - excludedInContainer
+    });
+    return { candidateElements: candidateElements.length, filteredCandidates: filteredCandidates.length, visibleElements: visibleElements.length, excludedInContainer, processed: processedInContainer };
+  }
+
   // Find containers
   // CRITICAL: Search for articleContainer FIRST, not content selector
   // content selector is for finding content INSIDE containers, not for finding containers themselves
@@ -2270,123 +2505,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
           const isContainer = tagName === 'div' || tagName === 'section' || tagName === 'article' || tagName === 'main';
           
           if (isContainer) {
-            // Use the same aggressive approach as fallback: find ALL relevant elements inside
-            // CRITICAL: Also include div elements that contain text, as many sites wrap content in divs
-            const candidateElements = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div'));
-            
-            // Debug: log candidate elements count
-            if (selectors.content) {
-              const paragraphsCount = candidateElements.filter(c => c.tagName.toLowerCase() === 'p').length;
-              console.log('[ClipAIble] Candidate elements found', {
-                total: candidateElements.length,
-                paragraphs: paragraphsCount,
-                divs: candidateElements.filter(c => c.tagName.toLowerCase() === 'div').length,
-                containerId: el.id
-              });
-            }
-            
-            // Filter divs: only include those that contain significant text content and are not containers themselves
-            const filteredCandidates = candidateElements.filter(candidate => {
-              if (candidate.tagName.toLowerCase() === 'div') {
-                // Skip if it's a container (has DIRECT block-level children)
-                // Only check direct children, not nested ones, to allow divs with text
-                // that have nested inline elements or styled divs
-                const blockTags = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote'];
-                const hasDirectBlockChildren = Array.from(candidate.children).some(child => {
-                  const childTag = child.tagName.toLowerCase();
-                  return blockTags.includes(childTag);
-                });
-                if (hasDirectBlockChildren) return false;
-                // Only include if it has significant text content
-                const text = (candidate.textContent || '').trim();
-                return text.length > 20; // Minimum text length
-              }
-              return true; // Include all non-div elements
-            });
-            
-            // Debug: log filtered candidates count
-            if (selectors.content) {
-              const paragraphsCount = filteredCandidates.filter(c => c.tagName.toLowerCase() === 'p').length;
-              console.log('[ClipAIble] Filtered candidates', {
-                total: filteredCandidates.length,
-                paragraphs: paragraphsCount,
-                divs: filteredCandidates.filter(c => c.tagName.toLowerCase() === 'div').length
-              });
-            }
-            
-            const visibleElements = filteredCandidates.filter(isElementVisible);
-            
-            // Sort by DOM order
-            visibleElements.sort((a, b) => {
-              const pos = a.compareDocumentPosition(b);
-              if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-              if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-              return 0;
-            });
-            
-            // Debug: log container processing
-            if (selectors.content && visibleElements.length > 0) {
-              console.log('[ClipAIble] Processing container children', {
-                containerId: el.id,
-                containerClass: el.className,
-                containerTag: el.tagName,
-                childrenCount: visibleElements.length,
-                paragraphsCount: visibleElements.filter(c => c.tagName.toLowerCase() === 'p').length,
-                contentSelector: selectors.content
-              });
-            }
-            
-            // Process each element
-            let excludedInContainer = 0;
-            let processedInContainer = 0;
-            for (const candidateEl of visibleElements) {
-              // CRITICAL: If candidate element is inside the content element (el),
-              // don't exclude it even if it's inside an excluded container.
-              // The content element itself is protected, so its children should be too.
-              let isInsideContentElement = false;
-              if (selectors.content && el.contains(candidateEl)) {
-                // Candidate is inside the content element, so it's protected
-                isInsideContentElement = true;
-              }
-              
-              if (!isInsideContentElement && shouldExclude(candidateEl)) {
-                // Debug: log why candidate was excluded (only first few to avoid spam)
-                if (selectors.content && excludedInContainer < 5) {
-                  console.log('[ClipAIble] Candidate excluded inside container', {
-                    candidateTag: candidateEl.tagName,
-                    candidateId: candidateEl.id,
-                    candidateClass: candidateEl.className,
-                    isInsideContentElement: isInsideContentElement,
-                    elContainsCandidate: el.contains(candidateEl),
-                    contentSelector: selectors.content
-                  });
-                }
-                excludedInContainer++;
-                continue;
-              }
-              
-              // Debug: log protected candidates (first few)
-              if (isInsideContentElement && processedInContainer < 3) {
-                console.log('[ClipAIble] Candidate protected (inside content element)', {
-                  candidateTag: candidateEl.tagName,
-                  candidateId: candidateEl.id,
-                  candidateClass: candidateEl.className,
-                  textPreview: candidateEl.textContent ? candidateEl.textContent.trim().substring(0, 50) : ''
-                });
-              }
-              
-              processElement(candidateEl);
-              processedInContainer++;
-            }
-            extractionDebug.strategiesUsed.push({
-              strategy: 'container_recursive',
-              containerTag: tagName,
-              candidateElements: candidateElements.length,
-              filteredCandidates: filteredCandidates.length,
-              visibleElements: visibleElements.length,
-              excludedInContainer: excludedInContainer,
-              processed: visibleElements.length - excludedInContainer
-            });
+            processContainerContent(el, '');
           } else {
             // Element is not a container, process it directly
             processElement(el);
@@ -2873,125 +2992,8 @@ export function extractFromPageInlined(selectors, baseUrl) {
           const isContainer = tagName === 'div' || tagName === 'section' || tagName === 'article' || tagName === 'main';
           
           if (isContainer) {
-            // Use the same aggressive approach as fallback: find ALL relevant elements inside
-            // CRITICAL: Also include div elements that contain text, as many sites wrap content in divs
-            const candidateElements = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table, div'));
-            
-            // Debug: log candidate elements count
-            if (selectors.content) {
-              const paragraphsCount = candidateElements.filter(c => c.tagName.toLowerCase() === 'p').length;
-              console.log('[ClipAIble] Candidate elements found (single container)', {
-                total: candidateElements.length,
-                paragraphs: paragraphsCount,
-                divs: candidateElements.filter(c => c.tagName.toLowerCase() === 'div').length,
-                containerId: el.id
-              });
-            }
-            
-            // Filter divs: only include those that contain significant text content and are not containers themselves
-            const filteredCandidates = candidateElements.filter(candidate => {
-              if (candidate.tagName.toLowerCase() === 'div') {
-                // Skip if it's a container (has DIRECT block-level children)
-                // Only check direct children, not nested ones, to allow divs with text
-                // that have nested inline elements or styled divs
-                const blockTags = ['div', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote'];
-                const hasDirectBlockChildren = Array.from(candidate.children).some(child => {
-                  const childTag = child.tagName.toLowerCase();
-                  return blockTags.includes(childTag);
-                });
-                if (hasDirectBlockChildren) return false;
-                // Only include if it has significant text content
-                const text = (candidate.textContent || '').trim();
-                return text.length > 20; // Minimum text length
-              }
-              return true; // Include all non-div elements
-            });
-            
-            // Debug: log filtered candidates count
-            if (selectors.content) {
-              const paragraphsCount = filteredCandidates.filter(c => c.tagName.toLowerCase() === 'p').length;
-              console.log('[ClipAIble] Filtered candidates (single container)', {
-                total: filteredCandidates.length,
-                paragraphs: paragraphsCount,
-                divs: filteredCandidates.filter(c => c.tagName.toLowerCase() === 'div').length
-              });
-            }
-            
-            const visibleElements = filteredCandidates.filter(isElementVisible);
-            
-            // Sort by DOM order
-            visibleElements.sort((a, b) => {
-              const pos = a.compareDocumentPosition(b);
-              if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-              if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-              return 0;
-            });
-            
-            // Debug: log container processing
-            if (selectors.content && visibleElements.length > 0) {
-              console.log('[ClipAIble] Processing container children (single container path)', {
-                containerId: el.id,
-                containerClass: el.className,
-                containerTag: el.tagName,
-                childrenCount: visibleElements.length,
-                paragraphsCount: visibleElements.filter(c => c.tagName.toLowerCase() === 'p').length,
-                contentSelector: selectors.content
-              });
-            }
-            
-            // Process each element
-            let excludedInContainer = 0;
-            let processedInContainer = 0;
-            for (const candidateEl of visibleElements) {
-              // CRITICAL: If candidate element is inside the content element (el),
-              // don't exclude it even if it's inside an excluded container.
-              // The content element itself is protected, so its children should be too.
-              let isInsideContentElement = false;
-              if (selectors.content && el.contains(candidateEl)) {
-                // Candidate is inside the content element, so it's protected
-                isInsideContentElement = true;
-              }
-              
-              if (!isInsideContentElement && shouldExclude(candidateEl)) {
-                // Debug: log why candidate was excluded (only first few to avoid spam)
-                if (selectors.content && excludedInContainer < 5) {
-                  console.log('[ClipAIble] Candidate excluded inside container (single)', {
-                    candidateTag: candidateEl.tagName,
-                    candidateId: candidateEl.id,
-                    candidateClass: candidateEl.className,
-                    isInsideContentElement: isInsideContentElement,
-                    elContainsCandidate: el.contains(candidateEl),
-                    contentSelector: selectors.content
-                  });
-                }
-                excludedInContainer++;
-                continue;
-              }
-              
-              // Debug: log protected candidates (first few)
-              if (isInsideContentElement && processedInContainer < 3) {
-                console.log('[ClipAIble] Candidate protected (inside content element, single)', {
-                  candidateTag: candidateEl.tagName,
-                  candidateId: candidateEl.id,
-                  candidateClass: candidateEl.className,
-                  textPreview: candidateEl.textContent ? candidateEl.textContent.trim().substring(0, 50) : ''
-                });
-              }
-              
-              processElement(candidateEl);
-              processedInContainer++;
-            }
-            extractionDebug.strategiesUsed.push({
-              strategy: 'container_recursive',
-              containerTag: tagName,
-              candidateElements: candidateElements.length,
-              filteredCandidates: filteredCandidates.length,
-              visibleElements: visibleElements.length,
-              excludedInContainer: excludedInContainer,
-              processed: visibleElements.length - excludedInContainer
-            });
+            processContainerContent(el, ' (single container)');
           } else {
-            // Element is not a container, process it directly
             processElement(el);
           }
       }
