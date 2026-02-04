@@ -181,6 +181,11 @@ describe('htmlToMarkdown', () => {
   it('should convert line breaks', () => {
     expect(htmlToMarkdown('Line1<br>Line2')).toBe('Line1\nLine2');
   });
+
+  it('should insert space after closing ** when followed by letter', () => {
+    expect(htmlToMarkdown('<strong>word</strong>next')).toBe('**word** next');
+    expect(htmlToMarkdown('<strong>Speed.</strong>in tissues')).toBe('**Speed.** in tissues');
+  });
 });
 
 describe('adjustColorBrightness', () => {

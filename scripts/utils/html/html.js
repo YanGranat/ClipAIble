@@ -1009,6 +1009,32 @@ export function stripHtml(html) {
 }
 
 /**
+ * Tilda block ID pattern: "T" + digits, optionally split by spaces in DOM (e.g. T006, T00 6, T22 0).
+ * Matches when followed by content (digit or Cyrillic). Use for both prefix and standalone.
+ * Keep in sync with cleanExtractedHtml in scripts/background.js (injected page context).
+ */
+const TILDA_BLOCK_ID_PREFIX = /\bT[\d\s]*\d\s*(?=\d|[А-Яа-яЁё])/g;
+const TILDA_BLOCK_ID_STANDALONE_TEXT = /(^|\n)\s*T[\d\s]*\d\s*(?=\n|$)/gm;
+/** Leftover single digit when ID was in another node; only 0/6 to avoid stripping "1. Введение" */
+const TILDA_LEFTOVER_DIGIT_TEXT = /(^|\n)\s*[06]\s+(?=\d|[А-Яа-яЁё])/gm;
+
+/**
+ * Strip Tilda/CMS block ID artifacts from plain text (safety net for extraction).
+ * Single universal pattern for block IDs (T1, T006, T00 6, T220, T22 0, etc.).
+ * @param {string} text - Plain text (may contain Tilda block IDs)
+ * @returns {string} Text with Tilda IDs stripped
+ */
+export function cleanTildaArtifactsFromText(text) {
+  if (!text || typeof text !== 'string') return '';
+  let s = text;
+  s = s.replace(TILDA_BLOCK_ID_PREFIX, '');
+  s = s.replace(TILDA_BLOCK_ID_STANDALONE_TEXT, '$1');
+  s = s.replace(TILDA_LEFTOVER_DIGIT_TEXT, '$1');
+  s = s.replace(/\s{2,}/g, ' ').trim();
+  return s;
+}
+
+/**
  * Decode common HTML entities
  * @param {string} text - Text with entities
  * @returns {string} Decoded text
@@ -1130,10 +1156,45 @@ export function htmlToMarkdown(html) {
   text = text.replace(/\*\*([^*]+?)\s+\*\*/g, '**$1**');
   text = text.replace(/\*([^*\s]+?)\s+\*/g, '*$1*');
   text = text.replace(/~~([^~]+?)\s+~~/g, '~~$1~~');
-  
-  // Clean up whitespace (normalize multiple spaces to single space)
+
+  // Insert space after closing ** when immediately followed by a letter or digit (avoids "**word**next" / ".**2.2.2.**" run-together)
+  text = text.replace(/([a-zA-Zа-яА-ЯёЁ0-9.,;:!?)\]])(\*\*)([a-zA-Zа-яА-ЯёЁ0-9])/g, (_, before, stars, next) => before + stars + ' ' + next);
+
+  // Insert newline between .** and next numbered item (e.g. ".**2.2.2.**" or ".** **2.2.2.**" from Tilda)
+  text = text.replace(/(\.\*\*)\s*(\*\*)?(\d(?:\.\d)+\.?\*\*)/g, (_, close, maybeStars, numPart) => close + '\n\n**' + numPart);
+
+  // Insert newline between consecutive bold items (e.g. ";** **next**" -> ";**\n**next**") so list items get separate lines
+  text = text.replace(/(;\s*\*\*)\s*(\*\*)/g, '$1\n$2');
+
+  // Insert newline after semicolon when followed by space or directly by letter (semicolon-separated list items; Tilda often has ";word" with no space)
+  text = text.replace(/;\s+/g, ';\n');
+  text = text.replace(/;(?=[а-яa-z])/g, ';\n');
+
+  // Insert space between word and opening paren when followed by Cyrillic (e.g. "теломер(концевых" -> "теломер (концевых")
+  text = text.replace(/([а-яА-ЯёЁa-zA-Z0-9])(\()([А-Яа-яЁё])/g, '$1 $2$3');
+
+  // Clean up whitespace (normalize multiple spaces to single space, preserve newlines)
   text = text.replace(/[ \t]+/g, ' ').trim();
-  
+
+  // Fallback: when DOM did not expose lists (no ul/ol or role=list), semicolon-separated lines
+  // can be formatted as markdown list. Prefer extraction of real ul/ol in background.js.
+  const semicolonParts = text.split(/;\n/).map(p => p.trim()).filter(Boolean);
+  if (semicolonParts.length >= 2) {
+    const first = semicolonParts[0];
+    const firstLines = first.split('\n');
+    const hasIntro = firstLines.length > 1 && firstLines[0].trim().endsWith(':');
+    if (hasIntro) {
+      const introLine = firstLines[0].trim();
+      const restOfFirst = firstLines.slice(1).join('\n').trim();
+      const items = restOfFirst ? [restOfFirst, ...semicolonParts.slice(1)] : semicolonParts.slice(1);
+      text = introLine + '\n' + items.map(p => '- ' + p).join('\n');
+    } else if (first.endsWith(':') && first.length < 180) {
+      text = first + '\n' + semicolonParts.slice(1).map(p => '- ' + p).join('\n');
+    } else if (semicolonParts.length >= 3) {
+      text = semicolonParts.map(p => '- ' + p).join('\n');
+    }
+  }
+
   return text;
 }
 

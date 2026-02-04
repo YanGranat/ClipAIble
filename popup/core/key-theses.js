@@ -29,6 +29,51 @@ export function initKeyTheses(deps) {
 
   const STALE_THRESHOLD = (deps.CONFIG && deps.CONFIG.KEY_THESES_STALE_THRESHOLD_MS) || CONFIG.KEY_THESES_STALE_THRESHOLD_MS;
 
+  /** Set button to generating state (text + red cancel X) or back to normal. Button stays enabled so clicks on X are received. */
+  async function setGeneratingView(isGenerating) {
+    if (!elements.generateKeyThesesBtn) return;
+    if (isGenerating) {
+      const generatingText = await t('generatingKeyTheses') || 'Generating key theses...';
+      const cancelTitle = await t('cancel') || 'Cancel';
+      elements.generateKeyThesesBtn.classList.add('key-theses-generating');
+      elements.generateKeyThesesBtn.disabled = false;
+      elements.generateKeyThesesBtn.innerHTML = `<span class="key-theses-generating-text">${escapeHtml(generatingText)}</span><span class="key-theses-cancel" role="button" tabindex="0" title="${escapeHtml(cancelTitle)}">✕</span>`;
+    } else {
+      elements.generateKeyThesesBtn.classList.remove('key-theses-generating');
+      elements.generateKeyThesesBtn.disabled = false;
+      elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+    }
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s;
+    return div.innerHTML;
+  }
+
+  const CANCEL_REQUESTED_KEY = 'key_theses_cancel_requested';
+
+  async function cancelKeyTheses() {
+    try {
+      await chrome.storage.local.set({ [CANCEL_REQUESTED_KEY]: true });
+    } catch (_) {}
+    try {
+      await chrome.runtime.sendMessage({ action: 'cancelKeyThesesGeneration' });
+    } catch (e) {
+      logWarn('Cancel key theses message failed', e);
+    }
+    try {
+      await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
+    } catch (_) {}
+    await setGeneratingView(false);
+    showToast(await t('processingCancelled') || 'Cancelled', 'success');
+  }
+
+  async function wasKeyThesesCancelled() {
+    const r = await chrome.storage.local.get(CANCEL_REQUESTED_KEY);
+    return !!r[CANCEL_REQUESTED_KEY];
+  }
+
   function toggleKeyTheses() {
     if (!elements.keyThesesContent || !elements.keyThesesToggle) return;
     const isExpanded = elements.keyThesesContent.classList.contains('expanded');
@@ -72,16 +117,24 @@ export function initKeyTheses(deps) {
     }
   }
 
+  function sanitizeFilename(s) {
+    if (!s || typeof s !== 'string') return '';
+    const sanitized = s.replace(/[/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+    return sanitized.slice(0, 120) || '';
+  }
+
   async function downloadKeyTheses() {
     if (!elements.keyThesesText) return;
     const text = elements.keyThesesText.dataset.originalMarkdown || elements.keyThesesText.textContent || elements.keyThesesText.innerText;
     if (!text) return;
     try {
+      const stored = await chrome.storage.local.get(['key_theses_article_title']);
       const state = await chrome.runtime.sendMessage({ action: 'getState' });
-      const title = (state?.result?.title) ? state.result.title.replace(/[^\w\s-]/g, '').trim() : 'key-theses';
+      const rawTitle = stored.key_theses_article_title || state?.result?.title || '';
+      const baseName = sanitizeFilename(rawTitle);
       const a = document.createElement('a');
       a.href = 'data:text/markdown;charset=utf-8,' + encodeURIComponent(text);
-      a.download = `${title}-key-theses.md`;
+      a.download = baseName ? `${baseName}, key-theses.md` : 'key-theses.md';
       a.click();
       showToast((await t('downloadStarted')) || 'Download started', 'success');
     } catch (error) {
@@ -103,19 +156,18 @@ export function initKeyTheses(deps) {
       if (isGenerating && storageResult.key_theses_generating_start_time) {
         const startTime = Number(storageResult.key_theses_generating_start_time);
         const timeSinceStart = Date.now() - startTime;
-        if (timeSinceStart > STALE_THRESHOLD) {
+        const hasKeyTheses = !!storageResult[STORAGE_KEYS.KEY_THESES_TEXT];
+        const HUNG_THRESHOLD_MS = 90 * 1000;
+        const isHung = timeSinceStart > HUNG_THRESHOLD_MS && !hasKeyTheses;
+        if (timeSinceStart > STALE_THRESHOLD || isHung) {
           await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
-          if (elements.generateKeyThesesBtn) {
-            elements.generateKeyThesesBtn.disabled = false;
-            elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
-          }
+          if (elements.generateKeyThesesBtn) await setGeneratingView(false);
           return;
         }
       }
 
       if (isGenerating && elements.generateKeyThesesBtn) {
-        elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
-        elements.generateKeyThesesBtn.disabled = true;
+        await setGeneratingView(true);
       } else if (storageResult[STORAGE_KEYS.KEY_THESES_TEXT] && !isGenerating && elements.keyThesesText && elements.keyThesesContainer) {
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
         if (doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) return;
@@ -124,10 +176,7 @@ export function initKeyTheses(deps) {
         const currentMarkdown = elements.keyThesesText.dataset.originalMarkdown;
         const containerWasHidden = elements.keyThesesContainer.style.display === 'none';
 
-        if (elements.generateKeyThesesBtn) {
-          elements.generateKeyThesesBtn.disabled = false;
-          elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
-        }
+        if (elements.generateKeyThesesBtn) await setGeneratingView(false);
         const keyThesesStr = typeof saved === 'string' ? saved : String(saved || '');
         if (currentMarkdown !== keyThesesStr || containerWasHidden) {
           elements.keyThesesText.dataset.originalMarkdown = keyThesesStr;
@@ -142,25 +191,24 @@ export function initKeyTheses(deps) {
         }
       } else if (!isGenerating && elements.generateKeyThesesBtn) {
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
-        if (!doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) {
-          elements.generateKeyThesesBtn.disabled = false;
-          elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
-        } else {
-          elements.generateKeyThesesBtn.disabled = true;
-          elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
-        }
+        if (!doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) await setGeneratingView(false);
+        else await setGeneratingView(true);
       }
     } catch (error) {
       logWarn('Error checking key theses status', error);
-      if (elements.generateKeyThesesBtn) {
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
-      }
+      if (elements.generateKeyThesesBtn) await setGeneratingView(false);
     }
   }
 
-  async function handleGenerateKeyTheses() {
+  async function handleGenerateKeyTheses(ev) {
     if (!elements.generateKeyThesesBtn || !elements.keyThesesContainer) return;
+    if (ev && ev.target && ev.target.closest && ev.target.closest('.key-theses-cancel')) {
+      await cancelKeyTheses();
+      return;
+    }
+    if (elements.generateKeyThesesBtn.classList.contains('key-theses-generating')) {
+      return;
+    }
 
     const required = ['modelSelect', 'apiKey', 'modeSelect', 'useCache'];
     const missing = required.filter(k => !elements[k]);
@@ -178,7 +226,8 @@ export function initKeyTheses(deps) {
       await chrome.storage.local.set({
         [STORAGE_KEYS.KEY_THESES_GENERATING]: true,
         key_theses_generating_start_time: Date.now(),
-        [STORAGE_KEYS.KEY_THESES_TEXT]: null
+        [STORAGE_KEYS.KEY_THESES_TEXT]: null,
+        key_theses_cancel_requested: false
       });
       await chrome.storage.local.remove([STORAGE_KEYS.KEY_THESES_TEXT, 'key_theses_saved_timestamp']);
       if (elements.keyThesesContainer) {
@@ -189,22 +238,19 @@ export function initKeyTheses(deps) {
         elements.keyThesesText.innerHTML = '';
         elements.keyThesesText.dataset.originalMarkdown = '';
       }
-      elements.generateKeyThesesBtn.disabled = true;
-      elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
+      await setGeneratingView(true);
 
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab) {
         await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
         showToast((await t('noTabAvailable')) || 'No active tab found.', 'error');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+        await setGeneratingView(false);
         return;
       }
       if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
         await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
         showToast((await t('pageNotAccessible')) || 'This page is not accessible.', 'error');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+        await setGeneratingView(false);
         return;
       }
 
@@ -223,8 +269,7 @@ export function initKeyTheses(deps) {
           if (!subtitlesData?.subtitles?.length) {
             await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
             showToast((await t('errorNoSubtitles')) || 'No subtitles found.', 'error');
-            elements.generateKeyThesesBtn.disabled = false;
-            elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+            await setGeneratingView(false);
             return;
           }
           contentItems = subtitlesData.subtitles.map(s => ({ type: 'paragraph', text: s.text || s }));
@@ -232,8 +277,7 @@ export function initKeyTheses(deps) {
           logError('YouTube key theses extraction failed', err);
           await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
           showToast((await t('errorSubtitleProcessingFailed')) || 'Failed to process subtitles', 'error');
-          elements.generateKeyThesesBtn.disabled = false;
-          elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+          await setGeneratingView(false);
           return;
         }
         model = elements.modelSelect.value;
@@ -243,24 +287,29 @@ export function initKeyTheses(deps) {
           try { apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted); } catch (e) {
             await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
             showToast((await t('failedToDecryptApiKey')) || 'Failed to decrypt API key', 'error');
-            elements.generateKeyThesesBtn.disabled = false;
-            elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+            await setGeneratingView(false);
             return;
           }
         }
         if (!apiKey) {
           const name = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
           showToast((await t(`pleaseEnter${name}ApiKey`)) || `Please enter ${name} API key`, 'error');
-          elements.generateKeyThesesBtn.disabled = false;
-          elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+          await setGeneratingView(false);
           return;
         }
         const targetLanguage = elements.languageSelect?.value || 'auto';
         const uiLanguage = await getUILanguage();
         const thesesLanguage = targetLanguage !== 'auto' ? targetLanguage : uiLanguage;
+        if (await wasKeyThesesCancelled()) {
+          await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null, key_theses_cancel_requested: false });
+          await setGeneratingView(false);
+          showToast(await t('processingCancelled') || 'Cancelled', 'success');
+          return;
+        }
+        const articleTitle = tab?.title || '';
         const response = await chrome.runtime.sendMessage({
           action: 'generateKeyTheses',
-          data: { contentItems, apiKey, model, url: currentUrl, language: thesesLanguage }
+          data: { contentItems, apiKey, model, url: currentUrl, language: thesesLanguage, title: articleTitle }
         });
         if (response?.error) throw new Error(response.error);
         if (!response?.started) throw new Error(tSync('errorSummaryGenerationFailed', await getUILanguage()));
@@ -288,8 +337,7 @@ export function initKeyTheses(deps) {
       if (!htmlResult?.[0]?.result) {
         await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
         showToast((await t('noContentAvailable')) || 'No content available.', 'error');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+        await setGeneratingView(false);
         return;
       }
       const pageData = htmlResult[0].result;
@@ -300,16 +348,14 @@ export function initKeyTheses(deps) {
         try { apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted); } catch (e) {
           await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
           showToast((await t('failedToDecryptApiKey')) || 'Failed to decrypt API key', 'error');
-          elements.generateKeyThesesBtn.disabled = false;
-          elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+          await setGeneratingView(false);
           return;
         }
       }
       if (!apiKey) {
         const name = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
         showToast((await t(`pleaseEnter${name}ApiKey`)) || `Please enter ${name} API key`, 'error');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+        await setGeneratingView(false);
         return;
       }
       const targetLanguage = elements.languageSelect?.value || 'auto';
@@ -327,31 +373,39 @@ export function initKeyTheses(deps) {
           mode: elements.modeSelect.value,
           useCache: elements.useCache.checked,
           tabId: tab.id,
-          autoGenerateSummary: false,
+          autoGenerateKeyTheses: true,
           language: thesesLanguage
         }
       });
       if (chrome.runtime.lastError) throw new Error(chrome.runtime.lastError.message);
       if (!extractResponse) throw new Error(tSync('errorNoResponseFromBackground', await getUILanguage()));
+      if (extractResponse.cancelled) {
+        await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null, key_theses_cancel_requested: false });
+        await setGeneratingView(false);
+        showToast(await t('processingCancelled') || 'Cancelled', 'success');
+        return;
+      }
       if (extractResponse.error) throw new Error(extractResponse.error);
-      if (extractResponse.extracting === true) {
-        await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
-        showToast((await t('contentExtractionInProgress')) || 'Content extraction in progress. Try again in a moment.', 'error');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+      if (extractResponse.success && extractResponse.extracting === true) {
         return;
       }
       contentItems = extractResponse?.result?.content;
       if (!contentItems || !Array.isArray(contentItems) || contentItems.length === 0) {
         await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
         showToast((await t('noContentAvailable')) || 'Failed to extract content.', 'error');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+        await setGeneratingView(false);
         return;
       }
+      if (await wasKeyThesesCancelled()) {
+        await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null, key_theses_cancel_requested: false });
+        await setGeneratingView(false);
+        showToast(await t('processingCancelled') || 'Cancelled', 'success');
+        return;
+      }
+      const articleTitle = extractResponse?.result?.title || tab?.title || '';
       const response = await chrome.runtime.sendMessage({
         action: 'generateKeyTheses',
-        data: { contentItems, apiKey, model, url: currentUrl, language: thesesLanguage }
+        data: { contentItems, apiKey, model, url: currentUrl, language: thesesLanguage, title: articleTitle }
       });
       if (response?.error) throw new Error(response.error);
       if (!response?.started) throw new Error(tSync('errorSummaryGenerationFailed', await getUILanguage()));
@@ -361,28 +415,20 @@ export function initKeyTheses(deps) {
         await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null });
       } catch (_) {}
       showToast(error?.message || (await t('keyThesesGenerationError')) || 'Error generating key theses', 'error');
-      elements.generateKeyThesesBtn.disabled = false;
-      elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+      await setGeneratingView(false);
     } finally {
       try {
         const check = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
         if (!check[STORAGE_KEYS.KEY_THESES_GENERATING]) {
           await new Promise(r => setTimeout(r, 100));
           const again = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
-          if (!again[STORAGE_KEYS.KEY_THESES_GENERATING]) {
-            elements.generateKeyThesesBtn.disabled = false;
-            elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
-          } else {
-            elements.generateKeyThesesBtn.disabled = true;
-            elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
-          }
+          if (!again[STORAGE_KEYS.KEY_THESES_GENERATING]) await setGeneratingView(false);
+          else await setGeneratingView(true);
         } else {
-          elements.generateKeyThesesBtn.disabled = true;
-          elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
+          await setGeneratingView(true);
         }
       } catch (_) {
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.textContent = await t('generateKeyTheses') || 'Key theses';
+        await setGeneratingView(false);
       }
     }
   }

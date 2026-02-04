@@ -78,7 +78,10 @@ export function initInitialization(deps) {
             timestamp: Date.now()
           });
           try {
-            await chrome.storage.local.remove(['summary_text', 'summary_saved_timestamp', 'key_theses_text', 'key_theses_saved_timestamp']);
+            await chrome.storage.local.remove([
+              'summary_text', 'summary_saved_timestamp',
+              'key_theses_text', 'key_theses_saved_timestamp', 'key_theses_article_title'
+            ]);
             log('Summary and key theses cleared from storage on extension reload');
           } catch (error) {
             const normalized = await handleError(error, {
@@ -131,7 +134,8 @@ export function initInitialization(deps) {
               summary_generating: false,
               summary_generating_start_time: null,
               key_theses_generating: false,
-              key_theses_generating_start_time: null
+              key_theses_generating_start_time: null,
+              key_theses_cancel_requested: false
             });
             log('summary_generating and key_theses_generating flags cleared on extension reload');
           } catch (error) {

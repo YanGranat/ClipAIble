@@ -567,6 +567,24 @@ export function extractFromPageInlined(selectors, baseUrl) {
     totalContentItemsBeforeInsert: 0
   };
   
+  // Detailed extraction log (returned in debug for diagnosis); all inputs/outputs and decisions
+  const extractionLog = [];
+  const MAX_LOG_PREVIEW = 120;
+  const MAX_EXTRACTION_LOG = 2500;
+  function addLog(step, data) {
+    const safe = {};
+    for (const k in data) {
+      if (Object.prototype.hasOwnProperty.call(data, k)) {
+        const v = data[k];
+        if (typeof v === 'string' && v.length > MAX_LOG_PREVIEW) safe[k] = v.substring(0, MAX_LOG_PREVIEW) + '…';
+        else if (Array.isArray(v)) safe[k] = v.length > 25 ? v.slice(0, 25) : v;
+        else safe[k] = v;
+      }
+    }
+    extractionLog.push({ t: Date.now(), step, ...safe });
+    if (extractionLog.length > MAX_EXTRACTION_LOG) extractionLog.shift();
+  }
+  
   // Helper functions
   function escapeHtml(text) {
     if (!text) return '';
@@ -668,8 +686,36 @@ export function extractFromPageInlined(selectors, baseUrl) {
     return false;
   }
   
+  /**
+   * Single place for CMS/editor artifacts cleanup. Applied to all extracted HTML.
+   * Tilda: universal block ID pattern T[\d\s]*\d (covers T1, T006, T00 6, T220, T22 0, etc.).
+   * Must stay in sync with cleanTildaArtifactsFromText in scripts/utils/html/html.js.
+   * @param {string} html
+   * @returns {string}
+   */
+  function cleanExtractedHtml(html) {
+    if (!html || typeof html !== 'string') return '';
+    let s = html;
+    // Tilda: inline CSS blocks (#rec123 .t006__uptitle{...})
+    s = s.replace(/#rec\d+(?:\s*[.,#\w\s\-]+)*\s*\{[^}]*\}/g, '');
+    // Tilda: block ID as prefix (T + digits, optional spaces between digits from DOM split)
+    s = s.replace(/\bT[\d\s]*\d\s*(?=\d|[А-Яа-яЁё])/g, '');
+    // Tilda: standalone block ID after tag or at start
+    s = s.replace(/(^|>)\s*T[\d\s]*\d\s*(?=<|$)/g, '$1');
+    // Tilda: leftover digit when ID was in another node (0/6 only to avoid stripping "1. Введение")
+    s = s.replace(/(^|>)\s*[06]\s+(?=\d|[А-Яа-яЁё])/g, '$1');
+    // Tilda: leaked class names (.t006__*, .t1__*, etc.)
+    s = s.replace(/\.t\d+__[\w-]+/g, '');
+    s = s.replace(/\s{2,}/g, ' ').trim();
+    if (s.replace(/<[^>]+>/g, '').replace(/\s/g, '').length === 0) return '';
+    return s;
+  }
+
   function getFormattedHtml(element) {
     const clone = element.cloneNode(true);
+    
+    // Remove style/script so CSS and JS do not leak into extracted text (e.g. Tilda blocks)
+    clone.querySelectorAll('style, script').forEach(el => el.remove());
     
     // Remove Wikipedia edit section spans (all languages use same class)
     clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
@@ -830,7 +876,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
       htmlResult = htmlResult + '</a>'.repeat(missing);
     }
     
-    return htmlResult;
+    return cleanExtractedHtml(htmlResult);
   }
   
   // Image helpers
@@ -1096,6 +1142,16 @@ export function extractFromPageInlined(selectors, baseUrl) {
     debugInfo.containerSelector = 'body';
   }
   
+  addLog('container_resolution', {
+    path: containers.length > 0 ? 'multiContainer' : 'singleContainer',
+    containersCount: containers.length,
+    containerId: container ? (container.id || null) : null,
+    containerClass: container ? (String(container.className || '').substring(0, 60)) : null,
+    containerSelector: debugInfo.containerSelector,
+    articleContainerSelector: selectors.articleContainer || null,
+    contentSelector: selectors.content || null
+  });
+  
   // Helper function to extract clean title text from element
   // Handles Wikipedia-style edit section spans that pollute title text
   function getCleanTitleText(element) {
@@ -1132,7 +1188,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   if (!articleTitle) { const h1 = document.querySelector('h1'); if (h1) articleTitle = getCleanTitleText(h1); }
   
-  // Clean title from service data and residual edit patterns
+  // Clean title from service data, residual edit patterns, and CMS artifacts (Tilda T006 etc.)
   // Note: cleanTitleFromServiceTokens is not available in page context, so we inline the logic here
   if (articleTitle && typeof articleTitle === 'string') {
     let cleaned = articleTitle;
@@ -1142,11 +1198,11 @@ export function extractFromPageInlined(selectors, baseUrl) {
     cleaned = cleaned.replace(/budget\w+/gi, '');
     cleaned = cleaned.replace(/#+/g, '');
     // Remove Wikipedia-style edit links that might remain as text: [edit], [ред.], [редагувати], etc.
-    // Pattern matches: [text] or [text | text] at end of string where text is short edit-related words
     cleaned = cleaned.replace(/\s*\[[^\]]{1,30}\s*\|\s*[^\]]{1,30}\]\s*$/g, '');
     cleaned = cleaned.replace(/\s*\[(edit|ред\.?|редагувати|править|editar|modifier|bearbeiten|編集|编辑|편집)[^\]]*\]\s*$/gi, '');
     cleaned = cleaned.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
     cleaned = cleaned.replace(/^[_\s-]+|[_\s-]+$/g, '');
+    cleaned = cleanExtractedHtml(cleaned).trim() || cleaned;
     articleTitle = cleaned || articleTitle;
   }
   
@@ -1189,12 +1245,15 @@ export function extractFromPageInlined(selectors, baseUrl) {
   
   function processElement(element) {
     const tagName = element.tagName.toLowerCase();
+    const textLen = element.textContent ? element.textContent.trim().length : 0;
+    const textPreview = element.textContent ? element.textContent.trim().substring(0, MAX_LOG_PREVIEW) : '';
+    addLog('pe_in', { tag: tagName, id: element.id || null, class: String(element.className || '').substring(0, 50), textLen, textPreview });
     const elementInfo = {
       tagName: tagName,
       id: element.id || null,
       className: element.className || null,
-      textContentLength: element.textContent ? element.textContent.trim().length : 0,
-      textContentPreview: element.textContent ? element.textContent.trim().substring(0, 100) : null
+      textContentLength: textLen,
+      textContentPreview: textPreview
     };
     
     // CRITICAL: If element is inside the content element (found by content selector),
@@ -1219,6 +1278,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
     
     if (!isInsideContentElement && shouldExclude(element)) {
       debugInfo.elementsExcluded++;
+      addLog('pe_skip', { reason: 'shouldExclude', tag: tagName, id: element.id || null });
       return;
     }
     
@@ -1241,6 +1301,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
       cssVisibility = style.visibility;
       if (style.display === 'none' || style.visibility === 'hidden') {
         cssHidden = true;
+        addLog('pe_skip', { reason: 'cssHidden', tag: tagName, display: cssDisplay, visibility: cssVisibility });
         return;
       }
     } catch (e) {
@@ -1254,12 +1315,26 @@ export function extractFromPageInlined(selectors, baseUrl) {
     if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
       const text = element.textContent.trim();
       const formattedText = getFormattedHtml(element);
+      // Skip if cleaned text is empty (e.g. Tilda block ID only: T135, T602)
+          if (!formattedText || !formattedText.trim()) {
+        addLog('pe_skip', { reason: 'heading_empty_after_clean', tag: tagName, rawLen: text.length, rawPreview: text.substring(0, 50) });
+        return;
+      }
       // Include heading even if it matches articleTitle (it's the main title)
       // Only skip if it's clearly author name or other metadata
       if (text) {
         if (articleAuthor) {
           const tl = text.toLowerCase(), al = articleAuthor.toLowerCase();
-          if (tl === al || (text.length < 50 && tl.includes(al))) return;
+          if (tl === al || (text.length < 50 && tl.includes(al))) {
+            addLog('pe_skip', { reason: 'heading_author_match', tag: tagName });
+            return;
+          }
+        }
+        // skip heading that is only a section number (e.g. "2" from Tilda layout)
+        const headingTextNorm = text.replace(/\s+/g, ' ').trim();
+        if (/^\d+$/.test(headingTextNorm)) {
+          addLog('pe_skip', { reason: 'heading_only_number', tag: tagName, text: headingTextNorm });
+          return;
         }
         let headingId = elementId;
         if (!headingId) {
@@ -1270,6 +1345,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
         debugInfo.headingCount++;
         const headingItem = { type: 'heading', level: parseInt(tagName[1]), text: formattedText, id: headingId };
         content.push(headingItem);
+        addLog('pe_pushed', { type: 'heading', level: parseInt(tagName[1]), textLen: text.length, textPreview: text.substring(0, MAX_LOG_PREVIEW) });
         
         // Track first heading position and insert subtitle immediately after it
         // This ensures subtitle is right after the title, before any other content
@@ -1330,27 +1406,18 @@ export function extractFromPageInlined(selectors, baseUrl) {
       if (html.trim()) {
         const pt = element.textContent?.trim() || '';
         if (articleAuthor && pt === articleAuthor) {
-          // Debug: log why paragraph was skipped
-          if (debugInfo.elementsProcessed < 5) {
-            console.log('[ClipAIble processElement] Paragraph skipped (author match)', {
-              textPreview: pt.substring(0, 50)
-            });
-          }
+          addLog('pe_skip', { reason: 'paragraph_author_match', tag: tagName });
           return;
         }
         const ct = pt.replace(/[\s\u00A0]/g, '');
         if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) {
-          // Debug: log why paragraph was skipped
-          if (debugInfo.elementsProcessed < 5) {
-            console.log('[ClipAIble processElement] Paragraph skipped (separator)', {
-              textPreview: pt.substring(0, 50)
-            });
-          }
+          addLog('pe_skip', { reason: 'paragraph_separator', tag: tagName });
           return;
         }
         if (elementId && !element.id && !html.startsWith(`<a id="${elementId}"`)) html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
         
         content.push({ type: 'paragraph', text: html, id: elementId });
+        addLog('pe_pushed', { type: 'paragraph', textLen: pt.length, textPreview: pt.substring(0, MAX_LOG_PREVIEW) });
         
         // Debug: log successful addition (first few only)
         if (debugInfo.elementsProcessed < 5) {
@@ -1360,13 +1427,8 @@ export function extractFromPageInlined(selectors, baseUrl) {
           });
         }
       } else {
-        // Debug: log why paragraph was not added
-        if (debugInfo.elementsProcessed < 5) {
-          console.log('[ClipAIble processElement] Paragraph not added (empty html)', {
-            textContent: element.textContent ? element.textContent.trim().substring(0, 50) : '',
-            htmlLength: html.length
-          });
-        }
+        const ptLen = (element.textContent || '').trim().length;
+        addLog('pe_skip', { reason: 'paragraph_empty_html', tag: tagName, textLen: ptLen, textPreview: (element.textContent || '').trim().substring(0, 50) });
       }
     }
     else if (tagName === 'img') {
@@ -1380,6 +1442,9 @@ export function extractFromPageInlined(selectors, baseUrl) {
       if (src && !isTrackingPixelOrSpacer(element, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(element, src)) {
         content.push({ type: 'image', src: src, alt: element.alt || '', id: elementId });
         addedImageUrls.add(ns);
+        addLog('pe_pushed', { type: 'image', id: elementId });
+      } else {
+        addLog('pe_skip', { reason: 'image_filtered', tag: 'img' });
       }
     }
     else if (tagName === 'picture') {
@@ -1505,7 +1570,9 @@ export function extractFromPageInlined(selectors, baseUrl) {
       }
     }
     else if (tagName === 'blockquote') {
-      content.push({ type: 'quote', text: getFormattedHtml(element), id: elementId });
+      const qt = getFormattedHtml(element);
+      content.push({ type: 'quote', text: qt, id: elementId });
+      addLog('pe_pushed', { type: 'quote', textLen: (element.textContent || '').trim().length });
     }
     else if (tagName === 'ul' || tagName === 'ol') {
       if (Object.keys(tocMapping).length === 0) extractTocMapping(element);
@@ -1515,7 +1582,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
         if (liId && !html.includes(`id="${liId}"`)) html = `<a id="${liId}" name="${liId}"></a>${html}`;
         return { html, id: liId };
       }).filter(item => item.html);
-      if (items.length > 0) content.push({ type: 'list', ordered: tagName === 'ol', items: items, id: elementId });
+      if (items.length > 0) {
+        content.push({ type: 'list', ordered: tagName === 'ol', items: items, id: elementId });
+        addLog('pe_pushed', { type: 'list', ordered: tagName === 'ol', itemCount: items.length, textPreview: (element.textContent || '').trim().substring(0, MAX_LOG_PREVIEW) });
+      }
     }
     else if (tagName === 'pre') {
       const code = element.querySelector('code');
@@ -1563,7 +1633,33 @@ export function extractFromPageInlined(selectors, baseUrl) {
         const childTag = child.tagName.toLowerCase();
         return blockTags.includes(childTag);
       });
-      
+      const textContent = element.textContent?.trim() || '';
+      const hasSignificantText = textContent.length >= 20;
+      // Tilda and common CMS use semantic <ul>/<ol> for lists (see Tilda accessibility docs; openlongevity snapshot shows list/listitem = ul/li in a11y tree).
+      const hasDirectList = Array.from(element.children).some(c => ['ul', 'ol'].includes((c.tagName || '').toLowerCase()));
+
+      // If div has both block children and significant text, text may live in text nodes (e.g. Tilda
+      // intro). But if it has direct ul/ol, we must recurse so lists are extracted as type: 'list',
+      // not flattened into one paragraph.
+      if (hasDirectBlockChildren && hasSignificantText && !hasDirectList) {
+        let html = getFormattedHtml(element);
+        if (!html.trim() && textContent.length > 0) {
+          addLog('pe_div_fallback_textContent', { tag: tagName, textLen: textContent.length, textPreview: textContent.substring(0, 60) });
+          html = textContent;
+        }
+        if (html.trim()) {
+          if (articleAuthor && textContent === articleAuthor) return;
+          const ct = textContent.replace(/[\s\u00A0]/g, '');
+          if (ct.length <= 3 && /^[—–\-\._·•\*]+$/.test(ct)) return;
+          if (elementId && !element.id && !html.startsWith(`<a id="${elementId}"`)) {
+            html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
+          }
+          content.push({ type: 'paragraph', text: html, id: elementId });
+          addLog('pe_pushed', { type: 'paragraph_div_mixed', textLen: textContent.length, textPreview: textContent.substring(0, MAX_LOG_PREVIEW) });
+          return;
+        }
+      }
+
       if (hasDirectBlockChildren) {
         // It's a container - process children
         for (const child of element.children) processElement(child);
@@ -1588,11 +1684,11 @@ export function extractFromPageInlined(selectors, baseUrl) {
         if (hasSignificantText && isBlockLevel) {
           let html = getFormattedHtml(element);
           // CRITICAL: If getFormattedHtml returns empty string, use textContent as fallback
-          // This ensures div-paragraphs are not lost if getFormattedHtml removes all content
           if (!html.trim()) {
+            if (textContent.length > 0) addLog('pe_div_fallback_textContent', { tag: tagName, textLen: textContent.length, textPreview: textContent.substring(0, 60) });
             html = textContent;
           }
-          if (html.trim()) {
+            if (html.trim()) {
             const pt = textContent;
             if (articleAuthor && pt === articleAuthor) return;
             const ct = pt.replace(/[\s\u00A0]/g, '');
@@ -1601,6 +1697,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
               html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
             }
             content.push({ type: 'paragraph', text: html, id: elementId });
+            addLog('pe_pushed', { type: 'paragraph_div', textLen: pt.length, textPreview: pt.substring(0, MAX_LOG_PREVIEW) });
           }
         } else if (hasSignificantText) {
           // If element has text but is not block-level, process its children instead
@@ -1654,6 +1751,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
             html = `<a id="${elementId}" name="${elementId}"></a>${html}`;
           }
           content.push({ type: 'paragraph', text: html, id: elementId });
+          addLog('pe_pushed', { type: 'paragraph_other', tag: tagName, textLen: pt.length });
         }
       } else if (hasSignificantText) {
         // If element has text but is not block-level, process its children instead
@@ -1784,7 +1882,9 @@ export function extractFromPageInlined(selectors, baseUrl) {
           if (style.display === 'none' || style.visibility === 'hidden') {
             // Element is hidden, skip it
           } else {
-            const subtitleText = subtitleEl.textContent.trim();
+            // Use innerText so <br> and block boundaries become newlines; then normalize to single spaces
+            const raw = (subtitleEl.innerText || subtitleEl.textContent || '').trim();
+            const subtitleText = raw.replace(/\s+/g, ' ').trim();
             subtitleDebug.subtitleText = subtitleText.substring(0, 100);
             // Subtitle should be meaningful (at least 20 characters, typically 50-300)
             if (subtitleText && subtitleText.length >= 20) {
@@ -1802,7 +1902,8 @@ export function extractFromPageInlined(selectors, baseUrl) {
           }
         } catch (styleError) {
           // If style check fails, try to extract anyway
-          const subtitleText = subtitleEl.textContent.trim();
+          const raw = (subtitleEl.innerText || subtitleEl.textContent || '').trim();
+          const subtitleText = raw.replace(/\s+/g, ' ').trim();
           if (subtitleText && subtitleText.length >= 20 && !shouldExclude(subtitleEl)) {
             subtitleDebug.subtitleText = subtitleText.substring(0, 100);
             const subtitleHtml = getFormattedHtml(subtitleEl);
@@ -1832,9 +1933,14 @@ export function extractFromPageInlined(selectors, baseUrl) {
   };
   
   if (containers.length > 0) {
+    addLog('path_taken', { path: 'multiContainer', containersCount: containers.length });
     for (const cont of containers) {
       const result = findContentElements(cont, selectors.content, containerSelector);
       extractionDebug.strategiesUsed.push(...(result.debug || []));
+      addLog('findContentElements_result', { path: 'multiContainer', containerId: cont.id || null, elementsCount: result.elements ? result.elements.length : 0, strategies: result.debug || [] });
+      if (!result.elements || result.elements.length === 0) {
+        extractionDebug.fallbackBranchReason = !selectors.content || selectors.content === containerSelector ? 'content selector same as container or missing' : 'findContentElements returned no elements';
+      }
       if (result.elements && result.elements.length > 0) {
         extractionDebug.contentElementsFound += result.elements.length;
         // Process found elements
@@ -1924,20 +2030,26 @@ export function extractFromPageInlined(selectors, baseUrl) {
               if (tagName === 'h1' && className.includes('longform-header-one')) {
                 if (text && text.length > 3) {
                   const html = getFormattedHtml(elem);
-                  const elemId = getAnchorId(elem);
-                  content.push({ type: 'heading', level: 1, text: html, id: elemId });
+                  if (html.trim()) {
+                    const elemId = getAnchorId(elem);
+                    content.push({ type: 'heading', level: 1, text: html, id: elemId });
+                  }
                 }
               } else if (tagName === 'h2' && className.includes('longform-header-two')) {
                 if (text && text.length > 3) {
                   const html = getFormattedHtml(elem);
-                  const elemId = getAnchorId(elem);
-                  content.push({ type: 'heading', level: 2, text: html, id: elemId });
+                  if (html.trim()) {
+                    const elemId = getAnchorId(elem);
+                    content.push({ type: 'heading', level: 2, text: html, id: elemId });
+                  }
                 }
               } else if (tagName === 'h3' && className.includes('longform-header-three')) {
                 if (text && text.length > 3) {
                   const html = getFormattedHtml(elem);
-                  const elemId = getAnchorId(elem);
-                  content.push({ type: 'heading', level: 3, text: html, id: elemId });
+                  if (html.trim()) {
+                    const elemId = getAnchorId(elem);
+                    content.push({ type: 'heading', level: 3, text: html, id: elemId });
+                  }
                 }
               }
               // Process paragraphs (only those that don't contain draft blocks)
@@ -2290,35 +2402,163 @@ export function extractFromPageInlined(selectors, baseUrl) {
           });
         }
       } else {
-        // Fallback: process all children recursively
-        // CRITICAL: When content selector matches container selector, we need to process ALL elements
-        // including nested ones (img, picture, figure) that might be inside paragraphs or other elements
-        extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children recursively', reason: 'No content elements found or content selector matches container' });
-        
-        // Collect all candidate elements from container (not just direct children)
-        // Include <font> for old websites that use deprecated HTML tags
-        const candidateElements = Array.from(cont.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table'));
-        // Filter to only visible elements
-        const visibleElements = candidateElements.filter(isElementVisible);
-        
-        // Sort by DOM order
-        visibleElements.sort((a, b) => {
-          const pos = a.compareDocumentPosition(b);
-          if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-          if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-          return 0;
+        // Fallback: when content selector matches container (e.g. #allrecords on Tilda),
+        // try section-aware extraction first so we preserve "1", "2.1.1", "Ожидаемый результат:" as headings.
+        // Debug data is written to extractionDebug.fallbackDetail so it appears in clipaible-logs (this code runs in page context, console.log would only show in page DevTools).
+        const fallbackDetail = {
+          containerId: cont.id || null,
+          containerClass: (cont.className && String(cont.className).substring(0, 80)) || null,
+          rawChildrenCount: cont.children.length,
+          contentSelector: selectors.content,
+          containerSelector: containerSelector
+        };
+        let filteredByExclude = 0;
+        let filteredByVisibility = 0;
+        const directChildren = Array.from(cont.children).filter(el => {
+          if (shouldExclude(el)) { filteredByExclude++; return false; }
+          try {
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') { filteredByVisibility++; return false; }
+          } catch (e) {}
+          return true;
         });
-        
-        // Process each element
-        for (const el of visibleElements) {
-          if (shouldExclude(el)) continue;
-          processElement(el);
+        fallbackDetail.directChildrenFilteredByExclude = filteredByExclude;
+        fallbackDetail.directChildrenFilteredByVisibility = filteredByVisibility;
+        const directDivCount = directChildren.filter(el => el.tagName.toLowerCase() === 'div').length;
+        const useSectionAware = directDivCount >= 3 && directChildren.length >= 3;
+        fallbackDetail.directChildrenCount = directChildren.length;
+        fallbackDetail.directDivCount = directDivCount;
+        fallbackDetail.useSectionAware = useSectionAware;
+        fallbackDetail.directChildrenPreview = directChildren.map((el, idx) => ({
+          index: idx,
+          tag: el.tagName.toLowerCase(),
+          id: el.id || null,
+          class: (el.className && String(el.className).substring(0, 60)) || null,
+          textPreview: (el.textContent && el.textContent.trim().substring(0, 80)) || ''
+        }));
+
+        if (useSectionAware) {
+          extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'section-aware (direct children as sections)', reason: 'No content elements found or content selector matches container', directDivCount });
+          fallbackDetail.sectionAwareDivs = [];
+          fallbackDetail.sectionBodySummary = [];
+          for (let childIdx = 0; childIdx < directChildren.length; childIdx++) {
+            const child = directChildren[childIdx];
+            const tag = child.tagName.toLowerCase();
+            if (tag === 'div') {
+              const text = (child.textContent || '').trim();
+              const hasList = child.querySelector('ul, ol');
+              const looksLikeSectionHeader = !hasList && text.length > 0 && text.length <= 220;
+              fallbackDetail.sectionAwareDivs.push({ childIndex: childIdx, textLen: text.length, hasList: !!hasList, looksLikeSectionHeader, textPreview: text.substring(0, 80) });
+              if (looksLikeSectionHeader) {
+                const html = getFormattedHtml(child);
+                if (html.trim()) {
+                  const id = getAnchorId(child) || (child.id || '');
+                  content.push({ type: 'heading', level: 2, text: html, id: id || undefined });
+                  debugInfo.headingCount++;
+                  addLog('extract_section_header', { childIdx, textPreview: text.substring(0, 80) });
+                } else if (text.length > 0) {
+                  addLog('extract_section_header_empty_clean', { childIdx, rawLen: text.length, rawPreview: text.substring(0, 60) });
+                }
+              } else {
+                const sectionBodyChildren = Array.from(child.children).filter(isElementVisible);
+                fallbackDetail.sectionBodySummary.push({ childIndex: childIdx, bodyChildrenCount: sectionBodyChildren.length, bodyTags: sectionBodyChildren.map(el => el.tagName.toLowerCase()) });
+                for (const el of sectionBodyChildren) {
+                  if (shouldExclude(el)) {
+                    addLog('extract_section_body_skip', { childIdx, reason: 'shouldExclude', tag: el.tagName.toLowerCase(), textPreview: (el.textContent || '').trim().substring(0, 50) });
+                    continue;
+                  }
+                  const elTag = el.tagName.toLowerCase();
+                  if (elTag === 'p' || elTag === 'ul' || elTag === 'ol') {
+                    addLog('extract_section_body_direct', { childIdx, tag: elTag });
+                    processElement(el);
+                  } else if (elTag === 'div') {
+                    const divText = (el.textContent || '').trim();
+                    const divHasList = el.querySelector('ul, ol');
+                    if (!divHasList && divText.length > 0 && divText.length <= 120) {
+                      const divHtml = getFormattedHtml(el);
+                      if (divHtml.trim()) {
+                        content.push({ type: 'heading', level: 3, text: divHtml, id: getAnchorId(el) || undefined });
+                        addLog('extract_section_body_div_h3', { childIdx, textPreview: divText.substring(0, 60) });
+                      } else if (divText.length > 0) {
+                        addLog('extract_section_body_div_h3_empty', { childIdx, rawPreview: divText.substring(0, 50) });
+                      }
+                    } else if (divText.length > 0 && !divHasList) {
+                      const divHtml = getFormattedHtml(el);
+                      if (divHtml.trim()) {
+                        content.push({ type: 'paragraph', text: divHtml, id: getAnchorId(el) || undefined });
+                        addLog('extract_section_body_div_p', { childIdx, textPreview: divText.substring(0, 60) });
+                      } else if (divText.length > 0) {
+                        addLog('extract_section_body_div_p_empty', { childIdx, rawPreview: divText.substring(0, 50) });
+                      }
+                    } else if (divHasList) {
+                      const nested = Array.from(el.children).filter(isElementVisible);
+                      addLog('extract_section_body_div_list', { childIdx, nestedCount: nested.length, nestedTags: nested.map(n => n.tagName.toLowerCase()) });
+                      if (nested.length === 0) {
+                        addLog('extract_section_body_div_list_no_children', { childIdx, textPreview: divText.substring(0, 60) });
+                      }
+                      for (const n of nested) { if (!shouldExclude(n)) processElement(n); }
+                    } else {
+                      // div with no text or text > 120 and no list: process children to avoid dropping content
+                      const nested = Array.from(el.children).filter(isElementVisible);
+                      addLog('extract_section_body_div_other', { childIdx, divTextLen: divText.length, nestedCount: nested.length });
+                      for (const n of nested) { if (!shouldExclude(n)) processElement(n); }
+                    }
+                  } else {
+                    // other tags (span, section, article, etc.) — process so content is not lost
+                    addLog('extract_section_body_other_tag', { childIdx, tag: elTag, textPreview: (el.textContent || '').trim().substring(0, 60) });
+                    processElement(el);
+                  }
+                }
+              }
+            } else {
+              processElement(child);
+            }
+          }
+        } else {
+          extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children recursively', reason: 'No content elements found or content selector matches container' });
+          const candidateElements = Array.from(cont.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table'));
+          const visibleElements = candidateElements.filter(isElementVisible);
+          visibleElements.sort((a, b) => {
+            const pos = a.compareDocumentPosition(b);
+            if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+            if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+            return 0;
+          });
+          const tagCounts = { h1: 0, h2: 0, h3: 0, p: 0, ul: 0, ol: 0, div: 0, other: 0 };
+          for (const el of visibleElements) {
+            const t = el.tagName.toLowerCase();
+            if (tagCounts[t] !== undefined) tagCounts[t]++;
+            else tagCounts.other++;
+          }
+          fallbackDetail.recursiveTagCounts = tagCounts;
+          fallbackDetail.recursiveCandidateCount = candidateElements.length;
+          fallbackDetail.recursiveVisibleCount = visibleElements.length;
+          fallbackDetail.recursiveFirstElements = visibleElements.slice(0, 15).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id || null, textPreview: (el.textContent && el.textContent.trim().substring(0, 50)) || '' }));
+          for (const el of visibleElements) {
+            if (shouldExclude(el)) continue;
+            processElement(el);
+          }
         }
+        fallbackDetail.contentLengthAfterFallback = content.length;
+        fallbackDetail.headingCountAfterFallback = debugInfo.headingCount;
+        const contentByType = {};
+        for (const item of content) {
+          const t = item.type || 'unknown';
+          contentByType[t] = (contentByType[t] || 0) + 1;
+        }
+        fallbackDetail.contentByType = contentByType;
+        extractionDebug.fallbackDetail = fallbackDetail;
       }
     }
     } else if (container) {
+      addLog('path_taken', { path: 'singleContainer', containerId: container.id || null });
       const result = findContentElements(container, selectors.content, containerSelector);
       extractionDebug.strategiesUsed.push(...(result.debug || []));
+      addLog('findContentElements_result', {
+        path: 'singleContainer',
+        elementsCount: result.elements ? result.elements.length : 0,
+        strategies: result.debug || []
+      });
       if (result.elements && result.elements.length > 0) {
       extractionDebug.contentElementsFound = result.elements.length;
       // Process found elements
@@ -2406,20 +2646,26 @@ export function extractFromPageInlined(selectors, baseUrl) {
             if (tagName === 'h1' && className.includes('longform-header-one')) {
               if (text && text.length > 3) {
                 const html = getFormattedHtml(elem);
-                const elemId = getAnchorId(elem);
-                content.push({ type: 'heading', level: 1, text: html, id: elemId });
+                if (html.trim()) {
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'heading', level: 1, text: html, id: elemId });
+                }
               }
             } else if (tagName === 'h2' && className.includes('longform-header-two')) {
               if (text && text.length > 3) {
                 const html = getFormattedHtml(elem);
-                const elemId = getAnchorId(elem);
-                content.push({ type: 'heading', level: 2, text: html, id: elemId });
+                if (html.trim()) {
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'heading', level: 2, text: html, id: elemId });
+                }
               }
             } else if (tagName === 'h3' && className.includes('longform-header-three')) {
               if (text && text.length > 3) {
                 const html = getFormattedHtml(elem);
-                const elemId = getAnchorId(elem);
-                content.push({ type: 'heading', level: 3, text: html, id: elemId });
+                if (html.trim()) {
+                  const elemId = getAnchorId(elem);
+                  content.push({ type: 'heading', level: 3, text: html, id: elemId });
+                }
               }
             }
             // Process paragraphs (only those that don't contain draft blocks)
@@ -2759,37 +3005,154 @@ export function extractFromPageInlined(selectors, baseUrl) {
         });
       }
     } else {
-      // Fallback: process all children recursively
-      // CRITICAL: When content selector matches container selector, we need to process ALL elements
-      // including nested ones (img, picture, figure) that might be inside paragraphs or other elements
-      extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children recursively', reason: 'No content elements found or content selector matches container' });
-      
-      // Collect all candidate elements from container (not just direct children)
-      // Include <font> for old websites that use deprecated HTML tags
-      const candidateElements = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table'));
-      // Filter to only visible elements
-      const visibleElements = candidateElements.filter(isElementVisible);
-      
-      // Sort by DOM order
-      visibleElements.sort((a, b) => {
-        const pos = a.compareDocumentPosition(b);
-        if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
-        if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
-        return 0;
+      // Fallback (single container): same as multi-container — section-aware or recursive, plus fallbackDetail for logs
+      extractionDebug.fallbackBranchReason = !selectors.content || selectors.content === containerSelector ? 'content selector same as container or missing' : 'findContentElements returned no elements';
+      addLog('fallback_start', { path: 'singleContainer', containerId: container.id || null });
+      const fallbackDetail = {
+        containerId: container.id || null,
+        containerClass: (container.className && String(container.className).substring(0, 80)) || null,
+        rawChildrenCount: container.children.length,
+        contentSelector: selectors.content,
+        containerSelector: containerSelector,
+        path: 'singleContainer'
+      };
+      const directChildren = Array.from(container.children).filter(el => {
+        if (shouldExclude(el)) return false;
+        try {
+          const style = window.getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return false;
+        } catch (e) {}
+        return true;
       });
-      
-      // Process each element
-      for (const el of visibleElements) {
-        if (shouldExclude(el)) continue;
-        processElement(el);
+      const directDivCount = directChildren.filter(el => el.tagName.toLowerCase() === 'div').length;
+      const useSectionAware = directDivCount >= 3 && directChildren.length >= 3;
+      fallbackDetail.directChildrenCount = directChildren.length;
+      fallbackDetail.directDivCount = directDivCount;
+      fallbackDetail.useSectionAware = useSectionAware;
+      fallbackDetail.directChildrenPreview = directChildren.map((el, idx) => ({
+        index: idx,
+        tag: el.tagName.toLowerCase(),
+        id: el.id || null,
+        class: (el.className && String(el.className).substring(0, 60)) || null,
+        textPreview: (el.textContent && el.textContent.trim().substring(0, 80)) || ''
+      }));
+      addLog('fallback_direct_children', { count: directChildren.length, directDivCount, useSectionAware });
+      for (let i = 0; i < directChildren.length; i++) {
+        const el = directChildren[i];
+        addLog('fallback_direct_child', { index: i, tag: el.tagName.toLowerCase(), id: el.id || null, textPreview: (el.textContent && el.textContent.trim().substring(0, 80)) || '' });
       }
+
+      if (useSectionAware) {
+        extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'section-aware (direct children as sections)', reason: 'No content elements found or content selector matches container', directDivCount });
+        fallbackDetail.sectionAwareDivs = [];
+        fallbackDetail.sectionBodySummary = [];
+        for (let childIdx = 0; childIdx < directChildren.length; childIdx++) {
+          const child = directChildren[childIdx];
+          const tag = child.tagName.toLowerCase();
+          if (tag === 'div') {
+            const text = (child.textContent || '').trim();
+            const hasList = child.querySelector('ul, ol');
+            const looksLikeSectionHeader = !hasList && text.length > 0 && text.length <= 220;
+            addLog('fallback_section_div', { childIndex: childIdx, textLen: text.length, hasList: !!hasList, looksLikeSectionHeader, textPreview: text.substring(0, 80) });
+            fallbackDetail.sectionAwareDivs.push({ childIndex: childIdx, textLen: text.length, hasList: !!hasList, looksLikeSectionHeader, textPreview: text.substring(0, 80) });
+            if (looksLikeSectionHeader) {
+              const html = getFormattedHtml(child);
+              if (html.trim()) {
+                const id = getAnchorId(child) || (child.id || '');
+                content.push({ type: 'heading', level: 2, text: html, id: id || undefined });
+                debugInfo.headingCount++;
+                addLog('fallback_section_h2_pushed', { childIndex: childIdx, textPreview: text.substring(0, 80) });
+              } else if (text.length > 0) {
+                addLog('fallback_section_h2_empty_clean', { childIndex: childIdx, rawLen: text.length, rawPreview: text.substring(0, 60) });
+              }
+            } else {
+              const sectionBodyChildren = Array.from(child.children).filter(isElementVisible);
+              addLog('fallback_section_body', { childIndex: childIdx, bodyChildrenCount: sectionBodyChildren.length, bodyTags: sectionBodyChildren.map(e => e.tagName.toLowerCase()) });
+              fallbackDetail.sectionBodySummary.push({ childIndex: childIdx, bodyChildrenCount: sectionBodyChildren.length, bodyTags: sectionBodyChildren.map(el => el.tagName.toLowerCase()) });
+              for (const el of sectionBodyChildren) {
+                if (shouldExclude(el)) { addLog('fallback_body_child_skip', { parentIdx: childIdx, tag: el.tagName.toLowerCase(), reason: 'shouldExclude' }); continue; }
+                const elTag = el.tagName.toLowerCase();
+                if (elTag === 'p' || elTag === 'ul' || elTag === 'ol') {
+                  addLog('fallback_body_child', { parentIdx: childIdx, decision: 'processElement', tag: elTag });
+                  processElement(el);
+                } else if (elTag === 'div') {
+                  const divText = (el.textContent || '').trim();
+                  const divHasList = el.querySelector('ul, ol');
+                  if (!divHasList && divText.length > 0 && divText.length <= 120) {
+                    const divHtml = getFormattedHtml(el);
+                    if (divHtml.trim()) { content.push({ type: 'heading', level: 3, text: divHtml, id: getAnchorId(el) || undefined }); addLog('fallback_body_child', { parentIdx: childIdx, decision: 'h3', tag: elTag, textPreview: divText.substring(0, 60) }); }
+                  } else if (divText.length > 0 && !divHasList) {
+                    const divHtml = getFormattedHtml(el);
+                    if (divHtml.trim()) { content.push({ type: 'paragraph', text: divHtml, id: getAnchorId(el) || undefined }); addLog('fallback_body_child', { parentIdx: childIdx, decision: 'paragraph', tag: elTag }); }
+                  } else if (divHasList) {
+                    const nested = Array.from(el.children).filter(isElementVisible);
+                    addLog('fallback_body_child', { parentIdx: childIdx, decision: 'nested_list', tag: elTag, nestedCount: nested.length });
+                    if (nested.length === 0) addLog('fallback_body_child_div_list_no_children', { parentIdx: childIdx, textPreview: divText.substring(0, 50) });
+                    for (const n of nested) { if (!shouldExclude(n)) processElement(n); }
+                  } else {
+                    const nested = Array.from(el.children).filter(isElementVisible);
+                    addLog('fallback_body_child', { parentIdx: childIdx, decision: 'div_other_recurse', tag: elTag, divTextLen: divText.length, nestedCount: nested.length });
+                    for (const n of nested) { if (!shouldExclude(n)) processElement(n); }
+                  }
+                } else {
+                  addLog('fallback_body_child', { parentIdx: childIdx, decision: 'other_tag_processElement', tag: elTag, textPreview: (el.textContent || '').trim().substring(0, 50) });
+                  processElement(el);
+                }
+              }
+            }
+          } else {
+            addLog('fallback_non_div_child', { childIndex: childIdx, tag });
+            processElement(child);
+          }
+        }
+      } else {
+        extractionDebug.strategiesUsed.push({ strategy: 'fallback', method: 'process all children recursively', reason: 'No content elements found or content selector matches container' });
+        const candidateElements = Array.from(container.querySelectorAll('h1, h2, h3, h4, h5, h6, p, font, img, picture, figure, blockquote, pre, code, ul, ol, table'));
+        const visibleElements = candidateElements.filter(isElementVisible);
+        visibleElements.sort((a, b) => {
+          const pos = a.compareDocumentPosition(b);
+          if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+          if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+          return 0;
+        });
+        addLog('fallback_recursive_candidates', { total: candidateElements.length, visible: visibleElements.length });
+        for (let i = 0; i < Math.min(visibleElements.length, 50); i++) {
+          const el = visibleElements[i];
+          addLog('fallback_recursive_el', { index: i, tag: el.tagName.toLowerCase(), id: el.id || null, textPreview: (el.textContent && el.textContent.trim().substring(0, 50)) || '' });
+        }
+        const tagCounts = { h1: 0, h2: 0, h3: 0, p: 0, ul: 0, ol: 0, div: 0, other: 0 };
+        for (const el of visibleElements) {
+          const t = el.tagName.toLowerCase();
+          if (tagCounts[t] !== undefined) tagCounts[t]++;
+          else tagCounts.other++;
+        }
+        fallbackDetail.recursiveTagCounts = tagCounts;
+        fallbackDetail.recursiveCandidateCount = candidateElements.length;
+        fallbackDetail.recursiveVisibleCount = visibleElements.length;
+        fallbackDetail.recursiveFirstElements = visibleElements.slice(0, 15).map(el => ({ tag: el.tagName.toLowerCase(), id: el.id || null, textPreview: (el.textContent && el.textContent.trim().substring(0, 50)) || '' }));
+        for (const el of visibleElements) {
+          if (shouldExclude(el)) continue;
+          processElement(el);
+        }
+      }
+      fallbackDetail.contentLengthAfterFallback = content.length;
+      fallbackDetail.headingCountAfterFallback = debugInfo.headingCount;
+      const contentByTypeEnd = {};
+      for (const item of content) {
+        const t = item.type || 'unknown';
+        contentByTypeEnd[t] = (contentByTypeEnd[t] || 0) + 1;
+      }
+      fallbackDetail.contentByType = contentByTypeEnd;
+      extractionDebug.fallbackDetail = fallbackDetail;
+      addLog('fallback_end', { contentLength: content.length, headingCount: debugInfo.headingCount, useSectionAware, contentByType: contentByTypeEnd });
     }
   } else {
     extractionDebug.strategiesUsed.push({ strategy: 'error', reason: 'No container found' });
   }
   
-  // Add extraction debug to debugInfo
+  // Add extraction debug and full step log to debugInfo (for clipaible-logs)
   debugInfo.extractionDebug = extractionDebug;
+  debugInfo.extractionLog = extractionLog;
   
   // If subtitle wasn't inserted yet, ensure title is in content and insert subtitle after it
   // CRITICAL: Title (h1) might be outside article, so it won't be processed

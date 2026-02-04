@@ -15,7 +15,7 @@ import {
   SELECTOR_SYSTEM_PROMPT,
   buildSelectorUserPrompt
 } from '../extraction/prompts.js';
-import { splitHtmlIntoChunks, deduplicateContent, trimHtmlForAnalysis } from '../extraction/html-utils.js';
+import { splitHtmlIntoChunks, deduplicateContent, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
 import { cleanTitleFromServiceTokens } from '../utils/html.js';
 import { detectLanguageByCharacters } from '../translation/index.js';
 import { extractAutomaticallyInlined } from '../extraction/automatic.js';
@@ -1033,9 +1033,11 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
     duplicateRate: `${Math.round((duplicatesRemoved / allContent.length) * 100)}%`
   });
 
+  const filtered = filterExtractionNoise(deduplicated);
+
   return {
     title: articleTitle,
-    content: deduplicated,
+    content: filtered,
     publishDate: publishDate
   };
 }
@@ -1182,8 +1184,15 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
         strategiesUsed: debugInfo.extractionDebug.strategiesUsed,
         elementsProcessed: debugInfo.elementsProcessed,
         elementsExcluded: debugInfo.elementsExcluded,
-        headingCount: debugInfo.headingCount
+        headingCount: debugInfo.headingCount,
+        fallbackBranchReason: debugInfo.extractionDebug.fallbackBranchReason || null
       });
+      if (debugInfo.extractionDebug.fallbackDetail) {
+        log('=== EXTRACTION FALLBACK DETAIL (for Tilda/div-based pages) ===', debugInfo.extractionDebug.fallbackDetail);
+      }
+      if (debugInfo.extractionLog && debugInfo.extractionLog.length > 0) {
+        log('=== EXTRACTION STEP LOG (count: ' + debugInfo.extractionLog.length + ') ===', { stepCount: debugInfo.extractionLog.length, steps: debugInfo.extractionLog });
+      }
     } else {
       logWarn('extractionDebug not available in debugInfo', {
         hasDebugInfo: !!debugInfo,
@@ -1366,7 +1375,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   if (injectionResult.content && injectionResult.content.length > 0) {
     const originalCount = injectionResult.content.length;
     injectionResult.content = deduplicateContent(injectionResult.content);
-    const duplicatesRemoved = originalCount - injectionResult.content.length;
+    let duplicatesRemoved = originalCount - injectionResult.content.length;
     if (duplicatesRemoved > 0) {
       log('✅ Deduplication applied to selector mode content', {
         originalCount,
@@ -1375,9 +1384,23 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
         duplicateRate: `${Math.round((duplicatesRemoved / originalCount) * 100)}%`
       });
     }
+    injectionResult.content = filterExtractionNoise(injectionResult.content);
   }
   
   return injectionResult;
+}
+
+/**
+ * Throw if key theses generation was cancelled (so extractContentOnly can respond with cancelled immediately).
+ * @throws {Error} Error with keyThesesCancelled=true when key_theses_cancel_requested is set in storage
+ */
+async function checkKeyThesesCancel() {
+  const r = await chrome.storage.local.get('key_theses_cancel_requested');
+  if (r.key_theses_cancel_requested) {
+    const e = new Error('Key theses cancelled');
+    e.keyThesesCancelled = true;
+    throw e;
+  }
 }
 
 /**
@@ -1391,6 +1414,8 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   log('🎯 AI Selector mode: Starting content extraction');
   log('Input data', { url, title, htmlLength: html?.length, tabId });
+
+  await checkKeyThesesCancel();
   
   const uiLang = await getUILanguage();
   if (!html) throw new Error(tSync('errorNoHtmlContent', uiLang));
@@ -1400,10 +1425,12 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   // Check cache first (if enabled)
   let selectors;
   let fromCache = false;
-  // Explicit check: use cache if explicitly true, or if undefined/null (default: true)
-  // Only skip cache if explicitly false
-  const useCache = data.useCache !== false; // true if undefined/null/true, false only if explicitly false
-  
+  const useCache = data.useCache !== false;
+
+  if (!useCache) {
+    log('⏱️ Selector cache disabled (useCache=false); AI call will run (~5s)', { url: url?.slice?.(0, 60) });
+  }
+
   if (useCache) {
     /** @type {import('../types.js').ExtendedCacheEntry|null} */
     const cached = await getCachedSelectors(url);
@@ -1412,15 +1439,17 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       fromCache = true;
       await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
       log(`💾 Using cached selectors (${cached.successCount || 0} previous successes)`, { url });
+    } else {
+      log('⏱️ No cached selectors for this domain; requesting from AI (~5s)', { url: url?.slice?.(0, 60) });
     }
   }
-  
+
   if (!fromCache) {
     // Check if processing was cancelled before AI analysis
     await checkCancellation('AI selector analysis');
-    
+
     await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 3);
-    
+
     // Trim HTML for analysis
     // DeepSeek and Qwen have smaller context windows, use 200k instead of 450k
     const provider = getProviderFromModel(model);
@@ -1454,10 +1483,12 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       const uiLang = await getUILanguage();
       throw new Error(tSync('errorAiEmptySelectors', uiLang));
     }
+    await checkKeyThesesCancel();
   }
   
   // Check if processing was cancelled before content extraction
   await checkCancellation('content extraction');
+  await checkKeyThesesCancel();
   
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
   

@@ -67,7 +67,8 @@ export function initKeepAlive(deps) {
       if (timeSinceStart > CONFIG.KEY_THESES_STALE_THRESHOLD_MS) {
         await chrome.storage.local.set({
           key_theses_generating: false,
-          key_theses_generating_start_time: null
+          key_theses_generating_start_time: null,
+          key_theses_cancel_requested: false
         });
         isKeyThesesGenerating = false;
       }

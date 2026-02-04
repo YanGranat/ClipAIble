@@ -12,6 +12,7 @@ import { CONFIG } from '../utils/config.js';
 import { detectPdfPage, getOriginalPdfUrl } from '../utils/pdf.js';
 import { processPdfPageWithAI, processPdfPage } from '../processing/pdf.js';
 import { getProviderFromModel } from '../api/index.js';
+import { isPopupOpen } from '../background/popup-connection.js';
 
 /**
  * Handle extractContentOnly request
@@ -44,9 +45,10 @@ export function handleExtractContentOnly(
     hasApiKey: !!request.data?.apiKey,
     hasModel: !!request.data?.model,
     autoGenerateSummary: request.data?.autoGenerateSummary || false,
+    autoGenerateKeyTheses: request.data?.autoGenerateKeyTheses || false,
     timestamp: Date.now()
   });
-  
+
   // CRITICAL: Validate request.data before destructuring to prevent crashes
   // This is a defensive check even though validateMessageParams should catch this
   if (!request.data || typeof request.data !== 'object') {
@@ -62,8 +64,10 @@ export function handleExtractContentOnly(
     return true;
   }
   
-  const { html, url, title, apiKey, model, mode, useCache, tabId, autoGenerateSummary, language } = request.data;
-  
+  const { html, url, title, apiKey, model, mode, useCache, tabId, autoGenerateSummary, autoGenerateKeyTheses, language } = request.data;
+  const willRespondImmediately = !!autoGenerateSummary || !!autoGenerateKeyTheses;
+  const willWaitForResult = !autoGenerateSummary && !autoGenerateKeyTheses;
+
   log('=== extractContentOnly: Extracted parameters ===', {
     hasHtml: !!html,
     htmlLength: html?.length || 0,
@@ -76,6 +80,7 @@ export function handleExtractContentOnly(
     hasTabId: !!tabId,
     tabId: tabId,
     autoGenerateSummary: autoGenerateSummary,
+    autoGenerateKeyTheses: autoGenerateKeyTheses,
     timestamp: Date.now()
   });
   
@@ -265,8 +270,9 @@ export function handleExtractContentOnly(
     mode,
     url: url?.slice?.(0, 60) + (url?.length > 60 ? '...' : ''),
     autoGenerateSummary,
-    willRespondImmediately: autoGenerateSummary,
-    willWaitForResult: !autoGenerateSummary,
+    autoGenerateKeyTheses,
+    willRespondImmediately,
+    willWaitForResult,
     timestamp: Date.now()
   });
 
@@ -287,13 +293,16 @@ export function handleExtractContentOnly(
         });
       } catch (e) {
         logWarn('[extractContentOnly] Failed to send response (channel may be closed)', { error: e?.message });
+        chrome.storage.local.set({
+          key_theses_generating: false,
+          key_theses_generating_start_time: null
+        }).catch(() => {});
       }
     }
   };
 
-  // When autoGenerateSummary is true: respond immediately so popup can close; extraction and summary run in background.
-  // When autoGenerateSummary is false: do not respond yet; wait for extraction and send full result (e.g. for key theses).
-  if (autoGenerateSummary) {
+  // When autoGenerateSummary or autoGenerateKeyTheses: respond immediately so popup can close; extraction and generation run in background.
+  if (willRespondImmediately) {
     try {
       safeSendResponse({ success: true, extracting: true });
       log('[extractContentOnly] Sent extracting:true (popup may close); extraction will run in background', { timestamp: Date.now() });
@@ -301,7 +310,7 @@ export function handleExtractContentOnly(
       logWarn('[extractContentOnly] Failed to send immediate response', { error: sendError?.message });
     }
   } else {
-    log('[extractContentOnly] autoGenerateSummary=false: not sending immediate response; will send full result when extraction completes', { timestamp: Date.now() });
+    log('[extractContentOnly] Will wait for extraction and send full result when complete', { timestamp: Date.now() });
   }
 
   log('[extractContentOnly] Calling processFunction (extraction started)', {
@@ -346,12 +355,46 @@ export function handleExtractContentOnly(
         timestamp: Date.now()
       });
 
-      if (!autoGenerateSummary) {
-        log('[extractContentOnly] Sending full result to popup (autoGenerateSummary=false)', {
-          contentItemsCount: result?.content?.length ?? 0,
+      if (willWaitForResult) {
+        if (!isPopupOpen()) {
+          await chrome.storage.local.set({
+            key_theses_generating: false,
+            key_theses_generating_start_time: null
+          });
+          log('[extractContentOnly] Popup closed; cleared key_theses flags (response would be lost)', {
+            contentItemsCount: result?.content?.length ?? 0,
+            timestamp: Date.now()
+          });
+        } else {
+          log('[extractContentOnly] Sending full result to popup', {
+            contentItemsCount: result?.content?.length ?? 0,
+            timestamp: Date.now()
+          });
+          safeSendResponse({ success: true, result });
+        }
+      }
+
+      if (autoGenerateKeyTheses && result.content && result.content.length > 0) {
+        log('=== AUTO-STARTING KEY THESES GENERATION ===', {
+          contentItemsCount: result.content.length,
+          url,
+          model,
+          language,
           timestamp: Date.now()
         });
-        safeSendResponse({ success: true, result });
+        try {
+          await startKeyThesesGeneration({
+            contentItems: result.content,
+            apiKey,
+            model,
+            url,
+            language: language || await getUILanguage(),
+            title: result.title || title
+          }, startKeepAlive, stopKeepAlive);
+          log('=== AUTO KEY THESES GENERATION COMPLETE ===', { timestamp: Date.now() });
+        } catch (ktError) {
+          logError('Failed to start auto key theses generation', ktError);
+        }
       }
 
       // CRITICAL: If autoGenerateSummary is true, automatically start summary generation
@@ -508,6 +551,14 @@ export function handleExtractContentOnly(
             }
           }
         } catch (error) {
+      if (error?.keyThesesCancelled) {
+        log('[extractContentOnly] Key theses cancelled by user', { timestamp: Date.now() });
+        try {
+          await chrome.storage.local.set({ key_theses_generating: false, key_theses_generating_start_time: null, key_theses_cancel_requested: false });
+        } catch (_) {}
+        if (willWaitForResult && isPopupOpen()) safeSendResponse({ success: true, cancelled: true });
+        return;
+      }
       logError('=== extractContentOnly: processFunction FAILED ===', {
         error: error?.message || String(error),
         errorStack: error?.stack,
@@ -515,21 +566,30 @@ export function handleExtractContentOnly(
         timestamp: Date.now()
       });
       
-      // CRITICAL: Clear summary_generating flag if it was set
-      // This prevents popup from showing "Generating summary..." forever when extraction fails
+      // CRITICAL: Clear summary and key_theses generating flags so popup does not show "Generating..." forever
       try {
-        const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
-        if (summaryState.summary_generating) {
-          await chrome.storage.local.set({
-            summary_generating: false,
-            summary_generating_start_time: null
-          });
-          log('summary_generating flag cleared on extractContentOnly error', { timestamp: Date.now() });
+        const state = await chrome.storage.local.get([
+          'summary_generating', 'summary_generating_start_time',
+          'key_theses_generating', 'key_theses_generating_start_time', 'key_theses_cancel_requested'
+        ]);
+        const updates = {};
+        if (state.summary_generating) {
+          updates.summary_generating = false;
+          updates.summary_generating_start_time = null;
+        }
+        if (state.key_theses_generating) {
+          updates.key_theses_generating = false;
+          updates.key_theses_generating_start_time = null;
+          updates.key_theses_cancel_requested = false;
+        }
+        if (Object.keys(updates).length) {
+          await chrome.storage.local.set(updates);
+          log('summary_generating and/or key_theses flags cleared on extractContentOnly error', { timestamp: Date.now() });
         }
       } catch (clearError) {
-        logError('Failed to clear summary_generating flag on extractContentOnly error', clearError);
+        logError('Failed to clear generating flags on extractContentOnly error', clearError);
       }
-      
+
       const normalized = await handleError(error, {
         source: 'messageHandler',
         errorType: 'contentExtractionFailed',
@@ -552,7 +612,7 @@ export function handleExtractContentOnly(
           code: normalized.userCode || normalized.code
         }, stopKeepAlive);
       }
-      if (!autoGenerateSummary) {
+      if (willWaitForResult) {
         log('[extractContentOnly] Sending error to popup (extraction failed)', {
           error: normalized?.message || normalized?.userMessage,
           timestamp: Date.now()
@@ -568,26 +628,35 @@ export function handleExtractContentOnly(
       errorStack: error?.stack,
       timestamp: Date.now()
     });
-    if (!autoGenerateSummary) {
+    if (willWaitForResult) {
       log('[extractContentOnly] Unhandled IIFE error: sending error to popup', {
         error: error?.message || String(error),
         timestamp: Date.now()
       });
       safeSendResponse({ error: error?.message || String(error) || 'Content extraction failed' });
     }
-    // CRITICAL: Clear summary_generating flag if it was set
-    // This prevents popup from showing "Generating summary..." forever
+    // CRITICAL: Clear summary and key_theses generating flags so popup does not show "Generating..." forever
     try {
-      const summaryState = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
-      if (summaryState.summary_generating) {
-        await chrome.storage.local.set({
-          summary_generating: false,
-          summary_generating_start_time: null
-        });
-        log('summary_generating flag cleared on extractContentOnly error', { timestamp: Date.now() });
+      const state = await chrome.storage.local.get([
+        'summary_generating', 'summary_generating_start_time',
+        'key_theses_generating', 'key_theses_generating_start_time', 'key_theses_cancel_requested'
+      ]);
+      const updates = {};
+      if (state.summary_generating) {
+        updates.summary_generating = false;
+        updates.summary_generating_start_time = null;
+      }
+      if (state.key_theses_generating) {
+        updates.key_theses_generating = false;
+        updates.key_theses_generating_start_time = null;
+        updates.key_theses_cancel_requested = false;
+      }
+      if (Object.keys(updates).length) {
+        await chrome.storage.local.set(updates);
+        log('summary_generating and/or key_theses flags cleared on extractContentOnly unhandled error', { timestamp: Date.now() });
       }
     } catch (clearError) {
-      logError('Failed to clear summary_generating flag on extractContentOnly error', clearError);
+      logError('Failed to clear generating flags on extractContentOnly error', clearError);
     }
   });
   return true;

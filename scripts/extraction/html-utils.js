@@ -151,8 +151,24 @@ function simpleHash(str) {
  * @returns {Array} Deduplicated content array
  */
 /**
+ * Extract plain text from a single sub-item (for items[].html / items[].text)
+ */
+function extractSubItemText(sub) {
+  if (typeof sub === 'string') return sub.trim();
+  if (sub && (sub.html != null || sub.text != null)) {
+    const raw = sub.html ?? sub.text ?? '';
+    if (typeof raw !== 'string') return '';
+    if (!/<[^>]+>/.test(raw)) return raw.trim();
+    return stripHtml(raw).trim();
+  }
+  return '';
+}
+
+/**
  * Extract plain text from content item for deduplication
- * Optimized to avoid expensive stripHtml when possible
+ * Optimized to avoid expensive stripHtml when possible.
+ * When item has items[] (selector-mode blocks), extract text from each .html/.text so
+ * different sections get different keys instead of "[object Object]|...".
  */
 function extractTextForDedup(item) {
   if (item.text) {
@@ -164,7 +180,10 @@ function extractTextForDedup(item) {
     return stripHtml(item.text).trim();
   }
   if (item.src) return item.src;
-  if (Array.isArray(item.items)) return item.items.join('|');
+  if (Array.isArray(item.items)) {
+    const parts = item.items.map(extractSubItemText).filter(Boolean);
+    return parts.join('|');
+  }
   return '';
 }
 
@@ -215,6 +234,56 @@ export function deduplicateContent(content) {
     duplicatesPreview: duplicatesFound
   });
   
+  return result;
+}
+
+/**
+ * Plain text from content item (for filtering).
+ * @param {import('../types.js').ContentItem} item
+ * @returns {string}
+ */
+function getItemPlainText(item) {
+  if (!item) return '';
+  if (item.text) {
+    if (!/<[^>]+>/.test(item.text)) return item.text.trim();
+    return stripHtml(item.text).trim();
+  }
+  return '';
+}
+
+/**
+ * Filter extraction noise: orphan number-only headings and page header blocks.
+ * Orphan headings (e.g. "2") come from Tilda when a layout element contains only a section number.
+ * Page header block is the duplicated title/breadcrumb (e.g. "Стратегия / Дорожная карта...").
+ * @param {Array<import('../types.js').ContentItem>} content
+ * @returns {Array<import('../types.js').ContentItem>}
+ */
+export function filterExtractionNoise(content) {
+  if (!content || !content.length) return content;
+  const result = [];
+  let removedHeadings = 0;
+  let removedParagraphs = 0;
+  for (const item of content) {
+    const type = item.type || 'unknown';
+    const plain = getItemPlainText(item);
+    if (type === 'heading' && plain && /^\d+$/.test(plain.replace(/\s+/g, ''))) {
+      removedHeadings++;
+      continue;
+    }
+    if (type === 'paragraph' && plain) {
+      const hasStrategy = plain.includes('Стратегия');
+      const hasRoadmap = plain.includes('Дорожная карта');
+      const hasDirections = plain.includes('Направления научного поиска');
+      if (hasStrategy && hasRoadmap && hasDirections) {
+        removedParagraphs++;
+        continue;
+      }
+    }
+    result.push(item);
+  }
+  if (removedHeadings > 0 || removedParagraphs > 0) {
+    log('filterExtractionNoise', { inputCount: content.length, outputCount: result.length, removedHeadings, removedParagraphs });
+  }
   return result;
 }
 

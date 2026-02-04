@@ -6,7 +6,7 @@
 // @typedef {import('../types.js').GenerationData} GenerationData
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { stripHtml, markdownToHtml } from '../utils/html.js';
+import { stripHtml, markdownToHtml, cleanTildaArtifactsFromText } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage, getExtensionVersion } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
@@ -86,7 +86,8 @@ export async function generateFb2(data, updateState) {
   (filteredContent || []).forEach((item, index) => {
     // Log ALL heading items for debugging
     if (item.type === 'heading') {
-      const text = stripHtml(item.text || '');
+      let text = stripHtml(item.text || '');
+      text = cleanTildaArtifactsFromText(text) || text;
       allHeadings.push({
         index,
         level: item.level,
@@ -642,7 +643,8 @@ function splitIntoSections(content, headings) {
     
     if (item.type === 'heading') {
       const headingLevel = item.level || 1;
-      const headingText = stripHtml(item.text || '');
+      let headingText = stripHtml(item.text || '');
+      headingText = cleanTildaArtifactsFromText(headingText) || headingText;
       
       log('FB2 splitIntoSections: Processing heading', {
         index: i,

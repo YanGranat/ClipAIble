@@ -6,7 +6,7 @@
 // @typedef {import('../types.js').ProcessingState} ProcessingState
 
 import { log, logWarn, logDebug } from '../utils/logging.js';
-import { stripHtml, htmlToMarkdown } from '../utils/html.js';
+import { stripHtml, htmlToMarkdown, cleanTildaArtifactsFromText } from '../utils/html.js';
 import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
 import { sanitizeFilename } from '../utils/security.js';
@@ -126,9 +126,10 @@ export async function generateMarkdown(data, updateState) {
   const headings = [];
   for (const item of filteredContent) {
     if (item.type === 'heading' && item.level >= 1) {
-      const text = stripHtml(item.text || '');
+      let text = stripHtml(item.text || '');
       if (text) {
-        headings.push({ text, level: item.level });
+        text = cleanTildaArtifactsFromText(text);
+        if (text) headings.push({ text, level: item.level });
       }
     }
   }
@@ -493,9 +494,8 @@ function contentItemToMarkdown(item) {
       // CRITICAL: Use item.html if available to preserve links, otherwise use item.text
       logDebug(`[Markdown] formatTextWithFragments - FALLBACK to simple formatting (no lines)`);
       const sourceText = item?.html || item?.text || '';
-      // CRITICAL: Normalize line breaks - replace newlines with spaces for paragraphs
-      // This prevents text from being split into multiple lines in markdown
-      const normalizedText = sourceText.replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+      // Normalize only horizontal whitespace so newlines from htmlToMarkdown are preserved
+      const normalizedText = sourceText.replace(/[ \t]+/g, ' ').trim();
       return formatText(normalizedText, item?.isBold, item?.isItalic, item?.isUnderlined);
     }
     
@@ -848,6 +848,7 @@ function contentItemToMarkdown(item) {
         // Fallback to item text without formatting
         text = stripHtml(item.text || '');
       }
+      text = cleanTildaArtifactsFromText(text);
       if (!text.trim()) return '';
       // Headings: one newline before, one after (will be cleaned up if needed)
       return `\n${prefix} ${text}\n\n`;
@@ -887,7 +888,8 @@ function contentItemToMarkdown(item) {
       
       items.forEach((listItem, index) => {
         // Extract text and level
-        const itemText = typeof listItem === 'string' ? listItem : (listItem.html || listItem.text || String(listItem));
+        let itemText = typeof listItem === 'string' ? listItem : (listItem.html || listItem.text || String(listItem));
+        itemText = cleanTildaArtifactsFromText(itemText) || itemText;
         const text = htmlToMarkdown(itemText);
         // CRITICAL: Support both 'level' and 'listLevel' properties for nesting
         // Type guard for list item object

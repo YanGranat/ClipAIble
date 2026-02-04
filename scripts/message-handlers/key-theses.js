@@ -12,9 +12,22 @@ import { createNotification } from '../background/notifications.js';
 
 const STORAGE_KEYS = { KEY_THESES_TEXT: 'key_theses_text', KEY_THESES_GENERATING: 'key_theses_generating' };
 
+/** Resolver for cancel promise; when called, current generation is treated as cancelled */
+let keyThesesCancelResolve = null;
+
+/**
+ * Request cancellation of key theses generation (from popup). Resolves the cancel promise so the running generation exits without saving.
+ */
+export function requestCancelKeyThesesGeneration() {
+  if (keyThesesCancelResolve) {
+    keyThesesCancelResolve();
+    keyThesesCancelResolve = null;
+  }
+}
+
 /**
  * Start key theses generation with proper state management
- * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string}} data
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, title?: string}} data
  * @param {function(): void} startKeepAlive
  * @param {function(): Promise<void>} stopKeepAlive
  * @param {function(import('../types.js').MessageResponse): void} [sendResponse]
@@ -86,6 +99,19 @@ export async function startKeyThesesGeneration(data, startKeepAlive, stopKeepAli
       log('[generateKeyTheses] Sent started:true to popup', { timestamp: Date.now() });
     }
 
+    const cancelRequested = await chrome.storage.local.get('key_theses_cancel_requested');
+    if (cancelRequested.key_theses_cancel_requested) {
+      log('[generateKeyTheses] Cancel requested before AI call, aborting', { timestamp: Date.now() });
+      await chrome.storage.local.set({
+        key_theses_generating: false,
+        key_theses_generating_start_time: null,
+        key_theses_cancel_requested: false
+      });
+      const finalState = getProcessingState();
+      if (!finalState.isProcessing) await stopKeepAlive();
+      return;
+    }
+
     const timeoutMs = CONFIG.KEY_THESES_TIMEOUT_MS;
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
@@ -94,17 +120,46 @@ export async function startKeyThesesGeneration(data, startKeepAlive, stopKeepAli
       }, timeoutMs);
     });
 
+    const cancelPromise = new Promise((resolve) => {
+      keyThesesCancelResolve = resolve;
+    });
+
     log('[generateKeyTheses] Calling generateKeyTheses (AI)', { timeoutMs, timestamp: Date.now() });
+    log('⏱️ Key theses text generation: AI call in progress (typically 15–30s)', { timestamp: Date.now() });
     let result;
+    let cancelled = false;
     try {
-      result = await Promise.race([generateKeyTheses(data), timeoutPromise]);
-      log('[generateKeyTheses] generateKeyTheses returned', {
-        hasKeyTheses: !!result?.keyTheses,
-        keyThesesLength: result?.keyTheses?.length ?? 0,
-        timestamp: Date.now()
-      });
+      const raceResult = await Promise.race([
+        generateKeyTheses(data),
+        timeoutPromise,
+        cancelPromise.then(() => ({ cancelled: true }))
+      ]);
+      if (raceResult && raceResult.cancelled) {
+        cancelled = true;
+        log('[generateKeyTheses] Cancelled by user', { timestamp: Date.now() });
+      } else {
+        result = raceResult;
+        log('[generateKeyTheses] generateKeyTheses returned', {
+          hasKeyTheses: !!result?.keyTheses,
+          keyThesesLength: result?.keyTheses?.length ?? 0,
+          timestamp: Date.now()
+        });
+      }
     } finally {
+      keyThesesCancelResolve = null;
       if (timeoutId) clearTimeout(timeoutId);
+    }
+
+    if (cancelled) {
+      await chrome.storage.local.set({
+        key_theses_generating: false,
+        key_theses_generating_start_time: null,
+        key_theses_cancel_requested: false
+      });
+      const finalState = getProcessingState();
+      if (!finalState.isProcessing) await stopKeepAlive();
+      log('[generateKeyTheses] Cancelled, not saving', { timestamp: Date.now() });
+      return;
     }
 
     log('[generateKeyTheses] Saving to storage, clearing generating flag', {
@@ -113,8 +168,10 @@ export async function startKeyThesesGeneration(data, startKeepAlive, stopKeepAli
     });
     await chrome.storage.local.set({
       [STORAGE_KEYS.KEY_THESES_TEXT]: result.keyTheses,
+      key_theses_article_title: data?.title ?? null,
       key_theses_generating: false,
       key_theses_generating_start_time: null,
+      key_theses_cancel_requested: false,
       key_theses_saved_timestamp: Date.now()
     });
 
@@ -162,10 +219,11 @@ export async function startKeyThesesGeneration(data, startKeepAlive, stopKeepAli
     try {
       await chrome.storage.local.set({
         key_theses_generating: false,
-        key_theses_generating_start_time: null
+        key_theses_generating_start_time: null,
+        key_theses_cancel_requested: false
       });
     } catch (storageError) {
-      logError('Failed to clear key_theses_generating on error', storageError);
+      logError('Failed to clear key_theses flags on error', storageError);
     }
     const finalState = getProcessingState();
     if (!finalState.isProcessing) await stopKeepAlive();

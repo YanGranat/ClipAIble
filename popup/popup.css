@@ -819,6 +819,44 @@ body[data-theme="light"] .btn-secondary:hover {
   cursor: not-allowed;
 }
 
+/* Key theses button when generating: text + cancel X on the same row (button stays enabled so X receives clicks) */
+.btn-summary.key-theses-generating {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: default;
+}
+
+.btn-summary.key-theses-generating .key-theses-generating-text {
+  cursor: default;
+  pointer-events: none;
+}
+
+.btn-summary.key-theses-generating .key-theses-cancel {
+  flex-shrink: 0;
+  color: #e57373;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.btn-summary.key-theses-generating .key-theses-cancel:hover {
+  background: rgba(229, 115, 115, 0.2);
+  color: #ef5350;
+}
+
+body[data-theme="light"] .btn-summary.key-theses-generating .key-theses-cancel {
+  color: #c62828;
+}
+
+body[data-theme="light"] .btn-summary.key-theses-generating .key-theses-cancel:hover {
+  background: rgba(198, 40, 40, 0.12);
+  color: #b71c1c;
+}
+
 body[data-theme="light"] .btn-summary {
   background: var(--bg-input);
   color: var(--text-secondary);

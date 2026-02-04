@@ -56,6 +56,8 @@ import {
   handleLogModelDropdown
 } from './complex.js';
 
+import { requestCancelKeyThesesGeneration } from './key-theses.js';
+
 // Offscreen handlers
 import { closeOffscreenForVoiceSwitch } from '../api/offline-tts-offscreen.js';
 
@@ -88,7 +90,7 @@ const VALID_ACTIONS = [
   // Video handlers
   'youtubeSubtitlesResult', 'extractYouTubeSubtitlesForSummary',
   // Complex handlers
-  'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'logModelDropdown',
+  'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'cancelKeyThesesGeneration', 'logModelDropdown',
   // TTS Progress
   'TTS_PROGRESS',
   // Log export
@@ -565,6 +567,11 @@ export function routeMessage(request, sender, sendResponse, deps) {
     ),
     'generateSummary': () => handleGenerateSummary(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
     'generateKeyTheses': () => handleGenerateKeyTheses(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
+    'cancelKeyThesesGeneration': () => {
+      requestCancelKeyThesesGeneration();
+      sendResponse({ cancelled: true });
+      return true;
+    },
     'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse),
     
     // TTS Progress handler (from offscreen.js)

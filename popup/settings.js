@@ -1076,8 +1076,12 @@ export function initSettings(deps) {
       }
 
       if (result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.generateKeyThesesBtn) {
-        elements.generateKeyThesesBtn.textContent = await t('generatingKeyTheses') || 'Generating key theses...';
-        elements.generateKeyThesesBtn.disabled = true;
+        const generatingText = await t('generatingKeyTheses') || 'Generating key theses...';
+        const cancelTitle = await t('cancel') || 'Cancel';
+        const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+        elements.generateKeyThesesBtn.classList.add('key-theses-generating');
+        elements.generateKeyThesesBtn.disabled = false;
+        elements.generateKeyThesesBtn.innerHTML = `<span class="key-theses-generating-text">${esc(generatingText)}</span><span class="key-theses-cancel" role="button" tabindex="0" title="${esc(cancelTitle)}">✕</span>`;
       }
       if (result[STORAGE_KEYS.KEY_THESES_TEXT] && !result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.keyThesesText && elements.keyThesesContainer) {
         const savedTheses = String(result[STORAGE_KEYS.KEY_THESES_TEXT]);

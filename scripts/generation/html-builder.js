@@ -2,7 +2,7 @@
 // HTML builder for PDF generation
 
 import { log, logWarn, logDebug, logError } from '../utils/logging.js';
-import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle, markdownToHtml } from '../utils/html.js';
+import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle, markdownToHtml, cleanTildaArtifactsFromText } from '../utils/html.js';
 import { PDF_LOCALIZATION } from '../utils/config.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
@@ -171,6 +171,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           
           // Remove any leading # characters and spaces (in case markdown syntax leaked in)
           headingText = headingText.replace(/^#+\s*/, '').trim();
+          headingText = cleanTildaArtifactsFromText(headingText) || headingText;
           
           let headingHtml;
           if (headingHasHtmlTags) {
@@ -578,8 +579,9 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
         stepLog.action = 'first_item';
       }
       
-      // Add list item
-      tocListHtml += `<li><a href="#${escapeAttr(h.id)}">${escapeHtml(h.text)}</a>`;
+      // Add list item (clean Tilda block IDs from heading text)
+      const tocTitle = cleanTildaArtifactsFromText(h.text || '') || (h.text || '');
+      tocListHtml += `<li><a href="#${escapeAttr(h.id)}">${escapeHtml(tocTitle)}</a>`;
       hasOpenLi = true;
       stepLog.addedLi = true;
       
