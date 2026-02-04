@@ -767,19 +767,17 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   }
   
   const isLocalFile = cleanPdfUrl.startsWith('file://');
+  const isWebUrl = cleanPdfUrl.startsWith('http');
   
-  // CRITICAL: For local files, get PDF data FIRST (before dimensions)
-  // This is required because offscreen document cannot load file:// URLs via fetch
-  // For web URLs, we can get dimensions directly
+  // CRITICAL: Get PDF data FIRST (before dimensions) for both local and web URLs
+  // - Local: offscreen cannot fetch file:// URLs (CORS/origin). We must pass data via IndexedDB.
+  // - Web: offscreen fetch to third-party URLs fails with CORS. Background can fetch; we save to IndexedDB and pass ref.
   let pdfData = null;
   if (isLocalFile && tabId) {
     log('[ClipAIble PDF Processing] Local file detected - getting PDF data first (before dimensions)', { pdfUrl: cleanPdfUrl, tabId });
     
-    // Use unified function to get PDF data with fallback strategies
     pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId);
     
-    // CRITICAL: At this point, pdfData should always be from IndexedDB
-    // Verify it's an ArrayBuffer and has valid PDF header using shared validation
     try {
       validatePdfData(pdfData, 'processPdfPageWithAI');
     } catch (validationError) {
@@ -795,10 +793,29 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       header: headerText,
       source: 'indexeddb'
     });
+  } else if (isWebUrl) {
+    log('[ClipAIble PDF Processing] Web PDF URL - getting PDF data in background (before dimensions)', { pdfUrl: cleanPdfUrl });
+    
+    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId);
+    
+    try {
+      validatePdfData(pdfData, 'processPdfPageWithAI');
+    } catch (validationError) {
+      throw new Error(`PDF data validation failed: ${validationError.message}`);
+    }
+    
+    const headerBytes = new Uint8Array(pdfData).slice(0, 4);
+    const headerText = String.fromCharCode(...headerBytes);
+    
+    log('[ClipAIble PDF Processing] ✅ PDF data ready for processing (web)', {
+      size: pdfData.byteLength,
+      sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
+      header: headerText,
+      source: 'web_fetch_then_indexeddb'
+    });
   }
   
-  // CRITICAL: Get PDF page dimensions via PDF.js API
-  // For local files, use pdfData if available; for web URLs, fetch directly
+  // CRITICAL: Get PDF page dimensions via PDF.js API (offscreen loads from IndexedDB via pdfDataRef when pdfData was set)
   let pdfPageDimensions = null;
   try {
     log('[ClipAIble PDF Processing] Getting PDF page dimensions via PDF.js API', {
@@ -982,10 +999,9 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   log(`Starting AI processing of ${numPages} pages`, { numPages });
 
-  // CRITICAL: For local files, pdfData was already obtained above (before dimensions)
-  // For web URLs, pdfData is null and will be loaded by offscreen document via fetch
-  if (isLocalFile && pdfData) {
-    log('[ClipAIble PDF Processing] ✅ PDF data available for local file - using offscreen rendering', {
+  // pdfData was obtained above for both local and web URLs (saved to IndexedDB; offscreen uses pdfDataRef)
+  if (pdfData) {
+    log('[ClipAIble PDF Processing] PDF data available for rendering', {
       size: pdfData.byteLength,
       sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
       method: 'offscreen_render'
