@@ -155,7 +155,7 @@ export function initOrchestration(deps) {
     logWarn('Failed to get tab URL for PDF detection', e);
   }
   
-  const pdfInfo = detectPdfPage(data.url, tabUrl);
+  const pdfInfo = detectPdfPage(data.url, tabUrl, data.html);
   if (pdfInfo && pdfInfo.isPdf) {
     log('📄 Detected PDF page - processing as PDF document');
     // Process as PDF page - skip selector/extract modes
