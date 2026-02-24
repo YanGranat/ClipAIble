@@ -799,7 +799,33 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
           "resources-section",
           "component-share-buttons",
           "aria-font-adjusts",
-          "font-adjust"
+          "font-adjust",
+          "byline",
+          "dateline",
+          "timestamp",
+          "toolbar",
+          "toolbox",
+          "breadcrumb",
+          "breadcrumbs",
+          "tag-cloud",
+          "tags",
+          "tag-list",
+          "widget",
+          "widgets",
+          "promo",
+          "promotion",
+          "promotional",
+          "toc",
+          "table-of-contents",
+          "contents-nav",
+          "modal",
+          "popup",
+          "overlay",
+          "lightbox",
+          "cookie",
+          "gdpr",
+          "consent",
+          "tracking"
     ];
     
     // Paywall classes
@@ -1645,6 +1671,16 @@ function isExcluded(win, element, constants) {
   if (adClasses.some((adClass) => className.includes(adClass) || id.includes(adClass))) {
     return true;
   }
+  const dataModule = (element.getAttribute("data-module") || "").toLowerCase();
+  const dataComponent = (element.getAttribute("data-component") || "").toLowerCase();
+  const dataType = (element.getAttribute("data-type") || "").toLowerCase();
+  if (dataModule === "ad" || dataModule === "advertisement" || dataComponent === "ad" || dataComponent === "advertisement" || dataType === "ad" || dataType === "advertisement") {
+    return true;
+  }
+  const dataOuter = ((element.getAttribute("data-widget") || "") + (element.getAttribute("data-embed") || "")).toLowerCase();
+  if (dataOuter.includes("google") || dataOuter.includes("facebook") || dataOuter.includes("twitter")) {
+    return true;
+  }
   if (PAYWALL_CLASSES2.some((paywallClass) => className.includes(paywallClass) || id.includes(paywallClass))) {
     return true;
   }
@@ -1884,6 +1920,38 @@ function calculateContentScore(win, element) {
   const sentenceCount = (text.match(/[.!?]+\s+/g) || []).length;
   if (sentenceCount > 5)
     score += Math.min(sentenceCount * 2, 30);
+  score += calculateStopwordBonus(text);
+  if (paragraphs.length > 0) {
+    let paragraphBonusTotal = 0;
+    let paragraphsChecked = 0;
+    for (const p of Array.from(paragraphs)) {
+      const pText = (p.textContent || "").trim();
+      if (pText.length > 50) {
+        paragraphBonusTotal += calculateStopwordBonus(pText);
+        paragraphsChecked++;
+      }
+    }
+    if (paragraphsChecked > 0) {
+      score += Math.min(paragraphBonusTotal / paragraphsChecked, 30);
+    }
+  }
+  if (paragraphs.length < 3) {
+    try {
+      const BLOCK = /* @__PURE__ */ new Set(["p", "ul", "ol", "table", "blockquote", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "div", "section", "article"]);
+      const divs = Array.from(element.querySelectorAll("div")).slice(0, 100);
+      let virtualParas = 0;
+      for (const div of divs) {
+        const hasBlockChild = Array.from(div.children).some((c) => BLOCK.has(c.tagName.toLowerCase()));
+        if (!hasBlockChild && (div.textContent || "").trim().length > 80) {
+          virtualParas++;
+        }
+      }
+      if (virtualParas >= 3) {
+        score += virtualParas * 6;
+      }
+    } catch (e) {
+    }
+  }
   const tagName = element.tagName.toLowerCase();
   if (tagName === "article")
     score *= 2;
@@ -1926,6 +1994,266 @@ function calculateContentScore(win, element) {
   if (longParagraphs > 3)
     score += longParagraphs * 5;
   return score;
+}
+
+function calculateStopwordBonus(text) {
+  if (!text || text.length < 50)
+    return 0;
+  const cjkChars = (text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
+  if (cjkChars > text.length * 0.15)
+    return 10;
+  const SW = /* @__PURE__ */ new Set([
+    // English
+    "the",
+    "is",
+    "was",
+    "are",
+    "were",
+    "a",
+    "an",
+    "of",
+    "in",
+    "to",
+    "it",
+    "he",
+    "she",
+    "they",
+    "we",
+    "that",
+    "this",
+    "for",
+    "with",
+    "on",
+    "at",
+    "by",
+    "from",
+    "as",
+    "but",
+    "and",
+    "or",
+    "not",
+    "have",
+    "has",
+    "had",
+    "will",
+    "would",
+    "could",
+    "should",
+    "be",
+    "been",
+    "being",
+    "its",
+    "his",
+    "her",
+    "their",
+    "our",
+    "you",
+    "if",
+    "do",
+    "did",
+    // Russian
+    "\u0438",
+    "\u0432",
+    "\u043D\u0435",
+    "\u043D\u0430",
+    "\u0447\u0442\u043E",
+    "\u043E\u043D",
+    "\u043E\u043D\u0430",
+    "\u043E\u043D\u0438",
+    "\u044F",
+    "\u043C\u044B",
+    "\u0441",
+    "\u043F\u043E",
+    "\u043A",
+    "\u0438\u0437",
+    "\u043A\u0430\u043A",
+    "\u0442\u043E",
+    "\u0443",
+    "\u043D\u043E",
+    "\u0434\u0430",
+    "\u0442\u0430\u043A",
+    "\u0435\u0441\u043B\u0438",
+    "\u0436\u0435",
+    "\u0443\u0436\u0435",
+    "\u043F\u0440\u0438",
+    "\u0438\u043B\u0438",
+    "\u0437\u0430",
+    "\u0441\u043E",
+    // Ukrainian
+    "\u0456",
+    "\u0442\u0430",
+    "\u043D\u0435",
+    "\u043D\u0430",
+    "\u0449\u043E",
+    "\u0432\u0456\u043D",
+    "\u0432\u043E\u043D\u0430",
+    "\u0432\u043E\u043D\u0438",
+    "\u044F",
+    "\u043C\u0438",
+    "\u0437",
+    "\u043F\u043E",
+    "\u0434\u043E",
+    "\u044F\u043A",
+    "\u0442\u043E",
+    "\u0443",
+    "\u0430\u043B\u0435",
+    "\u0432\u0436\u0435",
+    "\u0430\u0431\u043E",
+    "\u0436",
+    "\u0437\u0430",
+    "\u0437\u0456",
+    // German
+    "der",
+    "die",
+    "das",
+    "und",
+    "in",
+    "ist",
+    "den",
+    "zu",
+    "von",
+    "f\xFCr",
+    "eine",
+    "einer",
+    "auf",
+    "nicht",
+    "mit",
+    "sich",
+    "des",
+    "dem",
+    "war",
+    "sind",
+    "an",
+    "hat",
+    "er",
+    "sie",
+    "es",
+    "als",
+    "um",
+    "aber",
+    "wie",
+    "so",
+    "oder",
+    "noch",
+    "wenn",
+    // French
+    "le",
+    "la",
+    "les",
+    "de",
+    "et",
+    "en",
+    "un",
+    "une",
+    "dans",
+    "est",
+    "que",
+    "il",
+    "elle",
+    "on",
+    "nous",
+    "par",
+    "sur",
+    "pour",
+    "pas",
+    "plus",
+    "ce",
+    "qui",
+    "mais",
+    "ou",
+    "car",
+    "ni",
+    "si",
+    "dont",
+    // Spanish
+    "el",
+    "la",
+    "los",
+    "las",
+    "de",
+    "en",
+    "y",
+    "que",
+    "es",
+    "un",
+    "una",
+    "para",
+    "con",
+    "se",
+    "lo",
+    "del",
+    "su",
+    "por",
+    "al",
+    "le",
+    "m\xE1s",
+    "como",
+    "pero",
+    "sus",
+    "si",
+    // Italian
+    "il",
+    "la",
+    "di",
+    "e",
+    "che",
+    "in",
+    "un",
+    "una",
+    "per",
+    "con",
+    "non",
+    "si",
+    "ha",
+    "ma",
+    "sono",
+    "da",
+    "al",
+    "lo",
+    "le",
+    "della",
+    "del",
+    "come",
+    "pi\xF9",
+    // Portuguese
+    "o",
+    "a",
+    "os",
+    "as",
+    "de",
+    "em",
+    "e",
+    "que",
+    "um",
+    "uma",
+    "para",
+    "com",
+    "se",
+    "na",
+    "no",
+    "ao",
+    "do",
+    "da",
+    "mais",
+    "por",
+    "como",
+    "mas",
+    "j\xE1"
+  ]);
+  const words = text.toLowerCase().match(/[a-zа-яёіїєäöüßàáâèéêìíîòóôùúûñ]{2,}/g) || [];
+  if (words.length < 8)
+    return 0;
+  const stopCount = words.reduce((acc, w) => acc + (SW.has(w) ? 1 : 0), 0);
+  const ratio = stopCount / words.length;
+  if (ratio >= 0.18)
+    return 25;
+  if (ratio >= 0.12)
+    return 15;
+  if (ratio >= 0.08)
+    return 5;
+  if (ratio < 0.04 && words.length > 30)
+    return -10;
+  return 0;
 }
 
 function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {

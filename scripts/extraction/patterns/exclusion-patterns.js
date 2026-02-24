@@ -374,7 +374,14 @@ export const EXCLUDED_CLASSES = [
   'book-cta', 'course-cta', 'product-cta', 'course-ad', 'product-ad',
   'content-tabs', 'content-tab', 'book-cta__inverted', 'book-cta__col',
   'useful-resources', 'further-reading', 'resources-section',
-  'component-share-buttons', 'aria-font-adjusts', 'font-adjust'
+  'component-share-buttons', 'aria-font-adjusts', 'font-adjust',
+  // Patterns from node-unfluff not previously covered
+  'byline', 'dateline', 'timestamp', 'toolbar', 'toolbox',
+  'breadcrumb', 'breadcrumbs', 'tag-cloud', 'tags', 'tag-list',
+  'widget', 'widgets', 'promo', 'promotion', 'promotional',
+  'toc', 'table-of-contents', 'contents-nav',
+  'modal', 'popup', 'overlay', 'lightbox',
+  'cookie', 'gdpr', 'consent', 'tracking',
 ];
 
 /**

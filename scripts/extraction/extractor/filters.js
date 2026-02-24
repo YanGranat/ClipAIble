@@ -247,6 +247,25 @@ export function isExcluded(win, element, constants) {
   if (adClasses.some(adClass => className.includes(adClass) || id.includes(adClass))) {
     return true;
   }
+
+  // Data-attribute ad/tracking detection — inspired by node-unfluff's attribute-based exclusion.
+  // Catches ad widgets that use data attributes instead of class/id naming conventions.
+  const dataModule = (element.getAttribute('data-module') || '').toLowerCase();
+  const dataComponent = (element.getAttribute('data-component') || '').toLowerCase();
+  const dataType = (element.getAttribute('data-type') || '').toLowerCase();
+  if (dataModule === 'ad' || dataModule === 'advertisement' ||
+      dataComponent === 'ad' || dataComponent === 'advertisement' ||
+      dataType === 'ad' || dataType === 'advertisement') {
+    return true;
+  }
+  // Google / Facebook / Twitter tracking widgets embedded via data attributes
+  const dataOuter = (
+    (element.getAttribute('data-widget') || '') +
+    (element.getAttribute('data-embed') || '')
+  ).toLowerCase();
+  if (dataOuter.includes('google') || dataOuter.includes('facebook') || dataOuter.includes('twitter')) {
+    return true;
+  }
   
   // Paywall classes
   if (PAYWALL_CLASSES.some(paywallClass => className.includes(paywallClass) || id.includes(paywallClass))) {

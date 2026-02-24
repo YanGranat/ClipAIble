@@ -27,6 +27,69 @@ export function isLikelyContentContainer(element) {
 }
 
 /**
+ * Calculate stopword bonus for text quality detection.
+ * Inspired by the Goose algorithm used in node-unfluff / python-goose:
+ * real prose contains many function words (stopwords); boilerplate/navigation has fewer.
+ * Supports: English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese.
+ * CJK text (Chinese/Japanese/Korean) is treated as prose by default since word-level
+ * stopword analysis doesn't apply to character-based scripts.
+ * @param {string} text - Text to analyse
+ * @returns {number} - Score bonus (positive = likely prose, negative = likely boilerplate)
+ */
+export function calculateStopwordBonus(text) {
+  if (!text || text.length < 50) return 0;
+
+  // CJK detection — treat as prose (stopword ratio doesn't apply)
+  const cjkChars = (text.match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g) || []).length;
+  if (cjkChars > text.length * 0.15) return 10;
+
+  // Compact multilingual stopword set (common function words across supported languages)
+  const SW = new Set([
+    // English
+    'the','is','was','are','were','a','an','of','in','to','it','he','she',
+    'they','we','that','this','for','with','on','at','by','from','as','but',
+    'and','or','not','have','has','had','will','would','could','should','be',
+    'been','being','its','his','her','their','our','you','if','do','did',
+    // Russian
+    'и','в','не','на','что','он','она','они','я','мы','с','по','к','из',
+    'как','то','у','но','да','так','если','же','уже','при','или','за','со',
+    // Ukrainian
+    'і','та','не','на','що','він','вона','вони','я','ми','з','по','до',
+    'як','то','у','але','вже','або','ж','за','зі',
+    // German
+    'der','die','das','und','in','ist','den','zu','von','für','eine','einer',
+    'auf','nicht','mit','sich','des','dem','war','sind','an','hat','er',
+    'sie','es','als','um','aber','wie','so','oder','noch','wenn',
+    // French
+    'le','la','les','de','et','en','un','une','dans','est','que','il',
+    'elle','on','nous','par','sur','pour','pas','plus','ce','qui','mais',
+    'ou','car','ni','si','dont',
+    // Spanish
+    'el','la','los','las','de','en','y','que','es','un','una','para','con',
+    'se','lo','del','su','por','al','le','más','como','pero','sus','si',
+    // Italian
+    'il','la','di','e','che','in','un','una','per','con','non','si',
+    'ha','ma','sono','da','al','lo','le','della','del','come','più',
+    // Portuguese
+    'o','a','os','as','de','em','e','que','um','uma','para','com',
+    'se','na','no','ao','do','da','mais','por','como','mas','já',
+  ]);
+
+  // Extract Latin-script words (length ≥ 2)
+  const words = text.toLowerCase().match(/[a-zа-яёіїєäöüßàáâèéêìíîòóôùúûñ]{2,}/g) || [];
+  if (words.length < 8) return 0;
+
+  const stopCount = words.reduce((acc, w) => acc + (SW.has(w) ? 1 : 0), 0);
+  const ratio = stopCount / words.length;
+
+  if (ratio >= 0.18) return 25; // Strong prose signal
+  if (ratio >= 0.12) return 15; // Good prose signal
+  if (ratio >= 0.08) return  5; // Moderate prose signal
+  if (ratio < 0.04 && words.length > 30) return -10; // Suspiciously low — likely boilerplate
+  return 0;
+}
+
+/**
  * Calculate content score for element (Readability-inspired algorithm)
  * @param {Window} win - Window object
  * @param {Element} element - Element to score
@@ -38,7 +101,7 @@ export function calculateContentScore(win, element) {
   const links = element.querySelectorAll('a');
   const text = element.textContent || '';
   const textLength = text.length;
-  
+
   // Base score from structure
   let score = paragraphs.length * 10;
   score += headings.length * 5;
@@ -116,11 +179,51 @@ export function calculateContentScore(win, element) {
   const commaCount = (text.match(/,/g) || []).length;
   if (commaCount > 10) score *= 1.2;
   else if (commaCount > 5) score *= 1.1;
-  
+
   // Sentence count bonus
   const sentenceCount = (text.match(/[.!?]+\s+/g) || []).length;
   if (sentenceCount > 5) score += Math.min(sentenceCount * 2, 30);
-  
+
+  // Stopword bonus — inspired by Goose algorithm (node-unfluff / python-goose)
+  // Real prose has many function words; navigation/boilerplate has fewer.
+  // Apply both at container level and per-paragraph for bottom-up signal.
+  score += calculateStopwordBonus(text);
+  if (paragraphs.length > 0) {
+    let paragraphBonusTotal = 0;
+    let paragraphsChecked = 0;
+    for (const p of Array.from(paragraphs)) {
+      const pText = (p.textContent || '').trim();
+      if (pText.length > 50) {
+        paragraphBonusTotal += calculateStopwordBonus(pText);
+        paragraphsChecked++;
+      }
+    }
+    if (paragraphsChecked > 0) {
+      // Average per-paragraph bonus, capped to avoid over-boosting
+      score += Math.min(paragraphBonusTotal / paragraphsChecked, 30);
+    }
+  }
+
+  // Virtual paragraph detection — inspired by node-unfluff's div-to-p conversion.
+  // Some sites use <div> for body text instead of <p>. Count inline divs without
+  // block-level children as "virtual paragraphs" for scoring when real <p>s are absent.
+  if (paragraphs.length < 3) {
+    try {
+      const BLOCK = new Set(['p','ul','ol','table','blockquote','pre','h1','h2','h3','h4','h5','h6','div','section','article']);
+      const divs = Array.from(element.querySelectorAll('div')).slice(0, 100);
+      let virtualParas = 0;
+      for (const div of divs) {
+        const hasBlockChild = Array.from(div.children).some(c => BLOCK.has(c.tagName.toLowerCase()));
+        if (!hasBlockChild && (div.textContent || '').trim().length > 80) {
+          virtualParas++;
+        }
+      }
+      if (virtualParas >= 3) {
+        score += virtualParas * 6; // Similar magnitude to real paragraph score
+      }
+    } catch (e) { /* skip */ }
+  }
+
   // Semantic HTML bonus
   const tagName = element.tagName.toLowerCase();
   if (tagName === 'article') score *= 2.0;
