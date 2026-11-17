@@ -12,17 +12,17 @@
       <div class="header-controls">
         <div class="header-control header-control-left">
           <select id="uiLanguageSelect" class="header-select" data-i18n-title="extensionLanguage" title="Extension Language">
-            <option value="en">EN</option>
-            <option value="ru">RU</option>
-            <option value="ua">UA</option>
             <option value="de">DE</option>
-            <option value="fr">FR</option>
+            <option selected value="en">EN</option>
             <option value="es">ES</option>
+            <option value="fr">FR</option>
             <option value="it">IT</option>
-            <option value="pt">PT</option>
-            <option value="zh">ZH</option>
             <option value="ja">JA</option>
             <option value="ko">KO</option>
+            <option value="pt">PT</option>
+            <option value="ru">RU</option>
+            <option value="ua">UA</option>
+            <option value="zh">ZH</option>
           </select>
         </div>
         <div class="header-title">
@@ -30,7 +30,7 @@
         </div>
         <div class="header-control header-control-right">
           <select id="themeSelect" class="header-select" data-i18n-title="theme" title="Theme">
-            <option value="auto" data-i18n="auto">Auto</option>
+            <option value="auto" data-i18n="auto">As in system</option>
             <option value="dark" data-i18n="darkTheme">Dark</option>
             <option value="light" data-i18n="lightTheme">Light</option>
           </select>
@@ -53,7 +53,7 @@
           </select>
         </div>
         <div class="api-key-group">
-          <label id="modelSelectLabel" for="modelSelectTrigger" data-i18n="model">AI Model</label>
+          <label id="modelSelectLabel" for="modelSelectTrigger" data-i18n="model">Model</label>
           <div class="model-select-wrapper">
             <select id="modelSelect" hidden tabindex="-1" aria-hidden="true"></select>
             <button type="button" id="modelSelectTrigger" class="model-select-trigger" role="combobox" aria-haspopup="grid" aria-expanded="false" aria-controls="customModelOptions" aria-labelledby="modelSelectLabel">
@@ -138,12 +138,12 @@
       </div>
 
       <!-- Key theses Section -->
-      <button id="generateKeyThesesBtn" class="btn btn-summary" data-i18n="generateKeyTheses">Key theses</button>
+      <button id="generateKeyThesesBtn" class="btn btn-summary" data-i18n="generateKeyTheses">Key claims</button>
       <div id="keyThesesContainer" class="summary-container hidden">
         <div class="summary-header">
           <button id="keyThesesToggle" class="summary-toggle">
             <span class="summary-toggle-icon">▶</span>
-            <span data-i18n="keyTheses">Key theses</span>
+            <span data-i18n="keyTheses">Key claims</span>
           </button>
           <div class="summary-actions">
             <button id="keyThesesCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" title="Copy">📋</button>
@@ -162,7 +162,7 @@
           ⚙️ <span data-i18n="settings">Settings</span>
         </button>
         <button id="toggleStats" class="btn btn-text">
-          📊 <span data-i18n="statistics">Stats</span>
+          📊 <span data-i18n="statistics">Statistics</span>
         </button>
       </section>
 
@@ -175,7 +175,7 @@
         <div class="stats-grid">
           <div class="stat-card stat-total">
             <div class="stat-value" id="statTotal">0</div>
-            <div class="stat-label" data-i18n="totalSaved">Total saved</div>
+            <div class="stat-label" data-i18n="totalSaved">Total Saved</div>
           </div>
           <div class="stat-card stat-month">
             <div class="stat-value" id="statMonth">0</div>
@@ -264,7 +264,7 @@
           <select id="modeSelect">
             <option value="automatic" data-i18n="automaticMode">Automatic (no AI)</option>
             <option value="selector" data-i18n="aiSelectorFaster">AI Selector (faster, exact text)</option>
-            <option value="extract" data-i18n="aiExtractFull">AI Extract (full processing)</option>
+            <option value="extract" data-i18n="aiExtractFull">AI Extract (full content)</option>
           </select>
           <p class="setting-hint" id="modeHint" data-i18n="extractionModeHint">AI finds article blocks, script extracts content</p>
         </div>
@@ -277,7 +277,7 @@
         </div>
         <!-- Output format select is now on main screen, but kept hidden for synchronization -->
         <select id="outputFormat" class="hidden" data-i18n-title="outputFormat" title="Output format">
-          <option value="pdf" data-i18n="saveAsPdf">PDF</option>
+          <option value="pdf" data-i18n="saveAsPdf">Save as PDF</option>
           <option value="epub" data-i18n="epubEreaders">EPUB (e-readers)</option>
           <option value="fb2" data-i18n="fb2Ereaders">FB2 (e-readers)</option>
             <option value="markdown" data-i18n="formatMarkdown">MD</option>
@@ -288,11 +288,11 @@
           <label for="audioProvider" data-i18n="ttsProvider">TTS Provider</label>
           <select id="audioProvider">
             <option value="offline" data-i18n="offlineTts">Piper TTS (offline)</option>
-            <option value="openai" data-i18n="openaiTts">OpenAI TTS (MP3)</option>
-            <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs (MP3)</option>
-            <option value="google" data-i18n="googleTts">Google Gemini TTS (WAV)</option>
-            <option value="qwen" data-i18n="qwenTts">Qwen TTS (WAV)</option>
-            <option value="respeecher" data-i18n="respeecher">Respeecher (EN/UA, WAV)</option>
+            <option value="openai" data-i18n="openaiTts">OpenAI TTS</option>
+            <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs</option>
+            <option value="google" data-i18n="googleTts">Google Gemini TTS</option>
+            <option value="qwen" data-i18n="qwenTts">Qwen TTS</option>
+            <option value="respeecher" data-i18n="respeecher">Respeecher (EN/UA)</option>
           </select>
           <p class="setting-hint" data-i18n="ttsProviderHint">Choose text-to-speech provider</p>
         </div>
@@ -335,18 +335,18 @@
           <select id="qwenModel"></select>
         </div>
         <div class="setting-item hidden" id="qwenRegionGroup">
-          <label for="qwenRegion">Qwen Region</label>
+          <label for="qwenRegion" data-i18n="qwenRegion">Qwen region</label>
           <select id="qwenRegion">
-            <option value="singapore">Singapore</option>
-            <option value="beijing">Beijing</option>
+            <option value="singapore" data-i18n="regionSingapore">Singapore</option>
+            <option value="beijing" data-i18n="regionBeijing">Beijing</option>
           </select>
         </div>
         <div class="setting-item hidden" id="qwenWorkspaceGroup">
-          <label for="qwenWorkspaceId">Qwen Workspace ID</label>
+          <label for="qwenWorkspaceId" data-i18n="qwenWorkspaceId">Qwen workspace ID</label>
           <div class="input-group">
-            <input type="text" id="qwenWorkspaceId" autocomplete="off" spellcheck="false" placeholder="Workspace ID">
+            <input type="text" id="qwenWorkspaceId" autocomplete="off" spellcheck="false" placeholder="Workspace ID" data-i18n-placeholder="workspaceId">
           </div>
-          <p class="setting-hint">Use the workspace and API key from the selected region in <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noopener">Model Studio</a>.</p>
+          <p class="setting-hint"><span data-i18n="qwenWorkspaceHint">Use a workspace and API key from the selected region.</span> <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noopener">Model Studio</a></p>
         </div>
         <div class="setting-item hidden" id="respeecherApiKeyGroup">
           <label for="respeecherApiKey" data-i18n="respeecherApiKey">Respeecher API Key</label>
@@ -420,7 +420,7 @@
         <div class="setting-item hidden" id="elevenlabsFormatGroup">
           <label for="elevenlabsFormat" data-i18n="audioFormat">Audio Format</label>
           <select id="elevenlabsFormat">
-            <option value="mp3_44100_192" selected>MP3 44.1kHz 192kbps (highest quality)</option>
+            <option value="mp3_44100_192" selected>MP3 44.1kHz 192kbps</option>
             <option value="mp3_44100_128">MP3 44.1kHz 128kbps</option>
             <option value="mp3_22050_32">MP3 22.05kHz 32kbps</option>
             <option value="pcm_44100">PCM 44.1kHz</option>
@@ -440,7 +440,7 @@
                   <input type="range" id="elevenlabsStability" min="0" max="1" step="0.5" value="0.5">
                   <span class="slider-value" id="elevenlabsStabilityValue">0.5</span>
                 </div>
-                <p class="setting-hint" data-i18n="stabilityHint">Low = more variation, High = more stable (0.0 = Creative, 0.5 = Natural, 1.0 = Robust)</p>
+                <p class="setting-hint" data-i18n="stabilityHint">Low = more variation, High = more stable</p>
               </div>
               <div class="setting-item">
                 <label for="elevenlabsSimilarity" data-i18n="similarityBoost">Similarity Boost</label>
@@ -480,63 +480,52 @@
         <div class="setting-item hidden" id="googleTtsVoiceGroup">
           <label for="googleTtsVoice" data-i18n="voice">Voice</label>
           <select id="googleTtsVoice">
-            <option value="Callirrhoe">Callirrhoe (Easy-going)</option>
-            <option value="Zephyr">Zephyr (Bright)</option>
-            <option value="Puck">Puck (Optimistic)</option>
-            <option value="Charon">Charon (Informative)</option>
-            <option value="Kore">Kore (Firm)</option>
-            <option value="Fenrir">Fenrir (Excitable)</option>
-            <option value="Leda">Leda (Youthful)</option>
-            <option value="Orus">Orus (Firm)</option>
-            <option value="Aoede">Aoede (Breezy)</option>
-            <option value="Autonoe">Autonoe (Bright)</option>
-            <option value="Enceladus">Enceladus (Breathy)</option>
-            <option value="Iapetus">Iapetus (Clear)</option>
-            <option value="Umbriel">Umbriel (Easy-going)</option>
-            <option value="Algieba">Algieba (Smooth)</option>
-            <option value="Despina">Despina (Smooth)</option>
-            <option value="Erinome">Erinome (Clear)</option>
-            <option value="Algenib">Algenib (Gravelly)</option>
-            <option value="Rasalgethi">Rasalgethi (Informative)</option>
-            <option value="Laomedeia">Laomedeia (Optimistic)</option>
-            <option value="Achernar">Achernar (Soft)</option>
-            <option value="Alnilam">Alnilam (Firm)</option>
-            <option value="Schedar">Schedar (Even)</option>
-            <option value="Gacrux">Gacrux (Mature)</option>
-            <option value="Pulcherrima">Pulcherrima (Forward)</option>
-            <option value="Achird">Achird (Friendly)</option>
-            <option value="Zubenelgenubi">Zubenelgenubi (Casual)</option>
-            <option value="Vindemiatrix">Vindemiatrix (Gentle)</option>
-            <option value="Sadachbia">Sadachbia (Lively)</option>
-            <option value="Sadaltager">Sadaltager (Knowledgeable)</option>
-            <option value="Sulafat">Sulafat (Warm)</option>
+            <option value="Callirrhoe" data-i18n-parts='[{"text":"Callirrhoe ("},{"key":"voiceStyleEasyGoing"},{"text":")"}]'>Callirrhoe (Easy-going)</option>
+            <option value="Zephyr" data-i18n-parts='[{"text":"Zephyr ("},{"key":"voiceStyleBright"},{"text":")"}]'>Zephyr (Bright)</option>
+            <option value="Puck" data-i18n-parts='[{"text":"Puck ("},{"key":"voiceStyleOptimistic"},{"text":")"}]'>Puck (Optimistic)</option>
+            <option value="Charon" data-i18n-parts='[{"text":"Charon ("},{"key":"voiceStyleInformative"},{"text":")"}]'>Charon (Informative)</option>
+            <option value="Kore" data-i18n-parts='[{"text":"Kore ("},{"key":"voiceStyleFirm"},{"text":")"}]'>Kore (Firm)</option>
+            <option value="Fenrir" data-i18n-parts='[{"text":"Fenrir ("},{"key":"voiceStyleExcitable"},{"text":")"}]'>Fenrir (Excitable)</option>
+            <option value="Leda" data-i18n-parts='[{"text":"Leda ("},{"key":"voiceStyleYouthful"},{"text":")"}]'>Leda (Youthful)</option>
+            <option value="Orus" data-i18n-parts='[{"text":"Orus ("},{"key":"voiceStyleFirm"},{"text":")"}]'>Orus (Firm)</option>
+            <option value="Aoede" data-i18n-parts='[{"text":"Aoede ("},{"key":"voiceStyleBreezy"},{"text":")"}]'>Aoede (Breezy)</option>
+            <option value="Autonoe" data-i18n-parts='[{"text":"Autonoe ("},{"key":"voiceStyleBright"},{"text":")"}]'>Autonoe (Bright)</option>
+            <option value="Enceladus" data-i18n-parts='[{"text":"Enceladus ("},{"key":"voiceStyleBreathy"},{"text":")"}]'>Enceladus (Breathy)</option>
+            <option value="Iapetus" data-i18n-parts='[{"text":"Iapetus ("},{"key":"voiceStyleClear"},{"text":")"}]'>Iapetus (Clear)</option>
+            <option value="Umbriel" data-i18n-parts='[{"text":"Umbriel ("},{"key":"voiceStyleEasyGoing"},{"text":")"}]'>Umbriel (Easy-going)</option>
+            <option value="Algieba" data-i18n-parts='[{"text":"Algieba ("},{"key":"voiceStyleSmooth"},{"text":")"}]'>Algieba (Smooth)</option>
+            <option value="Despina" data-i18n-parts='[{"text":"Despina ("},{"key":"voiceStyleSmooth"},{"text":")"}]'>Despina (Smooth)</option>
+            <option value="Erinome" data-i18n-parts='[{"text":"Erinome ("},{"key":"voiceStyleClear"},{"text":")"}]'>Erinome (Clear)</option>
+            <option value="Algenib" data-i18n-parts='[{"text":"Algenib ("},{"key":"voiceStyleGravelly"},{"text":")"}]'>Algenib (Gravelly)</option>
+            <option value="Rasalgethi" data-i18n-parts='[{"text":"Rasalgethi ("},{"key":"voiceStyleInformative"},{"text":")"}]'>Rasalgethi (Informative)</option>
+            <option value="Laomedeia" data-i18n-parts='[{"text":"Laomedeia ("},{"key":"voiceStyleOptimistic"},{"text":")"}]'>Laomedeia (Optimistic)</option>
+            <option value="Achernar" data-i18n-parts='[{"text":"Achernar ("},{"key":"voiceStyleSoft"},{"text":")"}]'>Achernar (Soft)</option>
+            <option value="Alnilam" data-i18n-parts='[{"text":"Alnilam ("},{"key":"voiceStyleFirm"},{"text":")"}]'>Alnilam (Firm)</option>
+            <option value="Schedar" data-i18n-parts='[{"text":"Schedar ("},{"key":"voiceStyleEven"},{"text":")"}]'>Schedar (Even)</option>
+            <option value="Gacrux" data-i18n-parts='[{"text":"Gacrux ("},{"key":"voiceStyleMature"},{"text":")"}]'>Gacrux (Mature)</option>
+            <option value="Pulcherrima" data-i18n-parts='[{"text":"Pulcherrima ("},{"key":"voiceStyleForward"},{"text":")"}]'>Pulcherrima (Forward)</option>
+            <option value="Achird" data-i18n-parts='[{"text":"Achird ("},{"key":"voiceStyleFriendly"},{"text":")"}]'>Achird (Friendly)</option>
+            <option value="Zubenelgenubi" data-i18n-parts='[{"text":"Zubenelgenubi ("},{"key":"voiceStyleCasual"},{"text":")"}]'>Zubenelgenubi (Casual)</option>
+            <option value="Vindemiatrix" data-i18n-parts='[{"text":"Vindemiatrix ("},{"key":"voiceStyleGentle"},{"text":")"}]'>Vindemiatrix (Gentle)</option>
+            <option value="Sadachbia" data-i18n-parts='[{"text":"Sadachbia ("},{"key":"voiceStyleLively"},{"text":")"}]'>Sadachbia (Lively)</option>
+            <option value="Sadaltager" data-i18n-parts='[{"text":"Sadaltager ("},{"key":"voiceStyleKnowledgeable"},{"text":")"}]'>Sadaltager (Knowledgeable)</option>
+            <option value="Sulafat" data-i18n-parts='[{"text":"Sulafat ("},{"key":"voiceStyleWarm"},{"text":")"}]'>Sulafat (Warm)</option>
           </select>
           <p class="setting-hint" data-i18n="googleTtsVoiceHint">Uses same API key as Gemini</p>
         </div>
         <div class="setting-item hidden" id="googleTtsPromptGroup">
-          <label for="googleTtsPrompt" data-i18n="voiceStylePrompt">Voice Style Prompt (Optional)</label>
+          <label for="googleTtsPrompt" data-i18n="voiceStylePrompt">Voice style instructions</label>
           <textarea id="googleTtsPrompt" rows="2" placeholder="e.g., Speak slowly and clearly, Read with enthusiasm" data-i18n-placeholder="voiceStylePromptPlaceholder"></textarea>
           <p class="setting-hint" data-i18n="googleTtsPromptHint">Control voice style and emotion. Leave empty for default natural speech.</p>
         </div>
         <div class="setting-item hidden" id="audioVoiceGroup">
           <label for="audioVoice" data-i18n="voice">Voice</label>
           <select id="audioVoice">
-            <!-- OpenAI voices (default) -->
-            <option value="nova">Nova (female, warm)</option>
-            <option value="alloy">Alloy (neutral)</option>
-            <option value="echo">Echo (male)</option>
-            <option value="fable">Fable (expressive)</option>
-            <option value="onyx">Onyx (male, deep)</option>
-            <option value="shimmer">Shimmer (female, clear)</option>
-            <option value="coral">Coral (female, friendly)</option>
-            <option value="sage">Sage (neutral, calm)</option>
-            <option value="ash">Ash (male, authoritative)</option>
-            <option value="ballad">Ballad (expressive, dramatic)</option>
-            <option value="verse">Verse (rhythmic)</option>
+            <option value="marin">Marin</option>
           </select>
         </div>
         <div class="setting-item hidden" id="audioSpeedGroup">
-          <label for="audioSpeed" data-i18n="speed">Speech Speed</label>
+          <label for="audioSpeed" data-i18n="speed">Speed</label>
           <div class="slider-container">
             <input type="range" id="audioSpeed" min="0.5" max="2" step="0.1" value="1">
             <span class="slider-value" id="audioSpeedValue">1.0x</span>
@@ -547,29 +536,37 @@
           <label for="languageSelect" data-i18n="targetLanguage">Target Language</label>
           <select id="languageSelect">
             <option value="auto" data-i18n="autoOriginal">Auto (original)</option>
-            <option value="en">English</option>
-            <option value="ru">Русский</option>
-            <option value="ua">Українська</option>
             <option value="de">Deutsch</option>
-            <option value="fr">Français</option>
+            <option value="en">English</option>
             <option value="es">Español</option>
+            <option value="fr">Français</option>
             <option value="it">Italiano</option>
             <option value="pt">Português</option>
+            <option value="ru">Русский</option>
+            <option value="ua">Українська</option>
+            <option value="ko">한국어</option>
             <option value="zh">中文</option>
             <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
           </select>
           <p class="setting-hint" id="languageHint" data-i18n="keepOriginalOrTranslate">Keep original or translate to selected language</p>
         </div>
         <div class="setting-item hidden" id="translateImagesGroup">
           <label class="checkbox-label">
             <input type="checkbox" id="translateImages">
-            <span class="checkbox-text" data-i18n="translateImages">Translate images with text</span>
+            <span class="checkbox-text" data-i18n="translateImages">Translate images</span>
           </label>
           <p class="setting-hint" data-i18n="translateImagesHint">Uses Google Gemini AI to translate text on images</p>
         </div>
+        <div class="setting-item hidden" id="imageTranslationProviderGroup">
+          <label for="imageTranslationProvider" data-i18n="imageTranslationProvider">Image translation provider</label>
+          <select id="imageTranslationProvider">
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+          <p class="setting-hint" id="imageTranslationModelHint" data-i18n="imageTranslationModelHint" data-i18n-params='{"model":""}'></p>
+        </div>
         <div class="setting-item hidden" id="googleApiGroup">
-          <label for="googleApiKey" data-i18n="googleApiKey">Google AI API Key for image translation</label>
+          <label for="googleApiKey" data-i18n="googleApiKey">Google AI API Key</label>
           <div class="input-group">
             <input 
               type="password" 
@@ -588,9 +585,9 @@
         <div class="setting-item">
           <label class="checkbox-label">
             <input type="checkbox" id="generateAbstract">
-            <span class="checkbox-text" data-i18n="generateAbstract">Generate Abstract</span>
+            <span class="checkbox-text" data-i18n="generateAbstract">Generate TL;DR</span>
           </label>
-            <p class="setting-hint" data-i18n="generateAbstractHint">AI-generated brief summary (2-3 paragraphs)</p>
+            <p class="setting-hint" data-i18n="generateAbstractHint">AI-generated TL;DR (2-4 sentences)</p>
         </div>
         <div class="setting-item">
           <label class="checkbox-label">
@@ -655,37 +652,37 @@
         <div class="setting-item">
           <label for="bgColor" data-i18n="pdfBackgroundColor">PDF Background Color</label>
           <div class="color-row">
-            <input type="color" id="bgColor" value="#303030" title="Background color picker">
-            <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input" title="Background color hex code">
+            <input type="color" id="bgColor" value="#303030" title="Background color picker" data-i18n-title="pdfBackgroundColor" data-i18n-aria-label="pdfBackgroundColor">
+            <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input" title="Background color hex code" data-i18n-title="pdfBackgroundColor" data-i18n-aria-label="pdfBackgroundColor">
             <button class="btn-reset-inline" data-reset="bgColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
           <label for="textColor" data-i18n="pdfTextColor">PDF Text Color</label>
           <div class="color-row">
-            <input type="color" id="textColor" value="#b9b9b9" title="Text color picker">
-            <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input" title="Text color hex code">
+            <input type="color" id="textColor" value="#b9b9b9" title="Text color picker" data-i18n-title="pdfTextColor" data-i18n-aria-label="pdfTextColor">
+            <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input" title="Text color hex code" data-i18n-title="pdfTextColor" data-i18n-aria-label="pdfTextColor">
             <button class="btn-reset-inline" data-reset="textColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
           <label for="headingColor" data-i18n="pdfHeadingColor">PDF Heading Color</label>
           <div class="color-row">
-            <input type="color" id="headingColor" value="#cfcfcf" title="Heading color picker">
-            <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input" title="Heading color hex code">
+            <input type="color" id="headingColor" value="#cfcfcf" title="Heading color picker" data-i18n-title="pdfHeadingColor" data-i18n-aria-label="pdfHeadingColor">
+            <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input" title="Heading color hex code" data-i18n-title="pdfHeadingColor" data-i18n-aria-label="pdfHeadingColor">
             <button class="btn-reset-inline" data-reset="headingColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
           <label for="linkColor" data-i18n="pdfLinkColor">PDF Link Color</label>
           <div class="color-row">
-            <input type="color" id="linkColor" value="#6cacff" title="Link color picker">
-            <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input" title="Link color hex code">
+            <input type="color" id="linkColor" value="#6cacff" title="Link color picker" data-i18n-title="pdfLinkColor" data-i18n-aria-label="pdfLinkColor">
+            <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input" title="Link color hex code" data-i18n-title="pdfLinkColor" data-i18n-aria-label="pdfLinkColor">
             <button class="btn-reset-inline" data-reset="linkColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="settings-divider"></div>
-        <button id="resetStylesBtn" class="btn btn-reset" data-i18n="resetAllToDefault">Reset All to Default</button>
+        <button id="resetStylesBtn" class="btn btn-reset" data-i18n="resetAllToDefault">Reset styles to default</button>
         <div class="settings-divider"></div>
         <div class="setting-item">
           <label data-i18n="importExportSettings">Import/Export Settings</label>
@@ -693,8 +690,8 @@
             <button id="exportSettingsBtn" class="btn btn-secondary btn-small" data-i18n="exportSettings">Export Settings</button>
             <button id="importSettingsBtn" class="btn btn-secondary btn-small" data-i18n="importSettings">Import Settings</button>
           </div>
-          <p class="setting-hint" data-i18n="exportHint">Export includes: settings (without API keys), optional stats & cache</p>
-          <input type="file" id="importFileInput" accept=".json" class="hidden" title="Import settings file">
+          <p class="setting-hint" data-i18n="exportHint">Export includes: settings (without API keys), optional stats &amp; cache</p>
+          <input type="file" id="importFileInput" data-i18n-title="importSettings" accept=".json" class="hidden" title="Import settings file">
         </div>
         </div>
       </section>
@@ -706,7 +703,7 @@
       <div class="popup-footer-links">
         <a href="https://github.com/YanGranat/ClipAIble" target="_blank" rel="noopener" class="popup-footer-link" id="githubLink">GitHub</a>
         <span class="popup-footer-separator">•</span>
-        <span class="popup-footer-version" id="versionText">v3.3.9</span>
+        <span class="popup-footer-version" id="versionText">v3.3.10</span>
       </div>
     </footer>
 
@@ -740,8 +737,7 @@
       </div>
       <div class="modal-body">
         <div id="pdfFileSelectionModalContent">
-          <p id="pdfFileSelectionModalMessage" data-i18n="pdfFileSelectionDialogMessage">Working with local files in browser extensions has limitations. Please select the PDF file you want to process.</p>
-          <p id="pdfFileSelectionModalWarning" class="pdf-file-selection-warning" data-i18n="pdfFileSelectionDialogWarning">Important: Do not switch tabs while the extension is processing. Keep this popup open until processing is complete.</p>
+          <p id="pdfFileSelectionModalMessage" data-i18n="pdfFileSelectionDialogMessage">Select the local PDF file you want to process.</p>
         </div>
       </div>
       <div class="modal-footer">

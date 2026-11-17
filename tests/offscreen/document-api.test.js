@@ -9,13 +9,14 @@ vi.mock('../../scripts/utils/config.js', () => ({ CONFIG: {
   OFFScreen_TTS_TIMEOUT_BASE: 60000, OFFScreen_TTS_TIMEOUT_MAX: 18000000,
   OFFScreen_TTS_TIMEOUT_PER_CHAR: 100, ABSOLUTE_MAX_OPERATION_TIMEOUT_MS: 86400000,
   OFFScreen_TTS_HEARTBEAT_EXTENSION: 1800000, OFFScreen_TTS_HEARTBEAT_INTERVAL: 60000,
+  PDF_PARSE_TIMEOUT_MS: 1000, PDF_FIRST_PAGE_RENDER_TIMEOUT_MS: 1000, PDF_RENDER_TIMEOUT_MS: 1000,
   OFFScreen_TTS_CLEANUP_TIMEOUT_MS: 300000
 } }));
 vi.mock('../../scripts/state/processing.js', () => ({ isCancelled: runId => !!runId && runId !== dependencies.currentRun }));
 vi.mock('../../scripts/locales.js', () => ({ tSync: key => key }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en' }));
-vi.mock('../../scripts/api/pdf-storage.js', () => ({ savePdfData: vi.fn() }));
-vi.mock('../../scripts/api/pdf-cdp-render.js', () => ({ renderPdfPageImageCdp: vi.fn(), renderAllPdfPagesCdp: vi.fn() }));
+vi.mock('../../scripts/utils/processing/pipeline-helpers.js', () => ({ checkCancellation: async () => {} }));
+vi.mock('../../scripts/api/pdf-storage.js', () => ({ savePdfData: vi.fn(async () => {}), removePdfData: vi.fn(async () => {}), validatePdfData: vi.fn() }));
 vi.mock('../../scripts/offscreen/worker/init.js', () => ({ ensureTTSWorker: async () => dependencies.worker }));
 
 describe('Shared offscreen document API', () => {
@@ -62,20 +63,6 @@ describe('Shared offscreen document API', () => {
     await expect(pdf.getPdfMetadata('https://example.com/document.pdf')).resolves.toEqual({ numPages: 1, metadata: {} });
     expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
     expect(chrome.offscreen.createDocument).not.toHaveBeenCalled();
-  });
-
-  it('passes processing ownership through both CDP rendering entry points', async () => {
-    const cdp = await import('../../scripts/api/pdf-cdp-render.js');
-    cdp.renderPdfPageImageCdp.mockResolvedValue({ imageData: 'data:image/png;base64,AQ==', width: 10, height: 20 });
-    cdp.renderAllPdfPagesCdp.mockResolvedValue([{ pageNum: 1, imageData: 'data:image/png;base64,AQ==', width: 10, height: 20 }]);
-    const options = { processingRunId: 'current', checkCancelled: vi.fn() };
-    await pdf.renderPdfPageImage('https://example.com/document.pdf', 1, 2, null, options);
-    expect(cdp.renderPdfPageImageCdp).toHaveBeenCalledWith('https://example.com/document.pdf', 1, 2, null, options);
-    expect(cdp.renderPdfPageImageCdp.mock.calls.at(-1)[4]).toBe(options);
-    await expect(pdf.renderAllPdfPages('https://example.com/document.pdf', 1, 2, null, null, null, options))
-      .resolves.toEqual([expect.objectContaining({ pageNum: 1, base64: 'AQ==' })]);
-    expect(cdp.renderAllPdfPagesCdp).toHaveBeenCalledWith('https://example.com/document.pdf', 1, 2, null, null, null, options);
-    expect(cdp.renderAllPdfPagesCdp.mock.calls.at(-1)[6]).toBe(options);
   });
 
   it('creates one shared document for concurrent PDF and voice requests', async () => {

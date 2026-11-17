@@ -1,0 +1,14 @@
+[
+  {
+    "file": "piper_phonemize.js",
+    "sha256": "0b103c7363f8b503f8863382e91fe9873c600e6503e8735d735b287da2535d6e"
+  },
+  {
+    "file": "piper_phonemize.wasm",
+    "sha256": "ad792ca28a1edba22ddee0e1f13128e5f31da72fb8575876a9f9018f4f1b6a47"
+  },
+  {
+    "file": "piper_phonemize.data",
+    "sha256": "c07faba4a92fae9b6b710803df06ab74ac976e12841d6263fa47d75844763a1d"
+  }
+]

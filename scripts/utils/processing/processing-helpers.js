@@ -8,7 +8,7 @@ import { updateState, setError, startProcessing, isCancelled, ERROR_CODES } from
 import { tSync } from '../../locales.js';
 import { getUILanguageCached } from './pipeline-helpers.js';
 import { removeLargeData } from '../storage/storage.js';
-import { validateAudioApiKeys } from '../validation/validation.js';
+import { validateAudioApiKeys, validateImageTranslation } from '../validation/validation.js';
 import { detectVideoPlatform } from '../video.js';
 import { processVideoPage } from '../../processing/video.js';
 // processPdfPage and processPdfPageWithAI imported statically (required for service worker)
@@ -86,7 +86,9 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
     // Continue anyway - not critical
   }
   
-  // Pre-flight key checks for audio to avoid long work before failing
+  // Pre-flight key checks before content processing
+  if (isCancelled(data.processingRunId)) return false;
+  if (!(await validateImageTranslation(data, stopKeepAlive))) return false;
   if (isCancelled(data.processingRunId)) return false;
   if (!(await validateAudioApiKeys(data, stopKeepAlive))) {
     return false;

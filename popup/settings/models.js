@@ -2,7 +2,7 @@
 // Models management module
 // Handles model list updates, custom models, hidden models
 
-import { t, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
+import { t, tSync, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { getModelCatalog, getModelMetadata, resolveSavedModel, resolveStoredModelSelection } from '../../scripts/utils/model-catalog.js';
 
 /**
@@ -20,6 +20,7 @@ export function initModels(deps) {
   let listRevision = 0;
   let dropdownRevision = 0;
   let renderedProvider = null;
+  let presentationLanguage = null;
   let storageQueue = Promise.resolve();
   const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
   const providerValues = (map, provider) => isRecord(map) && Array.isArray(map[provider])
@@ -47,10 +48,22 @@ export function initModels(deps) {
     return [...entries.values()].filter(entry => !hidden.has(entry.value));
   }
 
-  function modelLabel(entry, provider) {
+  function modelLabel(entry, provider, language) {
     const unavailable = !entry.isCustom && getModelMetadata(provider, entry.value)?.available === false;
-    const status = entry.isLegacy ? (unavailable ? ' (saved, unavailable)' : ' (saved)') : (unavailable ? ' (unavailable)' : '');
-    return formatModelLabel(entry.value) + status;
+    const key = entry.isLegacy ? (unavailable ? 'modelSavedUnavailable' : 'modelSaved') : (unavailable ? 'modelUnavailable' : null);
+    const currentLanguage = presentationLanguage || language;
+    const model = formatModelLabel(entry.value, currentLanguage);
+    return key ? tSync(key, currentLanguage, { model }) : model;
+  }
+
+  function refreshModelLabels(language) {
+    presentationLanguage = language;
+    const provider = elements.apiProviderSelect?.value;
+    if (renderedProvider !== provider) return;
+    for (const option of elements.modelSelect.options) {
+      option.textContent = modelLabel({ value: option.value, isCustom: option.dataset.isCustom === 'true',
+        isLegacy: option.dataset.isLegacy === 'true' }, provider, language);
+    }
   }
 
   function persistSelection(provider, modelValue, isCurrent = () => elements.apiProviderSelect?.value === provider) {
@@ -79,7 +92,7 @@ export function initModels(deps) {
     const provider = elements.apiProviderSelect.value;
     const revision = ++listRevision;
     const isCurrent = () => revision === listRevision && elements.apiProviderSelect.value === provider;
-    const settings = await chrome.storage.local.get(settingsKeys);
+    const [settings, language] = await Promise.all([chrome.storage.local.get(settingsKeys), getUILanguage()]);
     if (!isCurrent()) return;
     const customIds = providerValues(settings[STORAGE_KEYS.CUSTOM_MODELS], provider);
     const byProvider = isRecord(settings[STORAGE_KEYS.MODEL_BY_PROVIDER]) ? settings[STORAGE_KEYS.MODEL_BY_PROVIDER] : {};
@@ -96,8 +109,9 @@ export function initModels(deps) {
     for (const entry of allModels) {
       const option = document.createElement('option');
       option.value = entry.value;
-      option.textContent = modelLabel(entry, provider);
+      option.textContent = modelLabel(entry, provider, language);
       option.dataset.isCustom = String(entry.isCustom);
+      option.dataset.isLegacy = String(entry.isLegacy);
       elements.modelSelect.appendChild(option);
     }
     renderedProvider = provider;
@@ -138,7 +152,7 @@ export function initModels(deps) {
     const visible = visibleModels(storageResult, provider, elements.modelSelect?.value);
     const providerCustomModels = providerValues(storageResult[STORAGE_KEYS.CUSTOM_MODELS], provider);
     const visibleIds = visible.map(entry => entry.value);
-    const [deleteModelText, hideModelText] = await Promise.all([t('deleteModel'), t('hideModel')]);
+    const [deleteModelText, hideModelText, language] = await Promise.all([t('deleteModel'), t('hideModel'), getUILanguage()]);
     if (revision !== dropdownRevision || elements.apiProviderSelect.value !== provider) return;
 
     // Get currently selected model
@@ -156,7 +170,7 @@ export function initModels(deps) {
       
       const labelSpan = document.createElement('span');
       labelSpan.className = 'custom-model-label';
-      labelSpan.textContent = modelLabel(visible.find(entry => entry.value === modelValue), provider);
+      labelSpan.textContent = modelLabel(visible.find(entry => entry.value === modelValue), provider, language);
       labelSpan.setAttribute('role', 'gridcell');
       labelSpan.id = `modelLabel-${encodeURIComponent(provider)}-${encodeURIComponent(modelValue)}`;
       
@@ -292,6 +306,7 @@ export function initModels(deps) {
   }
 
   return {
+    refreshModelLabels,
     updateModelList,
     selectModel,
     showCustomModelDropdown,

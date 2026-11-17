@@ -1,5 +1,12 @@
 // @ts-check
 
+export const OPENAI_TTS_MODEL = 'gpt-realtime-2.1-mini';
+export const DEFAULT_OPENAI_TTS_VOICE = 'marin';
+export const OPENAI_TTS_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'];
+export const OPENAI_TTS_MIN_SPEED = 0.25;
+export const OPENAI_TTS_MAX_SPEED = 1.5;
+export const OPENAI_TTS_MAX_INPUT = 4096;
+
 export const DEFAULT_GOOGLE_TTS_MODEL = 'gemini-3.8-flash-tts';
 export const DEFAULT_ELEVENLABS_TTS_MODEL = 'eleven_v4';
 export const DEFAULT_ELEVENLABS_TTS_VOICE = 'WQP7cQUF5aAS6Axh5yaa';
@@ -56,23 +63,24 @@ export function getDefaultTtsVoice(provider, qwenModel = DEFAULT_QWEN_TTS_MODEL)
   if (provider === 'google') return 'Callirrhoe';
   if (provider === 'respeecher') return 'samantha';
   if (provider === 'offline') return 'en_US-lessac-medium';
-  return 'nova';
+  return DEFAULT_OPENAI_TTS_VOICE;
 }
 
 export function getQwenTtsEndpoint(model = DEFAULT_QWEN_TTS_MODEL, workspaceId = '', region = 'singapore') {
+  const configurationError = (key, message) => Object.assign(new Error(message), { translationKey: key, translationParams: {} });
   if (model === 'qwen3-tts-flash-2025-11-27') {
-    throw new Error('This Qwen TTS model has been retired. Select a current model in audio settings.');
+    throw configurationError('errorQwenModelRetired', 'This Qwen TTS model has been retired. Select a current model in audio settings.');
   }
   if (model === 'qwen3-tts-flash') {
     return 'https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
   }
-  if (!isQwenAudioModel(model)) throw new Error('Unsupported Qwen TTS model.');
+  if (!isQwenAudioModel(model)) throw configurationError('errorQwenModelUnsupported', 'Unsupported Qwen TTS model.');
   const workspace = String(workspaceId || '').trim();
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(workspace)) {
-    throw new Error('Enter a valid Qwen workspace ID in audio settings.');
+    throw configurationError('errorQwenWorkspaceRequired', 'Enter a valid Qwen workspace ID in audio settings.');
   }
   const regions = { singapore: 'ap-southeast-1', beijing: 'cn-beijing' };
-  if (!Object.hasOwn(regions, region)) throw new Error('Select a supported Qwen region.');
+  if (!Object.hasOwn(regions, region)) throw configurationError('errorQwenRegionUnsupported', 'Select a supported Qwen region.');
   return `https://${workspace}.${regions[region]}.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer`;
 }
 

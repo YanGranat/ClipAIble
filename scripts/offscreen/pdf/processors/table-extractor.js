@@ -41,6 +41,18 @@ export function extractTableStructure(element, context = {}) {
   // Step 2: Group lines into rows
   log(`[PDF v3] extractTableStructure: Step 2 - Grouping lines into rows`);
   const rows = groupLinesIntoRows(lines, baseFontSize);
+  const separationTolerance = baseFontSize * TABLE_DETECTION.CELL_TOLERANCE_MULTIPLIER;
+  const crossesSeparator = lines.some(line => (line.items || []).some(item => columns.slice(1).some(x =>
+    item.x < x - separationTolerance && item.x + (item.width || 0) > x + separationTolerance)));
+  if (crossesSeparator) return null;
+  const sizedItems = lines.flatMap(line => line.items || []);
+  if (sizedItems.length && sizedItems.every(item => Number.isFinite(item.fontSize))) {
+    const primarySize = Math.max(...sizedItems.map(item => item.fontSize));
+    const supportedColumns = columns.map((x, index) => rows.filter(row => row.some(line => (line.items || []).some(item =>
+      item.fontSize >= primarySize * 0.8 && item.x >= x - separationTolerance &&
+      (index === columns.length - 1 || item.x < columns[index + 1] - separationTolerance)))).length);
+    if (supportedColumns.some(count => count < 2)) return null;
+  }
   log(`[PDF v3] extractTableStructure: Step 2 - Grouped into ${rows.length} rows`, {
     rows: rows.map((row, idx) => ({
       rowIdx: idx,
@@ -181,18 +193,8 @@ function splitRowIntoCells(rowLines, columns, baseFontSize) {
     // Item belongs to column if its start X is within column boundaries
     const cellItems = allItems.filter(item => {
       const itemStartX = item.x;
-      const itemEndX = item.x + (item.width || 0);
-      
-      // Item belongs to column if:
-      // 1. Item starts within column boundaries, OR
-      // 2. Item overlaps significantly with column (more than 50% of item width)
       const startsInColumn = itemStartX >= leftBoundary && itemStartX < rightBoundary;
-      const overlapsColumn = itemStartX < rightBoundary && itemEndX > leftBoundary;
-      const overlapRatio = item.width > 0 
-        ? (Math.min(itemEndX, rightBoundary !== Infinity ? rightBoundary : itemEndX) - Math.max(itemStartX, leftBoundary)) / item.width
-        : 0;
-      
-      return startsInColumn || (overlapsColumn && overlapRatio > TABLE_DETECTION.CELL_OVERLAP_RATIO);
+      return startsInColumn;
     });
     
     // Combine cell items into text

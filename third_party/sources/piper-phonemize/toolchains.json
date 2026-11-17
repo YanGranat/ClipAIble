@@ -1,0 +1,37 @@
+{
+  "llvm-mingw": {
+    "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-x86_64.zip",
+    "sha256": "810703594a7e3eea03385b5329c7ea3bd65f5e496b44cf1b68c17ff436d265e7",
+    "compilerSha256": "2e1c3555b5c733d619b62f1f35d6defb5358cf94a01b2263b81f9ecfc0e9e08a",
+    "compilerCxxSha256": "2e1c3555b5c733d619b62f1f35d6defb5358cf94a01b2263b81f9ecfc0e9e08a"
+  },
+  "emsdk": {
+    "version": "3.1.47",
+    "archives": {
+      "39ade279e75e6d17dd6b7eb9fba2006e61fe966b-wasm-binaries.zip": "66a6c4f0cda4ace14a86d3e59d20685d35211854d21670632b0566ac73638245",
+      "node-v16.20.0-win-x64.zip": "59c6fe429575b49765f0931d48b2a0888d103c42b17c121fe683cd6b4850105f",
+      "portable_jre_8_update_152_64bit.zip": "7d539c2e05f63ad7857a6a7f3faa97314f4f018c2d60209c495d7daa0493304a",
+      "python-3.9.2-4-amd64+pywin32.zip": "e47e5f00c8970cee28c228f100269aaad20f7fd1405e2bd4a6c9da33076830ac"
+    },
+    "executables": {
+      "upstream/bin/clang.exe": "804a86938f79c2676f2df331452882e4930b7153a47c1f49b159c05cd618bab9",
+      "upstream/emscripten/emcc.py": "e96dc44ef6aefe8e789b524e80a3e95b0cf4b2558f1fdf5a2e98a73ce4e7a7c7",
+      "node/16.20.0_64bit/bin/node.exe": "a49f9e852f80cfc00ddcd75dcfccbe2987672f78dcbf7f5454a832479c77f448",
+      "python/3.9.2-nuget_64bit/python.exe": "786e68ded8af18f36274d78ea00ff11289c27107dd9f8fdd2f6b4732a3b8a2da"
+    }
+  },
+  "cmake": {
+    "version": "3.27.9",
+    "url": "https://files.pythonhosted.org/packages/bf/40/eddffadde9be2eb62eef87f31bab13d950645374c48de7536e80ff1990ac/cmake-3.27.9-py2.py3-none-win_amd64.whl",
+    "sha256": "8eb760800b8bd0178a29334ea3c729ac0534865a30f40994cdfc9c0897488a9e",
+    "filename": "cmake-3.27.9-py2.py3-none-win_amd64.whl",
+    "executableSha256": "795d0fb45a984823d2ef21ab436441ac4c30cd74b90d571fa6dc2f9bd48e49d2"
+  },
+  "ninja": {
+    "version": "1.11.1.1",
+    "url": "https://files.pythonhosted.org/packages/b6/2f/a3bc50fa63fc4fe9348e15b53dc8c87febfd4e0c660fcf250c4b19a3aa3b/ninja-1.11.1.1-py2.py3-none-win_amd64.whl",
+    "sha256": "95da904130bfa02ea74ff9c0116b4ad266174fafb1c707aa50212bc7859aebf1",
+    "filename": "ninja-1.11.1.1-py2.py3-none-win_amd64.whl",
+    "executableSha256": "db1c74a3da7aa79aced07dbbd4fe9010ac777f4501273c9f32f54b7184028e08"
+  }
+}

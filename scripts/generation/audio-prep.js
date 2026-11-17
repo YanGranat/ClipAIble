@@ -8,6 +8,7 @@ import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
 import { handleError } from '../utils/error-handler.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
+import { OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE, OPENAI_TTS_MIN_SPEED, OPENAI_TTS_MAX_SPEED, OPENAI_TTS_MAX_INPUT } from '../api/tts-catalog.js';
 import {
   buildPreparationSettings,
   logContentAnalysis,
@@ -39,16 +40,15 @@ export const AUDIO_CONFIG = {
   MAX_CHUNK_SIZE: 6000,
   IDEAL_CHUNK_SIZE: 5000,
   
-  // TTS API limits (4096 chars, but text shrinks after AI cleanup)
-  TTS_MAX_INPUT: 4096,
+  // Bound each narration response independently.
+  TTS_MAX_INPUT: OPENAI_TTS_MAX_INPUT,
   
-  // Voice options for gpt-4o-mini-tts
-  VOICES: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse', 'marin', 'cedar'],
-  DEFAULT_VOICE: 'nova',
+  VOICES: OPENAI_TTS_VOICES,
+  DEFAULT_VOICE: DEFAULT_OPENAI_TTS_VOICE,
   
   // Speed range
-  MIN_SPEED: 0.25,
-  MAX_SPEED: 4.0,
+  MIN_SPEED: OPENAI_TTS_MIN_SPEED,
+  MAX_SPEED: OPENAI_TTS_MAX_SPEED,
   DEFAULT_SPEED: 1.0
 };
 
@@ -884,7 +884,8 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   // Convert content to plain text
   log('📝 Converting content to plain text');
   const convertingStatus = tSync('stageConvertingToText', uiLang);
-  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus, progress: startProgress });
+  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: convertingStatus,
+    statusTranslationKey: 'stageConvertingToText', statusTranslationParams: {}, progress: startProgress });
   const plainText = contentToPlainText(content);
   
   // Log plain text conversion
@@ -910,6 +911,8 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    error.translationKey = normalized.translationKey;
+    error.translationParams = normalized.translationParams;
     throw error;
   }
   
@@ -933,7 +936,8 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   log('✂️ Splitting text into chunks for TTS');
   const splittingStatus = tSync('stageSplittingIntoChunks', uiLang);
   const splitProgress = currentProgress >= 60 ? 60 : 15;
-  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus, progress: splitProgress });
+  updateState?.({ stage: PROCESSING_STAGES.GENERATING.id, status: splittingStatus,
+    statusTranslationKey: 'stageSplittingIntoChunks', statusTranslationParams: {}, progress: splitProgress });
   
   logChunkSplitting(fullText);
   
@@ -970,6 +974,8 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    error.translationKey = normalized.translationKey;
+    error.translationParams = normalized.translationParams;
     throw error;
   }
   
@@ -993,6 +999,7 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
     updateState?.({ 
       stage: PROCESSING_STAGES.GENERATING.id,
       status: preparingStatus, 
+      statusTranslationKey: 'stagePreparingSegment', statusTranslationParams: { current: i + 1, total: chunks.length },
       progress 
     });
     

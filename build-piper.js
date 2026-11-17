@@ -13,6 +13,9 @@ export function patchPiperTtsSource(source, filename) {
   if (!/const DEFAULT_WASM_PATHS = \{\s*onnxWasm: ONNX_BASE,\s*piperData: `\$\{WASM_BASE\}\.data`,\s*piperWasm: `\$\{WASM_BASE\}\.wasm`\s*\};/.test(source)) {
     throw new Error('Unsupported Piper SDK: default WASM path object');
   }
+  if ((source.match(/const\s*\{\s*createPiperPhonemize\s*\}\s*=\s*await import\(["']\.\/piper-o91UDS6e\.js["']\)/g) || []).length !== 1) {
+    throw new Error('Unsupported Piper SDK: phonemizer factory import');
+  }
   replaceOnce(/const ONNX_BASE = "https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/onnxruntime-web\/1\.18\.0\/";/,
     'const ONNX_BASE = self.location.origin + "/lib/";', 'ONNX base');
   replaceOnce(/const WASM_BASE = "https:\/\/cdn\.jsdelivr\.net\/npm\/@diffusionstudio\/piper-wasm@1\.0\.0\/build\/piper_phonemize";/,
@@ -24,4 +27,13 @@ export function patchPiperTtsSource(source, filename) {
   replaceOnce(/\.InferenceSession\.create\(\s*await modelBlob\.arrayBuffer\(\)\s*\)/,
     '.InferenceSession.create(await modelBlob.arrayBuffer(), { executionProviders: ["wasm"] })', 'WASM execution provider');
   return source;
+}
+
+/** Expose the packaged phonemizer factory to the browser SDK. */
+export function patchPiperPhonemizerSource(source) {
+  const trailer = /if \(typeof exports === 'object' && typeof module === 'object'\)\s*module\.exports = createPiperPhonemize;\s*else if \(typeof define === 'function' && define\['amd'\]\)\s*define\(\[\], \(\) => createPiperPhonemize\);\s*$/;
+  if (!/var createPiperPhonemize\s*=/.test(source) || !trailer.test(source)) {
+    throw new Error('Unsupported Piper phonemizer module');
+  }
+  return source.replace(trailer, '').replace(/require\(["'](?:fs|path)["']\)/g, 'undefined') + '\nexport { createPiperPhonemize };\n';
 }

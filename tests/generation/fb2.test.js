@@ -28,7 +28,8 @@ vi.mock('../../scripts/utils/images.js', () => ({
   })
 }));
 
-vi.mock('../../scripts/utils/config.js', () => ({
+vi.mock('../../scripts/utils/config.js', async importOriginal => ({
+  ...(await importOriginal()),
   PDF_LOCALIZATION: {
     en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
     ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' }
@@ -41,7 +42,8 @@ vi.mock('../../scripts/utils/config.js', () => ({
   getLocaleFromLanguage: vi.fn((lang) => lang === 'ru' ? 'ru-RU' : 'en-US')
 }));
 
-vi.mock('../../scripts/locales.js', () => ({
+vi.mock('../../scripts/locales.js', async importOriginal => ({
+  ...await importOriginal(),
   getUILanguage: vi.fn(() => Promise.resolve('en')),
   tSync: vi.fn((key) => {
     const translations = {
@@ -107,10 +109,10 @@ describe('generation/fb2', () => {
       }, updateState);
 
       expect(updateState).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'Building FB2 structure...', progress: 85 })
+        expect.objectContaining({ status: 'Generating FB2...', statusTranslationKey: 'statusGeneratingFb2', progress: 85 })
       );
       expect(updateState).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'Saving FB2 file...', progress: 95 })
+        expect.objectContaining({ status: 'Saving file...', statusTranslationKey: 'statusSavingFile', progress: 95 })
       );
       expect(chrome.downloads.download).toHaveBeenCalled();
     });

@@ -308,6 +308,25 @@ describe('utils/pipeline-helpers', () => {
       expect(translateImages).toHaveBeenCalled();
     });
 
+    it.each(['pdf', 'epub', 'fb2'])('passes independent image routing into %s translation without a Google key', async outputFormat => {
+      const content = [{ type: 'image', src: 'data:image/png;base64,c2FtcGxl' }];
+      const images = vi.fn(async value => value), text = vi.fn(async value => value);
+      await handleTranslation({ language: 'fr', outputFormat, translateImages: true, imageTranslationProvider: 'openai',
+        imageApiKey: 'ENC:synthetic-image-key', apiKey: 'synthetic-article-key', provider: 'deepseek', model: 'deepseek-v4-pro' },
+      { content }, text, images, () => 'en', mocks.mockUpdateState);
+      expect(images).toHaveBeenCalledWith(content, 'en', 'fr', 'synthetic-article-key', undefined, 'deepseek-v4-pro', expect.any(Function),
+        expect.objectContaining({ imageTranslationProvider: 'openai', imageApiKey: 'ENC:synthetic-image-key', provider: 'deepseek', outputFormat, checkCancelled: expect.any(Function) }));
+      expect(text).toHaveBeenCalledOnce();
+    });
+
+    it.each(['markdown', 'audio'])('keeps text translation but omits image editing in %s output', async outputFormat => {
+      const images = vi.fn(), text = vi.fn(async value => value);
+      await handleTranslation({ language: 'fr', outputFormat, translateImages: true, imageTranslationProvider: 'openai',
+        imageApiKey: 'synthetic-image-key', apiKey: 'synthetic-article-key' },
+      { content: [{ type: 'paragraph', text: 'Source' }] }, text, images, () => 'en', mocks.mockUpdateState);
+      expect(images).not.toHaveBeenCalled(); expect(text).toHaveBeenCalledOnce();
+    });
+
     it('should handle translation errors gracefully', async () => {
       const translateContent = vi.fn().mockRejectedValue(new Error('Network error'));
       const translateImages = vi.fn();

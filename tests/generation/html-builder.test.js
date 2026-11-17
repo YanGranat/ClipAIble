@@ -185,7 +185,7 @@ describe('generation/html-builder', () => {
         'This is an abstract text'
       );
 
-      expect(html).toContain('Abstract');
+      expect(html).toContain('TL;DR');
       expect(html).toContain('This is an abstract text');
     });
 

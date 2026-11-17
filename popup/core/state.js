@@ -53,13 +53,15 @@ export function initState(deps) {
     if (!state) return;
     
     // Simple update - no special handling for audio format
-    const stageLabel = await mapStageLabel(state.currentStage);
-    const statusText = stageLabel || state.status;
-    await performUIUpdate(state, statusText);
+    const stageKeys = { starting: 'stageStarting', analyzing: 'stageAnalyzing', extracting: 'stageExtracting', translating: 'stageTranslating', loading_images: 'stageLoadingImages', generating: 'stageGenerating', complete: 'stageComplete' };
+    const key = state.statusTranslationKey || stageKeys[state.currentStage];
+    const translation = key ? { key, params: state.statusTranslationParams || {} } : null;
+    const statusText = translation ? await t(key, null, translation.params) : state.status;
+    await performUIUpdate(state, statusText, translation);
   }
   
   // Perform actual UI updates
-  async function performUIUpdate(state, statusText) {
+  async function performUIUpdate(state, statusText, translation) {
     if (state.isProcessing) {
       // Use startTime from background (persists across popup reopens)
       if (state.startTime) {
@@ -82,7 +84,7 @@ export function initState(deps) {
         elements.cancelBtn.style.display = 'block';
         elements.cancelBtn.disabled = false;
       }
-      setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime);
+      setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime, translation);
       setProgress(state.progress);
     } else if (state.error || state.isCancelled) {
       // Check if error is actually a cancellation - don't show as error
@@ -103,7 +105,7 @@ export function initState(deps) {
           elements.cancelBtn.style.display = 'none';
         }
         const readyText = await t('ready');
-        setStatus('ready', readyText);
+        setStatus('ready', readyText, null, { key: 'ready' });
         setProgress(0, false);
       } else {
         // Real error - show as error
@@ -118,7 +120,12 @@ export function initState(deps) {
         }
         // Use localized error message if errorCode is available
         let errorMessage = state.error;
-        if (state.errorCode) {
+        let errorTranslation = state.errorTranslationKey
+          ? { key: state.errorTranslationKey, params: state.errorTranslationParams || {} }
+          : null;
+        if (errorTranslation) {
+          errorMessage = await t(errorTranslation.key, null, errorTranslation.params);
+        } else if (state.errorCode) {
           const errorKeyMap = {
             'auth_error': 'errorAuth',
             'rate_limit': 'errorRateLimit',
@@ -131,10 +138,11 @@ export function initState(deps) {
           };
           const errorKey = errorKeyMap[state.errorCode];
           if (errorKey) {
+            errorTranslation = { key: errorKey };
             errorMessage = await t(errorKey).catch(() => state.error || 'Unknown error');
           }
         }
-        setStatus('error', errorMessage);
+        setStatus('error', errorMessage, null, errorTranslation);
         setProgress(0, false);
       }
     } else {
@@ -152,7 +160,7 @@ export function initState(deps) {
         elements.cancelBtn.style.display = 'none';
       }
       
-      if (isDone && state.status === statusDoneText) {
+      if (isDone && (state.statusTranslationKey === 'statusDone' || state.status === statusDoneText)) {
         // Get saved format from state or current selection
         const savedFormat = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
         const formatKeyMap = {
@@ -167,12 +175,12 @@ export function initState(deps) {
 
         const messageTemplate = await t('notificationReady');
         const successMessage = messageTemplate.replace('{format}', formatLabel);
-        setStatus('ready', successMessage);
+        setStatus('ready', successMessage, null, { key: 'notificationReady', params: { format: formatLabel } });
         setProgress(0, false); // Hide progress bar immediately
       } else {
         // Processing completed but status not set to "Done!" - show ready state
         const readyText = await t('ready');
-        setStatus('ready', readyText);
+        setStatus('ready', readyText, null, { key: 'ready' });
         setProgress(0, false);
       }
     }
@@ -283,6 +291,10 @@ export function initState(deps) {
       newState.currentStage !== oldState.currentStage ||
       newState.error !== oldState.error ||
       newState.errorCode !== oldState.errorCode ||
+      newState.statusTranslationKey !== oldState.statusTranslationKey ||
+      JSON.stringify(newState.statusTranslationParams) !== JSON.stringify(oldState.statusTranslationParams) ||
+      newState.errorTranslationKey !== oldState.errorTranslationKey ||
+      JSON.stringify(newState.errorTranslationParams) !== JSON.stringify(oldState.errorTranslationParams) ||
       newState.isCancelled !== oldState.isCancelled ||
       newState.outputFormat !== oldState.outputFormat ||
       newState.startTime !== oldState.startTime

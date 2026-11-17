@@ -3,6 +3,7 @@
 // Determines which elements should be excluded from extraction
 
 import { safeGetComputedStyle, safeClosest } from './dom-utils.js';
+import { isArticleContentFigure } from './discover.js';
 
 // Optimized navigation pattern matching
 export function matchesNavigationPattern(text, patterns) {
@@ -341,7 +342,7 @@ export function isExcluded(win, element, constants) {
         indicator.test(parentClass) || indicator.test(parentId)
       );
       
-      if (isClearAd || parentTag === 'aside') {
+      if (isClearAd || (parentTag === 'aside' && !isArticleContentFigure(win, element))) {
         return true;
       }
       

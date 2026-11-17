@@ -39,6 +39,10 @@
  * @property {boolean} isCancelled - Whether processing was cancelled
  * @property {number} progress - Progress percentage (0-100)
  * @property {string} status - Status message
+ * @property {string|null} [statusTranslationKey] - Status translation key
+ * @property {Object|null} [statusTranslationParams] - Status interpolation values
+ * @property {string|null} [errorTranslationKey] - Error translation key
+ * @property {Object|null} [errorTranslationParams] - Error interpolation values
  * @property {Error|Object|null} error - Error object if processing failed
  * @property {Object|null} result - Processing result
  * @property {number|null} startTime - Processing start timestamp
@@ -50,6 +54,8 @@
 
 /**
  * @typedef {Object} NormalizedError
+ * @property {string} [translationKey] - Error translation key
+ * @property {Object} [translationParams] - Error interpolation values
  * @property {string} message - Error message
  * @property {string} code - Error code (from ERROR_CODES)
  * @property {Error|Object|null} originalError - Original error object
@@ -292,6 +298,8 @@
  * @property {string} [apiProvider] - API provider
  * @property {string} [targetLanguage] - Target language for translation
  * @property {boolean} [translateImages] - Translate images
+ * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
+ * @property {string|null} [imageApiKey] - Image provider API key
  * @property {string} [pageMode] - PDF page mode ('single'|'double')
  * @property {string} [fontFamily] - PDF font family
  * @property {string} [fontSize] - PDF font size
@@ -567,8 +575,8 @@
  * @property {string} [processingRunId] - Processing run identity
  * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
  * @property {string} [voice] - Voice to use
- * @property {number} [speed] - Speech speed 0.25-4.0 (default: 1.0, offline: 0.1-10.0)
- * @property {string} [format] - Output format (default: 'mp3', offline: always 'wav')
+ * @property {number} [speed] - Speech speed (OpenAI: 0.25-1.5, default: 1.0, offline: 0.1-10.0)
+ * @property {string} [format] - Output format (OpenAI/offline/Google: always 'wav')
  * @property {string} [instructions] - Voice style instructions (OpenAI only)
  * @property {string} [openaiInstructions] - Alternative instructions property name (OpenAI only)
  * @property {string} [language] - Language code for Qwen/Offline (auto-detected if not provided)
@@ -678,6 +686,8 @@
  * @property {string} [pageMode] - PDF page mode
  * @property {string} [language] - Document language
  * @property {boolean} [translateImages] - Whether to translate images
+ * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
+ * @property {string|null} [imageApiKey] - Image provider API key
  * @property {string|null} [googleApiKey] - Google API key for image translation
  * @property {string} [stylePreset] - PDF style preset
  * @property {string} [fontFamily] - PDF font family
@@ -720,6 +730,17 @@
  * @typedef {Object} AIRequestOptions
  * @property {AIProvider} [provider] - Explicit selected AI provider
  * @property {function(): void} [checkCancelled] - Synchronous owner check that throws after cancellation
+ */
+
+/**
+ * @typedef {Object} ImageTranslationOptions
+ * @property {AIProvider} [provider] - Article classifier provider for Gemini editing
+ * @property {function(): (void|Promise<void>)} [checkCancelled] - Image operation owner check
+ * @property {AbortSignal} [signal] - Operation cancellation signal
+ * @property {'gemini'|'openai'} [imageTranslationProvider] - Image editor provider
+ * @property {string|null} [imageApiKey] - Selected image provider credential
+ * @property {ExportFormat} [outputFormat] - Destination document format
+ * @property {'low'|'high'} [imageDetail] - Classifier image detail
  */
 
 /**
@@ -1111,7 +1132,7 @@
  * @property {function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, Function, function(Partial<import('./types.js').ProcessingState>): void): Promise<void>} handleAbstractGeneration - Handle abstract generation function
  * @property {function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, Function): Promise<string>} detectEffectiveLanguage - Detect effective language function
  * @property {function(import('./types.js').ExtractionResult, string, string, string, function(Partial<import('./types.js').ProcessingState> & {stage?: string}): void?): Promise<import('./types.js').ExtractionResult>} translateContent - Translate content function
- * @property {function(Array<import('./types.js').ContentItem>, string, string, string, string, string, function(Partial<import('./types.js').ProcessingState>): void): Promise<Array<import('./types.js').ContentItem>>} translateImages - Translate images function
+ * @property {typeof import('./translation/images.js').translateImages} translateImages - Translate images function
  * @property {function(Array<import('./types.js').ContentItem>): string} detectSourceLanguage - Detect source language function (supports: en, ru, ua, de, fr, es, it, pt, zh, ja, ko, ar)
  * @property {function(Array<import('./types.js').ContentItem>, string, string, string, string?, function(Partial<import('./types.js').ProcessingState>): void?): Promise<string>} generateAbstract - Generate abstract function
  * @property {function(Array<import('./types.js').ContentItem>, string, string): Promise<string>} detectContentLanguage - Detect content language function

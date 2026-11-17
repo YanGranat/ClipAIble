@@ -1,0 +1,30 @@
+Local modification dated 2026-11-17: deterministic source-order sorting.
+GNU GPL version 3 or later.
+
+--- a/src/libespeak-ng/compiledict.c
++++ b/src/libespeak-ng/compiledict.c
+@@ -148,6 +148,7 @@
+ 	void *start;
+ 	size_t length;
+ 	int group3_ix;
++	int source_order;
+ } RGROUP;
+ 
+ typedef enum
+@@ -1191,7 +1192,7 @@
+ 	if (ix != 0) return ix;
+ 	ix = strcmp(a->name, b->name);
+ 	if (ix != 0) return ix;
+-	return (uintptr_t)a->start - (uintptr_t)b->start;
++	return (a->source_order > b->source_order) - (a->source_order < b->source_order);
+ }
+ 
+ static void* output_rule_group(int n_rules, char **rules, char *name, size_t *outsize)
+@@ -1374,6 +1375,7 @@
+ 			if (n_rules > 0) {
+ 				strcpy(rgroup[n_rgroups].name, ctx->group_name);
+ 				rgroup[n_rgroups].group3_ix = ctx->group3_ix;
++				rgroup[n_rgroups].source_order = n_rgroups;
+ 				rgroup[n_rgroups].start = output_rule_group(n_rules, rules, ctx->group_name, &rgroup[n_rgroups].length);
+ 				n_rgroups++;
+ 

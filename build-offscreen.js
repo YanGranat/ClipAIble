@@ -4,11 +4,13 @@
 // This resolves all module imports at build time, eliminating need for import maps
 
 import * as esbuild from 'esbuild';
-import { patchPiperTtsSource } from './build-piper.js';
+import { patchPiperTtsSource, patchPiperPhonemizerSource } from './build-piper.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'node:module';
 
+const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -55,6 +57,10 @@ async function build() {
       plugins: [{
         name: 'resolve-onnxruntime',
         setup(build) {
+          build.onLoad({ filter: /[/\\]piper-o91UDS6e\.js$/ }, async () => ({
+            contents: patchPiperPhonemizerSource(await fs.readFile(path.join(__dirname, 'lib/piper-wasm/piper_phonemize.js'), 'utf8')),
+            loader: 'js'
+          }));
           // Intercept onnxruntime-web imports
           build.onResolve({ filter: /^onnxruntime-web$/ }, async (args) => {
             // Resolve to the WASM bundle (browser-friendly)
@@ -76,19 +82,6 @@ async function build() {
               }
             }
           });
-          
-          // Intercept piper-tts-web imports
-          build.onResolve({ filter: /^@mintplex-labs\/piper-tts-web$/ }, async (args) => {
-            try {
-              const piperPath = require.resolve('@mintplex-labs/piper-tts-web');
-              console.log(`✅ Resolving piper-tts-web → ${path.relative(process.cwd(), piperPath)}`);
-              return { path: piperPath };
-            } catch (error) {
-              console.error(`❌ Failed to resolve piper-tts-web: ${error.message}`);
-              throw error;
-            }
-          });
-          
           
           // Handle dynamic imports of onnxruntime-web within piper-tts-web
           build.onLoad({ filter: /piper-tts-web/ }, async (args) => {

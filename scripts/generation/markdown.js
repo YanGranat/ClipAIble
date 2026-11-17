@@ -7,14 +7,15 @@
 
 import { log, logWarn, logDebug } from '../utils/logging.js';
 import { stripHtml, htmlToMarkdown, cleanTildaArtifactsFromText } from '../utils/html.js';
-import { PDF_LOCALIZATION, formatDateForDisplay } from '../utils/config.js';
+import { getDocumentLocalization, formatDateForDisplay } from '../utils/config.js';
 import { translateMetadata } from '../translation/index.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isCancelled } from '../state/processing.js';
-import { getUILanguage, tSync } from '../locales.js';
+import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
+import { collateLine } from '../offscreen/pdf/core/text-collation.js';
 
 
 // Simple cache for localization strings (performance optimization)
@@ -45,7 +46,7 @@ function getLocalization(language) {
     });
   }
   
-  const l10n = PDF_LOCALIZATION[cacheKey] || PDF_LOCALIZATION['en'];
+  const l10n = getDocumentLocalization(cacheKey);
   l10nCache.set(cacheKey, l10n);
   return l10n;
 }
@@ -89,19 +90,28 @@ export async function generateMarkdown(data, updateState) {
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    Object.assign(error, getErrorTranslation(normalized));
     throw error;
   }
   
-  if (updateState) updateState({ status: 'Building Markdown...', progress: 85 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingMarkdown', await getUILanguage()), progress: 85 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = filterFigureParagraphs(content, sourceUrl);
+  let filteredContent = filterFigureParagraphs(content, sourceUrl);
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
       filteredCount: filteredContent.length,
       removedCount: content.length - filteredContent.length
     });
+  }
+
+  const normalizeTitle = value => stripHtml(value || '').replace(/^#+\s*/, '').replace(/\s*#+$/, '').trim().toLowerCase();
+  const firstBodyIndex = filteredContent.findIndex(item => item.type !== 'image');
+  const firstBodyItem = filteredContent[firstBodyIndex];
+  if (title && firstBodyItem?.type === 'heading' && firstBodyItem.level === 1 &&
+      normalizeTitle(title) && normalizeTitle(contentItemToMarkdown(firstBodyItem)) === normalizeTitle(title)) {
+    filteredContent = filteredContent.filter((_, index) => index !== firstBodyIndex);
   }
   
   // Collect headings for TOC (include all levels, starting from level 1)
@@ -332,7 +342,7 @@ export async function generateMarkdown(data, updateState) {
   
   log('Markdown generated', { length: markdown.length });
   
-  if (updateState) updateState({ status: 'Saving file...', progress: 95 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusSavingFile', await getUILanguage()), progress: 95 });
   
   // Calculate size metrics
   const markdownSize = new TextEncoder().encode(markdown).length;
@@ -410,7 +420,7 @@ export async function generateMarkdown(data, updateState) {
   log('=== MARKDOWN GENERATION END ===');
   if (updateState) {
     const uiLang = await getUILanguage();
-    updateState({ status: tSync('statusDone', uiLang), progress: 100 });
+    updateState({ ...formatStatusUpdate('statusDone', await getUILanguage()), progress: 100 });
   }
   
   return markdown;
@@ -423,6 +433,10 @@ export async function generateMarkdown(data, updateState) {
  */
 function contentItemToMarkdown(item) {
   if (!item || !item.type) return '';
+  const normalizeFragmentText = text => text.replace(/\s+/g, ' ').trim();
+  const fragmentsMatchText = typeof item.text !== 'string' || !Array.isArray(item.lines) ||
+    normalizeFragmentText(item.text) === normalizeFragmentText(item.lines.map(line =>
+      line.items?.length ? collateLine(line.items) : line.text || '').join(' '));
   
   // Helper to format text with bold/italic/underline
   const formatText = (text, isBold, isItalic, isUnderlined) => {
@@ -471,11 +485,10 @@ function contentItemToMarkdown(item) {
     
     logDebug(`[Markdown] formatTextWithFragments - type=${item?.type}, hasLines=${hasLines}, firstLineHasItems=${firstLineHasItems}, firstItemHasFormatting=${firstItemHasFormatting}, linesCount=${hasLines ? item.lines.length : 0}, firstLineItemsCount=${firstLineHasItems ? item.lines[0].items.length : 0}`);
     
-    if (!hasLines) {
-      // Fallback to simple formatting if no lines/items available
-      // CRITICAL: Use item.html if available to preserve links, otherwise use item.text
-      logDebug(`[Markdown] formatTextWithFragments - FALLBACK to simple formatting (no lines)`);
-      const sourceText = item?.html || item?.text || '';
+    if (!hasLines || !fragmentsMatchText) {
+      // Retained geometry must describe the current content before it can supply formatting.
+      logDebug(`[Markdown] formatTextWithFragments - FALLBACK to simple formatting`);
+      const sourceText = fragmentsMatchText ? item?.html || item?.text || '' : item.text;
       // Normalize only horizontal whitespace so newlines from htmlToMarkdown are preserved
       const normalizedText = sourceText.replace(/[ \t]+/g, ' ').trim();
       return formatText(normalizedText, item?.isBold, item?.isItalic, item?.isUnderlined);
@@ -491,11 +504,7 @@ function contentItemToMarkdown(item) {
         // Fallback to line text with simple formatting
         logDebug(`[Markdown] formatTextWithFragments - Line ${lineIdx} has no items, using simple formatting`);
         const fallbackText = formatText(line.text || '', line.isBold, line.isItalic, line.isUnderlined);
-        formattedLines.push({
-          text: fallbackText,
-          lastItem: null,
-          firstItem: null
-        });
+        formattedLines.push(fallbackText);
         continue;
       }
       
@@ -695,104 +704,11 @@ function contentItemToMarkdown(item) {
       
       logDebug(`[Markdown] formatTextWithFragments - Line ${lineIdx} processed: items=${sortedItems.length}, formattedItems=${formattedItemsCount}, resultLength=${lineResult.length}`);
       
-      formattedLines.push({
-        text: lineResult || line.text || '',
-        lastItem: sortedItems.length > 0 ? sortedItems[sortedItems.length - 1] : null,
-        firstItem: sortedItems.length > 0 ? sortedItems[0] : null
-      });
+      formattedLines.push(lineResult || line.text || '');
     }
     
-    // Join lines with smart merging: combine adjacent items with same formatting
-    let result = '';
-    for (let i = 0; i < formattedLines.length; i++) {
-      const currentLine = formattedLines[i];
-      const nextLine = i < formattedLines.length - 1 ? formattedLines[i + 1] : null;
-      
-      if (i > 0) {
-        const prevLine = formattedLines[i - 1];
-        // Check if we can merge with previous line (same formatting on adjacent items)
-        const prevLastItem = prevLine && typeof prevLine === 'object' ? prevLine.lastItem : null;
-        const currFirstItem = currentLine && typeof currentLine === 'object' ? currentLine.firstItem : null;
-        
-        if (prevLastItem && currFirstItem) {
-          const prevBold = prevLastItem.isBold || false;
-          const prevItalic = prevLastItem.isItalic || false;
-          const prevUnderlined = prevLastItem.isUnderlined || false;
-          const currBold = currFirstItem.isBold || false;
-          const currItalic = currFirstItem.isItalic || false;
-          const currUnderlined = currFirstItem.isUnderlined || false;
-          
-          // If formatting matches, merge without space (they're part of same phrase)
-          if (prevBold === currBold && prevItalic === currItalic && prevUnderlined === currUnderlined && (prevBold || prevItalic || prevUnderlined)) {
-            // Same formatting - merge by removing trailing formatting from prev and leading from current
-            const prevText = prevLine && typeof prevLine === 'object' ? prevLine.text : prevLine;
-            const currentText = currentLine && typeof currentLine === 'object' ? currentLine.text : currentLine;
-            
-            // Remove trailing formatting markers from prevText (keep the text content)
-            let prevTextClean = prevText;
-            // Remove in reverse order (outermost first)
-            if (prevUnderlined) {
-              prevTextClean = prevTextClean.replace(/__([^_]+)__$/, '$1');
-            }
-            if (prevBold && prevItalic) {
-              prevTextClean = prevTextClean.replace(/\*\*\*([^*]+)\*\*\*$/, '$1');
-            } else if (prevBold) {
-              prevTextClean = prevTextClean.replace(/\*\*([^*]+)\*\*$/, '$1');
-            } else if (prevItalic) {
-              prevTextClean = prevTextClean.replace(/\*([^*]+)\*$/, '$1');
-            }
-            
-            // Remove leading formatting markers from currentText (keep the text content)
-            let currentTextClean = currentText;
-            if (currBold && currItalic) {
-              currentTextClean = currentTextClean.replace(/^\*\*\*([^*]+)\*\*\*/, '$1');
-            } else if (currBold) {
-              currentTextClean = currentTextClean.replace(/^\*\*([^*]+)\*\*/, '$1');
-            } else if (currItalic) {
-              currentTextClean = currentTextClean.replace(/^\*([^*]+)\*/, '$1');
-            }
-            if (currUnderlined) {
-              currentTextClean = currentTextClean.replace(/^__([^_]+)__/, '$1');
-            }
-            
-            // Combine clean text with space between words
-            const combinedText = prevTextClean + ' ' + currentTextClean;
-            
-            // Apply formatting once to combined text
-            let formattedCombined = combinedText;
-            if (prevBold && prevItalic) {
-              formattedCombined = `***${combinedText}***`;
-            } else if (prevBold) {
-              formattedCombined = `**${combinedText}**`;
-            } else if (prevItalic) {
-              formattedCombined = `*${combinedText}*`;
-            }
-            
-            if (prevUnderlined) {
-              formattedCombined = `__${formattedCombined}__`;
-            }
-            
-            // Replace the last part of result with the combined formatted text
-            const prevTextIndex = result.lastIndexOf(prevText);
-            if (prevTextIndex !== -1) {
-              result = result.substring(0, prevTextIndex) + formattedCombined;
-              logDebug(`[Markdown] formatTextWithFragments - Merged lines ${i-1} and ${i}: "${prevTextClean}" + "${currentTextClean}" = "${formattedCombined}"`);
-            } else {
-              result += formattedCombined;
-            }
-            continue;
-          }
-        }
-      }
-      
-      // Add space between lines (normal case)
-      if (i > 0) {
-        result += ' ';
-      }
-      const currentText = currentLine && typeof currentLine === 'object' ? currentLine.text : currentLine;
-      result += currentText;
-    }
-    
+    const result = formattedLines.join(' ');
+
     logDebug(`[Markdown] formatTextWithFragments - FINAL: lines=${formattedLines.length}, resultLength=${result.length}, hasFormatting=${result.includes('**') || result.includes('*') || result.includes('__')}`);
     
     // CRITICAL: Normalize line breaks in final result - replace newlines with spaces
@@ -809,7 +725,7 @@ function contentItemToMarkdown(item) {
       // CRITICAL: Headings should never have bold/italic formatting
       // Extract plain text without formatting
       let text = '';
-      if (item.lines && Array.isArray(item.lines) && item.lines.length > 0) {
+      if (fragmentsMatchText && item.lines && Array.isArray(item.lines) && item.lines.length > 0) {
         // Extract text from lines without formatting
         const textParts = [];
         for (const line of item.lines) {
@@ -1010,10 +926,11 @@ function contentItemToMarkdown(item) {
  * @returns {string} Markdown table
  */
 function tableToMarkdown(item) {
-  if (!item.rows || !item.rows.length) return '';
+  const rows = Array.isArray(item.headers) && item.headers.length
+    ? [item.headers, ...(item.rows || [])] : item.rows;
+  if (!rows || !rows.length) return '';
   
   let md = '\n';
-  const rows = item.rows;
   const hasHeaders = item.hasHeaders !== false; // Default to true if not specified
   
   // Handle header row if present

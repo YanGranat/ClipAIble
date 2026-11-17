@@ -161,6 +161,8 @@ EXCLUDE RULES:
 If article has: <a href="#source-1">[1]</a> ... <ol class="refs"><li id="source-1">Reference text</li></ol>
 Then ".refs" must NOT be in exclude - it contains link targets!
 
+Preserve readable embedded quotations within the article, including blockquote.twitter-tweet fallback text and attribution. Embedded quotations are article content; exclude their surrounding sharing controls or scripts rather than the quote itself.
+
 ALWAYS EXCLUDE these sections (add their selectors to "exclude"):
 - Site navigation menus (header/footer nav with links to other pages)
 - Ads, social share buttons, popups, clap/like buttons

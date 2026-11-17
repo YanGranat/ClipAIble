@@ -5,6 +5,7 @@ import { logError } from '../../scripts/utils/logging.js';
 import { getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { ELEMENT_IDS } from '../constants.js';
 import { activateModalDialog } from './dom-helpers.js';
+import { localizePdfError, pdfFailurePayload } from '../../scripts/utils/pdf-errors.js';
 
 /**
  * Show PDF file selection dialog and wait for user confirmation
@@ -26,11 +27,9 @@ export async function showPdfFileSelectionDialog() {
   
   const titleEl = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_TITLE);
   const messageEl = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_MESSAGE);
-  const warningEl = document.getElementById(ELEMENT_IDS.PDF_FILE_SELECTION_MODAL_WARNING);
   
   if (titleEl) titleEl.textContent = locale.pdfFileSelectionDialogTitle || UI_LOCALES.en.pdfFileSelectionDialogTitle;
   if (messageEl) messageEl.textContent = locale.pdfFileSelectionDialogMessage || UI_LOCALES.en.pdfFileSelectionDialogMessage;
-  if (warningEl) warningEl.textContent = locale.pdfFileSelectionDialogWarning || UI_LOCALES.en.pdfFileSelectionDialogWarning;
   if (okBtn) okBtn.textContent = locale.ok || UI_LOCALES.en.ok;
   
   return new Promise((resolve) => {
@@ -122,10 +121,7 @@ export function initPdfFileSelectionHandler() {
             });
           }
         } catch (error) {
-          sendResponse({ 
-            success: false, 
-            error: error.message || 'Failed to select PDF file'
-          });
+          sendResponse(pdfFailurePayload(await localizePdfError(error, 'errorPdfDataUnavailable')));
         }
       })();
       return true; // Keep channel open for async response

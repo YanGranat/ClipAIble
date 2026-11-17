@@ -2,13 +2,14 @@
 // Main DOM parser for extraction
 // Converts DOM elements to content items
 
-import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl } from './dom-utils.js';
+import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneWithoutLinkAnnouncements } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isNumericHeading, isRealHeading, cleanLatexFormula, isEndOfContentSection } from './text-utils.js';
 import { isFootnoteLink, isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded } from './filters.js';
 import { extractBestImageUrl, isTrackingPixel, isDecorativeImage, getImageCaption } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
 import { isStandfirstText } from './standfirst.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
+import { findSplitArticleBody, isOutsideArticleBody } from './discover.js';
 
 /**
  * Candidate element selector
@@ -85,6 +86,37 @@ export function collectCandidateElements(mainContent, win) {
         return allElements;
       }
     }
+  }
+
+  const splitBody = findSplitArticleBody(mainContent, win);
+  if (splitBody) {
+    const { owner, roots } = splitBody;
+    const selected = new Set();
+    const first = roots[0];
+    const last = roots[roots.length - 1];
+    const ownerSelector = 'article, [itemprop~="articleBody"], .post, .article, .entry';
+    const belongsToOwner = element => {
+      const closest = element.closest(ownerSelector);
+      return (closest === owner || (!closest && owner === mainContent)) && !isOutsideArticleBody(element, owner);
+    };
+    for (const root of roots) {
+      if (root.matches(CANDIDATE_SELECTOR) && belongsToOwner(root)) selected.add(root);
+      for (const element of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) {
+        if (belongsToOwner(element)) selected.add(element);
+      }
+    }
+    for (const figure of Array.from(owner.querySelectorAll('figure'))) {
+      if (!belongsToOwner(figure)) continue;
+      const afterFirst = first.contains(figure) || (first.compareDocumentPosition(figure) & 4) !== 0;
+      const beforeLast = last.contains(figure) || (figure.compareDocumentPosition(last) & 4) !== 0;
+      if (afterFirst && beforeLast) {
+        selected.add(figure);
+        for (const element of Array.from(figure.querySelectorAll(CANDIDATE_SELECTOR))) {
+          if (belongsToOwner(element)) selected.add(element);
+        }
+      }
+    }
+    return Array.from(selected).sort(compareDomOrder);
   }
 
   // For WordPress sites (like fs.blog), prioritize .entry-content over entire article
@@ -322,7 +354,7 @@ export function partitionCandidateElements(elements) {
   function append(element) {
     if (visited.has(element)) return;
     visited.add(element);
-    const descendants = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div'));
+    const descendants = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div,aside,nav,footer'));
     const originalText = element.getAttribute('data-original-text');
     if (element.tagName !== 'DIV' || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
@@ -539,7 +571,7 @@ export function handleHeading(element, state, constants) {
   // Skip if standfirst element
   if (state.standfirstElement && element === state.standfirstElement) return null;
   
-  const rawText = element.textContent || '';
+  const rawText = cloneWithoutLinkAnnouncements(element).textContent || '';
   const cleanedText = cleanHeadingText(rawText);
   
   // Skip if matches standfirst text
@@ -729,7 +761,7 @@ export function processMathElements(container) {
  */
 export function sanitizeParagraphHtml(p) {
   // Clone to avoid modifying original
-  const clone = /** @type {Element} */ (p.cloneNode(true));
+  const clone = /** @type {Element} */ (cloneWithoutLinkAnnouncements(p));
   
   // Process math elements first - convert to LaTeX
   processMathElements(clone);
@@ -796,11 +828,7 @@ export function handleFigure(win, element, state, constants, baseUrl) {
   }
 
   // Get caption
-  const figcaption = element.querySelector('figcaption');
-  let caption = figcaption ? (figcaption.textContent || '').trim() : '';
-  if (!caption) {
-    caption = getImageCaption(/** @type {HTMLImageElement} */ (img));
-  }
+  const caption = getImageCaption(/** @type {HTMLImageElement} */ (img));
   
   return {
     type: 'image',
@@ -856,7 +884,7 @@ export function handleImg(win, element, state, constants, baseUrl) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleBlockquote(element) {
-  const text = (element.innerHTML || '').trim();
+  const text = (/** @type {HTMLElement} */ (cloneWithoutLinkAnnouncements(element)).innerHTML || '').trim();
   if (!text) return null;
   
   return {
@@ -923,7 +951,7 @@ export function handleList(element) {
     .filter(li => li.closest('ul, ol') === element)
     .map(li => {
       // Clone and process math elements
-      const clone = /** @type {Element} */ (li.cloneNode(true));
+      const clone = /** @type {Element} */ (cloneWithoutLinkAnnouncements(li));
       processMathElements(clone);
       return (clone.textContent || '').trim();
     })
@@ -957,7 +985,7 @@ export function handleTable(element) {
   if (tableText.length < 50) return null;
 
   // Clone and clean
-  const clone = element.cloneNode(true);
+  const clone = cloneWithoutLinkAnnouncements(element);
   const allElements = (/** @type {HTMLElement} */ (clone)).querySelectorAll('*');
   for (const el of Array.from(allElements)) {
     el.removeAttribute('style');

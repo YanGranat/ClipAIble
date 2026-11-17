@@ -1,0 +1,2 @@
+/lib/pdfjs/** -text
+/lib/piper-wasm/piper_phonemize.js -text

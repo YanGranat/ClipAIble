@@ -2,7 +2,7 @@
 // Image processing functions for extraction
 // Handles image URL extraction, filtering, and featured image detection
 
-import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle } from './dom-utils.js';
+import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle, cloneWithoutLinkAnnouncements } from './dom-utils.js';
 
 /**
  * Check if URL is a placeholder (base64 1x1 transparent pixel, etc.)
@@ -186,6 +186,14 @@ export function isDecorativeImage(win, img, logoPatterns) {
   const alt = (img.alt || '').toLowerCase();
   const className = String(img.className || '').toLowerCase();
   const id = (img.id || '').toLowerCase();
+  const naturalWidth = img.naturalWidth || img.width || 0;
+  const naturalHeight = img.naturalHeight || img.height || 0;
+
+  if (img.getAttribute('role') === 'separator') return true;
+  if (naturalWidth > 0 && naturalHeight > 0 &&
+      ((naturalWidth > 3 && naturalHeight <= 3) || (naturalHeight > 3 && naturalWidth <= 3))) {
+    return true;
+  }
   
   // Author headshots/photos
   if (className.includes('headshot') || id.includes('headshot') ||
@@ -235,8 +243,6 @@ export function isDecorativeImage(win, img, logoPatterns) {
   }
   
   // Very small dimensions (likely icons)
-  const naturalWidth = img.naturalWidth || img.width || 0;
-  const naturalHeight = img.naturalHeight || img.height || 0;
   if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
     if (src.includes('icon') || src.includes('logo') || src.includes('social')) {
       return true;
@@ -252,11 +258,12 @@ export function isDecorativeImage(win, img, logoPatterns) {
  * @returns {string} - Caption text or empty string
  */
 export function getImageCaption(img) {
+  const captionText = element => (cloneWithoutLinkAnnouncements(element).textContent || '').trim();
   // Check for figcaption in figure
   const figure = img.closest('figure');
   if (figure) {
     const figcaption = figure.querySelector('figcaption');
-    if (figcaption) return (figcaption.textContent || '').trim();
+    if (figcaption) return captionText(figcaption);
   }
   
   // Check aria-label or title
@@ -269,7 +276,7 @@ export function getImageCaption(img) {
   // Check next sibling
   const nextSibling = img.nextElementSibling;
   if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
-    return (nextSibling.textContent || '').trim();
+    return captionText(nextSibling);
   }
   
   // Check for caption in parent
@@ -277,8 +284,8 @@ export function getImageCaption(img) {
   if (parent) {
     const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption');
     if (captionEl) {
-      const captionText = (captionEl.textContent || '').trim();
-      if (captionText && captionText !== img.alt) return captionText;
+      const text = captionText(captionEl);
+      if (text && text !== img.alt) return text;
     }
   }
   
@@ -345,10 +352,8 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
       // Must be reasonably large
       if (naturalWidth >= 400 || naturalHeight >= 300 || (naturalWidth === 0 && naturalHeight === 0)) {
         const absoluteUrl = toAbsoluteUrl(src, baseUrl);
-        const urlLower = absoluteUrl.toLowerCase();
-        
-        // Skip logos
-        if (logoPatterns.some(pattern => urlLower.includes(pattern.toLowerCase()))) {
+        // Apply the same decorative-image rules as the body parser.
+        if (isDecorativeImage(doc.defaultView, imgElement, logoPatterns)) {
           continue;
         }
         

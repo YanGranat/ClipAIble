@@ -3,7 +3,7 @@
 // Handles API key encryption, validation, and provider UI updates
 
 import { encryptApiKey, decryptApiKey, maskApiKey, saveApiKeySettings } from '../../scripts/utils/encryption.js';
-import { t, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
+import { t, tSync, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { logError } from '../../scripts/utils/logging.js';
 import { formatModelLabel as formatCatalogModelLabel } from '../../scripts/utils/model-catalog.js';
 
@@ -28,8 +28,8 @@ export function initApiKeys(deps) {
   }
 
   // Format model label with code name and reasoning effort
-  function formatModelLabel(modelValue) {
-    return formatCatalogModelLabel(elements.apiProviderSelect?.value || 'openai', modelValue);
+  function formatModelLabel(modelValue, language = 'en') {
+    return formatCatalogModelLabel(elements.apiProviderSelect?.value || 'openai', modelValue, (key, params) => tSync(key, language, params));
   }
 
   // Update API provider UI (label, placeholder, model list)
@@ -38,6 +38,7 @@ export function initApiKeys(deps) {
     
     const provider = elements.apiProviderSelect.value;
     const uiLang = await getUILanguage();
+    if (elements.apiProviderSelect.value !== provider) return;
     const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
     
     let labelKey, placeholderKey, placeholderText;
@@ -91,18 +92,15 @@ export function initApiKeys(deps) {
     const apiKey = elements.apiKey.value.trim();
     
     // Check if main API key is provided (not masked)
-    const hasKey = apiKey && !apiKey.startsWith('****');
+    const hasKey = elements.apiKey.dataset.provider === provider && apiKey && !apiKey.startsWith('****');
     
     if (!hasKey) {
       const pleaseEnterKeyText = await t('pleaseEnterAtLeastOneApiKey');
-      showToast(pleaseEnterKeyText, 'error');
+      showToast(pleaseEnterKeyText, 'error', { key: 'pleaseEnterAtLeastOneApiKey' });
       return;
     }
 
     const keysToSave = {};
-    
-    // Save selected provider
-    keysToSave[STORAGE_KEYS.API_PROVIDER] = provider;
     
     // Save API key for selected provider
     if (apiKey) {
@@ -126,56 +124,56 @@ export function initApiKeys(deps) {
         if (provider === 'openai') {
           if (!apiKey.startsWith('sk-')) {
             const invalidOpenAiKeyText = await t('invalidOpenAiKeyFormat');
-            showToast(invalidOpenAiKeyText, 'error');
+            showToast(invalidOpenAiKeyText, 'error', { key: 'invalidOpenAiKeyFormat' });
             return;
           }
           try {
             keysToSave[STORAGE_KEYS.API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error');
+            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
         } else if (provider === 'claude') {
           if (!apiKey.startsWith('sk-ant-')) {
             const invalidClaudeKeyText = await t('invalidClaudeKeyFormat');
-            showToast(invalidClaudeKeyText, 'error');
+            showToast(invalidClaudeKeyText, 'error', { key: 'invalidClaudeKeyFormat' });
             return;
           }
           try {
             keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error');
+            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
         } else if (provider === 'gemini') {
           if (!apiKey.startsWith('AIza')) {
             const invalidGeminiKeyText = await t('invalidGeminiKeyFormat');
-            showToast(invalidGeminiKeyText, 'error');
+            showToast(invalidGeminiKeyText, 'error', { key: 'invalidGeminiKeyFormat' });
             return;
           }
           try {
             keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error');
+            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
         } else if (provider === 'grok') {
           if (!apiKey.startsWith('xai-')) {
             const invalidGrokKeyText = await t('invalidGrokKeyFormat');
-            showToast(invalidGrokKeyText, 'error');
+            showToast(invalidGrokKeyText, 'error', { key: 'invalidGrokKeyFormat' });
             return;
           }
           try {
             keysToSave[STORAGE_KEYS.GROK_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error');
+            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
@@ -183,14 +181,14 @@ export function initApiKeys(deps) {
           // OpenRouter API keys typically start with 'sk-or-' but we'll be lenient
           if (!apiKey.startsWith('sk-or-') && !apiKey.startsWith('sk-')) {
             const invalidOpenRouterKeyText = await t('invalidOpenRouterKeyFormat');
-            showToast(invalidOpenRouterKeyText, 'error');
+            showToast(invalidOpenRouterKeyText, 'error', { key: 'invalidOpenRouterKeyFormat' });
             return;
           }
           try {
             keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error');
+            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
@@ -198,14 +196,14 @@ export function initApiKeys(deps) {
           // DeepSeek API keys start with 'sk-'
           if (!apiKey.startsWith('sk-')) {
             const invalidDeepSeekKeyText = await t('invalidDeepSeekKeyFormat');
-            showToast(invalidDeepSeekKeyText, 'error');
+            showToast(invalidDeepSeekKeyText, 'error', { key: 'invalidDeepSeekKeyFormat' });
             return;
           }
           try {
             keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = await encryptApiKey(apiKey);
           } catch (error) {
             const failedToEncryptText = await t('failedToEncryptApiKey');
-            showToast(failedToEncryptText, 'error');
+            showToast(failedToEncryptText, 'error', { key: 'failedToEncryptApiKey' });
             logError('Encryption error', error);
             return;
           }
@@ -222,10 +220,11 @@ export function initApiKeys(deps) {
       }
     }
     
+    if (elements.apiProviderSelect?.value !== provider || elements.apiKey.dataset.provider !== provider) return;
     await saveApiKeySettings(keysToSave, keysToRemove);
     
     const apiKeysSavedText = await t('apiKeysSaved');
-    showToast(apiKeysSavedText, 'success');
+    showToast(apiKeysSavedText, 'success', { key: 'apiKeysSaved' });
   }
 
   return {

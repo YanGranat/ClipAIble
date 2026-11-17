@@ -17,6 +17,39 @@ function extract(html, baseUrl, selectors = {}) {
 }
 
 describe('selector page extraction', () => {
+  it('honors image exclusions inside selected prose while protecting prose from an excluded outer wrapper', () => {
+    const html = '<div class="site-wrapper"><article><h1>Field observations</h1><div class="hero"><img src="/hero.png" width="700" height="400"></div><div class="story"><p>The field report contains a substantial introduction.</p><figure><img src="/body.png" width="600" height="400"><figcaption>The survey illustration.</figcaption></figure><figure data-role="related"><a href="/another-report"><img src="/related.png" width="600" height="400"></a></figure><div class="subscription-box"><picture><img src="/avatar.png" width="100" height="100"></picture><p><img src="/promotion.png" width="600" height="400"></p></div><p>The field report retains its conclusion.</p></div></article></div>';
+    const result = extract(html, undefined, { articleContainer: 'article', content: '.story', heroImage: '.hero img', exclude: ['.site-wrapper', 'figure[data-role="related"]', '.subscription-box'] });
+    expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.com/hero.png', 'https://example.com/body.png']);
+    expect(JSON.stringify(result.content)).toContain('The field report retains its conclusion.');
+  });
+
+  it.each(['(opens a new tab)', 'opens in a new window'])('omits marked link announcements while preserving authored and mathematical text: %s', label => {
+    const result = extract(`<main><p>A report <a href="https://example.com/reference">reference<span class="screen-reader-text">${label}</span><span class="sr-only">Essential reference description.</span></a> remains available. The quoted phrase “opens a new tab” is part of this paragraph. <span class="sr-only">Essential author text.</span><math><mtext class="sr-only">opens a new tab</mtext></math></p></main>`);
+    const text = result.content.map(item => item.text || '').join('');
+    expect(text).not.toContain(label === '(opens a new tab)' ? '(opens a new tab)' : 'opens in a new window');
+    expect(text).toContain('Essential reference description.');
+    expect(text).toContain('Essential author text.');
+    expect(text).toContain('The quoted phrase');
+    expect(text.match(/opens a new tab/g)).toHaveLength(2);
+  });
+
+  it.each(['.twitter-tweet', 'blockquote.twitter-tweet'])('preserves readable embedded article quotations despite a widget exclusion: %s', widgetSelector => {
+    const result = extract('<main><h1>Field observations</h1><div class="story"><p>The introduction provides context for the quotation.</p><blockquote class="twitter-tweet"><p>Repeated measurements improve the reliability of a field survey.</p>— Field observer <a href="https://example.com/notes/1">Reference</a></blockquote><p>The conclusion follows the quotation.</p></div></main>', undefined, { content: '.story', exclude: [widgetSelector] });
+    const content = JSON.stringify(result.content);
+    expect(content.match(/Repeated measurements improve/g)).toHaveLength(1);
+    expect(content.match(/Field observer/g)).toHaveLength(1);
+    expect(content).toContain('The conclusion follows the quotation.');
+  });
+
+  it.each(['div class="omit"', 'div id="comments"', 'div class="advertisement"', 'nav'])('keeps embedded quotations excluded inside %s', parent => {
+    const tag = parent.split(' ')[0];
+    const result = extract(`<main><div class="story"><p>The article retains its own substantial introduction.</p><${parent}><blockquote class="twitter-tweet"><p>Excluded panel quotation must remain outside the document.</p></blockquote></${tag}><blockquote class="omit"><p>Explicitly excluded ordinary quotations must remain excluded.</p></blockquote><p>The article retains its conclusion.</p></div></main>`, undefined, { content: '.story', exclude: ['.twitter-tweet', '.omit', '#comments', '.advertisement', 'nav'] });
+    expect(JSON.stringify(result.content)).not.toContain('Excluded panel quotation');
+    expect(JSON.stringify(result.content)).not.toContain('Explicitly excluded ordinary');
+    expect(JSON.stringify(result.content)).toContain('The article retains its conclusion.');
+  });
+
   it('rejects navigation before reading the new document and permits an anchor change', () => {
     const html = '<h1>Article</h1><main><p>A paragraph with enough content to extract.</p></main>';
     expect(() => extract(html, 'https://example.com/other-article')).toThrow('page changed');

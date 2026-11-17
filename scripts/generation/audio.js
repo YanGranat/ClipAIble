@@ -7,7 +7,7 @@
 import { log, logWarn, logError } from '../utils/logging.js';
 import { prepareContentForAudio } from './audio-prep.js';
 import { chunksToSpeech, getAudioExtension } from '../api/tts.js';
-import { PROCESSING_STAGES, getProcessingState, isCancelled } from '../state/processing.js';
+import { PROCESSING_STAGES, getProcessingState, isCancelled, getScopedUpdateState } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { cleanTitleForFilename } from '../utils/html.js';
 import { getUILanguage, tSync } from '../locales.js';
@@ -41,6 +41,7 @@ import {
 export async function generateAudio(params, updateState) {
   const entryTime = Date.now();
   const processingRunId = params.processingRunId;
+  if (updateState) updateState = getScopedUpdateState(processingRunId, updateState);
   const {
     content,
     title,
@@ -68,7 +69,7 @@ export async function generateAudio(params, updateState) {
   }
 
   
-  // Step 1: Prepare content for audio (using main model like GPT-5.1)
+  // Prepare content for narration using the selected model.
   // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
   const currentState = getProcessingState();
   const currentProgress = currentState?.progress || 0;
@@ -78,7 +79,8 @@ export async function generateAudio(params, updateState) {
   
   updateState?.({ 
     stage: PROCESSING_STAGES.GENERATING.id,
-    status: 'Preparing article for audio narration...', 
+    status: tSync('statusPreparingAudioArticle', await getUILanguage()),
+    statusTranslationKey: 'statusPreparingAudioArticle', statusTranslationParams: {},
     progress: startProgress 
   });
   
@@ -128,6 +130,8 @@ export async function generateAudio(params, updateState) {
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    error.translationKey = normalized.translationKey;
+    error.translationParams = normalized.translationParams;
     throw error;
   }
   
@@ -150,7 +154,8 @@ export async function generateAudio(params, updateState) {
     const uiLang = await getUILanguage();
     updateState({ 
       stage: PROCESSING_STAGES.GENERATING.id,
-      status: tSync('statusConvertingToSpeech', uiLang).replace('{provider}', providerName), 
+      status: tSync('statusConvertingToSpeech', uiLang, { provider: providerName }),
+      statusTranslationKey: 'statusConvertingToSpeech', statusTranslationParams: { provider: providerName },
       progress: 60 
     });
   }
@@ -196,6 +201,8 @@ export async function generateAudio(params, updateState) {
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    error.translationKey = normalized.translationKey;
+    error.translationParams = normalized.translationParams;
     throw error;
   }
   
@@ -244,7 +251,8 @@ export async function generateAudio(params, updateState) {
     const uiLang = await getUILanguage();
     updateState({ 
       stage: PROCESSING_STAGES.GENERATING.id,
-      status: tSync('statusDownloadingAudio', uiLang), 
+      status: tSync('statusDownloadingAudio', uiLang),
+      statusTranslationKey: 'statusDownloadingAudio', statusTranslationParams: {},
       progress: 98 
     });
   }
@@ -299,7 +307,8 @@ export async function generateAudio(params, updateState) {
     const uiLang = await getUILanguage();
     updateState({ 
       stage: PROCESSING_STAGES.COMPLETE.id,
-      status: tSync('statusDone', uiLang), 
+      status: tSync('statusDone', uiLang),
+      statusTranslationKey: 'statusDone', statusTranslationParams: {},
       progress: 100 
     });
   }

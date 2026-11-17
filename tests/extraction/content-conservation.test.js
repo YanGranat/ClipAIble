@@ -39,6 +39,13 @@ function text(document, item) {
 }
 
 describe('Article content conservation', () => {
+  it('preserves independently owned repeated DOM quotations while retaining chunk-overlap deduplication', () => {
+    const quote = { type: 'quote', text: 'A field measurement is useful only when its method is clear.' };
+    const prose = { type: 'paragraph', text: 'The conclusion returns to the earlier quotation.' };
+    const content = [quote, prose, { ...quote }, { ...prose }];
+    expect(deduplicateContent(content, { preserveQuoteOccurrences: true })).toEqual([quote, prose, quote]);
+    expect(deduplicateContent(content)).toEqual([quote, prose]);
+  });
   it('keeps distinct equal-length content even when a short hash would collide', () => {
     const first = { type: 'paragraph', text: 'The example includes Aa in this position.' };
     const second = { type: 'paragraph', text: 'The example includes B@ in this position.' };

@@ -3,7 +3,7 @@
 
 import { log, logWarn, logDebug, logError } from '../utils/logging.js';
 import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle, markdownToHtml, cleanTildaArtifactsFromText } from '../utils/html.js';
-import { PDF_LOCALIZATION } from '../utils/config.js';
+import { getDocumentLocalization, getLocaleFromLanguage, getDocumentLanguageTag } from '../utils/config.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
 import { isDocumentColor, isDocumentFontFamily } from '../utils/styles-validation.js';
@@ -36,7 +36,7 @@ function getLocalization(language) {
     });
   }
   
-  const l10n = PDF_LOCALIZATION[cacheKey] || PDF_LOCALIZATION['auto'];
+  const l10n = getDocumentLocalization(cacheKey);
   l10nCache.set(cacheKey, l10n);
   return l10n;
 }
@@ -419,7 +419,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   }
 
   // Count words in content
-  const wordCount = countWords(content, title);
+  const wordCount = countWords(content, title, language);
   
   // Build meta info block
   const metaItems = [];
@@ -469,8 +469,10 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     metaItems.push(`<span class="article-date">${escapeHtml(publishDate)}</span>`);
   }
   if (wordCount > 0) {
-    const locale = language === 'ua' ? 'uk-UA' : language === 'ru' ? 'ru-RU' : 'en-US';
-    metaItems.push(`<span class="word-count">${wordCount.toLocaleString(locale)} ${l10n.words}</span>`);
+    const locale = getLocaleFromLanguage(language);
+    const category = new Intl.PluralRules(locale).select(wordCount);
+    const words = l10n[`words_${category}`] || l10n.words;
+    metaItems.push(`<span class="word-count">${wordCount.toLocaleString(locale)} ${words}</span>`);
   }
   const metaHtml = metaItems.length > 0 
     ? `<div class="article-meta">${metaItems.join(' • ')}</div>` 
@@ -661,7 +663,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     </nav>`;
   }
 
-  const docLang = language || 'en';
+  const docLang = getDocumentLanguageTag(language);
 
   const finalHtml = `<!DOCTYPE html>
 <html lang="${docLang}" translate="no" class="notranslate" data-translate="no">
@@ -711,7 +713,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
  * @param {string} title - Article title
  * @returns {number} Word count
  */
-function countWords(content, title) {
+function countWords(content, title, language) {
   function stripHtmlAndEntities(str) {
     if (!str) return '';
     return String(str)
@@ -773,7 +775,19 @@ function countWords(content, title) {
   extractAllText(content, allText);
   
   const fullText = allText.join(' ');
-  return fullText.split(/\s+/).filter(w => w.length > 0).length;
+  let segmenter;
+  const cjkScripts = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
+  const cjk = new RegExp(`[${cjkScripts}]`, 'u');
+  const runs = new RegExp(`[${cjkScripts}]+|[^${cjkScripts}]+`, 'gu');
+  return fullText.split(/\s+/).reduce((count, token) => {
+    for (const run of token.match(runs) || []) {
+      if (!/[\p{L}\p{N}]/u.test(run)) continue;
+      if (!cjk.test(run)) { count++; continue; }
+      segmenter ||= new Intl.Segmenter(getLocaleFromLanguage(language), { granularity: 'word' });
+      count += Array.from(segmenter.segment(run)).filter(part => part.isWordLike).length;
+    }
+    return count;
+  }, 0);
 }
 
 /**

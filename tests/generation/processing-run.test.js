@@ -10,7 +10,7 @@ import { chunksToSpeech } from '../../scripts/api/tts.js';
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ clearDecryptedKeyCache: vi.fn() }));
 vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () => null), processImagesInBatches: vi.fn(async () => []), embedImages: vi.fn(async html => html) }));
-vi.mock('../../scripts/locales.js', () => ({ getUILanguage: vi.fn(async () => 'en'), tSync: vi.fn(key => key) }));
+vi.mock('../../scripts/locales.js', async importOriginal => ({ ...await importOriginal(), getUILanguage: vi.fn(async () => 'en'), tSync: vi.fn(key => key) }));
 vi.mock('../../scripts/translation/index.js', () => ({ translateMetadata: vi.fn(async text => text) }));
 vi.mock('../../scripts/utils/storage.js', () => ({ saveLargeData: vi.fn(async () => {}), removeLargeData: vi.fn(async () => {}) }));
 vi.mock('../../scripts/api/tts.js', () => ({ chunksToSpeech: vi.fn(async () => new ArrayBuffer(16)), getAudioExtension: vi.fn(() => 'wav') }));

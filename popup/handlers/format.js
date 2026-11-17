@@ -99,5 +99,14 @@ export function setupFormatHandlers(deps) {
       });
     });
   }
+
+  elements.imageTranslationProvider?.addEventListener('change', () => {
+    debouncedSaveSettings(STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER, elements.imageTranslationProvider.value);
+    settingsModule?.updateTranslationVisibility();
+  });
+  for (const input of [elements.apiKey, elements.googleApiKey]) {
+    input?.addEventListener('input', () => { void settingsModule?.updateTranslationVisibility(); });
+  }
+  elements.apiProviderSelect?.addEventListener('change', () => { void settingsModule?.updateTranslationVisibility(); });
 }
 

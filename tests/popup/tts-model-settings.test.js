@@ -48,6 +48,8 @@ it('shows only the selected ElevenLabs model capabilities and preserves inactive
   expect(elements.audioSpeed.min).toBe('0.7'); expect(elements.audioSpeed.max).toBe('1.2');
   expect(elements.audioSpeed.value).toBe('1.2'); expect(elements.elevenlabsStyle.value).toBe('0.4');
   elements.audioProvider.value = 'openai'; audio.updateAudioProviderUI();
+  expect(elements.audioSpeed.value).toBe('1.5');
+  elements.audioProvider.value = 'offline'; audio.updateAudioProviderUI();
   expect(elements.audioSpeed.value).toBe('1.7');
 });
 
@@ -67,10 +69,24 @@ it('restores provider-specific choices across switches and migrates only the inv
   voices.current.offline = 'fr_FR-mls_fr-medium'; elements.audioProvider.value = 'offline'; audio.updateAudioProviderUI();
   expect(elements.audioVoice.value).toBe('fr_FR-mls-medium'); expect(voices.current.offline).toBe('fr_FR-mls-medium');
   elements.audioProvider.value = 'openai'; audio.updateAudioProviderUI();
-  expect(elements.audioVoice.value).toBe('nova');
+  expect(elements.audioVoice.value).toBe('marin');
   expect([...elements.audioVoice.options].map(option => option.value)).toEqual(expect.arrayContaining(['marin', 'cedar']));
   elements.audioProvider.value = 'offline'; audio.updateAudioProviderUI();
   expect(elements.audioVoice.value).toBe('fr_FR-mls-medium');
+});
+
+it('keeps unavailable saved OpenAI voices visible without replacing preferences', () => {
+  voices.current.openai = 'nova';
+  elements.audioProvider.value = 'openai'; audio.updateAudioProviderUI();
+  expect(elements.audioVoice.value).toBe('nova');
+  expect(voices.current.openai).toBe('nova');
+  expect(saves).not.toHaveBeenCalled();
+  expect(elements.audioVoice.selectedOptions[0].dataset.i18n).toBe('voiceUnavailable');
+  expect(JSON.parse(elements.audioVoice.selectedOptions[0].dataset.i18nParams)).toEqual({ voice: 'nova' });
+  for (const voice of ['fable', 'onyx']) expect([...elements.audioVoice.options].some(option => option.value === voice)).toBe(false);
+  elements.audioProvider.value = 'offline'; audio.updateAudioProviderUI();
+  elements.audioProvider.value = 'openai'; audio.updateAudioProviderUI();
+  expect(elements.audioVoice.value).toBe('nova');
 });
 
 it('persists Qwen setup fields and updates model capabilities through the registered handlers', () => {

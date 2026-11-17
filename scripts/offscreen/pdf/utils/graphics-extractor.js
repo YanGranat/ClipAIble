@@ -29,15 +29,25 @@ export async function extractPageGraphics(page, pageNum, viewport) {
   let pathRectangles = [];
   let currentPoint = null;
   let subpathStart = null;
+  let subpathPoints = [];
 
   function clearPath() {
     segments = [];
     pathRectangles = [];
     currentPoint = null;
     subpathStart = null;
+    subpathPoints = [];
   }
 
   function closeSubpath() {
+    const points = subpathPoints;
+    if (points.length === 4 && new Set(points.map(point => point[0])).size === 2 &&
+        new Set(points.map(point => point[1])).size === 2 &&
+        new Set(points.map(point => point.join(','))).size === 4 &&
+        points.every((point, index) => point[0] === points[(index + 1) % 4][0] || point[1] === points[(index + 1) % 4][1])) {
+      pathRectangles.push(points.map(point => transformPoint(point[0], point[1], ctm)));
+    }
+    subpathPoints = [];
     if (currentPoint && subpathStart) {
       if (currentPoint[0] !== subpathStart[0] || currentPoint[1] !== subpathStart[1]) {
         segments.push([currentPoint, subpathStart]);
@@ -46,43 +56,35 @@ export async function extractPageGraphics(page, pageNum, viewport) {
     }
   }
 
-  function constructPath(operators, coordinates) {
-    const pathCoordinates = Array.from(coordinates);
-    let offset = 0;
-    for (const operator of operators) {
-      if (operator === OPS.closePath) {
+  function constructPath(coordinates) {
+    // PDF.js packs each DrawOPS opcode and its coordinates into one typed array.
+    const pathCoordinates = coordinates || [];
+    for (let offset = 0; offset < pathCoordinates.length;) {
+      const operator = pathCoordinates[offset++];
+      if (operator === 4) {
         closeSubpath();
         continue;
       }
-      const count = operator === OPS.rectangle || operator === OPS.curveTo2 || operator === OPS.curveTo3
-        ? 4 : operator === OPS.curveTo ? 6 : 2;
-      const values = pathCoordinates.slice(offset, offset + count);
+      if (![0, 1, 2, 3].includes(operator)) throw new Error('Unsupported PDF drawing operator');
+      const count = operator === 2 ? 6 : operator === 3 ? 4 : 2;
+      const values = Array.from(pathCoordinates.slice(offset, offset + count));
       if (values.length !== count || !values.every(Number.isFinite)) {
         throw new Error('Invalid PDF path coordinates');
       }
       offset += count;
-      if (operator === OPS.rectangle) {
-        const [x, y, width, height] = values;
-        const corners = [
-          transformPoint(x, y, ctm), transformPoint(x + width, y, ctm),
-          transformPoint(x + width, y + height, ctm), transformPoint(x, y + height, ctm)
-        ];
-        for (let index = 0; index < 4; index++) segments.push([corners[index], corners[(index + 1) % 4]]);
-        pathRectangles.push(corners);
-        currentPoint = corners[0];
-        subpathStart = corners[0];
-      } else if (operator === OPS.moveTo) {
+      if (operator === 0) {
         currentPoint = transformPoint(values[0], values[1], ctm);
         subpathStart = currentPoint;
-      } else if (operator === OPS.lineTo) {
+        subpathPoints = [[values[0], values[1]]];
+      } else if (operator === 1) {
         const point = transformPoint(values[0], values[1], ctm);
         if (currentPoint) segments.push([currentPoint, point]);
         currentPoint = point;
-      } else if ([OPS.curveTo, OPS.curveTo2, OPS.curveTo3].includes(operator)) {
+        subpathPoints.push([values[0], values[1]]);
+      } else {
         // Curves are not straight borders; their endpoint starts the next segment.
         currentPoint = transformPoint(values[count - 2], values[count - 1], ctm);
-      } else {
-        throw new Error('Unsupported PDF path operator');
+        subpathPoints = [];
       }
     }
   }
@@ -154,15 +156,12 @@ export async function extractPageGraphics(page, pageNum, viewport) {
         } else if (operator === OPS.setGState) {
           for (const [key, value] of args[0] || []) if (key === 'LW') lineWidth = value;
         } else if (operator === OPS.constructPath) {
-          constructPath(args[0], args[1]);
-        } else if ([OPS.moveTo, OPS.lineTo, OPS.rectangle, OPS.curveTo, OPS.curveTo2, OPS.curveTo3, OPS.closePath].includes(operator)) {
-          constructPath([operator], args);
-        } else if (operator === OPS.stroke || operator === OPS.closeStroke) {
-          paintPath(true, false, operator === OPS.closeStroke);
-        } else if ([OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(operator)) {
-          paintPath(true, true, operator === OPS.closeFillStroke || operator === OPS.closeEOFillStroke);
-        } else if (operator === OPS.fill || operator === OPS.eoFill) {
-          paintPath(false, true);
+          clearPath();
+          constructPath(args[1]?.[0]);
+          const paint = args[0];
+          const stroke = [OPS.stroke, OPS.closeStroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(paint);
+          const fill = [OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(paint);
+          paintPath(stroke, fill, [OPS.closeStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(paint));
         } else if (operator === OPS.endPath) {
           clearPath();
         }

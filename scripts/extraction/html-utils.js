@@ -149,9 +149,10 @@ function extractTextForDedup(item) {
 /**
  * Remove items with identical types and normalized text, preserving first occurrence order.
  * @param {Array} content - Extracted content items
+ * @param {{preserveQuoteOccurrences?: boolean}} [options] - Preserve independently owned DOM quotations
  * @returns {Array} Deduplicated content
  */
-export function deduplicateContent(content) {
+export function deduplicateContent(content, { preserveQuoteOccurrences = false } = {}) {
   log('deduplicateContent', { inputCount: content.length });
   
   const result = [];
@@ -164,6 +165,11 @@ export function deduplicateContent(content) {
     
     // Skip empty items
     if (!sample) {
+      continue;
+    }
+
+    if (preserveQuoteOccurrences && type === 'quote') {
+      result.push(item);
       continue;
     }
     

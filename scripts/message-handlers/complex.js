@@ -2,7 +2,7 @@
 // Independent extraction, summary, and key-theses message handlers.
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { getUILanguage } from '../locales.js';
 import { startSummaryGeneration } from './summary.js';
 import { startKeyThesesGeneration } from './key-theses.js';
@@ -23,7 +23,7 @@ function responseOnce(sendResponse) {
 function runGeneration(start, data, startKeepAlive, stopKeepAlive, respond) {
   void start(data, startKeepAlive, stopKeepAlive, respond).catch((error) => {
     logError('Independent generation failed', error);
-    respond({ error: error?.userMessage || error?.message || 'Generation failed' });
+    respond({ error: error?.userMessage || error?.message || 'Generation failed', ...getErrorTranslation(error) });
   });
 }
 
@@ -100,9 +100,9 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
           source: 'messageHandler', errorType: 'contentExtractionFailed',
           logError: true, createUserMessage: true
         });
-        respond({ error: normalized.userMessage || normalized.message || 'Content extraction failed' });
+        respond({ error: normalized.userMessage || normalized.message || 'Content extraction failed', ...getErrorTranslation(normalized) });
       } catch (failure) {
-        respond({ error: failure?.message || 'Content extraction failed' });
+        respond({ error: failure?.message || 'Content extraction failed', ...getErrorTranslation(failure) });
       }
     });
   }

@@ -22,7 +22,8 @@ export function setupThemeHandlers(deps) {
     setUILanguage,
     applyLocalization,
     initAllCustomSelects,
-    settingsModule
+    settingsModule,
+    loadAndDisplayStats
   } = deps;
 
   if (elements.themeSelect) {
@@ -38,10 +39,9 @@ export function setupThemeHandlers(deps) {
       const langCode = elements.uiLanguageSelect.value;
       await setUILanguage(langCode);
       await applyLocalization();
-      if (settingsModule && settingsModule.loadSettings) {
-        await settingsModule.loadSettings();
-      }
+      settingsModule?.refreshLocalization?.(elements.uiLanguageSelect.value);
       initAllCustomSelects();
+      await loadAndDisplayStats?.();
     });
   }
 }

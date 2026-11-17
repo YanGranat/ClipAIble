@@ -85,7 +85,8 @@ import {
   handleGetPdfMetadata,
   handleGetPdfPageDimensions,
   handleRenderPdfPageImage,
-  handleRenderAllPdfPages
+  handleRenderAllPdfPages,
+  handleCancelPdfRender
 } from './scripts/offscreen/message-handlers.js';
 log('[ClipAIble Offscreen] Message handlers imported successfully', {
   timestamp: Date.now(),
@@ -535,6 +536,11 @@ try {
         
         case 'RENDER_ALL_PDF_PAGES': {
           await handleRenderAllPdfPages(messageId, message.data, sendResponse);
+          break;
+        }
+
+        case 'CANCEL_PDF_RENDER': {
+          handleCancelPdfRender(messageId, message.data, sendResponse);
           break;
         }
         

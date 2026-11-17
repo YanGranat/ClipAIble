@@ -564,6 +564,8 @@ export function extractFromPageInlined(selectors, baseUrl) {
   let footnotesHeaderAdded = false;
   const addedImageUrls = new Set();
   const handledInlineFigureNodes = new WeakSet();
+  const handledQuoteNodes = new WeakSet();
+  let selectedImageBodyRoots = null;
   let firstHeadingIndex = -1; // Track position of first heading for subtitle insertion
   let subtitleToInsert = null; // Store subtitle to insert after first heading
   
@@ -650,6 +652,40 @@ export function extractFromPageInlined(selectors, baseUrl) {
     return ['spoiler', 'interview', 'terminology', 'infobox', 'note-box', 'callout'].some(cls => className.includes(cls));
   }
   
+  function isReadableEmbeddedQuote(element, selector) {
+    if (typeof selector !== 'string' || !['.twitter-tweet', 'blockquote.twitter-tweet'].includes(selector.trim()) ||
+        !element.matches('blockquote.twitter-tweet')) return false;
+    const paragraph = element.querySelector('p');
+    if (!paragraph || (paragraph.textContent || '').trim().length < 20) return false;
+    for (let node = element; node; node = node.parentElement) {
+      if (node.matches('nav, aside, [role="navigation"], [role="complementary"]')) return false;
+      if (/(?:^|[\s_-])(?:comments?|ads?|advertisement|sponsored?|related)(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute('class') || ''}`)) return false;
+    }
+    for (const excluded of selectors.exclude || []) {
+      if (typeof excluded !== 'string') continue;
+      if (['.twitter-tweet', 'blockquote.twitter-tweet'].includes(excluded.trim())) continue;
+      try { if (element.closest(excluded)) return false; } catch (e) { }
+    }
+    return true;
+  }
+
+  function isExcludedBodyImage(element) {
+    if (!selectedImageBodyRoots) {
+      try {
+        selectedImageBodyRoots = selectors.content ? Array.from(document.querySelectorAll(selectors.content))
+          .filter(root => root.matches('article, main, section, div, body')) : [];
+      } catch (e) { selectedImageBodyRoots = []; }
+    }
+    const body = selectedImageBodyRoots.find(root => root.contains(element));
+    for (const selector of selectors.exclude || []) {
+      try {
+        const excluded = element.closest(selector);
+        if (excluded && !(body && excluded.contains(body))) return true;
+      } catch (e) { }
+    }
+    return false;
+  }
+
   function shouldExclude(element) {
     const tagName = element.tagName.toLowerCase();
     const elementInfo = {
@@ -673,6 +709,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
       try {
         const matches = element.matches(selector);
         if (matches) {
+          if (isReadableEmbeddedQuote(element, selector)) continue;
           elementInfo.matches.push(selector);
           return true;
         }
@@ -692,6 +729,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
       try {
         const closestExcluded = element.closest(selector);
         if (closestExcluded && closestExcluded !== element) {
+          if (isReadableEmbeddedQuote(closestExcluded, selector)) continue;
           elementInfo.closest.push(selector);
           return true;
         }
@@ -730,6 +768,13 @@ export function extractFromPageInlined(selectors, baseUrl) {
 
   function getFormattedHtml(element) {
     const clone = element.cloneNode(true);
+    for (const node of Array.from(clone.querySelectorAll('.screen-reader-text, .screen-reader-only, .sr-only, .visually-hidden'))) {
+      if (!node.closest('a') || node.closest('pre, code, math, mjx-assistive-mml, .MathJax, .katex') ||
+          node.querySelector('math, mjx-assistive-mml, .MathJax, .katex')) continue;
+      let label = (node.textContent || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      if (label.startsWith('(') && label.endsWith(')')) label = label.slice(1, -1).trim();
+      if (/^opens(?: in)? a new (?:tab|window)$/.test(label)) node.remove();
+    }
     
     // Remove style/script so CSS and JS do not leak into extracted text (e.g. Tilda blocks)
     clone.querySelectorAll('style, script').forEach(el => el.remove());
@@ -806,7 +851,9 @@ export function extractFromPageInlined(selectors, baseUrl) {
     if (selectors.exclude && Array.isArray(selectors.exclude)) {
       selectors.exclude.forEach(sel => { 
         try { 
-          clone.querySelectorAll(sel).forEach(el => el.remove()); 
+          clone.querySelectorAll(sel).forEach(el => {
+            if (!isReadableEmbeddedQuote(el, sel)) el.remove();
+          });
         } catch (e) {
           // Invalid selector from AI - skip it (graceful degradation)
           // This is expected - AI may provide invalid selectors, we just skip them
@@ -1538,7 +1585,10 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   
   function processElement(element) {
-    if (handledInlineFigureNodes.has(element)) return;
+    if (handledInlineFigureNodes.has(element) || handledQuoteNodes.has(element)) return;
+    if (element.matches('img, figure, picture') && isExcludedBodyImage(element)) return;
+    const quoteOwner = element.closest('blockquote');
+    if (quoteOwner && shouldExclude(quoteOwner)) return;
     const tagName = element.tagName.toLowerCase();
     const textLen = element.textContent ? element.textContent.trim().length : 0;
     const textPreview = element.textContent ? element.textContent.trim().substring(0, MAX_LOG_PREVIEW) : '';
@@ -1684,7 +1734,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
             let src = extractBestImageUrl(img);
             src = toAbsoluteUrl(src);
             const ns = normalizeImageUrl(src);
-            if (src && !isTrackingPixelOrSpacer(img, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(img, src)) {
+            if (src && !isExcludedBodyImage(img) && !isTrackingPixelOrSpacer(img, src) && !isPlaceholderUrl(src) && !addedImageUrls.has(ns) && !isSmallOrAvatarImage(img, src)) {
               const imgId = getAnchorId(img);
               content.push({ type: 'image', src: src, alt: img.alt || '', id: imgId });
               addedImageUrls.add(ns);
@@ -1867,6 +1917,8 @@ export function extractFromPageInlined(selectors, baseUrl) {
     else if (tagName === 'blockquote') {
       const qt = getFormattedHtml(element);
       content.push({ type: 'quote', text: qt, id: elementId });
+      handledQuoteNodes.add(element);
+      element.querySelectorAll('*').forEach(node => handledQuoteNodes.add(node));
       addLog('pe_pushed', { type: 'quote', textLen: (element.textContent || '').trim().length });
     }
     else if (tagName === 'ul' || tagName === 'ol') {

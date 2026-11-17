@@ -1,26 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { processPdfPageWithAI } from '../../scripts/processing/pdf.js';
 import { callAIWithImageAndHistory } from '../../scripts/api/index.js';
-import { getPdfMetadata, getPdfPageDimensions, renderAllPdfPages, renderPdfPageImage } from '../../scripts/api/pdf-offscreen.js';
+import { getPdfMetadata, renderAllPdfPages, renderPdfPageImage } from '../../scripts/api/pdf-offscreen.js';
 import { getPdfData } from '../../scripts/api/pdf-storage.js';
-import { measurePdfLayoutInOriginalTab } from '../../scripts/api/pdf-cdp-render.js';
 import { LIMITS } from '../../scripts/offscreen/pdf/constants.js';
+import { tSync } from '../../scripts/locales.js';
+
+const progressState = vi.hoisted(() => ({ update: vi.fn() }));
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), criticalLog: vi.fn() }));
-vi.mock('../../scripts/locales.js', () => ({ tSync: key => key }));
+vi.mock('../../scripts/locales.js', async importOriginal => ({ ...(await importOriginal()), getUILanguage: async () => 'en' }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
   checkCancellation: vi.fn(), updateProgress: vi.fn(), getUILanguageCached: async () => 'en',
   getAIRequestOptions: data => ({ provider: data.provider, checkCancelled: data.checkCancelled }),
-  getProcessingCallbacks: data => ({ updateState: vi.fn(), updateProgress: vi.fn(async () => {}), checkCancellation: async () => { await data.checkCancelled?.(); } })
+  getProcessingCallbacks: data => ({ updateState: progressState.update, updateProgress: vi.fn(async () => {}), checkCancellation: async () => { await data.checkCancelled?.(); } })
 }));
 vi.mock('../../scripts/state/processing.js', () => ({ PROCESSING_STAGES: { EXTRACTING: { id: 'extracting' } }, updateState: vi.fn() }));
 vi.mock('../../scripts/extraction/pdf.js', () => ({ extractPdfContent: vi.fn() }));
 vi.mock('../../scripts/api/index.js', () => ({ callAIWithImageAndHistory: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
-vi.mock('../../scripts/api/pdf-offscreen.js', () => ({ extractPdfViaOffscreen: vi.fn(), getPdfMetadata: vi.fn(), getPdfPageDimensions: vi.fn(), renderAllPdfPages: vi.fn(), renderPdfPageImage: vi.fn() }));
+vi.mock('../../scripts/api/pdf-offscreen.js', () => ({ extractPdfViaOffscreen: vi.fn(), getPdfMetadata: vi.fn(), renderAllPdfPages: vi.fn(), renderPdfPageImage: vi.fn() }));
 vi.mock('../../scripts/api/pdf-data-extractor.js', () => ({ extractPdfDataFromTab: vi.fn() }));
 vi.mock('../../scripts/api/pdf-storage.js', () => ({ getPdfData: vi.fn(), savePdfData: vi.fn(async () => {}), removePdfData: vi.fn(), validatePdfData: vi.fn() }));
-vi.mock('../../scripts/api/pdf-cdp-render.js', () => ({ measurePdfLayoutInOriginalTab: vi.fn() }));
 vi.mock('../../scripts/offscreen/pdf/constants.js', async importOriginal => {
   const actual = await importOriginal();
   return { ...actual, LIMITS: { ...actual.LIMITS, MAX_FILE_SIZE: 64 } };
@@ -34,8 +35,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   getPdfData.mockResolvedValue(pdfBytes);
   getPdfMetadata.mockResolvedValue({ numPages: 2, metadata: { title: 'Moon Landing' } });
-  getPdfPageDimensions.mockResolvedValue({ width: 595, height: 842 });
-  measurePdfLayoutInOriginalTab.mockResolvedValue({ pdfContentWidth: 595, pdfContentHeight: 842 });
   renderAllPdfPages.mockResolvedValue([{ pageNum: 1, ...image }, { pageNum: 2, ...image }]);
   renderPdfPageImage.mockResolvedValue(image);
   callAIWithImageAndHistory.mockImplementation(async () => response('## Section\n\nSample paragraph.'));
@@ -94,12 +93,38 @@ describe('PDF pipeline integrity', () => {
     expect(result.error).toBeInstanceOf(Error);
   });
 
+  it('retains translatable page counts and page ownership in progress updates', async () => {
+    await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    const updates = progressState.update.mock.calls.map(([state]) => state).filter(state => state.statusTranslationKey);
+    expect(updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ progress: 10, statusTranslationKey: 'statusRenderingPdfPages', statusTranslationParams: { pages: 2, count: 2 },
+        status: tSync('statusRenderingPdfPages', 'en', { pages: 2, count: 2 }) }),
+      ...[1, 2].map(page => expect.objectContaining({ statusTranslationKey: 'statusProcessingPdfPage', statusTranslationParams: { page, pages: 2 },
+        status: tSync('statusProcessingPdfPage', 'en', { page, pages: 2 }) }))
+    ]));
+    expect(updates.every(state => state.status !== state.statusTranslationKey)).toBe(true);
+  });
+
   it.each(['file:///sample.pdf', 'https://example.org/article.pdf'])('rejects incomplete extraction after a page fails: %s', async url => {
     vi.useFakeTimers();
     renderAllPdfPages.mockResolvedValue([{ pageNum: 1, ...image }, { pageNum: 2, error: 'Render failed' }]);
     renderPdfPageImage.mockImplementation(async (_url, page) => { if (page === 2) throw new Error('Render failed'); return image; });
     const result = await settle(processPdfPageWithAI(input, url));
-    expect(result.error).toBeInstanceOf(Error);
+    expect(result.error).toMatchObject({ translationKey: 'errorPdfIncomplete', translationParams: { pages: '2' } });
+  });
+
+  it('recovers only missing page images with one render admitted at a time', async () => {
+    getPdfMetadata.mockResolvedValue({ numPages: 4, metadata: { title: 'Moon Landing' } });
+    renderAllPdfPages.mockResolvedValue([1, 2, 3, 4].map(pageNum => pageNum % 2 === 0 ? { pageNum, error: 'Render failed' } : { pageNum, ...image }));
+    let active = 0, peak = 0;
+    renderPdfPageImage.mockImplementation(async () => {
+      active++; peak = Math.max(peak, active); await Promise.resolve(); active--; return image;
+    });
+    const result = await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    expect(renderPdfPageImage.mock.calls.map(call => call[1])).toEqual([2, 4]);
+    expect(peak).toBe(1);
+    expect(callAIWithImageAndHistory).toHaveBeenCalledTimes(4);
+    expect(result.content.length).toBeGreaterThan(0);
   });
 
   it('accepts an explicitly empty page without making repeated AI requests', async () => {
@@ -114,8 +139,7 @@ describe('PDF pipeline integrity', () => {
   it('passes the selected provider and operation identity through capture and AI requests', async () => {
     const checkCancelled = vi.fn();
     await processPdfPageWithAI({ ...input, checkCancelled }, 'https://example.org/article.pdf');
-    expect(measurePdfLayoutInOriginalTab.mock.calls[0][1]).toMatchObject({ processingRunId: input.processingRunId, checkCancelled });
-    expect(renderAllPdfPages.mock.calls[0][6]).toMatchObject({ processingRunId: input.processingRunId, checkCancelled });
+    expect(renderAllPdfPages.mock.calls[0][4]).toMatchObject({ processingRunId: input.processingRunId, checkCancelled });
     expect(callAIWithImageAndHistory.mock.calls[0][7]).toMatchObject({ provider: 'openrouter', checkCancelled });
   });
 

@@ -2,7 +2,7 @@
 // Utility functions for message handlers
 // Provides common error handling patterns
 
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { logError, log } from '../utils/logging.js';
 
 /**
@@ -74,7 +74,7 @@ export function withErrorHandling(promise, errorType, sendResponse) {
         return;
       }
       
-      safeSendResponse(sendResponse, { error: normalized.message }, errorType, 'in error path');
+      safeSendResponse(sendResponse, { error: normalized.message, ...getErrorTranslation(normalized) }, errorType, 'in error path');
     }
   })();
   
@@ -109,7 +109,7 @@ export async function withSuccessResponse(promise, errorType, sendResponse) {
     if (checkChromeRuntimeError('before error sendResponse', errorType)) {
       return true;
     }
-    sendResponse({ error: normalized.message });
+    sendResponse({ error: normalized.message, ...getErrorTranslation(normalized) });
     return true;
   }
 }

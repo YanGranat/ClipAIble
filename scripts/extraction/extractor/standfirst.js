@@ -3,15 +3,9 @@
 // Extracts article standfirst/deck/subtitle text
 
 import { looksLikeArticleStarter } from './text-utils.js';
-
-/**
- * Standfirst selectors to search for
- */
-const STANDFIRST_SELECTORS = [
-  '.standfirst', '.subtitle', '.deck', '.lede', '.intro', '.article__subhead',
-  '[class*="standfirst"]', '[class*="subtitle"]', '[class*="deck"]',
-  '[class*="intro"]', '[class*="summary"]', '[class*="subhead"]'
-];
+import { cloneWithoutLinkAnnouncements } from './dom-utils.js';
+import { STANDFIRST_SELECTORS } from '../constants/content-thresholds.js';
+import { isOutsideArticleBody } from './discover.js';
 
 /**
  * Extract standfirst/subtitle from main content
@@ -22,13 +16,20 @@ export function extractStandfirst(mainContent) {
   if (!mainContent) {
     return { text: null, element: null };
   }
+  const isNewsletterCandidate = element => {
+    for (let node = element; node; node = node.parentElement) {
+      if (/(?:^|[\s_-])newsletter(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute('class') || ''}`)) return true;
+      if (node === mainContent) break;
+    }
+    return false;
+  };
   
   // Try standfirst selectors first
   for (const selector of STANDFIRST_SELECTORS) {
     try {
-      const element = mainContent.querySelector(selector);
-      if (element) {
-        const text = (element.textContent || '').trim();
+      for (const element of Array.from(mainContent.querySelectorAll(selector))) {
+        if (isNewsletterCandidate(element) || (selector.includes('excerpt') && isOutsideArticleBody(element, mainContent))) continue;
+        const text = (cloneWithoutLinkAnnouncements(element).textContent || '').trim();
         // Valid standfirst: 50-500 characters
         if (text.length >= 50 && text.length <= 500) {
           return { text, element };
@@ -43,8 +44,9 @@ export function extractStandfirst(mainContent) {
   for (const selector of STANDFIRST_SELECTORS) {
     try {
       const element = document.querySelector(selector);
-      if (element && mainContent.contains(element)) {
-        const text = (element.textContent || '').trim();
+      if (element && mainContent.contains(element) && !isNewsletterCandidate(element) &&
+          (!selector.includes('excerpt') || !isOutsideArticleBody(element, mainContent))) {
+        const text = (cloneWithoutLinkAnnouncements(element).textContent || '').trim();
         if (text.length >= 50 && text.length <= 500) {
           return { text, element };
         }
@@ -55,7 +57,8 @@ export function extractStandfirst(mainContent) {
   // Fallback: first paragraph that meets criteria
   const paragraphs = mainContent.querySelectorAll('p');
   for (const p of paragraphs) {
-    const text = (p.textContent || '').trim();
+    if (isNewsletterCandidate(p)) continue;
+    const text = (cloneWithoutLinkAnnouncements(p).textContent || '').trim();
     
     // Valid standfirst paragraph criteria:
     // - Length between 50-200 characters

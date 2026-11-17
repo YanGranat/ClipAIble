@@ -149,7 +149,7 @@ ${inlinedCode}
  */
 export function getExtractorVersion() {
   return {
-    version: '3.3.9',
+    version: '3.3.10',
     modules: [
       'dom-utils',
       'text-utils',

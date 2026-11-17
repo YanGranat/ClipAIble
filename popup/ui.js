@@ -2,7 +2,7 @@
 // UI management module for popup
 // Handles localization, themes, visibility, status, progress, toast notifications
 
-import { getUILanguage, UI_LOCALES } from '../scripts/locales.js';
+import { getUILanguage, UI_LOCALES, formatMessage, getLocaleTag } from '../scripts/locales.js';
 import { logWarn } from '../scripts/utils/logging.js';
 import { escapeHtml } from '../scripts/utils/html.js';
 
@@ -35,17 +35,37 @@ export function initUI(deps) {
 
   let themeMediaQuery = null;
   let themeChangeListener = null;
+  let localizationRevision = 0;
+  let currentLanguage = null;
+  let statusPresentation = null;
+
+  const elementParams = element => {
+    try { return JSON.parse(element.getAttribute('data-i18n-params') || '{}'); }
+    catch { return {}; }
+  };
+  const renderParts = (parts, language) => parts.map(part => part.key
+    ? formatMessage(part.key, language, part.params)
+    : String(part.text || '')).join('');
 
   // Apply UI localization with batched DOM updates for better performance
   async function applyLocalization() {
+    const revision = ++localizationRevision;
     const langCode = await getUILanguage();
+    if (revision !== localizationRevision) return;
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     
     // Batch DOM updates using requestAnimationFrame for better performance
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
+        if (revision !== localizationRevision) { resolve(); return; }
         // Collect all updates first, then apply in batches
         const updates = [];
+        document.querySelectorAll('[data-i18n-parts]').forEach(element => {
+          updates.push(() => {
+            try { element.textContent = renderParts(JSON.parse(element.dataset.i18nParts), langCode); }
+            catch { /* Keep the existing message if its binding is malformed. */ }
+          });
+        });
         
         // Collect data-i18n updates
         document.querySelectorAll('[data-i18n]').forEach(element => {
@@ -58,17 +78,20 @@ export function initUI(deps) {
               if (inputElement.hasAttribute('data-i18n-placeholder')) {
                 const placeholderKey = inputElement.getAttribute('data-i18n-placeholder');
                 updates.push(() => {
-                  inputElement.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+                  const currentKey = inputElement.getAttribute('data-i18n-placeholder');
+                  if (currentKey) inputElement.placeholder = formatMessage(currentKey, langCode, elementParams(inputElement));
                 });
               } else {
                 updates.push(() => {
-                  inputElement.placeholder = translation;
+                  const currentKey = inputElement.getAttribute('data-i18n');
+                  if (currentKey) inputElement.placeholder = formatMessage(currentKey, langCode, elementParams(inputElement));
                 });
               }
             }
           } else if (element.tagName !== 'OPTION') {
             updates.push(() => {
-              element.textContent = translation;
+              const currentKey = element.getAttribute('data-i18n');
+              if (currentKey) element.textContent = formatMessage(currentKey, langCode, elementParams(element));
             });
           }
         });
@@ -79,7 +102,8 @@ export function initUI(deps) {
             const placeholderKey = element.getAttribute('data-i18n-placeholder');
             if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
               updates.push(() => {
-                element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+                const currentKey = element.getAttribute('data-i18n-placeholder');
+                if (currentKey) element.placeholder = formatMessage(currentKey, langCode, elementParams(element));
               });
             }
           }
@@ -90,7 +114,8 @@ export function initUI(deps) {
           const key = option.getAttribute('data-i18n');
           const translation = locale[key] || UI_LOCALES.en[key] || key;
           updates.push(() => {
-            option.textContent = translation;
+            const currentKey = option.getAttribute('data-i18n');
+            if (currentKey) option.textContent = formatMessage(currentKey, langCode, elementParams(option));
           });
         });
         
@@ -132,7 +157,8 @@ export function initUI(deps) {
               const key = opt.getAttribute('data-i18n');
               const translation = locale[key] || UI_LOCALES.en[key] || key;
               updates.push(() => {
-                opt.textContent = translation;
+                const currentKey = opt.getAttribute('data-i18n');
+                if (currentKey) opt.textContent = formatMessage(currentKey, langCode, elementParams(opt));
               });
             }
             
@@ -174,7 +200,8 @@ export function initUI(deps) {
           const key = element.getAttribute('data-i18n-title');
           if (element instanceof HTMLElement) {
             updates.push(() => {
-              element.title = locale[key] || UI_LOCALES.en[key] || key;
+              const currentKey = element.getAttribute('data-i18n-title');
+              if (currentKey) element.title = formatMessage(currentKey, langCode, elementParams(element));
             });
           }
         });
@@ -183,7 +210,8 @@ export function initUI(deps) {
         document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
           const key = element.getAttribute('data-i18n-aria-label');
           updates.push(() => {
-            element.setAttribute('aria-label', locale[key] || UI_LOCALES.en[key] || key);
+            const currentKey = element.getAttribute('data-i18n-aria-label');
+            if (currentKey) element.setAttribute('aria-label', formatMessage(currentKey, langCode, elementParams(element)));
           });
         });
         
@@ -192,6 +220,7 @@ export function initUI(deps) {
         let index = 0;
         
         function processBatch() {
+          if (revision !== localizationRevision) { resolve(); return; }
           const end = Math.min(index + BATCH_SIZE, updates.length);
           for (let i = index; i < end; i++) {
             updates[i]();
@@ -225,7 +254,12 @@ export function initUI(deps) {
               elements.saveText.textContent = locale.save || UI_LOCALES.en.save || 'Save';
             }
             
-            document.documentElement.lang = langCode;
+            document.documentElement.lang = getLocaleTag(langCode);
+            currentLanguage = langCode;
+            if (statusPresentation) {
+              const { type, text, startTime, translation } = statusPresentation;
+              setStatus(type, text, startTime, translation);
+            }
             
             resolve();
           }
@@ -275,7 +309,11 @@ export function initUI(deps) {
   }
 
   // Set status indicator
-  function setStatus(type, text, startTime = null) {
+  function setStatus(type, text, startTime = null, translation = null) {
+    statusPresentation = { type, text, startTime, translation };
+    elements.statusText.removeAttribute('data-i18n');
+    elements.statusText.removeAttribute('data-i18n-params');
+    if (translation?.key && currentLanguage) text = formatMessage(translation.key, currentLanguage, translation.params);
     elements.statusDot.className = 'status-dot';
     if (type === 'processing') {
       elements.statusDot.classList.add('processing');
@@ -311,7 +349,7 @@ export function initUI(deps) {
   }
 
   // Show toast notification
-  function showToast(message, type = 'success') {
+  function showToast(message, type = 'success', translation = null) {
     const existingToast = document.querySelector('.toast');
     if (existingToast) {
       existingToast.remove();
@@ -319,6 +357,15 @@ export function initUI(deps) {
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    if (translation?.parts) {
+      toast.dataset.i18nParts = JSON.stringify(translation.parts);
+      if (currentLanguage) message = renderParts(translation.parts, currentLanguage);
+    }
+    if (translation?.key) {
+      toast.setAttribute('data-i18n', translation.key);
+      toast.setAttribute('data-i18n-params', JSON.stringify(translation.params || {}));
+      if (currentLanguage) message = formatMessage(translation.key, currentLanguage, translation.params);
+    }
     toast.textContent = message;
     document.body.appendChild(toast);
 

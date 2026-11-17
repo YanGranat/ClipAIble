@@ -1,5 +1,6 @@
 // @ts-check
 // Panel handlers (settings, stats, import/export)
+import { formatMessage } from '../../scripts/locales.js';
 
 /**
  * Setup panel toggle and action handlers
@@ -125,7 +126,7 @@ export function setupPanelHandlers(deps) {
         await chrome.runtime.sendMessage({ action: 'clearStats' });
         await loadAndDisplayStats();
         const locale = await t('statisticsCleared');
-        showToast(locale, 'success');
+        showToast(locale, 'success', { key: 'statisticsCleared' });
       }
     });
   }
@@ -145,7 +146,7 @@ export function setupPanelHandlers(deps) {
               await chrome.runtime.sendMessage({ action: 'clearSelectorCache' });
               await loadAndDisplayStats();
               const locale = await t('cacheCleared');
-              showToast(locale, 'success');
+              showToast(locale, 'success', { key: 'cacheCleared' });
             });
           }
         });
@@ -166,6 +167,7 @@ export function setupPanelHandlers(deps) {
         elements.exportSettingsBtn.disabled = true;
         const exportingText = await t('exporting');
         elements.exportSettingsBtn.textContent = exportingText;
+        elements.exportSettingsBtn.dataset.i18n = 'exporting';
         
         const response = await chrome.runtime.sendMessage({
           action: 'exportSettings',
@@ -174,7 +176,7 @@ export function setupPanelHandlers(deps) {
         });
         
         if (response.error) {
-          throw new Error(response.error);
+          throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
         }
         
         const blob = new Blob([response.data], { type: 'application/json' });
@@ -191,15 +193,16 @@ export function setupPanelHandlers(deps) {
         }
         
         const settingsExportedText = await t('settingsExportedSuccessfully');
-        showToast(settingsExportedText, 'success');
+        showToast(settingsExportedText, 'success', { key: 'settingsExportedSuccessfully' });
       } catch (error) {
         logError('Export failed', error);
-        const exportFailedText = await t('exportFailed');
-        showToast(`${exportFailedText}: ${error.message}`, 'error');
+        const descriptor = error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsExportFailed', params: { error: error.message } };
+        showToast(formatMessage(descriptor.key, await getUILanguage(), descriptor.params), 'error', descriptor);
       } finally {
         elements.exportSettingsBtn.disabled = false;
         const exportSettingsText = await t('exportSettings');
         elements.exportSettingsBtn.textContent = exportSettingsText;
+        elements.exportSettingsBtn.dataset.i18n = 'exportSettings';
       }
     });
   }
@@ -223,17 +226,19 @@ export function setupPanelHandlers(deps) {
             const { getUILanguage } = await import('../../scripts/locales.js');
             const uiLang = await getUILanguage();
             const errorMsg = await t('errorImportJsonParseFailed');
-            reject(new Error(errorMsg));
+            reject(Object.assign(new Error(errorMsg), { translationKey: 'errorImportJsonParseFailed' }));
           };
           reader.readAsText(file);
         });
         
-        const data = JSON.parse(text);
+        let data;
+        try { data = JSON.parse(text); }
+        catch { throw Object.assign(new Error(await t('errorImportJsonParseFailed')), { translationKey: 'errorImportJsonParseFailed' }); }
         if (!data.settings) {
           const { t, getUILanguage } = await import('../../scripts/locales.js');
           const uiLang = await getUILanguage();
           const errorMsg = await t('errorImportMissingSettings');
-          throw new Error(errorMsg);
+          throw Object.assign(new Error(errorMsg), { translationKey: 'errorImportMissingSettings' });
         }
         
         const importStatsText = await t('includeStatisticsInImport');
@@ -247,6 +252,7 @@ export function setupPanelHandlers(deps) {
         elements.importSettingsBtn.disabled = true;
         const importingText = await t('importing');
         elements.importSettingsBtn.textContent = importingText;
+        elements.importSettingsBtn.dataset.i18n = 'importing';
         
         const response = await chrome.runtime.sendMessage({
           action: 'importSettings',
@@ -259,34 +265,43 @@ export function setupPanelHandlers(deps) {
         });
         
         if (response.error) {
-          throw new Error(response.error);
+          throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
         }
         
         const result = response.result;
         const uiLang = await getUILanguage();
         const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
         
-        let message = locale.importSettingsCount.replace('{count}', result.settingsImported);
+        const parts = [{ key: 'importSettingsCount', params: { count: result.settingsImported } }];
         if (result.settingsSkipped > 0) {
-          message += locale.importSettingsSkipped.replace('{count}', result.settingsSkipped);
+          parts.push({ key: 'importSettingsSkipped', params: { count: result.settingsSkipped } });
         }
-        if (result.statsImported) message += locale.importWithStatistics;
-        if (result.cacheImported) message += locale.importWithCache;
+        if (result.statsImported) parts.push({ key: 'importWithStatistics' });
+        if (result.cacheImported) parts.push({ key: 'importWithCache' });
+        const render = values => values.map(part => part.key ? formatMessage(part.key, uiLang, part.params) : part.text).join('');
+        const message = render(parts);
         
         if (result.warnings && result.warnings.length > 0) {
           const warningsText = result.warnings.join('; ');
           logWarn('Import warnings', { warnings: result.warnings });
           const warningsMsg = locale.importWarnings.replace('{warnings}', warningsText);
-          showToast(`${message}. ${warningsMsg}`, 'warning');
+          const warnings = result.warningTranslations?.length === result.warnings.length
+            ? result.warningTranslations.flatMap((part, index) => index ? [{ text: '; ' }, part] : [part])
+            : [{ text: warningsText }];
+          const warningParts = [...parts, { text: '. ' }, ...warnings];
+          showToast(render(warningParts), 'warning', { parts: warningParts });
         } else {
-          showToast(message, 'success');
+          showToast(message, 'success', { parts });
         }
         
         if (result.errors && result.errors.length > 0) {
           const errorsText = result.errors.join('; ');
           logError('Import errors', { errors: result.errors });
           const errorMsg = locale.importCompletedWithErrors.replace('{errors}', errorsText);
-          showToast(errorMsg, 'error');
+          const errorParts = result.errorTranslations?.length === result.errors.length
+            ? result.errorTranslations.flatMap((part, index) => index ? [{ text: '; ' }, part] : [part])
+            : [{ key: 'importCompletedWithErrors', params: { errors: errorsText } }];
+          showToast(render(errorParts), 'error', { parts: errorParts });
         }
         
         if (settingsModule && settingsModule.loadSettings) {
@@ -308,12 +323,13 @@ export function setupPanelHandlers(deps) {
         
       } catch (error) {
         logError('Import failed', error);
-        const importFailedText = await t('importFailed');
-        showToast(`${importFailedText}: ${error.message}`, 'error');
+        const descriptor = error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsImportFailed', params: { error: error.message } };
+        showToast(formatMessage(descriptor.key, await getUILanguage(), descriptor.params), 'error', descriptor);
       } finally {
         elements.importSettingsBtn.disabled = false;
         const importSettingsText = await t('importSettings');
         elements.importSettingsBtn.textContent = importSettingsText;
+        elements.importSettingsBtn.dataset.i18n = 'importSettings';
         elements.importFileInput.value = '';
       }
     });

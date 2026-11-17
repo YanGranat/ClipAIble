@@ -2,7 +2,7 @@
 // Fallback extraction strategies
 // Handles Twitter/X articles and various fallback scenarios
 
-import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl } from './dom-utils.js';
+import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneWithoutLinkAnnouncements } from './dom-utils.js';
 import { cleanHeadingText, normalizeHeadingForDedup } from './text-utils.js';
 import { isExcluded, isWidget, isNavigationParagraph } from './filters.js';
 import { extractBestImageUrl, isTrackingPixel, isDecorativeImage } from './images.js';
@@ -122,7 +122,7 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     
     // Heading
     if (tagName.match(/^h[1-3]$/)) {
-      const text = cleanHeadingText(element.textContent || '');
+      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || '');
       const normalized = normalizeHeadingForDedup(text);
       
       if (normalized === state.mainTitleText) continue;
@@ -161,13 +161,14 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     }
     // Draft.js block (paragraph)
     else if (element.hasAttribute('data-offset-key')) {
-      const text = (element.textContent || '').trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || '').trim();
       if (!text) continue;
       
       // Check for heading inside
       const innerHeading = element.querySelector('h1, h2, h3');
       if (innerHeading) {
-        const headingText = cleanHeadingText(innerHeading.textContent || '');
+        const headingText = cleanHeadingText(cloneWithoutLinkAnnouncements(innerHeading).textContent || '');
         const normalized = normalizeHeadingForDedup(headingText);
         
         if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
@@ -183,7 +184,7 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       
       // Regular paragraph
       const originalText = getOriginalTextIfTranslated(element);
-      const finalText = originalText || element.innerHTML;
+      const finalText = originalText || cleanedElement.innerHTML;
       
       content.push({ type: 'paragraph', text: finalText, html: finalText });
     }
@@ -220,7 +221,7 @@ export function extractWhenMainContentMissing(win, doc, state, constants, baseUr
     const tagName = element.tagName.toLowerCase();
     
     if (tagName.match(/^h[1-6]$/)) {
-      const text = cleanHeadingText(element.textContent || '');
+      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || '');
       const normalized = normalizeHeadingForDedup(text);
       
       if (normalized === state.mainTitleText) continue;
@@ -232,11 +233,12 @@ export function extractWhenMainContentMissing(win, doc, state, constants, baseUr
       content.push({ type: 'heading', level, text });
     }
     else if (tagName === 'p') {
-      const text = (element.textContent || '').trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || '').trim();
       if (text.length < 10) continue;
       
       const originalText = getOriginalTextIfTranslated(element);
-      const finalText = originalText || element.innerHTML;
+      const finalText = originalText || cleanedElement.innerHTML;
       
       content.push({ type: 'paragraph', text: finalText, html: finalText });
     }
@@ -313,7 +315,8 @@ export function extractLastResortContainerSearch(win, doc, state, constants, bas
   
   for (const element of elements) {
     const tagName = element.tagName.toLowerCase();
-    const text = (element.textContent || '').trim();
+    const cleanedElement = cloneWithoutLinkAnnouncements(element);
+    const text = (cleanedElement.textContent || '').trim();
     
     if (tagName === 'p') {
       if (text.length < 10) continue;
@@ -322,7 +325,7 @@ export function extractLastResortContainerSearch(win, doc, state, constants, bas
       }
       
       const originalText = getOriginalTextIfTranslated(element);
-      const finalText = originalText || element.innerHTML;
+      const finalText = originalText || cleanedElement.innerHTML;
       
       content.push({ type: 'paragraph', text: finalText, html: finalText });
     }
@@ -365,7 +368,7 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
     // Skip if in widget
     if (isWidget(win, heading)) continue;
     
-    const text = cleanHeadingText(heading.textContent || '');
+    const text = cleanHeadingText(cloneWithoutLinkAnnouncements(heading).textContent || '');
     const normalized = normalizeHeadingForDedup(text);
     
     if (normalized === state.mainTitleText) continue;
@@ -390,7 +393,8 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
     if (isExcluded(win, p, constants)) continue;
     if (isWidget(win, p)) continue;
     
-    const text = (p.textContent || '').trim();
+    const cleanedElement = cloneWithoutLinkAnnouncements(p);
+    const text = (cleanedElement.textContent || '').trim();
     if (text.length < 10) continue;
     
     if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
@@ -398,7 +402,7 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
     }
     
     const originalText = getOriginalTextIfTranslated(p);
-    const finalText = originalText || p.innerHTML;
+    const finalText = originalText || cleanedElement.innerHTML;
     
     const item = { type: 'paragraph', text: finalText, html: finalText };
     content.push(item);
@@ -427,7 +431,8 @@ export function extractEmergencyFallback(win, doc, state, constants, mainContent
     const elements = mainContent.querySelectorAll('p, h1, h2, h3, h4, h5, h6');
     for (const element of Array.from(elements).slice(0, 100)) {
       const tagName = element.tagName.toLowerCase();
-      const text = (element.textContent || '').trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || '').trim();
       
       if (text.length < 10) continue;
       if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
@@ -436,7 +441,7 @@ export function extractEmergencyFallback(win, doc, state, constants, mainContent
       
       if (tagName === 'p') {
         const originalText = getOriginalTextIfTranslated(element);
-        content.push({ type: 'paragraph', text: originalText || text, html: originalText || element.innerHTML });
+        content.push({ type: 'paragraph', text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
         const cleanedText = cleanHeadingText(text);
         const normalized = normalizeHeadingForDedup(cleanedText);
@@ -457,13 +462,14 @@ export function extractEmergencyFallback(win, doc, state, constants, mainContent
     const elements = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6');
     for (const element of Array.from(elements).slice(0, 100)) {
       const tagName = element.tagName.toLowerCase();
-      const text = (element.textContent || '').trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || '').trim();
       
       if (text.length < 10) continue;
       
       if (tagName === 'p') {
         const originalText = getOriginalTextIfTranslated(element);
-        content.push({ type: 'paragraph', text: originalText || text, html: originalText || element.innerHTML });
+        content.push({ type: 'paragraph', text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
         const cleanedText = cleanHeadingText(text);
         const normalized = normalizeHeadingForDedup(cleanedText);

@@ -36,6 +36,7 @@ export function initContextMenu(deps) {
 
   // Flag to prevent concurrent context menu updates
   let isUpdatingContextMenu = false;
+  let contextMenuUpdatePending = false;
 
   /**
    * Create or update context menu with localization
@@ -44,18 +45,22 @@ export function initContextMenu(deps) {
   async function updateContextMenu() {
     // Prevent concurrent calls
     if (isUpdatingContextMenu) {
-      logWarn('Context menu update already in progress, skipping');
+      contextMenuUpdatePending = true;
       return;
     }
     
     isUpdatingContextMenu = true;
     
     try {
-      // Get current UI language
-      const lang = await getUILanguage();
-      await updateContextMenuWithLang(lang);
-    } catch (error) {
-      logError('Failed to update context menu', error);
+      do {
+        contextMenuUpdatePending = false;
+        try {
+          const lang = await getUILanguage();
+          await updateContextMenuWithLang(lang);
+        } catch (error) {
+          logError('Failed to update context menu', error);
+        }
+      } while (contextMenuUpdatePending);
     } finally {
       isUpdatingContextMenu = false;
     }

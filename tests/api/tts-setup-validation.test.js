@@ -10,7 +10,9 @@ it.each([
 ])('rejects Qwen setup before article processing: %s', async (options, message) => {
   setError.mockClear(); const stop = vi.fn();
   expect(await validateAudioApiKeys({ outputFormat: 'audio', audioProvider: 'qwen', qwenApiKey: 'synthetic-key', processingRunId: 'sample-run', ...options }, stop)).toBe(false);
-  expect(setError).toHaveBeenCalledWith({ message: expect.stringMatching(message), code: 'validation-error' }, stop, 'sample-run');
+  expect(setError).toHaveBeenCalledWith({ message: expect.stringMatching(message), code: 'validation-error',
+    translationKey: options.qwenModel ? 'errorQwenModelRetired' : options.qwenRegion ? 'errorQwenRegionUnsupported' : 'errorQwenWorkspaceRequired',
+    translationParams: {} }, stop, 'sample-run');
 });
 
 it('accepts configured current Qwen and explicit legacy models without changing their settings', async () => {
@@ -20,4 +22,21 @@ it('accepts configured current Qwen and explicit legacy models without changing 
     expect(await validateAudioApiKeys(data, vi.fn())).toBe(true);
     expect(data).toEqual(original);
   }
+});
+
+it.each(['nova', 'fable', 'onyx'])('rejects unavailable OpenAI voice %s before key lookup or article processing', async voice => {
+  setError.mockClear(); chrome.storage.local.get.mockClear();
+  const stop = vi.fn();
+  const data = { outputFormat: 'audio', audioProvider: 'openai', audioVoice: voice, processingRunId: 'sample-run' };
+  expect(await validateAudioApiKeys(data, stop)).toBe(false);
+  expect(setError).toHaveBeenCalledWith(expect.objectContaining({ code: 'validation-error',
+    translationKey: 'errorOpenaiVoiceUnavailable', translationParams: { voice } }), stop, 'sample-run');
+  expect(chrome.storage.local.get.mock.calls.some(([keys]) => keys.includes('openai_api_key'))).toBe(false);
+  expect(data.audioVoice).toBe(voice);
+});
+
+it.each(['unknown', '__proto__', 'constructor'])('rejects unsupported audio provider %s at preflight', async provider => {
+  setError.mockClear();
+  expect(await validateAudioApiKeys({ outputFormat: 'audio', audioProvider: provider }, vi.fn())).toBe(false);
+  expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorUnknownAudioProvider', translationParams: { provider } }), expect.any(Function), undefined);
 });

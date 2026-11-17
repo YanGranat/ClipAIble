@@ -72,7 +72,7 @@ describe('generation/audio-helpers', () => {
 
       const settings = buildAudioSettings(params);
 
-      expect(settings.voice).toBe('nova');
+      expect(settings.voice).toBe('marin');
       expect(settings.speed).toBe(1.0);
       expect(settings.format).toBe('mp3');
     });
@@ -138,7 +138,7 @@ describe('generation/audio-helpers', () => {
         content: [{ type: 'paragraph', text: 'Test content' }],
         apiKey: 'test-key',
         ttsApiKey: 'sk-test-key',
-        voice: 'nova',
+        voice: 'marin',
         speed: 1.0,
         format: 'mp3'
       };
@@ -226,7 +226,7 @@ describe('generation/audio-helpers', () => {
       const result = getTTSVoiceAndFormat('openai', 'nova', 'mp3', null);
       
       expect(result.ttsVoice).toBe('nova');
-      expect(result.ttsFormat).toBe('mp3');
+      expect(result.ttsFormat).toBe('wav');
     });
 
     it('should return voice and format for ElevenLabs', () => {
@@ -250,11 +250,11 @@ describe('generation/audio-helpers', () => {
       expect(result.ttsFormat).toBe('wav');
     });
 
-    it('should use default format when not provided', () => {
-      const result = getTTSVoiceAndFormat('openai', 'nova', 'mp3', null);
+    it('returns WAV for OpenAI when no format is provided', () => {
+      const result = getTTSVoiceAndFormat('openai', 'marin', undefined, null);
       
-      expect(result.ttsVoice).toBe('nova');
-      expect(result.ttsFormat).toBe('mp3');
+      expect(result.ttsVoice).toBe('marin');
+      expect(result.ttsFormat).toBe('wav');
     });
   });
 

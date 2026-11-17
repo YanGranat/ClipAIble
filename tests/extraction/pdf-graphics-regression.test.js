@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { extractPageGraphics } from '../../scripts/offscreen/pdf/utils/graphics-extractor.js';
+import { installPdfTestCompatibility } from '../helpers/pdf-test-compatibility.js';
 
 let pdfjs;
 vi.mock('../../scripts/offscreen/pdf/utils/pdf-loader.js', () => ({ loadPdfJs: async () => pdfjs }));
@@ -9,18 +8,12 @@ vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), criticalLog: vi.fn()
 }));
 
-beforeAll(() => {
-  const module = { exports: {} };
-  const context = vm.createContext({
-    module, exports: module.exports, console, URL, Uint8Array, Uint32Array, Int32Array,
-    ArrayBuffer, TextEncoder, TextDecoder, ReadableStream, Promise, setTimeout, clearTimeout
-  });
-  vm.runInContext(readFileSync(new URL('../../lib/pdfjs/pdf.min.js', import.meta.url), 'utf8'), context);
-  pdfjs = module.exports;
-  context.module = { exports: {} };
-  context.exports = context.module.exports;
-  vm.runInContext(readFileSync(new URL('../../lib/pdfjs/pdf.worker.min.js', import.meta.url), 'utf8'), context);
-  context.pdfjsWorker = context.module.exports;
+beforeAll(async () => {
+  installPdfTestCompatibility();
+  vi.stubGlobal('DOMMatrix', class {});
+  await import('../../lib/pdfjs/compatibility.mjs');
+  pdfjs = await import('../../lib/pdfjs/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('../../lib/pdfjs/worker.mjs', import.meta.url).href;
 });
 
 function createPdf(stream, resources = '<< >>', extraObjects = []) {
@@ -51,7 +44,7 @@ async function graphics(stream, { resources, extraObjects, rotation = 0 } = {}) 
     const page = await document.getPage(1);
     return await extractPageGraphics(page, 1, page.getViewport({ scale: 1, rotation }));
   } finally {
-    await document.destroy();
+    await task.destroy();
   }
 }
 

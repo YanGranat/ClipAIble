@@ -4,6 +4,8 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { savePdfData } from './pdf-storage.js';
+import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
+import { tSync } from '../locales.js';
 
 /**
  * Request user to select PDF file via File API
@@ -36,7 +38,7 @@ export async function requestPdfFileSelection(expectedPdfUrl = null) {
     }
   } catch (error) {
     logError('[PDF File Picker] Failed to select PDF file', error);
-    throw error;
+    throw await localizePdfError(error, 'errorPdfDataUnavailable');
   }
 }
 
@@ -133,7 +135,7 @@ async function selectPdfFileViaFileSystemAccess(expectedPdfUrl) {
     
     const pickerOptions = {
       types: [{
-        description: 'PDF files',
+        description: tSync('pdfFilesFilter', document.documentElement?.lang || 'en'),
         accept: {
           'application/pdf': ['.pdf']
         }
@@ -214,7 +216,7 @@ async function selectPdfFileViaInput(expectedPdfUrl) {
         
         // Validate file type
         if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-          reject(new Error('Selected file is not a PDF file'));
+          reject(createPdfError('Selected file is not a PDF file', 'errorPdfInvalid'));
           return;
         }
         
@@ -231,7 +233,7 @@ async function selectPdfFileViaInput(expectedPdfUrl) {
           try {
             const arrayBuffer = reader.result;
             if (!(arrayBuffer instanceof ArrayBuffer)) {
-              reject(new Error('Failed to read file as ArrayBuffer'));
+              reject(createPdfError('Failed to read file as ArrayBuffer', 'errorPdfInvalid'));
               return;
             }
             
@@ -247,7 +249,7 @@ async function selectPdfFileViaInput(expectedPdfUrl) {
         };
         
         reader.onerror = () => {
-          reject(new Error('Failed to read file: ' + reader.error?.message));
+          reject(createPdfError('Failed to read file: ' + reader.error?.message, 'errorPdfDataUnavailable'));
         };
         
         reader.readAsArrayBuffer(file);
@@ -288,13 +290,13 @@ export async function requestPdfFileSelectionFromPopup(expectedPdfUrl = null) {
     }, (response) => {
       if (chrome.runtime.lastError) {
         logError('[PDF File Picker] Failed to send message to popup', chrome.runtime.lastError);
-        reject(new Error(chrome.runtime.lastError.message));
+        reject(createPdfError(chrome.runtime.lastError.message, 'errorPdfDataUnavailable'));
         return;
       }
       
       if (!response) {
         log('[PDF File Picker] No response from popup - popup may be closed');
-        reject(new Error('No response from popup. Please keep the extension popup open and try again.'));
+        reject(createPdfError('No response from popup. Please keep the extension popup open and try again.', 'errorPdfDataUnavailable'));
         return;
       }
       
@@ -325,7 +327,7 @@ export async function requestPdfFileSelectionFromPopup(expectedPdfUrl = null) {
           resolve(null);
         }
       } else {
-        reject(new Error(response.error || 'Failed to select PDF file'));
+        reject(createPdfError(response.error || 'Failed to select PDF file', response.translationKey || 'errorPdfDataUnavailable', response.translationParams || {}));
       }
     });
   });

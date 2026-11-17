@@ -424,7 +424,7 @@ export function detectColumns(lines, viewport, metrics = {}) {
   }
   
   // Step 5.5: Validate columns by checking for empty space between them
-  // CRITICAL: If columns overlap (negative gap), fix boundaries to prevent overlap
+  // Validate column boundaries against concurrently occupied text regions.
   // Also check if gap is too small - might indicate incorrectly detected columns
   const baseFontSize = metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE;
   
@@ -444,16 +444,15 @@ export function detectColumns(lines, viewport, metrics = {}) {
         log(`[PDF v3] detectColumns: Checking gap between columns ${i - 1} and ${i} - prevMaxX=${prevMaxX.toFixed(2)}, currentMinX=${currentMinX.toFixed(2)}, gap=${gapBetweenColumns.toFixed(2)}, minGapRequired=${minGapBetweenColumns.toFixed(2)}`);
         
         if (gapBetweenColumns < 0) {
-          // CRITICAL: Columns overlap! Fix by adjusting boundaries
-          // Set prevMaxX to midpoint between columns, and currentMinX to same point
-          const midpoint = (prevMaxX + currentMinX) / 2;
-          prevColumn.maxX = midpoint;
-          prevColumn.width = midpoint - prevColumn.x;
-          column.x = midpoint;
-          column.width = (column.maxX || (column.x + column.width)) - midpoint;
-          column.maxX = column.x + column.width;
-          
-          log(`[PDF v3] detectColumns: CRITICAL FIX - Columns ${i - 1} and ${i} overlap (gap=${gapBetweenColumns.toFixed(2)})! Adjusted boundaries - prevMaxX=${midpoint.toFixed(2)}, currentMinX=${midpoint.toFixed(2)}`);
+          const top = Math.max(Math.min(...prevColumn.lines.map(line => line.y)), Math.min(...column.lines.map(line => line.y)));
+          const bottom = Math.min(Math.max(...prevColumn.lines.map(line => line.y)), Math.max(...column.lines.map(line => line.y)));
+          const previousBody = prevColumn.lines.filter(line => line.y >= top && line.y <= bottom);
+          const currentBody = column.lines.filter(line => line.y >= top && line.y <= bottom);
+          const bodyRight = Math.max(...previousBody.map(line => calculateLineRight(line, baseFontSize)));
+          const bodyLeft = Math.min(...currentBody.map(line => line.x));
+          if (previousBody.length < 3 || currentBody.length < 3 || bodyRight >= bodyLeft) return [];
+          prevColumn.maxX = bodyRight;
+          prevColumn.width = bodyRight - prevColumn.x;
           validatedColumns.push(column);
         } else if (gapBetweenColumns >= minGapBetweenColumns) {
           // Significant gap found - columns are separate

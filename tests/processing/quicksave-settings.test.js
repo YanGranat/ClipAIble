@@ -8,6 +8,7 @@ const prepare = (settings, format = 'pdf') => prepareQuickSaveData(settings, for
 
 it('reads custom-model ownership before migrating a context-menu selection', () => {
   expect(getQuickSaveSettingsKeys()).toContain('custom_models');
+  expect(getQuickSaveSettingsKeys()).toContain('image_translation_provider');
 });
 
 it.each([
@@ -58,4 +59,23 @@ it.each(Object.keys(STYLE_PRESETS))('uses the current %s palette for quick save'
 it('uses all four current custom color settings', async () => {
   const result = await prepare({ openai_api_key: 'synthetic-key', pdf_style_preset: 'custom', pdf_custom_bg_color: '#112233', pdf_custom_text_color: '#445566', pdf_custom_heading_color: '#778899', pdf_custom_link_color: '#aabbcc' });
   expect(result).toMatchObject({ bgColor: '#112233', textColor: '#445566', headingColor: '#778899', linkColor: '#aabbcc' });
+});
+
+it('uses the saved OpenAI image key independently of the article provider', async () => {
+  const settings = { api_provider: 'deepseek', deepseek_api_key: 'synthetic-article-key', openai_api_key: 'ENC:synthetic-image-key',
+    google_api_key: 'synthetic-google-key', image_translation_provider: 'openai', translate_images: true, pdf_language: 'fr' };
+  await expect(prepare(settings)).resolves.toMatchObject({ provider: 'deepseek', apiKey: 'synthetic-article-key',
+    imageTranslationProvider: 'openai', imageApiKey: 'ENC:synthetic-image-key', googleApiKey: 'synthetic-google-key', translateImages: true });
+});
+
+it.each(['markdown', 'audio'])('does not enable image editing for hidden %s quick save', async format => {
+  await expect(prepare({ extraction_mode: 'automatic', translate_images: true, pdf_language: 'fr', image_translation_provider: 'openai', openai_api_key: 'synthetic-image-key' }, format))
+    .resolves.toMatchObject({ translateImages: false, imageApiKey: null });
+});
+
+it('preserves default Gemini settings and leaves automatic language images unchanged', async () => {
+  await expect(prepare({ extraction_mode: 'automatic', translate_images: true, pdf_language: 'fr', google_api_key: 'synthetic-google-key' }))
+    .resolves.toMatchObject({ imageTranslationProvider: 'gemini', imageApiKey: 'synthetic-google-key', translateImages: true });
+  await expect(prepare({ extraction_mode: 'automatic', translate_images: true, pdf_language: 'auto', openai_api_key: 'synthetic-image-key' }))
+    .resolves.toMatchObject({ translateImages: false, imageApiKey: null });
 });

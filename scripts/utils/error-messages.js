@@ -3,38 +3,8 @@
 // Provides localized, helpful error messages instead of technical ones
 
 import { getUILanguage, tSync } from '../locales.js';
-import { logError } from './logging.js';
 
-/**
- * Generate user-friendly error message with actionable advice
- * @param {string} errorType - Type of error (e.g., 'selectorAnalysisFailed', 'contentExtractionFailed')
- * @param {Record<string, any>} [context={}] - Additional context (error object, details, etc.)
- * @returns {Promise<string>} User-friendly error message
- * @see {@link createUserFriendlyError} For creating error objects with user messages (used by handleError)
- */
-export async function getUserFriendlyError(errorType, context = {}) {
-  const uiLang = await getUILanguage();
-  
-  // Handle HTTP errors with status-specific messages
-  if (errorType === 'httpError' && context.statusCode) {
-    const status = context.statusCode;
-    if (status === 401) {
-      return tSync('errorApiKeyInvalid', uiLang);
-    } else if (status === 403) {
-      return tSync('errorApiAccessForbidden', uiLang);
-    } else if (status === 429) {
-      return tSync('errorRateLimit', uiLang);
-    } else if (status === 404 && context.model) {
-      // Model not found
-      return tSync('errorModelNotFound', uiLang).replace('{model}', context.model || 'unknown');
-    } else {
-      // Generic API error with status
-      return tSync('errorApiError', uiLang).replace('{status}', String(status));
-    }
-  }
-  
-  // Map error types to localization keys
-  const errorKeyMap = {
+const ERROR_KEYS = {
     'selectorAnalysisFailed': 'errorSelectorAnalysisFailed',
     'contentExtractionFailed': 'errorContentExtractionFailed',
     'noContentExtracted': 'errorNoContentExtracted',
@@ -84,62 +54,34 @@ export async function getUserFriendlyError(errorType, context = {}) {
     'parseError': 'errorFailedToParseResponse',
     'invalidJsonError': 'errorInvalidJsonResponse',
     'apiNoContentError': 'errorNoContentReceived' // API returned no content
-  };
+};
   
-  const errorKey = errorKeyMap[errorType];
-  
-  if (errorKey) {
-    try {
-      const message = tSync(errorKey, uiLang);
-      // Replace placeholders if any
-      if (context.error && context.error.message && message.includes('{error}')) {
-        return message.replace('{error}', context.error.message);
-      }
-      return message;
-    } catch (error) {
-      logError('Failed to get localized error message', { errorType, errorKey, error });
-      // Fallback to English
-      return tSync(errorKey, 'en') || getFallbackMessage(errorType);
-    }
+
+/** Return a message identity without fixing it to the current UI language. */
+export function getUserFriendlyErrorDescriptor(errorType, context = {}) {
+  const error = context.error;
+  if (typeof error?.translationKey === 'string' && error.translationKey) {
+    return { key: error.translationKey, params: error.translationParams || {} };
   }
-  
-  // If no mapping found, try to extract useful info from error
-  if (context.error && context.error.message) {
-    return context.error.message;
+  if (errorType === 'pageNotReady' && context.blockedPage) return { key: 'pageNotAccessible', params: {} };
+  if (errorType === 'httpError' && context.statusCode) {
+    const status = Number(context.statusCode);
+    if (status === 401) return { key: 'errorApiKeyInvalid', params: {} };
+    if (status === 403) return { key: 'errorApiAccessForbidden', params: {} };
+    if (status === 429) return { key: 'errorRateLimit', params: {} };
+    if (status === 404 && context.model) return { key: 'errorModelNotFound', params: { model: context.model } };
+    return { key: 'errorApiError', params: { status } };
   }
-  
-  return getFallbackMessage(errorType);
+  const key = Object.hasOwn(ERROR_KEYS, errorType) ? ERROR_KEYS[errorType] : null;
+  if (!key) return error?.message ? null : { key: 'errorUnknown', params: {} };
+  return { key, params: tSync(key, 'en').includes('{error}') ? { error: error?.message || '' } : {} };
 }
 
-/**
- * Get fallback error message in English
- * @param {string} errorType - Type of error
- * @returns {string} Fallback message
- */
-function getFallbackMessage(errorType) {
-  const fallbacks = {
-    'selectorAnalysisFailed': 'Failed to analyze page structure. Try switching to "AI Extract" mode in settings, or check your API key.',
-    'contentExtractionFailed': 'Failed to extract content from page. Try: 1) Switch to "AI Extract" mode, 2) Scroll to load all content, 3) Check if page uses dynamic loading.',
-    'noContentExtracted': 'No content found on this page. Try: 1) Switch to "AI Extract" mode, 2) Make sure the page has loaded completely, 3) Try a different article.',
-    'scriptExecutionFailed': 'Failed to read page content. The page may be blocking extensions. Try refreshing the page and try again.',
-    'emptySelectors': 'AI could not find content selectors. Try switching to "AI Extract" mode in settings.',
-    'extractModeNoContent': 'AI Extract mode returned no content. The page may use dynamic loading. Try scrolling to load all content before saving.',
-    'videoProcessingFailed': 'Failed to process video. Make sure subtitles are enabled on the video page.',
-    'subtitleProcessingFailed': 'Failed to process subtitles. Try again or check your API key.',
-    'imageTranslationFailed': 'Failed to translate images. Check your Google API key in settings (required for image translation).',
-    'abstractGenerationFailed': 'Failed to generate summary. Check your API key and try again.',
-    'pdfGenerationFailed': 'Failed to generate PDF. Try: 1) Check your API key, 2) Try a different format, 3) Make sure the page has loaded completely.',
-    'epubGenerationFailed': 'Failed to generate EPUB. Try again or check your settings.',
-    'fb2GenerationFailed': 'Failed to generate FB2. Try again or check your settings.',
-    'markdownGenerationFailed': 'Failed to generate Markdown. Try again or check your settings.',
-    'audioGenerationFailed': 'Failed to generate audio. Check your TTS provider API key and try again.',
-    'tabNotFound': 'Page tab not found. Please refresh the page and try again.',
-    'noApiKey': 'API key is required. Please add your API key in settings.',
-    'invalidFormat': 'Invalid export format selected. Please choose a valid format.',
-    'pageNotReady': 'Page is not ready. Please wait for the page to load completely and try again.'
-  };
-  
-  return fallbacks[errorType] || 'An error occurred. Please try again.';
+/** Generate a message in the current UI language, retaining upstream diagnostics when unmapped. */
+export async function getUserFriendlyError(errorType, context = {}) {
+  const descriptor = getUserFriendlyErrorDescriptor(errorType, context);
+  if (!descriptor) return context.error.message;
+  return tSync(descriptor.key, await getUILanguage(), descriptor.params);
 }
 
 /**
@@ -153,6 +95,7 @@ function getFallbackMessage(errorType) {
  */
 export async function createUserFriendlyError(errorType, context = {}, errorCode = null) {
   const message = await getUserFriendlyError(errorType, context);
+  const descriptor = getUserFriendlyErrorDescriptor(errorType, context);
   
   // Map error types to error codes if not provided
   if (!errorCode) {
@@ -213,7 +156,8 @@ export async function createUserFriendlyError(errorType, context = {}, errorCode
   
   return {
     message,
-    code: errorCode
+    code: errorCode,
+    ...(descriptor ? { translationKey: descriptor.key, translationParams: descriptor.params } : {})
   };
 }
 

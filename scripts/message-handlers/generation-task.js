@@ -36,7 +36,8 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
 
   async function start(data, startKeepAlive, stopKeepAlive, sendResponse = null) {
     if (owner && !owner.cancelled && !owner.finished) {
-      sendResponse?.({ error: `${label} generation is already in progress` });
+      const translationKey = prefix === 'summary' ? 'summaryAlreadyGenerating' : 'keyThesesAlreadyGenerating';
+      sendResponse?.({ error: tSync(translationKey, await getUILanguage()), translationKey, translationParams: {} });
       return;
     }
     let cancel;
@@ -60,7 +61,7 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
     let progressTimer;
     try {
       data.onAdmitted?.(checkCancelled);
-      await save(job, { ...flags(true, job), [`${prefix}_cancel_requested`]: false, [`${prefix}_error`]: null });
+      await save(job, { ...flags(true, job), [`${prefix}_cancel_requested`]: false, [`${prefix}_error`]: null, [`${prefix}_error_translation`]: null });
       checkCancelled();
       startKeepAlive();
       try { sendResponse?.({ started: true, generationId: job.id }); }
@@ -71,7 +72,7 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => {
           job.cancelled = true;
-          reject(new Error(`${label} generation timed out after ${Math.round(timeoutMs / 1000 / 60)} minutes`));
+          reject(Object.assign(new Error(`${label} generation timed out after ${Math.round(timeoutMs / 1000 / 60)} minutes`), { translationKey: 'errorTimeout', translationParams: {} }));
         }, timeoutMs);
       });
       if (progressIntervalMs) {
@@ -102,7 +103,11 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
         source: `${prefix}Generation`, errorType: 'abstractGenerationFailed',
         logError: true, createUserMessage: true, context: { url: data.url || '' }
       });
-      await save(job, { [`${prefix}_error`]: normalized.userMessage || normalized.message || error.message });
+      await save(job, {
+        [`${prefix}_error`]: normalized.userMessage || normalized.message || error.message,
+        [`${prefix}_error_translation`]: normalized.translationKey
+          ? { key: normalized.translationKey, params: normalized.translationParams || {} } : null
+      });
       throw normalized;
     } finally {
       if (timer) clearTimeout(timer);

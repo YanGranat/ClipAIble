@@ -5,7 +5,7 @@ import { processPdfPageWithAI } from '../../scripts/processing/pdf.js';
 import { setError } from '../../scripts/state/processing.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/utils/error-handler.js', () => ({ handleError: async error => error }));
+vi.mock('../../scripts/utils/error-handler.js', async importOriginal => ({ ...(await importOriginal()), handleError: async error => error }));
 vi.mock('../../scripts/state/processing.js', () => ({ getProcessingState: () => ({ isProcessing: true }), setError: vi.fn() }));
 vi.mock('../../scripts/translation/index.js', () => ({ generateSummary: vi.fn(), generateKeyTheses: vi.fn() }));
 vi.mock('../../scripts/processing/pdf.js', () => ({ processPdfPageWithAI: vi.fn(), processPdfPage: vi.fn() }));

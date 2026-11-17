@@ -6,6 +6,8 @@ import { logWarn } from '../../scripts/utils/logging.js';
 import { CONFIG } from '../../scripts/utils/config.js';
 import { ELEVENLABS_TTS_MODELS, ELEVENLABS_TTS_VOICES, GOOGLE_TTS_MODELS, QWEN_TTS_MODELS, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getElevenLabsCapabilities, isQwenAudioModel } from '../../scripts/api/tts-catalog.js';
 import { normalizePiperVoiceId } from '../../scripts/api/piper-voices-mapping.js';
+import { OPENAI_TTS_VOICES, OPENAI_TTS_MAX_SPEED } from '../../scripts/api/tts-catalog.js';
+import { tSync } from '../../scripts/locales.js';
 
 export function restoreTtsSelect(select, value) {
   if (!select || !value) return;
@@ -256,40 +258,13 @@ export function initAudio(deps) {
       restoreTtsSelect(elements.audioVoice, normalizedVoice || getDefaultTtsVoice(provider));
       if (!currentValue || normalizedVoice !== currentValue) saveAudioVoice(provider, elements.audioVoice.value);
     } else {
-      // OpenAI voices
-      const openaiVoices = [
-        { value: 'nova', name: 'Nova (female, warm)' },
-        { value: 'alloy', name: 'Alloy (neutral)' },
-        { value: 'echo', name: 'Echo (male)' },
-        { value: 'fable', name: 'Fable (expressive)' },
-        { value: 'onyx', name: 'Onyx (male, deep)' },
-        { value: 'shimmer', name: 'Shimmer (female, clear)' },
-        { value: 'coral', name: 'Coral (female, friendly)' },
-        { value: 'sage', name: 'Sage (neutral, calm)' },
-        { value: 'ash', name: 'Ash (male, authoritative)' },
-        { value: 'ballad', name: 'Ballad (expressive, dramatic)' },
-        { value: 'verse', name: 'Verse (rhythmic)' },
-        { value: 'marin', name: 'Marin' },
-        { value: 'cedar', name: 'Cedar' }
-      ];
-      
-      openaiVoices.forEach(voice => {
-        const option = document.createElement('option');
-        option.value = voice.value;
-        option.textContent = voice.name;
-        elements.audioVoice.appendChild(option);
-      });
-      
-      // Set value: use saved value if valid, otherwise use default
-      if (currentValue && openaiVoices.find(v => v.value === currentValue)) {
-        elements.audioVoice.value = currentValue;
-      } else if (currentValue) {
-        elements.audioVoice.value = CONFIG.DEFAULT_AUDIO_VOICE;
-        saveAudioVoice(provider, CONFIG.DEFAULT_AUDIO_VOICE);
-      } else {
-        elements.audioVoice.value = CONFIG.DEFAULT_AUDIO_VOICE;
+      populateVoices(provider, OPENAI_TTS_VOICES.map(id => ({ id, name: id[0].toUpperCase() + id.slice(1) })), currentValue);
+      if (currentValue && !OPENAI_TTS_VOICES.includes(currentValue)) {
+        const option = elements.audioVoice.selectedOptions[0];
+        option.dataset.i18n = 'voiceUnavailable';
+        option.dataset.i18nParams = JSON.stringify({ voice: currentValue });
+        option.textContent = tSync('voiceUnavailable', document.documentElement.lang).replace('{voice}', currentValue);
       }
-      saveAudioVoice(provider, elements.audioVoice.value);
     }
   }
 
@@ -379,7 +354,7 @@ export function initAudio(deps) {
       if (preferredSpeed === null) preferredSpeed = audioSpeed.value;
       audioSpeed.disabled = !supportsSpeed;
       audioSpeed.min = isElevenLabs && capabilities.speed ? '0.7' : (isQwen && supportsSpeed ? '0.5' : baseSpeedMin);
-      audioSpeed.max = isElevenLabs && capabilities.speed ? '1.2' : (isQwen && supportsSpeed ? '2.0' : baseSpeedMax);
+      audioSpeed.max = isOpenAI ? String(OPENAI_TTS_MAX_SPEED) : (isElevenLabs && capabilities.speed ? '1.2' : (isQwen && supportsSpeed ? '2.0' : baseSpeedMax));
       audioSpeed.value = preferredSpeed;
       const audioSpeedValue = getElement('audioSpeedValue');
       if (audioSpeedValue) audioSpeedValue.textContent = `${Number(audioSpeed.value).toFixed(1)}x`;

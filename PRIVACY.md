@@ -20,7 +20,7 @@ API keys are stored using AES-256-GCM encryption. The encryption key is derived 
 
 AI extraction, translation, summaries, and key theses send the required page content and metadata to the selected AI service. Depending on the extraction mode, this can include page HTML or extracted text.
 
-Image translation sends selected images to Google Gemini. Cloud speech synthesis sends the prepared text to the selected TTS service. AI and TTS providers can be configured separately.
+Image translation sends selected images to Google Gemini or OpenAI for editing and to the AI service used for text detection. Cloud speech synthesis sends the prepared text to the selected TTS service. AI, image translation, and TTS providers can be configured separately.
 
 Retrieving source images, online PDFs, and video subtitles makes requests to their source websites. Piper downloads voice lists and model files from Hugging Face; speech synthesis then runs locally using the downloaded model.
 

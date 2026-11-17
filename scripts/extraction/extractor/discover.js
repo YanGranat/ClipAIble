@@ -5,6 +5,90 @@
 import { safeGetComputedStyle } from './dom-utils.js';
 
 /**
+ * Recognize a captioned illustration embedded in an article's prose body.
+ * @param {Window} win
+ * @param {Element} element
+ * @returns {boolean}
+ */
+export function isArticleContentFigure(win, element) {
+  const figure = element.closest('figure');
+  if (!figure || !figure.querySelector('img') || !(figure.querySelector('figcaption')?.textContent || '').trim()) return false;
+  const body = figure.closest('.post-content, .post__content, .article-content, .entry-content, .article-body, .wysiwyg');
+  if (!body) return false;
+  const owner = body.closest('article, [itemprop~="articleBody"], .post, .article, .entry');
+  if (!owner) return false;
+  if (!owner.matches('article, [itemprop~="articleBody"]')) {
+    const title = (win.document.title || '').trim().toLowerCase();
+    if (!Array.from(owner.querySelectorAll('h1')).some(heading => {
+      const text = (heading.textContent || '').trim().toLowerCase();
+      return text.length > 0 && (title === text || [' | ', ' — ', ' – ', ' - '].some(separator => title.startsWith(text + separator)));
+    })) return false;
+  }
+  for (let node = figure; node && node !== owner; node = node.parentElement) {
+    if (node.matches('nav, footer, [role="navigation"], [hidden], [aria-hidden="true"]')) return false;
+    if (/(?:^|[\s_-])(?:comments?|related|recommended|recommendations?|newsletter|advertisement|advertising|ads?|sponsored?|social|share|author|byline|contributor)(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute('class') || ''}`)) return false;
+    for (const name of ['data-module', 'data-component', 'data-type']) {
+      if (/^(?:ad|advertisement)$/i.test(node.getAttribute(name) || '')) return false;
+    }
+  }
+  return Array.from(body.querySelectorAll('p')).some(paragraph => !paragraph.closest('aside, figure') && (paragraph.textContent || '').trim().length >= 20);
+}
+
+/**
+ * Check whether a body fragment belongs to a non-article panel.
+ * @param {Element} element
+ * @param {Element} owner
+ * @returns {boolean}
+ */
+export function isOutsideArticleBody(element, owner) {
+  const contentFigure = isArticleContentFigure(owner.ownerDocument.defaultView, element);
+  for (let node = element; node && node !== owner; node = node.parentElement) {
+    if (node.matches('nav, footer, [role="navigation"], [hidden], [aria-hidden="true"]')) return true;
+    if (node.matches('aside, [role="complementary"]') && !contentFigure) return true;
+    const labels = `${node.id} ${node.getAttribute('class') || ''}`;
+    if (/(?:^|[\s_-])(?:comments?|related|recommended|recommendations?|sidebar|newsletter|advertisement|advertising|ads?|sponsored?|social|share)(?:$|[\s_-])/i.test(labels)) return true;
+    for (const name of ['data-module', 'data-component', 'data-type']) {
+      if (/^(?:ad|advertisement)$/i.test(node.getAttribute(name) || '')) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Find repeated prose fragments belonging to one article, retaining outer wrappers.
+ * @param {Element} scope
+ * @param {Window} win
+ * @returns {{owner: Element, roots: Element[]}|null}
+ */
+export function findSplitArticleBody(scope, win) {
+  const ownerSelector = 'article, [itemprop~="articleBody"], .post, .article, .entry';
+  const title = (win.document.title || '').trim().toLowerCase();
+  const matchesTitle = owner => Array.from(owner.querySelectorAll('h1')).some(heading => {
+    const text = (heading.textContent || '').trim().toLowerCase();
+    return text.length > 0 && (title === text || [' | ', ' — ', ' – ', ' - '].some(separator => title.startsWith(text + separator)));
+  });
+  for (const selector of ['.post-content', '.post__content', '.article-content', '.entry-content', '.article-body', '.wysiwyg']) {
+    const groups = new Map();
+    for (const element of Array.from(scope.querySelectorAll(selector))) {
+      let owner = element.closest(ownerSelector);
+      if (!owner && scope.matches('main, [role="main"]') && scope.querySelectorAll('h1').length === 1) owner = scope;
+      if (!owner || !scope.contains(owner) || isOutsideArticleBody(element, owner)) continue;
+      if (!owner.matches('article, [itemprop~="articleBody"]') && !matchesTitle(owner)) continue;
+      if (isOutsideArticleBody(owner, scope)) continue;
+      if (!groups.has(owner)) groups.set(owner, []);
+      groups.get(owner).push(element);
+    }
+    for (const [owner, matches] of groups) {
+      const roots = matches.filter(element => !matches.some(other => other !== element && other.contains(element)));
+      if (roots.length < 2) continue;
+      const textLength = roots.reduce((sum, element) => sum + (element.textContent || '').trim().length, 0);
+      if (textLength > 500 && roots.some(element => element.querySelector('p'))) return { owner, roots };
+    }
+  }
+  return null;
+}
+
+/**
  * Check if element is likely a content container based on class/id
  * @param {Element} element - Element to check
  * @returns {boolean} - True if element is likely content container
@@ -385,6 +469,8 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   if (main) {
     const mainText = (main.textContent || '').trim();
     if (mainText.length > 100) {
+      const splitBody = findSplitArticleBody(main, win);
+      if (splitBody) return splitBody.owner;
       const specificContent = main.querySelector('.wysiwyg, .article-content, .post-content');
       if (specificContent && (specificContent.textContent || '').trim().length > 500) {
         if (!isExcluded(specificContent)) return specificContent;

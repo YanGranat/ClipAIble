@@ -104,6 +104,8 @@ export function initHandlers(deps) {
     closeKeyTheses,
     settingsModule
   } = deps;
+  let providerRevision = 0;
+  let keyDraftRevision = 0;
 
   /**
    * Helper: Defer async work to avoid blocking UI
@@ -273,7 +275,8 @@ export function initHandlers(deps) {
       setUILanguage,
       applyLocalization,
       initAllCustomSelects,
-      settingsModule
+      settingsModule,
+      loadAndDisplayStats
     });
     
     // ============================================
@@ -294,6 +297,10 @@ export function initHandlers(deps) {
     // ============================================
 
     // API provider selector change handler - optimize to avoid blocking
+    elements.apiKey?.addEventListener('input', () => {
+      keyDraftRevision++;
+      elements.apiKey.dataset.provider = elements.apiProviderSelect?.value || '';
+    });
     if (elements.apiProviderSelect) {
       elements.apiProviderSelect.addEventListener('change', async () => {
         // Close custom dropdown immediately (lightweight operation)
@@ -305,11 +312,22 @@ export function initHandlers(deps) {
           });
         }
         const provider = elements.apiProviderSelect.value;
+        const revision = ++providerRevision;
+        const draftRevision = keyDraftRevision;
+        const isCurrent = () => revision === providerRevision && elements.apiProviderSelect.value === provider;
+        if (elements.apiKey) {
+          elements.apiKey.value = '';
+          delete elements.apiKey.dataset.provider;
+          delete elements.apiKey.dataset.encrypted;
+          delete elements.apiKey.dataset.decrypted;
+        }
         
         // Defer heavy async work to avoid blocking main thread
         deferAsyncWork(async () => {
+          if (!isCurrent()) return;
           // Save selected provider
           await chrome.storage.local.set({ [STORAGE_KEYS.API_PROVIDER]: provider });
+          if (!isCurrent()) return;
           
           // Load API key for selected provider
           const result = await chrome.storage.local.get([
@@ -320,6 +338,7 @@ export function initHandlers(deps) {
             STORAGE_KEYS.OPENROUTER_API_KEY,
             STORAGE_KEYS.DEEPSEEK_API_KEY
           ]);
+          if (!isCurrent()) return;
           
           let apiKeyValue = '';
           let apiKeyEncrypted = null;
@@ -387,9 +406,13 @@ export function initHandlers(deps) {
           }
           
           // Defer DOM updates to requestAnimationFrame
+          if (!isCurrent()) return;
           requestAnimationFrame(() => {
-            if (elements.apiKey) {
+            if (!isCurrent()) return;
+            if (elements.apiKey && keyDraftRevision === draftRevision) {
+              delete elements.apiKey.dataset.decrypted;
               elements.apiKey.value = apiKeyValue;
+              elements.apiKey.dataset.provider = provider;
               if (apiKeyEncrypted) {
                 elements.apiKey.dataset.encrypted = apiKeyEncrypted;
               } else {

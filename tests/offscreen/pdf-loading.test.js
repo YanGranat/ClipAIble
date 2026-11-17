@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const pdfjs = vi.hoisted(() => ({ getDocument: vi.fn(), version: '2.6.347' }));
+const pdfjs = vi.hoisted(() => ({ getDocument: vi.fn(), version: '6.5.438' }));
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(), logError: vi.fn(), logWarn: vi.fn(), criticalLog: vi.fn()
 }));
@@ -8,13 +8,13 @@ vi.mock('../../scripts/utils/config.js', () => ({ CONFIG: { PDF_PARSE_TIMEOUT_MS
 vi.mock('../../scripts/offscreen/pdf/utils/pdf-loader.js', () => ({ loadPdfJs: async () => pdfjs }));
 vi.mock('../../scripts/offscreen/pdf/core/pdf-loader.js', () => ({
   loadPdfDocument: vi.fn(),
-  destroyPdfDocument: vi.fn(async pdf => { if (pdf) await pdf.destroy(); })
+  destroyPdfDocument: vi.fn(async () => {})
 }));
 vi.mock('../../scripts/offscreen/pdf/extract.js', () => ({ extractPdfContent: vi.fn() }));
 
 import { parsePdfDocument } from '../../scripts/offscreen/pdf/utils/pdf-parser.js';
 import { handleGetPdfPageDimensions, handleGetVoices, handleGetStoredVoices, handleRenderPdfPageImage, handleRenderAllPdfPages, handleGetPdfMetadata, handleExtractPdfPageText } from '../../scripts/offscreen/message-handlers.js';
-import { loadPdfDocument } from '../../scripts/offscreen/pdf/core/pdf-loader.js';
+import { loadPdfDocument, destroyPdfDocument } from '../../scripts/offscreen/pdf/core/pdf-loader.js';
 
 describe('PDF loading options', () => {
   let pdf;
@@ -22,7 +22,6 @@ describe('PDF loading options', () => {
     vi.stubGlobal('document', { fonts: {}, createElement: vi.fn() });
     pdf = {
       numPages: 1,
-      destroy: vi.fn(async () => {}),
       getPage: vi.fn(async () => ({
         getViewport: () => ({ width: 600, height: 800 }),
         getTextContent: async () => ({ items: [{ str: 'Sample text' }] }),
@@ -30,14 +29,14 @@ describe('PDF loading options', () => {
       }))
     };
     loadPdfDocument.mockResolvedValue({ pdf, numPages: 1, metadata: { title: 'Sample document' } });
-    pdfjs.getDocument.mockReturnValue({ promise: Promise.resolve(pdf) });
+    pdfjs.getDocument.mockReturnValue({ promise: Promise.resolve(pdf), destroy: vi.fn(async () => {}) });
   });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
   it('disables generated evaluation while parsing PDF data', async () => {
     const data = new TextEncoder().encode('%PDF-1.4\n').buffer;
     await expect(parsePdfDocument(data)).resolves.toBe(pdf);
-    expect(pdfjs.getDocument).toHaveBeenCalledWith(expect.objectContaining({ data, isEvalSupported: false }));
+    expect(pdfjs.getDocument).toHaveBeenCalledWith(expect.objectContaining({ data: new Uint8Array(data), isEvalSupported: false, fontExtraProperties: true }));
   });
 
   it('disables generated evaluation while loading page dimensions from data', async () => {
@@ -45,7 +44,7 @@ describe('PDF loading options', () => {
     await handleGetPdfPageDimensions('request', { pdfData: btoa('%PDF-1.4\n'), pageNum: 1 }, reply);
     expect(pdfjs.getDocument).toHaveBeenCalledWith(expect.objectContaining({ isEvalSupported: false }));
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ success: true, width: 600, height: 800 }));
-    expect(pdf.destroy).toHaveBeenCalledOnce();
+    expect(destroyPdfDocument).toHaveBeenCalledExactlyOnceWith(pdf);
   });
 
   it('clears a completed page render deadline', async () => {
@@ -68,7 +67,7 @@ describe('PDF loading options', () => {
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(1000);
     expect(task.cancel).not.toHaveBeenCalled();
-    expect(pdf.destroy).toHaveBeenCalledOnce();
+    expect(destroyPdfDocument).toHaveBeenCalledExactlyOnceWith(pdf);
     expect(page.render).toHaveBeenCalledWith(expect.objectContaining({ intent: 'print' }));
   });
 
@@ -77,7 +76,7 @@ describe('PDF loading options', () => {
       const reply = vi.fn();
       await handler('request', { pdfUrl: 'https://example.com/document.pdf', pageNum: 1 }, reply);
       expect(reply).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
-      expect(pdf.destroy).toHaveBeenCalledOnce();
+      expect(destroyPdfDocument).toHaveBeenCalledExactlyOnceWith(pdf);
     });
 
   it('releases a document after rendering all requested pages', async () => {
@@ -93,7 +92,7 @@ describe('PDF loading options', () => {
     const reply = vi.fn();
     await handleRenderAllPdfPages('request', { pdfData: btoa('%PDF-1.4\n'), totalPages: 1 }, reply);
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ success: true, images: [expect.objectContaining({ pageNum: 1, base64: 'AQ==' })] }));
-    expect(pdf.destroy).toHaveBeenCalledOnce();
+    expect(destroyPdfDocument).toHaveBeenCalledExactlyOnceWith(pdf);
     expect(page.render).toHaveBeenCalledWith(expect.objectContaining({ intent: 'print' }));
   });
 
@@ -102,8 +101,9 @@ describe('PDF loading options', () => {
       pdf.getPage.mockRejectedValue(new Error('Page unavailable'));
       const reply = vi.fn();
       await handler('request', { pdfUrl: 'https://example.com/document.pdf', pageNum: 1 }, reply);
-      expect(reply).toHaveBeenCalledWith({ success: false, error: 'Page unavailable' });
-      expect(pdf.destroy).toHaveBeenCalledOnce();
+      expect(reply).toHaveBeenCalledWith({ success: false, error: 'Page unavailable',
+        translationKey: 'errorPdfExtractionFailed', translationParams: { error: 'Page unavailable' } });
+      expect(destroyPdfDocument).toHaveBeenCalledExactlyOnceWith(pdf);
     });
 });
 

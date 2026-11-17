@@ -7,7 +7,11 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { extractPdfContent } from './pdf/extract.js';
 import { loadPdfDocument, destroyPdfDocument } from './pdf/core/pdf-loader.js';
-import { loadPdfJs } from './pdf/utils/pdf-loader.js';
+import { parsePdfDocument } from './pdf/utils/pdf-parser.js';
+import { createPdfError, pdfFailurePayload } from '../utils/pdf-errors.js';
+import { startPdfRender, cancelPdfRender } from './pdf/render-operations.js';
+import { getPdfData } from '../api/pdf-storage.js';
+import { getPdfRenderViewport } from './pdf/render-viewport.js';
 
 /**
  * Handle GET_VOICES message
@@ -246,68 +250,27 @@ export function handlePing(messageId, sendResponse) {
  * @throws {Error} If PDF loading fails
  */
 export async function handleExtractPdf(messageId, data, sendResponse) {
-  // CRITICAL: Log function entry IMMEDIATELY with ALL available methods
-  // VERSION v6 - Using log with localStorage and sendMessage
-  const handleExtractPdfEntryMsg = `[ClipAIble Offscreen] handleExtractPdf ENTRY messageId=${messageId} pdfUrl=${data?.pdfUrl} - CODE VERSION 2025-12-29-v6`;
-  const marker = `=== HANDLE_EXTRACT_PDF_ENTRY_${messageId}_V6 ===`;
-  
-  // Use log which tries ALL available methods
-  log(handleExtractPdfEntryMsg, marker, { messageId, pdfUrl: data?.pdfUrl, version: 'v6' });
-  
-  const extractStart = Date.now();
-  
+  const operation = startPdfRender(data.operationId);
+  let payload;
   try {
-    const result = await extractPdfContent(data.pdfUrl);
-      const extractDuration = Date.now() - extractStart;
-      
-      // Diagnostic: Check if elements have lines with items
-      if (result.content && Array.isArray(result.content)) {
-        const elementsWithLines = result.content.filter(el => el.lines && Array.isArray(el.lines) && el.lines.length > 0);
-        const elementsWithItems = elementsWithLines.filter(el => 
-          el.lines.some(line => line.items && Array.isArray(line.items) && line.items.length > 0)
-        );
-        const elementsWithFormatting = elementsWithItems.filter(el =>
-          el.lines.some(line => 
-            line.items.some(item => 
-              item.isBold !== undefined || item.isItalic !== undefined || item.isUnderlined !== undefined
-            )
-          )
-        );
-        
-        log(`[ClipAIble Offscreen] EXTRACT_PDF complete for ${messageId}`, {
-          messageId,
-          title: result.title,
-          contentItems: result.content?.length || 0,
-          elementsWithLines: elementsWithLines.length,
-          elementsWithItems: elementsWithItems.length,
-          elementsWithFormatting: elementsWithFormatting.length,
-          duration: extractDuration
-        });
-      } else {
-        log(`[ClipAIble Offscreen] EXTRACT_PDF complete for ${messageId}`, {
-          messageId,
-          title: result.title,
-          contentItems: result.content?.length || 0,
-          duration: extractDuration
-        });
-      }
-      
-      sendResponse({
-        success: true,
-        result: result
-      });
+    operation.check();
+    let pdfData = null;
+    if (data.pdfDataRef) {
+      try { pdfData = await getPdfData(data.pdfDataRef); }
+      catch { throw createPdfError('PDF data could not be read', 'errorPdfDataUnavailable'); }
+      if (!(pdfData instanceof ArrayBuffer)) throw createPdfError('PDF data is unavailable', 'errorPdfDataUnavailable');
+    }
+    operation.check();
+    const result = await extractPdfContent(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check });
+    operation.check();
+    payload = { success: true, result };
   } catch (error) {
-    logError(`[ClipAIble Offscreen] EXTRACT_PDF failed for ${messageId}`, {
-      messageId,
-      error: error.message,
-      stack: error.stack
-    });
-    
-      sendResponse({
-        success: false,
-        error: error.message
-      });
+    logError(`[ClipAIble Offscreen] EXTRACT_PDF failed for ${messageId}`, { error: error.message });
+    payload = pdfFailurePayload(operation.signal.aborted ? operation.signal.reason : error);
+  } finally {
+    await operation.finish();
   }
+  sendResponse(payload);
 }
 
 /**
@@ -336,7 +299,7 @@ export async function handleExtractPdfPageText(messageId, data, sendResponse) {
     const pageNum = data.pageNum || 1;
     
     if (pageNum < 1 || pageNum > numPages) {
-      throw new Error(`Invalid page number: ${pageNum}. PDF has ${numPages} pages.`);
+      throw createPdfError(`Invalid page number: ${pageNum}. PDF has ${numPages} pages.`, 'errorPdfPageUnavailable', { page: pageNum, pages: numPages });
     }
     
     const page = await pdf.getPage(pageNum);
@@ -371,10 +334,7 @@ export async function handleExtractPdfPageText(messageId, data, sendResponse) {
       stack: error.stack
     });
     
-    sendResponse({
-      success: false,
-      error: error.message
-    });
+    sendResponse(pdfFailurePayload(error));
   } finally {
     await destroyPdfDocument(pdf);
   }
@@ -390,45 +350,27 @@ export async function handleExtractPdfPageText(messageId, data, sendResponse) {
  * @throws {Error} If PDF loading fails
  */
 export async function handleGetPdfMetadata(messageId, data, sendResponse) {
-  let pdf = null;
-  // Only log if verbose
-  if (CONFIG?.VERBOSE_LOGGING) {
-    log(`[ClipAIble Offscreen] GET_PDF_METADATA request`, { messageId });
-  }
-  
+  const operation = startPdfRender(data.operationId);
+  let payload;
   try {
-    const loaded = await loadPdfDocument(data.pdfUrl);
-    pdf = loaded.pdf;
-    const { numPages, metadata } = loaded;
-    
-    // Only log if verbose
-    if (CONFIG?.VERBOSE_LOGGING) {
-      log(`[ClipAIble Offscreen] GET_PDF_METADATA complete`, {
-        messageId,
-        numPages,
-        hasMetadata: !!metadata
-      });
+    operation.check();
+    let pdfData = null;
+    if (data.pdfDataRef) {
+      try { pdfData = await getPdfData(data.pdfDataRef); }
+      catch { throw createPdfError('PDF data could not be read', 'errorPdfDataUnavailable'); }
+      if (!(pdfData instanceof ArrayBuffer)) throw createPdfError('PDF data is unavailable', 'errorPdfDataUnavailable');
     }
-    
-    sendResponse({
-      success: true,
-      numPages,
-      metadata: metadata || {}
-    });
+    operation.check();
+    const loaded = await loadPdfDocument(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check });
+    operation.adopt(loaded.pdf);
+    payload = { success: true, numPages: loaded.numPages, metadata: loaded.metadata || {} };
   } catch (error) {
-    logError(`[ClipAIble Offscreen] GET_PDF_METADATA failed for ${messageId}`, {
-      messageId,
-      error: error.message,
-      stack: error.stack
-    });
-    
-    sendResponse({
-      success: false,
-      error: error.message
-    });
+    logError(`[ClipAIble Offscreen] GET_PDF_METADATA failed for ${messageId}`, { error: error.message });
+    payload = pdfFailurePayload(operation.signal.aborted ? operation.signal.reason : error);
   } finally {
-    await destroyPdfDocument(pdf);
+    await operation.finish();
   }
+  sendResponse(payload);
 }
 
 /**
@@ -519,7 +461,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
               expected: '%PDF',
               firstBytes: Array.from(headerBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')
             });
-            throw new Error(`Invalid PDF header: expected '%PDF', got '${headerText}'`);
+            throw createPdfError(`Invalid PDF header: expected '%PDF', got '${headerText}'`, 'errorPdfInvalid');
           }
         } catch (decodeError) {
           logError(`[ClipAIble Offscreen] Failed to decode PDF data from base64 for ${messageId}`, {
@@ -528,7 +470,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
             base64Length: data.pdfData.length,
             base64Preview: data.pdfData.substring(0, 100)
           });
-          throw new Error(`Failed to decode PDF data: ${decodeError.message}`);
+          throw createPdfError(`Failed to decode PDF data: ${decodeError.message}`, 'errorPdfInvalid');
         }
       } else if (data.pdfData instanceof ArrayBuffer) {
         // Already ArrayBuffer (shouldn't happen, but handle it)
@@ -541,9 +483,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
     if (pdfData) {
       // Use provided PDF data (already decoded from base64)
       try {
-        const pdfjsLib = await loadPdfJs();
-        const loadingTask = pdfjsLib.getDocument({ data: pdfData, disableWorker: true, isEvalSupported: false });
-        const pdfDocument = await loadingTask.promise;
+        const pdfDocument = await parsePdfDocument(pdfData);
         pdf = pdfDocument;
         numPages = pdfDocument.numPages;
         
@@ -559,7 +499,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
           pdfDataSize: pdfData.byteLength,
           firstBytes: Array.from(new Uint8Array(pdfData).slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ')
         });
-        throw new Error(`Failed to load PDF document: ${loadError.message}`);
+        throw loadError;
       }
     } else {
       // Load from URL
@@ -570,7 +510,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
     
     const pageNum = data.pageNum || 1;
     if (pageNum < 1 || pageNum > numPages) {
-      throw new Error(`Invalid page number: ${pageNum}. PDF has ${numPages} pages.`);
+      throw createPdfError(`Invalid page number: ${pageNum}. PDF has ${numPages} pages.`, 'errorPdfPageUnavailable', { page: pageNum, pages: numPages });
     }
     
     // Get page
@@ -651,10 +591,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
       stack: error.stack
     });
     
-    sendResponse({
-      success: false,
-      error: error.message
-    });
+    sendResponse(pdfFailurePayload(error));
   } finally {
     await destroyPdfDocument(pdf);
   }
@@ -671,7 +608,9 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
  * @throws {Error} If PDF loading fails
  */
 export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
+  const operation = startPdfRender(data.operationId);
   let pdf = null;
+  let resultPayload;
   const startTime = Date.now();
   log(`[ClipAIble Offscreen] RENDER_PDF_PAGE_IMAGE request for ${messageId}`, 'RENDER_PDF_PAGE_IMAGE_START', {
     messageId,
@@ -684,6 +623,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
   });
   
   try {
+    operation.check();
     log(`[ClipAIble Offscreen] Loading PDF document for ${messageId}...`, 'RENDER_PDF_PAGE_IMAGE_LOAD_START', { 
       messageId, 
       hasPdfData: !!data.pdfData,
@@ -697,68 +637,9 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     // CRITICAL: Check for IndexedDB reference first (for large PDFs)
     let pdfData = null;
     if (data.pdfDataRef) {
-      log(`[ClipAIble Offscreen] Loading PDF data from IndexedDB for ${messageId}...`, {
-        messageId,
-        pdfDataRef: data.pdfDataRef
-      });
-      
-      try {
-        log(`[ClipAIble Offscreen] Starting dynamic import of pdf-storage.js for ${messageId}...`, 'PDF_STORAGE_IMPORT_START', {
-          messageId,
-          pdfDataRef: data.pdfDataRef
-        });
-        const importStart = Date.now();
-        
-        // CRITICAL: Dynamic import is needed because pdf-storage.js is in scripts/api/
-        // which is outside the offscreen bundle. We need to import it at runtime.
-        // Offscreen document can use dynamic imports (unlike service worker)
-        // Use chrome.runtime.getURL() to get the correct extension URL
-        const pdfStorageUrl = chrome.runtime.getURL('scripts/api/pdf-storage.js');
-        log(`[ClipAIble Offscreen] PDF storage URL: ${pdfStorageUrl}`, 'PDF_STORAGE_URL', {
-          messageId,
-          pdfStorageUrl
-        });
-        const { getPdfData } = await import(pdfStorageUrl);
-        const importDuration = Date.now() - importStart;
-        
-        log(`[ClipAIble Offscreen] pdf-storage.js imported successfully for ${messageId}`, 'PDF_STORAGE_IMPORT_SUCCESS', {
-          messageId,
-          importDuration,
-          hasGetPdfData: typeof getPdfData === 'function'
-        });
-        
-        const loadStart = Date.now();
-        pdfData = await getPdfData(data.pdfDataRef);
-        const loadDuration = Date.now() - loadStart;
-        
-        if (pdfData) {
-          log(`[ClipAIble Offscreen] PDF data loaded from IndexedDB for ${messageId}`, 'PDF_DATA_LOADED', {
-            messageId,
-            size: pdfData.byteLength,
-            loadDuration,
-            firstBytes: Array.from(new Uint8Array(pdfData).slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')
-          });
-        } else {
-          log(`[ClipAIble Offscreen] PDF data not found in IndexedDB for ${messageId}`, 'PDF_DATA_NOT_FOUND', {
-            messageId,
-            pdfDataRef: data.pdfDataRef,
-            loadDuration
-          });
-        }
-      } catch (storageError) {
-        log(`[ClipAIble Offscreen] Failed to load PDF data from IndexedDB for ${messageId}`, 'PDF_DATA_LOAD_ERROR', {
-          messageId,
-          error: storageError.message,
-          errorStack: storageError.stack,
-          pdfDataRef: data.pdfDataRef
-        });
-        logError(`[ClipAIble Offscreen] Failed to load PDF data from IndexedDB for ${messageId}`, {
-          messageId,
-          error: storageError.message,
-          errorStack: storageError.stack,
-          pdfDataRef: data.pdfDataRef
-        });
-      }
+      try { pdfData = await getPdfData(data.pdfDataRef); }
+      catch { throw createPdfError('PDF data could not be read', 'errorPdfDataUnavailable'); }
+      if (!(pdfData instanceof ArrayBuffer)) throw createPdfError('PDF data is unavailable', 'errorPdfDataUnavailable');
     } else if (data.pdfData) {
       log(`[ClipAIble Offscreen] Converting PDF data for ${messageId}...`, {
         messageId,
@@ -820,8 +701,10 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     });
     
     const loadStartTime = Date.now();
-    const loaded = await loadPdfDocument(data.pdfUrl, pdfData);
+    operation.check();
+    const loaded = await loadPdfDocument(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check });
     pdf = loaded.pdf;
+    operation.adopt(pdf);
     const { numPages } = loaded;
     const loadDuration = Date.now() - loadStartTime;
     
@@ -840,10 +723,10 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     });
     
     const pageNum = data.pageNum || 1;
-    const scale = data.scale || 2.0; // Higher scale = better quality
+    const scale = data.scale ?? 2.0; // Higher scale = better quality
     
     if (pageNum < 1 || pageNum > numPages) {
-      throw new Error(`Invalid page number: ${pageNum}. PDF has ${numPages} pages.`);
+      throw createPdfError(`Invalid page number: ${pageNum}. PDF has ${numPages} pages.`, 'errorPdfPageUnavailable', { page: pageNum, pages: numPages });
     }
     
     log(`[ClipAIble Offscreen] Getting page ${pageNum} for ${messageId}...`, { messageId, pageNum });
@@ -855,12 +738,12 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       getPageDuration: Date.now() - getPageStart
     });
     
-    const viewport = page.getViewport({ scale });
+    const { viewport, width, height } = getPdfRenderViewport(page, scale);
     log(`[ClipAIble Offscreen] Viewport created for ${messageId}`, {
       messageId,
       pageNum,
-      width: viewport.width,
-      height: viewport.height,
+      width,
+      height,
       scale
     });
     
@@ -868,7 +751,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     // PDF.js cannot reuse the same canvas - causes "Cannot use the same canvas" error
     // Always use standard HTMLCanvasElement (NOT OffscreenCanvas) for offscreen document
     if (typeof document === 'undefined' || !document.createElement) {
-      throw new Error('document.createElement not available - cannot render PDF in offscreen document');
+      throw createPdfError('document.createElement not available - cannot render PDF in offscreen document', 'errorPdfRenderFailed');
     }
     
     // Create NEW canvas for this page (not reused from previous pages)
@@ -880,8 +763,8 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     
     try {
       canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      canvas.width = width;
+      canvas.height = height;
       context = canvas.getContext('2d', { alpha: false });
       
       log(`[ClipAIble Offscreen] Created NEW canvas for page ${pageNum} (${messageId})`, {
@@ -914,39 +797,12 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     
     // CRITICAL: Check if context is valid before rendering
     if (!context) {
-      throw new Error('Canvas context is null - cannot render PDF page');
+      throw createPdfError('Canvas context is null - cannot render PDF page', 'errorPdfRenderFailed');
     }
     
     // CRITICAL: Check canvas dimensions
     if (canvas.width === 0 || canvas.height === 0) {
-      throw new Error(`Invalid canvas dimensions: ${canvas.width}x${canvas.height}`);
-    }
-    
-    // CRITICAL: Check PDF.js worker status before rendering
-    const pdfjsLib = await loadPdfJs();
-    const globalWorkerDisabled = pdfjsLib.GlobalWorkerOptions?.disableWorker === true;
-    const directDisableWorker = pdfjsLib.disableWorker === true;
-    const workerDisabled = globalWorkerDisabled || directDisableWorker;
-    
-    log(`[ClipAIble Offscreen] PDF.js worker status check for ${messageId}...`, 'PDF_WORKER_STATUS_CHECK', {
-      messageId,
-      pageNum,
-      hasGlobalWorkerOptions: !!pdfjsLib.GlobalWorkerOptions,
-      workerSrc: pdfjsLib.GlobalWorkerOptions?.workerSrc,
-      globalWorkerOptionsDisableWorker: pdfjsLib.GlobalWorkerOptions?.disableWorker,
-      pdfjsLibDisableWorker: pdfjsLib.disableWorker,
-      workerDisabled: workerDisabled,
-      hasRenderMethod: typeof page.render === 'function',
-      hasGetOperatorList: typeof page.getOperatorList === 'function'
-    });
-    
-    if (!workerDisabled) {
-      logWarn(`[ClipAIble Offscreen] WARNING: Worker may still be enabled for ${messageId}! Rendering may hang.`, {
-        messageId,
-        pageNum,
-        globalWorkerOptionsDisableWorker: pdfjsLib.GlobalWorkerOptions?.disableWorker,
-        pdfjsLibDisableWorker: pdfjsLib.disableWorker
-      });
+      throw createPdfError(`Invalid canvas dimensions: ${canvas.width}x${canvas.height}`, 'errorPdfRenderFailed');
     }
     
     log(`[ClipAIble Offscreen] About to call page.render() for ${messageId}...`, 'PDF_PAGE_RENDER_CALL_START', {
@@ -959,10 +815,10 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       canvasType: canvas.constructor.name
     });
     
-      // Add timeout for rendering (60 seconds max)
+       // Bound rendering and retain the task for cancellation.
       // CRITICAL: Use renderTask to get better control over rendering
-      // Try to use getOperatorList first if render hangs (alternative rendering method)
       renderTask = page.render(renderContext);
+      operation.track(renderTask);
       log(`[ClipAIble Offscreen] renderTask created for ${messageId}`, 'PDF_PAGE_RENDER_TASK_CREATED', {
         messageId,
         pageNum,
@@ -991,7 +847,6 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       // CRITICAL: Use longer timeout (5 minutes) for PDF rendering
       // Rendering large documents can take time.
       // Very large PDFs (up to 1000 pages) can take significantly longer to render
-      // With disableWorker=true set BEFORE import, rendering should work in main thread
       const RENDER_TIMEOUT_MS = CONFIG.PDF_RENDER_TIMEOUT_MS;
       const timeoutPromise = new Promise((_, reject) => {
         renderTimeoutId = setTimeout(() => {
@@ -1017,7 +872,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
               });
             }
           }
-          reject(new Error(`PDF page render timeout after ${RENDER_TIMEOUT_MS / 1000} seconds (worker likely hung in offscreen document)`));
+          reject(createPdfError(`PDF page render timeout after ${RENDER_TIMEOUT_MS / 1000} seconds`, 'errorTimeout'));
         }, RENDER_TIMEOUT_MS);
       });
       
@@ -1068,6 +923,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       const convertStart = Date.now();
       
       // Use JPEG with a quality setting to reduce file size.
+      operation.check();
       const imageData = canvas.toDataURL('image/jpeg', 0.92);
       
       log(`[ClipAIble Offscreen] Canvas converted for ${messageId}`, {
@@ -1087,16 +943,16 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
         messageId,
         pageNum,
         imageSize: imageData.length,
-        dimensions: { width: viewport.width, height: viewport.height },
+        dimensions: { width, height },
         totalDuration
       });
       
-      sendResponse({
+      resultPayload = {
         success: true,
         imageData: imageData, // base64 data URL
-        width: viewport.width,
-        height: viewport.height
-      });
+        width,
+        height
+      };
     } finally {
       if (renderTimeoutId) {
         clearTimeout(renderTimeoutId);
@@ -1133,13 +989,11 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       totalDuration
     });
     
-    sendResponse({
-      success: false,
-      error: error.message
-    });
+    resultPayload = pdfFailurePayload(operation.signal.aborted ? operation.signal.reason : error);
   } finally {
-    await destroyPdfDocument(pdf);
+    await operation.finish();
   }
+  sendResponse(resultPayload);
 }
 
 /**
@@ -1148,7 +1002,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
  * This is MUCH faster than loading PDF for each page separately
  * 
  * @param {string} messageId - Message ID for logging
- * @param {{pdfUrl: string, totalPages: number, scale?: number, pdfDataRef?: string, pdfData?: string|ArrayBuffer, originalTabLayout?: any}} data - Message data
+ * @param {{pdfUrl: string, totalPages: number, scale?: number, pdfDataRef?: string, pdfData?: string|ArrayBuffer, operationId?: string}} data - Message data
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {Promise<void>}
  * @throws {Error} If PDF rendering fails
@@ -1166,35 +1020,18 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     pdfDataRef: data?.pdfDataRef
   });
   
+  const operation = startPdfRender(data.operationId);
   let pdf = null;
+  let resultPayload;
   
   try {
+    operation.check();
     // Load PDF data (same logic as handleRenderPdfPageImage)
     let pdfData = null;
     if (data.pdfDataRef) {
-      log(`[ClipAIble Offscreen] Loading PDF data from IndexedDB for ${messageId}...`, {
-        messageId,
-        pdfDataRef: data.pdfDataRef
-      });
-      
-      try {
-        const pdfStorageUrl = chrome.runtime.getURL('scripts/api/pdf-storage.js');
-        const { getPdfData } = await import(pdfStorageUrl);
-        pdfData = await getPdfData(data.pdfDataRef);
-        
-        if (pdfData) {
-          log(`[ClipAIble Offscreen] PDF data loaded from IndexedDB for ${messageId}`, {
-            messageId,
-            size: pdfData.byteLength
-          });
-        }
-      } catch (storageError) {
-        logError(`[ClipAIble Offscreen] Failed to load PDF data from IndexedDB for ${messageId}`, {
-          messageId,
-          error: storageError.message
-        });
-        throw storageError;
-      }
+      try { pdfData = await getPdfData(data.pdfDataRef); }
+      catch { throw createPdfError('PDF data could not be read', 'errorPdfDataUnavailable'); }
+      if (!(pdfData instanceof ArrayBuffer)) throw createPdfError('PDF data is unavailable', 'errorPdfDataUnavailable');
     } else if (data.pdfData) {
       // Convert base64 or ArrayBuffer to ArrayBuffer
       if (typeof data.pdfData === 'string') {
@@ -1210,7 +1047,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     }
     
     if (!pdfData) {
-      throw new Error('No PDF data provided');
+      throw createPdfError('No PDF data provided', 'errorPdfInvalid');
     }
     
     // CRITICAL: Load PDF document ONCE for all pages
@@ -1221,8 +1058,10 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     });
     
     const loadStartTime = Date.now();
-    const { pdf: loadedPdf, numPages } = await loadPdfDocument(data.pdfUrl, pdfData);
+    operation.check();
+    const { pdf: loadedPdf, numPages } = await loadPdfDocument(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check });
     pdf = loadedPdf;
+    operation.adopt(pdf);
     const loadDuration = Date.now() - loadStartTime;
     
     const totalPages = data.totalPages || numPages;
@@ -1234,12 +1073,13 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
       loadDuration
     });
     
-    const scale = data.scale || 2.0;
+    const scale = data.scale ?? 2.0;
     const images = [];
     
     // CRITICAL: Render pages SEQUENTIALLY (not parallel!)
     // This ensures proper cleanup between pages
     for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      operation.check();
       let page = null;
       let canvas = null;
       let renderTask = null;
@@ -1250,102 +1090,14 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         
         // Create NEW canvas for this page
         if (typeof document === 'undefined' || !document.createElement) {
-          throw new Error('document.createElement not available');
+          throw createPdfError('document.createElement not available', 'errorPdfRenderFailed');
         }
         
         canvas = document.createElement('canvas');
-        const viewport = page.getViewport({ scale });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        const { viewport, width, height } = getPdfRenderViewport(page, scale);
+        canvas.width = width;
+        canvas.height = height;
         const context = canvas.getContext('2d', { alpha: false });
-        
-        // CRITICAL: Check PDF.js worker status before rendering (diagnostics)
-        const pdfjsLib = await loadPdfJs();
-        const workerSrc = pdfjsLib.GlobalWorkerOptions?.workerSrc;
-        /** @type {any} */
-        const WorkerConstructor = typeof self !== 'undefined' ? self.Worker : null;
-        const workerPatched = WorkerConstructor?._patched || false;
-        
-        // Check Worker status from PDF document (if available)
-        const transport = pdf._transport;
-        const worker = transport?.worker;
-        
-        // CRITICAL: Deep inspection of PDF.js internal structure
-        const transportInspection = {
-          exists: transport !== undefined,
-          type: transport?.constructor?.name || 'unknown',
-          keys: transport ? Object.keys(transport) : [],
-          hasWorker: 'worker' in (transport || {}),
-          workerValue: transport?.worker,
-          workerType: transport?.worker?.constructor?.name || (transport?.worker === undefined ? 'undefined' : (transport?.worker === null ? 'null' : 'unknown'))
-        };
-        
-        const workerInspection = worker ? {
-          exists: true,
-          type: worker.constructor?.name || 'unknown',
-          keys: Object.keys(worker),
-          hasPort: 'port' in worker,
-          hasMessageHandler: '_messageHandler' in worker,
-          hasDestroyed: 'destroyed' in worker,
-          portType: worker.port?.constructor?.name || 'none',
-          messageHandlerType: worker._messageHandler?.constructor?.name || 'none'
-        } : {
-          exists: false,
-          reason: transport === undefined ? 'transport is undefined' : 'worker property missing or null'
-        };
-        
-        const pdfWorkerStatus = {
-          hasTransport: transport !== undefined,
-          hasWorker: worker !== undefined && worker !== null,
-          hasWorkerPort: worker?.port !== undefined,
-          hasWorkerMessageHandler: worker?._messageHandler !== undefined,
-          workerDestroyed: worker?.destroyed === true,
-          workerType: worker?.constructor?.name || 'unknown',
-          isFakeWorker: worker !== undefined && worker !== null && !worker?.port && worker?._messageHandler !== undefined,
-          isRealWorker: worker?.port !== undefined,
-          transportInspection: transportInspection,
-          workerInspection: workerInspection
-        };
-        
-        // Use log to ensure Worker status reaches background.js
-        log(`[ClipAIble Offscreen] PDF.js worker status before render for ${messageId}`, 'PDF_WORKER_STATUS_BEFORE_RENDER', {
-          messageId,
-          pageNum,
-          workerSrc,
-          workerPatched,
-          pdfWorkerStatus: pdfWorkerStatus,
-          note: pdfWorkerStatus.isFakeWorker ? 'Using fake worker (main thread) ✅' : 
-                pdfWorkerStatus.isRealWorker ? 'Using real Worker (may hang) ⚠️' : 
-                pdfWorkerStatus.hasWorker ? 'Worker exists but type unclear ⚠️' :
-                'No worker found - may use direct rendering ⚠️'
-        });
-        
-        log(`[ClipAIble Offscreen] PDF.js worker status before render for ${messageId}`, {
-          messageId,
-          pageNum,
-          workerSrc,
-          workerPatched,
-          pdfWorkerStatus: pdfWorkerStatus,
-          note: pdfWorkerStatus.isFakeWorker ? 'Using fake worker (main thread) ✅' : 
-                pdfWorkerStatus.hasWorkerPort ? 'Using real Worker (may hang) ⚠️' : 
-                'Worker status unclear ⚠️'
-        });
-        
-        // CRITICAL: Verify Worker is blocked before rendering
-        const workerPort = pdfjsLib.GlobalWorkerOptions?.workerPort;
-        /** @type {any} */
-        const WorkerConstructor2 = typeof self !== 'undefined' ? self.Worker : null;
-        const hasWorkerPatch = WorkerConstructor2?._patched === true;
-        
-        log(`[ClipAIble Offscreen] Pre-render Worker status check for page ${pageNum} (${messageId})`, 'PDF_PRE_RENDER_WORKER_CHECK', {
-          messageId,
-          pageNum,
-          workerSrc: workerSrc || 'empty',
-          workerPort: workerPort,
-          hasWorkerPatch: hasWorkerPatch,
-          workerPatchActive: hasWorkerPatch,
-          note: workerSrc === '' ? 'Empty workerSrc should force fake worker' : 'workerSrc is set - may try to load worker'
-        });
         
         // Render with timeout
         const renderStart = Date.now();
@@ -1354,6 +1106,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
           viewport: viewport,
           intent: 'print'
         });
+        operation.track(renderTask);
         
         log(`[ClipAIble Offscreen] Render task created for page ${pageNum} (${messageId})`, {
           messageId,
@@ -1394,8 +1147,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         });
         
         // Allow additional initialization time for the first page.
-        // Fake worker runs in main thread and is slower, especially for first page
-        // First page: 10 minutes (initialization), other pages: 5 minutes
+            // First page: 10 minutes (initialization), other pages: 5 minutes
         const RENDER_TIMEOUT_MS = pageNum === 1 ? CONFIG.PDF_FIRST_PAGE_RENDER_TIMEOUT_MS : CONFIG.PDF_RENDER_TIMEOUT_MS;
         let renderTimeoutId;
         const timeoutPromise = new Promise((_, reject) => {
@@ -1426,7 +1178,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
               }
             }
             
-            reject(new Error(`Page ${pageNum} render timeout after ${RENDER_TIMEOUT_MS / 1000} seconds`));
+            reject(createPdfError(`Page ${pageNum} render timeout after ${RENDER_TIMEOUT_MS / 1000} seconds`, 'errorTimeout'));
           }, RENDER_TIMEOUT_MS);
         });
         
@@ -1440,40 +1192,27 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         }
         
         // Convert to JPEG
+        operation.check();
         const imageData = canvas.toDataURL('image/jpeg', 0.92);
         const base64 = imageData.split(',')[1];
         
         images.push({
           pageNum,
           base64,
-          width: viewport.width,
-          height: viewport.height
+          width,
+          height
         });
         
         log(`[ClipAIble Offscreen] Page ${pageNum} rendered successfully for ${messageId}`, {
           messageId,
           pageNum,
-          width: viewport.width,
-          height: viewport.height,
+          width,
+          height,
           imageSize: base64.length
         });
         
-        // Send progress update (non-blocking)
-        try {
-          chrome.runtime.sendMessage({
-            type: 'renderProgress',
-            data: { current: pageNum, total: totalPages, messageId }
-          }, () => {
-            // CRITICAL: Check chrome.runtime.lastError to prevent "Unchecked runtime.lastError" spam
-            if (chrome.runtime.lastError) {
-              // Silently ignore - "Could not establish connection" is expected when receiver is closed
-            }
-          });
-        } catch (e) {
-          // Ignore
-        }
-        
       } catch (error) {
+        operation.check();
         logError(`[ClipAIble Offscreen] Page ${pageNum} render failed for ${messageId}`, {
           messageId,
           pageNum,
@@ -1507,14 +1246,13 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         // Add error placeholder
         images.push({
           pageNum,
-          error: error.message
+          ...(pdfFailurePayload(error, 'errorPdfRenderFailed'))
         });
         
       } finally {
         // CRITICAL: Cleanup page BEFORE next iteration
         if (page) {
           page.cleanup();
-          page._transport = null;
         }
         
         // CRITICAL: Cleanup canvas
@@ -1539,11 +1277,11 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
       totalDuration
     });
     
-    sendResponse({
+    resultPayload = {
       success: true,
       images,
       totalPages
-    });
+    };
     
   } catch (error) {
     const totalDuration = Date.now() - startTime;
@@ -1554,26 +1292,15 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
       totalDuration
     });
     
-    sendResponse({
-      success: false,
-      error: error.message
-    });
+    resultPayload = pdfFailurePayload(error);
     
   } finally {
-    // CRITICAL: Cleanup PDF document AFTER all pages
-    if (pdf) {
-      try {
-        await destroyPdfDocument(pdf);
-        log(`[ClipAIble Offscreen] PDF document cleaned up for ${messageId}`, {
-          messageId
-        });
-      } catch (cleanupError) {
-        logWarn(`[ClipAIble Offscreen] Failed to cleanup PDF document for ${messageId}`, {
-          messageId,
-          error: cleanupError.message
-        });
-      }
-    }
+    await operation.finish();
   }
+  sendResponse(resultPayload);
 }
 
+export function handleCancelPdfRender(_messageId, data, sendResponse) {
+  cancelPdfRender(data?.operationId);
+  sendResponse({ success: true });
+}

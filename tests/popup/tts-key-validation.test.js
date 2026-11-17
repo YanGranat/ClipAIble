@@ -28,14 +28,14 @@ describe('Google TTS key validation', () => {
     await save();
     expect(deps.encryptApiKey).not.toHaveBeenCalled();
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
-    expect(deps.showToast).toHaveBeenCalledWith('invalidGoogleTtsKeyFormat', 'error');
+    expect(deps.showToast).toHaveBeenCalledWith('invalidGoogleTtsKeyFormat', 'error', { key: 'invalidGoogleTtsKeyFormat' });
   });
 
   it('does not store a Google key that is too short', async () => {
     deps.elements.googleTtsApiKey.value = 'AIza-short';
     await save();
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
-    expect(deps.showToast).toHaveBeenCalledWith('keyTooShort', 'error');
+    expect(deps.showToast).toHaveBeenCalledWith('keyTooShort', 'error', { key: 'keyTooShort' });
   });
 
   it('stores a key accepted by asynchronous validation', async () => {
@@ -45,6 +45,6 @@ describe('Google TTS key validation', () => {
     expect(navigator.locks.request).toHaveBeenCalledWith('clipaible-api-key-storage', expect.any(Function));
     expect(deps.elements.googleTtsApiKey.dataset.encrypted).toBe('encrypted-key');
     expect(deps.elements.googleTtsApiKey.type).toBe('password');
-    expect(deps.showToast).toHaveBeenCalledWith('googleTtsKeySaved', 'success');
+    expect(deps.showToast).toHaveBeenCalledWith('googleTtsKeySaved', 'success', { key: 'googleTtsKeySaved' });
   });
 });

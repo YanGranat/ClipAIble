@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "5f06fa07a4284d846a43a0477a09fb15b4769157",
+  "packageVersion": "1.0.4",
+  "archives": [
+    {
+      "file": "piper-tts-web-source.tar.gz",
+      "url": "https://codeload.github.com/Mintplex-Labs/piper-tts-web/tar.gz/5f06fa07a4284d846a43a0477a09fb15b4769157",
+      "bytes": 95650,
+      "sha256": "f393fa0ad857026a6b8adf73bf04d2605853844b0ec151539ce1838e413b0ded"
+    },
+    {
+      "file": "piper-tts-web-1.0.4.tgz",
+      "url": "https://registry.npmjs.org/@mintplex-labs/piper-tts-web/-/piper-tts-web-1.0.4.tgz",
+      "bytes": 101283,
+      "sha256": "84425e377b4c943db4e3c0537c5d509b5bcb6353ec1c1b18abd9fc9b14aec8a3"
+    },
+    {
+      "file": "yarn-1.22.22.tgz",
+      "url": "https://registry.npmjs.org/yarn/-/yarn-1.22.22.tgz",
+      "bytes": 1238429,
+      "sha256": "c17d3797fb9a9115bf375e31bfd30058cac6bc9c3b8807a3d8cb2094794b51ca"
+    }
+  ]
+}

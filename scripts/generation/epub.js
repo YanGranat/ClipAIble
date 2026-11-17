@@ -7,16 +7,17 @@
 // @typedef {import('../types.js').ProcessingState} ProcessingState
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { stripHtml, markdownToHtml, sanitizeHtml, decodeHtmlEntities } from '../utils/html.js';
+import { stripHtml, markdownToHtml, sanitizeHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import JSZip from '../../lib/jszip-wrapper.js';
-import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
-import { getUILanguage, tSync } from '../locales.js';
+import { getDocumentLocalization, getDocumentLanguageTag, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
+import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
+import { normalizeXmlCharacters, escapeXml, isNativePdfContent, protectXmlLiteralText, serializeXmlInline } from './xml.js';
 
 
 /**
@@ -74,10 +75,11 @@ export async function generateEpub(data, updateState) {
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    Object.assign(error, getErrorTranslation(normalized));
     throw error;
   }
   
-  if (updateState) updateState({ status: 'Building EPUB structure...', progress: 82 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 82 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
   const filteredContent = filterFigureParagraphs(content, sourceUrl);
@@ -101,13 +103,13 @@ export async function generateEpub(data, updateState) {
   // Format ISO date to readable format using language code
   const pubDate = formatDateForDisplay(publishDate, langCode) || new Date().toLocaleDateString(getLocaleFromLanguage(langCode), { year: 'numeric', month: 'long', day: 'numeric' });
   
-  if (updateState) updateState({ status: 'Building EPUB structure...', progress: 85 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 85 });
   
   // 1. mimetype (must be first, uncompressed)
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
   
   // 2. META-INF/container.xml
-  zip.file('META-INF/container.xml', generateContainerXml());
+  zip.file('META-INF/container.xml', normalizeXmlCharacters(generateContainerXml()));
   
   // 3. Collect headings for TOC (preserve original IDs for internal links)
   // Include all headings starting from level 1 (same as PDF/Markdown)
@@ -117,7 +119,7 @@ export async function generateEpub(data, updateState) {
   const headings = [];
   filteredContent.forEach((item, index) => {
     if (item.type === 'heading' && item.level >= 1) {
-      const text = stripHtml(item.text || '');
+      const text = isNativePdfContent(item) ? item.text : stripHtml(item.text || '');
       if (text) {
         // Use original id from page (e.g. "TradRevi") or generate fallback
         const originalId = item.id || `heading-${index}`;
@@ -134,7 +136,7 @@ export async function generateEpub(data, updateState) {
   if (updateState) {
     const uiLang = await getUILanguage();
     const loadingStatus = tSync('stageLoadingImages', uiLang);
-    updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 87 });
+    updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, ...formatStatusUpdate('stageLoadingImages', await getUILanguage()), progress: 87 });
   }
   const imageManifest = await embedEpubImages(zip, filteredContent, updateState);
   if (imageCount > 0) {
@@ -142,20 +144,20 @@ export async function generateEpub(data, updateState) {
   }
   
   // 5. Generate content XHTML (uses _epubSrc for images)
-  if (updateState) updateState({ status: 'Converting content...', progress: 90 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 90 });
   const contentXhtml = generateContentXhtml(filteredContent, safeTitle, safeAuthor, pubDate, sourceUrl, headings, language, generateAbstract, abstract);
-  zip.file('OEBPS/content.xhtml', contentXhtml);
+  zip.file('OEBPS/content.xhtml', normalizeXmlCharacters(contentXhtml));
   
   // 6. Generate TOC navigation (only if more than 1 heading)
   if (generateToc && headings.length > 1) {
     log(`📑 Generating EPUB table of contents: ${headings.length} headings`);
   }
   const navXhtml = generateNavXhtml(safeTitle, headings, generateToc && headings.length > 1, langCode);
-  zip.file('OEBPS/nav.xhtml', navXhtml);
+  zip.file('OEBPS/nav.xhtml', normalizeXmlCharacters(navXhtml));
   
   // 7. Generate NCX for EPUB 2 compatibility
   const tocNcx = generateTocNcx(bookId, safeTitle, headings, generateToc && headings.length > 1);
-  zip.file('OEBPS/toc.ncx', tocNcx);
+  zip.file('OEBPS/toc.ncx', normalizeXmlCharacters(tocNcx));
   if (generateToc && headings.length > 1) {
     log('✅ EPUB table of contents generated');
   }
@@ -168,9 +170,9 @@ export async function generateEpub(data, updateState) {
   if (imageManifest.length > 0) {
     contentOpf = addImagesToOpf(contentOpf, imageManifest);
   }
-  zip.file('OEBPS/content.opf', contentOpf);
+  zip.file('OEBPS/content.opf', normalizeXmlCharacters(contentOpf));
   
-  if (updateState) updateState({ status: 'Creating EPUB file...', progress: 95 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 95 });
   
   // Generate the ZIP file as blob to avoid large base64 in memory
   log('Generating ZIP...');
@@ -271,7 +273,7 @@ export async function generateEpub(data, updateState) {
   log('=== EPUB GENERATION END ===');
   if (updateState) {
     const uiLang = await getUILanguage();
-    updateState({ status: tSync('statusDone', uiLang), progress: 100 });
+    updateState({ ...formatStatusUpdate('statusDone', await getUILanguage()), progress: 100 });
   }
   
   return epubBlob;
@@ -317,7 +319,7 @@ function generateContentOpf(bookId, title, author, lang, pubDate, sourceUrl, gen
     <dc:identifier id="BookId">${bookId}</dc:identifier>
     <dc:title>${escapedTitle}</dc:title>
 ${author ? `    <dc:creator>${escapedAuthor}</dc:creator>` : ''}
-    <dc:language>${escapeXml(lang)}</dc:language>
+    <dc:language>${escapeXml(getDocumentLanguageTag(lang))}</dc:language>
     <dc:date>${escapeXml(pubDate)}</dc:date>
     <dc:source>${escapedSource}</dc:source>
     <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}</meta>
@@ -352,7 +354,7 @@ function addImagesToOpf(opf, imageManifest) {
 function generateNavXhtml(title, headings, generateToc, language = 'en') {
   const escapedTitle = escapeXml(title);
   const langCode = language === 'auto' ? 'en' : language;
-  const l10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
+  const l10n = getDocumentLocalization(langCode);
   const contentsLabel = l10n.contents || 'Contents';
   
   let tocHtml = '';
@@ -446,7 +448,7 @@ function generateNavXhtml(title, headings, generateToc, language = 'en') {
     </nav>`;
   }
   
-  const langAttr = langCode;
+  const langAttr = getDocumentLanguageTag(langCode);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${escapeXml(langAttr)}">
@@ -505,7 +507,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   
   // Get localized labels
   const langCode = language === 'auto' ? 'en' : language;
-  const l10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
+  const l10n = getDocumentLocalization(langCode);
   const sourceLabel = l10n.source || 'Source';
   const dateLabel = l10n.date || 'Date';
   
@@ -518,7 +520,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
       const subtitleText = item.text || item.html || '';
       if (subtitleText) {
         const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-        subtitleHtml = `\n    <p class="standfirst"${idAttr}>${sanitizeHtmlForXhtml(subtitleText, sourceUrl)}</p>`;
+        subtitleHtml = `\n    <p class="standfirst"${idAttr}>${sanitizeHtmlForXhtml(subtitleText, sourceUrl, isNativePdfContent(item))}</p>`;
         subtitleIndex = i;
         break;
       }
@@ -587,7 +589,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   let abstractHtml = '';
   if (generateAbstract && abstract) {
     // langCode already computed above
-    const abstractL10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
+    const abstractL10n = getDocumentLocalization(langCode);
     const abstractLabel = abstractL10n.abstract || 'Abstract';
     abstractHtml = `\n  <section class="abstract">
     <h2>${escapeXml(abstractLabel)}</h2>
@@ -614,7 +616,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   // langCode already computed above, use it for xml:lang
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${escapeXml(langCode)}">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${escapeXml(getDocumentLanguageTag(langCode))}">
 <head>
   <meta charset="UTF-8"/>
   <title>${escapedTitle}</title>
@@ -642,14 +644,14 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       const text = item.text || '';
       // Prefer original item.id, then headings array, then fallback
       const id = item.id || headings[headingIndex]?.id || `heading-${headingIndex}`;
-      return `    <h${level} id="${escapeXml(id)}">${sanitizeHtmlForXhtml(text, sourceUrl)}</h${level}>\n`;
+      return `    <h${level} id="${escapeXml(id)}">${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</h${level}>\n`;
     }
     
     case 'paragraph': {
       const text = item.text || '';
       if (!text.trim()) return '';
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-      return `    <p${idAttr}>${sanitizeHtmlForXhtml(text, sourceUrl)}</p>\n`;
+      return `    <p${idAttr}>${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</p>\n`;
     }
     
     case 'quote':
@@ -657,7 +659,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       const text = item.text || '';
       if (!text.trim()) return '';
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-      return `    <blockquote${idAttr}><p>${sanitizeHtmlForXhtml(text, sourceUrl)}</p></blockquote>\n`;
+      return `    <blockquote${idAttr}><p>${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</p></blockquote>\n`;
     }
     
     case 'code': {
@@ -673,7 +675,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
         const text = typeof li === 'string' ? li : (li.html || li.text || '');
         const liId = (typeof li === 'object' && li.id) ? li.id : '';
         const liIdAttr = liId ? ` id="${escapeXml(liId)}"` : '';
-        return `      <li${liIdAttr}>${sanitizeHtmlForXhtml(text, sourceUrl)}</li>`;
+        return `      <li${liIdAttr}>${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</li>`;
       }).join('\n');
       return `    <${tag}${listIdAttr}>\n${listItems}\n    </${tag}>\n`;
     }
@@ -713,7 +715,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       };
       
       const captionText = item.caption || '';
-      const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl) : '';
+      const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl, isNativePdfContent(item)) : '';
       if (!src) return '';
 
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
@@ -743,7 +745,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
     
     default: {
       if (item.text) {
-        return `    <p>${sanitizeHtmlForXhtml(item.text, sourceUrl)}</p>\n`;
+        return `    <p>${sanitizeHtmlForXhtml(item.text, sourceUrl, isNativePdfContent(item))}</p>\n`;
       }
       return '';
     }
@@ -754,27 +756,30 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
  * Convert table to XHTML
  */
 function tableToXhtml(item, sourceUrl = '') {
-  if (!item.rows || !item.rows.length) return '';
+  const rows = Array.isArray(item.headers) && item.headers.length
+    ? [item.headers, ...(item.rows || [])] : item.rows;
+  if (!rows || !rows.length) return '';
   
   let html = '    <table>\n';
-  const rows = item.rows;
+  const hasHeaders = item.hasHeaders !== false;
   
   // First row as header
-  if (rows.length > 0) {
+  if (hasHeaders) {
     html += '      <thead><tr>\n';
     rows[0].forEach(cell => {
-      html += `        <th>${sanitizeHtmlForXhtml(cell, sourceUrl)}</th>\n`;
+      html += `        <th>${sanitizeHtmlForXhtml(cell, sourceUrl, isNativePdfContent(item))}</th>\n`;
     });
     html += '      </tr></thead>\n';
   }
   
   // Body rows
-  if (rows.length > 1) {
+  const startRow = hasHeaders ? 1 : 0;
+  if (rows.length > startRow) {
     html += '      <tbody>\n';
-    for (let i = 1; i < rows.length; i++) {
+    for (let i = startRow; i < rows.length; i++) {
       html += '      <tr>\n';
       rows[i].forEach(cell => {
-        html += `        <td>${sanitizeHtmlForXhtml(cell, sourceUrl)}</td>\n`;
+        html += `        <td>${sanitizeHtmlForXhtml(cell, sourceUrl, isNativePdfContent(item))}</td>\n`;
       });
       html += '      </tr>\n';
     }
@@ -829,221 +834,17 @@ function convertInternalLinks(html, sourceUrl) {
 /**
  * Sanitize HTML for XHTML (close tags, escape entities)
  */
-function sanitizeHtmlForXhtml(html, sourceUrl = '') {
+function sanitizeHtmlForXhtml(html, sourceUrl = '', plainText = false) {
   if (!html) return '';
-  
-  // Preserve allowed inline tags, escape others
-  let result = html;
-  
-  // CRITICAL: Convert markdown to HTML if text contains markdown syntax
-  // Check if text contains markdown patterns: **bold**, *italic*, `code`, [link](url)
-  // Convert even if HTML tags are present (markdown can be mixed with HTML)
-  // Pattern matches: **text**, *text*, `code`, [text](url), __bold__, ~~strikethrough~~
+  if (plainText) return escapeXml(html);
+  let result = normalizeXmlCharacters(html);
   const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(result);
-  if (hasMarkdown) {
-    // Convert markdown to HTML first
-    result = markdownToHtml(result);
-  }
-
-  result = sanitizeHtml(result, sourceUrl);
-  
-  // Convert internal links to local anchors
-  if (sourceUrl) {
-    result = convertInternalLinks(result, sourceUrl);
-  }
-  
-  // CRITICAL: Remove inline style attributes that set colors (especially from links)
-  // This ensures EPUB styles control link colors, not inline styles from source page
-  // Remove style="color: ..." from all elements
+  if (hasMarkdown) result = markdownToHtml(result);
+  result = sanitizeHtml(protectXmlLiteralText(result), sourceUrl);
+  if (sourceUrl) result = convertInternalLinks(result, sourceUrl);
   result = result.replace(/\s*style\s*=\s*["'][^"']*color\s*:[^"']*["']/gi, '');
-  // Also remove style attributes that only contain color (clean up empty style="")
   result = result.replace(/\s*style\s*=\s*["']\s*["']/gi, '');
-  
-  // CRITICAL: Process closing block tags - replace with <br> to preserve line breaks
-  // Then remove <br> before inline elements to prevent unwanted line breaks
-  // This matches the logic in sanitizeHtml for PDF generation
-  const allowedTags = ['a', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'ins', 'code', 'br', 'sub', 'sup', 'mark', 'small', 'span', 'abbr', 'cite', 'q', 'time', 'dfn', 'kbd', 'var', 'samp'];
-  
-  // CRITICAL: First, properly extract and clean up links
-  // Extract link text and href, then reconstruct clean <a> tags
-  // This prevents link attributes from leaking into text content
-  result = result.replace(/<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (match, href, linkText) => {
-    // Clean link text - remove any HTML tags and attributes that might have leaked
-    const cleanText = linkText
-      .replace(/<[^>]+>/g, '') // Remove all HTML tags
-      .replace(/&nbsp;/g, ' ') // Replace &nbsp; with space
-      .trim();
-    // Escape XML entities in link text
-    const escapedText = decodeHtmlEntities(cleanText)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&apos;');
-    // Return clean link tag with only href attribute
-    return `<a href="${href}">${escapedText}</a>`;
-  });
-  
-  // CRITICAL: Handle orphaned <a> tags without href (they should have been processed above, but handle edge cases)
-  // Remove <a> tags without href to prevent unclosed tags
-  result = result.replace(/<a\s+[^>]*>(?!.*href)/gi, (match) => {
-    // Check if this tag has href attribute
-    const hasHref = /href\s*=\s*["']/i.test(match);
-    if (!hasHref) {
-      // No href - remove the opening tag (but keep the content)
-      return '';
-    }
-    return match;
-  });
-  
-  // CRITICAL: Remove orphaned closing </a> tags that don't have matching opening tags
-  // This prevents malformed HTML
-  result = result.replace(/<\/a>/gi, (match, offset) => {
-    // Check if there's a matching opening <a> tag before this closing tag
-    const beforeText = result.substring(0, offset);
-    const openingTags = (beforeText.match(/<a\s+[^>]*>/gi) || []).length;
-    const closingTags = (beforeText.match(/<\/a>/gi) || []).length;
-    if (openingTags <= closingTags) {
-      // No matching opening tag - remove this closing tag
-      return '';
-    }
-    return match;
-  });
-  
-  // Replace closing block tags with <br>
-  result = result.replace(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi, (match, tagName) => {
-    const tag = tagName.toLowerCase();
-    
-    // Keep allowed inline tags (but links are already processed above)
-    if (allowedTags.includes(tag)) {
-      if (match.startsWith('</')) return `</${tag}>`;
-      // For opening tags, preserve href and other allowed attributes
-      if (tag === 'a') {
-        // This should not happen after link processing above, but handle it anyway
-        const hrefMatch = match.match(/href\s*=\s*["']([^"']+)["']/i);
-        if (hrefMatch) {
-          return `<a href="${hrefMatch[1]}">`;
-        }
-        // CRITICAL: If no href, add href="#" to prevent unclosed tags
-        return '<a href="#">';
-      }
-      return match;
-    }
-    
-    // For non-allowed tags:
-    // Opening tags: remove completely
-    // Closing block tags: replace with <br> to preserve line breaks
-    if (match.startsWith('</')) {
-      const blockTags = ['p', 'div', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
-      if (blockTags.includes(tag)) {
-        return '<br>';
-      }
-    }
-    return '';
-  });
-  
-  // Clean up multiple <br> tags
-  result = result.replace(/(<br\s*\/?>\s*)+/gi, '<br/>');
-  result = result.replace(/^(\s*<br\s*\/?\s*>)+/gi, '');
-  result = result.replace(/(\s*<br\s*\/?\s*>)+$/gi, '');
-  
-  // CRITICAL: Remove <br> tags that appear before inline elements
-  // This prevents unwanted line breaks when block tags are converted to <br>
-  // but the next element is inline (e.g., <a>CLAUDE.md</a><br/><span> should become <a>CLAUDE.md</a><span>)
-  // Inline tags that should not have <br> before them
-  // CRITICAL: Order matters - longer tags first to avoid partial matches (e.g., 'strong' before 's')
-  const inlineTagPattern = '(a|span|strong|code|mark|small|abbr|cite|time|dfn|kbd|samp|del|ins|sub|sup|em|var|b|i|u|s|q)';
-  // Remove <br> before opening inline tag (most common case: </div><br/><span> or </a><br/><span>)
-  // Pattern: <br/> followed by whitespace and opening inline tag
-  // CRITICAL: Use capturing group to preserve the full tag name, not just first letter
-  result = result.replace(new RegExp(`<br\\s*\\/?>\\s*<(${inlineTagPattern})(?:\\s|>|\\b)`, 'gi'), '<$1');
-  
-  // Decode &nbsp; to regular space before escaping
-  result = result.replace(/&nbsp;/gi, ' ');
-  
-  // Self-closing tags must end with />
-  result = result.replace(/<(br|hr|img)([^>]*)>/gi, '<$1$2/>');
-  
-  // Empty anchor tags (used as link targets) should be self-closing in XHTML
-  // <a id="xxx"></a> or <a name="xxx"></a> -> <a id="xxx"/>
-  result = result.replace(/<a\s+((?:id|name)=["'][^"']+["'][^>]*)>\s*<\/a>/gi, '<a $1/>');
-  
-  // Escape special XML entities (but not in existing tags)
-  result = result.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
-  
-  // CRITICAL: Ensure all opening tags have matching closing tags (stack-based approach)
-  // This prevents unclosed tags from affecting subsequent text (e.g., unclosed <a> makes all text blue)
-  const allowedTagsForCheck = ['b', 'strong', 'em', 'i', 'u', 's', 'del', 'ins', 'code', 'mark', 'small', 'span', 'a'];
-  const tagStack = [];
-  let processedResult = '';
-  let i = 0;
-  
-  while (i < result.length) {
-    // Check for opening tag
-    const openMatch = result.substring(i).match(/^<([a-z][a-z0-9]*)\b[^>]*>/i);
-    if (openMatch) {
-      const tag = openMatch[1].toLowerCase();
-      if (allowedTagsForCheck.includes(tag)) {
-        // Self-closing tags like <br/> don't need closing
-        if (tag !== 'br') {
-          tagStack.push(tag);
-        }
-        processedResult += openMatch[0];
-        i += openMatch[0].length;
-        continue;
-      }
-    }
-    
-    // Check for closing tag
-    const closeMatch = result.substring(i).match(/^<\/([a-z][a-z0-9]*)>/i);
-    if (closeMatch) {
-      const tag = closeMatch[1].toLowerCase();
-      if (allowedTagsForCheck.includes(tag)) {
-        // Find matching opening tag in stack
-        const stackIndex = tagStack.lastIndexOf(tag);
-        if (stackIndex >= 0) {
-          // Close all tags between stackIndex+1 and end (these are nested tags that need to be closed first)
-          for (let j = tagStack.length - 1; j > stackIndex; j--) {
-            processedResult += `</${tagStack[j]}>`;
-          }
-          // Remove the matching tag and all tags after it from stack
-          tagStack.length = stackIndex;
-          processedResult += closeMatch[0];
-        } else {
-          // Orphaned closing tag - ignore it (don't add to result)
-        }
-        i += closeMatch[0].length;
-        continue;
-      }
-    }
-    
-    // Regular character
-    processedResult += result[i];
-    i++;
-  }
-  
-  // Close any remaining open tags
-  while (tagStack.length > 0) {
-    const remainingTag = tagStack.pop();
-    processedResult += `</${remainingTag}>`;
-  }
-  
-  result = processedResult;
-  
-  return result.trim();
-}
-
-/**
- * Escape XML special characters
- */
-function escapeXml(str) {
-  if (!str) return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  return serializeXmlInline(result, 'xhtml').trim();
 }
 
 /**
@@ -1243,7 +1044,7 @@ async function embedEpubImages(zip, content, updateState) {
   }
   
   if (updateState) {
-    updateState({ status: `Loading ${imageItems.length} images...`, progress: 87 });
+    updateState({ ...formatStatusUpdate('statusLoadingImagesCount', await getUILanguage(), { count: imageItems.length }), progress: 87 });
   }
   
   // Process images in parallel batches

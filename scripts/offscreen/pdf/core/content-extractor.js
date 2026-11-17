@@ -5,6 +5,7 @@
 import { log, logWarn } from '../../../utils/logging.js';
 import { processPage } from '../processors/page-processor.js';
 import { CROSS_PAGE_BREAK_MARKER } from '../constants.js';
+import { createPdfError } from '../../../utils/pdf-errors.js';
 
 /**
  * Extract content from all pages
@@ -32,6 +33,7 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
   
   const allElements = [];
   let hasTextContent = false;
+  const failedPages = [];
   
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     log(`[PDF v3] Processing page ${pageNum}/${numPages}`);
@@ -56,7 +58,7 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
         stack: error.stack,
         name: error.name
       });
-      // Continue processing other pages even if one fails
+      failedPages.push(pageNum);
     }
     
     // Cleanup page
@@ -66,6 +68,10 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
       logWarn(`[PDF v3] Failed to cleanup page ${pageNum}`, cleanupError);
       // Continue anyway
     }
+  }
+
+  if (failedPages.length) {
+    throw createPdfError(`PDF extraction is incomplete. Failed pages: ${failedPages.join(', ')}.`, 'errorPdfIncomplete', { pages: failedPages.join(', ') });
   }
   
   // COMMENTED: log(`[PDF v3] Extraction complete - hasTextContent=${hasTextContent}, allElements.length=${allElements.length}`);
@@ -79,7 +85,7 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
   // If we have elements, even if hasTextContent is false, we should continue
   if (allElements.length === 0) {
     logWarn(`[PDF v3] No elements extracted from ${numPages} pages - PDF may be scanned or have no text layer`);
-    throw new Error('This PDF has no text layer (scanned PDF). OCR is not supported.');
+    throw createPdfError('This PDF has no text layer (scanned PDF). OCR is not supported.', 'errorPdfNoTextLayer');
   }
   
   log(`[PDF v3] Content extracted from all pages - totalElements=${allElements.length}`);

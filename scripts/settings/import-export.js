@@ -8,6 +8,11 @@ import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
 import { DOCUMENT_FONT_FAMILIES, isDocumentColor } from '../utils/styles-validation.js';
+import { IMAGE_TRANSLATION_PROVIDERS } from '../api/image-translation-catalog.js';
+
+function importError(key, language, params = {}) {
+  return Object.assign(new Error(tSync(key, language, params)), { translationKey: key, translationParams: params });
+}
 
 // Get current extension version (centralized function)
 function getCurrentVersion() {
@@ -36,6 +41,7 @@ const STORAGE_KEYS_TO_EXPORT = [
   'page_mode',
   'pdf_language',
   'translate_images',
+  'image_translation_provider',
   
   // Audio settings
   'audio_provider',
@@ -195,16 +201,16 @@ export async function importSettings(jsonData, options = {}) {
     } catch (parseError) {
       logError('Failed to parse import JSON', parseError);
       const uiLang = await getUILanguageCached();
-      throw new Error(tSync('errorImportJsonParseFailed', uiLang));
+      throw importError('errorImportJsonParseFailed', uiLang);
     }
     
     const uiLang = await getUILanguageCached();
     if (!data || typeof data !== 'object') {
-      throw new Error(tSync('errorImportDataNotObject', uiLang));
+      throw importError('errorImportDataNotObject', uiLang);
     }
     
     if (!data.settings) {
-      throw new Error(tSync('errorImportMissingSettings', uiLang));
+      throw importError('errorImportMissingSettings', uiLang);
     }
     
     // Validate data size to prevent DoS attacks
@@ -213,12 +219,12 @@ export async function importSettings(jsonData, options = {}) {
     if (dataSize > maxDataSize) {
       const sizeMB = Math.round(dataSize / 1024 / 1024);
       const maxMB = Math.round(maxDataSize / 1024 / 1024);
-      throw new Error(tSync('errorImportFileTooLarge', uiLang).replace('{size}', String(sizeMB)).replace('{max}', String(maxMB)));
+      throw importError('errorImportFileTooLarge', uiLang, { size: sizeMB, max: maxMB });
     }
     
     // Validate settings object structure
     if (typeof data.settings !== 'object' || Array.isArray(data.settings)) {
-      throw new Error(tSync('errorImportSettingsNotObject', uiLang));
+      throw importError('errorImportSettingsNotObject', uiLang);
     }
     
     const result = {
@@ -227,9 +233,16 @@ export async function importSettings(jsonData, options = {}) {
       statsImported: false,
       cacheImported: false,
       errors: [],
-      warnings: []
+      warnings: [],
+      warningTranslations: [],
+      errorTranslations: []
     };
     
+    const notice = (kind, key, params = {}) => {
+      result[kind].push(tSync(key, uiLang, params));
+      result[kind === 'warnings' ? 'warningTranslations' : 'errorTranslations'].push({ key, params });
+    };
+
     // Validate version compatibility
     const exportVersion = data.version || 'unknown';
     const currentVersion = getCurrentVersion();
@@ -243,11 +256,11 @@ export async function importSettings(jsonData, options = {}) {
       // Warn if major version differs (potential incompatibility)
       if (exportMajor !== currentMajor) {
         logWarn('Version mismatch: major version differs', { exportVersion, currentVersion });
-        result.errors.push(`Warning: Export file version (${exportVersion}) differs significantly from current version (${currentVersion}). Some settings may not be compatible.`);
+        notice('errors', 'warningImportVersion', { exportVersion, currentVersion });
       } else if (Math.abs(exportMinor - currentMinor) > 2) {
         // Warn if minor version differs by more than 2
         logWarn('Version mismatch: minor version differs significantly', { exportVersion, currentVersion });
-        result.errors.push(`Warning: Export file version (${exportVersion}) differs from current version (${currentVersion}). Some settings may not work correctly.`);
+        notice('errors', 'warningImportVersion', { exportVersion, currentVersion });
       } else {
         log('Version check passed', { exportVersion, currentVersion });
       }
@@ -259,7 +272,7 @@ export async function importSettings(jsonData, options = {}) {
     );
     if (unknownKeys.length > 0) {
       logWarn('Unknown keys found in import file', { keys: unknownKeys });
-      result.warnings.push(`Found ${unknownKeys.length} unknown setting(s) in import file. They will be ignored.`);
+      notice('warnings', 'warningImportUnknown', { count: unknownKeys.length });
     }
     
     // Import settings
@@ -280,6 +293,7 @@ export async function importSettings(jsonData, options = {}) {
     // Valid enum values for validation
     const VALID_ENUMS = {
       api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter', 'deepseek'],
+      image_translation_provider: IMAGE_TRANSLATION_PROVIDERS,
       audio_provider: ['offline', 'openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
       output_format: ['pdf', 'epub', 'fb2', 'markdown', 'audio'],
       extraction_mode: ['automatic', 'selector', 'extract'],
@@ -359,13 +373,13 @@ export async function importSettings(jsonData, options = {}) {
       if (data.settings[key] !== undefined) {
         if (/^pdf_(?:custom_)?(?:bg|text|heading|link)_color$/.test(key) &&
             !isDocumentColor(data.settings[key])) {
-          result.warnings.push(`Invalid ${key} value: expected a six-digit hex color. Skipping.`);
+          notice('warnings', 'warningImportColor', { setting: key });
           continue;
         }
         // Validate enum values
         if (VALID_ENUMS[key] && !VALID_ENUMS[key].includes(data.settings[key])) {
           logWarn('Invalid enum value for setting', { key, value: data.settings[key], valid: VALID_ENUMS[key] });
-          result.warnings.push(`Invalid value for ${key}: "${data.settings[key]}". Skipping.`);
+          notice('warnings', 'warningImportValue', { setting: key });
           continue;
         }
         
@@ -378,7 +392,7 @@ export async function importSettings(jsonData, options = {}) {
             : rawValue;
           if (typeof numericValue !== 'number' || !Number.isFinite(numericValue) || numericValue < range.min || numericValue > range.max) {
             logWarn('Invalid numeric value for setting', { key, value: data.settings[key], range });
-            result.warnings.push(`Invalid ${key} value: ${data.settings[key]}. Must be between ${range.min} and ${range.max}. Skipping.`);
+            notice('warnings', 'warningImportRange', { setting: key, min: range.min, max: range.max });
             continue;
           }
         }
@@ -388,7 +402,7 @@ export async function importSettings(jsonData, options = {}) {
           const value = data.settings[key];
           if (value !== null && (typeof value !== 'object' || Array.isArray(value))) {
             logWarn('Invalid object structure for setting', { key, valueType: typeof value, isArray: Array.isArray(value) });
-            result.warnings.push(`Invalid ${key} value: must be an object. Skipping.`);
+            notice('warnings', 'warningImportObject', { setting: key });
             continue;
           }
         }
@@ -396,7 +410,7 @@ export async function importSettings(jsonData, options = {}) {
         // Validate boolean settings
         if (BOOLEAN_KEYS.includes(key) && typeof data.settings[key] !== 'boolean') {
           logWarn('Invalid boolean value for setting', { key, value: data.settings[key] });
-          result.warnings.push(`Invalid boolean value for ${key}. Skipping.`);
+          notice('warnings', 'warningImportBoolean', { setting: key });
           continue;
         }
         
@@ -405,7 +419,7 @@ export async function importSettings(jsonData, options = {}) {
           const maxStringLength = 100000; // 100KB limit per string setting
           if (data.settings[key].length > maxStringLength) {
             logWarn('String value too long for setting', { key, length: data.settings[key].length, max: maxStringLength });
-            result.warnings.push(`Invalid ${key} value: string too long (${data.settings[key].length} > ${maxStringLength}). Skipping.`);
+            notice('warnings', 'warningImportLength', { setting: key, length: data.settings[key].length, max: maxStringLength });
             continue;
           }
         }
@@ -480,7 +494,7 @@ export async function importSettings(jsonData, options = {}) {
         log('Statistics imported');
       } catch (error) {
         logError('Failed to import statistics', error);
-        result.errors.push('Failed to import statistics: ' + error.message);
+        notice('errors', 'errorImportStatsFailed', { error: error.message });
       }
     }
     
@@ -489,7 +503,7 @@ export async function importSettings(jsonData, options = {}) {
       try {
         // Validate cache structure
         if (typeof data.selectorCache !== 'object' || Array.isArray(data.selectorCache)) {
-          throw new Error(tSync('errorImportCacheNotObject', uiLang));
+          throw importError('errorImportCacheNotObject', uiLang);
         }
         
         // Validate cache size
@@ -498,7 +512,7 @@ export async function importSettings(jsonData, options = {}) {
         if (cacheSize > maxCacheSize) {
           const sizeMB = Math.round(cacheSize / 1024 / 1024);
           const maxMB = Math.round(maxCacheSize / 1024 / 1024);
-          throw new Error(tSync('errorImportCacheTooLarge', uiLang).replace('{size}', String(sizeMB)).replace('{max}', String(maxMB)));
+          throw importError('errorImportCacheTooLarge', uiLang, { size: sizeMB, max: maxMB });
         }
         
         await chrome.storage.local.set({ selector_cache: data.selectorCache });
@@ -507,7 +521,8 @@ export async function importSettings(jsonData, options = {}) {
         log('Selector cache imported', { domains: domainCount });
       } catch (error) {
         logError('Failed to import cache', error);
-        result.errors.push('Failed to import cache: ' + error.message);
+        if (error.translationKey) notice('errors', error.translationKey, error.translationParams);
+        else notice('errors', 'errorImportCacheFailed', { error: error.message });
       }
     }
     

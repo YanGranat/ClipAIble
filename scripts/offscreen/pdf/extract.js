@@ -4,6 +4,7 @@
 // Starting with simple proven algorithms, ready for expansion
 
 import { log, logError } from '../../utils/logging.js';
+import { createPdfError } from '../../utils/pdf-errors.js';
 
 // Core modules
 import { loadPdfDocument, destroyPdfDocument } from './core/pdf-loader.js';
@@ -22,10 +23,10 @@ import { analyzeGaps } from './analyzers/gap-analyzer.js';
  * @param {string} url - PDF file URL
  * @returns {Promise<Object>} Extracted content result
  */
-export async function extractPdfContent(url) {
+export async function extractPdfContent(url, pdfData = null, requestOptions = {}) {
   // Validate input
   if (!url || typeof url !== 'string' || url.trim().length === 0) {
-    throw new Error('Invalid PDF URL: URL must be a non-empty string');
+    throw createPdfError('Invalid PDF URL: URL must be a non-empty string', 'errorPdfUrlNotFound');
   }
   
   const versionMarker = 'CODE VERSION 2025-12-29-v6';
@@ -36,20 +37,34 @@ export async function extractPdfContent(url) {
   log(startMsg, marker, { url, version: 'v6' });
   
   let pdf = null;
+  const { signal } = requestOptions;
+  let rejectAbort;
+  const aborted = new Promise((_, reject) => { rejectAbort = reject; });
+  void aborted.catch(() => {});
+  const check = () => { if (signal?.aborted) throw signal.reason; };
+  const onAbort = () => { rejectAbort(signal.reason); if (pdf) void destroyPdfDocument(pdf); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  const phase = async operation => {
+    check();
+    const result = await Promise.race([operation, aborted]);
+    check();
+    return result;
+  };
   try {
     // Step 1: Load PDF document
-    const loaded = await loadPdfDocument(url);
+    const loaded = await loadPdfDocument(url, pdfData, requestOptions);
     pdf = loaded.pdf;
+    check();
     const { numPages, metadata, outline } = loaded;
     
     // Step 2: Collect sample items for metrics analysis
-    const sampleItems = await collectSampleItems(pdf, numPages);
+    const sampleItems = await phase(collectSampleItems(pdf, numPages));
     
     // Step 3: Analyze PDF metrics
     const metrics = analyzePdfMetrics(sampleItems, numPages);
     
     // Step 4: Collect all lines for global gap analysis
-    const allLines = await collectAllLinesForGapAnalysis(pdf, numPages);
+    const allLines = await phase(collectAllLinesForGapAnalysis(pdf, numPages));
     
     // Step 5: Perform global gap analysis
     // COMMENTED: log('[PDF v3] === Performing global gap analysis ===', { totalLines: allLines.length });
@@ -63,7 +78,7 @@ export async function extractPdfContent(url) {
     // COMMENTED: console.warn('=== BEFORE_CALLING_EXTRACT_CONTENT ===', beforeCallMsg);
     // COMMENTED: console.log(beforeCallMsg);
     // COMMENTED: log('=== BEFORE_CALLING_EXTRACT_CONTENT === ' + beforeCallMsg, { numPages, hasMetrics: !!metrics, hasGapAnalysis: !!metrics.gapAnalysis });
-    const { elements: allElements } = await extractContentFromPages(pdf, numPages, metrics);
+    const { elements: allElements } = await phase(extractContentFromPages(pdf, numPages, metrics));
     // COMMENTED: console.log(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
     // COMMENTED: console.error(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
     // COMMENTED: log(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
@@ -85,6 +100,7 @@ export async function extractPdfContent(url) {
     // COMMENTED: console.log(`[PDF v3] === PDF EXTRACTION END === - ${versionMarker}`);
     // COMMENTED: console.error(`[PDF v3] === PDF EXTRACTION END === - ${versionMarker}`);
     
+    check();
     return {
       title: title || 'Untitled PDF',
       content: finalElements,
@@ -96,6 +112,7 @@ export async function extractPdfContent(url) {
     logError('[PDF v3] PDF extraction failed', error);
     throw error;
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     await destroyPdfDocument(pdf);
   }
 }

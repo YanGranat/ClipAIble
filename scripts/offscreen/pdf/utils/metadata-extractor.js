@@ -14,7 +14,7 @@ import { isAnonymousAuthor, cleanAuthor } from '../../../utils/author-validator.
  * @throws {Error} If metadata extraction timeout (10s)
  * @throws {Error} If PDF metadata retrieval fails
  */
-export async function extractPdfMetadata(pdf) {
+export async function extractPdfMetadata(pdf, { signal } = {}) {
   let title = '';
   let author = '';
   let publishDate = '';
@@ -30,11 +30,17 @@ export async function extractPdfMetadata(pdf) {
       }, METADATA_TIMEOUT_MS);
     });
     
+    let rejectAbort;
+    const aborted = new Promise((_, reject) => { rejectAbort = reject; });
+    const onAbort = () => rejectAbort(signal.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
     let metadata;
     try {
-      metadata = await Promise.race([metadataPromise, timeoutPromise]);
+      if (signal?.aborted) throw signal.reason;
+      metadata = await Promise.race([metadataPromise, timeoutPromise, aborted]);
     } finally {
       clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
     }
     if (metadata && metadata.info) {
       if (metadata.info.Title) {
@@ -66,6 +72,7 @@ export async function extractPdfMetadata(pdf) {
     
     log('[PDF v3] Metadata extracted', { title, author, publishDate });
   } catch (error) {
+    if (signal?.aborted) throw signal.reason;
     logWarn('[PDF v3] Failed to extract PDF metadata', error);
   }
   

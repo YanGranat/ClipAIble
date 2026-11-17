@@ -1,5 +1,5 @@
 import { isWavBuffer, pcmToWav } from './audio-format.js';
-import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { textToSpeech as openaiTTS } from './openai-tts.js';
 // @ts-check
 // Text-to-Speech API module for ClipAIble extension
 // Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
@@ -27,7 +27,7 @@ logDebug('[ClipAIble TTS] Loading offline TTS module...', {
 });
 
 // Import offline TTS module - it doesn't load WASM on import, only when used
-// The actual WASM loading happens in offscreen.js when initPiperTTS() is called
+// WASM and voice models are initialized in the offscreen speech worker on demand.
 import { textToSpeech as offlineTTS, OFFLINE_TTS_CONFIG } from './offline-tts-offscreen.js';
 
 logDebug('[ClipAIble TTS] === MODULE LOADED ===', {
@@ -51,7 +51,7 @@ log('[ClipAIble TTS] TTS module initialized with all providers', {
  * @param {string} text - Text to convert (required)
  * @param {string} [apiKey] - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud) - optional for 'offline' provider, required for others
  * @param {import('../types.js').TTSOptions} [options={}] - TTS options
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (format depends on provider: mp3 for OpenAI/ElevenLabs, wav for offline/Google)
+ * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV for OpenAI/offline/Google; provider-selected format for others)
  * @throws {Error} If text is empty or too long
  * @throws {Error} If API key is missing (for non-offline providers)
  * @throws {Error} If TTS API request fails
@@ -62,10 +62,10 @@ log('[ClipAIble TTS] TTS module initialized with all providers', {
  * // Use OpenAI TTS (default)
  * const audio = await textToSpeech('Hello world', 'sk-...', {
  *   provider: 'openai',
- *   voice: 'nova',
+ *   voice: 'marin',
  *   speed: 1.0
  * });
- * const blob = new Blob([audio], { type: 'audio/mp3' });
+ * const blob = new Blob([audio], { type: 'audio/wav' });
  * const url = URL.createObjectURL(blob);
  * @example
  * // Use offline TTS (no API key needed)
@@ -88,6 +88,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
   await checkCancellation('TTS request', options.processingRunId);
   const entryTime = Date.now();
   const { provider = 'openai' } = options;
+  if (!['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'offline'].includes(provider)) {
+    const translationKey = 'errorUnknownAudioProvider';
+    const translationParams = { provider: String(provider) };
+    throw Object.assign(new Error(tSync(translationKey, await getUILanguage(), translationParams)), { translationKey, translationParams });
+  }
   
   log('[ClipAIble TTS] === textToSpeech ENTRY POINT ===', {
     timestamp: entryTime,
@@ -162,140 +167,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
   }
 }
 
-/**
- * Convert text to speech using OpenAI TTS API
- * @param {string} text - Text to convert (max 4096 characters)
- * @param {string} apiKey - OpenAI API key
- * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
- * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (MP3 format)
- * @throws {Error} If text is empty or too long (max 4096 characters)
- * @throws {Error} If API key is missing
- * @throws {Error} If OpenAI TTS API request fails
- * @throws {Error} If network error occurs
- */
+/** Convert text to speech using OpenAI Realtime audio. */
 async function textToSpeechOpenAI(text, apiKey, options = {}) {
-  const {
-    voice = AUDIO_CONFIG.DEFAULT_VOICE,
-    speed = AUDIO_CONFIG.DEFAULT_SPEED,
-    format = 'mp3',
-    instructions = null,
-    openaiInstructions = null
-  } = options;
-  
-  // Use custom instructions if provided, otherwise use default instructions
-  const finalInstructions = openaiInstructions || instructions;
-  
-  log('TTS request', { textLength: text?.length, voice, speed, format, hasInstructions: !!finalInstructions });
-  
-  const uiLang = await getUILanguage();
-  
-  if (!text || text.length === 0) {
-    throw new Error(tSync('errorTtsNoText', uiLang));
-  }
-  
-  if (text.length > AUDIO_CONFIG.TTS_MAX_INPUT) {
-    throw new Error(tSync('errorTtsTextTooLong', uiLang).replace('{length}', String(text.length)).replace('{max}', String(AUDIO_CONFIG.TTS_MAX_INPUT)));
-  }
-  
-  if (!apiKey) {
-    throw new Error(tSync('errorTtsNoApiKey', uiLang));
-  }
-  
-  // Validate voice
-  if (!AUDIO_CONFIG.VOICES.includes(voice)) {
-    log(`Invalid voice "${voice}", using default "${AUDIO_CONFIG.DEFAULT_VOICE}"`);
-  }
-  
-  // Validate speed
-  const validSpeed = Math.max(AUDIO_CONFIG.MIN_SPEED, Math.min(AUDIO_CONFIG.MAX_SPEED, speed));
-  
-  const requestBody = {
-    model: 'gpt-4o-mini-tts',
-    input: text,
-    voice: AUDIO_CONFIG.VOICES.includes(voice) ? voice : AUDIO_CONFIG.DEFAULT_VOICE,
-    response_format: format,
-    speed: validSpeed
-  };
-  
-  // Add instructions if provided (for voice style control)
-  if (finalInstructions) {
-    requestBody.instructions = finalInstructions;
-  }
-  
-  let response;
-  
-  try {
-    log('Sending TTS request to OpenAI...');
-    
-    response = await callWithRetry(
-      async () => {
-        await checkCancellation('OpenAI TTS request', options.processingRunId);
-        
-        try {
-          const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/audio/speech', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(requestBody)
-          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
-          
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              const error = /** @type {Error & {status?: number, response?: Response}} */ (new Error(`HTTP ${fetchResponse.status}`));
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              throw error;
-            }
-            
-            // Non-retryable error
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            const errorMsg = errorData.error?.message || tSync('errorTtsApiError', uiLang).replace('{status}', String(fetchResponse.status));
-            const error = /** @type {Error & {status?: number}} */ (new Error(errorMsg));
-            error.status = fetchResponse.status;
-            throw error;
-          }
-          
-          return fetchResponse;
-        } catch (e) {
-          throw e;
-        }
-      },
-      {
-        onRetry: (attempt, delay) => {
-          log(`TTS API retry attempt ${attempt}, waiting ${delay}ms...`);
-        }
-      }
-    );
-  } catch (fetchError) {
-    if (fetchError.name === 'AbortError') {
-      logError('TTS API request timed out');
-      throw new Error(tSync('errorTtsTimeout', uiLang));
-    }
-    if (fetchError.status) {
-      const apiErrorMsg = fetchError.message || tSync('errorTtsApiError', uiLang).replace('{status}', String(fetchError.status || 'unknown'));
-      throw new Error(apiErrorMsg);
-    }
-    logError('TTS network error', fetchError);
-    throw new Error(tSync('errorTtsNetworkError', uiLang).replace('{error}', fetchError.message || 'unknown'));
-  }
-  
-  // Get audio data as ArrayBuffer
-  const audioBuffer = await response.arrayBuffer();
-  
-  log('TTS response received', { 
-    audioSize: audioBuffer.byteLength,
-    contentType: response.headers.get('content-type')
+  return callWithRetry(() => openaiTTS(text, apiKey, options), {
+    shouldRetry: error => error.retryable === false ? false : undefined,
+    onRetry: (attempt, delay) => log(`TTS API retry attempt ${attempt}, waiting ${delay}ms...`)
   });
-  
-  return audioBuffer;
 }
 
 /**
@@ -614,6 +491,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
  */
 export async function chunksToSpeech(chunks, apiKey, options = {}, updateState = null) {
   await checkCancellation('TTS conversion', options.processingRunId);
+  const uiLang = await getUILanguageCached();
   if (updateState) updateState = getScopedUpdateState(options.processingRunId, updateState);
   const entryTime = Date.now();
   log('[ClipAIble TTS] === chunksToSpeech ENTRY POINT ===', {
@@ -704,7 +582,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   if (updateState && expandedChunks.length > 0) {
     updateState({
       stage: PROCESSING_STAGES.GENERATING.id,
-      status: 'Generating audio...', 
+      status: tSync('statusGeneratingAudio', uiLang),
+      statusTranslationKey: 'statusGeneratingAudio', statusTranslationParams: {},
       progress: progressBase
     });
   }
@@ -737,7 +616,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
           estimatedProgress
         });
         updateState?.({
-          status: `Generating audio... (${processedChunks}/${totalChunks} chunks)`,
+          status: tSync('statusGeneratingAudioChunks', uiLang, { current: processedChunks, total: totalChunks }),
+          statusTranslationKey: 'statusGeneratingAudioChunks', statusTranslationParams: { current: processedChunks, total: totalChunks },
           progress: Math.min(estimatedProgress, 94) // Cap at 94% to leave room for final update
         });
       }
@@ -767,12 +647,13 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
           async () => {
             await checkCancellation('TTS retry', options.processingRunId);
             // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
-            return await textToSpeech(chunk.text, apiKey, options);
+            return provider === 'openai' ? await openaiTTS(chunk.text, apiKey, options) : await textToSpeech(chunk.text, apiKey, options);
           },
           {
             maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
             delays: CONFIG.RETRY_DELAYS,
             retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+            shouldRetry: error => error.retryable === false ? false : undefined,
             onRetry: (attempt, delay) => {
               logWarn(`Chunk ${i + 1} failed, retrying... (attempt ${attempt}/${CONFIG.RETRY_MAX_ATTEMPTS + 1}, waiting ${delay}ms)`, {
                 chunkIndex: i + 1,
@@ -788,6 +669,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
         chunkProcessed = true;
       } catch (error) {
         await checkCancellation('TTS failure', options.processingRunId);
+        if (error.retryable === false) throw error;
         lastChunkError = error;
         
         const chunkError = {
@@ -820,7 +702,9 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
       const errorMsg = failedChunks.length > 0
         ? `All ${expandedChunks.length} chunks failed. Last error: ${failedChunks[failedChunks.length - 1].error}`
         : 'All chunks failed to convert';
-      throw new Error(tSync('errorTtsAllChunksFailed', uiLang) || errorMsg);
+      throw Object.assign(new Error(tSync('errorTtsAllChunksFailed', uiLang) || errorMsg), {
+        translationKey: 'errorTtsAllChunksFailed', translationParams: {}
+      });
     }
     
     // Log summary of failed chunks (if any)
@@ -834,7 +718,9 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
         failedChunkIndices: failedChunks.map(c => c.index),
         note: 'Incomplete audio will not be exported'
       });
-      throw new Error(`Audio generation failed for ${failedChunks.length} of ${expandedChunks.length} chunks. Please try again.`);
+      throw Object.assign(new Error(tSync('errorAudioChunksFailed', uiLang, { failed: failedChunks.length, total: expandedChunks.length })), {
+        translationKey: 'errorAudioChunksFailed', translationParams: { failed: failedChunks.length, total: expandedChunks.length }
+      });
     }
   } finally {
     // Clean up progress tracker
@@ -850,7 +736,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   
   // Final progress update before concatenation
   updateState?.({ 
-    status: 'Assembling audio file...', 
+    status: tSync('statusAssemblingAudio', uiLang),
+    statusTranslationKey: 'statusAssemblingAudio', statusTranslationParams: {},
     progress: 95 
   });
   

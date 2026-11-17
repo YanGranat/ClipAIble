@@ -405,8 +405,8 @@ export const LOGO_PATTERNS = [
   'social-media', 'social-icon', 'share-icon', 'share-button',
   'youtube-white-logo', 'youtube-logo', 'yt-logo',
   'facebook-logo', 'twitter-logo', 'instagram-logo',
-  'arrow', 'chevron', 'bullet', 'dot', 'gradient', 'bg', 'background', 'shadow', 'border',
-  'divider', 'line', 'separator', 'spinner', 'loader', 'loading',
+  'arrow', 'chevron', 'bullet', 'dot', 'bg', 'background', 'shadow', 'border',
+  'divider', 'separator', 'spinner', 'loader', 'loading',
   'placeholder', 'default', 'avatar', 'user', 'profile', 'gravatar'
 ];
 

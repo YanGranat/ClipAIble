@@ -4,6 +4,7 @@ import { AUDIO_CONFIG } from '../../scripts/generation/audio-prep.js';
 import { prepareQuickSaveData } from '../../scripts/processing/quicksave.js';
 import { DocumentGeneratorFactory } from '../../scripts/generation/factory.js';
 import { pcmToWav } from '../../scripts/api/audio-format.js';
+import { realtimeWebSocket } from '../helpers/realtime-websocket.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
@@ -32,7 +33,8 @@ it.each([['pcm_24000', 'wav', 'audio/wav'], ['ulaw_8000', 'wav', 'audio/wav'], [
     expect(String.fromCharCode(...result.slice(8, 12))).toBe('WAVE');
     expect(new DataView(result.buffer).getUint32(24, true)).toBe(format === 'ulaw_8000' ? 8000 : 24000);
   } else expect([...result]).toEqual(bytes);
-  expect(AUDIO_CONFIG.VOICES).toEqual(expect.arrayContaining(['nova', 'marin', 'cedar']));
+  expect(AUDIO_CONFIG.VOICES).toEqual(expect.arrayContaining(['marin', 'cedar']));
+  expect(AUDIO_CONFIG.VOICES).not.toContain('nova');
 });
 
 it('keeps Qwen workspace, region, model and voice from stored quick-save settings through the factory to the synthesis request', async () => {
@@ -49,4 +51,17 @@ it('keeps Qwen workspace, region, model and voice from stored quick-save setting
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ model: settings.qwen_model, input: { voice: 'xunanchuan_v3.1' } });
   expect(chrome.downloads.download).toHaveBeenLastCalledWith(expect.objectContaining({ filename: 'Article.wav' }));
   expect(settings.qwen_region).toBe('beijing');
+});
+
+it('exports complete Realtime narration as WAV through the generation factory', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ value: 'ek_synthetic' }))));
+  vi.stubGlobal('WebSocket', realtimeWebSocket(socket => socket.complete([3, 0, 4, 0])));
+  let blob;
+  vi.spyOn(URL, 'createObjectURL').mockImplementation(value => { blob = value; return 'blob:synthetic-audio'; });
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  await DocumentGeneratorFactory.generate('audio', { audioProvider: 'openai', audioVoice: 'marin', audioSpeed: 1,
+    apiKey: 'synthetic-prep-key', openaiApiKey: 'synthetic-tts-key' }, { content: [{ type: 'paragraph', text: 'Article.' }], title: 'Article' }, undefined);
+  expect(chrome.downloads.download).toHaveBeenLastCalledWith(expect.objectContaining({ filename: 'Article.wav' }));
+  expect(blob.type).toBe('audio/wav');
+  expect([...new Uint8Array(await blob.arrayBuffer()).subarray(44)]).toEqual([3, 0, 4, 0]);
 });

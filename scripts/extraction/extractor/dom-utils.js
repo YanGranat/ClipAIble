@@ -143,6 +143,19 @@ export function getTextContent(element) {
   return (element.textContent || '').trim().replace(/\s+/g, ' ');
 }
 
+/** Clone content while removing assistive announcements attached to links. */
+export function cloneWithoutLinkAnnouncements(element) {
+  const clone = element.cloneNode(true);
+  for (const node of Array.from(clone.querySelectorAll('.screen-reader-text, .screen-reader-only, .sr-only, .visually-hidden'))) {
+    if (!node.closest('a') || node.closest('pre, code, math, mjx-assistive-mml, .MathJax, .katex') ||
+        node.querySelector('math, mjx-assistive-mml, .MathJax, .katex')) continue;
+    let label = (node.textContent || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    if (label.startsWith('(') && label.endsWith(')')) label = label.slice(1, -1).trim();
+    if (/^opens(?: in)? a new (?:tab|window)$/.test(label)) node.remove();
+  }
+  return clone;
+}
+
 /**
  * Check if element is in viewport (visible area)
  * @param {Element} element - Element to check

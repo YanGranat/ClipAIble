@@ -10,6 +10,7 @@ import { ELEMENT_DECISION, DEFAULT_METRICS, TABLE_DETECTION } from '../constants
 import { normalizeYCoordinate, getColumnIndexForElement, detectTableColumns, detectTableHeaders } from '../utils/table-helpers.js';
 import { checkGraphicsInElementArea } from '../utils/graphics-extractor.js';
 import { getGraphicsDataForPage, isTableLine } from '../utils/graphics-helpers.js';
+import { getBorderedGridRows } from '../utils/grid-cells.js';
 
 /** Find table grids with full borders or adjacent shaded header cells. */
 function getHeadingTableRegions(graphics, baseFontSize, elements) {
@@ -829,7 +830,7 @@ function createTableFromRows(rows, metrics, pageNum) {
     log(`[PDF v3] createTableFromRows: No rows provided`);
     return null;
   }
-  const maxColumns = Math.max(...columnCounts);
+  let maxColumns = Math.max(...columnCounts);
   if (maxColumns === 0) {
     log(`[PDF v3] createTableFromRows: No columns found in rows`);
     return null;
@@ -838,7 +839,7 @@ function createTableFromRows(rows, metrics, pageNum) {
   const baseFontSize = (metrics && metrics.baseFontSize) ? metrics.baseFontSize : DEFAULT_METRICS.BASE_FONT_SIZE;
   const yTolerance = baseFontSize * TABLE_DETECTION.Y_TOLERANCE_MULTIPLIER;
   
-  const tableRows = rows.map((row, rowIdx) => {
+  let tableRows = rows.map((row, rowIdx) => {
     if (!row || !row.elements || !Array.isArray(row.elements)) {
       log(`[PDF v3] createTableFromRows: Invalid row ${rowIdx} - missing elements`);
       return [];
@@ -906,6 +907,11 @@ function createTableFromRows(rows, metrics, pageNum) {
       .flatMap(el => (el.lines && Array.isArray(el.lines))
         ? el.lines.filter(line => line.y !== undefined && Math.abs(line.y - row.y) <= yTolerance)
         : []));
+  const borderedRows = getBorderedGridRows(rowLines, getGraphicsDataForPage(metrics, pageNum), baseFontSize, yTolerance);
+  if (borderedRows) {
+    tableRows = borderedRows;
+    maxColumns = borderedRows[0].length;
+  }
   let hasHeaders = detectTableHeaders(tableRows, rowLines);
   
   // Additional check: if first row contains common header words, mark as header

@@ -2,6 +2,7 @@
 // Format helper functions for popup
 
 import { escapeHtml as escapeHtmlUtil } from '../../scripts/utils/html.js';
+import { getLocaleTag } from '../../scripts/locales.js';
 
 /**
  * Convert markdown to HTML
@@ -97,21 +98,23 @@ export function escapeHtml(text) {
  * @param {Date|number} date - Date to format
  * @returns {string} Formatted relative date string
  */
-export function formatRelativeDate(date) {
+export function formatRelativeDate(date, language = 'en') {
   const now = new Date();
   const dateTime = date instanceof Date ? date.getTime() : (typeof date === 'number' ? date : Date.now());
   if (!Number.isFinite(dateTime)) return '';
   const diffMs = now.getTime() - dateTime;
-  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  const minutes = Math.floor(diffMs / 60000);
-  const hours = Math.floor(diffMs / 3600000);
-  const days = Math.floor(diffMs / 86400000);
-  const weeks = Math.floor(diffMs / 604800000);
+  const direction = diffMs < 0 ? 1 : -1;
+  const elapsed = Math.abs(diffMs);
+  const rtf = new Intl.RelativeTimeFormat(getLocaleTag(language), { numeric: 'auto' });
+  const minutes = Math.floor(elapsed / 60000);
+  const hours = Math.floor(elapsed / 3600000);
+  const days = Math.floor(elapsed / 86400000);
+  const weeks = Math.floor(elapsed / 604800000);
 
   if (minutes < 1) return rtf.format(-0, 'minute');
-  if (minutes < 60) return rtf.format(-minutes, 'minute');
-  if (hours < 24) return rtf.format(-hours, 'hour');
-  if (days < 7) return rtf.format(-days, 'day');
-  return rtf.format(-weeks, 'week');
+  if (minutes < 60) return rtf.format(direction * minutes, 'minute');
+  if (hours < 24) return rtf.format(direction * hours, 'hour');
+  if (days < 7) return rtf.format(direction * days, 'day');
+  return rtf.format(direction * weeks, 'week');
 }
 

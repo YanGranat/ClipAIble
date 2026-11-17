@@ -15,7 +15,7 @@ ClipAIble is a Chrome extension built with Manifest V3 using native ES modules. 
 
 - **WebAssembly**: Used for Piper TTS offline voice synthesis
 - **ONNX Runtime**: ML model inference for offline TTS
-- **PDF.js**: PDF document parsing and text extraction
+- **PDF.js**: PDF document parsing, text extraction, and page rendering in the offscreen document
 - **IndexedDB**: Fallback storage for large data exceeding chrome.storage limits
 - **Web Crypto API**: AES-256-GCM encryption for API keys
 - **Offscreen API**: Background DOM operations for PDF processing
@@ -62,7 +62,7 @@ The extension integrates with 6 AI providers through unified API interfaces:
 
 Audio generation supports 6 TTS services:
 
-- **OpenAI TTS**: MP3 generation with voice customization and speed control (0.25x-4.0x)
+- **OpenAI TTS**: Realtime synthesis saved as WAV, with voice selection and speed control (0.25x-1.5x)
 - **ElevenLabs**: High-quality voices with advanced parameters and speed control (0.1x-2.0x)
 - **Google Gemini**: WAV generation with voice styles (no speed control)
 - **Qwen**: Chinese TTS service with language detection (no speed control)

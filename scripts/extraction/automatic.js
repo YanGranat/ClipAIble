@@ -874,13 +874,11 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
           "chevron",
           "bullet",
           "dot",
-          "gradient",
           "bg",
           "background",
           "shadow",
           "border",
           "divider",
-          "line",
           "separator",
           "spinner",
           "loader",
@@ -895,9 +893,19 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     
     // Standfirst selectors (used by standfirst.js)
     const STANDFIRST_SELECTORS = [
-      '.standfirst', '.subtitle', '.deck', '.lede', '.intro', '.article__subhead',
-      '[class*="standfirst"]', '[class*="subtitle"]', '[class*="deck"]',
-      '[class*="intro"]', '[class*="summary"]', '[class*="subhead"]'
+          ".standfirst",
+          ".subtitle",
+          ".deck",
+          "[class*=\"excerpt\"]",
+          ".lede",
+          ".intro",
+          ".article__subhead",
+          "[class*=\"standfirst\"]",
+          "[class*=\"subtitle\"]",
+          "[class*=\"deck\"]",
+          "[class*=\"intro\"]",
+          "[class*=\"summary\"]",
+          "[class*=\"subhead\"]"
     ];
     
     // Candidate element selector (used by parse.js)
@@ -925,6 +933,17 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
 // ============================================
 
 // --- DOM Utils ---
+function cloneWithoutLinkAnnouncements(element) {
+  const clone = element.cloneNode(true);
+  for (const node of Array.from(clone.querySelectorAll(".screen-reader-text, .screen-reader-only, .sr-only, .visually-hidden"))) {
+    if (!node.closest("a") || node.closest("pre, code, math, mjx-assistive-mml, .MathJax, .katex") || node.querySelector("math, mjx-assistive-mml, .MathJax, .katex")) continue;
+    let label = (node.textContent || "").trim().replace(/\s+/g, " ").toLowerCase();
+    if (label.startsWith("(") && label.endsWith(")")) label = label.slice(1, -1).trim();
+    if (/^opens(?: in)? a new (?:tab|window)$/.test(label)) node.remove();
+  }
+  return clone;
+}
+
 function compareDomOrder(a, b) {
   const position = a.compareDocumentPosition(b);
   if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
@@ -1707,7 +1726,7 @@ function isExcluded(win, element, constants) {
       const isClearAd = clearAdIndicators.some(
         (indicator) => indicator.test(parentClass) || indicator.test(parentId)
       );
-      if (isClearAd || parentTag === "aside") {
+      if (isClearAd || parentTag === "aside" && !isArticleContentFigure(win, element)) {
         return true;
       }
       parent = parent.parentElement;
@@ -2281,6 +2300,8 @@ function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
   if (main) {
     const mainText = (main.textContent || "").trim();
     if (mainText.length > 100) {
+      const splitBody = findSplitArticleBody(main, win);
+      if (splitBody) return splitBody.owner;
       const specificContent = main.querySelector(".wysiwyg, .article-content, .post-content");
       if (specificContent && (specificContent.textContent || "").trim().length > 500) {
         if (!isExcluded2(specificContent)) return specificContent;
@@ -2343,10 +2364,62 @@ function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
   return bestCandidate && maxScore > 0 ? bestCandidate : null;
 }
 
+function findSplitArticleBody(scope, win) {
+  const ownerSelector = 'article, [itemprop~="articleBody"], .post, .article, .entry';
+  const title = (win.document.title || "").trim().toLowerCase();
+  const matchesTitle = (owner) => Array.from(owner.querySelectorAll("h1")).some((heading) => {
+    const text = (heading.textContent || "").trim().toLowerCase();
+    return text.length > 0 && (title === text || [" | ", " \u2014 ", " \u2013 ", " - "].some((separator) => title.startsWith(text + separator)));
+  });
+  for (const selector of [".post-content", ".post__content", ".article-content", ".entry-content", ".article-body", ".wysiwyg"]) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const element of Array.from(scope.querySelectorAll(selector))) {
+      let owner = element.closest(ownerSelector);
+      if (!owner && scope.matches('main, [role="main"]') && scope.querySelectorAll("h1").length === 1) owner = scope;
+      if (!owner || !scope.contains(owner) || isOutsideArticleBody(element, owner)) continue;
+      if (!owner.matches('article, [itemprop~="articleBody"]') && !matchesTitle(owner)) continue;
+      if (isOutsideArticleBody(owner, scope)) continue;
+      if (!groups.has(owner)) groups.set(owner, []);
+      groups.get(owner).push(element);
+    }
+    for (const [owner, matches] of groups) {
+      const roots = matches.filter((element) => !matches.some((other) => other !== element && other.contains(element)));
+      if (roots.length < 2) continue;
+      const textLength = roots.reduce((sum, element) => sum + (element.textContent || "").trim().length, 0);
+      if (textLength > 500 && roots.some((element) => element.querySelector("p"))) return { owner, roots };
+    }
+  }
+  return null;
+}
+
 function hasSubstantialContent(element) {
   const text = (element.textContent || "").trim();
   const paragraphs = element.querySelectorAll("p");
   return text.length > 100 && (paragraphs.length >= 1 || text.length > 300);
+}
+
+function isArticleContentFigure(win, element) {
+  const figure = element.closest("figure");
+  if (!figure || !figure.querySelector("img") || !(figure.querySelector("figcaption")?.textContent || "").trim()) return false;
+  const body = figure.closest(".post-content, .post__content, .article-content, .entry-content, .article-body, .wysiwyg");
+  if (!body) return false;
+  const owner = body.closest('article, [itemprop~="articleBody"], .post, .article, .entry');
+  if (!owner) return false;
+  if (!owner.matches('article, [itemprop~="articleBody"]')) {
+    const title = (win.document.title || "").trim().toLowerCase();
+    if (!Array.from(owner.querySelectorAll("h1")).some((heading) => {
+      const text = (heading.textContent || "").trim().toLowerCase();
+      return text.length > 0 && (title === text || [" | ", " \u2014 ", " \u2013 ", " - "].some((separator) => title.startsWith(text + separator)));
+    })) return false;
+  }
+  for (let node = figure; node && node !== owner; node = node.parentElement) {
+    if (node.matches('nav, footer, [role="navigation"], [hidden], [aria-hidden="true"]')) return false;
+    if (/(?:^|[\s_-])(?:comments?|related|recommended|recommendations?|newsletter|advertisement|advertising|ads?|sponsored?|social|share|author|byline|contributor)(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute("class") || ""}`)) return false;
+    for (const name of ["data-module", "data-component", "data-type"]) {
+      if (/^(?:ad|advertisement)$/i.test(node.getAttribute(name) || "")) return false;
+    }
+  }
+  return Array.from(body.querySelectorAll("p")).some((paragraph) => !paragraph.closest("aside, figure") && (paragraph.textContent || "").trim().length >= 20);
 }
 
 function isLikelyContentContainer(element) {
@@ -2364,6 +2437,20 @@ function isLikelyContentContainer(element) {
   for (const indicator of contentIndicators) {
     if (className.includes(indicator) || id.includes(indicator)) {
       return true;
+    }
+  }
+  return false;
+}
+
+function isOutsideArticleBody(element, owner) {
+  const contentFigure = isArticleContentFigure(owner.ownerDocument.defaultView, element);
+  for (let node = element; node && node !== owner; node = node.parentElement) {
+    if (node.matches('nav, footer, [role="navigation"], [hidden], [aria-hidden="true"]')) return true;
+    if (node.matches('aside, [role="complementary"]') && !contentFigure) return true;
+    const labels = `${node.id} ${node.getAttribute("class") || ""}`;
+    if (/(?:^|[\s_-])(?:comments?|related|recommended|recommendations?|sidebar|newsletter|advertisement|advertising|ads?|sponsored?|social|share)(?:$|[\s_-])/i.test(labels)) return true;
+    for (const name of ["data-module", "data-component", "data-type"]) {
+      if (/^(?:ad|advertisement)$/i.test(node.getAttribute(name) || "")) return true;
     }
   }
   return false;
@@ -2680,8 +2767,7 @@ function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
       const naturalHeight = imgElement.naturalHeight || 0;
       if (naturalWidth >= 400 || naturalHeight >= 300 || naturalWidth === 0 && naturalHeight === 0) {
         const absoluteUrl = toAbsoluteUrl(src, baseUrl);
-        const urlLower = absoluteUrl.toLowerCase();
-        if (logoPatterns.some((pattern) => urlLower.includes(pattern.toLowerCase()))) {
+        if (isDecorativeImage(doc.defaultView, imgElement, logoPatterns)) {
           continue;
         }
         return {
@@ -2728,10 +2814,11 @@ function getBestSrcsetUrl(srcset) {
 }
 
 function getImageCaption(img) {
+  const captionText = (element) => (cloneWithoutLinkAnnouncements(element).textContent || "").trim();
   const figure = img.closest("figure");
   if (figure) {
     const figcaption = figure.querySelector("figcaption");
-    if (figcaption) return (figcaption.textContent || "").trim();
+    if (figcaption) return captionText(figcaption);
   }
   const ariaLabel = img.getAttribute("aria-label");
   if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
@@ -2739,14 +2826,14 @@ function getImageCaption(img) {
   if (title && title.trim() && title !== img.alt) return title.trim();
   const nextSibling = img.nextElementSibling;
   if (nextSibling && (nextSibling.tagName === "P" || String(nextSibling.className || "").toLowerCase().includes("caption"))) {
-    return (nextSibling.textContent || "").trim();
+    return captionText(nextSibling);
   }
   const parent = img.parentElement;
   if (parent) {
     const captionEl = parent.querySelector(".caption, .image-caption, .photo-caption");
     if (captionEl) {
-      const captionText = (captionEl.textContent || "").trim();
-      if (captionText && captionText !== img.alt) return captionText;
+      const text = captionText(captionEl);
+      if (text && text !== img.alt) return text;
     }
   }
   return "";
@@ -2758,6 +2845,12 @@ function isDecorativeImage(win, img, logoPatterns) {
   const alt = (img.alt || "").toLowerCase();
   const className = String(img.className || "").toLowerCase();
   const id = (img.id || "").toLowerCase();
+  const naturalWidth = img.naturalWidth || img.width || 0;
+  const naturalHeight = img.naturalHeight || img.height || 0;
+  if (img.getAttribute("role") === "separator") return true;
+  if (naturalWidth > 0 && naturalHeight > 0 && (naturalWidth > 3 && naturalHeight <= 3 || naturalHeight > 3 && naturalWidth <= 3)) {
+    return true;
+  }
   if (className.includes("headshot") || id.includes("headshot") || className.includes("author-photo") || className.includes("author-image") || className.includes("byline-thumbnail") || className.includes("contributor-thumbnail")) {
     return true;
   }
@@ -2790,8 +2883,6 @@ function isDecorativeImage(win, img, logoPatterns) {
   if (className.includes("logo") || className.includes("icon") || className.includes("brand") || className.includes("social") || className.includes("share")) {
     return true;
   }
-  const naturalWidth = img.naturalWidth || img.width || 0;
-  const naturalHeight = img.naturalHeight || img.height || 0;
   if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
     if (src.includes("icon") || src.includes("logo") || src.includes("social")) {
       return true;
@@ -2839,11 +2930,18 @@ function extractStandfirst(mainContent) {
   if (!mainContent) {
     return { text: null, element: null };
   }
+  const isNewsletterCandidate = (element) => {
+    for (let node = element; node; node = node.parentElement) {
+      if (/(?:^|[\s_-])newsletter(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute("class") || ""}`)) return true;
+      if (node === mainContent) break;
+    }
+    return false;
+  };
   for (const selector of STANDFIRST_SELECTORS) {
     try {
-      const element = mainContent.querySelector(selector);
-      if (element) {
-        const text = (element.textContent || "").trim();
+      for (const element of Array.from(mainContent.querySelectorAll(selector))) {
+        if (isNewsletterCandidate(element) || selector.includes("excerpt") && isOutsideArticleBody(element, mainContent)) continue;
+        const text = (cloneWithoutLinkAnnouncements(element).textContent || "").trim();
         if (text.length >= 50 && text.length <= 500) {
           return { text, element };
         }
@@ -2854,8 +2952,8 @@ function extractStandfirst(mainContent) {
   for (const selector of STANDFIRST_SELECTORS) {
     try {
       const element = document.querySelector(selector);
-      if (element && mainContent.contains(element)) {
-        const text = (element.textContent || "").trim();
+      if (element && mainContent.contains(element) && !isNewsletterCandidate(element) && (!selector.includes("excerpt") || !isOutsideArticleBody(element, mainContent))) {
+        const text = (cloneWithoutLinkAnnouncements(element).textContent || "").trim();
         if (text.length >= 50 && text.length <= 500) {
           return { text, element };
         }
@@ -2865,7 +2963,8 @@ function extractStandfirst(mainContent) {
   }
   const paragraphs = mainContent.querySelectorAll("p");
   for (const p of paragraphs) {
-    const text = (p.textContent || "").trim();
+    if (isNewsletterCandidate(p)) continue;
+    const text = (cloneWithoutLinkAnnouncements(p).textContent || "").trim();
     if (text.length >= 50 && text.length <= 200) {
       const hasLinks = p.querySelectorAll("a").length > 0;
       if (!hasLinks && !looksLikeArticleStarter(text)) {
@@ -2945,6 +3044,36 @@ function collectCandidateElements(mainContent, win) {
         return allElements;
       }
     }
+  }
+  const splitBody = findSplitArticleBody(mainContent, win);
+  if (splitBody) {
+    const { owner, roots } = splitBody;
+    const selected = /* @__PURE__ */ new Set();
+    const first = roots[0];
+    const last = roots[roots.length - 1];
+    const ownerSelector = 'article, [itemprop~="articleBody"], .post, .article, .entry';
+    const belongsToOwner = (element) => {
+      const closest = element.closest(ownerSelector);
+      return (closest === owner || !closest && owner === mainContent) && !isOutsideArticleBody(element, owner);
+    };
+    for (const root of roots) {
+      if (root.matches(CANDIDATE_SELECTOR) && belongsToOwner(root)) selected.add(root);
+      for (const element of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) {
+        if (belongsToOwner(element)) selected.add(element);
+      }
+    }
+    for (const figure of Array.from(owner.querySelectorAll("figure"))) {
+      if (!belongsToOwner(figure)) continue;
+      const afterFirst = first.contains(figure) || (first.compareDocumentPosition(figure) & 4) !== 0;
+      const beforeLast = last.contains(figure) || (figure.compareDocumentPosition(last) & 4) !== 0;
+      if (afterFirst && beforeLast) {
+        selected.add(figure);
+        for (const element of Array.from(figure.querySelectorAll(CANDIDATE_SELECTOR))) {
+          if (belongsToOwner(element)) selected.add(element);
+        }
+      }
+    }
+    return Array.from(selected).sort(compareDomOrder);
   }
   const entryContent = mainContent.querySelector(".entry-content");
   if (entryContent) {
@@ -3108,7 +3237,10 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
 }
 
 function handleBlockquote(element) {
-  const text = (element.innerHTML || "").trim();
+  const text = (
+    /** @type {HTMLElement} */
+    (cloneWithoutLinkAnnouncements(element).innerHTML || "").trim()
+  );
   if (!text) return null;
   return {
     type: "quote",
@@ -3234,14 +3366,10 @@ function handleFigure(win, element, state, constants, baseUrl) {
   if (state.processedImages.size < 1e3) {
     state.processedImages.add(normalizedSrc);
   }
-  const figcaption = element.querySelector("figcaption");
-  let caption = figcaption ? (figcaption.textContent || "").trim() : "";
-  if (!caption) {
-    caption = getImageCaption(
-      /** @type {HTMLImageElement} */
-      img
-    );
-  }
+  const caption = getImageCaption(
+    /** @type {HTMLImageElement} */
+    img
+  );
   return {
     type: "image",
     src: absoluteSrc,
@@ -3252,7 +3380,7 @@ function handleFigure(win, element, state, constants, baseUrl) {
 
 function handleHeading(element, state, constants) {
   if (state.standfirstElement && element === state.standfirstElement) return null;
-  const rawText = element.textContent || "";
+  const rawText = cloneWithoutLinkAnnouncements(element).textContent || "";
   const cleanedText = cleanHeadingText(rawText);
   if (isStandfirstText(cleanedText, state.standfirstText)) return null;
   if (isNumericHeading(cleanedText)) return null;
@@ -3319,7 +3447,7 @@ function handleList(element) {
   const items = Array.from(element.querySelectorAll("li")).filter((li) => li.closest("ul, ol") === element).map((li) => {
     const clone = (
       /** @type {Element} */
-      li.cloneNode(true)
+      cloneWithoutLinkAnnouncements(li)
     );
     processMathElements(clone);
     return (clone.textContent || "").trim();
@@ -3380,7 +3508,7 @@ function handleTable(element) {
   }
   const tableText = (element.textContent || "").trim();
   if (tableText.length < 50) return null;
-  const clone = element.cloneNode(true);
+  const clone = cloneWithoutLinkAnnouncements(element);
   const allElements = (
     /** @type {HTMLElement} */
     clone.querySelectorAll("*")
@@ -3550,7 +3678,7 @@ function partitionCandidateElements(elements) {
   function append(element) {
     if (visited.has(element)) return;
     visited.add(element);
-    const descendants = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div"));
+    const descendants = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div,aside,nav,footer"));
     const originalText = element.getAttribute("data-original-text");
     if (element.tagName !== "DIV" || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
@@ -3626,7 +3754,7 @@ function processMathElements(container) {
 function sanitizeParagraphHtml(p) {
   const clone = (
     /** @type {Element} */
-    p.cloneNode(true)
+    cloneWithoutLinkAnnouncements(p)
   );
   processMathElements(clone);
   const allElements = clone.querySelectorAll("*");
@@ -3664,14 +3792,15 @@ function extractEmergencyFallback(win, doc, state, constants, mainContent) {
     const elements = mainContent.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
     for (const element of Array.from(elements).slice(0, 100)) {
       const tagName = element.tagName.toLowerCase();
-      const text = (element.textContent || "").trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || "").trim();
       if (text.length < 10) continue;
       if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
         continue;
       }
       if (tagName === "p") {
         const originalText = getOriginalTextIfTranslated(element);
-        content.push({ type: "paragraph", text: originalText || text, html: originalText || element.innerHTML });
+        content.push({ type: "paragraph", text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
         const cleanedText = cleanHeadingText(text);
         const normalized = normalizeHeadingForDedup(cleanedText);
@@ -3688,11 +3817,12 @@ function extractEmergencyFallback(win, doc, state, constants, mainContent) {
     const elements = container.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
     for (const element of Array.from(elements).slice(0, 100)) {
       const tagName = element.tagName.toLowerCase();
-      const text = (element.textContent || "").trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || "").trim();
       if (text.length < 10) continue;
       if (tagName === "p") {
         const originalText = getOriginalTextIfTranslated(element);
-        content.push({ type: "paragraph", text: originalText || text, html: originalText || element.innerHTML });
+        content.push({ type: "paragraph", text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
         const cleanedText = cleanHeadingText(text);
         const normalized = normalizeHeadingForDedup(cleanedText);
@@ -3729,14 +3859,15 @@ function extractLastResortContainerSearch(win, doc, state, constants, baseUrl) {
   const elements = bestContainer.querySelectorAll("p, h1, h2, h3, h4, h5, h6");
   for (const element of elements) {
     const tagName = element.tagName.toLowerCase();
-    const text = (element.textContent || "").trim();
+    const cleanedElement = cloneWithoutLinkAnnouncements(element);
+    const text = (cleanedElement.textContent || "").trim();
     if (tagName === "p") {
       if (text.length < 10) continue;
       if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
         continue;
       }
       const originalText = getOriginalTextIfTranslated(element);
-      const finalText = originalText || element.innerHTML;
+      const finalText = originalText || cleanedElement.innerHTML;
       content.push({ type: "paragraph", text: finalText, html: finalText });
     } else if (tagName.match(/^h[1-6]$/)) {
       const cleanedText = cleanHeadingText(text);
@@ -3759,7 +3890,7 @@ function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
   for (const heading of allHeadings) {
     if (headingCount >= 50) break;
     if (isWidget(win, heading)) continue;
-    const text = cleanHeadingText(heading.textContent || "");
+    const text = cleanHeadingText(cloneWithoutLinkAnnouncements(heading).textContent || "");
     const normalized = normalizeHeadingForDedup(text);
     if (normalized === state.mainTitleText) continue;
     if (state.addedHeadings.has(normalized)) continue;
@@ -3776,13 +3907,14 @@ function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
     if (paragraphCount >= 500) break;
     if (isExcluded(win, p, constants)) continue;
     if (isWidget(win, p)) continue;
-    const text = (p.textContent || "").trim();
+    const cleanedElement = cloneWithoutLinkAnnouncements(p);
+    const text = (cleanedElement.textContent || "").trim();
     if (text.length < 10) continue;
     if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
       continue;
     }
     const originalText = getOriginalTextIfTranslated(p);
-    const finalText = originalText || p.innerHTML;
+    const finalText = originalText || cleanedElement.innerHTML;
     const item = { type: "paragraph", text: finalText, html: finalText };
     content.push(item);
     sourceElements.set(item, p);
@@ -3804,7 +3936,7 @@ function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
   for (const element of elements) {
     const tagName = element.tagName.toLowerCase();
     if (tagName.match(/^h[1-6]$/)) {
-      const text = cleanHeadingText(element.textContent || "");
+      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || "");
       const normalized = normalizeHeadingForDedup(text);
       if (normalized === state.mainTitleText) continue;
       if (state.addedHeadings.has(normalized)) continue;
@@ -3812,10 +3944,11 @@ function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
       const level = parseInt(tagName.charAt(1));
       content.push({ type: "heading", level, text });
     } else if (tagName === "p") {
-      const text = (element.textContent || "").trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || "").trim();
       if (text.length < 10) continue;
       const originalText = getOriginalTextIfTranslated(element);
-      const finalText = originalText || element.innerHTML;
+      const finalText = originalText || cleanedElement.innerHTML;
       content.push({ type: "paragraph", text: finalText, html: finalText });
     } else if (tagName === "img" || tagName === "figure") {
       const img = tagName === "figure" ? element.querySelector("img") : element;
@@ -3913,7 +4046,7 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   for (const element of allElements) {
     const tagName = element.tagName.toLowerCase();
     if (tagName.match(/^h[1-3]$/)) {
-      const text = cleanHeadingText(element.textContent || "");
+      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || "");
       const normalized = normalizeHeadingForDedup(text);
       if (normalized === state.mainTitleText) continue;
       if (state.addedHeadings.has(normalized)) continue;
@@ -3938,11 +4071,12 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       if (alt.toLowerCase().includes("image")) alt = "";
       content.push({ type: "image", src: absoluteSrc, alt, caption: "" });
     } else if (element.hasAttribute("data-offset-key")) {
-      const text = (element.textContent || "").trim();
+      const cleanedElement = cloneWithoutLinkAnnouncements(element);
+      const text = (cleanedElement.textContent || "").trim();
       if (!text) continue;
       const innerHeading = element.querySelector("h1, h2, h3");
       if (innerHeading) {
-        const headingText = cleanHeadingText(innerHeading.textContent || "");
+        const headingText = cleanHeadingText(cloneWithoutLinkAnnouncements(innerHeading).textContent || "");
         const normalized = normalizeHeadingForDedup(headingText);
         if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
           state.addedHeadings.add(normalized);
@@ -3953,7 +4087,7 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       const innerImg = element.querySelector("img");
       if (innerImg) continue;
       const originalText = getOriginalTextIfTranslated(element);
-      const finalText = originalText || element.innerHTML;
+      const finalText = originalText || cleanedElement.innerHTML;
       content.push({ type: "paragraph", text: finalText, html: finalText });
     }
   }

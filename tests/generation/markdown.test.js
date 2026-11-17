@@ -17,7 +17,8 @@ vi.mock('../../scripts/utils/html.js', async (importOriginal) => ({
   htmlToMarkdown: vi.fn((text) => text?.replace(/<[^>]*>/g, '') || '')
 }));
 
-vi.mock('../../scripts/utils/config.js', () => ({
+vi.mock('../../scripts/utils/config.js', async importOriginal => ({
+  ...(await importOriginal()),
   CONFIG: {
     STORAGE_SAVE_DEBOUNCE: 500
   },
@@ -94,7 +95,7 @@ describe('generation/markdown', () => {
       }, updateState);
 
       expect(updateState).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'Building Markdown...', progress: 85 })
+        expect.objectContaining({ status: 'Generating Markdown...', statusTranslationKey: 'statusGeneratingMarkdown', progress: 85 })
       );
       expect(updateState).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'Saving file...', progress: 95 })

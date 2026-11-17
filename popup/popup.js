@@ -42,8 +42,8 @@
 
 log('[ClipAIble Popup] Starting imports', { timestamp: Date.now() });
 
-import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey, saveApiKeySettings } from '../scripts/utils/encryption.js';
-import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
+import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
+import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES, formatMessage, getLocaleTag } from '../scripts/locales.js';
 import { log, logWarn, logDebug } from '../scripts/utils/logging.js';
 import { enhancedLogError, initGlobalErrorHandlers } from './utils/error-handling.js';
 import { initPdfFileSelectionHandler } from './utils/pdf-dialog.js';
@@ -316,18 +316,21 @@ async function applyLocalization() {
   }
   const langCode = await getUILanguage();
   const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
+  const params = element => {
+    try { return JSON.parse(element.getAttribute('data-i18n-params') || '{}'); } catch { return {}; }
+  };
   
   // Apply translations to elements with data-i18n attribute
   document.querySelectorAll('[data-i18n]').forEach(element => {
     if (!(element instanceof HTMLElement)) return;
     const key = element.getAttribute('data-i18n');
-    const translation = locale[key] || UI_LOCALES.en[key] || key;
+    const translation = formatMessage(key, langCode, params(element));
     
     if (element instanceof HTMLInputElement && (element.type === 'text' || element.type === 'password')) {
       // For inputs, check if they have a separate placeholder key
       if (element.hasAttribute('data-i18n-placeholder')) {
         const placeholderKey = element.getAttribute('data-i18n-placeholder');
-        element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+        element.placeholder = formatMessage(placeholderKey, langCode, params(element));
       } else {
         element.placeholder = translation;
       }
@@ -343,14 +346,14 @@ async function applyLocalization() {
     if (!(element instanceof HTMLInputElement)) return;
     if (!element.hasAttribute('data-i18n')) {
       const placeholderKey = element.getAttribute('data-i18n-placeholder');
-      element.placeholder = locale[placeholderKey] || UI_LOCALES.en[placeholderKey] || '';
+      element.placeholder = formatMessage(placeholderKey, langCode, params(element));
     }
   });
   
   // Handle select options with data-i18n
   document.querySelectorAll('select option[data-i18n]').forEach(option => {
     const key = option.getAttribute('data-i18n');
-    const translation = locale[key] || UI_LOCALES.en[key] || key;
+    const translation = formatMessage(key, langCode, params(option));
     option.textContent = translation;
   });
   
@@ -387,7 +390,7 @@ async function applyLocalization() {
       // Update text from data-i18n if present
       if (opt.hasAttribute('data-i18n')) {
         const key = opt.getAttribute('data-i18n');
-        const translation = locale[key] || UI_LOCALES.en[key] || key;
+        const translation = formatMessage(key, langCode, params(opt));
         opt.textContent = translation;
       }
       // Update selected state and displayed value
@@ -433,13 +436,13 @@ async function applyLocalization() {
   document.querySelectorAll('[data-i18n-title]').forEach(element => {
     if (!(element instanceof HTMLElement)) return;
     const key = element.getAttribute('data-i18n-title');
-    element.title = locale[key] || UI_LOCALES.en[key] || key;
+    element.title = formatMessage(key, langCode, params(element));
   });
   
   // Update aria-label attributes
   document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
     const key = element.getAttribute('data-i18n-aria-label');
-    element.setAttribute('aria-label', locale[key] || UI_LOCALES.en[key] || key);
+    element.setAttribute('aria-label', formatMessage(key, langCode, params(element)));
   });
   
   // Update specific dynamic elements
@@ -459,7 +462,7 @@ async function applyLocalization() {
   }
   
   // Update document language
-  document.documentElement.lang = langCode;
+  document.documentElement.lang = getLocaleTag(langCode);
 }
 
 /**
@@ -605,7 +608,7 @@ async function resetStyleSetting(type) {
       break;
   }
   const resetText = await t('resetToDefault');
-  showToast(resetText, 'success');
+  showToast(resetText, 'success', { key: 'resetToDefault' });
 }
 
 // Reset all style settings to defaults
@@ -648,7 +651,7 @@ async function resetAllStyles() {
   });
   
   const allStylesResetText = await t('allStylesReset');
-  showToast(allStylesResetText, 'success');
+  showToast(allStylesResetText, 'success', { key: 'allStylesReset' });
 }
 
 
@@ -743,6 +746,7 @@ function initAllCustomSelects() {
     'audioVoice',
     'pageMode',
     'languageSelect',
+    'imageTranslationProvider',
     'stylePreset',
     'uiLanguageSelect',
     'themeSelect'
@@ -762,158 +766,13 @@ function initAllCustomSelects() {
 }
 
 
-// Save API keys to storage
-async function saveApiKey() {
-  const provider = elements.apiProviderSelect?.value || 'openai';
-  const apiKey = elements.apiKey.value.trim();
-  
-  // Check if main API key is provided (not masked)
-  const hasKey = apiKey && !apiKey.startsWith('****');
-  
-  if (!hasKey) {
-    const pleaseEnterKeyText = await t('pleaseEnterAtLeastOneApiKey');
-    showToast(pleaseEnterKeyText, 'error');
-    return;
-  }
-
-  const keysToSave = {};
-  
-  // Save selected provider
-  keysToSave[STORAGE_KEYS.API_PROVIDER] = provider;
-  
-  // Save API key for selected provider
-  if (apiKey) {
-    // If masked (user didn't change it), keep existing encrypted value
-    if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
-      if (provider === 'openai') {
-        keysToSave[STORAGE_KEYS.API_KEY] = elements.apiKey.dataset.encrypted;
-      } else if (provider === 'claude') {
-        keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = elements.apiKey.dataset.encrypted;
-      } else if (provider === 'gemini') {
-        keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = elements.apiKey.dataset.encrypted;
-      } else if (provider === 'grok') {
-        keysToSave[STORAGE_KEYS.GROK_API_KEY] = elements.apiKey.dataset.encrypted;
-      } else if (provider === 'openrouter') {
-        keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = elements.apiKey.dataset.encrypted;
-      } else if (provider === 'deepseek') {
-        keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = elements.apiKey.dataset.encrypted;
-      }
-    } else if (!apiKey.startsWith('****')) {
-      // New key provided, validate and encrypt
-      if (provider === 'openai') {
-        if (!apiKey.startsWith('sk-')) {
-          const invalidOpenAiKeyText = await t('invalidOpenAiKeyFormat');
-          showToast(invalidOpenAiKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.API_KEY] = await encryptApiKey(apiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      } else if (provider === 'claude') {
-        if (!apiKey.startsWith('sk-ant-')) {
-          const invalidClaudeKeyText = await t('invalidClaudeKeyFormat');
-          showToast(invalidClaudeKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.CLAUDE_API_KEY] = await encryptApiKey(apiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      } else if (provider === 'gemini') {
-        if (!apiKey.startsWith('AIza')) {
-          const invalidGeminiKeyText = await t('invalidGeminiKeyFormat');
-          showToast(invalidGeminiKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.GEMINI_API_KEY] = await encryptApiKey(apiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      } else if (provider === 'grok') {
-        if (!apiKey.startsWith('xai-')) {
-          const invalidGrokKeyText = await t('invalidGrokKeyFormat');
-          showToast(invalidGrokKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.GROK_API_KEY] = await encryptApiKey(apiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      } else if (provider === 'openrouter') {
-        // OpenRouter API keys typically start with 'sk-or-' but we'll be lenient
-        if (!apiKey.startsWith('sk-or-') && !apiKey.startsWith('sk-')) {
-          const invalidOpenRouterKeyText = await t('invalidOpenRouterKeyFormat');
-          showToast(invalidOpenRouterKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.OPENROUTER_API_KEY] = await encryptApiKey(apiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      } else if (provider === 'deepseek') {
-        // DeepSeek API keys start with 'sk-'
-        if (!apiKey.startsWith('sk-')) {
-          const invalidDeepSeekKeyText = await t('invalidDeepSeekKeyFormat');
-          showToast(invalidDeepSeekKeyText, 'error');
-          return;
-        }
-        try {
-          keysToSave[STORAGE_KEYS.DEEPSEEK_API_KEY] = await encryptApiKey(apiKey);
-        } catch (error) {
-          const failedToEncryptText = await t('failedToEncryptApiKey');
-          showToast(failedToEncryptText, 'error');
-          logError('Encryption error', error);
-          return;
-        }
-      }
-    }
-  }
-  
-  // Google API key is now saved separately via saveGoogleApiKey button in settings
-  // Removed from here to avoid confusion
-
-  // Remove null values before saving (explicitly remove keys)
-  const keysToRemove = [];
-  for (const [key, value] of Object.entries(keysToSave)) {
-    if (value === null) {
-      keysToRemove.push(key);
-      delete keysToSave[key];
-    }
-  }
-  
-  await saveApiKeySettings(keysToSave, keysToRemove);
-  
-  const apiKeysSavedText = await t('apiKeysSaved');
-  showToast(apiKeysSavedText, 'success');
-}
-
-
 // Set status indicator (kept for backward compatibility, now uses uiModule)
-function setStatus(type, text, startTime = null) {
+function setStatus(type, text, startTime = null, translation = null) {
   if (uiModuleRef) {
-    return uiModuleRef.setStatus(type, text, startTime);
+    return uiModuleRef.setStatus(type, text, startTime, translation);
   }
+  elements.statusText.removeAttribute('data-i18n');
+  elements.statusText.removeAttribute('data-i18n-params');
   elements.statusDot.className = 'status-dot';
   if (type === 'processing') {
     elements.statusDot.classList.add('processing');
@@ -952,9 +811,9 @@ function setProgress(percent, show = true) {
 }
 
 // Show toast notification (kept for backward compatibility, now uses uiModule)
-function showToast(message, type = 'success') {
+function showToast(message, type = 'success', translation = null) {
   if (uiModuleRef) {
-    return uiModuleRef.showToast(message, type);
+    return uiModuleRef.showToast(message, type, translation);
   }
   const existingToast = document.querySelector('.toast');
   if (existingToast) {
@@ -963,6 +822,10 @@ function showToast(message, type = 'success') {
 
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
+  if (translation?.key) {
+    toast.dataset.i18n = translation.key;
+    toast.dataset.i18nParams = JSON.stringify(translation.params || {});
+  }
   toast.textContent = message;
   document.body.appendChild(toast);
 
@@ -1126,7 +989,7 @@ async function displayCacheStats(stats) {
             await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
             await loadAndDisplayStats();
             const domainRemovedText = await t('domainRemovedFromCache');
-            showToast(domainRemovedText, 'success');
+            showToast(domainRemovedText, 'success', { key: 'domainRemovedFromCache' });
           }
         });
       });

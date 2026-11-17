@@ -12,6 +12,33 @@ import { STORAGE_KEYS } from '../constants.js';
 const callbackTimers = new Map();
 const revisions = new Map();
 
+/** Resolve a provider-owned draft or the provider's saved key. */
+export async function resolveProviderApiKey(input, provider, decryptApiKey, translate) {
+  const ownsInput = input?.dataset.provider === provider;
+  const draft = ownsInput ? input.value.trim() : '';
+  let encrypted = ownsInput && draft.startsWith('****') ? input.dataset.encrypted : null;
+  if (ownsInput && !encrypted) return draft.startsWith('****') ? '' : draft;
+  if (!ownsInput) {
+    try {
+      const storageKey = `${provider}_api_key`;
+      const stored = await chrome.storage.local.get([storageKey]);
+      encrypted = typeof stored[storageKey] === 'string' ? stored[storageKey] : '';
+    } catch (error) {
+      throw Object.assign(new Error(await translate('errorApiKeyRead')), {
+        translationKey: 'errorApiKeyRead', translationParams: {}
+      });
+    }
+  }
+  if (!encrypted) return '';
+  try {
+    return await decryptApiKey(encrypted, provider);
+  } catch (error) {
+    throw Object.assign(new Error(await translate('failedToDecryptApiKey')), {
+      translationKey: 'failedToDecryptApiKey', translationParams: {}
+    });
+  }
+}
+
 /**
  * Persist settings immediately and debounce each setting's UI callback.
  * @param {string} key - Storage key

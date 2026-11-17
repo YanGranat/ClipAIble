@@ -11,13 +11,13 @@ import { callAIWithImageAndHistory } from '../api/index.js';
 import { callWithRetry } from '../utils/retry.js';
 import { CONFIG } from '../utils/config.js';
 import { PDF_TO_MARKDOWN_SYSTEM_PROMPT, buildPdfPageUserPrompt } from '../extraction/prompts.js';
-import { extractPdfViaOffscreen, getPdfMetadata, getPdfPageDimensions, renderPdfPageImage, renderAllPdfPages } from '../api/pdf-offscreen.js';
+import { extractPdfViaOffscreen, getPdfMetadata, renderPdfPageImage, renderAllPdfPages } from '../api/pdf-offscreen.js';
 import { extractPdfDataFromTab } from '../api/pdf-data-extractor.js';
 import { getPdfData, savePdfData, removePdfData, validatePdfData } from '../api/pdf-storage.js';
-import { measurePdfLayoutInOriginalTab } from '../api/pdf-cdp-render.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { fetchPdfFile } from '../offscreen/pdf/utils/pdf-fetcher.js';
 import { isTerminalAIResponseError } from '../api/response-validation.js';
+import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
 
 /**
  * Get PDF data with fallback strategies
@@ -171,7 +171,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null, requestOptions = {})
       logWarn('[ClipAIble PDF Processing] ❌ Failed to get PDF file from user selection', errorContext);
       
       // Create new error with user-friendly message, but preserve original error as cause
-      const userError = new Error('PDF data not available. Please select the PDF file when prompted, or ensure PDF is open in a browser tab.');
+      const userError = createPdfError('PDF data not available. Please select the PDF file when prompted, or ensure PDF is open in a browser tab.', 'errorPdfDataUnavailable');
       if (fileSelectionError.cause) {
         userError.cause = fileSelectionError.cause;
       } else {
@@ -201,11 +201,11 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null, requestOptions = {})
         error: fetchError.message,
         pdfUrl
       });
-      throw new Error(`Failed to fetch PDF from web: ${fetchError.message}`);
+      throw fetchError;
     }
   }
   
-  throw new Error('PDF data not available. Please ensure PDF is open in a browser tab or provide a valid URL.');
+  throw createPdfError('PDF data not available. Please ensure PDF is open in a browser tab or provide a valid URL.', 'errorPdfDataUnavailable');
 }
 
 /**
@@ -224,13 +224,13 @@ async function requestPdfFileSelectionViaMessage(expectedPdfUrl) {
     }, (response) => {
       if (chrome.runtime.lastError) {
         logError('[ClipAIble PDF Processing] Failed to send message to popup', chrome.runtime.lastError);
-        reject(new Error(chrome.runtime.lastError.message));
+        reject(createPdfError(chrome.runtime.lastError.message, 'errorPdfDataUnavailable'));
         return;
       }
       
       if (!response) {
         log('[ClipAIble PDF Processing] No response from popup - popup may be closed');
-        reject(new Error('No response from popup. Please keep the extension popup open and try again.'));
+        reject(createPdfError('No response from popup. Please keep the extension popup open and try again.', 'errorPdfDataUnavailable'));
         return;
       }
       
@@ -293,7 +293,7 @@ async function requestPdfFileSelectionViaMessage(expectedPdfUrl) {
           resolve(null);
         }
       } else {
-        reject(new Error(response.error || 'Failed to select PDF file'));
+        reject(createPdfError(response.error || 'Failed to select PDF file', response.translationKey || 'errorPdfDataUnavailable', response.translationParams || {}));
       }
     });
   });
@@ -477,31 +477,28 @@ export async function processPdfPage(data, pdfUrl) {
       }
     };
     
-    result = await extractPdfContent(pdfUrl);
+    let pdfData = null;
+    try { pdfData = await getPdfData(pdfUrl); }
+    catch (error) { logWarn('[PDF] Cached data unavailable', { error: error.message }); }
+    const requestOptions = getAIRequestOptions(data);
+    if (pdfData instanceof ArrayBuffer) {
+      validatePdfData(pdfData, 'PDF extraction');
+      await fetchPdfFile(pdfUrl, pdfData, requestOptions);
+    }
+    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, processingRunId: data.processingRunId });
+    await checkCancellation('PDF extraction');
     
     log(`✅ PDF content extracted: ${result.content?.length || 0} content items`, { 
       title: result.title
     });
   } catch (error) {
     logError('Failed to extract PDF content', error);
-    const uiLang = await getUILanguageCached();
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    
-    // Provide user-friendly error messages
-    if (errorMsg.includes('password')) {
-      throw new Error(tSync('errorPdfPasswordProtected', uiLang) || errorMsg);
-    } else if (errorMsg.includes('too large')) {
-      throw new Error(errorMsg); // Already user-friendly
-    } else if (errorMsg.includes('No text')) {
-      throw new Error(tSync('errorPdfNoTextLayer', uiLang) || errorMsg);
-    } else {
-      throw new Error(tSync('errorPdfExtractionFailed', uiLang)?.replace('{error}', errorMsg) || errorMsg);
-    }
+    throw await localizePdfError(error);
   }
   
   if (!result.content || result.content.length === 0) {
     const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorPdfNoContent', uiLang) || 'No content extracted from PDF');
+    throw createPdfError(tSync('errorPdfNoContent', uiLang), 'errorPdfNoContent');
   }
   
   updateState({ progress: 40 });
@@ -549,8 +546,13 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   if (!apiKey) {
     const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorTtsNoApiKey', uiLang) || 'API key is required for AI processing');
+    throw createPdfError(tSync('errorTtsNoApiKey', uiLang), 'errorTtsNoApiKey');
   }
+  const pdfStatusLanguage = await getUILanguageCached();
+  const updatePdfStatus = (key, params, progress) => updateState({
+    progress, status: tSync(key, pdfStatusLanguage, params),
+    statusTranslationKey: key, statusTranslationParams: params
+  });
   
   // Remove URL fragment (#page=N) before loading PDF - fetch cannot handle fragments
   // Chrome PDF viewer uses #page=N for navigation, but we need clean URL for file loading
@@ -574,7 +576,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     try {
       validatePdfData(pdfData, 'processPdfPageWithAI');
     } catch (validationError) {
-      throw new Error(`PDF data validation failed: ${validationError.message}`);
+      throw createPdfError(`PDF data validation failed: ${validationError.message}`, 'errorPdfInvalid');
     }
     
     const headerBytes = new Uint8Array(pdfData).slice(0, 4);
@@ -594,7 +596,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     try {
       validatePdfData(pdfData, 'processPdfPageWithAI');
     } catch (validationError) {
-      throw new Error(`PDF data validation failed: ${validationError.message}`);
+      throw createPdfError(`PDF data validation failed: ${validationError.message}`, 'errorPdfInvalid');
     }
     
     const headerBytes = new Uint8Array(pdfData).slice(0, 4);
@@ -608,126 +610,14 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     });
   }
   
-  // CRITICAL: Get PDF page dimensions via PDF.js API (offscreen loads from IndexedDB via pdfDataRef when pdfData was set)
-  let pdfPageDimensions = null;
-  try {
-    log('[ClipAIble PDF Processing] Getting PDF page dimensions via PDF.js API', {
-      pdfUrl: cleanPdfUrl,
-      pageNum: 1,
-      hasPdfData: !!pdfData,
-      isLocalFile
-    });
-    
-    pdfPageDimensions = await getPdfPageDimensions(cleanPdfUrl, 1, pdfData);
-    
-    criticalLog('[ClipAIble PDF Processing] ✅ PDF page dimensions retrieved via PDF.js API', 'PDF_PAGE_DIMENSIONS_RETRIEVED_VERY_EARLY', {
-      width: pdfPageDimensions?.width,
-      height: pdfPageDimensions?.height,
-      aspectRatio: pdfPageDimensions ? (pdfPageDimensions.width / pdfPageDimensions.height).toFixed(4) : null,
-      mediaBox: pdfPageDimensions?.mediaBox,
-      cropBox: pdfPageDimensions?.cropBox,
-      timestamp: Date.now()
-    });
-    
-    log('[ClipAIble PDF Processing] PDF page dimensions retrieved', {
-      width: pdfPageDimensions?.width,
-      height: pdfPageDimensions?.height,
-      aspectRatio: pdfPageDimensions ? (pdfPageDimensions.width / pdfPageDimensions.height).toFixed(4) : null
-    });
-  } catch (error) {
-    logWarn('[ClipAIble PDF Processing] Failed to get PDF page dimensions via PDF.js API', {
-      error: error.message,
-      note: 'Will abort processing'
-    });
-  }
-  
-  // CRITICAL: Abort processing if dimensions are not available
-  if (!pdfPageDimensions || !pdfPageDimensions.width || !pdfPageDimensions.height) {
-    const errorMsg = 'PDF page dimensions not available - aborting processing';
-    logError('[ClipAIble PDF Processing] ❌ ABORTING: PDF page dimensions not available', {
-      pdfPageDimensions,
-      hasWidth: !!(pdfPageDimensions && pdfPageDimensions.width),
-      hasHeight: !!(pdfPageDimensions && pdfPageDimensions.height)
-    });
-    throw new Error(errorMsg);
-  }
-  
-  // CRITICAL: Measure PDF layout in original user tab (BEFORE opening new tabs)
-  // This measures sidebar width and PDF content coordinates in the tab where user opened PDF
-  // We'll use these measurements for all new tabs to exclude sidebar automatically
-  // CRITICAL: Processing will abort if measurement fails (required for correct clipping)
-  let originalTabLayout = null;
-  if (tabId) {
-    try {
-      log('[ClipAIble PDF Processing] Measuring PDF layout in original user tab (BEFORE opening new tabs)', {
-        tabId,
-        pdfUrl: cleanPdfUrl,
-        note: 'This will measure sidebar width and PDF content coordinates to use for all new tabs. Processing will abort if this fails.'
-      });
-      
-      // Use static import (already imported at top of file)
-      originalTabLayout = await measurePdfLayoutInOriginalTab(tabId, captureOptions);
-      
-      if (originalTabLayout) {
-        criticalLog('[ClipAIble PDF Processing] ✅ PDF layout measured in original tab', 'PDF_LAYOUT_MEASURED_ORIGINAL_TAB', {
-          tabId,
-          sidebarWidth: originalTabLayout.sidebarWidth,
-          pdfContentX: originalTabLayout.pdfContentX,
-          pdfContentY: originalTabLayout.pdfContentY,
-          pdfContentWidth: originalTabLayout.pdfContentWidth,
-          pdfContentHeight: originalTabLayout.pdfContentHeight,
-          viewportWidth: originalTabLayout.viewportWidth,
-          viewportHeight: originalTabLayout.viewportHeight,
-          note: originalTabLayout.sidebarWidth === 0 
-            ? 'Sidebar width is 0 (hidden or collapsed) - will collapse sidebar in new tabs' 
-            : 'Will use these coordinates for all new tabs to exclude sidebar',
-          timestamp: Date.now()
-        });
-        
-        // NOTE: If sidebarWidth is 0, it means sidebar is hidden/collapsed or not found
-        // We'll collapse it in new tabs anyway, so this is OK
-        if (originalTabLayout.sidebarWidth === 0) {
-          log('[ClipAIble PDF Processing] Sidebar is hidden/collapsed or not found in original tab - will collapse it in new tabs', {
-            tabId,
-            note: 'No need to exclude sidebar from screenshots - it will be collapsed automatically in new tabs'
-          });
-        }
-      } else {
-        const errorMsg = 'Failed to measure PDF layout in original tab - aborting processing';
-        logError('[ClipAIble PDF Processing] ❌ ABORTING: PDF layout measurement failed', {
-          tabId,
-          originalTabLayout,
-          note: 'Processing aborted - PDF layout measurement is required'
-        });
-        throw new Error(errorMsg);
-      }
-    } catch (error) {
-      logError('[ClipAIble PDF Processing] ❌ ABORTING: Error measuring PDF layout in original tab', {
-        tabId,
-        error: error.message,
-        errorStack: error.stack,
-        note: 'Processing aborted - sidebar width measurement is required for correct clipping'
-      });
-      throw error; // Re-throw to abort processing
-    }
-  } else {
-    const errorMsg = 'No tabId provided - cannot measure PDF layout in original tab';
-    logError('[ClipAIble PDF Processing] ❌ ABORTING: No tabId for layout measurement', {
-      tabId,
-      note: 'Processing aborted - tabId is required to measure sidebar width'
-    });
-    throw new Error(errorMsg);
-  }
-  
   // Stage 1: Get PDF metadata (MINIMAL - just get page count, nothing else)
   // CRITICAL: Do this as fast as possible, no unnecessary operations
   let pdfMetadata;
   try {
-    pdfMetadata = await getPdfMetadata(cleanPdfUrl);
+    pdfMetadata = await getPdfMetadata(cleanPdfUrl, pdfData, captureOptions);
   } catch (error) {
     logError('Failed to get PDF metadata', error);
-    const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorPdfExtractionFailed', uiLang)?.replace('{error}', error.message) || error.message);
+    throw await localizePdfError(error);
   }
   
   const numPages = pdfMetadata.numPages;
@@ -735,7 +625,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   if (numPages === 0) {
     const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorPdfNoContent', uiLang) || 'PDF has no pages');
+    throw createPdfError(tSync('errorPdfNoContent', uiLang), 'errorPdfNoContent');
   }
   
   log(`PDF has ${numPages} pages - starting parallel extraction`);
@@ -805,22 +695,18 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   const pageImages = []; // Store all rendered page images
   
   // CRITICAL: Render ALL pages at once (loads PDF ONCE - much faster)
-  // pdfPageDimensions was already retrieved at the very beginning of the function
   // Render pages together to avoid repeatedly loading the document.
   log('[ClipAIble PDF Processing] Rendering all PDF pages at once (loads PDF once)', {
     numPages,
     pdfDataSize: pdfData ? pdfData.byteLength : null,
     hasPdfData: !!pdfData,
-    method: 'renderAllPdfPages',
-    hasPageDimensions: !!pdfPageDimensions,
-    pageWidth: pdfPageDimensions?.width,
-    pageHeight: pdfPageDimensions?.height
+    method: 'renderAllPdfPages'
   });
   
-  updateState({ progress: 10, status: `Rendering ${numPages} pages...` });
+  updatePdfStatus('statusRenderingPdfPages', { pages: numPages, count: numPages }, 10);
   
   try {
-    const renderedPages = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, pdfPageDimensions, originalTabLayout, captureOptions);
+    const renderedPages = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, captureOptions);
     
     // Convert rendered pages to pageImages array
     for (const renderedPage of renderedPages) {
@@ -877,6 +763,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     log(`[ClipAIble PDF Processing] All pages rendered: ${pageImages.filter(img => img !== null).length}/${numPages} successful`);
     
   } catch (error) {
+    await checkCancellation('PDF rendering');
     logError('[ClipAIble PDF Processing] Failed to render all PDF pages', {
       error: error.message,
       numPages
@@ -921,7 +808,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       await checkCancellation(`PDF AI processing page ${pageNum}`);
       
       const captureProgress = 10 + (pageNum / numPages) * 20; // 10-30%
-      updateState({ progress: Math.round(captureProgress), status: `Processing page ${pageNum}/${numPages} with AI...` });
+      updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, Math.round(captureProgress));
       
       // Check if we still need to search for metadata
       const shouldExtractMetadata = needsMetadata(pageNum);
@@ -944,7 +831,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       }
       
       // IMMEDIATELY process this page with LLM (like old working version)
-      // This gives Chrome time between captures and prevents blocking
+      // Yield between pages to keep background work responsive.
       if (pageImage) {
         await checkCancellation(`PDF AI processing page ${pageNum}`);
         
@@ -970,7 +857,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
         
         // Update progress (30-40% for LLM processing)
         const pageProgress = 30 + (pageNum / numPages) * 10; // 30-40%
-        updateState({ progress: Math.round(pageProgress), status: `Processing page ${pageNum}/${numPages} with AI...` });
+        updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, Math.round(pageProgress));
         
         try {
           // CRITICAL: Verify imageData has prefix before using it
@@ -1313,66 +1200,23 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     const allPagesRendered = alreadyRenderedCount === numPages;
     
     if (!allPagesRendered) {
-      // For remote PDFs: Fetch and render in parallel ONLY if not all pages were rendered
-      // Use unified function to get PDF data with fallback strategies
-      if (!pdfData) {
-        pdfData = await getPdfDataWithFallback(cleanPdfUrl, null, requestOptions);
+      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        if (pageImages[pageNum - 1]) continue;
+        await checkCancellation(`PDF rendering page ${pageNum}`);
+        try {
+          const pageImage = await renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData, captureOptions);
+          pageImages[pageNum - 1] = pageImage;
+        } catch (error) {
+          await checkCancellation(`PDF rendering page ${pageNum}`);
+          pageImages[pageNum - 1] = null;
+          logWarn('[PDF] Page render retry failed', { pageNum, error: error.message });
+        }
       }
-      
-      // Render all pages in parallel using offscreen render
-      log('[ClipAIble PDF Processing] Starting parallel rendering', {
-        numPages,
-        alreadyRenderedCount,
-        missingPages: numPages - alreadyRenderedCount
-      });
-    
-    const renderPromises = [];
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      renderPromises.push(
-        renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData, captureOptions)
-          .then(pageImage => {
-            // CRITICAL: Use full imageData (with prefix) instead of extracting base64
-            // imageData already has full data URL like "data:image/png;base64,..."
-            const finalImageData = pageImage.imageData || (pageImage.base64 ? `data:image/png;base64,${pageImage.base64}` : null);
-            
-            if (!finalImageData) {
-              pageImages[pageNum - 1] = null;
-              return { pageNum, success: false, error: 'No imageData or base64 available' };
-            }
-            
-            pageImages[pageNum - 1] = {
-              imageData: finalImageData, // Use full data URL, not just base64
-              width: pageImage.width,
-              height: pageImage.height
-            };
-            
-            return { pageNum, success: true };
-          })
-          .catch(error => {
-            pageImages[pageNum - 1] = null;
-            return { pageNum, success: false, error: error.message };
-          })
-      );
     }
-    
-      // Wait for all pages to render in parallel
-      await Promise.all(renderPromises);
-      
-      log('[ClipAIble PDF Processing] Parallel rendering complete', {
-        numPages,
-        successfulPages: pageImages.filter(img => img !== null).length,
-        failedPages: pageImages.filter(img => img === null).length
-      });
-    } else {
-      log('[ClipAIble PDF Processing] Skipping parallel rendering - all pages already rendered', {
-        numPages,
-        alreadyRenderedCount
-      });
-    }
-      
-      // CRITICAL: All pages extracted in parallel - now ready for LLM processing
+
+      // Process complete page images in document order.
       const renderedCount = pageImages.filter(img => img !== null).length;
-      log(`Parallel extraction complete: ${renderedCount}/${numPages} pages ready for LLM processing`);
+      log(`Page rendering complete: ${renderedCount}/${numPages} pages ready for LLM processing`);
       
       // Check if we already processed all pages in fallback (sequential capture+process mode)
       const alreadyProcessedAll = processedPages.length > 0 && processedPages.length + failedPages.length === numPages;
@@ -1384,7 +1228,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           total: numPages
         });
       } else {
-        // Now process all captured pages with LLM (no more tab switching!)
+        // Process the rendered pages with the selected AI provider.
         for (let pageNum = 1; pageNum <= numPages; pageNum++) {
         await checkCancellation(`PDF AI processing page ${pageNum}`);
 
@@ -1400,7 +1244,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           hasCapturedImage: pageImages[pageNum - 1] !== null
         });
 
-        // Get pre-captured page image (no tab switching needed!)
+        // Get the rendered page image.
         const pageImage = pageImages[pageNum - 1];
         
         if (pageImage === null || pageImage === undefined) {
@@ -1431,7 +1275,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
 
         // Update progress (30-40% for LLM processing)
         const pageProgress = 30 + (pageNum / numPages) * 10; // 30-40%
-        updateState({ progress: Math.round(pageProgress), status: `Processing page ${pageNum}/${numPages} with AI...` });
+        updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, Math.round(pageProgress));
 
         try {
           // CRITICAL: Verify imageData has prefix before using it
@@ -1824,7 +1668,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   const processedSet = new Set(processedPages);
   const missingPages = Array.from({ length: numPages }, (_, index) => index + 1).filter(page => !processedSet.has(page));
   if (missingPages.length) {
-    throw new Error(`PDF extraction is incomplete. Failed pages: ${missingPages.join(', ')}.`);
+    throw createPdfError(`PDF extraction is incomplete. Failed pages: ${missingPages.join(', ')}.`, 'errorPdfIncomplete', { pages: missingPages.join(', ') });
   }
   failedPages.length = 0;
 
@@ -1863,7 +1707,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     const errorDetails = errorSummary.details.length > 0 
       ? ` Errors: ${errorSummary.details.map(e => `Page ${e.pageNum}: ${e.error}`).join('; ')}`
       : '';
-    throw new Error((tSync('errorPdfNoContent', uiLang) || 'No pages were successfully processed') + errorDetails);
+    throw createPdfError(tSync('errorPdfNoContent', uiLang) + errorDetails, 'errorPdfNoContent');
   }
   
   if (failedPages.length > 0) {
@@ -1943,7 +1787,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   if (!combinedMarkdown.trim()) {
     const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorPdfNoContent', uiLang) || 'No content extracted from PDF');
+    throw createPdfError(tSync('errorPdfNoContent', uiLang), 'errorPdfNoContent');
   }
   
   // Extract title from first H1 heading (if exists) and remove it from markdown

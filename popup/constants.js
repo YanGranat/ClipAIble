@@ -107,6 +107,9 @@ export const ELEMENT_IDS = {
   LANGUAGE_SELECT: 'languageSelect',
   TRANSLATE_IMAGES: 'translateImages',
   TRANSLATE_IMAGES_GROUP: 'translateImagesGroup',
+  IMAGE_TRANSLATION_PROVIDER: 'imageTranslationProvider',
+  IMAGE_TRANSLATION_PROVIDER_GROUP: 'imageTranslationProviderGroup',
+  IMAGE_TRANSLATION_MODEL_HINT: 'imageTranslationModelHint',
 
   // Styles
   STYLE_PRESET: 'stylePreset',
@@ -220,7 +223,6 @@ export const ELEMENT_IDS = {
   PDF_FILE_SELECTION_MODAL_CLOSE: 'pdfFileSelectionModalClose',
   PDF_FILE_SELECTION_MODAL_CONTENT: 'pdfFileSelectionModalContent',
   PDF_FILE_SELECTION_MODAL_MESSAGE: 'pdfFileSelectionModalMessage',
-  PDF_FILE_SELECTION_MODAL_WARNING: 'pdfFileSelectionModalWarning',
   PDF_FILE_SELECTION_MODAL_OK: 'pdfFileSelectionModalOk',
 
   // Additional elements
@@ -257,6 +259,7 @@ export const STORAGE_KEYS = {
   PAGE_MODE: 'page_mode',
   LANGUAGE: 'pdf_language',
   STORAGE_TRANSLATE_IMAGES: 'translate_images',
+  IMAGE_TRANSLATION_PROVIDER: 'image_translation_provider',
 
   // Styles
   STYLE_PRESET: 'pdf_style_preset',

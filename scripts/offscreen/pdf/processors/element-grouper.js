@@ -529,7 +529,11 @@ export function groupLinesIntoElements(lines, metrics) {
       elementForClassification.nextIsList = nextIsList;
       
       // Classify the grouped block (not individual lines)
-      const headingResult = classifyHeading(elementForClassification, metrics);
+      const headingResult = classifyHeading({
+        ...elementForClassification,
+        isBold: block.lines.length > 0 && block.lines.every(line => line.isBold),
+        isItalic: block.lines.length > 0 && block.lines.every(line => line.isItalic)
+      }, metrics);
       const listResult = classifyList(elementForClassification);
       const paraResult = classifyParagraph(elementForClassification, metrics);
       log(`[PDF v3] groupLinesIntoElements: Block [${i}] - Classifying element - text="${truncateText(block.combinedText, 50)}", lineCount=${block.lines?.length || 0}`);

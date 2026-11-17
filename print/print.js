@@ -3,8 +3,9 @@
 
 import { getLargeData, removeLargeData } from '../scripts/utils/storage.js';
 import { cleanTitleForFilename, escapeHtml } from '../scripts/utils/html.js';
-import { getUILanguage, tSync } from '../scripts/locales.js';
+import { getUILanguage, tSync, getLocaleTag } from '../scripts/locales.js';
 import { CONFIG } from '../scripts/utils/config.js';
+import { getErrorTranslation } from '../scripts/utils/error-handler.js';
 
 const LOG_PREFIX = '[ClipAIble:Print]';
 
@@ -51,6 +52,7 @@ async function init() {
   // Load UI language and update loading text
   try {
     const uiLang = await getUILanguage();
+    document.documentElement.lang = getLocaleTag(uiLang);
     const loadingText = tSync('loadingArticle', uiLang);
     const loadingElement = document.getElementById('loadingText');
     const titleElement = document.getElementById('pageTitle');
@@ -62,13 +64,13 @@ async function init() {
   
   try {
     // Get HTML from storage (checks both chrome.storage and IndexedDB)
-    if (!printStorageKey) throw new Error('Invalid print job');
+    if (!printStorageKey) throw Object.assign(new Error('Invalid print job'), { translationKey: 'errorPrintContentUnavailable' });
     const printJob = await getLargeData(printStorageKey);
     processingRunId = printJob?.processingRunId;
     const printHtml = printJob?.html;
     
     if (typeof printHtml !== 'string' || !printHtml) {
-      throw new Error('No content in storage');
+      throw Object.assign(new Error('No content in storage'), { translationKey: 'errorPrintContentUnavailable' });
     }
     
     // Get metadata from chrome.storage
@@ -253,7 +255,7 @@ async function init() {
       log('PDF generation started');
       // Tab will be closed by background script after PDF is saved
     } else {
-      throw new Error(response?.error || 'PDF generation failed');
+      throw Object.assign(new Error(response?.error || 'PDF generation failed'), { translationKey: response?.translationKey || (!response?.error ? 'errorPdfGenerationFailed' : null), translationParams: response?.translationParams || {} });
     }
     
     log('=== DONE ===');
@@ -263,7 +265,7 @@ async function init() {
     log(`ERROR: ${error.message}`, { error: error.toString(), stack: error.stack }, 'error');
     if (validJobId) {
       try {
-        await chrome.runtime.sendMessage({ action: 'printJobFailed', data: { printJobId, processingRunId, error: error.message } });
+        await chrome.runtime.sendMessage({ action: 'printJobFailed', data: { printJobId, processingRunId, error: error.message, ...getErrorTranslation(error) } });
       } catch (reportError) {
         log('Failed to report print error', { error: reportError.message }, 'error');
       }
@@ -274,7 +276,8 @@ async function init() {
       const errorTitle = tSync('errorPrintPage', uiLang);
       const unknownErrorText = tSync('unknownError', uiLang);
       // SECURITY: Escape error message to prevent XSS attacks
-      const safeErrorMessage = escapeHtml(error.message || unknownErrorText);
+      const safeErrorMessage = escapeHtml(error.translationKey ? tSync(error.translationKey, uiLang, error.translationParams) : (error.message || unknownErrorText));
+      document.documentElement.lang = getLocaleTag(uiLang);
       document.body.innerHTML = `<div style="padding:40px;color:red;font-family:sans-serif;">
         <h2>${escapeHtml(errorTitle)}</h2>
         <p>${safeErrorMessage}</p>

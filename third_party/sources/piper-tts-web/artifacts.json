@@ -1,0 +1,72 @@
+[
+  {
+    "file": "audio.d.ts",
+    "bytes": 173,
+    "sha256": "32b0cf7dbeb5e19a17ac945c43d9ecbf6f100e958e84221d2f08de33c3f9d1e3"
+  },
+  {
+    "file": "fixtures.d.ts",
+    "bytes": 576,
+    "sha256": "56564c85c22bad0819a3f8cb471b7cbf355c9515b744c6e4fc014a6da9a8453b"
+  },
+  {
+    "file": "http.d.ts",
+    "bytes": 137,
+    "sha256": "13f746c2907b2dd8f819d9908964f0fa69f3deeffd50fc497918b75be94e93f7"
+  },
+  {
+    "file": "index.d.ts",
+    "bytes": 135,
+    "sha256": "0f16393f29d055c759961dc3ac0ea168d76645f8ea90556993bcfeef02316466"
+  },
+  {
+    "file": "inference.d.ts",
+    "bytes": 1348,
+    "sha256": "dee5f2380b0d43770843ede0d63141b971dfa2ddb70872500b0008d3def24a40"
+  },
+  {
+    "file": "opfs.d.ts",
+    "bytes": 213,
+    "sha256": "be0d2e1918be63fa9b64968860ef0400a5b72ce26a9157381b18ae75bbb57130"
+  },
+  {
+    "file": "piper-o91UDS6e.js",
+    "bytes": 158217,
+    "sha256": "b5ac96981729547606fd026b8e3829aad81e9e3c22308869d50473259c563283"
+  },
+  {
+    "file": "piper-tts-web.js",
+    "bytes": 20500,
+    "sha256": "55aaf75ac6174a0c349acbe2a812a56a843abaf0591f54b5d9dd35120eb4b3c7"
+  },
+  {
+    "file": "piper.d.ts",
+    "bytes": 59,
+    "sha256": "214ddc769408598e8b59c12175e86fd5e2668777eb2060eb58cf307aed1bc8b5"
+  },
+  {
+    "file": "storage.d.ts",
+    "bytes": 467,
+    "sha256": "6570408800b6ffc1204109a18fd07ee82c337cd4ec5fb6995f810b3315de9a99"
+  },
+  {
+    "file": "types.d.ts",
+    "bytes": 4139,
+    "sha256": "22d82aac925d4f8d5a735522d542ce7535705792666e31e980ee2a255b56bba8"
+  },
+  {
+    "file": "voices.d.ts",
+    "bytes": 188,
+    "sha256": "728cb8661241c41d280bd7bc2f31aa02f737fa2e281bdcee10d9fe779bbc4fff"
+  },
+  {
+    "file": "voices_static-D_OtJDHM.js",
+    "bytes": 147377,
+    "sha256": "72cbd46fecaa067a09ed9455ca04b970d722810905d90bb2421e0911a5c4d758"
+  },
+  {
+    "file": "voices_static.json.d.ts",
+    "bytes": 154620,
+    "sha256": "12c0e546d2c95a51abda600e0e9365b7fb3603e487a525efee391e8132b8e49f"
+  }
+]

@@ -89,6 +89,9 @@ export function initializeDOMElements(elements) {
   elements.languageSelect = document.getElementById(ELEMENT_IDS.LANGUAGE_SELECT);
   elements.translateImages = document.getElementById(ELEMENT_IDS.TRANSLATE_IMAGES);
   elements.translateImagesGroup = document.getElementById(ELEMENT_IDS.TRANSLATE_IMAGES_GROUP);
+  elements.imageTranslationProvider = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_PROVIDER);
+  elements.imageTranslationProviderGroup = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_PROVIDER_GROUP);
+  elements.imageTranslationModelHint = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_MODEL_HINT);
   
   // Find hint element - it's the <p> with class "setting-hint" inside translateImagesGroup
   const translateImagesHintEl = elements.translateImagesGroup?.querySelector('.setting-hint');
@@ -495,7 +498,7 @@ export async function finalizeInitialization(modules, initAllCustomSelects, setC
     // Fallback: try to get from manifest directly
     try {
       const manifest = chrome.runtime.getManifest();
-      const version = manifest?.version || '3.3.9';
+      const version = manifest?.version || '3.3.10';
       const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
       if (versionElement) {
         versionElement.textContent = `v${version}`;

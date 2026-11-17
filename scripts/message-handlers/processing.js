@@ -3,7 +3,7 @@
 // Handlers: processArticle, generatePdfDebugger
 
 import { log, logError } from '../utils/logging.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { getProcessingState, setError, updateState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
 import { finalizeProcessing } from '../utils/pipeline-helpers.js';
 import { generatePdfWithDebugger } from '../generation/pdf.js';
@@ -190,7 +190,7 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
       }
       
       try {
-        sendResponse({ error: normalized.message || 'Processing failed' });
+        sendResponse({ error: normalized.message || 'Processing failed', ...getErrorTranslation(normalized) });
       } catch (sendError) {
         logError('=== handleProcessArticle: sendResponse failed in error path ===', {
           error: sendError.message,
@@ -278,9 +278,9 @@ export function handlePrintJobFailed(request, sender, sendResponse, stopKeepAliv
     sendResponse({ success: true, ignored: true });
     return true;
   }
-  setError(typeof error === 'string' ? error : 'PDF preparation failed', stopKeepAlive, state.processingRunId)
+  setError({ message: typeof error === 'string' ? error : 'PDF preparation failed', ...getErrorTranslation(request.data) }, stopKeepAlive, state.processingRunId)
     .then(() => sendResponse({ success: true }))
-    .catch((failure) => sendResponse({ success: false, error: failure?.message || 'PDF preparation failed' }));
+    .catch((failure) => sendResponse({ success: false, error: failure?.message || 'PDF preparation failed', ...getErrorTranslation(failure) }));
   return true;
 }
 

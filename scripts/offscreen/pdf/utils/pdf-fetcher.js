@@ -4,6 +4,7 @@
 // @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { LIMITS } from '../constants.js';
+import { createPdfError } from '../../../utils/pdf-errors.js';
 
 /**
  * Convert Windows absolute path to file:// URL
@@ -33,7 +34,10 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
   const maxSize = LIMITS.MAX_FILE_SIZE;
   let cancellationError;
   const checkCancelled = async () => {
-    try { await requestOptions?.checkCancelled?.(); }
+    try {
+      if (requestOptions?.signal?.aborted) throw requestOptions.signal.reason;
+      await requestOptions?.checkCancelled?.();
+    }
     catch (error) { cancellationError = error; throw error; }
   };
   await checkCancelled();
@@ -43,7 +47,7 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
     if (pdfData.byteLength > maxSize) {
       const sizeMB = (pdfData.byteLength / 1024 / 1024).toFixed(1);
       const maxMB = (maxSize / 1024 / 1024).toFixed(0);
-      throw new Error(`PDF file is too large (${sizeMB} MB). Maximum size: ${maxMB} MB.`);
+      throw createPdfError(`PDF file is too large (${sizeMB} MB). Maximum size: ${maxMB} MB.`, 'errorPdfTooLarge', { size: sizeMB, max: maxMB });
     }
     log('[PDF v3] PDF file data provided directly', { size: pdfData.byteLength });
     await checkCancelled();
@@ -70,7 +74,7 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
     let resetTimeout;
     const timeout = new Promise((_, reject) => {
       const expire = () => {
-        reject(new Error(`PDF download timeout after ${FETCH_TIMEOUT_MS / 1000} seconds. The file may be too large.`));
+        reject(createPdfError(`PDF download timeout after ${FETCH_TIMEOUT_MS / 1000} seconds. The file may be too large.`, 'errorTimeout'));
         abortRead();
       };
       resetTimeout = () => {
@@ -79,6 +83,15 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
       };
       resetTimeout();
     });
+    let rejectAbort;
+    const aborted = new Promise((_, reject) => { rejectAbort = reject; });
+    const onAbort = () => {
+      cancellationError = requestOptions.signal.reason;
+      abortRead();
+      rejectAbort(cancellationError);
+    };
+    requestOptions?.signal?.addEventListener('abort', onAbort, { once: true });
+    if (requestOptions?.signal?.aborted) onAbort();
 
     const operation = (async () => {
       await checkCancelled();
@@ -88,7 +101,7 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
       await checkCancelled();
       if (!readBody) return response;
       if (!response.ok) {
-        throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+        throw createPdfError(`Failed to fetch PDF: ${response.status} ${response.statusText}`, 'errorPdfDownloadFailed', { status: response.status });
       }
 
       reader = response.body?.getReader() || null;
@@ -96,7 +109,7 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
         await checkCancelled();
         const buffer = await response.arrayBuffer();
         await checkCancelled();
-        if (buffer.byteLength > maxSize) throw new Error('PDF file is too large.');
+        if (buffer.byteLength > maxSize) throw createPdfError('PDF file is too large.', 'errorPdfTooLarge', { size: (buffer.byteLength / 1024 / 1024).toFixed(1), max: (maxSize / 1024 / 1024).toFixed(0) });
         return buffer;
       }
 
@@ -109,7 +122,7 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
         if (done) break;
         size += value.byteLength;
         if (size > maxSize) {
-          throw new Error(`PDF file is too large. Maximum size: ${(maxSize / 1024 / 1024).toFixed(0)} MB.`);
+          throw createPdfError(`PDF file is too large. Maximum size: ${(maxSize / 1024 / 1024).toFixed(0)} MB.`, 'errorPdfTooLarge', { size: (size / 1024 / 1024).toFixed(1), max: (maxSize / 1024 / 1024).toFixed(0) });
         }
         chunks.push(value);
       }
@@ -124,12 +137,13 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
     })();
 
     try {
-      return await Promise.race([operation, timeout]);
+      return await Promise.race([operation, timeout, aborted]);
     } catch (error) {
       abortRead();
       throw error;
     } finally {
       clearTimeout(timeoutId);
+      requestOptions?.signal?.removeEventListener('abort', onAbort);
       if (reader) {
         try { reader.releaseLock(); } catch {}
       }
@@ -147,17 +161,17 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
     }
     const contentLength = Number(headResponse?.headers.get('Content-Length'));
     if (Number.isFinite(contentLength) && contentLength > maxSize) {
-      throw new Error(`PDF file is too large. Maximum size: ${(maxSize / 1024 / 1024).toFixed(0)} MB.`);
+      throw createPdfError(`PDF file is too large. Maximum size: ${(maxSize / 1024 / 1024).toFixed(0)} MB.`, 'errorPdfTooLarge', { size: (contentLength / 1024 / 1024).toFixed(1), max: (maxSize / 1024 / 1024).toFixed(0) });
     }
     const arrayBuffer = await fetchWithTimeout({}, true);
     await checkCancelled();
     log('[PDF v3] PDF file fetched', { size: arrayBuffer.byteLength });
     return arrayBuffer;
   } catch (error) {
-    if (error === cancellationError) throw error;
+    if (error === cancellationError || error.translationKey) throw error;
     if (fetchUrl.startsWith('file://')) {
       logWarn('[PDF v3] Fetch failed for local file', { error: error.message });
-      throw new Error(`Cannot load local file directly. Please open the PDF file in Chrome first, or use a web URL. Original error: ${error.message}`);
+      throw createPdfError(`Cannot load local file directly. Please open the PDF file in Chrome first, or use a web URL. Original error: ${error.message}`, 'errorPdfLocalFileAccess');
     }
     throw error;
   }

@@ -335,13 +335,13 @@ describe('generation/audio-prep', () => {
 
     it('should have valid speed range', () => {
       expect(AUDIO_CONFIG.MIN_SPEED).toBe(0.25);
-      expect(AUDIO_CONFIG.MAX_SPEED).toBe(4.0);
+      expect(AUDIO_CONFIG.MAX_SPEED).toBe(1.5);
       expect(AUDIO_CONFIG.DEFAULT_SPEED).toBe(1.0);
     });
 
     it('should have default voice', () => {
-      expect(AUDIO_CONFIG.DEFAULT_VOICE).toBe('nova');
-      expect(AUDIO_CONFIG.VOICES).toContain('nova');
+      expect(AUDIO_CONFIG.DEFAULT_VOICE).toBe('marin');
+      expect(AUDIO_CONFIG.VOICES).toContain('marin');
     });
   });
 });

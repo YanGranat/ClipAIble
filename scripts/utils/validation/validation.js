@@ -1,8 +1,29 @@
 // @ts-check
 // Validation utilities for ClipAIble extension
 
-import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint } from '../../api/tts-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE } from '../../api/tts-catalog.js';
 import { setError, ERROR_CODES } from '../../state/processing.js';
+import { getUILanguage, tSync } from '../../locales.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, getImageTranslationApiKey, isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
+import { isMaskedKey } from '../encryption.js';
+
+/** Validate image translation settings before article processing. */
+export async function validateImageTranslation(data, stopKeepAlive) {
+  if (!isImageTranslationEnabled(data)) return true;
+  const provider = data.imageTranslationProvider ?? DEFAULT_IMAGE_TRANSLATION_PROVIDER;
+  let key, params;
+  if (!IMAGE_TRANSLATION_PROVIDERS.includes(provider)) {
+    key = 'errorImageProviderUnsupported'; params = { provider: String(provider) };
+  } else {
+    const apiKey = getImageTranslationApiKey(data);
+    if (typeof apiKey === 'string' && apiKey.trim() && !isMaskedKey(apiKey.trim())) return true;
+    key = 'errorImageKeyRequired'; params = { provider: provider === 'openai' ? 'OpenAI' : 'Google' };
+  }
+  const language = await getUILanguage();
+  await setError({ message: tSync(key, language, params), code: ERROR_CODES.VALIDATION_ERROR,
+    translationKey: key, translationParams: params }, stopKeepAlive, data.processingRunId);
+  return false;
+}
 
 /**
  * Validate API keys for audio generation
@@ -27,16 +48,23 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
     return true;
   }
 
+  const language = await getUILanguage();
+  const fail = async (key, params = {}) => {
+    await setError({ message: tSync(key, language, params), code: ERROR_CODES.VALIDATION_ERROR,
+      translationKey: key, translationParams: params }, stopKeepAlive, data.processingRunId);
+    return false;
+  };
+  if (provider === 'openai') {
+    const voice = data.audioVoice === undefined ? DEFAULT_OPENAI_TTS_VOICE : data.audioVoice;
+    if (!OPENAI_TTS_VOICES.includes(voice)) return fail('errorOpenaiVoiceUnavailable', { voice: String(voice) });
+  }
+
   let openaiKey;
   if (provider === 'openai') {
     try {
       openaiKey = (await chrome.storage.local.get(['openai_api_key'])).openai_api_key;
     } catch (error) {
-      await setError({
-        message: 'Could not read the OpenAI TTS API key. Please try again.',
-        code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive, data.processingRunId);
-      return false;
+      return fail('errorAudioKeyRead');
     }
   }
   
@@ -64,30 +92,21 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
     }
   };
   
-  const config = providerConfig[provider];
+  const config = Object.hasOwn(providerConfig, provider) ? providerConfig[provider] : null;
   
   if (!config) {
-    await setError({
-      message: `Unknown audio provider: ${provider}`,
-      code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive, data.processingRunId);
-    return false;
+    return fail('errorUnknownAudioProvider', { provider });
   }
   
   if (!config.key) {
-    await setError({
-      message: `${config.name} API key is required for audio. Please add it in settings.`,
-      code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive, data.processingRunId);
-    return false;
+    return fail('errorAudioApiKeyRequired', { provider: config.name });
   }
   
   if (provider === 'qwen') {
     try {
       getQwenTtsEndpoint(data.qwenModel || DEFAULT_QWEN_TTS_MODEL, data.qwenWorkspaceId, data.qwenRegion);
     } catch (error) {
-      await setError({ message: error.message, code: ERROR_CODES.VALIDATION_ERROR }, stopKeepAlive, data.processingRunId);
-      return false;
+      return fail(error.translationKey, error.translationParams);
     }
   }
   return true;

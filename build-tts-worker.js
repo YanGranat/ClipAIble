@@ -4,7 +4,7 @@
 // without requiring import maps
 
 import * as esbuild from 'esbuild';
-import { patchPiperTtsSource } from './build-piper.js';
+import { patchPiperTtsSource, patchPiperPhonemizerSource } from './build-piper.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -72,6 +72,10 @@ async function build() {
       plugins: [{
         name: 'patch-dynamic-imports',
         setup(build) {
+          build.onLoad({ filter: /[/\\]piper-o91UDS6e\.js$/ }, async () => ({
+            contents: patchPiperPhonemizerSource(await fs.readFile(path.join(__dirname, 'lib/piper-wasm/piper_phonemize.js'), 'utf8')),
+            loader: 'js'
+          }));
           // CRITICAL: Patch piper-tts-web to use global onnxruntime
           build.onLoad({ filter: /piper-tts-web.*\.js$/ }, async (args) => {
             const source = await fs.readFile(args.path, 'utf8');

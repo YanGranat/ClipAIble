@@ -3,7 +3,7 @@
 // Handlers: youtubeSubtitlesResult, extractYouTubeSubtitlesForSummary
 
 import { log, logError } from '../utils/logging.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { extractYouTubeSubtitles } from '../extraction/video-subtitles.js';
 
 /**
@@ -99,7 +99,7 @@ export function handleExtractYouTubeSubtitlesForSummary(request, sender, sendRes
         logError: true,
         createUserMessage: false
       });
-      sendResponse({ error: normalized.message || 'Failed to extract subtitles' });
+      sendResponse({ error: normalized.message || 'Failed to extract subtitles', ...getErrorTranslation(normalized) });
     }
   })();
   return true;

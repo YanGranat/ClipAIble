@@ -3026,23 +3026,6 @@ body[data-theme="light"] .modal-dialog {
   gap: 10px;
 }
 
-/* PDF File Selection Dialog Warning */
-.pdf-file-selection-warning {
-  margin-top: 12px;
-  padding: 10px;
-  background: rgba(255, 193, 7, 0.1);
-  border-left: 3px solid #ffc107;
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-body[data-theme="light"] .pdf-file-selection-warning {
-  background: rgba(255, 193, 7, 0.15);
-  border-left-color: #ff9800;
-}
-
 /* Animations */
 .btn-icon-left {
   font-size: 16px;

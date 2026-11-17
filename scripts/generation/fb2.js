@@ -8,13 +8,14 @@
 import { log, logError, logWarn } from '../utils/logging.js';
 import { stripHtml, markdownToHtml, cleanTildaArtifactsFromText, sanitizeHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
-import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage, getExtensionVersion } from '../utils/config.js';
-import { getUILanguage, tSync } from '../locales.js';
+import { getDocumentLocalization, getDocumentLanguageTag, formatDateForDisplay, getLocaleFromLanguage, getExtensionVersion } from '../utils/config.js';
+import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
+import { normalizeXmlCharacters, escapeXml, isNativePdfContent, protectXmlLiteralText, serializeXmlInline } from './xml.js';
 import { buildTocStructure, renderTocAsFb2 } from './toc-builder.js';
 
 
@@ -68,7 +69,7 @@ export async function generateFb2(data, updateState) {
   (filteredContent || []).forEach((item, index) => {
     // Log ALL heading items for debugging
     if (item.type === 'heading') {
-      let text = stripHtml(item.text || '');
+      let text = (isNativePdfContent(item) ? item.text : stripHtml(item.text || ''));
       text = cleanTildaArtifactsFromText(text) || text;
       allHeadings.push({
         index,
@@ -126,10 +127,11 @@ export async function generateFb2(data, updateState) {
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    Object.assign(error, getErrorTranslation(normalized));
     throw error;
   }
   
-  if (updateState) updateState({ status: 'Building FB2 structure...', progress: 85 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingFb2', await getUILanguage()), progress: 85 });
   
   const langCode = language === 'auto' ? 'en' : language;
   const safeTitle = title || 'Article';
@@ -150,7 +152,7 @@ export async function generateFb2(data, updateState) {
   if (updateState) {
     const uiLang = await getUILanguage();
     const loadingStatus = tSync('stageLoadingImages', uiLang);
-    updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 86 });
+    updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, ...formatStatusUpdate('stageLoadingImages', await getUILanguage()), progress: 86 });
   }
   const images = await collectFb2Images(filteredContent, updateState);
   
@@ -159,7 +161,7 @@ export async function generateFb2(data, updateState) {
     log(`✅ Images embedded in FB2: ${images.length} images`);
   }
   
-  if (updateState) updateState({ status: 'Generating FB2 content...', progress: 90 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingFb2', await getUILanguage()), progress: 90 });
   
   // Build FB2 XML
   let fb2 = `<?xml version="1.0" encoding="UTF-8"?>
@@ -168,8 +170,9 @@ ${generateDescription(safeTitle, authorParts, langCode, pubDate, sourceUrl, docI
 ${generateBody(filteredContent, safeTitle, authorParts, generateToc, headings, pubDate, sourceUrl, langCode, generateAbstract, abstract)}
 ${generateBinaries(images)}
 </FictionBook>`;
+  fb2 = normalizeXmlCharacters(fb2);
   
-  if (updateState) updateState({ status: 'Saving FB2 file...', progress: 95 });
+  if (updateState) updateState({ ...formatStatusUpdate('statusSavingFile', await getUILanguage()), progress: 95 });
   
   // Calculate size metrics
   const fb2Size = new TextEncoder().encode(fb2).length;
@@ -249,7 +252,7 @@ ${generateBinaries(images)}
   log('=== FB2 GENERATION END ===');
   if (updateState) {
     const uiLang = await getUILanguage();
-    updateState({ status: tSync('statusDone', uiLang), progress: 100 });
+    updateState({ ...formatStatusUpdate('statusDone', await getUILanguage()), progress: 100 });
   }
   
   return blob;
@@ -313,7 +316,7 @@ async function collectFb2Images(content, updateState) {
   }
   
   if (updateState) {
-    updateState({ status: `Loading ${imageItems.length} images...`, progress: 86 });
+    updateState({ ...formatStatusUpdate('statusLoadingImagesCount', await getUILanguage(), { count: imageItems.length }), progress: 86 });
   }
   
   // Process images in parallel batches
@@ -404,7 +407,7 @@ ${author.middleName ? `        <middle-name>${escapeXml(author.middleName)}</mid
     <title-info>
 ${authorXml}
       <book-title>${escapedTitle}</book-title>
-      <lang>${escapeXml(lang)}</lang>
+      <lang>${escapeXml(getDocumentLanguageTag(lang))}</lang>
     </title-info>
     <document-info>
       <author>
@@ -427,7 +430,7 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   
   // Get localized labels
   const langCode = language === 'auto' ? 'en' : language;
-  const l10n = PDF_LOCALIZATION[langCode] || PDF_LOCALIZATION['en'];
+  const l10n = getDocumentLocalization(langCode);
   const dateLabel = l10n.date || 'Date';
   const sourceLabel = l10n.source || 'Source';
   
@@ -437,7 +440,7 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   for (let i = 0; i < content.length; i++) {
     if (content[i].type === 'subtitle') {
       const item = content[i];
-      subtitleText = stripHtml(item.text || item.html || '');
+      subtitleText = isNativePdfContent(item) ? item.text : stripHtml(item.text || item.html || '');
       if (subtitleText) {
         subtitleIndex = i;
         break;
@@ -625,7 +628,7 @@ function splitIntoSections(content, headings) {
     
     if (item.type === 'heading') {
       const headingLevel = item.level || 1;
-      let headingText = stripHtml(item.text || '');
+      let headingText = (isNativePdfContent(item) ? item.text : stripHtml(item.text || ''));
       headingText = cleanTildaArtifactsFromText(headingText) || headingText;
       
       log('FB2 splitIntoSections: Processing heading', {
@@ -791,7 +794,7 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
       // Log warning and skip it (shouldn't happen in normal flow)
       log('FB2 contentItemToFb2: WARNING - heading found as item, should have been section title', {
         level: item.level,
-        text: stripHtml(item.text || '').substring(0, 50),
+        text: (isNativePdfContent(item) ? item.text : stripHtml(item.text || '')).substring(0, 50),
         id: item.id || 'no-id'
       });
       // Return empty - heading should not be rendered as content item
@@ -801,14 +804,14 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
     case 'paragraph': {
       const text = item.text || '';
       if (!text.trim()) return '';
-      return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl)}</p>`;
+      return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl, isNativePdfContent(item))}</p>`;
     }
     
     case 'quote':
     case 'blockquote': {
       const text = item.text || '';
       if (!text.trim()) return '';
-      return `\n${indentStr}  <cite><p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl)}</p></cite>`;
+      return `\n${indentStr}  <cite><p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl, isNativePdfContent(item))}</p></cite>`;
     }
     
     case 'code': {
@@ -830,7 +833,7 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
         const liId = (typeof li === 'object' && li.id) ? li.id : '';
         const liAnchor = createFb2Anchor(liId);
         const prefix = item.ordered ? `${index + 1}. ` : '• ';
-        return `\n${indentStr}  <p>${liAnchor}${prefix}${convertInlineHtmlToFb2(text, sourceUrl)}</p>`;
+        return `\n${indentStr}  <p>${liAnchor}${prefix}${convertInlineHtmlToFb2(text, sourceUrl, isNativePdfContent(item))}</p>`;
       }).join('');
     }
     
@@ -839,7 +842,7 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
       const alt = escapeXml(item.alt || '');
       // CRITICAL: Use convertInlineHtmlToFb2 to preserve links in captions (like PDF)
       // This handles cases where caption contains HTML with links, e.g., <span>text</span><a href="...">(source)</a>
-      const caption = item.caption ? convertInlineHtmlToFb2(item.caption, sourceUrl) : '';
+      const caption = item.caption ? convertInlineHtmlToFb2(item.caption, sourceUrl, isNativePdfContent(item)) : '';
       
       // Add anchor paragraph before image if id exists
       let imageXml = anchor ? `\n${indentStr}  <p>${anchor}</p>` : '';
@@ -867,7 +870,7 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
     
     default: {
       if (item.text) {
-        return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(item.text, sourceUrl)}</p>`;
+        return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(item.text, sourceUrl, isNativePdfContent(item))}</p>`;
       }
       return '';
     }
@@ -875,16 +878,18 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
 }
 
 /**
- * Convert table to FB2 (simplified - FB2 doesn't support tables natively)
+ * Convert table cells to FB2 paragraphs.
  */
 function tableToFb2(item, sourceUrl = '', indent = 1) {
-  if (!item.rows || !item.rows.length) return '';
+  const rows = Array.isArray(item.headers) && item.headers.length
+    ? [item.headers, ...(item.rows || [])] : item.rows;
+  if (!rows || !rows.length) return '';
   const indentStr = '  '.repeat(indent);
   
   let fb2 = `\n${indentStr}  <empty-line/>`;
   
-  for (const row of item.rows) {
-    const cells = row.map(cell => stripHtml(cell)).join(' | ');
+  for (const row of rows) {
+    const cells = row.map(cell => isNativePdfContent(item) ? String(cell ?? '') : stripHtml(cell)).join(' | ');
     fb2 += `\n${indentStr}  <p>${escapeXml(cells)}</p>`;
   }
   
@@ -936,156 +941,16 @@ function convertInternalLinks(html, sourceUrl) {
 /**
  * Convert inline HTML tags to FB2 equivalents
  */
-function convertInlineHtmlToFb2(html, sourceUrl = '') {
+function convertInlineHtmlToFb2(html, sourceUrl = '', plainText = false) {
   if (!html) return '';
-  
-  let result = html;
-  
-  // CRITICAL: Check if input already contains HTML tags (from extraction)
-  // If it contains HTML tags, use it directly; otherwise convert markdown to HTML
+  if (plainText) return escapeXml(html);
+  let result = normalizeXmlCharacters(html);
   const hasHtmlTags = /<[a-z][\s\S]*>/i.test(result);
-  
-  // CRITICAL: Convert markdown to HTML if text contains markdown syntax
-  // Check if text contains markdown patterns: **bold**, *italic*, `code`, [link](url)
-  // Convert even if HTML tags are present (markdown can be mixed with HTML)
-  // Pattern matches: **text**, *text*, `code`, [text](url), __bold__, ~~strikethrough~~
   const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(result);
-  if (hasMarkdown && !hasHtmlTags) {
-    // Only convert markdown if input doesn't already contain HTML
-    // If HTML is present, markdown conversion might break existing structure
-    result = markdownToHtml(result);
-  }
-
-  result = sanitizeHtml(result, sourceUrl);
-  
-  // Convert internal links to local anchors first
-  if (sourceUrl) {
-    result = convertInternalLinks(result, sourceUrl);
-  }
-  
-  // CRITICAL: Remove span tags BEFORE processing links to avoid breaking link structure
-  // Span tags don't exist in FB2, so we need to remove them while preserving their content
-  // This must be done before link conversion to ensure links are not broken
-  result = result.replace(/<span[^>]*>/gi, '');
-  result = result.replace(/<\/span>/gi, '');
-  
-  // Convert common inline tags
-  result = result.replace(/<strong>(.*?)<\/strong>/gi, '<strong>$1</strong>');
-  result = result.replace(/<b>(.*?)<\/b>/gi, '<strong>$1</strong>');
-  result = result.replace(/<em>(.*?)<\/em>/gi, '<emphasis>$1</emphasis>');
-  result = result.replace(/<i>(.*?)<\/i>/gi, '<emphasis>$1</emphasis>');
-  result = result.replace(/<code>(.*?)<\/code>/gi, '<code>$1</code>');
-  result = result.replace(/<sup>(.*?)<\/sup>/gi, '<sup>$1</sup>');
-  result = result.replace(/<sub>(.*?)<\/sub>/gi, '<sub>$1</sub>');
-  result = result.replace(/<s>(.*?)<\/s>/gi, '<strikethrough>$1</strikethrough>');
-  result = result.replace(/<strike>(.*?)<\/strike>/gi, '<strikethrough>$1</strikethrough>');
-  
-  // Convert anchor links (targets for internal links) - preserve id/name as FB2 anchors
-  // <a id="xxx"></a> or <a name="xxx"></a> -> <a id="xxx"/>
-  result = result.replace(/<a\s+(?:id|name)=["']([^"']+)["'][^>]*>\s*<\/a>/gi, '<a id="$1"/>');
-  result = result.replace(/<a\s+(?:id|name)=["']([^"']+)["'][^>]*\/>/gi, '<a id="$1"/>');
-  
-  // CRITICAL: Convert links with href - FB2 supports <a> with l:href
-  // Use non-greedy matching and handle nested tags inside link text
-  // This handles cases like <span>text</span><a href="...">link</a><span>more</span>
-  result = result.replace(/<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (match, href, linkText) => {
-    // Strip any remaining HTML tags from link text (but preserve FB2 tags if any)
-    const cleanLinkText = linkText.replace(/<(?!\/?(?:a|strong|emphasis|code|sup|sub|strikethrough)\b)[^>]+>/gi, '');
-    return `<a l:href="${href}">${cleanLinkText}</a>`;
-  });
-  
-  // CRITICAL: Handle orphaned <a> tags without href (they should have been processed above, but handle edge cases)
-  // Remove <a> tags without href to prevent unclosed tags
-  result = result.replace(/<a\s+[^>]*>(?!.*href)/gi, (match) => {
-    // Check if this tag has href attribute
-    const hasHref = /href\s*=\s*["']/i.test(match);
-    if (!hasHref) {
-      // No href - remove the opening tag (but keep the content)
-      return '';
-    }
-    return match;
-  });
-  
-  // CRITICAL: Remove orphaned closing </a> tags that don't have matching opening tags
-  // This prevents malformed FB2 XML
-  result = result.replace(/<\/a>/gi, (match, offset) => {
-    // Check if there's a matching opening <a> tag before this closing tag
-    const beforeText = result.substring(0, offset);
-    const openingTags = (beforeText.match(/<a\s+[^>]*>/gi) || []).length;
-    const closingTags = (beforeText.match(/<\/a>/gi) || []).length;
-    if (openingTags <= closingTags) {
-      // No matching opening tag - remove this closing tag
-      return '';
-    }
-    return match;
-  });
-  
-  // Remove other HTML tags (but not our converted FB2 tags)
-  result = result.replace(/<br\s*\/?>/gi, ' ');
-  // Remove HTML tags but preserve FB2 tags (a, strong, emphasis, code, sup, sub, strikethrough)
-  result = result.replace(/<(?!\/?(?:a|strong|emphasis|code|sup|sub|strikethrough)\b)[^>]+>/gi, '');
-  
-  // CRITICAL: Ensure all opening tags have matching closing tags (stack-based approach)
-  // This prevents unclosed tags from affecting subsequent text (e.g., unclosed <a> makes all text blue)
-  // FB2 tags: a, strong, emphasis, code, sup, sub, strikethrough
-  const allowedTagsForCheck = ['a', 'strong', 'emphasis', 'code', 'sup', 'sub', 'strikethrough'];
-  const tagStack = [];
-  let processedResult = '';
-  let i = 0;
-  
-  while (i < result.length) {
-    // Check for opening tag
-    const openMatch = result.substring(i).match(/^<([a-z][a-z0-9]*)\b[^>]*>/i);
-    if (openMatch) {
-      const tag = openMatch[1].toLowerCase();
-      if (allowedTagsForCheck.includes(tag)) {
-        tagStack.push(tag);
-        processedResult += openMatch[0];
-        i += openMatch[0].length;
-        continue;
-      }
-    }
-    
-    // Check for closing tag
-    const closeMatch = result.substring(i).match(/^<\/([a-z][a-z0-9]*)>/i);
-    if (closeMatch) {
-      const tag = closeMatch[1].toLowerCase();
-      if (allowedTagsForCheck.includes(tag)) {
-        // Find matching opening tag in stack
-        const stackIndex = tagStack.lastIndexOf(tag);
-        if (stackIndex >= 0) {
-          // Close all tags between stackIndex+1 and end (these are nested tags that need to be closed first)
-          for (let j = tagStack.length - 1; j > stackIndex; j--) {
-            processedResult += `</${tagStack[j]}>`;
-          }
-          // Remove the matching tag and all tags after it from stack
-          tagStack.length = stackIndex;
-          processedResult += closeMatch[0];
-        } else {
-          // Orphaned closing tag - ignore it (don't add to result)
-        }
-        i += closeMatch[0].length;
-        continue;
-      }
-    }
-    
-    // Regular character
-    processedResult += result[i];
-    i++;
-  }
-  
-  // Close any remaining open tags
-  while (tagStack.length > 0) {
-    const remainingTag = tagStack.pop();
-    processedResult += `</${remainingTag}>`;
-  }
-  
-  result = processedResult;
-  
-  // Escape remaining special characters (but not in tags)
-  result = escapeXmlContent(result);
-  
-  return result;
+  if (hasMarkdown && !hasHtmlTags) result = markdownToHtml(result);
+  result = sanitizeHtml(protectXmlLiteralText(result), sourceUrl);
+  if (sourceUrl) result = convertInternalLinks(result, sourceUrl);
+  return serializeXmlInline(result, 'fb2');
 }
 
 /**
@@ -1100,29 +965,5 @@ function generateBinaries(images) {
   }
   
   return binaries;
-}
-
-/**
- * Escape XML special characters for attributes
- */
-function escapeXml(str) {
-  if (!str) return '';
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-/**
- * Escape XML content (preserve allowed FB2 tags)
- */
-function escapeXmlContent(str) {
-  if (!str) return '';
-  // Decode &nbsp; to regular space first
-  str = str.replace(/&nbsp;/gi, ' ');
-  // Only escape & that are not part of valid XML entities
-  return str.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, '&amp;');
 }
 

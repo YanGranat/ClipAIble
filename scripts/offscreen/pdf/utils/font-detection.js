@@ -140,7 +140,7 @@ export function buildFontFormatMap(items, fontNameMap = null) {
       }
       
       // Combine all methods
-      const isBold = isBoldByRegex || isBoldByDirect || isBoldByRatio;
+      const isBold = isBoldByRegex || isBoldByDirect || (directFontWeight !== 'normal' && isBoldByRatio);
       const isItalic = isItalicByRegex || isItalicByDirect;
     
     if (isBold && isItalic) {

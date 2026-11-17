@@ -4,7 +4,7 @@ import { initModels } from '../../popup/settings/models.js';
 import { setupModelHandlers } from '../../popup/handlers/model.js';
 import { STORAGE_KEYS } from '../../popup/constants.js';
 
-vi.mock('../../scripts/locales.js', () => ({ t: async value => value, getUILanguage: async () => 'en', UI_LOCALES: { en: {} } }));
+vi.mock('../../scripts/locales.js', async importOriginal => ({ ...(await importOriginal()), getUILanguage: async () => 'en' }));
 
 let dom, elements, stored, models;
 beforeEach(() => {

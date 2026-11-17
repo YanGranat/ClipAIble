@@ -4,7 +4,9 @@
 
 import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice } from '../../scripts/api/tts-catalog.js';
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
-import { getUserFriendlyError } from '../../scripts/utils/error-messages.js';
+import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
+import { resolveProviderApiKey } from '../utils/settings-helpers.js';
 
 /**
  * Initialize processing module
@@ -45,6 +47,16 @@ export function initProcessing(deps) {
     settingsModule
   } = deps;
 
+  async function readStoredApiKey(storageKey) {
+    try {
+      const saved = await chrome.storage.local.get([storageKey]);
+      return typeof saved[storageKey] === 'string' ? saved[storageKey] : '';
+    } catch (error) {
+      logError('Failed to read a saved API key', error);
+      throw Object.assign(new Error(await t('errorApiKeyRead')), { translationKey: 'errorApiKeyRead', translationParams: {} });
+    }
+  }
+
   // Handle Cancel button click
   async function handleCancel() {
     if (!elements.cancelBtn) {
@@ -58,9 +70,9 @@ export function initProcessing(deps) {
       }
       await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
       const cancelledText = await t('processingCancelled', undefined);
-      showToast(cancelledText, 'success');
+      showToast(cancelledText, 'success', { key: 'processingCancelled' });
       const readyText = await t('ready', undefined);
-      setStatus('ready', readyText, undefined);
+      setStatus('ready', readyText, undefined, { key: 'ready' });
       setProgress(0, false);
       stopTimerDisplay();
       if (elements.savePdfBtn) {
@@ -244,6 +256,7 @@ export function initProcessing(deps) {
     const model = elements.modelSelect ? /** @type {HTMLSelectElement} */ (elements.modelSelect).value : '';
     // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
     const provider = elements.apiProviderSelect ? /** @type {HTMLSelectElement} */ (elements.apiProviderSelect).value : getProviderFromModel(model);
+    const apiKeyOwner = elements.apiKey?.dataset.provider;
     
     log('=== handleSavePdf: Got model and provider ===', {
       model: model,
@@ -252,35 +265,26 @@ export function initProcessing(deps) {
     });
     
     // Get the appropriate API key based on selected provider
-    let apiKey = '';
-    apiKey = elements.apiKey ? /** @type {HTMLInputElement} */ (elements.apiKey).value.trim() : '';
-    // If masked, decrypt the encrypted version from dataset
-    if (apiKey.startsWith('****') && elements.apiKey && elements.apiKey.dataset.encrypted) {
-      try {
-        apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted, provider);
-      } catch (error) {
-        logError(`Failed to decrypt ${provider} API key`, error);
-        showToast(await t('failedToDecryptApiKey', undefined), 'error');
+    try {
+      const currentProvider = () => !elements.apiProviderSelect || elements.apiProviderSelect.value === provider;
+      const apiKey = await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t);
+      if (!currentProvider()) return;
+      // Check API key only if not using automatic mode
+      const mode = elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '';
+      if (mode !== 'automatic' && !apiKey) {
+        const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
+        showToast(await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`, undefined), 'error', { key: `pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey` });
         return;
       }
-    }
-    // Check API key only if not using automatic mode
-    const mode = elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '';
-    if (mode !== 'automatic' && !apiKey) {
-      const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
-      showToast(await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`, undefined), 'error');
-      return;
-    }
 
-    try {
       // CRITICAL: Get current active tab at the moment of button click
       // This ensures we process the page that is currently active, not the one where popup was opened
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (!tab) {
         // Use user-friendly error message directly
-        const userFriendlyMessage = await getUserFriendlyError('tabNotFound', {});
-        throw new Error(userFriendlyMessage);
+        const friendly = await createUserFriendlyError('tabNotFound', {});
+        throw Object.assign(new Error(friendly.message), friendly);
       }
       
       log('=== handleSavePdf: Tab found (at button click moment) ===', {
@@ -295,17 +299,18 @@ export function initProcessing(deps) {
       // Use tab.url for initial check, but we'll verify with actual pageData.url later
       if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
         log('handleSavePdf: pageNotReady - tab URL is restricted', { tabUrl: tab.url });
-        const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
+        const friendly = await createUserFriendlyError('pageNotReady', {
+          blockedPage: true,
           error: { message: 'Cannot extract content from browser internal pages' }
         });
-        throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
       }
 
       log('=== handleSavePdf: Setting status and disabling button ===', {
         timestamp: Date.now()
       });
       
-      setStatus('processing', await t('extractingPageContent', undefined), undefined);
+      setStatus('processing', await t('extractingPageContent', undefined), undefined, { key: 'extractingPageContent' });
       setProgress(0, false);
       if (elements.savePdfBtn) {
         /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = true;
@@ -440,18 +445,18 @@ export function initProcessing(deps) {
             timestamp: Date.now()
           });
           // Use user-friendly error message
-          const userFriendlyMessage = await getUserFriendlyError('scriptExecutionFailed', {
+          const friendly = await createUserFriendlyError('scriptExecutionFailed', {
             error: scriptError
           });
-          throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
         }
       }
       
       if (!pageData || !pageData.html) {
-        const userFriendlyMessage = await getUserFriendlyError('noContentExtracted', {
+        const friendly = await createUserFriendlyError('noContentExtracted', {
           error: { message: 'No HTML data received from page' }
         });
-        throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
       }
 
       log('=== handleSavePdf: Page data extracted ===', {
@@ -474,18 +479,19 @@ export function initProcessing(deps) {
       const actualUrl = pageData.url || pageData.metadata?.url;
       if (!actualUrl) {
         log('handleSavePdf: pageNotReady - no URL in page data', { hasPageData: !!pageData, pageDataKeys: pageData ? Object.keys(pageData) : [], hasMetadata: !!pageData?.metadata, metadataKeys: pageData?.metadata ? Object.keys(pageData.metadata) : [] });
-        const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
+        const friendly = await createUserFriendlyError('pageNotReady', {
           error: { message: 'No page URL found' }
         });
-        throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
       }
       
       if (actualUrl.startsWith('chrome://') || actualUrl.startsWith('chrome-extension://') || actualUrl.startsWith('edge://') || actualUrl.startsWith('about:')) {
         log('handleSavePdf: pageNotReady - actual URL is restricted', { actualUrl });
-        const userFriendlyMessage = await getUserFriendlyError('pageNotReady', {
+        const friendly = await createUserFriendlyError('pageNotReady', {
+          blockedPage: true,
           error: { message: 'Cannot extract content from browser internal pages' }
         });
-        throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
       }
       
       // Log URL mismatch warning if URLs don't match
@@ -511,7 +517,18 @@ export function initProcessing(deps) {
           googleApiKey = '';
         }
       }
-      const translateImages = !!(elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto');
+      const outputFormat = elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
+      const translateImages = !!(elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto' && supportsImageTranslation(outputFormat));
+      const imageTranslationProvider = elements.imageTranslationProvider?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
+      let imageApiKey = translateImages ? googleApiKey : '';
+      if (translateImages && imageTranslationProvider === 'openai') {
+        const ownsOpenAiDraft = provider === 'openai' && apiKeyOwner === 'openai' &&
+          elements.apiProviderSelect?.value === 'openai' && elements.apiKey?.dataset.provider === 'openai';
+        if (ownsOpenAiDraft) imageApiKey = apiKey;
+        else {
+          imageApiKey = await readStoredApiKey('openai_api_key');
+        }
+      }
 
       log('=== handleSavePdf: About to send processArticle message ===', {
         mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
@@ -525,6 +542,7 @@ export function initProcessing(deps) {
       // Send to background script for processing
       // CRITICAL: Use actualUrl (from pageData.url) which is the URL at the moment of button click
       // This ensures we process the correct page even if user switched tabs after opening popup
+      if (!currentProvider()) return;
       const response = await chrome.runtime.sendMessage({
         action: 'processArticle',
         data: {
@@ -534,10 +552,12 @@ export function initProcessing(deps) {
           apiKey: apiKey,
           provider: provider,
           googleApiKey: googleApiKey,
+          imageTranslationProvider,
+          imageApiKey,
           model: model,
           mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
           useCache: elements.useCache ? /** @type {HTMLInputElement} */ (elements.useCache).checked : false,
-          outputFormat: elements.mainFormatSelect ? /** @type {HTMLSelectElement} */ (elements.mainFormatSelect).value : (elements.outputFormat ? /** @type {HTMLSelectElement} */ (elements.outputFormat).value : 'pdf'),
+          outputFormat,
           generateToc: elements.generateToc ? /** @type {HTMLInputElement} */ (elements.generateToc).checked : false,
           generateAbstract: elements.generateAbstract ? /** @type {HTMLInputElement} */ (elements.generateAbstract).checked : false,
           pageMode: elements.pageMode ? /** @type {HTMLSelectElement} */ (elements.pageMode).value : 'single',
@@ -561,9 +581,9 @@ export function initProcessing(deps) {
               logWarn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
                 timestamp: Date.now(),
                 provider,
-                willUseDefault: 'nova'
+                willUseDefault: getDefaultTtsVoice('openai')
               });
-              return 'nova';
+              return getDefaultTtsVoice('openai');
             }
             const audioVoiceEl = /** @type {HTMLSelectElement} */ (elements.audioVoice);
             const voiceValue = audioVoiceEl.value;
@@ -706,10 +726,10 @@ export function initProcessing(deps) {
           timestamp: Date.now()
         });
         // Use user-friendly error message for communication failures
-        const userFriendlyMessage = await getUserFriendlyError('scriptExecutionFailed', {
+        const friendly = await createUserFriendlyError('scriptExecutionFailed', {
           error: { message: chrome.runtime.lastError?.message || 'Failed to communicate with background script' }
         });
-        throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
       }
 
       // CRITICAL: Handle case when response is undefined or null (async response not received)
@@ -724,6 +744,9 @@ export function initProcessing(deps) {
           timestamp: Date.now()
         });
       } else if (response.error && typeof response.error === 'string') {
+        if (response.translationKey) {
+          throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
+        }
         // Only treat as error if error is a non-empty string
         logError('=== handleSavePdf: Response contains error ===', {
           error: response.error,
@@ -734,10 +757,10 @@ export function initProcessing(deps) {
         const errorType = await determineErrorType(new Error(response.error), {
           responseError: true
         });
-        const userFriendlyMessage = await getUserFriendlyError(errorType, {
+        const friendly = await createUserFriendlyError(errorType, {
           error: { message: response.error }
         });
-        throw new Error(userFriendlyMessage);
+        throw Object.assign(new Error(friendly.message), friendly);
       } else if (response.error) {
         // Error exists but is not a string - log warning but don't throw
         logWarn('=== handleSavePdf: Response has error property but it is not a string ===', {
@@ -755,7 +778,6 @@ export function initProcessing(deps) {
       // Processing started in background
       // CRITICAL: For audio, defer polling and state check to avoid blocking user interactions
       // Audio generation has long-running WASM operations that should not be interrupted
-      const outputFormat = (elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf');
       const isAudioFormat = outputFormat === 'audio';
       
       if (isAudioFormat) {
@@ -801,8 +823,9 @@ export function initProcessing(deps) {
           error: error
         });
         
-        setStatus('error', userFriendlyMessage, undefined);
-        showToast(userFriendlyMessage, 'error');
+        const translation = getUserFriendlyErrorDescriptor(errorType, { error });
+        setStatus('error', userFriendlyMessage, undefined, translation);
+        showToast(userFriendlyMessage, 'error', translation);
       } catch (errorHandlingError) {
         // Fallback to original error message if user-friendly message generation fails
         logError('Failed to generate user-friendly error message', errorHandlingError);

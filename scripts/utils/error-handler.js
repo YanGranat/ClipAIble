@@ -39,6 +39,13 @@
 
 import { ERROR_CODES } from '../state/processing.js';
 import { createUserFriendlyError } from './error-messages.js';
+
+/** Keep an error response translatable without changing its diagnostic message. */
+export function getErrorTranslation(error) {
+  return typeof error?.translationKey === 'string' && error.translationKey
+    ? { translationKey: error.translationKey, translationParams: error.translationParams || {} }
+    : {};
+}
 import { logError } from './logging.js';
 
 /**
@@ -109,6 +116,7 @@ export function normalizeError(error, context = {}) {
   return {
     message,
     code,
+    ...(typeof error?.translationKey === 'string' ? { translationKey: error.translationKey, translationParams: error.translationParams || {} } : {}),
     originalError,
     context: {
       ...context,
@@ -231,7 +239,8 @@ export async function handleError(error, options = {}) {
       return {
         ...normalized,
         userMessage: userFriendly.message,
-        userCode: userFriendly.code
+        userCode: userFriendly.code,
+        ...(userFriendly.translationKey ? { translationKey: userFriendly.translationKey, translationParams: userFriendly.translationParams || {} } : {})
       };
     } catch (msgError) {
       logError('Failed to create user-friendly error message', msgError);
@@ -273,6 +282,8 @@ export function withErrorHandling(fn, options = {}) {
       normalizedError.code = handled.code;
       normalizedError.originalError = handled.originalError;
       normalizedError.context = handled.context;
+      normalizedError.translationKey = handled.translationKey;
+      normalizedError.translationParams = handled.translationParams;
       throw normalizedError;
     }
   };
@@ -297,6 +308,7 @@ export function createErrorHandler(options = {}) {
       code: handled.code,
       originalError: handled.originalError,
       context: handled.context,
+      ...(handled.translationKey && { translationKey: handled.translationKey, translationParams: handled.translationParams || {} }),
       ...(handled.userMessage && { userMessage: handled.userMessage }),
       ...(handled.userCode && { userCode: handled.userCode })
     };

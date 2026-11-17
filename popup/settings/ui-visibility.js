@@ -4,6 +4,7 @@
 
 import { getUILanguage, UI_LOCALES, tSync } from '../../scripts/locales.js';
 import { ELEMENT_IDS } from '../constants.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, getImageTranslationModel, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
 
 /**
  * Initialize UI visibility module
@@ -19,6 +20,7 @@ export function initUIVisibility(deps) {
     hideAllAudioFields,
     updateAudioProviderUI
   } = deps;
+  let translationRevision = 0;
 
   // Update mode hint text
   async function updateModeHint() {
@@ -51,63 +53,65 @@ export function initUIVisibility(deps) {
     
     if (!languageSelect || !translateImages || !outputFormat) return;
     
-    // CRITICAL: Read format from mainFormatSelect first (user-facing control),
-    // then fallback to outputFormat. This ensures we use the actual selected value.
-    let format = outputFormat.value;
-    if (mainFormatSelect && mainFormatSelect.value) {
-      format = mainFormatSelect.value;
-    }
-    
+    const revision = ++translationRevision;
+    const format = mainFormatSelect?.value || outputFormat.value;
+    const imageProviderSelect = getElement('imageTranslationProvider');
+    const provider = imageProviderSelect?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
+    const targetLanguage = languageSelect.value;
     const isTranslating = languageSelect.value !== 'auto';
     const translateImagesEnabled = translateImages.checked;
-    const isAudio = format === 'audio';
-    const isMarkdown = format === 'markdown';
-    
-    // Show image translation option for PDF, EPUB, FB2 formats (not for Markdown or Audio)
-    // Markdown doesn't support embedded images with translation, Audio doesn't use images
-    const supportsImageTranslation = format === 'pdf' || format === 'epub' || format === 'fb2';
-    
-    // Show image translation option when:
-    // 1. Format supports image translation (PDF, EPUB, FB2)
-    // 2. AND user has selected a target language (not 'auto')
-    const shouldShowTranslateImages = supportsImageTranslation && isTranslating;
+    const isCurrent = () => revision === translationRevision &&
+      (mainFormatSelect?.value || outputFormat.value) === format &&
+      (imageProviderSelect?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER) === provider &&
+      languageSelect.value === targetLanguage && translateImages.checked === translateImagesEnabled;
+    const shouldShowTranslateImages = supportsImageTranslation(format) && isTranslating;
+    const active = shouldShowTranslateImages && translateImagesEnabled;
     setElementGroupDisplay('translateImagesGroup', shouldShowTranslateImages ? 'block' : 'none');
-    
-    // Show Google API key input when image translation is enabled
-    setElementGroupDisplay('googleApiGroup', (supportsImageTranslation && isTranslating && translateImagesEnabled) ? 'block' : 'none');
-    
-    // Show hint if translateImages is enabled but Google key is missing
-    const translateImagesHint = getElement('translateImagesHint');
-    if (isTranslating && translateImagesEnabled && translateImagesHint) {
-      const googleApiKey = getElement('googleApiKey');
-      const googleApiKeyValue = googleApiKey?.value?.trim() || '';
-      const hasGoogleKey = googleApiKeyValue && !googleApiKeyValue.startsWith('****');
-      
-      // Check if key exists in storage (might be encrypted/masked)
-      if (!hasGoogleKey) {
-        try {
-          const stored = await chrome.storage.local.get(['google_api_key']);
-          const storedKey = stored.google_api_key;
-          if (!storedKey || (typeof storedKey === 'string' && storedKey.startsWith('****'))) {
-            // No key or masked key - show hint
-            const uiLang = await getUILanguage();
-            const hintText = tSync('translateImagesRequiresGoogleKey', uiLang) || '⚠️ Requires Google API key for image translation';
-            translateImagesHint.textContent = hintText;
-            translateImagesHint.style.color = 'var(--text-warning, #ffa500)';
-            return;
-          }
-        } catch (error) {
-          // Ignore errors
-        }
-      }
-      
-      // Key exists - show normal hint
-      const uiLang = await getUILanguage();
-      const normalHint = tSync('translateImagesHint', uiLang) || 'Uses Google Gemini AI to translate text on images';
-      translateImagesHint.textContent = normalHint;
-      translateImagesHint.style.color = '';
+    setElementGroupDisplay('imageTranslationProviderGroup', active ? 'block' : 'none');
+    setElementGroupDisplay('googleApiGroup', active && provider === 'gemini' ? 'block' : 'none');
+
+    const uiLanguage = await getUILanguage();
+    if (!isCurrent()) return;
+    const currentLanguage = () => getElement('uiLanguageSelect')?.value || uiLanguage;
+    const modelHint = getElement('imageTranslationModelHint');
+    if (modelHint) {
+      const model = getImageTranslationModel(provider);
+      modelHint.hidden = !model;
+      modelHint.dataset.i18nParams = JSON.stringify({ model: model || '' });
+      modelHint.textContent = model ? tSync('imageTranslationModelHint', currentLanguage(), { model }) : '';
     }
+    const translateImagesHint = getElement('translateImagesHint');
+    if (!translateImagesHint) return;
+    const renderHint = (key, warning = false) => {
+      translateImagesHint.dataset.i18n = key;
+      translateImagesHint.textContent = tSync(key, currentLanguage());
+      translateImagesHint.style.color = warning ? 'var(--text-warning, #ffa500)' : '';
+    };
+    const normalKey = provider === 'openai' ? 'translateImagesOpenAiHint' : 'translateImagesHint';
+    renderHint(normalKey);
+    if (!active) return;
+
+    const keyInput = getElement(provider === 'openai' ? 'apiKey' : 'googleApiKey');
+    const draft = keyInput?.value?.trim() || '';
+    const ownsDraft = provider !== 'openai' ||
+      (getElement('apiProviderSelect')?.value === 'openai' && keyInput?.dataset.provider === 'openai');
+    let hasKey = ownsDraft && Boolean(draft) && !/^(?:\*{4}|•{4})/.test(draft);
+    if (!hasKey) {
+      try {
+        const storageKey = provider === 'openai' ? 'openai_api_key' : 'google_api_key';
+        const stored = await chrome.storage.local.get([storageKey]);
+        if (!isCurrent()) return;
+        hasKey = typeof stored[storageKey] === 'string' && Boolean(stored[storageKey]) && !/^(?:\*{4}|•{4})/.test(stored[storageKey]);
+      } catch { if (!isCurrent()) return; }
+    }
+    if (!hasKey) renderHint(provider === 'openai' ? 'translateImagesRequiresOpenAiKey' : 'translateImagesRequiresGoogleKey', true);
   }
+
+  chrome.storage.onChanged?.addListener((changes, area) => {
+    if (area === 'local' && (changes.openai_api_key || changes.google_api_key || changes.ui_language)) {
+      void updateTranslationVisibility();
+    }
+  });
 
   /**
    * Update UI based on output format selection

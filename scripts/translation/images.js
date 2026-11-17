@@ -21,6 +21,15 @@ import { decryptApiKey } from '../utils/encryption.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { handleError } from '../utils/error-handler.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
+import { getUILanguage, formatStatusUpdate } from '../locales.js';
+import { translateImageWithOpenAI } from '../api/openai-images.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, OPENAI_IMAGE_DETECTION_MODEL, getImageTranslationApiKey, supportsImageTranslation } from '../api/image-translation-catalog.js';
+
+async function checkImageOwner(options) {
+  if (options.signal?.aborted) throw options.signal.reason;
+  await options.checkCancelled?.();
+  if (options.signal?.aborted) throw options.signal.reason;
+}
 
 /**
  * Detect if image contains translatable text
@@ -31,7 +40,7 @@ import { checkCancellation } from '../utils/pipeline-helpers.js';
  * @returns {Promise<boolean>}
  */
 export async function detectImageText(imageBase64, targetLang, apiKey, model, options = {}) {
-  options.checkCancelled?.();
+  await checkImageOwner(options);
   log('detectImageText', { targetLang, model });
   
   const prompt = `Analyze this image. Does it contain meaningful text that is NOT in ${targetLang}?
@@ -115,30 +124,48 @@ Respond with ONLY "yes" or "no".`;
       assertCompleteAIResponse(data, provider);
       answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
     } else if (provider === 'openai') {
-      const response = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          ...getOpenAIRequestConfig(model, { shortResponse: true }),
-          messages: [
-            { 
-              role: 'user', 
-              content: [
-                { type: 'text', text: prompt },
-                { type: 'image_url', image_url: { url: imageBase64, detail: 'low' } }
-              ]
-            }
-          ]
-        })
-      }, undefined, options);
+      const controller = new AbortController();
+      const onAbort = () => controller.abort(options.signal.reason);
+      let settled = false, timer;
+      const poll = async () => {
+        try { await checkImageOwner(options); }
+        catch (error) { if (!settled) controller.abort(error); return; }
+        if (!settled) timer = setTimeout(poll, 100);
+      };
+      options.signal?.addEventListener('abort', onAbort, { once: true });
+      if (options.signal?.aborted) onAbort();
+      if (options.checkCancelled) timer = setTimeout(poll, 100);
+      try {
+        const response = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            ...getOpenAIRequestConfig(model, { shortResponse: true, maxTokens: 16 }),
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: prompt },
+                  { type: 'image_url', image_url: { url: imageBase64, detail: options.imageDetail || 'low' } }
+                ]
+              }
+            ]
+          })
+        }, undefined, options);
 
-      if (!response.ok) return false;
-      const data = await response.json();
-      assertCompleteAIResponse(data, provider);
-      answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+        if (!response.ok) return false;
+        const data = await response.json();
+        assertCompleteAIResponse(data, provider);
+        answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+      } finally {
+        settled = true;
+        clearTimeout(timer);
+        options.signal?.removeEventListener('abort', onAbort);
+      }
     } else if (provider === 'claude') {
       const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
       if (!matches) return false;
@@ -194,10 +221,11 @@ Respond with ONLY "yes" or "no".`;
       answer = getGeminiResponseText(data).toLowerCase().trim();
     }
     
+    await checkImageOwner(options);
     log('detectImageText result', { answer });
     return answer === 'yes';
   } catch (error) {
-    options.checkCancelled?.();
+    await checkImageOwner(options);
     if (error?.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
     // Normalize error with context for better logging and error tracking
     await handleError(error, {
@@ -224,36 +252,51 @@ Respond with ONLY "yes" or "no".`;
  * @param {string} googleApiKey - Google API key for Gemini Vision
  * @param {string} model - Model name
  * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
+ * @param {import('../types.js').ImageTranslationOptions} [options] - Image routing and cancellation
  * @returns {Promise<Array<import('../types.js').ContentItem>>} Content items with translated image text
  */
 export async function translateImages(content, sourceLang, targetLang, apiKey, googleApiKey, model, updateState, options = {}) {
-  options.checkCancelled?.();
+  const check = async () => {
+    await checkImageOwner(options);
+    if (!options.checkCancelled) await checkCancellation('image translation');
+  };
+  await check();
+  if (targetLang === 'auto' || !supportsImageTranslation(options.outputFormat || 'pdf')) return content;
   log('=== IMAGE TRANSLATION START ===', { sourceLang, targetLang });
-  
-  // Decrypt API keys if needed
+  const provider = options.imageTranslationProvider ?? DEFAULT_IMAGE_TRANSLATION_PROVIDER;
+  if (!IMAGE_TRANSLATION_PROVIDERS.includes(provider)) throw Object.assign(new Error('Unsupported image translation provider'), {
+    translationKey: 'errorImageProviderUnsupported', translationParams: { provider: String(provider) }
+  });
   let decryptedApiKey = apiKey;
-  let decryptedGoogleApiKey = googleApiKey;
-  
-  try {
-    decryptedApiKey = await decryptApiKey(apiKey);
-  } catch (error) {
-    options.checkCancelled?.();
-    log('API key decryption failed for image detection, using as-is', error);
-  }
-  
-  if (googleApiKey) {
+  let editKey = getImageTranslationApiKey({ ...options, googleApiKey });
+  let detectionModel = model;
+  let detectionOptions = options;
+  if (provider === 'openai') {
+    if (typeof editKey !== 'string' || !editKey.trim() || editKey.startsWith('****')) throw Object.assign(new Error('Image translation API key required'), {
+      translationKey: 'errorImageKeyRequired', translationParams: { provider: 'OpenAI' }
+    });
+    if (editKey.startsWith('ENC:')) editKey = await decryptApiKey(editKey, 'openai');
+    await check();
+    if (!editKey || editKey.startsWith('ENC:') || editKey.startsWith('****')) throw Object.assign(new Error('Image translation API key required'), {
+      translationKey: 'errorImageKeyRequired', translationParams: { provider: 'OpenAI' }
+    });
+    decryptedApiKey = editKey;
+    detectionModel = OPENAI_IMAGE_DETECTION_MODEL;
+    detectionOptions = { ...options, provider: 'openai', imageDetail: 'high' };
+  } else {
     try {
-      decryptedGoogleApiKey = await decryptApiKey(googleApiKey);
+      decryptedApiKey = await decryptApiKey(apiKey);
     } catch (error) {
-    options.checkCancelled?.();
-      if (error?.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
-      log('Google API key decryption failed, using as-is', error);
+      await check();
+      log('API key decryption failed for image detection, using as-is', error);
     }
-  }
-  
-  if (!decryptedGoogleApiKey) {
-    logWarn('No Google API key provided, skipping image translation');
-    return content;
+    await check();
+    if (editKey) {
+      try { editKey = await decryptApiKey(editKey); }
+      catch (error) { await check(); log('Image API key decryption failed, using as-is', error); }
+      await check();
+    }
+    if (!editKey) return content;
   }
   
   const imageIndices = [];
@@ -274,16 +317,17 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
   
   for (let i = 0; i < imageIndices.length; i++) {
     // Check if processing was cancelled before processing each image
-    if (options.checkCancelled) options.checkCancelled();
-    else await checkCancellation(`image translation (${i + 1}/${imageIndices.length})`);
+    await check();
     
     const idx = imageIndices[i];
     const img = content[idx];
     
     if (updateState) {
+      const status = formatStatusUpdate('statusAnalyzingImage', await getUILanguage(), { current: i + 1, total: imageIndices.length });
+      await check();
       updateState({ 
         stage: PROCESSING_STAGES.TRANSLATING.id,
-        status: `Analyzing image ${i + 1}/${imageIndices.length}...`, 
+        ...status,
         progress: 10 + Math.floor((i / imageIndices.length) * 5) 
       });
     }
@@ -292,6 +336,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
       let imageBase64 = img.src;
       if (!imageBase64.startsWith('data:')) {
         imageBase64 = await imageToBase64(img.src);
+        await check();
         if (!imageBase64) {
           logWarn(`Could not fetch image ${i + 1}`);
           failed++;
@@ -299,7 +344,8 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         }
       }
       
-      const needsTranslation = await detectImageText(imageBase64, langName, decryptedApiKey, model, options);
+      const needsTranslation = await detectImageText(imageBase64, langName, decryptedApiKey, detectionModel, detectionOptions);
+      await check();
       
       if (!needsTranslation) {
         log(`Image ${i + 1} does not need translation`);
@@ -309,16 +355,20 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
       
       log(`Image ${i + 1} needs translation`);
       if (updateState) {
+        const status = formatStatusUpdate('statusTranslatingImage', await getUILanguage(), { current: i + 1, total: imageIndices.length });
+        await check();
         updateState({ 
           stage: PROCESSING_STAGES.TRANSLATING.id,
-          status: `Translating image ${i + 1}/${imageIndices.length}...`, 
+          ...status,
           progress: 10 + Math.floor((i / imageIndices.length) * 5) 
         });
       }
       
-      const translatedImage = await translateImageWithGemini(imageBase64, langName, decryptedGoogleApiKey, options);
+      const translatedImage = provider === 'openai'
+        ? await translateImageWithOpenAI(imageBase64, langName, editKey, options)
+        : await translateImageWithGemini(imageBase64, langName, editKey, options);
       
-      options.checkCancelled?.();
+      await check();
       if (translatedImage) {
         content[idx].src = translatedImage;
         content[idx].translated = true;
@@ -329,12 +379,12 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
           imageIndex: i + 1,
           totalImages: imageIndices.length,
           imageSrc: img?.src?.substring(0, 100) || 'unknown',
-          reason: 'translateImageWithGemini returned null (check logs above for details)'
+          reason: 'Image editor returned no image'
         });
         failed++;
       }
     } catch (error) {
-    options.checkCancelled?.();
+      await check();
       // Normalize error with context for better logging and error tracking
       await handleError(error, {
         source: 'imageTranslation',
@@ -351,7 +401,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
       failed++;
     }
   }
-  
+  await check();
   log('=== IMAGE TRANSLATION END ===', { translated, skipped, failed });
   return content;
 }

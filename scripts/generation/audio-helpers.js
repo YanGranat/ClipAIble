@@ -7,6 +7,7 @@ import { AUDIO_CONFIG } from './audio-prep.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint } from '../api/tts-catalog.js';
+import { validateOpenAiVoice } from '../api/openai-tts.js';
 
 // Language to TTS instruction mapping
 const LANGUAGE_TTS_INSTRUCTIONS = {
@@ -137,6 +138,7 @@ export async function validateAudioParams(params, provider) {
   if (provider === 'qwen') {
     getQwenTtsEndpoint(params.qwenModel || DEFAULT_QWEN_TTS_MODEL, params.qwenWorkspaceId, params.qwenRegion);
   }
+  if (provider === 'openai') validateOpenAiVoice(params.voice, uiLang);
 }
 
 /**
@@ -158,8 +160,8 @@ export function getTTSInstructions(language) {
  */
 export function getTTSVoiceAndFormat(provider, voice, format, googleTtsVoice) {
   const ttsVoice = provider === 'google' ? googleTtsVoice : voice;
-  // Google TTS and Offline TTS always return WAV format, format parameter is ignored
-  const ttsFormat = (provider === 'google' || provider === 'offline') ? 'wav' : format;
+  // PCM providers return a WAVE container.
+  const ttsFormat = ['openai', 'google', 'offline'].includes(provider) ? 'wav' : format;
   return { ttsVoice, ttsFormat };
 }
 

@@ -16,9 +16,14 @@ import { CONFIG } from '../config.js';
 import { isPopupOpen } from '../../background/popup-connection.js';
 import { createNotification } from '../../background/notifications.js';
 import { isTerminalAIResponseError } from '../../api/response-validation.js';
+import { isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
 
 // Cache for UI language to avoid repeated async calls
 let cachedUILang = null;
+let uiLanguageEpoch = 0;
+chrome.storage.onChanged?.addListener((changes, area) => {
+  if (area === 'local' && Object.hasOwn(changes, 'ui_language')) clearUILanguageCache();
+});
 
 /**
  * Get UI language with caching
@@ -26,7 +31,10 @@ let cachedUILang = null;
  */
 export async function getUILanguageCached() {
   if (!cachedUILang) {
-    cachedUILang = await getUILanguage();
+    const epoch = uiLanguageEpoch;
+    const language = await getUILanguage();
+    if (epoch !== uiLanguageEpoch) return getUILanguageCached();
+    cachedUILang = language;
   }
   return cachedUILang;
 }
@@ -36,6 +44,7 @@ export async function getUILanguageCached() {
  * @returns {void}
  */
 export function clearUILanguageCache() {
+  uiLanguageEpoch++;
   cachedUILang = null;
 }
 
@@ -70,7 +79,7 @@ export async function checkCancellation(context = '', runId) {
   if (isCancelled(runId)) {
     log(`Processing cancelled${context ? ` before ${context}` : ''}`);
     const uiLang = await getUILanguageCached();
-    throw new Error(tSync('statusCancelled', uiLang));
+    throw Object.assign(new Error(tSync('statusCancelled', uiLang)), { translationKey: 'statusCancelled', translationParams: {} });
   }
 }
 
@@ -79,25 +88,27 @@ export async function checkCancellation(context = '', runId) {
  * @param {{id: string, label?: string, name?: string, order?: number}} stage - Processing stage object (from PROCESSING_STAGES)
  * @param {string} statusKey - Translation key for status message
  * @param {number} progress - Progress percentage (0-100)
- * @param {{replacements?: Array<string>, extra?: Record<string, any>}} [options={}] - Additional options
+ * @param {{replacements?: Array<string>, params?: Record<string, string|number>, extra?: Record<string, any>, processingRunId?: string}} [options={}] - Additional options
  * @returns {Promise<void>}
  */
 export async function updateProgress(stage, statusKey, progress, options = {}) {
   if (!isCurrentProcessingRun(options.processingRunId)) return;
   const uiLang = await getUILanguageCached();
-  let status = tSync(statusKey, uiLang);
+  const params = { ...options.params };
   
   // Apply replacements if provided
   if (options.replacements && Array.isArray(options.replacements)) {
     // Simple replacement: replace {0}, {1}, etc. with replacement values
     options.replacements.forEach((replacement, index) => {
-      status = status.replace(`{${index}}`, String(replacement));
+      params[index] = String(replacement);
     });
   }
   
   updateState({ 
     stage: stage.id, 
-    status, 
+    status: tSync(statusKey, uiLang, params),
+    statusTranslationKey: statusKey,
+    statusTranslationParams: params,
     progress,
     ...options.extra
   }, options.processingRunId);
@@ -275,7 +286,9 @@ export async function handleProcessingError(error, data, stopKeepAlive, errorCon
   // Set error with normalized message and code
   await setError({
     message: normalized.userMessage || normalized.message || 'Processing failed',
-    code: normalized.userCode || normalized.code
+    code: normalized.userCode || normalized.code,
+    translationKey: normalized.translationKey,
+    translationParams: normalized.translationParams
   }, stopKeepAlive, data.processingRunId);
 }
 
@@ -284,7 +297,7 @@ export async function handleProcessingError(error, data, stopKeepAlive, errorCon
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {import('../../types.js').ExtractionResult} result - Extracted content result
  * @param {function(import('../../types.js').ExtractionResult, string, string, string, function(Partial<import('../../types.js').ProcessingState>): void): Promise<import('../../types.js').ExtractionResult>} translateContent - Function to translate content
- * @param {function(Array<import('../../types.js').ContentItem>, string, string, string, string, string, function(Partial<import('../../types.js').ProcessingState>): void): Promise<Array<import('../../types.js').ContentItem>>} translateImages - Function to translate images
+ * @param {typeof import('../../translation/images.js').translateImages} translateImages - Function to translate images
  * @param {function(Array<import('../../types.js').ContentItem>): string} detectSourceLanguage - Function to detect source language (synchronous)
  * @param {function(Partial<import('../../types.js').ProcessingState>): void} updateState - Function to update state
  * @returns {Promise<import('../../types.js').ExtractionResult>} Updated result with translated content
@@ -300,7 +313,7 @@ export async function handleTranslation(
   await checkCancellation('translation', data.processingRunId);
   updateState = getScopedUpdateState(data.processingRunId, updateState);
   const language = data.language || 'auto';
-  const hasImageTranslation = data.translateImages && data.googleApiKey;
+  const hasImageTranslation = isImageTranslationEnabled(data);
   
   // Only translate if user explicitly selected a target language (not 'auto')
   if (language === 'auto' || !result.content || result.content.length === 0) {
@@ -348,7 +361,10 @@ export async function handleTranslation(
     }
     result.content = await translateImages(
       result.content, sourceLang, language, 
-      data.apiKey, data.googleApiKey, data.model, updateState, getAIRequestOptions(data)
+      data.apiKey, data.googleApiKey, data.model, updateState, {
+        ...getAIRequestOptions(data), imageTranslationProvider: data.imageTranslationProvider,
+        imageApiKey: data.imageApiKey, outputFormat: data.outputFormat
+      }
     );
     log('✅ Image translation complete');
   }

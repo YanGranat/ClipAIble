@@ -9,6 +9,7 @@ import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
 import { resolveStoredModelSelection } from '../scripts/utils/model-catalog.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS } from '../scripts/api/image-translation-catalog.js';
 import { ELEMENT_IDS, STORAGE_KEYS } from './constants.js';
 
 // Import submodules
@@ -140,6 +141,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.PAGE_MODE,
         STORAGE_KEYS.LANGUAGE,
         STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES,
+        STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER,
         STORAGE_KEYS.STYLE_PRESET,
         STORAGE_KEYS.FONT_FAMILY,
         STORAGE_KEYS.FONT_SIZE,
@@ -276,11 +278,13 @@ export function initSettings(deps) {
         }
       }
       
-      if (elements.apiKey) {
+      if (elements.apiKey && elements.apiProviderSelect?.value === apiProvider) {
+        delete elements.apiKey.dataset.decrypted;
         elements.apiKey.value = apiKeyValue;
+        elements.apiKey.dataset.provider = apiProvider;
         if (apiKeyEncrypted) {
           elements.apiKey.dataset.encrypted = apiKeyEncrypted;
-        }
+        } else delete elements.apiKey.dataset.encrypted;
       }
       
       // Update UI for selected provider
@@ -440,6 +444,11 @@ export function initSettings(deps) {
       
       if (result[STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES] !== undefined) {
         elements.translateImages.checked = result[STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES];
+      }
+      if (elements.imageTranslationProvider) {
+        const savedImageProvider = result[STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER];
+        elements.imageTranslationProvider.value = IMAGE_TRANSLATION_PROVIDERS.includes(savedImageProvider)
+          ? savedImageProvider : DEFAULT_IMAGE_TRANSLATION_PROVIDER;
       }
       
       // Load style preset
@@ -1022,6 +1031,7 @@ export function initSettings(deps) {
     
     // From models module
     updateModelList: modelsModule.updateModelList,
+    refreshLocalization: modelsModule.refreshModelLabels,
     selectModel: modelsModule.selectModel,
     showCustomModelDropdown: modelsModule.showCustomModelDropdown,
     showAddModelDialog: modelsModule.showAddModelDialog,

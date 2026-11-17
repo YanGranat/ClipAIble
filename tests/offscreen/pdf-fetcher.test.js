@@ -60,6 +60,22 @@ describe('PDF download bounds', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it.each(['headers', 'body'])('reacts to an AbortSignal while %s are stalled', async phase => {
+    const controller = new AbortController(), reason = new Error('Owner cancelled');
+    const cancel = vi.fn();
+    if (phase === 'headers') fetch.mockImplementation(() => new Promise(() => {}));
+    else fetch.mockResolvedValueOnce(head()).mockResolvedValueOnce(new Response(new ReadableStream({ cancel })));
+    const pending = fetchPdfFile('https://example.com/document.pdf', null, { signal: controller.signal });
+    const rejected = expect(pending).rejects.toBe(reason);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.abort(reason);
+    expect(fetch.mock.calls.at(-1)[1].signal.aborted).toBe(true);
+    await rejected;
+    expect(fetch.mock.calls.at(-1)[1].signal.aborted).toBe(true);
+    if (phase === 'body') expect(cancel).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('gives the body its own deadline after slow response headers', async () => {
     let deliverHeaders;
     fetch.mockResolvedValueOnce(head()).mockImplementationOnce(() => new Promise(resolve => { deliverHeaders = resolve; }));

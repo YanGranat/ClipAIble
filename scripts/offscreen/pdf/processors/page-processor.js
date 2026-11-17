@@ -12,6 +12,7 @@ import { splitTableBlocksFromColumn1 } from './table-block-splitter.js';
 import { mergeColumnElementsIntoTables } from './table-column-merger.js';
 import { extractPageGraphics, detectTableRegionsFromGraphics } from '../utils/graphics-extractor.js';
 import { DEFAULT_METRICS } from '../constants.js';
+import { extractPaintedTables } from '../utils/grid-cells.js';
 
 /**
  * Process a single PDF page and extract elements
@@ -78,6 +79,7 @@ export async function processPage(page, pageNum, metrics) {
     
     metrics.graphicsData[pageNum] = {
       lines: storedLines,
+      allLines: graphicsData.allLines || storedLines,
       rectangles: storedRectangles,
       tableRegions: tableRegions || [],
       extracted: true,
@@ -118,6 +120,7 @@ export async function processPage(page, pageNum, metrics) {
   }
   
   log(`[PDF v3] Page ${pageNum} processed: ${lines.length} lines`);
+  const physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE);
   
   // Step 2: DETERMINE TOP-LEVEL TEXT REGIONS (COLUMNS)
   // This is the key insight: we need to identify column boundaries FIRST,
@@ -135,7 +138,7 @@ export async function processPage(page, pageNum, metrics) {
   let pageElements;
   try {
     log(`[PDF v3] Page ${pageNum} - Calling processLinesByColumns with ${lines.length} lines`);
-    pageElements = processLinesByColumns(lines, viewport, metrics, groupLinesIntoElements);
+    pageElements = processLinesByColumns(physical.remainingLines, viewport, metrics, groupLinesIntoElements);
     log(`[PDF v3] Page ${pageNum} - processLinesByColumns returned ${pageElements?.length || 0} elements`);
   } catch (error) {
     logWarn(`[PDF v3] processLinesByColumns failed for page ${pageNum}`, {
@@ -178,6 +181,7 @@ export async function processPage(page, pageNum, metrics) {
       });
       pageElements = pageElements ? [pageElements] : [];
     }
+    pageElements.push(...physical.tables);
     
     log(`[PDF v3] Page ${pageNum} elements extracted: ${pageElements.length} elements`);
     

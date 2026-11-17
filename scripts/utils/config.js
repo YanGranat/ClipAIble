@@ -1,7 +1,7 @@
 // @ts-check
 // Configuration constants for ClipAIble extension
 
-import { DEFAULT_ELEVENLABS_TTS_MODEL } from '../api/tts-catalog.js';
+import { DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_OPENAI_TTS_VOICE } from '../api/tts-catalog.js';
 
 /**
  * @readonly
@@ -102,7 +102,7 @@ export const CONFIG = {
   TRANSLATION_RETRY_DELAYS: [2000, 5000, 10000, 20000, 30000], // ms - retry delays for translation
   
   // Default values
-  DEFAULT_AUDIO_VOICE: 'nova',    // Default OpenAI TTS voice
+  DEFAULT_AUDIO_VOICE: DEFAULT_OPENAI_TTS_VOICE,
   DEFAULT_AUDIO_SPEED: 1.0,       // Default audio playback speed
   DEFAULT_AUDIO_FORMAT: 'mp3',    // Default audio format
   DEFAULT_ELEVENLABS_MODEL: DEFAULT_ELEVENLABS_TTS_MODEL,
@@ -117,7 +117,7 @@ export const CONFIG = {
   // Extension version (synchronized with manifest.json)
   // This is used as fallback if chrome.runtime.getManifest() fails (extremely rare)
   // CRITICAL: Must be updated when version changes in manifest.json
-  EXTENSION_VERSION: '3.3.9'
+  EXTENSION_VERSION: '3.3.10'
 };
 
 /**
@@ -172,7 +172,11 @@ export const PDF_LOCALIZATION = {
     source: 'Source',
     author: 'Author',
     abstract: 'TL;DR',
-    footnotes: 'Footnotes'
+    footnotes: 'Footnotes',
+    words_one: 'word',
+    words_few: 'words',
+    words_many: 'words',
+    words_other: 'words'
   },
   'ru': {
     originalArticle: 'Оригинал статьи',
@@ -181,8 +185,12 @@ export const PDF_LOCALIZATION = {
     date: 'Дата',
     source: 'Источник',
     author: 'Автор',
-    abstract: 'TL;DR',
-    footnotes: 'Сноски'
+    abstract: 'Краткое содержание',
+    footnotes: 'Сноски',
+    words_one: 'слово',
+    words_few: 'слова',
+    words_many: 'слов',
+    words_other: 'слова'
   },
   'ua': {
     originalArticle: 'Оригінал статті',
@@ -191,8 +199,12 @@ export const PDF_LOCALIZATION = {
     date: 'Дата',
     source: 'Джерело',
     author: 'Автор',
-    abstract: 'TL;DR',
-    footnotes: 'Виноски'
+    abstract: 'Стислий виклад',
+    footnotes: 'Виноски',
+    words_one: 'слово',
+    words_few: 'слова',
+    words_many: 'слів',
+    words_other: 'слова'
   },
   'de': {
     originalArticle: 'Originalartikel',
@@ -202,7 +214,11 @@ export const PDF_LOCALIZATION = {
     source: 'Quelle',
     author: 'Autor',
     abstract: 'Zusammenfassung',
-    footnotes: 'Fußnoten'
+    footnotes: 'Fußnoten',
+    words_one: 'Wort',
+    words_few: 'Wörter',
+    words_many: 'Wörter',
+    words_other: 'Wörter'
   },
   'fr': {
     originalArticle: 'Article original',
@@ -212,7 +228,11 @@ export const PDF_LOCALIZATION = {
     source: 'Source',
     author: 'Auteur',
     abstract: 'Résumé',
-    footnotes: 'Notes'
+    footnotes: 'Notes',
+    words_one: 'mot',
+    words_few: 'mots',
+    words_many: 'mots',
+    words_other: 'mots'
   },
   'es': {
     originalArticle: 'Artículo original',
@@ -222,7 +242,11 @@ export const PDF_LOCALIZATION = {
     source: 'Fuente',
     author: 'Autor',
     abstract: 'Resumen',
-    footnotes: 'Notas'
+    footnotes: 'Notas',
+    words_one: 'palabra',
+    words_few: 'palabras',
+    words_many: 'palabras',
+    words_other: 'palabras'
   },
   'it': {
     originalArticle: 'Articolo originale',
@@ -232,7 +256,11 @@ export const PDF_LOCALIZATION = {
     source: 'Fonte',
     author: 'Autore',
     abstract: 'Riassunto',
-    footnotes: 'Note'
+    footnotes: 'Note',
+    words_one: 'parola',
+    words_few: 'parole',
+    words_many: 'parole',
+    words_other: 'parole'
   },
   'pt': {
     originalArticle: 'Artigo original',
@@ -242,17 +270,25 @@ export const PDF_LOCALIZATION = {
     source: 'Fonte',
     author: 'Autor',
     abstract: 'Resumo',
-    footnotes: 'Notas de rodapé'
+    footnotes: 'Notas de rodapé',
+    words_one: 'palavra',
+    words_few: 'palavras',
+    words_many: 'palavras',
+    words_other: 'palavras'
   },
   'zh': {
     originalArticle: '原文',
-    words: '字',
+    words: '词',
     contents: '目录',
     date: '日期',
     source: '来源',
     author: '作者',
     abstract: '摘要',
-    footnotes: '脚注'
+    footnotes: '脚注',
+    words_one: '词',
+    words_few: '词',
+    words_many: '词',
+    words_other: '词'
   },
   'ja': {
     originalArticle: '元の記事',
@@ -262,7 +298,11 @@ export const PDF_LOCALIZATION = {
     source: '出典',
     author: '著者',
     abstract: '要約',
-    footnotes: '脚注'
+    footnotes: '脚注',
+    words_one: '語',
+    words_few: '語',
+    words_many: '語',
+    words_other: '語'
   },
   'ko': {
     originalArticle: '원본 기사',
@@ -272,7 +312,11 @@ export const PDF_LOCALIZATION = {
     source: '출처',
     author: '저자',
     abstract: '요약',
-    footnotes: '각주'
+    footnotes: '각주',
+    words_one: '단어',
+    words_few: '단어',
+    words_many: '단어',
+    words_other: '단어'
   },
   'auto': {
     originalArticle: 'Original article',
@@ -282,7 +326,11 @@ export const PDF_LOCALIZATION = {
     source: 'Source',
     author: 'Author',
     abstract: 'TL;DR',
-    footnotes: 'Footnotes'
+    footnotes: 'Footnotes',
+    words_one: 'word',
+    words_few: 'words',
+    words_many: 'words',
+    words_other: 'words'
   }
 };
 
@@ -322,6 +370,21 @@ export const STYLE_PRESETS = {
 };
 
 
+/** Resolve metadata labels without accepting inherited object properties as locales. */
+export function getDocumentLocalization(language) {
+  const code = language === 'uk' ? 'ua' : language;
+  return Object.hasOwn(PDF_LOCALIZATION, code) ? PDF_LOCALIZATION[code] : PDF_LOCALIZATION.en;
+}
+
+/** Normalize a document language without using the UI language as its content language. */
+export function getDocumentLanguageTag(language) {
+  const value = typeof language === 'string' ? language.trim() : '';
+  if (!value || ['auto', 'unknown', 'not detected'].includes(value.toLowerCase())) return 'und';
+  const tag = value.replace(/_/g, '-').replace(/^ua(?=-|$)/i, 'uk');
+  try { return Intl.getCanonicalLocales(tag)[0] || 'und'; }
+  catch { return 'und'; }
+}
+
 /**
  * Get locale string from language code
  * @param {string} langCode - Language code (e.g., 'ru', 'en', 'ua')
@@ -347,7 +410,7 @@ export function getLocaleFromLanguage(langCode) {
     'tr': 'tr-TR',
     'auto': 'en-US'
   };
-  return localeMap[langCode] || 'en-US';
+  return Object.hasOwn(localeMap, langCode) ? localeMap[langCode] : 'en-US';
 }
 
 /**

@@ -9,7 +9,7 @@ ClipAIble declares the following Chrome extension permissions.
 | `unlimitedStorage` | Store large processing data and local resources. |
 | `scripting` | Run content extraction in the selected page. |
 | `downloads` | Save generated documents and audio files. |
-| `debugger` | Render PDF pages and generate PDFs through Chrome's debugging and print interfaces. |
+| `debugger` | Generate PDF documents through Chrome's debugging and print interfaces. |
 | `alarms` | Schedule background processing checks. |
 | `notifications` | Report processing completion and errors. |
 | `contextMenus` | Add save actions to the page context menu. |

@@ -46,7 +46,8 @@ vi.mock('../../lib/jszip-wrapper.js', () => {
   return { default: MockJSZip };
 });
 
-vi.mock('../../scripts/utils/config.js', () => ({
+vi.mock('../../scripts/utils/config.js', async importOriginal => ({
+  ...(await importOriginal()),
   PDF_LOCALIZATION: {
     en: { date: 'Date', source: 'Source', author: 'Author', contents: 'Contents', abstract: 'Abstract' },
     ru: { date: 'Дата', source: 'Источник', author: 'Автор', contents: 'Содержание', abstract: 'Аннотация' }
@@ -58,7 +59,8 @@ vi.mock('../../scripts/utils/config.js', () => ({
   getLocaleFromLanguage: vi.fn((lang) => lang === 'ru' ? 'ru-RU' : 'en-US')
 }));
 
-vi.mock('../../scripts/locales.js', () => ({
+vi.mock('../../scripts/locales.js', async importOriginal => ({
+  ...await importOriginal(),
   getUILanguage: vi.fn(() => Promise.resolve('en')),
   tSync: vi.fn((key) => {
     const translations = {
@@ -141,7 +143,7 @@ describe('generation/epub', () => {
       }, updateState);
 
       expect(updateState).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'Building EPUB structure...', progress: 82 })
+        expect.objectContaining({ status: 'Generating EPUB...', statusTranslationKey: 'statusGeneratingEpub', progress: 82 })
       );
       expect(updateState).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'Done!', progress: 100 })

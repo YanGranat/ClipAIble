@@ -1381,7 +1381,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   // This ensures that div.longform-unstyled and div.public-DraftStyleDefault-block duplicates are removed
   if (injectionResult.content && injectionResult.content.length > 0) {
     const originalCount = injectionResult.content.length;
-    injectionResult.content = deduplicateContent(injectionResult.content);
+    injectionResult.content = deduplicateContent(injectionResult.content, { preserveQuoteOccurrences: true });
     let duplicatesRemoved = originalCount - injectionResult.content.length;
     if (duplicatesRemoved > 0) {
       log('✅ Deduplication applied to selector mode content', {

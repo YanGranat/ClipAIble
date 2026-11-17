@@ -11,9 +11,9 @@ import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { translateMetadata } from '../translation/index.js';
 import { saveLargeData, removeLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
-import { getUILanguage, tSync } from '../locales.js';
+import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES, isCancelled, getProcessingRunId } from '../state/processing.js';
@@ -87,6 +87,7 @@ export async function generatePdf(data, updateState) {
     error.code = normalized.code;
     error.originalError = normalized.originalError;
     error.context = normalized.context;
+    Object.assign(error, getErrorTranslation(normalized));
     throw error;
   }
   
@@ -116,7 +117,7 @@ export async function generatePdf(data, updateState) {
   }
   
   if (language !== 'auto' && apiKey) {
-    if (updateState) updateState({ status: 'Translating metadata...', progress: 68 });
+    if (updateState) updateState({ ...formatStatusUpdate('statusTranslatingMetadata', await getUILanguage()), progress: 68 });
     
     // CRITICAL: Clean author BEFORE translation to avoid translating "anonymous" to anonymous variants
     // If author is already anonymous, don't translate it
@@ -143,7 +144,7 @@ export async function generatePdf(data, updateState) {
   try {
     if (updateState) {
       const uiLang = await getUILanguage();
-      updateState({ status: tSync('statusLoadingStyles', uiLang), progress: 72 });
+      updateState({ ...formatStatusUpdate('statusLoadingStyles', await getUILanguage()), progress: 72 });
     }
     
     log('Loading CSS styles...');
@@ -174,6 +175,7 @@ export async function generatePdf(data, updateState) {
         error.status = stylesResponse.status;
         error.originalError = normalized.originalError;
         error.context = normalized.context;
+        Object.assign(error, getErrorTranslation(normalized));
         throw error;
       }
       styles = await stylesResponse.text();
@@ -199,6 +201,7 @@ export async function generatePdf(data, updateState) {
       error.code = normalized.code;
       error.originalError = normalized.originalError;
       error.context = normalized.context;
+      Object.assign(error, getErrorTranslation(normalized));
       throw error;
     }
     
@@ -208,7 +211,7 @@ export async function generatePdf(data, updateState) {
     });
     log('Applied custom styles');
     
-    if (updateState) updateState({ status: 'Building document...', progress: 78 });
+    if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingPdf', await getUILanguage()), progress: 78 });
     
     log('Building HTML document...');
     
@@ -333,7 +336,7 @@ export async function generatePdf(data, updateState) {
       // Get localized status
       const uiLang = await getUILanguage();
       const loadingStatus = tSync('stageLoadingImages', uiLang);
-      updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, status: loadingStatus, progress: 82 });
+      updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, ...formatStatusUpdate('stageLoadingImages', await getUILanguage()), progress: 82 });
     }
     
     log('Embedding images...', { 
@@ -381,13 +384,14 @@ export async function generatePdf(data, updateState) {
       error.code = normalized.code;
       error.originalError = normalized.originalError;
       error.context = normalized.context;
+      Object.assign(error, getErrorTranslation(normalized));
       throw error;
     }
     
     const currentWindow = await chrome.windows.getCurrent();
     log('Current window', { id: currentWindow.id });
     
-    if (updateState) updateState({ status: 'Opening PDF generator...', progress: 95 });
+    if (updateState) updateState({ ...formatStatusUpdate('statusOpeningPdfGenerator', await getUILanguage()), progress: 95 });
     
     // Open print page
     const printPageUrl = `${chrome.runtime.getURL('print/print.html')}?job=${encodeURIComponent(printJobId)}`;
@@ -429,6 +433,7 @@ export async function generatePdf(data, updateState) {
       error.code = normalized.code;
       error.originalError = normalized.originalError;
       error.context = normalized.context;
+      Object.assign(error, getErrorTranslation(normalized));
       throw error;
     }
 

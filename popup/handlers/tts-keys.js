@@ -37,7 +37,7 @@ async function saveTtsApiKey(config) {
   if (!key) {
     const inputKeyName = keyName === 'Respeecher' ? 'Respecher' : keyName;
     const pleaseEnterKeyText = await t(`pleaseEnter${inputKeyName}ApiKey`);
-    showToast(pleaseEnterKeyText, 'error');
+    showToast(pleaseEnterKeyText, 'error', { key: `pleaseEnter${inputKeyName}ApiKey` });
     return;
   }
   
@@ -47,7 +47,7 @@ async function saveTtsApiKey(config) {
   
   if (!/^[\x20-\x7E]+$/.test(key)) {
     const invalidKeyText = await t('invalidKeyFormat');
-    showToast(invalidKeyText, 'error');
+    showToast(invalidKeyText, 'error', { key: 'invalidKeyFormat' });
     return;
   }
   
@@ -69,11 +69,11 @@ async function saveTtsApiKey(config) {
     }
     const savedKeyName = keyName === 'GoogleTts' ? 'googleTts' : keyName.toLowerCase();
     const keySavedText = await t(`${savedKeyName}KeySaved`);
-    showToast(keySavedText, 'success');
+    showToast(keySavedText, 'success', { key: `${savedKeyName}KeySaved` });
   } catch (error) {
     logError(`Failed to save ${keyName} API key`, error);
     const failedToSaveText = await t('failedToSave');
-    showToast(failedToSaveText, 'error');
+    showToast(failedToSaveText, 'error', { key: 'failedToSave' });
   }
 }
 
@@ -114,7 +114,7 @@ export function setupTtsKeyHandlers(deps) {
         t,
         validateKey: (key) => {
           if (key.length < 10) {
-            t('keyTooShort').then(msg => showToast(msg, 'error'));
+            t('keyTooShort').then(msg => showToast(msg, 'error', { key: 'keyTooShort' }));
             return false;
           }
           return true;
@@ -139,7 +139,7 @@ export function setupTtsKeyHandlers(deps) {
         t,
         validateKey: (key) => {
           if (key.length < 10) {
-            t('keyTooShort').then(msg => showToast(msg, 'error'));
+            t('keyTooShort').then(msg => showToast(msg, 'error', { key: 'keyTooShort' }));
             return false;
           }
           return true;
@@ -164,7 +164,7 @@ export function setupTtsKeyHandlers(deps) {
         t,
         validateKey: (key) => {
           if (key.length < 10) {
-            t('keyTooShort').then(msg => showToast(msg, 'error'));
+            t('keyTooShort').then(msg => showToast(msg, 'error', { key: 'keyTooShort' }));
             return false;
           }
           return true;
@@ -190,12 +190,12 @@ export function setupTtsKeyHandlers(deps) {
         validateKey: async (key) => {
           if (!key.startsWith('AIza')) {
             const invalidKeyText = await t('invalidGoogleTtsKeyFormat');
-            showToast(invalidKeyText, 'error');
+            showToast(invalidKeyText, 'error', { key: 'invalidGoogleTtsKeyFormat' });
             return false;
           }
           if (key.length < 20) {
             const keyTooShortText = await t('keyTooShort');
-            showToast(keyTooShortText, 'error');
+            showToast(keyTooShortText, 'error', { key: 'keyTooShort' });
             return false;
           }
           return true;
@@ -221,7 +221,7 @@ export function setupTtsKeyHandlers(deps) {
         validateKey: async (key) => {
           if (!key.startsWith('AIza')) {
             const invalidGoogleKeyText = await t('invalidGoogleKeyFormat');
-            showToast(invalidGoogleKeyText, 'error');
+            showToast(invalidGoogleKeyText, 'error', { key: 'invalidGoogleKeyFormat' });
             return false;
           }
           return true;

@@ -4,7 +4,7 @@
 
 import { log, logWarn, logError, sanitizeLogData, shouldLogDiagnostic } from '../utils/logging.js';
 import { updateState, getProcessingState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
-import { handleError } from '../utils/error-handler.js';
+import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { isValidMessageSize } from '../utils/security/security.js';
 
 // Simple handlers
@@ -347,7 +347,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
     const { initializationReady, ...readyDeps } = deps;
     Promise.resolve(initializationReady)
       .then(() => routeMessage(request, sender, sendResponse, readyDeps))
-      .catch((error) => sendResponse({ success: false, error: error?.message || 'Background initialization failed' }));
+      .catch((error) => sendResponse({ success: false, error: error?.message || 'Background initialization failed', ...getErrorTranslation(error) }));
     return true;
   }
   const {
@@ -385,10 +385,10 @@ export function routeMessage(request, sender, sendResponse, deps) {
           source: 'messageRouter', errorType, logError: true, createUserMessage: true,
           context: { operation: 'routeMessage', action: request.action, errorName: error?.name, errorStack: error?.stack }
         });
-        safeSendResponse({ error: error?.message || normalized.message, errorCode: normalized.code });
+        safeSendResponse({ error: error?.message || normalized.message, errorCode: normalized.code, ...getErrorTranslation(normalized) });
       } catch (normalizationError) {
         logError('Message error normalization failed', normalizationError);
-        safeSendResponse({ error: error?.message || 'Message handling failed' });
+        safeSendResponse({ error: error?.message || 'Message handling failed', ...getErrorTranslation(error) });
       }
     })().catch((handlingError) => logError('Message error handling failed', handlingError));
     return true;
@@ -622,7 +622,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
         return true;
       } catch (error) {
         logWarn('[ClipAIble] Error handling TTS_PROGRESS', error);
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: error.message, ...getErrorTranslation(error) });
         return true;
       }
     },
@@ -646,7 +646,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
           error: error.message,
           timestamp: Date.now()
         });
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: error.message, ...getErrorTranslation(error) });
         return true;
       }
     },
@@ -669,7 +669,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
           error: error.message,
           timestamp: Date.now()
         });
-        sendResponse({ success: false, error: error.message });
+        sendResponse({ success: false, error: error.message, ...getErrorTranslation(error) });
         return true;
       }
     }

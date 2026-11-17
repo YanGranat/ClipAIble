@@ -7,27 +7,17 @@
   <!-- Headers for SharedArrayBuffer support (if needed for ONNX Runtime threading) -->
   <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
   <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
-  <!-- NOTE: Import map no longer needed - piper-tts-web.js has been patched -->
-  <!-- to use chrome.runtime.getURL() directly for onnxruntime-web import -->
+  <!-- The offscreen bundle resolves the packaged speech SDK and phonemizer. -->
   
-  <!-- ============================================== -->
-  <!-- PDF.js 2.6.347 (stable legacy version) -->
-  <!-- Downloaded from CDN and saved locally -->
-  <!-- ============================================== -->
-  <!-- CRITICAL: Use local file - CSP does not allow external URLs -->
-  <script src="lib/pdfjs/pdf.min.js"></script>
-
-  <!-- PDF.js initialization - extracted to external file for CSP compliance -->
+  <!-- Load the local PDF API and worker without inline scripts. -->
   <script src="scripts/offscreen/pdf-init.js"></script>
 </head>
 <body>
-  <!-- Bundle loads AFTER PDF.js is configured -->
-  <!-- CRITICAL: Bundle must load AFTER PDF.js initialization -->
+  <!-- PDF requests await the initialization promise. -->
 
   <!-- Main offscreen bundle -->
   <script src="dist/offscreen-bundle.js"></script>
 
-  <!-- PDF.js is now loaded globally and will be accessed via window.PDFJS or window.pdfjsLib -->
 </body>
 </html>
 

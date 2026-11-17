@@ -1,0 +1,37 @@
+[
+  {
+    "name": "phonemize",
+    "repo": "wide-video/piper-phonemize",
+    "pin": "cfff8e52ebaea37c7e953ae2d06b174acb827ac4",
+    "url": "https://codeload.github.com/wide-video/piper-phonemize/tar.gz/cfff8e52ebaea37c7e953ae2d06b174acb827ac4",
+    "sha256": "7029b52aabc2512d36f4d98c6ede732c48a0e7128d0cd0e62379dfcee770038e"
+  },
+  {
+    "name": "espeak-host",
+    "repo": "rhasspy/espeak-ng",
+    "pin": "8593723f10cfd9befd50de447f14bf0a9d2a14a4",
+    "url": "https://codeload.github.com/rhasspy/espeak-ng/tar.gz/8593723f10cfd9befd50de447f14bf0a9d2a14a4",
+    "sha256": "41c199da1355deec93eab6065be99d00b938dd452e78f282ab481db91657e4e4"
+  },
+  {
+    "name": "espeak-wasm",
+    "repo": "rhasspy/espeak-ng",
+    "pin": "0f65aa301e0d6bae5e172cc74197d32a6182200f",
+    "url": "https://codeload.github.com/rhasspy/espeak-ng/tar.gz/0f65aa301e0d6bae5e172cc74197d32a6182200f",
+    "sha256": "37ebbabb010200be8ec26c61b770e93f964f4503a329d7d74c239a1a40051e43"
+  },
+  {
+    "name": "emsdk",
+    "repo": "emscripten-core/emsdk",
+    "pin": "3.1.47",
+    "url": "https://codeload.github.com/emscripten-core/emsdk/tar.gz/3.1.47",
+    "sha256": "a882560a83cbacec67867e7ce6b00420d557e71c501b523d2ed956ded021f9b4"
+  },
+  {
+    "name": "sonic",
+    "repo": "waywardgeek/sonic",
+    "pin": "fbf75c3d6d846bad3bb3d456cbc5d07d9fd8c104",
+    "url": "https://codeload.github.com/waywardgeek/sonic/tar.gz/fbf75c3d6d846bad3bb3d456cbc5d07d9fd8c104",
+    "sha256": "715827b5a39b79e56e44397d7b845910df996d4cca74777b3b61629b1ddc98c1"
+  }
+]

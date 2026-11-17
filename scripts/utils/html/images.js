@@ -2,23 +2,22 @@
 // Image utility functions for ClipAIble extension
 
 import { log, logWarn, logError } from '../logging.js';
-import { getUILanguage, tSync } from '../../locales.js';
+import { getUILanguage, formatStatusUpdate } from '../../locales.js';
 import { isValidExternalUrl } from '../security.js';
 
 /**
  * Get localized loading images status
  * @param {number} processed - Number of processed images
  * @param {number} total - Total number of images
- * @returns {Promise<string>} Localized status string
+ * @returns {Promise<Object>} Localized status with its message identity
  */
 async function getLocalizedLoadingStatus(processed, total) {
   try {
     const uiLang = await getUILanguage();
-    const baseStatus = tSync('stageLoadingImages', uiLang);
-    return `${baseStatus} ${processed}/${total}...`;
+    return formatStatusUpdate('statusLoadingImagesProgress', uiLang, { current: processed, total });
   } catch (error) {
     // Fallback to English if localization fails
-    return `Loading images ${processed}/${total}...`;
+    return formatStatusUpdate('statusLoadingImagesProgress', 'en', { current: processed, total });
   }
 }
 
@@ -190,7 +189,7 @@ export async function processImagesInBatches(images, concurrency, updateState, p
         
         if (updateState) {
           updateState({ 
-            status: await getLocalizedLoadingStatus(processed, total), 
+            ...await getLocalizedLoadingStatus(processed, total),
             progress: 82 + Math.floor((processed / total) * 13) 
           });
         }
@@ -201,7 +200,7 @@ export async function processImagesInBatches(images, concurrency, updateState, p
         logWarn(`Image ${globalIndex + 1} processing failed`, { error: e.message });
         if (updateState) {
           updateState({ 
-            status: await getLocalizedLoadingStatus(processed, total), 
+            ...await getLocalizedLoadingStatus(processed, total),
             progress: 82 + Math.floor((processed / total) * 13) 
           });
         }
@@ -295,7 +294,7 @@ export async function embedImages(html, content, updateState, escapeAttr) {
   
   if (updateState) {
     updateState({ 
-      status: `Loading ${images.length} images...`, 
+      ...formatStatusUpdate('statusLoadingImagesCount', await getUILanguage(), { count: images.length }),
       progress: 82 
     });
   }

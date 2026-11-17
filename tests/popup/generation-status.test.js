@@ -9,6 +9,7 @@ function element() {
   const classes = new Set();
   return {
     value: '', dataset: {}, style: {}, disabled: false, textContent: '', innerHTML: '',
+    removeAttribute(name) { if (name === 'data-i18n') delete this.dataset.i18n; },
     classList: {
       add: value => classes.add(value),
       remove: value => classes.delete(value),
@@ -33,6 +34,7 @@ describe('popup generation status', () => {
     elements.modelSelect.value = 'gpt-test';
     elements.modeSelect.value = 'automatic';
     elements.apiProviderSelect.value = 'openai';
+    elements.apiKey.dataset.provider = 'openai';
     globalThis.document = { createElement: () => element() };
     globalThis.chrome = {
       storage: { local: {
@@ -136,9 +138,19 @@ describe('popup generation status', () => {
       expect(deps.showToast).toHaveBeenCalledWith('Generation could not finish', 'error');
     });
 
+    it(`${name} forwards the current background error identity to the visible toast`, async () => {
+      const prefix = name === 'summary' ? 'summary' : 'key_theses';
+      store[`${prefix}_error`] = 'Current failure';
+      store[`${prefix}_error_translation`] = { key: 'errorNetwork', params: {} };
+      const module = initializer(deps);
+      await module[name === 'summary' ? 'checkSummaryStatus' : 'checkKeyThesesStatus']();
+      expect(deps.showToast).toHaveBeenCalledWith('Current failure', 'error', { key: 'errorNetwork', params: {} });
+    });
+
     it(`${name} sends video subtitles with the selected provider to background generation`, async () => {
       elements.apiKey.value = 'synthetic-api-key';
       elements.apiProviderSelect.value = 'openrouter';
+      elements.apiKey.dataset.provider = 'openrouter';
       deps.detectVideoPlatform = () => ({ platform: 'youtube' });
       chrome.tabs.sendMessage = vi.fn(async () => ({ success: true }));
       chrome.runtime.sendMessage.mockImplementation(async message => {

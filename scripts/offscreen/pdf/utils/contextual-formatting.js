@@ -377,7 +377,7 @@ export function detectContextualFormatting(lines, fontNameMap = null, fontToForm
       const explicitItalic = isItalicByFontName || isItalicByDirect || isItalicByFontMap;
       
       // Ratio-based formatting methods (global base, ratio) need additional validation
-      const ratioBasedBold = isBoldByGlobalBase || isBoldByRatio;
+      const ratioBasedBold = directFontWeight !== 'normal' && item.fontWeight !== 'normal' && (isBoldByGlobalBase || isBoldByRatio);
       const ratioBasedItalic = isItalicByGlobalBase || isItalicByRatio;
       
       // Filter 1: Minimum text length check for ratio-based formatting

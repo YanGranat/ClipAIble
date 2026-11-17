@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startSummaryGeneration } from '../../scripts/message-handlers/summary.js';
 import { startKeyThesesGeneration, requestCancelKeyThesesGeneration } from '../../scripts/message-handlers/key-theses.js';
 import { generateSummary, generateKeyTheses } from '../../scripts/translation/index.js';
+import { handleError } from '../../scripts/utils/error-handler.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logWarn: vi.fn() }));
-vi.mock('../../scripts/utils/error-handler.js', () => ({ handleError: async (error) => error }));
+vi.mock('../../scripts/utils/error-handler.js', async importOriginal => ({ ...(await importOriginal()), handleError: vi.fn(async error => error) }));
 vi.mock('../../scripts/state/processing.js', () => ({ getProcessingState: () => ({ isProcessing: false }) }));
 vi.mock('../../scripts/translation/index.js', () => ({ generateSummary: vi.fn(), generateKeyTheses: vi.fn() }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: key => key }));
@@ -18,6 +19,7 @@ beforeEach(() => {
   chrome.storage.local.get.mockReset().mockImplementation(async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter(key => key in stored).map(key => [key, structuredClone(stored[key])])));
   chrome.storage.local.set.mockReset().mockImplementation(async values => { Object.assign(stored, structuredClone(values)); });
   generateSummary.mockReset(); generateKeyTheses.mockReset();
+  handleError.mockReset().mockImplementation(async error => error);
 });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
@@ -34,7 +36,8 @@ describe('independent generation ownership', () => {
     try {
       await vi.advanceTimersByTimeAsync(0);
       expect(generate).toHaveBeenCalledTimes(1);
-      expect(secondResponse).toHaveBeenCalledWith({ error: expect.stringContaining('already in progress') });
+      const translationKey = _kind === 'summary' ? 'summaryAlreadyGenerating' : 'keyThesesAlreadyGenerating';
+      expect(secondResponse).toHaveBeenCalledWith({ error: translationKey, translationKey, translationParams: {} });
     } finally {
       releases.forEach(release => release(result));
       await Promise.allSettled([first, second]);
@@ -97,5 +100,26 @@ describe('independent generation ownership', () => {
     await Promise.all([old, current]);
     expect(generateKeyTheses).toHaveBeenCalledTimes(1);
     expect(stored).toMatchObject({ key_theses_text: 'Current result', key_theses_generating: false });
+  });
+
+  it('keeps the current error message and its translation identity together after an older failure resumes', async () => {
+    let finishOldNormalization, failCurrent;
+    const oldError = Object.assign(new Error('Old failure'), { translationKey: 'errorNetwork', translationParams: {} });
+    const currentError = Object.assign(new Error('Current failure'), { translationKey: 'errorOpenaiVoiceUnavailable', translationParams: { voice: 'sample-voice' } });
+    handleError.mockImplementationOnce(() => new Promise(resolve => { finishOldNormalization = resolve; }));
+    generateKeyTheses.mockRejectedValueOnce(oldError).mockImplementationOnce(() => new Promise((_resolve, reject) => { failCurrent = reject; }));
+    const old = startKeyThesesGeneration(data, vi.fn(), vi.fn()).catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finishOldNormalization).toEqual(expect.any(Function));
+    const current = startKeyThesesGeneration(data, vi.fn(), vi.fn()).catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored.key_theses_error_translation).toBeNull();
+    finishOldNormalization(oldError);
+    await old;
+    expect(stored.key_theses_error).toBeNull();
+    expect(stored.key_theses_error_translation).toBeNull();
+    failCurrent(currentError);
+    await current;
+    expect(stored).toMatchObject({ key_theses_error: 'Current failure', key_theses_error_translation: { key: 'errorOpenaiVoiceUnavailable', params: { voice: 'sample-voice' } } });
   });
 });

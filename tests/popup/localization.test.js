@@ -9,9 +9,14 @@ afterEach(() => vi.unstubAllGlobals());
 describe('localization fallback', () => {
   it('uses English when an existing locale has no translation', async () => {
     const key = 'errorOffscreenApiNotAvailable';
-    expect(UI_LOCALES.de[key]).toBeUndefined();
-    expect(tSync(key, 'de')).toBe(UI_LOCALES.en[key]);
-    await expect(t(key, 'de')).resolves.toBe(UI_LOCALES.en[key]);
+    const german = UI_LOCALES.de[key];
+    delete UI_LOCALES.de[key];
+    try {
+      expect(tSync(key, 'de')).toBe(UI_LOCALES.en[key]);
+      await expect(t(key, 'de')).resolves.toBe(UI_LOCALES.en[key]);
+    } finally {
+      UI_LOCALES.de[key] = german;
+    }
   });
 
   it('preserves existing translations and supports unknown language codes', async () => {

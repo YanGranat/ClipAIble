@@ -122,7 +122,7 @@ export const CONTENT_SELECTORS = [
  * Standfirst/subtitle selectors
  */
 export const STANDFIRST_SELECTORS = [
-  '.standfirst', '.subtitle', '.deck', '.lede', '.intro', '.article__subhead',
+  '.standfirst', '.subtitle', '.deck', '[class*="excerpt"]', '.lede', '.intro', '.article__subhead',
   '[class*="standfirst"]', '[class*="subtitle"]', '[class*="deck"]',
   '[class*="intro"]', '[class*="summary"]', '[class*="subhead"]'
 ];

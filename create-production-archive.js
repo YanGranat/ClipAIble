@@ -6,11 +6,18 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import { createHash } from 'node:crypto';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const runtimeFiles = ['manifest.json', 'offscreen.html', 'offscreen.js', 'README.md', 'PRIVACY.md', 'PERMISSIONS.md', 'LICENSE', 'docs/technical-overview.md'];
 const runtimeDirectories = ['icons', 'popup', 'scripts', 'config', 'print', 'lib'];
+const sourceFiles = [
+  ...runtimeFiles, '.gitattributes', '.gitignore', 'package.json', 'package-lock.json',
+  'build-extraction.js', 'build-offscreen.js', 'build-piper.js', 'build-tts-worker.js',
+  'create-production-archive.js', 'jsconfig.json', 'vitest.config.js', 'THIRD_PARTY_NOTICES.txt'
+];
+const sourceDirectories = [...runtimeDirectories, 'src', 'tests', 'docs', 'third_party/sources'];
 const buildOnlyFiles = new Set(['scripts/apply-extraction-build.js', 'scripts/extraction/extractor/builder.js']);
 
 function isRuntimeFile(relativePath) {
@@ -21,16 +28,20 @@ function isRuntimeFile(relativePath) {
     !normalized.endsWith('.map');
 }
 
-async function copyDirectory(source, destination, relativePath) {
+function isSourceFile(relativePath) {
+  return buildOnlyFiles.has(relativePath.split(path.sep).join('/')) || isRuntimeFile(relativePath);
+}
+
+async function copyDirectory(source, destination, relativePath, include = isRuntimeFile) {
   await fs.mkdir(destination, { recursive: true });
   for (const entry of await fs.readdir(source, { withFileTypes: true })) {
     const childRelative = path.join(relativePath, entry.name);
-    if (!isRuntimeFile(childRelative)) continue;
+    if (!include(childRelative)) continue;
     if (entry.isSymbolicLink()) throw new Error('Symbolic links cannot be packaged: ' + childRelative);
     const childSource = path.join(source, entry.name);
     const childDestination = path.join(destination, entry.name);
     if (entry.isDirectory()) {
-      await copyDirectory(childSource, childDestination, childRelative);
+      await copyDirectory(childSource, childDestination, childRelative, include);
     } else if (entry.isFile()) {
       await fs.copyFile(childSource, childDestination);
     }
@@ -56,13 +67,12 @@ async function copyRuntimeLibraries(destination) {
         !['ort.all.min.js', 'ort.wasm.min.js'].includes(entry.name)) continue;
     await fs.copyFile(path.join(onnxDirectory, entry.name), path.join(destination, 'lib', entry.name));
   }
-  const piperDestination = path.join(destination, 'lib', 'piper-wasm');
-  await fs.mkdir(piperDestination, { recursive: true });
-  for (const filename of ['piper_phonemize.data', 'piper_phonemize.wasm', 'piper_phonemize.js']) {
-    await fs.copyFile(
-      path.join(root, 'node_modules', '@diffusionstudio', 'piper-wasm', 'build', filename),
-      path.join(piperDestination, filename)
-    );
+  const artifacts = JSON.parse(await fs.readFile(path.join(root, 'third_party/sources/piper-phonemize/artifacts.json'), 'utf8'));
+  for (const artifact of artifacts) {
+    const bytes = await fs.readFile(path.join(destination, 'lib/piper-wasm', artifact.file));
+    if (createHash('sha256').update(bytes).digest('hex') !== artifact.sha256) {
+      throw new Error('Packaged phonemizer does not match its corresponding source: ' + artifact.file);
+    }
   }
 }
 
@@ -103,6 +113,7 @@ async function createArchive() {
   const temporaryRoot = path.join(root, 'temporary_files');
   await fs.mkdir(temporaryRoot, { recursive: true });
   const stagingDirectory = await fs.mkdtemp(path.join(temporaryRoot, 'package-'));
+  let sourceStagingDirectory;
   try {
     for (const filename of runtimeFiles) {
       await fs.mkdir(path.dirname(path.join(stagingDirectory, filename)), { recursive: true });
@@ -136,11 +147,26 @@ async function createArchive() {
       'lib/piper-wasm/piper_phonemize.data', 'lib/piper-wasm/piper_phonemize.wasm'
     ]) await fs.access(path.join(stagingDirectory, filename));
     await createZip(stagingDirectory, outputPath);
+    sourceStagingDirectory = await fs.mkdtemp(path.join(temporaryRoot, 'sources-'));
+    for (const filename of sourceFiles) {
+      await fs.mkdir(path.dirname(path.join(sourceStagingDirectory, filename)), { recursive: true });
+      await fs.copyFile(path.join(root, filename), path.join(sourceStagingDirectory, filename));
+    }
+    for (const directory of sourceDirectories) {
+      await copyDirectory(path.join(root, directory), path.join(sourceStagingDirectory, directory), directory, isSourceFile);
+    }
+    const sourceOutputPath = outputPath.replace(/\.zip$/i, '-sources.zip');
+    await createZip(sourceStagingDirectory, sourceOutputPath);
     console.log('Archive: ' + outputPath);
+    console.log('Sources: ' + sourceOutputPath);
     console.log('Size: ' + (await fs.stat(outputPath)).size + ' bytes');
   } finally {
     if (!stagingDirectory.startsWith(temporaryRoot + path.sep)) throw new Error('Invalid staging directory');
     await fs.rm(stagingDirectory, { recursive: true });
+    if (sourceStagingDirectory) {
+      if (!sourceStagingDirectory.startsWith(temporaryRoot + path.sep)) throw new Error('Invalid source staging directory');
+      await fs.rm(sourceStagingDirectory, { recursive: true });
+    }
   }
 }
 

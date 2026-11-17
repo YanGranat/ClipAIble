@@ -198,7 +198,8 @@ export function extractFontNameMapping(textContent, pageNum, fontObjects = null)
               fontWeight = 'bold';
               log(`[PDF v3] extractFontNameMapping: Page ${pageNum} - Detected BOLD from font name: "${finalFontName}"`);
             }
-            if (!fontStyle && /italic|oblique/i.test(finalFontName)) {
+            if (!fontWeight && /(?:^|[-_])(?:regular|regu|roman)(?:ital|italic|oblique)?$/i.test(finalFontName)) fontWeight = 'normal';
+            if (!fontStyle && /italic|oblique|(?:regu|regular|roman|medi)ital$/i.test(finalFontName)) {
               fontStyle = 'italic';
               log(`[PDF v3] extractFontNameMapping: Page ${pageNum} - Detected ITALIC from font name: "${finalFontName}"`);
             }

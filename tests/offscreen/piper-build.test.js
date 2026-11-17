@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { build } from 'esbuild';
 import { describe, expect, it, vi } from 'vitest';
-import { patchPiperTtsSource } from '../../build-piper.js';
+import { patchPiperTtsSource, patchPiperPhonemizerSource } from '../../build-piper.js';
 
 const sdkPath = createRequire(import.meta.url).resolve.paths('@mintplex-labs/piper-tts-web')
   .map(base => join(base, '@mintplex-labs/piper-tts-web/dist/piper-tts-web.js')).find(existsSync);
@@ -33,6 +33,8 @@ describe('packaged Piper SDK build adapter', () => {
       } }
     };
     runInNewContext(bundle.outputFiles[0].text, context);
+    expect(locations).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
     const session = await context.Piper.TtsSession.create({ voiceId: 'en_US-hfc_female-medium' });
     const audio = await session.predict('Sample text.');
     expect(runtime.env.wasm.numThreads).toBe(1);
@@ -49,5 +51,15 @@ describe('packaged Piper SDK build adapter', () => {
     const source = await readFile(sdkPath, 'utf8');
     expect(() => patchPiperTtsSource(source.replace('const DEFAULT_WASM_PATHS', 'const OTHER_PATHS'), sdkPath)).toThrow('Unsupported Piper SDK');
     expect(() => patchPiperTtsSource(source.replace('await modelBlob.arrayBuffer()', 'await otherModel.arrayBuffer()'), sdkPath)).toThrow('WASM execution provider');
+    expect(() => patchPiperTtsSource(source.replace('piper-o91UDS6e.js', 'other-factory.js'), sdkPath)).toThrow('phonemizer factory import');
+  });
+
+  it('adapts the packaged phonemizer without retaining a CommonJS or AMD export', async () => {
+    const source = await readFile(new URL('../../lib/piper-wasm/piper_phonemize.js', import.meta.url), 'utf8');
+    const adapted = patchPiperPhonemizerSource(source);
+    expect(adapted).toContain('export { createPiperPhonemize };');
+    expect(adapted).not.toMatch(/module\.exports|define\(\[\],/);
+    expect(adapted).not.toMatch(/require\(["'](?:fs|path)["']\)/);
+    expect(() => patchPiperPhonemizerSource(source.replace('module.exports = createPiperPhonemize;', 'module.exports = otherFactory;'))).toThrow('Unsupported Piper phonemizer');
   });
 });

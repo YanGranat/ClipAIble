@@ -480,6 +480,12 @@ export function getProcessingState() {
  */
 export function updateState(updates, runId) {
   if (!isCurrentProcessingRun(runId)) return;
+  if (updates.status !== undefined) {
+    updates = { ...updates, statusTranslationKey: updates.statusTranslationKey || null, statusTranslationParams: updates.statusTranslationParams || null };
+  }
+  if (updates.error !== undefined) {
+    updates = { ...updates, errorTranslationKey: updates.errorTranslationKey || null, errorTranslationParams: updates.errorTranslationParams || null };
+  }
   // Queue updates if another update is in progress
   // This prevents data loss from concurrent updates
   if (isUpdatingState) {
@@ -625,6 +631,8 @@ export async function completeProcessing(stopKeepAlive, runId) {
   const uiLang = await getUILanguage();
   if (!isCurrentProcessingRun(ownerRunId)) return;
   processingState.status = tSync('statusDone', uiLang);
+  processingState.statusTranslationKey = 'statusDone';
+  processingState.statusTranslationParams = {};
   
   // CRITICAL: Check if summary generation is active before stopping keep-alive
   // Summary generation is independent and should continue even if document/audio processing completes
@@ -676,10 +684,14 @@ export async function setError(error, stopKeepAlive, runId) {
     processingState.error = error.message || 'Unknown error';
     processingState.errorCode = error.code || ERROR_CODES.UNKNOWN_ERROR;
   }
+  processingState.errorTranslationKey = typeof error === 'object' ? error.translationKey || null : null;
+  processingState.errorTranslationParams = typeof error === 'object' ? error.translationParams || null : null;
   
   const uiLang = await getUILanguage();
   if (!isCurrentProcessingRun(ownerRunId)) return;
   processingState.status = tSync('statusError', uiLang);
+  processingState.statusTranslationKey = 'statusError';
+  processingState.statusTranslationParams = {};
   
   // CRITICAL: Check if summary generation is active before stopping keep-alive
   // Summary generation is independent and should continue even if document/audio processing fails
@@ -744,6 +756,8 @@ export async function startProcessing(startKeepAlive, onStarted) {
     isCancelled: false,
     progress: 0,
     status: startingStatus,
+    statusTranslationKey: 'stageStarting',
+    statusTranslationParams: {},
     error: null,
     result: null,
     startTime: Date.now(),

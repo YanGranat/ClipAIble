@@ -174,9 +174,18 @@ export function getModelMetadata(provider, id) {
 }
 
 /** Format managed reasoning variants without interpreting arbitrary custom suffixes. */
-export function formatModelLabel(provider, id) {
+export function formatModelLabel(provider, id, translate) {
   const metadata = getModelMetadata(provider, id);
   if (!metadata) return id || '';
+  if (translate) {
+    let label = metadata.displayName || metadata.apiModel;
+    if (metadata.reasoningEffort && metadata.reasoningEffort !== 'none') {
+      label = translate('modelReasoningEffort', { model: label, effort: translate(`reasoningEffort_${metadata.reasoningEffort}`) });
+    }
+    if (metadata.reasoningEffort === 'none' || metadata.reasoningEnabled === false) label = translate('modelNoReasoning', { model: label });
+    if (!metadata.inputModalities.includes('image')) label = translate('modelTextOnly', { model: label });
+    return label;
+  }
   const effort = metadata.reasoningEffort ? ` (reasoning effort - ${metadata.reasoningEffort})` : '';
   const disabled = metadata.reasoningEnabled === false ? ' (no reasoning)' : '';
   const textOnly = !metadata.inputModalities.includes('image') ? ' (text only)' : '';

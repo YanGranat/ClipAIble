@@ -51,7 +51,7 @@ export function initStyles(deps) {
         break;
     }
     const resetText = await t('resetToDefault');
-    showToast(resetText, 'success');
+    showToast(resetText, 'success', { key: 'resetToDefault' });
   }
 
   // Reset all style settings to defaults
@@ -94,7 +94,7 @@ export function initStyles(deps) {
     });
     
     const allStylesResetText = await t('allStylesReset');
-    showToast(allStylesResetText, 'success');
+    showToast(allStylesResetText, 'success', { key: 'allStylesReset' });
   }
 
   return {

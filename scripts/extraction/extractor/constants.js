@@ -153,11 +153,7 @@ export function getInlinedConstantsCode() {
     const LOGO_PATTERNS = ${JSON.stringify(LOGO_PATTERNS, null, 6).replace(/\n/g, '\n    ')};
     
     // Standfirst selectors (used by standfirst.js)
-    const STANDFIRST_SELECTORS = [
-      '.standfirst', '.subtitle', '.deck', '.lede', '.intro', '.article__subhead',
-      '[class*="standfirst"]', '[class*="subtitle"]', '[class*="deck"]',
-      '[class*="intro"]', '[class*="summary"]', '[class*="subhead"]'
-    ];
+    const STANDFIRST_SELECTORS = ${JSON.stringify(STANDFIRST_SELECTORS, null, 6).replace(/\n/g, '\n    ')};
     
     // Candidate element selector (used by parse.js)
     const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table, div';

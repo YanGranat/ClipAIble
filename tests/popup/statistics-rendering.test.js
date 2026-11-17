@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { getSafeHistoryUrl, initStats } from '../../popup/stats.js';
 
-vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', t: async key => key, UI_LOCALES: { en: {} } }));
+vi.mock('../../scripts/locales.js', async importOriginal => ({ ...(await importOriginal()), getUILanguage: async () => 'en' }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 
 describe('statistics rendering', () => {
@@ -36,15 +36,16 @@ describe('statistics rendering', () => {
     expect(history.querySelector('button').dataset.index).toBe('1');
   });
 
-  it('escapes attribute quotes and cache age values', async () => {
+  it('escapes attribute quotes and derives cache age from its timestamp', async () => {
     const stats = initStats({ showToast: vi.fn() });
     const domain = 'example.org" data-injected="true';
-    await stats.displayCacheStats({ domains: [{ domain, age: '<img src="x">' }] });
+    await stats.displayCacheStats({ domains: [{ domain, age: '<img src="x">', lastUsed: Date.now() - 3600000 }] });
     const cache = document.getElementById('cacheDomainsList');
     expect(cache.querySelector('img')).toBeNull();
     expect(cache.querySelector('[data-injected]')).toBeNull();
     expect(cache.querySelector('button').dataset.domain).toBe(domain);
-    expect(cache.textContent).toContain('<img');
+    expect(cache.textContent).not.toContain('<img');
+    expect(cache.textContent).toContain('1 hour ago');
   });
 
   it('preserves supported web and local document links', () => {

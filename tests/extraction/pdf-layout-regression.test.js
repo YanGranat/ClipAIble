@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { detectPreliminaryColumns } from '../../scripts/offscreen/pdf/analyzers/preliminary-column-detector.js';
 import { analyzeVisualStructure } from '../../scripts/offscreen/pdf/analyzers/visual-structure-analyzer.js';
 import { classifyHeading } from '../../scripts/offscreen/pdf/classifiers/heading.js';
+import { detectColumns } from '../../scripts/offscreen/pdf/analyzers/column-detector.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn()
@@ -17,6 +18,32 @@ const columnItems = () => [
 ];
 
 describe('PDF layout boundaries', () => {
+  it('keeps hanging indents in one reading column when their horizontal extents overlap', () => {
+    const lines = Array.from({ length: 12 }, (_, index) => {
+      const x = index % 3 === 0 ? 50 : 85;
+      return { x, y: 50 + index * 12, text: `Reference record ${index}`, items: [{ x, width: 480 - x }] };
+    });
+    expect(detectColumns(lines, viewport, metrics)).toEqual([]);
+  });
+
+  it('retains real disjoint reading columns', () => {
+    const lines = Array.from({ length: 8 }, (_, index) => [50, 330].map(x => ({ x, y: 50 + index * 12,
+      text: `Column record ${x} ${index}`, items: [{ x, width: 200 }] }))).flat();
+    expect(detectColumns(lines, viewport, metrics)).toHaveLength(2);
+  });
+
+  it('retains two reading columns with full-width text above and below their shared body', () => {
+    const lines = Array.from({ length: 8 }, (_, index) => [50, 330].map(x => ({ x, y: 80 + index * 12,
+      text: `Column record ${x} ${index}`, items: [{ x, width: 200 }] }))).flat();
+    lines.unshift({ x: 50, y: 20, text: 'Survey overview', items: [{ x: 50, width: 480 }] });
+    lines.push({ x: 50, y: 220, text: 'Figure description across both regions.', items: [{ x: 50, width: 480 }] });
+    const columns = detectColumns(lines, viewport, metrics);
+    expect(columns).toHaveLength(2);
+    expect(columns[0].maxX).toBeLessThan(columns[1].x);
+    const owned = columns.flatMap(column => column.lines);
+    expect(owned).toHaveLength(lines.length);
+    expect(new Set(owned)).toEqual(new Set(lines));
+  });
   it('retains the rightmost column when its start falls on a histogram boundary', () => {
     const columns = detectPreliminaryColumns(columnItems(), viewport, metrics);
     expect(columns).toHaveLength(2);

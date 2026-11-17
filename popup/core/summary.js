@@ -3,6 +3,7 @@
 // Handles summary generation, display, and user interactions
 
 import { tSync } from '../../scripts/locales.js';
+import { resolveProviderApiKey } from '../utils/settings-helpers.js';
 
 /**
  * Initialize summary module
@@ -97,11 +98,11 @@ export function initSummary(deps) {
     try {
       await navigator.clipboard.writeText(text);
       const copiedText = await t('copiedToClipboard') || 'Copied to clipboard';
-      showToast(copiedText, 'success');
+      showToast(copiedText, 'success', { key: 'copiedToClipboard' });
     } catch (error) {
       logError('Failed to copy summary', error);
       const errorText = await t('copyFailed') || 'Failed to copy';
-      showToast(errorText, 'error');
+      showToast(errorText, 'error', { key: 'copyFailed' });
     }
   }
 
@@ -135,11 +136,11 @@ export function initSummary(deps) {
       }
       
       const downloadedText = await t('downloaded') || 'Downloaded';
-      showToast(downloadedText, 'success');
+      showToast(downloadedText, 'success', { key: 'downloaded' });
     } catch (error) {
       logError('Failed to download summary', error);
       const errorText = await t('downloadFailed') || 'Failed to download';
-      showToast(errorText, 'error');
+      showToast(errorText, 'error', { key: 'downloadFailed' });
     }
   }
 
@@ -154,7 +155,8 @@ export function initSummary(deps) {
         STORAGE_KEYS.SUMMARY_TEXT,
         'summary_generating_start_time',
         'summary_saved_timestamp',
-        'summary_error'
+        'summary_error',
+        'summary_error_translation'
       ]);
       
       const summaryTextFromStorage = storageResult[STORAGE_KEYS.SUMMARY_TEXT];
@@ -172,7 +174,8 @@ export function initSummary(deps) {
       if (isSummaryGenerating) shownGenerationError = null;
       else if (storageResult.summary_error && storageResult.summary_error !== shownGenerationError) {
         shownGenerationError = storageResult.summary_error;
-        showToast(shownGenerationError, 'error');
+        if (storageResult.summary_error_translation) showToast(shownGenerationError, 'error', storageResult.summary_error_translation);
+        else showToast(shownGenerationError, 'error');
       }
       
       // CRITICAL: Check if summary is generating (only from flag, not processingState)
@@ -180,6 +183,7 @@ export function initSummary(deps) {
         // Summary generation is in progress - show status
         const generatingText = await t('generatingSummary') || 'Generating summary...';
         elements.generateSummaryBtn.textContent = generatingText;
+        elements.generateSummaryBtn.dataset.i18n = 'generatingSummary';
         elements.generateSummaryBtn.disabled = true;
         log('checkSummaryStatus: Generation in progress - button disabled', { text: generatingText });
       } else if (storageResult[STORAGE_KEYS.SUMMARY_TEXT] && !isSummaryGenerating && elements.summaryText && elements.summaryContainer) {
@@ -210,6 +214,7 @@ export function initSummary(deps) {
           elements.generateSummaryBtn.disabled = false;
           const generateSummaryText = await t('generateSummary') || 'Generate Summary';
           elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
         }
         
         // Update content if it changed or container is hidden
@@ -270,12 +275,14 @@ export function initSummary(deps) {
             elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
             log('checkSummaryStatus: No generation in progress - button enabled');
           } else {
             // Flag was set between checks - keep button disabled
             elements.generateSummaryBtn.disabled = true;
             const generatingText = await t('generatingSummary') || 'Generating summary...';
             elements.generateSummaryBtn.textContent = generatingText;
+        elements.generateSummaryBtn.dataset.i18n = 'generatingSummary';
             log('checkSummaryStatus: Generation flag found on double-check - button kept disabled');
           }
         }
@@ -287,6 +294,7 @@ export function initSummary(deps) {
         elements.generateSummaryBtn.disabled = false;
         const generateSummaryText = await t('generateSummary') || 'Generate Summary';
         elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
       }
     }
   }
@@ -312,17 +320,20 @@ export function initSummary(deps) {
     if (missingElements.length > 0) {
       logError('Required UI elements not found', { missingElements });
       const errorText = await t('uiElementsNotFound') || 'Required UI elements not found. Please refresh the page.';
-      showToast(errorText, 'error');
+      showToast(errorText, 'error', { key: 'uiElementsNotFound' });
       return;
     }
     
     // Variables for API key and model (used for both extraction and summary generation)
     let apiKey = null;
-    let model = null;
-    let provider = null;
+    const model = elements.modelSelect.value;
+    const provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+    const currentProvider = () => !elements.apiProviderSelect || elements.apiProviderSelect.value === provider;
 
     isPreparing = true;
     try {
+      apiKey = await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t);
+      if (!currentProvider()) return;
       // CRITICAL: Clear old summary from UI
       // Hide summary container and clear content
       if (elements.summaryContainer) {
@@ -340,6 +351,7 @@ export function initSummary(deps) {
       elements.generateSummaryBtn.disabled = true;
       const generatingText = await t('generatingSummary') || 'Generating summary...';
       elements.generateSummaryBtn.textContent = generatingText;
+        elements.generateSummaryBtn.dataset.i18n = 'generatingSummary';
       log('Generate summary button clicked - flag set, button disabled and status updated', { text: generatingText });
       
       // Get current tab URL first - needed for validation
@@ -356,10 +368,11 @@ export function initSummary(deps) {
 
         logError('No tab found when generating summary');
         const noTabText = await t('noTabAvailable') || 'No active tab found. Please open a web page.';
-        showToast(noTabText, 'error');
+        showToast(noTabText, 'error', { key: 'noTabAvailable' });
         elements.generateSummaryBtn.disabled = false;
         const generateSummaryText = await t('generateSummary') || 'Generate Summary';
         elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
         return;
       }
       
@@ -368,10 +381,11 @@ export function initSummary(deps) {
 
         logError('Tab URL is not accessible for content extraction', { url: tab.url, tabId: tab.id });
         const inaccessibleText = await t('pageNotAccessible') || 'This page is not accessible for content extraction. Please open a regular web page.';
-        showToast(inaccessibleText, 'error');
+        showToast(inaccessibleText, 'error', { key: 'pageNotAccessible' });
         elements.generateSummaryBtn.disabled = false;
         const generateSummaryText = await t('generateSummary') || 'Generate Summary';
         elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
         return;
       }
       
@@ -450,10 +464,11 @@ export function initSummary(deps) {
             if (!subtitlesData || !subtitlesData.subtitles || subtitlesData.subtitles.length === 0) {
 
               const noSubtitlesText = await t('errorNoSubtitles') || 'No subtitles found.';
-              showToast(noSubtitlesText, 'error');
+              showToast(noSubtitlesText, 'error', { key: 'errorNoSubtitles' });
               elements.generateSummaryBtn.disabled = false;
               const generateSummaryText = await t('generateSummary') || 'Generate Summary';
               elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
               return;
             }
             
@@ -466,33 +481,15 @@ export function initSummary(deps) {
             }));
             
             // Get API key and model for summary generation
-            model = elements.modelSelect.value;
-            provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
-            apiKey = elements.apiKey.value.trim();
-            
-            if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
-              try {
-                apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
-              } catch (error) {
-                logError('Failed to decrypt API key', error);
-
-                const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
-                showToast(failedDecryptText, 'error');
-                elements.generateSummaryBtn.disabled = false;
-                const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-                elements.generateSummaryBtn.textContent = generateSummaryText;
-                return;
-              }
-            }
-            
             if (!apiKey) {
 
               const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
               const pleaseEnterKeyText = await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`) || `Please enter ${providerName} API key`;
-              showToast(pleaseEnterKeyText, 'error');
+              showToast(pleaseEnterKeyText, 'error', { key: `pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey` });
               elements.generateSummaryBtn.disabled = false;
               const generateSummaryText = await t('generateSummary') || 'Generate Summary';
               elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
               return;
             }
             
@@ -512,6 +509,7 @@ export function initSummary(deps) {
             });
             
             try {
+              if (!currentProvider()) return;
               const response = await chrome.runtime.sendMessage({
                 action: 'generateSummary',
                 data: {
@@ -530,7 +528,7 @@ export function initSummary(deps) {
               });
               
               if (response?.error) {
-                throw new Error(response.error);
+                throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
               }
               
               if (!response?.started) {
@@ -546,20 +544,22 @@ export function initSummary(deps) {
               logError('Failed to send generateSummary message for YouTube', sendError);
 
               const errorText = await t('summaryGenerationError') || 'Error starting summary generation';
-              showToast(errorText, 'error');
+              showToast(errorText, 'error', { key: 'summaryGenerationError' });
               elements.generateSummaryBtn.disabled = false;
               const generateSummaryText = await t('generateSummary') || 'Generate Summary';
               elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
               return;
             }
           } catch (error) {
             logError('Failed to extract/process YouTube subtitles', error);
 
             const errorText = await t('errorSubtitleProcessingFailed') || 'Failed to process subtitles';
-            showToast(errorText, 'error');
+            showToast(errorText, 'error', { key: 'errorSubtitleProcessingFailed' });
             elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
             return;
           }
         } else {
@@ -604,10 +604,11 @@ export function initSummary(deps) {
           
           if (!htmlResult || !htmlResult[0] || !htmlResult[0].result) {
             const noContentText = await t('noContentAvailable') || 'No content available.';
-            showToast(noContentText, 'error');
+            showToast(noContentText, 'error', { key: 'noContentAvailable' });
             elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
             return;
           }
           
@@ -627,31 +628,14 @@ export function initSummary(deps) {
           });
           
           // Get API key and model (will be used for both extraction and summary generation)
-          model = elements.modelSelect.value;
-          provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
-          apiKey = elements.apiKey.value.trim();
-          
-          if (apiKey.startsWith('****') && elements.apiKey.dataset.encrypted) {
-            try {
-              apiKey = await decryptApiKey(elements.apiKey.dataset.encrypted);
-            } catch (error) {
-              logError('Failed to decrypt API key', error);
-              const failedDecryptText = await t('failedToDecryptApiKey') || 'Failed to decrypt API key';
-              showToast(failedDecryptText, 'error');
-              elements.generateSummaryBtn.disabled = false;
-              const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-              elements.generateSummaryBtn.textContent = generateSummaryText;
-              return;
-            }
-          }
-          
           if (!apiKey) {
             const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
             const pleaseEnterKeyText = await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`) || `Please enter ${providerName} API key`;
-            showToast(pleaseEnterKeyText, 'error');
+            showToast(pleaseEnterKeyText, 'error', { key: `pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey` });
             elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
             return;
           }
           
@@ -680,6 +664,7 @@ export function initSummary(deps) {
             const uiLanguage = await getUILanguage();
             const summaryLanguage = targetLanguage !== 'auto' ? targetLanguage : uiLanguage;
             
+            if (!currentProvider()) return;
             extractResponse = await chrome.runtime.sendMessage({
               action: 'extractContentOnly',
               data: {
@@ -776,10 +761,11 @@ export function initSummary(deps) {
               length: extractResponse?.result?.content?.length || 0
             });
             const noContentText = await t('noContentAvailable') || 'Failed to extract content.';
-            showToast(noContentText, 'error');
+            showToast(noContentText, 'error', { key: 'noContentAvailable' });
             elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
             return;
           }
           
@@ -824,13 +810,14 @@ export function initSummary(deps) {
         errorText = await t('summaryGenerationError') || 'Error generating summary';
       }
       
-      showToast(errorText, 'error');
+      showToast(errorText, 'error', error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : (!error.message ? { key: 'summaryGenerationError' } : null));
       
       // Restore button
       if (elements.generateSummaryBtn) {
         elements.generateSummaryBtn.disabled = false;
         const generateSummaryText = await t('generateSummary') || 'Generate Summary';
         elements.generateSummaryBtn.textContent = generateSummaryText;
+        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
       }
     } finally {
       isPreparing = false;
