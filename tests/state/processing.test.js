@@ -66,10 +66,10 @@ global.chrome = {
 };
 
 describe('processing state', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    resetState();
+    await resetState();
   });
 
   afterEach(() => {
@@ -150,7 +150,6 @@ describe('processing state', () => {
 
     it('should queue updates when another update is in progress', async () => {
       // Simulate concurrent update by setting flag
-      // Note: This is a simplified test - real concurrency is harder to test
       updateState({ progress: 10 });
       updateState({ progress: 20 });
       updateState({ progress: 30 });
@@ -176,8 +175,8 @@ describe('processing state', () => {
       expect(state.result).toBe(null);
     });
 
-    it('should clear storage', () => {
-      resetState();
+    it('should clear storage', async () => {
+      await resetState();
       expect(mockStorage.local.remove).toHaveBeenCalledWith(['processingState']);
     });
   });
@@ -202,9 +201,7 @@ describe('processing state', () => {
       const stopKeepAlive = vi.fn();
       await startProcessing(startKeepAlive);
       await cancelProcessing(stopKeepAlive);
-      // cancelProcessing resets state back to idle after cleanup.
-      // isCancelled() is intended for in-flight cancellation checks, not a persistent flag.
-      expect(isCancelled()).toBe(false);
+      expect(isCancelled()).toBe(true);
     });
   });
 

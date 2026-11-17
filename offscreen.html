@@ -18,17 +18,13 @@
   <script src="lib/pdfjs/pdf.min.js"></script>
 
   <!-- PDF.js initialization - extracted to external file for CSP compliance -->
-  <script src="scripts/offscreen/pdf-init-inline.js"></script>
+  <script src="scripts/offscreen/pdf-init.js"></script>
 </head>
 <body>
   <!-- Bundle loads AFTER PDF.js is configured -->
   <!-- CRITICAL: Bundle must load AFTER PDF.js initialization -->
 
-  <!-- Bundle check utilities - extracted to external file for CSP compliance -->
-  <script src="scripts/offscreen/bundle-check.js"></script>
-
   <!-- Main offscreen bundle -->
-  <!-- Event listeners added programmatically in bundle-check.js for CSP compliance -->
   <script src="dist/offscreen-bundle.js"></script>
 
   <!-- PDF.js is now loaded globally and will be accessed via window.PDFJS or window.pdfjsLib -->

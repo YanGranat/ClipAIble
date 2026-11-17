@@ -3,7 +3,7 @@
 // Handles model list updates, custom models, hidden models
 
 import { t, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
-import { getProviderFromModel } from '../../scripts/api/index.js';
+import { getModelCatalog, getModelMetadata, resolveSavedModel, resolveStoredModelSelection } from '../../scripts/utils/model-catalog.js';
 
 /**
  * Initialize models module
@@ -17,131 +17,94 @@ export function initModels(deps) {
     formatModelLabel
   } = deps;
 
-  // Update model list based on selected provider
-  async function updateModelList() {
-    if (!elements.apiProviderSelect || !elements.modelSelect) return;
-    
-    const provider = elements.apiProviderSelect.value;
-    const uiLang = await getUILanguage();
-    const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
-    
-    // Load custom models from storage
-    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
-    const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
-    const providerCustomModels = customModels[provider] || [];
-    const hiddenModels = storageResult[STORAGE_KEYS.HIDDEN_MODELS] || {};
-    const providerHiddenModels = hiddenModels[provider] || [];
-    
-    // Define default models for each provider (using code names)
-    const modelsByProvider = {
-      openai: [
-        { value: 'gpt-5.2', isCustom: false },
-        { value: 'gpt-5.2-high', isCustom: false },
-        { value: 'gpt-5.1', isCustom: false }
-      ],
-      claude: [
-        { value: 'claude-opus-4-5', isCustom: false },
-        { value: 'claude-sonnet-4-5', isCustom: false },
-        { value: 'claude-haiku-4-5', isCustom: false }
-      ],
-      gemini: [
-        { value: 'gemini-3-flash-preview', isCustom: false },
-        { value: 'gemini-3-pro-preview', isCustom: false }
-      ],
-      grok: [
-        { value: 'grok-4', isCustom: false },
-        { value: 'grok-4-1-fast-reasoning', isCustom: false }
-      ],
-      deepseek: [
-        { value: 'deepseek-chat', isCustom: false },
-        { value: 'deepseek-reasoner', isCustom: false }
-      ],
-      openrouter: [
-        { value: 'openai/gpt-5.2', isCustom: false },
-        { value: 'openai/gpt-5.1', isCustom: false },
-        { value: 'google/gemini-3-flash-preview', isCustom: false },
-        { value: 'google/gemini-3-pro-preview', isCustom: false },
-        { value: 'anthropic/claude-sonnet-4.5', isCustom: false },
-        { value: 'deepseek/deepseek-v3.2', isCustom: false },
-        { value: 'qwen/qwen3-235b-a22b-2507', isCustom: false },
-        { value: 'mistralai/devstral-2512:free', isCustom: false }
-      ]
-    };
-    
-    // Get default models for provider and filter out hidden ones
-    const defaultModels = (modelsByProvider[provider] || modelsByProvider.openai)
-      .filter(model => !providerHiddenModels.includes(model.value));
-    
-    // Add custom models (also filter out hidden custom models)
-    const customModelsList = providerCustomModels
-      .filter(modelValue => !providerHiddenModels.includes(modelValue))
-      .map(modelValue => ({
-        value: modelValue,
-        isCustom: true
-      }));
-    
-    // Combine default and custom models
-    const allModels = [...defaultModels, ...customModelsList];
-    
-    const currentValue = elements.modelSelect.value;
-    
-    // Clear existing options
-    elements.modelSelect.innerHTML = '';
-    
-    // Add models for selected provider
-    allModels.forEach(model => {
-      const option = document.createElement('option');
-      option.value = model.value;
-      option.textContent = formatModelLabel(model.value);
-      option.dataset.isCustom = model.isCustom ? 'true' : 'false';
-      elements.modelSelect.appendChild(option);
-    });
-    
-    // Load saved model for this provider
-    const storageResult2 = await chrome.storage.local.get([STORAGE_KEYS.MODEL_BY_PROVIDER]);
-    const savedModelsByProvider = storageResult2[STORAGE_KEYS.MODEL_BY_PROVIDER] || {};
-    const savedModelForProvider = savedModelsByProvider[provider];
-    
-    // Try to restore saved model for this provider
-    let modelToSelect = null;
-    if (savedModelForProvider) {
-      const modelExists = allModels.some(m => m.value === savedModelForProvider);
-      if (modelExists) {
-        modelToSelect = savedModelForProvider;
-      }
+  let listRevision = 0;
+  let dropdownRevision = 0;
+  let renderedProvider = null;
+  let storageQueue = Promise.resolve();
+  const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
+  const providerValues = (map, provider) => isRecord(map) && Array.isArray(map[provider])
+    ? map[provider].filter(value => typeof value === 'string' && value)
+    : [];
+  const settingsKeys = [STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS,
+    STORAGE_KEYS.MODEL_BY_PROVIDER, STORAGE_KEYS.MODEL, STORAGE_KEYS.API_PROVIDER];
+
+  function queueStorage(operation) {
+    const pending = storageQueue.then(operation);
+    storageQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  function visibleModels(settings, provider, selection) {
+    const customIds = providerValues(settings[STORAGE_KEYS.CUSTOM_MODELS], provider);
+    const hiddenIds = providerValues(settings[STORAGE_KEYS.HIDDEN_MODELS], provider);
+    const hidden = new Set(hiddenIds.flatMap(id => [id, resolveSavedModel(provider, id, customIds)]));
+    const entries = new Map(getModelCatalog(provider).map(entry => [entry.id,
+      { value: entry.id, isCustom: customIds.includes(entry.id), isLegacy: false }]));
+    for (const id of customIds) entries.set(id, { value: id, isCustom: true, isLegacy: false });
+    if (selection && !entries.has(selection)) {
+      entries.set(selection, { value: selection, isCustom: customIds.includes(selection), isLegacy: true });
     }
-    
-    // If no saved model or saved model doesn't exist, check current model
-    if (!modelToSelect) {
-      const currentModelProvider = getProviderFromModel(currentValue);
-      if (currentModelProvider === provider) {
-        // Current model belongs to this provider - check if it exists
-        const modelExists = allModels.some(m => m.value === currentValue);
-        if (modelExists) {
-          modelToSelect = currentValue;
-        }
-      }
-    }
-    
-    // If still no model, use first in list
-    if (!modelToSelect && allModels.length > 0) {
-      modelToSelect = allModels[0].value;
-    }
-    
-    // Set selected model
-    if (modelToSelect) {
-      elements.modelSelect.value = modelToSelect;
-      // Save to both general model key (for backward compatibility) and provider-specific
-      const modelsByProvider = savedModelsByProvider && typeof savedModelsByProvider === 'object' 
-        ? savedModelsByProvider 
-        : {};
-      await chrome.storage.local.set({ 
-        [STORAGE_KEYS.MODEL]: modelToSelect,
-        [STORAGE_KEYS.MODEL_BY_PROVIDER]: {
-          ...modelsByProvider,
-          [provider]: modelToSelect
-        }
+    return [...entries.values()].filter(entry => !hidden.has(entry.value));
+  }
+
+  function modelLabel(entry, provider) {
+    const unavailable = !entry.isCustom && getModelMetadata(provider, entry.value)?.available === false;
+    const status = entry.isLegacy ? (unavailable ? ' (saved, unavailable)' : ' (saved)') : (unavailable ? ' (unavailable)' : '');
+    return formatModelLabel(entry.value) + status;
+  }
+
+  function persistSelection(provider, modelValue, isCurrent = () => elements.apiProviderSelect?.value === provider) {
+    return queueStorage(async () => {
+      const saved = await chrome.storage.local.get([STORAGE_KEYS.MODEL_BY_PROVIDER]);
+      if (!isCurrent() || !modelValue) return;
+      const byProvider = isRecord(saved[STORAGE_KEYS.MODEL_BY_PROVIDER]) ? saved[STORAGE_KEYS.MODEL_BY_PROVIDER] : {};
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.MODEL]: modelValue,
+        [STORAGE_KEYS.MODEL_BY_PROVIDER]: { ...byProvider, [provider]: modelValue }
       });
+    });
+  }
+
+  async function selectModel(modelValue) {
+    const provider = elements.apiProviderSelect?.value;
+    if (renderedProvider !== provider || !modelValue) return;
+    ++dropdownRevision;
+    const revision = ++listRevision;
+    await persistSelection(provider, modelValue, () => revision === listRevision && elements.apiProviderSelect?.value === provider);
+  }
+
+  async function updateModelList(preferredModel) {
+    if (!elements.apiProviderSelect || !elements.modelSelect) return;
+    ++dropdownRevision;
+    const provider = elements.apiProviderSelect.value;
+    const revision = ++listRevision;
+    const isCurrent = () => revision === listRevision && elements.apiProviderSelect.value === provider;
+    const settings = await chrome.storage.local.get(settingsKeys);
+    if (!isCurrent()) return;
+    const customIds = providerValues(settings[STORAGE_KEYS.CUSTOM_MODELS], provider);
+    const byProvider = isRecord(settings[STORAGE_KEYS.MODEL_BY_PROVIDER]) ? settings[STORAGE_KEYS.MODEL_BY_PROVIDER] : {};
+    let saved = typeof preferredModel === 'string' ? preferredModel : byProvider[provider];
+    if (!saved && renderedProvider === provider) saved = elements.modelSelect.value;
+    if (!saved && renderedProvider === null) {
+      const selection = resolveStoredModelSelection(settings);
+      if (selection.provider === provider) saved = selection.model;
+    }
+    const selection = typeof saved === 'string' && saved ? resolveSavedModel(provider, saved, customIds) : null;
+    const allModels = visibleModels(settings, provider, selection);
+    const chosen = allModels.find(entry => entry.value === selection)?.value || allModels[0]?.value;
+    elements.modelSelect.replaceChildren();
+    for (const entry of allModels) {
+      const option = document.createElement('option');
+      option.value = entry.value;
+      option.textContent = modelLabel(entry, provider);
+      option.dataset.isCustom = String(entry.isCustom);
+      elements.modelSelect.appendChild(option);
+    }
+    renderedProvider = provider;
+    elements.modelSelect.dataset.provider = provider;
+    if (chosen) {
+      elements.modelSelect.value = chosen;
+      await persistSelection(provider, chosen, isCurrent);
     }
   }
 
@@ -150,6 +113,9 @@ export function initModels(deps) {
     if (!elements.customModelDropdown || !elements.customModelOptions) {
       return;
     }
+    if (renderedProvider !== elements.apiProviderSelect?.value) return;
+    elements.customModelOptions.setAttribute('aria-busy', 'true');
+    elements.customModelOptions.replaceChildren();
     
     // Close all other custom selects
     document.querySelectorAll('.custom-select.open').forEach(select => {
@@ -166,76 +132,62 @@ export function initModels(deps) {
     elements.customModelDropdown.style.display = 'block';
     
     const provider = elements.apiProviderSelect.value;
-    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
-    const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
-    const providerCustomModels = customModels[provider] || [];
-    
-    // Get all models (default + custom)
-    const modelsByProvider = {
-      openai: ['gpt-5.2', 'gpt-5.2-high', 'gpt-5.1'],
-      claude: ['claude-opus-4-5', 'claude-sonnet-4-5', 'claude-haiku-4-5'],
-      gemini: ['gemini-3-flash-preview', 'gemini-3-pro-preview'],
-      grok: ['grok-4', 'grok-4-1-fast-reasoning'],
-      deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-      openrouter: [
-        'openai/gpt-5.2', 'openai/gpt-5.1',
-        'google/gemini-3-flash-preview', 'google/gemini-3-pro-preview',
-        'anthropic/claude-sonnet-4.5',
-        'deepseek/deepseek-v3.2',
-        'qwen/qwen3-235b-a22b-2507', 'mistralai/devstral-2512:free'
-      ]
-    };
-    
-    const defaultModels = modelsByProvider[provider] || modelsByProvider.openai;
-    const allModels = [...defaultModels, ...providerCustomModels];
-    
-    // Get hidden models
-    const hiddenResult = await chrome.storage.local.get([STORAGE_KEYS.HIDDEN_MODELS]);
-    const hiddenModels = hiddenResult[STORAGE_KEYS.HIDDEN_MODELS] || {};
-    const providerHiddenModels = hiddenModels[provider] || [];
-    
-    // Filter out hidden models
-    const visibleModels = allModels.filter(modelValue => !providerHiddenModels.includes(modelValue));
-    
-    // Clear dropdown
-    elements.customModelOptions.innerHTML = '';
-    
+    const revision = ++dropdownRevision;
+    const storageResult = await chrome.storage.local.get(settingsKeys);
+    if (revision !== dropdownRevision || elements.apiProviderSelect.value !== provider) return;
+    const visible = visibleModels(storageResult, provider, elements.modelSelect?.value);
+    const providerCustomModels = providerValues(storageResult[STORAGE_KEYS.CUSTOM_MODELS], provider);
+    const visibleIds = visible.map(entry => entry.value);
+    const [deleteModelText, hideModelText] = await Promise.all([t('deleteModel'), t('hideModel')]);
+    if (revision !== dropdownRevision || elements.apiProviderSelect.value !== provider) return;
+
     // Get currently selected model
     const currentModel = elements.modelSelect ? elements.modelSelect.value : null;
     
     // Add models to dropdown
-    for (const modelValue of visibleModels) {
+    for (const modelValue of visibleIds) {
       const isCustom = providerCustomModels.includes(modelValue);
       const isSelected = modelValue === currentModel;
       const optionDiv = document.createElement('div');
       optionDiv.className = 'custom-model-option' + (isSelected ? ' selected' : '');
       optionDiv.dataset.modelValue = modelValue;
+      optionDiv.setAttribute('role', 'row');
+      optionDiv.id = `modelRow-${encodeURIComponent(provider)}-${encodeURIComponent(modelValue)}`;
       
       const labelSpan = document.createElement('span');
       labelSpan.className = 'custom-model-label';
-      labelSpan.textContent = formatModelLabel(modelValue);
+      labelSpan.textContent = modelLabel(visible.find(entry => entry.value === modelValue), provider);
+      labelSpan.setAttribute('role', 'gridcell');
+      labelSpan.id = `modelLabel-${encodeURIComponent(provider)}-${encodeURIComponent(modelValue)}`;
       
       optionDiv.appendChild(labelSpan);
       
       // Add delete button for all models
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'custom-model-delete';
+      deleteBtn.type = 'button';
+      deleteBtn.tabIndex = -1;
       deleteBtn.innerHTML = '×';
-      const deleteModelText = await t('deleteModel');
-      const hideModelText = await t('hideModel');
       deleteBtn.title = isCustom ? deleteModelText : hideModelText;
+      deleteBtn.setAttribute('aria-label', `${deleteBtn.title}: ${labelSpan.textContent}`);
       deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (revision !== dropdownRevision || elements.apiProviderSelect.value !== provider) return;
         if (isCustom) {
-          await removeCustomModel(modelValue);
+          await removeCustomModel(modelValue, provider);
         } else {
-          await hideDefaultModel(modelValue);
+          await hideDefaultModel(modelValue, provider);
         }
       });
-      optionDiv.appendChild(deleteBtn);
+      const actions = document.createElement('span');
+      actions.className = 'custom-model-actions';
+      actions.setAttribute('role', 'gridcell');
+      actions.appendChild(deleteBtn);
+      optionDiv.appendChild(actions);
       
       // Add click handler to entire option div for full-width clickable area
       optionDiv.addEventListener('click', (e) => {
+        if (revision !== dropdownRevision || elements.apiProviderSelect.value !== provider) return;
         // Don't trigger selection if clicking on delete button
         const target = e.target instanceof Element ? e.target : null;
         if (target && (target.classList.contains('custom-model-delete') || target.closest('.custom-model-delete'))) {
@@ -255,6 +207,7 @@ export function initModels(deps) {
       
       elements.customModelOptions.appendChild(optionDiv);
     }
+    elements.customModelOptions.setAttribute('aria-busy', 'false');
   }
 
   // Show dialog for adding new model
@@ -262,6 +215,7 @@ export function initModels(deps) {
     const provider = elements.apiProviderSelect.value;
     const uiLang = await getUILanguage();
     const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
+    if (elements.apiProviderSelect.value !== provider) return;
     
     const modelName = prompt(locale.addModelPrompt || 'Enter model name:');
     
@@ -273,15 +227,14 @@ export function initModels(deps) {
     
     // Validate model name format - allow alphanumeric, hyphens, underscores, slashes, colons, dots
     if (!trimmedName.match(/^[a-z0-9][a-z0-9\-_\/:\.]*$/i)) {
-      const errorMsg = locale.addModelInvalidFormat || 'Invalid model name format. Use code name like gpt-5.2 or claude-sonnet-4-5';
+      const errorMsg = locale.addModelInvalidFormat || 'Enter a valid API model ID.';
       alert(errorMsg);
       return;
     }
     
     // Check if model already exists
     const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
-    const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
-    const providerCustomModels = customModels[provider] || [];
+    const providerCustomModels = providerValues(storageResult[STORAGE_KEYS.CUSTOM_MODELS], provider);
     
     if (providerCustomModels.includes(trimmedName)) {
       const errorMsg = locale.addModelAlreadyExists || 'This model already exists';
@@ -290,105 +243,57 @@ export function initModels(deps) {
     }
     
     // Add model
-    await addCustomModel(trimmedName);
+    await addCustomModel(trimmedName, provider);
   }
 
-  // Add custom model to storage
-  async function addCustomModel(modelValue) {
-    const provider = elements.apiProviderSelect.value;
-    
-    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
-    const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
-    
-    if (!customModels[provider]) {
-      customModels[provider] = [];
-    }
-    
-    if (!customModels[provider].includes(modelValue)) {
-      customModels[provider].push(modelValue);
-      await chrome.storage.local.set({ [STORAGE_KEYS.CUSTOM_MODELS]: customModels });
-      
-      // Update model list
-      await updateModelList();
-      
-      // Select the newly added model
-      if (elements.modelSelect) {
-        elements.modelSelect.value = modelValue;
-        await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: modelValue });
-      }
-    }
+  async function addCustomModel(modelValue, provider = elements.apiProviderSelect.value) {
+    if (elements.apiProviderSelect.value === provider) ++listRevision;
+    await queueStorage(async () => {
+      const saved = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
+      const custom = isRecord(saved[STORAGE_KEYS.CUSTOM_MODELS]) ? saved[STORAGE_KEYS.CUSTOM_MODELS] : {};
+      const hidden = isRecord(saved[STORAGE_KEYS.HIDDEN_MODELS]) ? saved[STORAGE_KEYS.HIDDEN_MODELS] : {};
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.CUSTOM_MODELS]: { ...custom, [provider]: [...new Set([...providerValues(custom, provider), modelValue])] },
+        [STORAGE_KEYS.HIDDEN_MODELS]: { ...hidden, [provider]: providerValues(hidden, provider).filter(id => id !== modelValue) }
+      });
+    });
+    if (elements.apiProviderSelect.value === provider) await updateModelList(modelValue);
   }
 
-  // Hide default model from list
-  async function hideDefaultModel(modelValue) {
-    const provider = elements.apiProviderSelect.value;
-    
-    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.HIDDEN_MODELS]);
-    const hiddenModels = storageResult[STORAGE_KEYS.HIDDEN_MODELS] || {};
-    
-    if (!hiddenModels[provider]) {
-      hiddenModels[provider] = [];
-    }
-    
-    if (!hiddenModels[provider].includes(modelValue)) {
-      hiddenModels[provider].push(modelValue);
-      await chrome.storage.local.set({ [STORAGE_KEYS.HIDDEN_MODELS]: hiddenModels });
-      
-      // If hidden model was selected, select first available model
-      if (elements.modelSelect && elements.modelSelect.value === modelValue) {
-        const firstOption = elements.modelSelect.options[0];
-        if (firstOption) {
-          elements.modelSelect.value = firstOption.value;
-          await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: firstOption.value });
-        }
+  async function removeModel(modelValue, provider, custom) {
+    if (elements.apiProviderSelect.value === provider) ++listRevision;
+    await queueStorage(async () => {
+      const saved = await chrome.storage.local.get(settingsKeys);
+      const field = custom ? STORAGE_KEYS.CUSTOM_MODELS : STORAGE_KEYS.HIDDEN_MODELS;
+      const values = isRecord(saved[field]) ? saved[field] : {};
+      const byProvider = isRecord(saved[STORAGE_KEYS.MODEL_BY_PROVIDER]) ? { ...saved[STORAGE_KEYS.MODEL_BY_PROVIDER] } : {};
+      const entries = providerValues(values, provider);
+      const changes = { [field]: { ...values, [provider]: custom ? entries.filter(id => id !== modelValue) : [...new Set([...entries, modelValue])] } };
+      if (byProvider[provider] === modelValue) {
+        delete byProvider[provider];
+        changes[STORAGE_KEYS.MODEL_BY_PROVIDER] = byProvider;
       }
-      
-      // Update model list
-      await updateModelList();
-      
-      // Update custom dropdown if visible
-      if (elements.customModelDropdown && 
-          !elements.customModelDropdown.classList.contains('hidden') &&
-          elements.customModelDropdown.style.display !== 'none') {
-        await showCustomModelDropdown();
-      }
-    }
+      if (elements.apiProviderSelect.value === provider && saved[STORAGE_KEYS.MODEL] === modelValue) changes[STORAGE_KEYS.MODEL] = '';
+      await chrome.storage.local.set(changes);
+    });
+    if (elements.apiProviderSelect.value !== provider) return;
+    if (elements.modelSelect?.value === modelValue) elements.modelSelect.value = '';
+    await updateModelList();
+    if (elements.customModelDropdown && !elements.customModelDropdown.classList.contains('hidden') &&
+        elements.customModelDropdown.style.display !== 'none') await showCustomModelDropdown();
   }
 
-  // Remove custom model from storage
-  async function removeCustomModel(modelValue) {
-    const provider = elements.apiProviderSelect.value;
-    
-    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
-    const customModels = storageResult[STORAGE_KEYS.CUSTOM_MODELS] || {};
-    
-    if (customModels[provider]) {
-      customModels[provider] = customModels[provider].filter(m => m !== modelValue);
-      await chrome.storage.local.set({ [STORAGE_KEYS.CUSTOM_MODELS]: customModels });
-      
-      // If removed model was selected, select first available model
-      if (elements.modelSelect && elements.modelSelect.value === modelValue) {
-        const firstOption = elements.modelSelect.options[0];
-        if (firstOption) {
-          elements.modelSelect.value = firstOption.value;
-          await chrome.storage.local.set({ [STORAGE_KEYS.MODEL]: firstOption.value });
-        }
-      }
-      
-      // Update model list
-      await updateModelList();
-      
-      // Update custom dropdown if visible
-      if (elements.customModelDropdown && 
-          !elements.customModelDropdown.classList.contains('hidden') &&
-          elements.customModelDropdown.style.display !== 'none') {
-        await showCustomModelDropdown();
-      }
-    }
+  async function hideDefaultModel(modelValue, provider = elements.apiProviderSelect.value) {
+    await removeModel(modelValue, provider, false);
+  }
+
+  async function removeCustomModel(modelValue, provider = elements.apiProviderSelect.value) {
+    await removeModel(modelValue, provider, true);
   }
 
   return {
     updateModelList,
+    selectModel,
     showCustomModelDropdown,
     showAddModelDialog,
     addCustomModel,

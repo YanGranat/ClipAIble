@@ -12,7 +12,7 @@
  * }} ServiceWorkerWithLogging
  */
 
-import { sanitizeErrorForLogging } from '../security.js';
+import { sanitizeErrorForLogging, sanitizeLogText } from '../security.js';
 import { CONFIG } from '../config.js';
 import { logViaPort, initLogPort } from './logging-port.js';
 
@@ -115,11 +115,29 @@ function dataToString(data, maxSize = null) {
  * @returns {*} Sanitized data
  */
 function sanitizeData(data) {
-  if (data === null || data === undefined) return data;
-  if (typeof data === 'object') {
-    return sanitizeErrorForLogging(data);
-  }
-  return data;
+  return sanitizeLogData(data);
+}
+
+export function sanitizeLogData(data) {
+  const safe = sanitizeErrorForLogging(data);
+  if (CONFIG.VERBOSE_LOGGING || safe === null || safe === undefined) return safe;
+  const diagnosticFields = new Set([
+    'error', 'message', 'code', 'name', 'errorName', 'errorMessage', 'stack', 'errorStack',
+    'status', 'statusText', 'stage', 'stageId', 'provider', 'model', 'operation',
+    'category', 'source', 'marker', 'method', 'format', 'voice', 'language', 'reason', 'type'
+  ]);
+  const project = (value, key = '') => {
+    if (typeof value === 'string') return diagnosticFields.has(key) || value === '***' ? value : undefined;
+    if (!value || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return { items: value.length };
+    const result = {};
+    for (const [field, item] of Object.entries(value)) {
+      const projected = project(item, field);
+      if (projected !== undefined) result[field] = projected;
+    }
+    return result;
+  };
+  return typeof safe === 'string' ? { characters: safe.length } : project(safe);
 }
 
 /**
@@ -129,6 +147,8 @@ function sanitizeData(data) {
  */
 export function logDebug(message, data = null) {
   if (!shouldLog(LOG_LEVELS.DEBUG)) return;
+  message = sanitizeLogText(message);
+  data = sanitizeData(data);
   
   const timestamp = getTimestamp();
   const fullMessage = `${LOG_PREFIX} [${timestamp}] DEBUG: ${message}`;
@@ -166,6 +186,8 @@ export function logDebug(message, data = null) {
  */
 export function log(message, data = null) {
   if (!shouldLog(LOG_LEVELS.INFO)) return;
+  message = sanitizeLogText(message);
+  data = sanitizeData(data);
   
   const timestamp = getTimestamp();
   const fullMessage = `${LOG_PREFIX} [${timestamp}] ${message}`;
@@ -209,9 +231,10 @@ export function log(message, data = null) {
  * @param {{chunkSize?: number, meta?: any, level?: 'info'|'debug'}} [options]
  */
 export function logLargeString(label, text, options = {}) {
+  label = sanitizeLogText(label);
   const level = options.level || 'info';
   const chunkSize = Math.max(256, Math.min(10000, options.chunkSize || 2000));
-  const meta = options.meta || null;
+  const meta = sanitizeData(options.meta || null);
   
   const should =
     level === 'debug'
@@ -219,7 +242,7 @@ export function logLargeString(label, text, options = {}) {
       : shouldLog(LOG_LEVELS.INFO);
   if (!should) return;
   
-  const safeText = typeof text === 'string' ? text : String(text ?? '');
+  const safeText = sanitizeLogText(typeof text === 'string' ? text : String(text ?? ''));
   const totalLength = safeText.length;
   const totalChunks = totalLength === 0 ? 1 : Math.ceil(totalLength / chunkSize);
   const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -299,6 +322,7 @@ export function logLargeString(label, text, options = {}) {
  * @param {{chunkSize?: number, meta?: any, level?: 'info'|'debug'}} [options]
  */
 export function logLargeJson(label, value, options = {}) {
+  value = sanitizeErrorForLogging(value);
   let text;
   try {
     text = JSON.stringify(value, null, 2);
@@ -315,17 +339,17 @@ export function logLargeJson(label, value, options = {}) {
  */
 export function logError(message, error = null) {
   if (!shouldLog(LOG_LEVELS.ERROR)) return;
+  message = sanitizeLogText(message);
   
   const timestamp = getTimestamp();
   const fullMessage = `${LOG_PREFIX} [${timestamp}] ERROR: ${message}`;
   console.error(fullMessage);
   if (error) {
     // Sanitize error to prevent leaking sensitive information (API keys, URLs with tokens, etc.)
-    const sanitized = sanitizeErrorForLogging(error);
+    const sanitized = sanitizeData(typeof error === 'string' ? { message: error } : error);
     console.error(`${LOG_PREFIX} [${timestamp}] Error details:`, sanitized);
-    if (error.stack) {
-      // Stack traces are safe to log (they don't contain user data)
-      console.error(`${LOG_PREFIX} [${timestamp}] Stack trace:`, error.stack);
+    if (sanitized?.stack) {
+      console.error(`${LOG_PREFIX} [${timestamp}] Stack trace:`, sanitized.stack);
     }
   }
   
@@ -340,7 +364,7 @@ export function logError(message, error = null) {
       // Check if addLogToCollection exists and is a function
       // addLogToCollection is added dynamically in service worker (background.js line 1073)
       if (typeof selfWithLogging.addLogToCollection === 'function') {
-        selfWithLogging.addLogToCollection(fullMessage, error ? sanitizeErrorForLogging(error) : null, 'error');
+        selfWithLogging.addLogToCollection(fullMessage, error ? sanitizeData(typeof error === 'string' ? { message: error } : error) : null, 'error');
       }
     }
   } catch (e) {
@@ -355,6 +379,8 @@ export function logError(message, error = null) {
  */
 export function logWarn(message, data = null) {
   if (!shouldLog(LOG_LEVELS.WARN)) return;
+  message = sanitizeLogText(message);
+  data = sanitizeData(data);
   
   const timestamp = getTimestamp();
   const fullMessage = `${LOG_PREFIX} [${timestamp}] WARN: ${message}`;
@@ -410,10 +436,19 @@ export { LOG_LEVELS };
  * @param {string} marker - Optional marker for easy searching
  * @param {*} data - Optional data to log
  */
-export function criticalLog(message, marker = '', data = null) {
+export function shouldLogDiagnostic(level = 'debug') {
+  if (level === 'error') return shouldLog(LOG_LEVELS.ERROR);
+  if (level === 'warn') return shouldLog(LOG_LEVELS.WARN);
+  return Boolean(CONFIG?.VERBOSE_LOGGING) && shouldLog(LOG_LEVELS.DEBUG);
+}
+
+export function criticalLog(message, marker = '', data = null, level = 'debug') {
+  if (!shouldLogDiagnostic(level)) return;
+  message = sanitizeLogText(message);
+  marker = sanitizeLogText(marker);
+  data = sanitizeData(data);
   const timestamp = Date.now();
   const fullMessage = marker ? `[CRITICAL_LOG === ${marker} ===] ${message}` : `[CRITICAL_LOG] ${message}`;
-  
   // Truncate data if too large to prevent performance issues
   let processedData = data;
   if (data && typeof data === 'object') {
@@ -436,80 +471,26 @@ export function criticalLog(message, marker = '', data = null) {
     }
   }
   
-  // CRITICAL: Use console.error for maximum visibility (red, always shown)
-  try {
-    console.error(fullMessage);
-    if (processedData) {
-      console.error('[CRITICAL_LOG_DATA]', processedData);
-    }
-    // Also use console.warn and console.log for redundancy
-    console.warn(fullMessage);
-    console.log(fullMessage);
-    if (processedData) {
-      console.warn('[CRITICAL_LOG_DATA]', processedData);
-      console.log('[CRITICAL_LOG_DATA]', processedData);
-    }
-  } catch (e) {
-    // Ignore console errors
-  }
-  
-  // Also use standard log function (with prefix and timestamp)
-  try {
-    // Check if log function exists before calling it
-    if (typeof log === 'function') {
-      log(fullMessage, {
-        marker,
-        data: processedData,
-        timestamp,
-        source: typeof window !== 'undefined' ? window.location?.href : 'service-worker'
-      });
-    } else {
-      console.log('[CRITICAL_LOG_FALLBACK] log function not available, using console.log:', fullMessage);
-    }
-  } catch (e) {
-    // Ignore log function errors
-  }
-  
-  // CRITICAL: Don't send message to self if we're already in service worker
-  // Service worker cannot send messages to itself - this causes "Could not establish connection" errors
+
+  if (level === 'error') logError(fullMessage, processedData);
+  else if (level === 'warn') logWarn(fullMessage, processedData);
+  else logDebug(fullMessage, processedData);
+
   const isServiceWorker = typeof window === 'undefined' && typeof self !== 'undefined' && typeof chrome !== 'undefined' && chrome.runtime;
-  
-  // Send to background via port (if available and not in service worker)
   if (!isServiceWorker) {
     try {
-      logViaPort(message, marker, processedData);
-    } catch (e) {
-      // Fallback to sendMessage (if in offscreen/content script context)
-      // CRITICAL: Use callback-based API with empty callback to suppress "Unchecked runtime.lastError"
-      // Promise-based API may not be available in all contexts
+      logViaPort(message, marker, processedData, level);
+    } catch {
       try {
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-          // Use callback-based API with empty callback to suppress errors
-          // This prevents "Unchecked runtime.lastError" spam in console
-          chrome.runtime.sendMessage({
-            action: 'log',
-            data: {
-              level: 'critical',
-              message: message,
-              marker: marker,
-              data: processedData,
-              timestamp: timestamp,
-              source: typeof window !== 'undefined' ? 'offscreen' : 'service-worker'
-            }
-          }, () => {
-            // CRITICAL: Empty callback suppresses "Unchecked runtime.lastError"
-            // Check lastError but don't log it - these errors are expected when receiver is closed
-            if (chrome.runtime.lastError) {
-              // Silently ignore - "Could not establish connection" is expected when tabs/offscreen are closed
-            }
-          });
-        }
-      } catch (e2) {
-        // Ignore all sendMessage errors
+        chrome.runtime.sendMessage({
+          action: 'log',
+          data: { level: 'critical', severity: level, message, marker, data: processedData, timestamp, source: 'offscreen' }
+        }, () => { void chrome.runtime.lastError; });
+      } catch {
+        // Logging must not interrupt processing.
       }
     }
   }
-  // If we're in service worker, logs are already visible via console.error above
 }
 
 /**
@@ -639,15 +620,11 @@ function flushServiceWorkerLogQueue() {
  * @param {*} data - Optional data to log
  */
 export function logToServiceWorker(message, category = 'general', data = null) {
-  // Check if verbose logging is enabled (for detailed PDF processing logs)
-  if (!CONFIG?.VERBOSE_LOGGING && category.includes('PDF') && message.includes('page')) {
-    // Skip detailed page-by-page logs unless verbose logging is enabled
-    // Only log errors or critical information
-    if (!message.toLowerCase().includes('error') && !message.toLowerCase().includes('critical')) {
-      return;
-    }
-  }
-  
+  message = sanitizeLogText(message);
+  category = sanitizeLogText(category);
+  data = sanitizeData(data);
+  if (!shouldLogDiagnostic()) return;
+
   const timestamp = Date.now();
   const logMessage = `[PDF v3] [${category}] ${message}`;
   const marker = `=== SERVICE_WORKER_LOG_${category.toUpperCase()} ===`;

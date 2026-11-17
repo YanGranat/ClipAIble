@@ -2,6 +2,7 @@
 // Processing module
 // Handles PDF saving, cancellation, and content extraction
 
+import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice } from '../../scripts/api/tts-catalog.js';
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError } from '../../scripts/utils/error-messages.js';
 
@@ -267,7 +268,7 @@ export function initProcessing(deps) {
     const mode = elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '';
     if (mode !== 'automatic' && !apiKey) {
       const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
-      showToast(await t(`pleaseEnter${providerName}ApiKey`, undefined), 'error');
+      showToast(await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`, undefined), 'error');
       return;
     }
 
@@ -640,7 +641,7 @@ export function initProcessing(deps) {
             
             // Final fallback: use default
             if (!finalVoice) {
-              finalVoice = provider === 'offline' ? 'en_US-lessac-medium' : 'nova';
+              finalVoice = getDefaultTtsVoice(provider, elements.qwenModel?.value);
               logWarn('[ClipAIble Processing] ===== USING DEFAULT VOICE =====', {
                 timestamp: Date.now(),
                 provider,
@@ -663,14 +664,14 @@ export function initProcessing(deps) {
           audioSpeed: parseFloat(elements.audioSpeed ? /** @type {HTMLInputElement} */ (elements.audioSpeed).value : '1.0'),
           audioFormat: 'mp3',
           elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
-          elevenlabsModel: elements.elevenlabsModel ? /** @type {HTMLSelectElement} */ (elements.elevenlabsModel).value : 'eleven_v3',
+          elevenlabsModel: elements.elevenlabsModel ? /** @type {HTMLSelectElement} */ (elements.elevenlabsModel).value : DEFAULT_ELEVENLABS_TTS_MODEL,
           elevenlabsFormat: elements.elevenlabsFormat ? /** @type {HTMLSelectElement} */ (elements.elevenlabsFormat).value : 'mp3_44100_192',
           elevenlabsStability: elements.elevenlabsStability ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStability).value) : 0.5,
           elevenlabsSimilarity: elements.elevenlabsSimilarity ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsSimilarity).value) : 0.75,
           elevenlabsStyle: elements.elevenlabsStyle ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStyle).value) : 0.0,
           elevenlabsSpeakerBoost: elements.elevenlabsSpeakerBoost ? /** @type {HTMLInputElement} */ (elements.elevenlabsSpeakerBoost).checked : true,
           openaiInstructions: elements.openaiInstructions ? /** @type {HTMLTextAreaElement} */ (elements.openaiInstructions).value.trim() : null,
-          googleTtsModel: elements.googleTtsModel ? /** @type {HTMLSelectElement} */ (elements.googleTtsModel).value : 'gemini-2.5-pro-preview-tts',
+          googleTtsModel: elements.googleTtsModel ? /** @type {HTMLSelectElement} */ (elements.googleTtsModel).value : DEFAULT_GOOGLE_TTS_MODEL,
           googleTtsVoice: elements.googleTtsVoice ? /** @type {HTMLSelectElement} */ (elements.googleTtsVoice).value : 'Callirrhoe',
           googleTtsPrompt: elements.googleTtsPrompt ? /** @type {HTMLInputElement} */ (elements.googleTtsPrompt).value.trim() : null,
           respeecherTemperature: elements.respeecherTemperature ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTemperature).value) : 1.0,
@@ -679,6 +680,9 @@ export function initProcessing(deps) {
           googleTtsApiKey: elements.googleTtsApiKey?.dataset.encrypted || null,
           geminiApiKey: elements.geminiApiKey?.dataset.encrypted || null,
           qwenApiKey: elements.qwenApiKey?.dataset.encrypted || null,
+          qwenModel: elements.qwenModel?.value || DEFAULT_QWEN_TTS_MODEL,
+          qwenWorkspaceId: elements.qwenWorkspaceId?.value.trim() || '',
+          qwenRegion: elements.qwenRegion?.value || 'singapore',
           respeecherApiKey: elements.respeecherApiKey?.dataset.encrypted || null
         }
       });

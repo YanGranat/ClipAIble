@@ -3,8 +3,7 @@
 // Text cleaning, normalization, and analysis helpers
 
 /**
- * Clean heading text by removing OBJ markers and other artifacts
- * Removes U+FFFC (Object Replacement Character), OBJ tags, HTML, trailing #
+ * Clean heading text by removing replacement characters and presentation markup
  * @param {string} text - Heading text to clean
  * @returns {string} - Cleaned heading text
  */
@@ -13,11 +12,6 @@ export function cleanHeadingText(text) {
   return text
     // Remove U+FFFC (Object Replacement Character)
     .replace(/\uFFFC/g, '')
-    // Remove OBJ markers in various formats
-    .replace(/<OBJ>/gi, '')
-    .replace(/<\/OBJ>/gi, '')
-    .replace(/\[OBJ\]/gi, '')
-    .replace(/OBJ/g, '')
     // Remove any remaining HTML tags
     .replace(/<[^>]+>/g, '')
     // Remove Wikipedia edit section patterns (all languages): [edit], [ред. | ред. код], etc.
@@ -31,20 +25,15 @@ export function cleanHeadingText(text) {
 }
 
 /**
- * Strip OBJ markers from text
- * More aggressive version that handles edge cases
- * @param {string} text - Text with potential OBJ markers
- * @returns {string} - Text with OBJ markers removed
+ * Remove object replacement characters without changing ordinary words
+ * @param {string} text - Text to normalize
+ * @returns {string} - Normalized text
  */
 export function stripObjMarkers(text) {
   if (!text) return '';
   return text
     // Remove U+FFFC (Object Replacement Character)
     .replace(/\uFFFC/g, '')
-    // Remove OBJ in various formats
-    .replace(/\s*OBJ\s*/gi, ' ')
-    .replace(/\s*\[OBJ\]\s*/gi, ' ')
-    .replace(/<\/?OBJ>/gi, '')
     // Normalize whitespace
     .replace(/\s+/g, ' ')
     .trim();

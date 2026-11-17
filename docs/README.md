@@ -24,7 +24,3 @@ The main English README is located in the project root: [../README.md](../README
 ## Technical Documentation
 
 Technical documentation for developers: [technical-overview.md](technical-overview.md)
-
----
-
-All translations are maintained to match the latest version of the main README.

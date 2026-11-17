@@ -1,0 +1,101 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { startSummaryGeneration } from '../../scripts/message-handlers/summary.js';
+import { startKeyThesesGeneration, requestCancelKeyThesesGeneration } from '../../scripts/message-handlers/key-theses.js';
+import { generateSummary, generateKeyTheses } from '../../scripts/translation/index.js';
+
+vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logWarn: vi.fn() }));
+vi.mock('../../scripts/utils/error-handler.js', () => ({ handleError: async (error) => error }));
+vi.mock('../../scripts/state/processing.js', () => ({ getProcessingState: () => ({ isProcessing: false }) }));
+vi.mock('../../scripts/translation/index.js', () => ({ generateSummary: vi.fn(), generateKeyTheses: vi.fn() }));
+vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: key => key }));
+vi.mock('../../scripts/background/popup-connection.js', () => ({ isPopupOpen: () => true }));
+vi.mock('../../scripts/background/notifications.js', () => ({ createNotification: vi.fn() }));
+let stored;
+const data = { contentItems: [{ type: 'paragraph', text: 'Article text' }], apiKey: 'synthetic-key', model: 'gpt-example', url: 'https://example.com/', language: 'en' };
+beforeEach(() => {
+  vi.useFakeTimers();
+  stored = {};
+  chrome.storage.local.get.mockReset().mockImplementation(async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter(key => key in stored).map(key => [key, structuredClone(stored[key])])));
+  chrome.storage.local.set.mockReset().mockImplementation(async values => { Object.assign(stored, structuredClone(values)); });
+  generateSummary.mockReset(); generateKeyTheses.mockReset();
+});
+afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+
+describe('independent generation ownership', () => {
+  it.each([
+    ['summary', startSummaryGeneration, generateSummary, { summary: 'Summary' }],
+    ['key theses', startKeyThesesGeneration, generateKeyTheses, { keyTheses: 'Theses' }]
+  ])('admits one %s request before the first response arrives', async (_kind, start, generate, result) => {
+    const releases = [];
+    generate.mockImplementation(() => new Promise(resolve => releases.push(resolve)));
+    const firstResponse = vi.fn(); const secondResponse = vi.fn();
+    const first = start(data, vi.fn(), vi.fn(), firstResponse);
+    const second = start(data, vi.fn(), vi.fn(), secondResponse);
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(secondResponse).toHaveBeenCalledWith({ error: expect.stringContaining('already in progress') });
+    } finally {
+      releases.forEach(release => release(result));
+      await Promise.allSettled([first, second]);
+    }
+  });
+
+  it('cancels extraction before starting a paid generation request', async () => {
+    let releaseContent;
+    const first = startKeyThesesGeneration({ ...data, getContent: () => new Promise(resolve => { releaseContent = resolve; }) }, vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    requestCancelKeyThesesGeneration(stored.key_theses_generation_id);
+    await first;
+    releaseContent({ contentItems: data.contentItems });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(generateKeyTheses).not.toHaveBeenCalled();
+    expect(stored.key_theses_generating).toBe(false);
+  });
+
+  it('preserves a replacement job and its cancellation after the old job unwinds', async () => {
+    let releaseOld;
+    let releaseNew;
+    generateKeyTheses.mockImplementationOnce(() => new Promise(resolve => { releaseOld = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { releaseNew = resolve; }));
+    const old = startKeyThesesGeneration(data, vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    const oldId = stored.key_theses_generation_id;
+    requestCancelKeyThesesGeneration(oldId);
+    const replacement = startKeyThesesGeneration(data, vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    await old;
+    expect(stored.key_theses_generation_id).not.toBe(oldId);
+    expect(stored.key_theses_generating).toBe(true);
+    releaseOld({ keyTheses: 'Obsolete result' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored.key_theses_text).toBeUndefined();
+    expect(requestCancelKeyThesesGeneration(oldId)).toMatchObject({ ignored: true });
+    expect(requestCancelKeyThesesGeneration()).toMatchObject({ ignored: true });
+    expect(stored.key_theses_generating).toBe(true);
+    requestCancelKeyThesesGeneration(stored.key_theses_generation_id);
+    await replacement;
+    expect(stored.key_theses_generating).toBe(false);
+    releaseNew({ keyTheses: 'Cancelled replacement' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stored.key_theses_text).toBeUndefined();
+  });
+
+  it('serializes an outstanding old flag write before a replacement starts', async () => {
+    let releaseWrite;
+    chrome.storage.local.set.mockImplementationOnce(async values => {
+      await new Promise(resolve => { releaseWrite = resolve; });
+      Object.assign(stored, structuredClone(values));
+    });
+    generateKeyTheses.mockResolvedValue({ keyTheses: 'Current result' });
+    const old = startKeyThesesGeneration(data, vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(0);
+    requestCancelKeyThesesGeneration(chrome.storage.local.set.mock.calls[0][0].key_theses_generation_id);
+    const current = startKeyThesesGeneration(data, vi.fn(), vi.fn());
+    expect(generateKeyTheses).not.toHaveBeenCalled();
+    releaseWrite();
+    await Promise.all([old, current]);
+    expect(generateKeyTheses).toHaveBeenCalledTimes(1);
+    expect(stored).toMatchObject({ key_theses_text: 'Current result', key_theses_generating: false });
+  });
+});

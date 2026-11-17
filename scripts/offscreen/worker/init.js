@@ -16,11 +16,6 @@ import { resetWorkerInactivityTimer } from './lifecycle.js';
  * @throws {Error} If chrome.runtime is not available
  */
 export async function initTTSWorker() {
-  // If Worker already exists, return it immediately
-  if (state.getTTSWorker()) {
-    return state.getTTSWorker();
-  }
-  
   // If initialization is already in progress, wait for it
   // This prevents race conditions when multiple functions call initTTSWorker() simultaneously
   const existingPromise = state.getTTSWorkerInitPromise();
@@ -31,9 +26,14 @@ export async function initTTSWorker() {
     return await existingPromise;
   }
   
+  if (state.getTTSWorker()) {
+    return state.getTTSWorker();
+  }
+
   // Start new initialization and cache the promise
   const initPromise = (async () => {
     const initStartTime = Date.now();
+    let initializingWorker = null;
     
     try {
       log('[ClipAIble Offscreen] === initTTSWorker CALL START ===', {
@@ -64,6 +64,7 @@ export async function initTTSWorker() {
       let worker;
       try {
         worker = new Worker(workerUrl);
+        initializingWorker = worker;
         const workerCreateDuration = Date.now() - workerCreateStart;
         log('[ClipAIble Offscreen] Worker created successfully', {
           workerUrl,
@@ -89,7 +90,9 @@ export async function initTTSWorker() {
       // Initialize worker - bundle is self-contained, no need to pass module URLs
       const initPromise = new Promise((resolve, reject) => {
         const initPromiseStart = Date.now();
+        let unregister = () => {};
         const timeout = setTimeout(() => {
+          unregister();
           const timeoutError = new Error('Worker initialization timeout (30s)');
           logError('[ClipAIble Offscreen] initTTSWorker timeout', {
             duration: Date.now() - initStartTime,
@@ -131,6 +134,7 @@ export async function initTTSWorker() {
           }
           
           if (event.data.type === 'INIT_SUCCESS') {
+            unregister();
             clearTimeout(timeout);
             worker.removeEventListener('message', handler);
             const initDuration = Date.now() - initStartTime;
@@ -143,6 +147,7 @@ export async function initTTSWorker() {
             });
             resolve(worker);
           } else if (event.data.type === 'ERROR') {
+            unregister();
             clearTimeout(timeout);
             worker.removeEventListener('message', handler);
             const initDuration = Date.now() - initStartTime;
@@ -159,9 +164,15 @@ export async function initTTSWorker() {
         };
         
         worker.addEventListener('message', handler);
+        unregister = state.registerWorkerRequest(error => {
+          clearTimeout(timeout);
+          worker.removeEventListener('message', handler);
+          reject(error);
+        });
         
         // Handle worker errors
         worker.onerror = (error) => {
+          unregister();
           clearTimeout(timeout);
           worker.removeEventListener('message', handler);
           const initDuration = Date.now() - initStartTime;
@@ -196,18 +207,17 @@ export async function initTTSWorker() {
       });
       
       // Clean up on error
-      const worker = state.getTTSWorker();
+      const worker = initializingWorker;
       if (worker) {
         log('[ClipAIble Offscreen] Terminating failed Worker', {
           timestamp: Date.now()
         });
         worker.terminate();
-        state.setTTSWorker(null);
-        state.setUseWorker(false);
+        if (state.getTTSWorker() === worker) {
+          state.setTTSWorker(null);
+          state.setUseWorker(false);
+        }
       }
-      
-      // Clear promise cache on error to allow retry
-      state.clearTTSWorkerInitPromise();
       
       throw error; // Re-throw error - no fallback
     }
@@ -218,7 +228,9 @@ export async function initTTSWorker() {
   try {
     return await initPromise;
   } catch (error) {
-    // Promise cache is already cleared in catch block above
+    if (state.getTTSWorkerInitPromise() === initPromise) {
+      state.clearTTSWorkerInitPromise();
+    }
     throw error;
   }
 }
@@ -230,6 +242,10 @@ export async function initTTSWorker() {
  * @throws {Error} If Worker cannot be initialized
  */
 export async function ensureTTSWorker() {
+  const initializing = state.getTTSWorkerInitPromise();
+  if (initializing) {
+    await initializing;
+  }
   // If Worker already exists, return it immediately and reset inactivity timer
   if (state.getTTSWorker()) {
     resetWorkerInactivityTimer();

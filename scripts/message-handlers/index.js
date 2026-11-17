@@ -2,8 +2,8 @@
 // Message handler router
 // Routes incoming messages to appropriate handlers
 
-import { log, logWarn, logError } from '../utils/logging.js';
-import { updateState, getProcessingState } from '../state/processing.js';
+import { log, logWarn, logError, sanitizeLogData, shouldLogDiagnostic } from '../utils/logging.js';
+import { updateState, getProcessingState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
 import { handleError } from '../utils/error-handler.js';
 import { isValidMessageSize } from '../utils/security/security.js';
 
@@ -39,7 +39,8 @@ import {
 // Processing handlers
 import {
   handleProcessArticle,
-  handleGeneratePdfDebugger
+  handleGeneratePdfDebugger,
+  handlePrintJobFailed
 } from './processing.js';
 
 // Video handlers
@@ -86,7 +87,7 @@ const VALID_ACTIONS = [
   // Settings handlers
   'exportSettings', 'importSettings',
   // Processing handlers
-  'processArticle', 'generatePdfDebugger',
+  'processArticle', 'generatePdfDebugger', 'printJobFailed',
   // Video handlers
   'youtubeSubtitlesResult', 'extractYouTubeSubtitlesForSummary',
   // Complex handlers
@@ -113,6 +114,7 @@ function validateMessageOrigin(request, sender) {
     'generateKeyTheses',
     'extractContentOnly',
     'generatePdfDebugger',
+    'printJobFailed',
     'exportSettings',
     'importSettings'
   ];
@@ -331,11 +333,23 @@ function validateMessageParams(request) {
       return { valid: false, error: 'generatePdfDebugger.data.contentHeight must be a number' };
     }
   }
+  if (action === 'printJobFailed' && (!data || typeof data.error !== 'string' || typeof data.printJobId !== 'string' ||
+      (data.processingRunId !== undefined && typeof data.processingRunId !== 'string'))) {
+    return { valid: false, error: 'printJobFailed requires a printJobId and error strings' };
+  }
   
   return { valid: true };
 }
 
 export function routeMessage(request, sender, sendResponse, deps) {
+  if (request?.target === 'offscreen') return false;
+  if (deps.initializationReady) {
+    const { initializationReady, ...readyDeps } = deps;
+    Promise.resolve(initializationReady)
+      .then(() => routeMessage(request, sender, sendResponse, readyDeps))
+      .catch((error) => sendResponse({ success: false, error: error?.message || 'Background initialization failed' }));
+    return true;
+  }
   const {
     startArticleProcessing,
     processWithSelectorMode,
@@ -347,10 +361,11 @@ export function routeMessage(request, sender, sendResponse, deps) {
   
   // CRITICAL: Prevent double sendResponse calls
   let responseSent = false;
+  const originalSendResponse = sendResponse;
   const safeSendResponse = (response) => {
     if (!responseSent) {
       try {
-        sendResponse(response);
+        originalSendResponse(response);
         responseSent = true;
       } catch (sendError) {
         // Ignore if already sent or channel closed
@@ -361,6 +376,23 @@ export function routeMessage(request, sender, sendResponse, deps) {
       }
     }
   };
+  sendResponse = safeSendResponse;
+
+  function handleRouterError(error, errorType) {
+    (async () => {
+      try {
+        const normalized = await handleError(error, {
+          source: 'messageRouter', errorType, logError: true, createUserMessage: true,
+          context: { operation: 'routeMessage', action: request.action, errorName: error?.name, errorStack: error?.stack }
+        });
+        safeSendResponse({ error: error?.message || normalized.message, errorCode: normalized.code });
+      } catch (normalizationError) {
+        logError('Message error normalization failed', normalizationError);
+        safeSendResponse({ error: error?.message || 'Message handling failed' });
+      }
+    })().catch((handlingError) => logError('Message error handling failed', handlingError));
+    return true;
+  }
   
   // SECURITY: Validate message structure before processing
   if (!validateMessageStructure(request)) {
@@ -394,7 +426,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
   }
   
   // SECURITY: Validate message parameters for critical actions (runtime type checking)
-  const criticalActions = ['processArticle', 'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'generatePdfDebugger'];
+  const criticalActions = ['processArticle', 'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'generatePdfDebugger', 'printJobFailed'];
   if (criticalActions.includes(request.action)) {
     const paramValidation = validateMessageParams(request);
     if (!paramValidation.valid) {
@@ -425,89 +457,43 @@ export function routeMessage(request, sender, sendResponse, deps) {
     return false;
   }
   
+  function forwardDiagnostic(entry) {
+    const level = entry.severity || (entry.level === 'critical' ? 'debug' : entry.level) || 'debug';
+    if (!shouldLogDiagnostic(level)) return;
+    const data = sanitizeLogData(entry.data);
+    const message = `[CRITICAL_LOG${entry.marker ? ` ${entry.marker}` : ''}] ${entry.message}`;
+    deps.addLogToCollection?.(message, {
+      marker: entry.marker, data, timestamp: entry.timestamp,
+      source: entry.source || 'offscreen', senderUrl: sender.url
+    }, level);
+    const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'debug';
+    console[consoleMethod](message, data || '');
+  }
+
   // Route to appropriate handler based on action
   const handlers = {
     // Simple handlers
     'log': () => {
-      // Special handling for critical logs from offscreen documents
-      // CRITICAL: These logs are sent from offscreen documents via chrome.runtime.sendMessage
-      // They are ALWAYS visible in background service worker console, even if offscreen console is not open
       if (request.data?.level === 'critical') {
-        const { message, marker, data, timestamp, source } = request.data;
-        const logMessage = `[CRITICAL_LOG${marker ? ` ${marker}` : ''}] ${message}`;
-        
-        // Log to background console (ALWAYS VISIBLE)
-        // Use console.error for maximum visibility (red color, always shown)
-        console.error(logMessage, data || '');
-        
-        // Also use standard log function (with prefix and timestamp)
-        log(logMessage, {
-          marker,
-          data,
-          timestamp,
-          source: source || 'offscreen',
-          senderUrl: sender.url
-        });
-        
-        // Also use console.warn and console.log for redundancy
-        console.warn(logMessage, data || '');
-        console.log(logMessage, data || '');
+        forwardDiagnostic(request.data);
+        sendResponse({ success: true });
+        return true;
       }
       return handleLog(request, sender, sendResponse);
     },
     'logBatch': () => {
-      // Handle batched logs from offscreen documents
-      // This avoids Chrome's ~1000 message limit by sending multiple logs in one message
       if (request.data?.level === 'critical' && Array.isArray(request.data.logs)) {
-        const { logs, batchSize, totalQueued } = request.data;
-        
-        // Process each log in the batch
-        for (const logEntry of logs) {
-          const { message, marker, data, timestamp, source } = logEntry;
-          const logMessage = `[CRITICAL_LOG${marker ? ` ${marker}` : ''}] ${message}`;
-          
-          // Add to unlimited log collection (bypasses Chrome console limit)
-          // Access global allLogsCollection from background.js via deps
-          if (deps?.addLogToCollection) {
-            deps.addLogToCollection(logMessage, {
-              marker,
-              data,
-              timestamp,
-              source: source || 'offscreen',
-              senderUrl: sender.url
-            }, 'error');
-          }
-          
-          // Log to background console (ALWAYS VISIBLE)
-          console.error(logMessage, data || '');
-          
-          // Also use standard log function (with prefix and timestamp)
-          log(logMessage, {
-            marker,
-            data,
-            timestamp,
-            source: source || 'offscreen',
-            senderUrl: sender.url
-          });
-        }
-        
-        // Log batch summary
-        if (batchSize > 1) {
-          log(`[CRITICAL_LOG_BATCH] Processed ${batchSize} logs, ${totalQueued || 0} remaining in queue`, {
-            batchSize,
-            totalQueued,
-            source: 'offscreen'
-          });
-        }
+        for (const entry of request.data.logs) forwardDiagnostic(entry);
       }
       sendResponse({ success: true });
       return true;
     },
     'logError': () => handleLogError(request, sender, sendResponse),
     'logFromPrintPage': () => {
-      const { message, data } = request.data || {};
+      const { message, data, level } = request.data || {};
       if (message) {
-        log(`[Print Page] ${message}`, data || null);
+        if (level === 'error') logError(`[Print Page] ${message}`, sanitizeLogData(data));
+        else log(`[Print Page] ${message}`, sanitizeLogData(data));
       }
       sendResponse({ success: true });
       return true;
@@ -549,6 +535,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
     // Processing handlers
     'processArticle': () => handleProcessArticle(request, sender, sendResponse, startArticleProcessing, stopKeepAlive),
     'generatePdfDebugger': () => handleGeneratePdfDebugger(request, sender, sendResponse, stopKeepAlive),
+    'printJobFailed': () => handlePrintJobFailed(request, sender, sendResponse, stopKeepAlive),
     
     // Video handlers
     'youtubeSubtitlesResult': () => handleYoutubeSubtitlesResult(request, sender, sendResponse),
@@ -568,8 +555,8 @@ export function routeMessage(request, sender, sendResponse, deps) {
     'generateSummary': () => handleGenerateSummary(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
     'generateKeyTheses': () => handleGenerateKeyTheses(request, sender, sendResponse, startKeepAlive, stopKeepAlive),
     'cancelKeyThesesGeneration': () => {
-      requestCancelKeyThesesGeneration();
-      sendResponse({ cancelled: true });
+      const result = requestCancelKeyThesesGeneration(request.data?.generationId);
+      sendResponse({ ...result, cancelled: !result.ignored });
       return true;
     },
     'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse),
@@ -577,7 +564,11 @@ export function routeMessage(request, sender, sendResponse, deps) {
     // TTS Progress handler (from offscreen.js)
     'TTS_PROGRESS': () => {
       try {
-        const { sentenceIndex, totalSentences, progressBase = 60, progressRange = 35 } = request.data || {};
+        const { sentenceIndex, totalSentences, progressBase = 60, progressRange = 35, processingRunId } = request.data || {};
+        if (!isValidProcessingRunId(processingRunId) || isCancelled(processingRunId)) {
+          sendResponse({ success: true, ignored: true });
+          return true;
+        }
         
         // Log only every 5th progress update to reduce log spam
         if (sentenceIndex % 5 === 0 || sentenceIndex === totalSentences) {
@@ -595,7 +586,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
             updateState({
               status: 'Generating audio... (1/1 sentences)',
               progress: 90 // Set to 90% for single sentence
-            });
+            }, processingRunId);
           } else if (totalSentences > 1) {
             // Multiple sentences - calculate progress: 60-95% range for TTS conversion
             const estimatedProgress = progressBase + Math.floor(
@@ -616,7 +607,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
             updateState({
               status: `Generating audio... (${sentenceIndex}/${totalSentences} sentences)`,
               progress: Math.min(estimatedProgress, 94) // Cap at 94% to leave room for final update
-            });
+            }, processingRunId);
           }
         } else {
           logWarn('[ClipAIble] TTS_PROGRESS handler: invalid data', {
@@ -670,7 +661,7 @@ export function routeMessage(request, sender, sendResponse, deps) {
       });
       
       try {
-        const closed = await closeOffscreenForVoiceSwitch();
+        const closed = await closeOffscreenForVoiceSwitch(request.data?.processingRunId);
         sendResponse({ success: closed });
         return true;
       } catch (error) {
@@ -723,49 +714,13 @@ export function routeMessage(request, sender, sendResponse, deps) {
     try {
       const result = handler();
       
-      // If handler returns a promise, Chrome will wait for it
-      // If handler returns true, it means async response will be sent
+      if (result && typeof result.then === 'function') {
+        Promise.resolve(result).catch((error) => handleRouterError(error, 'handlerAsyncError'));
+        return true;
+      }
       return result;
     } catch (error) {
-      // Normalize error with context for better logging and error tracking
-      (async () => {
-        try {
-          const normalized = await handleError(error, {
-            source: 'messageRouter',
-            errorType: 'handlerSyncError',
-            logError: true,
-            createUserMessage: true, // Use centralized user-friendly message
-            context: {
-              operation: 'routeMessage',
-              action: request.action,
-              errorName: error?.name,
-              errorStack: error?.stack
-            }
-          });
-          
-          // Try to send normalized error response
-          safeSendResponse({ 
-            error: error.message || normalized.message,
-            errorCode: normalized.code
-          });
-        } catch (normalizationError) {
-          // Fallback if normalization fails
-          logError('=== routeMessage: Error normalization failed ===', {
-            normalizationError: normalizationError?.message,
-            originalError: error?.message
-          });
-          safeSendResponse({ error: error.message });
-        }
-      })().catch(error => {
-        // Additional protection: catch any unhandled errors in error handler IIFE
-        logError('=== routeMessage: Unhandled error in error handler IIFE ===', {
-          error: error?.message || String(error),
-          errorStack: error?.stack,
-          originalAction: request.action
-        });
-      });
-      
-      return true;
+      return handleRouterError(error, 'handlerSyncError');
     }
   }
   

@@ -40,6 +40,7 @@ import {
  */
 export async function generateAudio(params, updateState) {
   const entryTime = Date.now();
+  const processingRunId = params.processingRunId;
   const {
     content,
     title,
@@ -62,6 +63,10 @@ export async function generateAudio(params, updateState) {
 
   // Validate parameters
   await validateAudioParams(params, provider);
+  if (isCancelled(processingRunId)) {
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+
   
   // Step 1: Prepare content for audio (using main model like GPT-5.1)
   // Get current progress to avoid rollback (e.g., if translation was done, progress might be 60%)
@@ -96,7 +101,9 @@ export async function generateAudio(params, updateState) {
     useAICleanup ? model : null,  // Pass null model for offline to skip AI cleanup
     language,
     updateState,
-    provider // Pass provider to control cleanup mode
+    provider, // Pass provider to control cleanup mode
+    processingRunId,
+    params.aiRequestOptions
   );
   
   if (!preparedChunks || preparedChunks.length === 0) {
@@ -157,7 +164,14 @@ export async function generateAudio(params, updateState) {
 
   // Convert chunks to speech
   const chunksToSpeechStart = Date.now();
+  if (isCancelled(processingRunId)) {
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
   const audioBuffer = await chunksToSpeech(preparedChunks, ttsApiKey, ttsOptions, updateState);
+  if (isCancelled(processingRunId)) {
+    throw new Error(tSync('statusCancelled', await getUILanguage()));
+  }
+
   
   // CRITICAL: Check audioBuffer BEFORE using it
   if (!audioBuffer || audioBuffer.byteLength === 0) {
@@ -260,14 +274,14 @@ export async function generateAudio(params, updateState) {
   const filename = sanitizeFilename(cleanTitle) + '.' + extension;
   
   // Check if processing was cancelled before downloading
-  if (isCancelled()) {
+  if (isCancelled(processingRunId)) {
     log('Processing cancelled, skipping audio download');
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
   
   // Use actual format for MIME/extension to avoid corrupt files (e.g., WAV from Qwen/Respeecher)
   try {
-    await downloadAudio(audioBuffer, filename, actualFormat);
+    await downloadAudio(audioBuffer, filename, actualFormat, processingRunId);
   } catch (downloadError) {
     // Enhanced error context for expensive operations
     logError('Audio download failed', {
@@ -299,9 +313,9 @@ export async function generateAudio(params, updateState) {
  * @param {string} filename - Target filename
  * @param {string} format - Audio format for MIME type
  */
-async function downloadAudio(buffer, filename, format) {
+async function downloadAudio(buffer, filename, format, processingRunId) {
   // Check if processing was cancelled before downloading
-  if (isCancelled()) {
+  if (isCancelled(processingRunId)) {
     log('Processing cancelled, skipping audio download');
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
@@ -320,7 +334,7 @@ async function downloadAudio(buffer, filename, format) {
     const objectUrl = urlApi.createObjectURL(blob);
     try {
       // Check again before actual download
-      if (isCancelled()) {
+      if (isCancelled(processingRunId)) {
         log('Processing cancelled, skipping audio download');
         throw new Error(tSync('statusCancelled', await getUILanguage()));
       }
@@ -350,7 +364,7 @@ async function downloadAudio(buffer, filename, format) {
     });
 
     // Check again before actual download
-    if (isCancelled()) {
+    if (isCancelled(processingRunId)) {
       log('Processing cancelled, skipping audio download');
       throw new Error(tSync('statusCancelled', await getUILanguage()));
     }

@@ -103,17 +103,17 @@ For YouTube pages, the extension:
 
 ### chrome.storage.local
 
-Primary storage with these limitations:
-- 5MB per item, 10MB total (Chrome extension limits)
+Primary storage for settings, processing state, and recent results:
+- The manifest requests `unlimitedStorage`; the default `storage.local` quota is therefore not enforced.
 - Asynchronous access
 - No complex queries
 - No binary data support (must be JSON-serializable)
 
 ### IndexedDB Fallback
 
-Used for large content exceeding storage limits:
+Used by the extension's large-data storage helper:
 - Asynchronous access
-- No size limits
+- Capacity depends on browser storage and available disk space.
 - Complex data structures support
 
 ### Encryption
@@ -134,8 +134,7 @@ API keys are encrypted using:
 ### Bundling
 
 Uses esbuild for:
-- ES module bundling and minification
-- Code splitting for workers
+- ES module bundling into separate offscreen and worker bundles
 - Source map generation
 - Tree shaking to reduce bundle size
 
@@ -237,7 +236,7 @@ Provides access to:
 
 ## Browser Compatibility
 
-- Chrome 109+ (required for Offscreen API used in PDF processing and offline TTS)
+- Chrome 116+ (required for `chrome.runtime.getContexts` in PDF processing and offline TTS)
 - WebAssembly support required (for offline TTS)
 - IndexedDB support required (for fallback storage)
 - Web Crypto API support required (for API key encryption)

@@ -1,446 +1,150 @@
 // @ts-check
-// Script to create production archive for Chrome Web Store
-// This script copies all necessary files and creates a ZIP archive
+// Build and package the extension for Chrome Web Store distribution.
 
 import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const root = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
+const runtimeFiles = ['manifest.json', 'offscreen.html', 'offscreen.js', 'README.md', 'PRIVACY.md', 'PERMISSIONS.md', 'LICENSE', 'docs/technical-overview.md'];
+const runtimeDirectories = ['icons', 'popup', 'scripts', 'config', 'print', 'lib'];
+const buildOnlyFiles = new Set(['scripts/apply-extraction-build.js', 'scripts/extraction/extractor/builder.js']);
 
-// Archive configuration
-const ARCHIVE_NAME = 'clipaible-3.3.4-production.zip';
-const TEMP_DIR = 'temp-archive';
-
-// Files and folders to include
-const INCLUDE = [
-  'manifest.json',
-  'offscreen.html',
-  'offscreen.js',
-  'README.md',
-  'icons',
-  'popup',
-  'scripts',
-  'dist',
-  'config',
-  'print',
-  'lib' // Include lib folder (will be populated with ONNX Runtime files)
-];
-
-// Files and folders to exclude
-const EXCLUDE = [
-  'node_modules',
-  '.git',
-  'doc',
-  'temp-archive',
-  'create-production-archive.js',
-  'build-tts-worker.js',
-  'build-offscreen.js',
-  'build-extraction.js',
-  'package.json',
-  'package-lock.json',
-  '.gitignore',
-  '.vscode',
-  'src',
-  'tests',
-  'clipaible-*.zip'
-];
-
-// ONNX Runtime files to copy to lib/
-// CRITICAL: Copy ALL .mjs and .wasm files because .mjs files use relative imports
-// When we load lib/ort.wasm.min.mjs, it does: await import('./ort-wasm-simd-threaded.jsep.mjs')
-// These relative imports resolve relative to the module URL, so ALL files must be in lib/
-const ONNX_FILES = [
-  // Main ONNX Runtime files
-  'node_modules/onnxruntime-web/dist/ort.all.min.js',
-  'node_modules/onnxruntime-web/dist/ort.all.min.js.map',
-  'node_modules/onnxruntime-web/dist/ort.wasm.min.js',
-  'node_modules/onnxruntime-web/dist/ort.wasm.min.js.map',
-
-  // CRITICAL: ALL .mjs files (for ESM relative imports to work)
-  'node_modules/onnxruntime-web/dist/ort.wasm.min.mjs',
-  'node_modules/onnxruntime-web/dist/ort.wasm.min.mjs.map',
-  'node_modules/onnxruntime-web/dist/ort.wasm.mjs',
-  'node_modules/onnxruntime-web/dist/ort.all.min.mjs',
-  'node_modules/onnxruntime-web/dist/ort.all.min.mjs.map',
-  'node_modules/onnxruntime-web/dist/ort.all.mjs',
-
-  // CRITICAL: ALL WASM files that .mjs files import
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd.wasm',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd.mjs',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd.jsep.wasm',
-  'node_modules/onnxruntime-web/dist/ort-wasm-simd.jsep.mjs',
-  'node_modules/onnxruntime-web/dist/ort-wasm.wasm',
-  'node_modules/onnxruntime-web/dist/ort-wasm.mjs',
-  'node_modules/onnxruntime-web/dist/ort-wasm.jsep.wasm',
-  'node_modules/onnxruntime-web/dist/ort-wasm.jsep.mjs',
-];
-
-// Piper WASM files to copy to lib/piper-wasm/
-const PIPER_FILES = [
-  'node_modules/@diffusionstudio/piper-wasm/build/piper_phonemize.data',
-  'node_modules/@diffusionstudio/piper-wasm/build/piper_phonemize.wasm',
-  'node_modules/@diffusionstudio/piper-wasm/build/piper_phonemize.js'
-];
-
-/**
- * Copy file with directory creation
- */
-async function copyFile(src, dest) {
-  try {
-    await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.copyFile(src, dest);
-    console.log(`  ✅ Copied: ${path.relative(__dirname, src)} → ${path.relative(__dirname, dest)}`);
-  } catch (error) {
-    console.error(`  ❌ Failed to copy ${src}:`, error.message);
-    throw error;
-  }
+function isRuntimeFile(relativePath) {
+  const normalized = relativePath.split(path.sep).join('/');
+  return !buildOnlyFiles.has(normalized) &&
+    !normalized.startsWith('scripts/test/') &&
+    !/\.(?:backup|bak)(?:\.|$)/i.test(normalized) &&
+    !normalized.endsWith('.map');
 }
 
-/**
- * Copy directory recursively
- */
-async function copyDir(src, dest, level = 0) {
-  const indent = '  '.repeat(level);
-
-  try {
-    await fs.mkdir(dest, { recursive: true });
-    const entries = await fs.readdir(src, { withFileTypes: true });
-
-    for (const entry of entries) {
-      const srcPath = path.join(src, entry.name);
-      const destPath = path.join(dest, entry.name);
-
-      // Skip excluded files
-      if (EXCLUDE.includes(entry.name)) {
-        console.log(`${indent}⏭️  Skipped: ${entry.name}`);
-        continue;
-      }
-
-      if (entry.isDirectory()) {
-        console.log(`${indent}📁 ${entry.name}/`);
-        await copyDir(srcPath, destPath, level + 1);
-      } else {
-        await fs.copyFile(srcPath, destPath);
-        console.log(`${indent}  ✅ ${entry.name}`);
-      }
+async function copyDirectory(source, destination, relativePath) {
+  await fs.mkdir(destination, { recursive: true });
+  for (const entry of await fs.readdir(source, { withFileTypes: true })) {
+    const childRelative = path.join(relativePath, entry.name);
+    if (!isRuntimeFile(childRelative)) continue;
+    if (entry.isSymbolicLink()) throw new Error('Symbolic links cannot be packaged: ' + childRelative);
+    const childSource = path.join(source, entry.name);
+    const childDestination = path.join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirectory(childSource, childDestination, childRelative);
+    } else if (entry.isFile()) {
+      await fs.copyFile(childSource, childDestination);
     }
-  } catch (error) {
-    console.error(`${indent}❌ Failed to copy directory ${src}:`, error.message);
-    throw error;
   }
 }
 
-/**
- * Create ZIP archive using PowerShell
- */
-async function createZip(sourceDir, outputFile) {
-  const { exec } = await import('child_process');
-  const { promisify } = await import('util');
-  const execAsync = promisify(exec);
+async function buildBundles() {
+  for (const script of ['build-extraction.js', 'build-offscreen.js', 'build-tts-worker.js']) {
+    console.log('Building ' + script);
+    const { stdout, stderr } = await execFileAsync(process.execPath, [path.join(root, script)], {
+      cwd: root, maxBuffer: 10 * 1024 * 1024
+    });
+    if (stdout.trim()) console.log(stdout.trim());
+    if (stderr.trim()) console.error(stderr.trim());
+  }
+}
 
-  const sourcePath = path.resolve(__dirname, sourceDir);
-  const outputPath = path.resolve(__dirname, outputFile);
+async function copyRuntimeLibraries(destination) {
+  const onnxDirectory = path.join(root, 'node_modules', 'onnxruntime-web', 'dist');
+  for (const entry of await fs.readdir(onnxDirectory, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith('.mjs') && !entry.name.endsWith('.wasm') &&
+        !['ort.all.min.js', 'ort.wasm.min.js'].includes(entry.name)) continue;
+    await fs.copyFile(path.join(onnxDirectory, entry.name), path.join(destination, 'lib', entry.name));
+  }
+  const piperDestination = path.join(destination, 'lib', 'piper-wasm');
+  await fs.mkdir(piperDestination, { recursive: true });
+  for (const filename of ['piper_phonemize.data', 'piper_phonemize.wasm', 'piper_phonemize.js']) {
+    await fs.copyFile(
+      path.join(root, 'node_modules', '@diffusionstudio', 'piper-wasm', 'build', filename),
+      path.join(piperDestination, filename)
+    );
+  }
+}
 
-  // Remove old archive if exists
+async function createZip(sourceDirectory, outputPath) {
   try {
     await fs.unlink(outputPath);
-    console.log('🗑️  Removed old archive');
   } catch (error) {
-    // File doesn't exist, ignore
+    if (error.code !== 'ENOENT') throw error;
   }
-
-  // Create ZIP using PowerShell with Force flag
-  const command = `powershell -command "Compress-Archive -Path '${sourcePath}\\*' -DestinationPath '${outputPath}' -CompressionLevel Optimal -Force"`;
-
-  console.log('📦 Creating ZIP archive...');
-  try {
-    const result = await execAsync(command);
-    if (result.stdout) console.log(result.stdout);
-    if (result.stderr) console.error(result.stderr);
-    console.log('✅ ZIP archive created successfully');
-  } catch (error) {
-    console.error('❌ Failed to create ZIP:', error.message);
-    if (error.stdout) console.log('stdout:', error.stdout);
-    if (error.stderr) console.error('stderr:', error.stderr);
-    throw error;
-  }
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    'Add-Type -AssemblyName System.IO.Compression',
+    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+    '$source = $env:CLIPAIBLE_PACKAGE_SOURCE',
+    '$archive = [IO.Compression.ZipFile]::Open($env:CLIPAIBLE_PACKAGE_OUTPUT, [IO.Compression.ZipArchiveMode]::Create)',
+    'try {',
+    '  Get-ChildItem -LiteralPath $source -File -Recurse | Sort-Object FullName | ForEach-Object {',
+    "    $name = $_.FullName.Substring($source.Length + 1).Replace('\\', '/')",
+    '    $entry = $archive.CreateEntry($name, [IO.Compression.CompressionLevel]::Optimal)',
+    '    $entry.LastWriteTime = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)',
+    '    $inputStream = [IO.File]::OpenRead($_.FullName)',
+    '    $outputStream = $entry.Open()',
+    '    try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }',
+    '  }',
+    '} finally { $archive.Dispose() }'
+  ].join('\n');
+  await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+    env: { ...process.env, CLIPAIBLE_PACKAGE_SOURCE: sourceDirectory, CLIPAIBLE_PACKAGE_OUTPUT: outputPath }
+  });
 }
 
-/**
- * Get file size in MB
- */
-async function getFileSize(filePath) {
-  try {
-    const stats = await fs.stat(filePath);
-    return (stats.size / 1024 / 1024).toFixed(2);
-  } catch (error) {
-    return 'N/A';
-  }
-}
-
-/**
- * Build all bundles before creating archive
- * CRITICAL: Always rebuild bundles to ensure latest code is included
- */
-async function buildAllBundles() {
-  const { exec } = await import('child_process');
-  const { promisify } = await import('util');
-  const execAsync = promisify(exec);
-
-  console.log('🔨 Building all bundles...\n');
-
-  // List of build scripts to run
-  const buildScripts = [
-    { name: 'TTS Worker', script: 'build-tts-worker.js', critical: true },
-    { name: 'Offscreen', script: 'build-offscreen.js', critical: true },
-    { name: 'Extraction', script: 'build-extraction.js', critical: false }
-  ];
-
-  for (const { name, script, critical } of buildScripts) {
-    const scriptPath = path.join(__dirname, script);
-
-    // Check if script exists
-    try {
-      await fs.access(scriptPath);
-    } catch (error) {
-      if (critical) {
-        console.log(`  ❌ CRITICAL: ${script} not found!`);
-        throw new Error(`Critical build script ${script} not found`);
-      } else {
-        console.log(`  ⏭️  Skipped: ${script} (not found, non-critical)\n`);
-        continue;
-      }
-    }
-
-    console.log(`  🔨 Building ${name}...`);
-    try {
-      const { stdout, stderr } = await execAsync(`node "${scriptPath}"`, {
-        cwd: __dirname,
-        maxBuffer: 10 * 1024 * 1024 // 10MB buffer for large outputs
-      });
-
-      if (stdout) {
-        // Only show last few lines of output to avoid clutter
-        const lines = stdout.trim().split('\n');
-        const lastLines = lines.slice(-3).join('\n');
-        console.log(`     ${lastLines}`);
-      }
-      if (stderr && stderr.trim()) {
-        console.error(`     stderr: ${stderr.trim()}`);
-      }
-
-      console.log(`  ✅ ${name} built successfully\n`);
-    } catch (error) {
-      console.error(`  ❌ Failed to build ${name}:`);
-      console.error(`     ${error.message}`);
-      if (error.stdout) console.log(`     stdout: ${error.stdout}`);
-      if (error.stderr) console.error(`     stderr: ${error.stderr}`);
-
-      if (critical) {
-        throw new Error(`Critical build failed: ${name}`);
-      } else {
-        console.log(`     ⚠️  Non-critical build failed, continuing...\n`);
-      }
-    }
-  }
-
-  console.log('✅ All bundles built successfully\n');
-}
-
-/**
- * Patch manifest.json to remove node_modules references from web_accessible_resources
- * In production, all files are in lib/, not node_modules/
- */
-async function patchManifest(tempPath) {
-  console.log('🔧 Patching manifest.json...');
-
-  const manifestPath = path.join(tempPath, 'manifest.json');
-
-  try {
-    // Read manifest.json
-    const manifestContent = await fs.readFile(manifestPath, 'utf-8');
-    const manifest = JSON.parse(manifestContent);
-
-    // Find web_accessible_resources
-    if (manifest.web_accessible_resources && Array.isArray(manifest.web_accessible_resources)) {
-      for (const resourceGroup of manifest.web_accessible_resources) {
-        if (resourceGroup.resources && Array.isArray(resourceGroup.resources)) {
-          const originalCount = resourceGroup.resources.length;
-
-          // Filter out all node_modules/* entries
-          resourceGroup.resources = resourceGroup.resources.filter(resource => {
-            const hasNodeModules = resource.includes('node_modules');
-            if (hasNodeModules) {
-              console.log(`  🗑️  Removed: ${resource}`);
-            }
-            return !hasNodeModules;
-          });
-
-          const removedCount = originalCount - resourceGroup.resources.length;
-          console.log(`  ✅ Removed ${removedCount} node_modules references`);
-          console.log(`  ✅ Kept ${resourceGroup.resources.length} production resources`);
-        }
-      }
-    }
-
-    // Write patched manifest.json back
-    await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
-    console.log('✅ manifest.json patched successfully\n');
-
-  } catch (error) {
-    console.error('❌ Failed to patch manifest.json:', error.message);
-    throw error;
-  }
-}
-
-/**
- * Main function
- */
 async function createArchive() {
-  console.log('🚀 Creating production archive for ClipAIble 3.3.4\n');
-
-  const tempPath = path.join(__dirname, TEMP_DIR);
-
+  const manifest = JSON.parse(await fs.readFile(path.join(root, 'manifest.json'), 'utf8'));
+  const outputPath = path.resolve(root, process.argv[2] || 'clipaible-' + manifest.version + '-production.zip');
+  if (path.extname(outputPath).toLowerCase() !== '.zip') throw new Error('Output must be a ZIP file');
+  await buildBundles();
+  const temporaryRoot = path.join(root, 'temporary_files');
+  await fs.mkdir(temporaryRoot, { recursive: true });
+  const stagingDirectory = await fs.mkdtemp(path.join(temporaryRoot, 'package-'));
   try {
-    // 0. Build all bundles FIRST to ensure latest code
-    await buildAllBundles();
-
-    // 1. Clean up temp directory
-    console.log('🧹 Cleaning up temp directory...');
-    try {
-      await fs.rm(tempPath, { recursive: true, force: true });
-    } catch (error) {
-      // Ignore if doesn't exist
+    for (const filename of runtimeFiles) {
+      await fs.mkdir(path.dirname(path.join(stagingDirectory, filename)), { recursive: true });
+      await fs.copyFile(path.join(root, filename), path.join(stagingDirectory, filename));
     }
-    await fs.mkdir(tempPath, { recursive: true });
-    console.log('✅ Temp directory created\n');
-
-    // 2. Copy main files and folders
-    console.log('📋 Copying main files and folders...');
-    for (const item of INCLUDE) {
-      const srcPath = path.join(__dirname, item);
-      const destPath = path.join(tempPath, item);
-
-      try {
-        const stats = await fs.stat(srcPath);
-
-        if (stats.isDirectory()) {
-          console.log(`📁 Copying directory: ${item}/`);
-          await copyDir(srcPath, destPath, 1);
-        } else {
-          console.log(`📄 Copying file: ${item}`);
-          await copyFile(srcPath, destPath);
-        }
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          console.log(`⚠️  Skipped (not found): ${item}`);
-        } else {
-          throw error;
-        }
+    for (const directory of runtimeDirectories) {
+      await copyDirectory(path.join(root, directory), path.join(stagingDirectory, directory), directory);
+    }
+    for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+      if (entry.isFile() && /(?:^|[-_.])(?:licenses?|notices?)(?:[-_.]|$)/i.test(entry.name) &&
+          !runtimeFiles.includes(entry.name)) {
+        await fs.copyFile(path.join(root, entry.name), path.join(stagingDirectory, entry.name));
       }
     }
-    console.log('✅ Main files copied\n');
-
-    // 3. Copy ONNX Runtime files to lib/
-    console.log('📦 Copying ONNX Runtime files to lib/...');
-    for (const file of ONNX_FILES) {
-      const srcPath = path.join(__dirname, file);
-      const fileName = path.basename(file);
-      const destPath = path.join(tempPath, 'lib', fileName);
-
-      try {
-        await copyFile(srcPath, destPath);
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          console.log(`  ⚠️  Skipped (not found): ${fileName}`);
-        } else {
-          throw error;
-        }
-      }
+    await fs.mkdir(path.join(stagingDirectory, 'dist'), { recursive: true });
+    for (const filename of ['offscreen-bundle.js', 'tts-worker-bundle.js']) {
+      await fs.copyFile(path.join(root, 'dist', filename), path.join(stagingDirectory, 'dist', filename));
     }
-    console.log('✅ ONNX Runtime files copied\n');
-
-    // 4. Copy Piper WASM files to lib/piper-wasm/
-    console.log('📦 Copying Piper WASM files to lib/piper-wasm/...');
-    for (const file of PIPER_FILES) {
-      const srcPath = path.join(__dirname, file);
-      const fileName = path.basename(file);
-      const destPath = path.join(tempPath, 'lib', 'piper-wasm', fileName);
-
-      try {
-        await copyFile(srcPath, destPath);
-      } catch (error) {
-        if (error.code === 'ENOENT') {
-          console.log(`  ⚠️  Skipped (not found): ${fileName}`);
-        } else {
-          throw error;
-        }
-      }
+    await fs.copyFile(
+      path.join(root, 'dist', 'extraction-automatic-generated.js'),
+      path.join(stagingDirectory, 'scripts', 'extraction', 'automatic.js')
+    );
+    await copyRuntimeLibraries(stagingDirectory);
+    for (const group of manifest.web_accessible_resources || []) {
+      group.resources = group.resources.filter(resource => !resource.includes('node_modules') && !resource.endsWith('.map'));
     }
-    console.log('✅ Piper WASM files copied\n');
-
-    // 5. Patch manifest.json to remove node_modules references
-    await patchManifest(tempPath);
-
-    // 6. Verify critical files
-    console.log('🔍 Verifying critical files...');
-    const criticalFiles = [
-      'manifest.json',
-      'dist/tts-worker-bundle.js',
-      'lib/ort.all.min.js',
-      'lib/piper-wasm/piper_phonemize.data',
-      'lib/piper-wasm/piper_phonemize.wasm'
-    ];
-
-    let allCriticalFilesExist = true;
-    for (const file of criticalFiles) {
-      const filePath = path.join(tempPath, file);
-      try {
-        await fs.access(filePath);
-        const size = await getFileSize(filePath);
-        console.log(`  ✅ ${file} (${size} MB)`);
-      } catch (error) {
-        console.log(`  ❌ MISSING: ${file}`);
-        allCriticalFilesExist = false;
-      }
-    }
-
-    if (!allCriticalFilesExist) {
-      throw new Error('Some critical files are missing!');
-    }
-    console.log('✅ All critical files verified\n');
-
-    // 7. Create ZIP archive
-    await createZip(TEMP_DIR, ARCHIVE_NAME);
-
-    // 8. Get archive size
-    const archiveSize = await getFileSize(path.join(__dirname, ARCHIVE_NAME));
-    console.log(`\n📊 Archive size: ${archiveSize} MB`);
-
-    // 9. Clean up temp directory
-    console.log('\n🧹 Cleaning up temp directory...');
-    await fs.rm(tempPath, { recursive: true, force: true });
-    console.log('✅ Temp directory removed\n');
-
-    // 10. Success
-    console.log('✅ ✅ ✅ Production archive created successfully! ✅ ✅ ✅\n');
-    console.log(`📦 Archive: ${ARCHIVE_NAME}`);
-    console.log(`📊 Size: ${archiveSize} MB`);
-    console.log(`\n🎉 Ready to upload to Chrome Web Store!`);
-
-  } catch (error) {
-    console.error('\n❌ Failed to create archive:', error);
-    console.error('Stack:', error.stack);
-    process.exit(1);
+    await fs.writeFile(path.join(stagingDirectory, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+    for (const filename of [
+      'manifest.json', 'scripts/background.js', 'popup/popup.html', 'print/print.html',
+      'dist/offscreen-bundle.js', 'dist/tts-worker-bundle.js', 'lib/ort.all.min.js',
+      'lib/piper-wasm/piper_phonemize.data', 'lib/piper-wasm/piper_phonemize.wasm'
+    ]) await fs.access(path.join(stagingDirectory, filename));
+    await createZip(stagingDirectory, outputPath);
+    console.log('Archive: ' + outputPath);
+    console.log('Size: ' + (await fs.stat(outputPath)).size + ' bytes');
+  } finally {
+    if (!stagingDirectory.startsWith(temporaryRoot + path.sep)) throw new Error('Invalid staging directory');
+    await fs.rm(stagingDirectory, { recursive: true });
   }
 }
 
-// Run
-createArchive();
+createArchive().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});

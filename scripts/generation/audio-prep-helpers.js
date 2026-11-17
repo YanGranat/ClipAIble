@@ -149,7 +149,8 @@ export async function processChunkForAudio(
   model,
   language,
   prepareChunkForAudio,
-  basicCleanup
+  basicCleanup,
+  requestOptions = {}
 ) {
   const chunkStartTime = Date.now();
 
@@ -168,7 +169,8 @@ export async function processChunkForAudio(
       totalChunks,
       apiKey,
       model,
-      language
+      language,
+      requestOptions
     );
   } else {
     log('=== prepareContentForAudio: Using basic cleanup (offline TTS) ===', {

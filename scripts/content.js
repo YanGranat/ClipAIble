@@ -4,6 +4,43 @@
 
 (function() {
   'use strict';
+
+  const subtitleRequests = new Map();
+  const isSubtitleRequestId = id => typeof id === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id);
+  const hasSubtitleRequest = id => isSubtitleRequestId(id) && subtitleRequests.has(id);
+
+  function clearSubtitleRequest(requestId) {
+    if (!hasSubtitleRequest(requestId)) return;
+    clearTimeout(subtitleRequests.get(requestId));
+    subtitleRequests.delete(requestId);
+    const element = document.getElementById(`ClipAIblePendingSubtitles-${requestId}`);
+    if (element) {
+      try {
+        const data = JSON.parse(element.getAttribute('data-subtitles') || 'null');
+        if (data?.requestId === requestId) element.remove();
+      } catch {}
+    }
+    try { chrome.storage.local.remove(`pendingSubtitles-${requestId}`).catch(() => {}); } catch {}
+  }
+
+  function registerSubtitleRequest(requestId) {
+    if (!isSubtitleRequestId(requestId) || subtitleRequests.has(requestId)) return;
+    subtitleRequests.set(requestId, setTimeout(() => clearSubtitleRequest(requestId), 60000));
+  }
+
+  function saveSubtitlesToStorage(subtitleData) {
+    if (!hasSubtitleRequest(subtitleData?.requestId)) return Promise.resolve();
+    const requestId = subtitleData.requestId;
+    const storageKey = `pendingSubtitles-${requestId}`;
+    return chrome.storage.local.set({ [storageKey]: {
+      requestId: subtitleData.requestId,
+      subtitles: subtitleData.subtitles,
+      metadata: subtitleData.metadata,
+      timestamp: Date.now()
+    } }).then(() => {
+      if (!hasSubtitleRequest(requestId)) return chrome.storage.local.remove(storageKey);
+    });
+  }
   
   // CRITICAL: Register listeners IMMEDIATELY before everything else
   // This ensures listeners are ready to receive messages
@@ -62,6 +99,7 @@
   
   // Helper function to save subtitles to DOM as fallback when chrome.storage is unavailable
   function saveToDOMFallback(subtitleData) {
+    if (!hasSubtitleRequest(subtitleData?.requestId)) return;
     try {
       // Check that body exists
       if (!document.body) {
@@ -77,7 +115,8 @@
       }
       
       // Remove old element if exists
-      const oldElement = document.getElementById('ClipAIblePendingSubtitles');
+      const elementId = `ClipAIblePendingSubtitles-${subtitleData.requestId}`;
+      const oldElement = document.getElementById(elementId);
       if (oldElement) {
         oldElement.remove();
       }
@@ -85,10 +124,11 @@
       // Save data to a special element on the page
       // Background script can read them via executeScript
       const dataElement = document.createElement('div');
-      dataElement.id = 'ClipAIblePendingSubtitles';
+      dataElement.id = elementId;
       dataElement.style.display = 'none';
       
       const dataToSave = {
+        requestId: subtitleData.requestId,
         subtitles: subtitleData.subtitles,
         metadata: subtitleData.metadata,
         timestamp: Date.now(),
@@ -101,7 +141,7 @@
       document.body.insertBefore(dataElement, document.body.firstChild);
       
       // Check that element is actually in DOM
-      const verification = document.getElementById('ClipAIblePendingSubtitles');
+      const verification = document.getElementById(elementId);
       if (!verification) {
         sendErrorToBackground('DOM element NOT found after adding', null, {
           action: 'saveToDOMFallback'
@@ -269,11 +309,14 @@
     }
     
     if (event.data && event.data.type === 'ClipAIbleYouTubeSubtitles') {
+      if (!hasSubtitleRequest(event.data.requestId) ||
+          (event.data.result && event.data.result.requestId !== event.data.requestId)) return;
       try {
         // CRITICAL: Check context BEFORE sending message
         if (!isExtensionContextValid()) {
           if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
             const subtitleData = {
+              requestId: event.data.requestId,
               subtitles: event.data.result.subtitles,
               metadata: event.data.result.metadata || {}
             };
@@ -286,6 +329,7 @@
         let subtitleData = null;
         if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
           subtitleData = {
+            requestId: event.data.requestId,
             subtitles: event.data.result.subtitles,
             metadata: event.data.result.metadata || {}
           };
@@ -299,14 +343,7 @@
             // Try to use chrome.storage
             try {
               if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                chrome.storage.local.set({
-                  pendingSubtitles: {
-                    subtitles: subtitleData.subtitles,
-                    metadata: subtitleData.metadata,
-                    timestamp: Date.now(),
-                    source: 'content_script_timeout_fallback'
-                  }
-                }).catch(storageError => {
+                saveSubtitlesToStorage(subtitleData).catch(storageError => {
                   sendErrorToBackground('Failed to save to storage (timeout fallback)', storageError, {
                     action: 'saveSubtitlesToStorage',
                     context: 'timeoutFallback'
@@ -340,13 +377,7 @@
               storageSaved = true;
               try {
                 if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                  chrome.storage.local.set({
-                    pendingSubtitles: {
-                      subtitles: subtitleData.subtitles,
-                      metadata: subtitleData.metadata,
-                      timestamp: Date.now()
-                    }
-                  }).catch(storageError => {
+                  saveSubtitlesToStorage(subtitleData).catch(storageError => {
                     sendErrorToBackground('Failed to save to storage', storageError, {
                       action: 'saveSubtitlesToStorage'
                     });
@@ -374,6 +405,7 @@
         // Try to save to storage if we have subtitle data
         if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
           const subtitleData = {
+            requestId: event.data.requestId,
             subtitles: event.data.result.subtitles,
             metadata: event.data.result.metadata || {}
           };
@@ -389,13 +421,7 @@
             // Other errors - try storage, then DOM fallback
             try {
               if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                chrome.storage.local.set({
-                  pendingSubtitles: {
-                    subtitles: subtitleData.subtitles,
-                    metadata: subtitleData.metadata,
-                    timestamp: Date.now()
-                  }
-                }).catch(storageError => {
+                saveSubtitlesToStorage(subtitleData).catch(storageError => {
                   sendErrorToBackground('Failed to save to storage (timeout fallback)', storageError, {
                     action: 'saveSubtitlesToStorage',
                     context: 'timeoutFallback'
@@ -510,7 +536,14 @@
     
     // Handle ping request to verify content script is loaded
     if (request.action === 'ping') {
+      registerSubtitleRequest(request.subtitleRequestId);
       sendResponse({ success: true, loaded: true, timestamp: new Date().toISOString() });
+      return true;
+    }
+
+    if (request.action === 'clearSubtitleRequest') {
+      clearSubtitleRequest(request.requestId);
+      sendResponse({ success: true });
       return true;
     }
     
@@ -532,11 +565,14 @@
     if (!event.detail || event.detail.type !== 'ClipAIbleYouTubeSubtitles') {
       return;
     }
+    if (!hasSubtitleRequest(event.detail.requestId) ||
+        (event.detail.result && event.detail.result.requestId !== event.detail.requestId)) return;
     
     // Save subtitle data for storage fallback if needed
     let subtitleData = null;
     if (event.detail.result && event.detail.result.subtitles && event.detail.result.subtitles.length > 0) {
       subtitleData = {
+        requestId: event.detail.requestId,
         subtitles: event.detail.result.subtitles,
         metadata: event.detail.result.metadata || {}
       };
@@ -550,7 +586,7 @@
     if (subtitleData && subtitleData.subtitles.length > 0) {
       const firstText = subtitleData.subtitles[0]?.text?.substring(0, 20) || '';
       const lastText = subtitleData.subtitles[subtitleData.subtitles.length - 1]?.text?.substring(0, 20) || '';
-      currentHash = `${subtitleData.subtitles.length}_${firstText}_${lastText}`;
+      currentHash = `${subtitleData.requestId}_${subtitleData.subtitles.length}_${firstText}_${lastText}`;
     }
     
     // Only check for duplicates if we have a hash AND it's very recent (2 seconds)
@@ -588,13 +624,7 @@
           // Try to use chrome.storage
           try {
             if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-              chrome.storage.local.set({
-                pendingSubtitles: {
-                  subtitles: subtitleData.subtitles,
-                  metadata: subtitleData.metadata,
-                  timestamp: Date.now()
-                }
-              }).catch(storageError => {
+              saveSubtitlesToStorage(subtitleData).catch(storageError => {
                 sendErrorToBackground('Failed to save to storage (CustomEvent timeout)', storageError, {
                   action: 'saveSubtitlesToStorage',
                   context: 'customEventTimeout'
@@ -638,13 +668,7 @@
                 storageSaved = true;
                 try {
                   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                    chrome.storage.local.set({
-                      pendingSubtitles: {
-                        subtitles: subtitleData.subtitles,
-                        metadata: subtitleData.metadata,
-                        timestamp: Date.now()
-                      }
-                    }).catch(storageError => {
+                    saveSubtitlesToStorage(subtitleData).catch(storageError => {
                       sendErrorToBackground('Failed to save to storage (CustomEvent sendMessage)', storageError, {
                         action: 'saveSubtitlesToStorage',
                         context: 'customEventSendMessage'
@@ -693,13 +717,7 @@
             storageSaved = true;
             try {
               if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                chrome.storage.local.set({
-                  pendingSubtitles: {
-                    subtitles: subtitleData.subtitles,
-                    metadata: subtitleData.metadata,
-                    timestamp: Date.now()
-                  }
-                }).catch(storageError => {
+                saveSubtitlesToStorage(subtitleData).catch(storageError => {
                   sendErrorToBackground('Failed to save to storage (timeout fallback)', storageError, {
                     action: 'saveSubtitlesToStorage',
                     context: 'timeoutFallback'
@@ -739,13 +757,7 @@
           storageSaved = true;
           try {
             if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-              chrome.storage.local.set({
-                pendingSubtitles: {
-                  subtitles: subtitleData.subtitles,
-                  metadata: subtitleData.metadata,
-                  timestamp: Date.now()
-                }
-              }).catch(storageError => {
+              saveSubtitlesToStorage(subtitleData).catch(storageError => {
                 sendErrorToBackground('Failed to save to storage (CustomEvent catch)', storageError, {
                   action: 'saveSubtitlesToStorage',
                   context: 'customEventCatch'
@@ -911,6 +923,7 @@
   // Cleanup function to remove all listeners
   function cleanupListeners() {
     try {
+      for (const requestId of [...subtitleRequests.keys()]) clearSubtitleRequest(requestId);
       // Remove window message listener
       if (messageListener) {
         window.removeEventListener('message', messageListener);

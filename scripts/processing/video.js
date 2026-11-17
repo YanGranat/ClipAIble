@@ -5,8 +5,8 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { tSync } from '../locales.js';
-import { checkCancellation, updateProgress, getUILanguageCached } from '../utils/pipeline-helpers.js';
-import { PROCESSING_STAGES, updateState } from '../state/processing.js';
+import { checkCancellation, updateProgress, getUILanguageCached, getAIRequestOptions } from '../utils/pipeline-helpers.js';
+import { PROCESSING_STAGES, getScopedUpdateState } from '../state/processing.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from '../extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from '../extraction/video-processor.js';
 import { detectSourceLanguage, detectContentLanguage } from '../translation/detection.js';
@@ -21,17 +21,18 @@ import { detectSourceLanguage, detectContentLanguage } from '../translation/dete
  * @throws {Error} If AI processing fails
  */
 export async function processVideoPage(data, videoInfo) {
+  const updateState = getScopedUpdateState(data.processingRunId);
   const { platform, videoId } = videoInfo;
   const { url, tabId, apiKey, model } = data;
   
   log(`🎥 Processing ${platform} video: ${videoId}`, { url });
   
   // Check if processing was cancelled before video processing
-  await checkCancellation('video processing');
+  await checkCancellation('video processing', data.processingRunId);
   
   log('📝 Extracting subtitles from video');
   // Stage 1: Extract subtitles (5-15%)
-  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingSubtitles', 5);
+  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingSubtitles', 5, { processingRunId: data.processingRunId });
 
   let subtitles, metadata;
   let detectedVideoLanguage = 'en'; // Default to English
@@ -113,7 +114,7 @@ export async function processVideoPage(data, videoInfo) {
       const textForDetection = `${videoMetadata.title}\n${videoMetadata.description || ''}`;
       const contentForAI = [{ type: 'text', text: textForDetection }];
 
-      detectedVideoLanguage = await detectContentLanguage(contentForAI, apiKey, model);
+      detectedVideoLanguage = await detectContentLanguage(contentForAI, apiKey, model, getAIRequestOptions(data));
       log('🌍 Video language detected via AI', {
         detectedVideoLanguage,
         title: videoMetadata.title,
@@ -129,6 +130,7 @@ export async function processVideoPage(data, videoInfo) {
     logWarn('Failed to detect video language via AI, using default', error);
   }
 
+  await checkCancellation('subtitle extraction', data.processingRunId);
   log('Extracting subtitles', { platform, tabId, targetLanguage: data.targetLanguage, detectedVideoLanguage });
   try {
     const subtitlesData = platform === 'youtube'
@@ -152,10 +154,10 @@ export async function processVideoPage(data, videoInfo) {
     throw new Error(errorMsg);
   }
   
-  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingSubtitles', 15);
+  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingSubtitles', 15, { processingRunId: data.processingRunId });
   
   // Check if processing was cancelled before subtitle processing
-  await checkCancellation('subtitle processing');
+  await checkCancellation('subtitle processing', data.processingRunId);
   
   // Stage 2: Process subtitles with AI (15-40%)
   let content;
@@ -169,7 +171,7 @@ export async function processVideoPage(data, videoInfo) {
     };
     
     log('🤖 Processing subtitles with AI');
-    content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback);
+    content = await processSubtitlesWithAI(subtitles, apiKey, model, progressCallback, data.processingRunId, getAIRequestOptions(data));
     log(`✅ Subtitles processed: ${content.length} content items created`);
   } catch (error) {
     logError('Failed to process subtitles', error);

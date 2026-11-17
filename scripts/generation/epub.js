@@ -7,7 +7,7 @@
 // @typedef {import('../types.js').ProcessingState} ProcessingState
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { stripHtml, markdownToHtml } from '../utils/html.js';
+import { stripHtml, markdownToHtml, sanitizeHtml, decodeHtmlEntities } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import JSZip from '../../lib/jszip-wrapper.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage } from '../utils/config.js';
@@ -16,26 +16,8 @@ import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
+import { filterFigureParagraphs } from './content.js';
 
-/**
- * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
- * This prevents duplicate caption text in EPUB.
- * 
- * @param {Array<import('../types.js').ContentItem>} content - Content array
- * @returns {Array<import('../types.js').ContentItem>} Filtered content array
- */
-function filterFigureParagraphs(content) {
-  if (!content || !Array.isArray(content)) return content;
-  
-  return content.filter((item, index) => {
-    if (item.type !== 'paragraph') return true;
-    const text = item.text || item.html || '';
-    if (!text.includes('<figure')) return true;
-    const nextItem = content[index + 1];
-    if (!nextItem || nextItem.type !== 'image') return true;
-    return false;
-  });
-}
 
 /**
  * Generate EPUB file from content
@@ -98,7 +80,7 @@ export async function generateEpub(data, updateState) {
   if (updateState) updateState({ status: 'Building EPUB structure...', progress: 82 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = filterFigureParagraphs(content);
+  const filteredContent = filterFigureParagraphs(content, sourceUrl);
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
@@ -228,7 +210,7 @@ export async function generateEpub(data, updateState) {
   const filename = `${safeFilename}.epub`;
   
   // Check if processing was cancelled before downloading
-  if (isCancelled()) {
+  if (isCancelled(data.processingRunId)) {
     log('Processing cancelled, skipping EPUB download');
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
@@ -244,7 +226,7 @@ export async function generateEpub(data, updateState) {
     const objectUrl = urlApi.createObjectURL(epubBlob);
     try {
       // Check again before actual download
-      if (isCancelled()) {
+      if (isCancelled(data.processingRunId)) {
         log('Processing cancelled, skipping EPUB download');
         throw new Error(tSync('statusCancelled', await getUILanguage()));
       }
@@ -273,7 +255,7 @@ export async function generateEpub(data, updateState) {
     });
 
     // Check again before actual download
-    if (isCancelled()) {
+    if (isCancelled(data.processingRunId)) {
       log('Processing cancelled, skipping EPUB download');
       throw new Error(tSync('statusCancelled', await getUILanguage()));
     }
@@ -335,8 +317,8 @@ function generateContentOpf(bookId, title, author, lang, pubDate, sourceUrl, gen
     <dc:identifier id="BookId">${bookId}</dc:identifier>
     <dc:title>${escapedTitle}</dc:title>
 ${author ? `    <dc:creator>${escapedAuthor}</dc:creator>` : ''}
-    <dc:language>${lang}</dc:language>
-    <dc:date>${pubDate}</dc:date>
+    <dc:language>${escapeXml(lang)}</dc:language>
+    <dc:date>${escapeXml(pubDate)}</dc:date>
     <dc:source>${escapedSource}</dc:source>
     <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}</meta>
   </metadata>
@@ -467,7 +449,7 @@ function generateNavXhtml(title, headings, generateToc, language = 'en') {
   const langAttr = langCode;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${langAttr}">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${escapeXml(langAttr)}">
 <head>
   <meta charset="UTF-8"/>
   <title>Navigation</title>
@@ -490,7 +472,7 @@ function generateTocNcx(bookId, title, headings, generateToc) {
     navPoints = headings.map((h, i) => `
     <navPoint id="navpoint-${i + 1}" playOrder="${i + 1}">
       <navLabel><text>${escapeXml(h.text)}</text></navLabel>
-      <content src="content.xhtml#${h.id}"/>
+      <content src="content.xhtml#${escapeXml(h.id)}"/>
     </navPoint>`).join('');
   } else {
     navPoints = `
@@ -559,7 +541,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   
   if (hasValidAuthor || pubDate) {
     headerHtml += '\n    <p class="meta">';
-    if (hasValidAuthor) headerHtml += `<span class="author">${escapeXml(escapedAuthor)}</span>`;
+    if (hasValidAuthor) headerHtml += `<span class="author">${escapedAuthor}</span>`;
     if (hasValidAuthor && pubDate) headerHtml += ' · ';
     if (pubDate) headerHtml += `<span class="date-label">${escapeXml(dateLabel)}:</span> <span class="date">${escapeXml(pubDate)}</span>`;
     headerHtml += '</p>';
@@ -595,7 +577,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
       headerHtml += `\n    <p class="source">${escapeXml(sourceLabel)}: ${escapeXml(displaySource)}</p>`;
     } else {
       // For non-local files, show "Source:" label with link
-      headerHtml += `\n    <p class="source"><a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a></p>`;
+      headerHtml += `\n    <p class="source">${sanitizeHtmlForXhtml(`<a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a>`, sourceUrl)}</p>`;
     }
   }
   
@@ -632,7 +614,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   // langCode already computed above, use it for xml:lang
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${langCode}">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="${escapeXml(langCode)}">
 <head>
   <meta charset="UTF-8"/>
   <title>${escapedTitle}</title>
@@ -660,7 +642,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       const text = item.text || '';
       // Prefer original item.id, then headings array, then fallback
       const id = item.id || headings[headingIndex]?.id || `heading-${headingIndex}`;
-      return `    <h${level} id="${id}">${sanitizeHtmlForXhtml(text, sourceUrl)}</h${level}>\n`;
+      return `    <h${level} id="${escapeXml(id)}">${sanitizeHtmlForXhtml(text, sourceUrl)}</h${level}>\n`;
     }
     
     case 'paragraph': {
@@ -735,7 +717,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       if (!src) return '';
 
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-      let figureHtml = `    <figure${idAttr}><img src="${src}" alt="${alt}"/>`;
+      let figureHtml = `    <figure${idAttr}><img src="${escapeXml(src)}" alt="${alt}"/>`;
       if (caption) {
         figureHtml += `<figcaption>${caption}</figcaption>`;
       }
@@ -862,6 +844,8 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '') {
     // Convert markdown to HTML first
     result = markdownToHtml(result);
   }
+
+  result = sanitizeHtml(result, sourceUrl);
   
   // Convert internal links to local anchors
   if (sourceUrl) {
@@ -890,14 +874,14 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '') {
       .replace(/&nbsp;/g, ' ') // Replace &nbsp; with space
       .trim();
     // Escape XML entities in link text
-    const escapedText = cleanText
+    const escapedText = decodeHtmlEntities(cleanText)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&apos;');
     // Return clean link tag with only href attribute
-    return `<a href="${escapeXml(href)}">${escapedText}</a>`;
+    return `<a href="${href}">${escapedText}</a>`;
   });
   
   // CRITICAL: Handle orphaned <a> tags without href (they should have been processed above, but handle edge cases)
@@ -938,7 +922,7 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '') {
         // This should not happen after link processing above, but handle it anyway
         const hrefMatch = match.match(/href\s*=\s*["']([^"']+)["']/i);
         if (hrefMatch) {
-          return `<a href="${escapeXml(hrefMatch[1])}">`;
+          return `<a href="${hrefMatch[1]}">`;
         }
         // CRITICAL: If no href, add href="#" to prevent unclosed tags
         return '<a href="#">';

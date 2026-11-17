@@ -146,7 +146,7 @@ import { initInitialization } from './background/initialization.js';
 log('[ClipAIble Background] Importing utils modules', { timestamp: Date.now() });
 import { handleError } from './utils/error-handler.js';
 import { clearDecryptedKeyCache } from './utils/encryption.js';
-import { restoreStateFromStorage } from './state/processing.js';
+import { restoreStateFromStorage, initPrintTabLifecycle } from './state/processing.js';
 import { runInitialization } from './initialization/index.js';
 
 log('[ClipAIble Background] Importing background modules', { timestamp: Date.now() });
@@ -213,6 +213,8 @@ import {
 log('[ClipAIble Background] Importing processing modes and message handlers', { timestamp: Date.now() });
 import { processWithoutAI, processWithExtractMode, processWithSelectorMode } from './processing/modes.js';
 import { routeMessage } from './message-handlers/index.js';
+import { isSummaryGenerationActive } from './message-handlers/summary.js';
+import { isKeyThesesGenerationActive } from './message-handlers/key-theses.js';
 
 log('[ClipAIble Background] All modules imported successfully', {
   timestamp: Date.now(),
@@ -258,7 +260,8 @@ const keepAliveModule = initKeepAlive({
   logWarn,
   CONFIG,
   getProcessingState,
-  saveStateToStorageImmediate
+  saveStateToStorageImmediate,
+  isIndependentGenerationActive: () => isSummaryGenerationActive() || isKeyThesesGenerationActive()
 });
 log('[ClipAIble Background] Keep-alive module initialized', {
   timestamp: Date.now(),
@@ -270,6 +273,7 @@ log('[ClipAIble Background] Keep-alive module initialized', {
 
 // Extract keep-alive functions for use in background.js and other modules
 const { startKeepAlive, stopKeepAlive, initKeepAliveListener } = keepAliveModule;
+initPrintTabLifecycle(stopKeepAlive);
 log('[ClipAIble Background] Keep-alive functions extracted', {
   timestamp: Date.now(),
   functions: ['startKeepAlive', 'stopKeepAlive', 'initKeepAliveListener']
@@ -295,7 +299,8 @@ log('[ClipAIble Background] Extension initialization module created', {
 
 // Initialize extension
 log('[ClipAIble Background] Calling initialization module (main extension init)', { timestamp: Date.now() });
-initializationModule();
+const initializationReady = initializationModule();
+initializationReady.catch((error) => logError('Background initialization failed', error));
 log('[ClipAIble Background] Extension initialization completed', { timestamp: Date.now() });
 
 // Initialize keep-alive listener
@@ -417,7 +422,10 @@ const contextMenuModule = initContextMenu({
 // Use setTimeout to ensure extractFromPageInlined is available
 setTimeout(() => {
   // Create wrapper for startArticleProcessing that includes extractFromPageInlined
-  const startArticleProcessingWrapper = (data) => startArticleProcessing(data, extractFromPageInlined);
+  const startArticleProcessingWrapper = async (data) => {
+    await initializationReady;
+    return startArticleProcessing(data, extractFromPageInlined);
+  };
   contextMenuModule.initContextMenuListeners(startArticleProcessingWrapper);
 }, 0);
 
@@ -461,7 +469,7 @@ try {
     
     // CRITICAL: Messages with target: 'offscreen' are for offscreen document
     // Service worker must NOT handle them - return false immediately to let them pass through
-    if (request.target === 'offscreen') {
+    if (request?.target === 'offscreen') {
       // ALWAYS log offscreen messages (even if frequent) to diagnose delivery issues
       log('[ClipAIble Background] Offscreen message detected, passing through', {
         type: request.type,
@@ -486,6 +494,7 @@ try {
     const startArticleProcessingWrapperForMessage = (data) => startArticleProcessing(data, extractFromPageInlined);
     
     const result = routeMessage(request, sender, sendResponse, {
+      initializationReady,
       startArticleProcessing: startArticleProcessingWrapperForMessage,
       processWithSelectorMode: processWithSelectorModeWrapper,
       processWithExtractMode,
@@ -533,6 +542,13 @@ try {
  * @returns {import('./types.js').InjectionResult} Extraction result
  */
 export function extractFromPageInlined(selectors, baseUrl) {
+  const expectedUrl = new URL(baseUrl);
+  const currentUrl = new URL(window.location.href);
+  expectedUrl.hash = '';
+  currentUrl.hash = '';
+  if (expectedUrl.href !== currentUrl.href) {
+    throw new Error('The page changed during processing. Open the intended page and try again.');
+  }
   
   /** @type {ContentItem[]} */
   const content = [];
@@ -547,6 +563,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
   const tocMapping = {};
   let footnotesHeaderAdded = false;
   const addedImageUrls = new Set();
+  const handledInlineFigureNodes = new WeakSet();
   let firstHeadingIndex = -1; // Track position of first heading for subtitle insertion
   let subtitleToInsert = null; // Store subtitle to insert after first heading
   
@@ -618,12 +635,12 @@ export function extractFromPageInlined(selectors, baseUrl) {
       const urlParam = urlObj.searchParams.get('url');
       if (urlParam) {
         // Include the 'url' parameter value in normalization for Vercel image URLs
-        return (urlObj.pathname + '?url=' + urlParam).toLowerCase();
+        return urlObj.origin + urlObj.pathname + '?url=' + encodeURIComponent(urlParam);
       }
       // For other URLs, include full pathname and search (query params) to distinguish different images
-      return (urlObj.pathname + urlObj.search).toLowerCase(); 
+      return urlObj.href;
     } catch { 
-      return url.toLowerCase(); 
+      return url;
     }
   }
   
@@ -1181,9 +1198,53 @@ export function extractFromPageInlined(selectors, baseUrl) {
     }
   }
 
+  function processInlineFigureContent(container) {
+    const figures = Array.from(container.querySelectorAll('figure'));
+    if (!figures.length || figures.some(figure => {
+      if (!figure.querySelector('img')) return true;
+      const remainder = figure.cloneNode(true);
+      remainder.querySelectorAll('img,picture,figcaption').forEach(node => node.remove());
+      return (remainder.textContent || '').trim() || remainder.querySelector('table,pre,code,ul,ol,blockquote');
+    })) return false;
+    const blocks = container.querySelectorAll('div,section,article,main,p,h1,h2,h3,h4,h5,h6,ul,ol,table,blockquote,pre');
+    if (Array.from(blocks).some(node => !node.closest('figure,picture'))) return false;
+
+    const prose = container.cloneNode(true);
+    prose.querySelectorAll('figure,picture,img').forEach(node => node.remove());
+    if (!getFormattedHtml(prose).trim() || !(prose.textContent || '').trim()) return false;
+
+    const media = Array.from(container.querySelectorAll('figure,picture,img')).filter(node => {
+      const ancestor = node.parentElement?.closest('figure,picture');
+      return !ancestor || !container.contains(ancestor);
+    });
+    const range = document.createRange();
+    range.setStart(container, 0);
+    const emitProse = () => {
+      const wrap = document.createElement('div');
+      wrap.appendChild(range.cloneContents());
+      const html = getFormattedHtml(wrap);
+      if (html.trim() && (wrap.textContent || '').trim()) {
+        content.push({ type: 'paragraph', text: html, id: getAnchorId(wrap) || undefined });
+      }
+    };
+    for (const node of media) {
+      range.setEndBefore(node);
+      emitProse();
+      if (!shouldExclude(node) && isElementVisible(node)) processElement(node);
+      range.setStartAfter(node);
+    }
+    range.setEnd(container, container.childNodes.length);
+    emitProse();
+    handledInlineFigureNodes.add(container);
+    container.querySelectorAll('*').forEach(node => handledInlineFigureNodes.add(node));
+    return true;
+  }
+
   function processContainerContent(el, logPrefix) {
+    if (handledInlineFigureNodes.has(el)) return;
     const candidateElements = Array.from(el.querySelectorAll(CONTENT_CANDIDATE_SELECTOR));
     const filteredCandidates = filterContentCandidates(candidateElements);
+    if (processInlineFigureContent(el)) return;
     const paragraphCount = filteredCandidates.filter(c => (c.tagName || '').toLowerCase() === 'p').length;
     const mixedBodyDivs = filteredCandidates.filter(isMixedBodyDiv);
 
@@ -1429,9 +1490,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
     let cleaned = articleTitle;
     cleaned = cleaned.replace(/budgettoken[_\s]*budget\d*/gi, '');
     cleaned = cleaned.replace(/budget\d+/gi, '');
-    cleaned = cleaned.replace(/token/gi, '');
-    cleaned = cleaned.replace(/budget\w+/gi, '');
-    cleaned = cleaned.replace(/#+/g, '');
+    cleaned = cleaned.replace(/^\s*#{1,6}\s+|\s+#{1,6}\s*$/g, '');
     // Remove Wikipedia-style edit links that might remain as text: [edit], [ред.], [редагувати], etc.
     cleaned = cleaned.replace(/\s*\[[^\]]{1,30}\s*\|\s*[^\]]{1,30}\]\s*$/g, '');
     cleaned = cleaned.replace(/\s*\[(edit|ред\.?|редагувати|править|editar|modifier|bearbeiten|編集|编辑|편집)[^\]]*\]\s*$/gi, '');
@@ -1479,6 +1538,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
   }
   
   function processElement(element) {
+    if (handledInlineFigureNodes.has(element)) return;
     const tagName = element.tagName.toLowerCase();
     const textLen = element.textContent ? element.textContent.trim().length : 0;
     const textPreview = element.textContent ? element.textContent.trim().substring(0, MAX_LOG_PREVIEW) : '';
@@ -1859,6 +1919,7 @@ export function extractFromPageInlined(selectors, baseUrl) {
         content.push({ type: 'heading', level: 2, text: 'Footnotes', id: 'footnotes-section' });
         footnotesHeaderAdded = true;
       }
+      if (processInlineFigureContent(element)) return;
       
       // CRITICAL: Check if this div is actually a paragraph (no direct block-level children)
       // If it has direct block-level children, it's a container - process children

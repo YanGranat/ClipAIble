@@ -2,7 +2,7 @@
 // PDF loader - handles PDF file loading and parsing
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { fetchPdfFile } from '../utils/pdf-fetcher.js';
 import { parsePdfDocument } from '../utils/pdf-parser.js';
 import { extractPdfMetadata } from '../utils/metadata-extractor.js';
@@ -51,6 +51,16 @@ export async function loadPdfDocument(url, pdfData = null) {
     metadata,
     outline
   };
+}
+
+/** Release a request-owned PDF document and its worker. */
+export async function destroyPdfDocument(pdf) {
+  if (!pdf) return;
+  try {
+    await pdf.destroy();
+  } catch (error) {
+    logWarn('[PDF] Failed to release document resources', { error: error.message });
+  }
 }
 
 

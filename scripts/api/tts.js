@@ -1,3 +1,5 @@
+import { isWavBuffer, pcmToWav } from './audio-format.js';
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
 // @ts-check
 // Text-to-Speech API module for ClipAIble extension
 // Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
@@ -6,7 +8,8 @@ import { log, logError, logDebug, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
-import { PROCESSING_STAGES } from '../state/processing.js';
+import { DEFAULT_GOOGLE_TTS_MODEL, getDefaultTtsVoice } from './tts-catalog.js';
+import { PROCESSING_STAGES, getScopedUpdateState } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { getUILanguageCached, checkCancellation } from '../utils/pipeline-helpers.js';
 
@@ -82,6 +85,7 @@ log('[ClipAIble TTS] TTS module initialized with all providers', {
  * });
  */
 export async function textToSpeech(text, apiKey, options = {}) {
+  await checkCancellation('TTS request', options.processingRunId);
   const entryTime = Date.now();
   const { provider = 'openai' } = options;
   
@@ -225,19 +229,17 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+        await checkCancellation('OpenAI TTS request', options.processingRunId);
         
         try {
-          const fetchResponse = await fetch('https://api.openai.com/v1/audio/speech', {
+          const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/audio/speech', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey}`
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
           
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
@@ -264,11 +266,6 @@ async function textToSpeechOpenAI(text, apiKey, options = {}) {
           return fetchResponse;
         } catch (e) {
           throw e;
-        } finally {
-          // CRITICAL: Always clear timeout in finally to prevent memory leaks
-          if (timeout) {
-            clearTimeout(timeout);
-          }
         }
       },
       {
@@ -369,7 +366,7 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
     voice = ELEVENLABS_CONFIG.DEFAULT_VOICE_ID,
     speed = ELEVENLABS_CONFIG.DEFAULT_SPEED,
     format = ELEVENLABS_CONFIG.DEFAULT_FORMAT,
-    elevenlabsFormat = ELEVENLABS_CONFIG.DEFAULT_FORMAT,
+    elevenlabsFormat = null,
     elevenlabsModel = ELEVENLABS_CONFIG.DEFAULT_MODEL,
     elevenlabsStability = 0.5,
     elevenlabsSimilarity = 0.75,
@@ -378,7 +375,7 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
   } = options;
   
   // Use elevenlabsFormat if provided, otherwise use format
-  const finalFormat = elevenlabsFormat || format;
+  const finalFormat = elevenlabsFormat || (format === 'mp3' ? ELEVENLABS_CONFIG.DEFAULT_FORMAT : format);
   
   return elevenlabsTTS(text, apiKey, { 
     voiceId: voice, 
@@ -388,7 +385,8 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
     stability: elevenlabsStability,
     similarityBoost: elevenlabsSimilarity,
     style: elevenlabsStyle,
-    useSpeakerBoost: elevenlabsSpeakerBoost
+    useSpeakerBoost: elevenlabsSpeakerBoost,
+    processingRunId: options.processingRunId
   });
 }
 
@@ -405,12 +403,12 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
  */
 async function textToSpeechQwen(text, apiKey, options = {}) {
   const {
-    voice = QWEN_CONFIG.DEFAULT_VOICE,
+    voice = getDefaultTtsVoice('qwen', options.qwenModel),
     speed = QWEN_CONFIG.DEFAULT_SPEED,
     language = null
   } = options;
   
-  return qwenTTS(text, apiKey, { voice, speed, language });
+  return qwenTTS(text, apiKey, { ...options, voice, speed, language, processingRunId: options.processingRunId });
 }
 
 /**
@@ -438,7 +436,8 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
     language,
     respeecherTemperature,
     respeecherRepetitionPenalty,
-    respeecherTopP
+    respeecherTopP,
+    processingRunId: options.processingRunId
   });
 }
 
@@ -458,7 +457,7 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
     voice = GOOGLE_TTS_CONFIG.DEFAULT_VOICE,
     prompt = null,
     googleTtsPrompt = null,
-    model = 'gemini-2.5-pro-preview-tts',
+    model = DEFAULT_GOOGLE_TTS_MODEL,
     googleTtsModel = null
   } = options;
   
@@ -470,7 +469,7 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
   
   // Google TTS always returns WAV format (24kHz, 16-bit, mono)
   // Speed is not supported by API
-  return googleTTS(text, apiKey, { voice, prompt: finalPrompt, model: finalModel });
+  return googleTTS(text, apiKey, { voice, prompt: finalPrompt, model: finalModel, processingRunId: options.processingRunId });
 }
 
 /**
@@ -560,7 +559,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
   // No need for tabId or window context
   const callStart = Date.now();
   try {
-    const result = await offlineTTS(text, { voice, speed, language });
+    const result = await offlineTTS(text, { voice, speed, language, processingRunId: options.processingRunId });
     const callDuration = Date.now() - callStart;
     
     log('[ClipAIble TTS] === offlineTTS call SUCCESS ===', {
@@ -598,224 +597,6 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
 }
 
 /**
- * Execute Piper TTS in page context via executeScript
- * Piper TTS requires window object, so we inject a script that loads and uses it
- * @param {string} text - Text to convert
- * @param {number} tabId - Tab ID
- * @param {Partial<import('../types.js').TTSOptions>} options - TTS options
- * @returns {Promise<ArrayBuffer>} Audio data as WAV ArrayBuffer
- * @throws {Error} If text is empty
- * @throws {Error} If tabId is missing
- * @throws {Error} If Piper TTS execution fails
- */
-async function executePiperTTSInPage(text, tabId, options = {}) {
-  log('Executing Piper TTS in page context', { tabId, textLength: text.length });
-  
-  // Get UI language once at the start of the function
-  const uiLang = await getUILanguage();
-  
-  // Check if tab is still available before executing
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    if (!tab || tab.discarded) {
-      throw new Error(tSync('errorTtsTabClosed', uiLang));
-    }
-  } catch (error) {
-    logError('Tab check failed before Piper TTS execution', error);
-    if (error.message.includes('No tab with id') || error.message.includes('tab was closed') || error.message.includes('Invalid tab ID')) {
-      throw new Error(tSync('errorTtsTabClosedDuring', uiLang));
-    }
-    throw new Error(tSync('errorTtsTabNotAvailable', uiLang).replace('{tabId}', String(tabId)).replace('{error}', error.message || 'unknown'));
-  }
-  
-  try {
-    // Inject the Piper TTS script file first
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        world: 'MAIN',
-        files: ['scripts/injected/piper-tts.js']
-      });
-      log('Piper TTS script file injected successfully', { tabId });
-    } catch (injectError) {
-      logError('Failed to inject Piper TTS script file', { error: injectError.message, tabId });
-      throw new Error(tSync('errorTtsInjectionFailed', uiLang).replace('{error}', injectError.message || 'unknown'));
-    }
-    
-    // Wait a bit for script to initialize
-    await new Promise(resolve => setTimeout(resolve, CONFIG.TTS_DELAY));
-    
-    // Verify function is available before calling
-    log('Checking if executePiperTTS is available', { tabId });
-    const checkResults = await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      world: 'MAIN',
-      func: () => {
-        return {
-          hasWindow: typeof window !== 'undefined',
-          hasFunction: typeof window?.executePiperTTS === 'function',
-          functionType: typeof window?.executePiperTTS
-        };
-      }
-    });
-    
-    log('Function availability check', { 
-      checkResult: checkResults?.[0]?.result,
-      hasWindow: checkResults?.[0]?.result?.hasWindow,
-      hasFunction: checkResults?.[0]?.result?.hasFunction
-    });
-    
-    if (!checkResults?.[0]?.result?.hasFunction) {
-      throw new Error(tSync('errorTtsFunctionNotAvailable', uiLang));
-    }
-    
-    // Get module URL from service worker (where chrome.runtime is available)
-    const moduleUrl = chrome.runtime.getURL('scripts/api/offline-tts-piper.js');
-    log('Piper TTS module URL', { moduleUrl });
-    
-    // Execute the function with arguments
-    log('Executing Piper TTS function', { tabId, textLength: text.length });
-    
-    // Use a timeout to prevent hanging
-    // Increased to 5 hours for very long operations (2-5 hour articles)
-    let timeoutId = null;
-    const timeoutPromise = new Promise((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error('Piper TTS execution timeout after 5 hours'));
-      }, CONFIG.MAX_OPERATION_TIMEOUT_MS); // 5 hours timeout for very long operations
-    });
-    
-    const scriptPromise = chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      world: 'MAIN',
-      func: (/** @type {string} */ text, /** @type {any} */ options, /** @type {string} */ moduleUrl) => {
-        try {
-          // DEBUG: This runs in MAIN world where modules are not available
-          // console.log is acceptable here as logging module cannot be imported
-          // Note: Always logs for debugging (no access to CONFIG in MAIN world)
-          console.log('[ClipAIble] executeScript func called', { textLength: text.length, hasWindow: typeof window !== 'undefined', moduleUrl });
-          
-          // Cannot use async/await or localization in MAIN world
-          // Use hardcoded English messages for errors in injected script
-          if (typeof window === 'undefined') {
-            throw new Error('Window is undefined');
-          }
-          if (typeof window.executePiperTTS !== 'function') {
-            const availableKeys = Object.keys(window).filter(k => k.includes('execute') || k.includes('TTS') || k.includes('Piper'));
-            throw new Error(`executePiperTTS function not found. Available keys: ${availableKeys.join(', ')}`);
-          }
-          
-          // Add moduleUrl to options
-          const optionsWithUrl = { ...options, moduleUrl };
-          
-          // DEBUG: This runs in MAIN world where modules are not available
-          console.log('[ClipAIble] Calling window.executePiperTTS...');
-          // Call the function and return the promise
-          // executeScript will wait for the promise to resolve
-          const promise = window.executePiperTTS(text, optionsWithUrl);
-          
-          if (!promise || typeof promise.then !== 'function') {
-            throw new Error(`executePiperTTS did not return a promise. Got: ${typeof promise}`);
-          }
-          
-          // DEBUG: This runs in MAIN world where modules are not available
-          console.log('[ClipAIble] Promise returned from executePiperTTS, waiting for resolution...');
-          return promise;
-        } catch (error) {
-          // DEBUG: This runs in MAIN world where modules are not available
-          // console.error is acceptable here as logging module cannot be imported
-          // Note: Always logs for debugging (no access to CONFIG in MAIN world)
-          console.error('[ClipAIble] Error in executeScript func', error);
-          console.error('[ClipAIble] Error stack', error.stack);
-          throw error;
-        }
-      },
-      args: [text, options, moduleUrl]
-    });
-    
-    let results;
-    try {
-      results = await Promise.race([scriptPromise, timeoutPromise]);
-      // Clear timeout if script completed successfully
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-    } catch (error) {
-      // Clear timeout on error too
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      throw error;
-    }
-    
-    log('Piper TTS execution completed', { 
-      hasResults: !!results, 
-      resultsLength: results?.length,
-      hasFirstResult: !!results?.[0],
-      hasError: !!results?.[0]?.error,
-      hasResult: !!results?.[0]?.result,
-      errorMessage: results?.[0]?.error?.message,
-      resultType: typeof results?.[0]?.result
-    });
-    
-    if (!results || !results[0]) {
-      // Check if tab was closed during execution
-      try {
-        await chrome.tabs.get(tabId);
-      } catch (tabError) {
-        throw new Error(tSync('errorTtsTabClosedDuringExecution', uiLang).replace('{tabId}', String(tabId)));
-      }
-      throw new Error(tSync('errorTtsNoResult', uiLang));
-    }
-    
-    if (results[0].error) {
-      logError('Piper TTS execution error', { 
-        error: results[0].error,
-        errorMessage: results[0].error?.message,
-        errorStack: results[0].error?.stack
-      });
-      throw new Error(tSync('errorTtsExecutionError', uiLang).replace('{error}', results[0].error.message || String(results[0].error)));
-    }
-    
-    if (!results[0].result) {
-      logError('Piper TTS execution returned no result', { 
-        result: results[0].result,
-        resultType: typeof results[0].result
-      });
-      throw new Error(tSync('errorTtsNoResult', uiLang));
-    }
-    
-    const wavBase64 = results[0].result;
-    
-    // Convert base64 back to ArrayBuffer
-    const binaryString = atob(wavBase64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    
-    return bytes.buffer;
-  } catch (error) {
-    logError('Failed to execute Piper TTS in page', { 
-      error: error.message, 
-      tabId,
-      textLength: text.length 
-    });
-    
-    // Check if error is due to tab being closed
-    if (error.message.includes('closed') || error.message.includes('discarded') || error.message.includes('not available')) {
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('errorTtsTabClosedDuring', uiLang));
-    }
-    
-    const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorTtsPiperFailed', uiLang).replace('{error}', error.message || 'unknown'));
-  }
-}
-
-/**
  * Convert multiple text chunks to speech and concatenate
  * 
  * Note: Requests are processed sequentially (one at a time) to avoid hitting
@@ -832,6 +613,8 @@ async function executePiperTTSInPage(text, tabId, options = {}) {
  * @throws {Error} If network error occurs
  */
 export async function chunksToSpeech(chunks, apiKey, options = {}, updateState = null) {
+  await checkCancellation('TTS conversion', options.processingRunId);
+  if (updateState) updateState = getScopedUpdateState(options.processingRunId, updateState);
   const entryTime = Date.now();
   log('[ClipAIble TTS] === chunksToSpeech ENTRY POINT ===', {
     timestamp: entryTime,
@@ -972,7 +755,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   try {
     for (let i = 0; i < expandedChunks.length; i++) {
       // Check if processing was cancelled before processing each chunk
-      await checkCancellation(`TTS chunk ${i + 1}/${expandedChunks.length}`);
+      await checkCancellation(`TTS chunk ${i + 1}/${expandedChunks.length}`, options.processingRunId);
       
       const chunk = expandedChunks[i];
       let chunkProcessed = false;
@@ -982,6 +765,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
       try {
         const audioBuffer = await callWithRetry(
           async () => {
+            await checkCancellation('TTS retry', options.processingRunId);
             // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
             return await textToSpeech(chunk.text, apiKey, options);
           },
@@ -997,11 +781,13 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
             }
           }
         );
+        await checkCancellation('TTS response', options.processingRunId);
         
         audioBuffers.push(audioBuffer);
         processedChunks = i + 1; // Update counter for progress tracker
         chunkProcessed = true;
       } catch (error) {
+        await checkCancellation('TTS failure', options.processingRunId);
         lastChunkError = error;
         
         const chunkError = {
@@ -1046,8 +832,9 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
         failedChunks: failedChunks.length,
         successRate: `${successRate}%`,
         failedChunkIndices: failedChunks.map(c => c.index),
-        note: 'Continuing with successfully processed chunks'
+        note: 'Incomplete audio will not be exported'
       });
+      throw new Error(`Audio generation failed for ${failedChunks.length} of ${expandedChunks.length} chunks. Please try again.`);
     }
   } finally {
     // Clean up progress tracker
@@ -1058,6 +845,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   }
   
   // Log all buffers before concatenation
+  await checkCancellation('audio assembly', options.processingRunId);
   log('=== CONCATENATION START ===', { buffersCount: audioBuffers.length });
   
   // Final progress update before concatenation
@@ -1072,20 +860,6 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   log('=== CONCATENATION COMPLETE ===', { chunkCount: audioBuffers.length, totalSize: concatenated.byteLength });
   
   return concatenated;
-}
-
-/**
- * Check if buffer is WAV format by examining header
- * Checks for "RIFF" at start and "WAVE" at offset 8
- * @param {ArrayBuffer} buffer - Audio buffer to check
- * @returns {boolean} True if buffer is WAV format, false otherwise
- */
-function isWavBuffer(buffer) {
-  if (!buffer || buffer.byteLength < 12) return false;
-  const view = new Uint8Array(buffer);
-  // Check for "RIFF" at start and "WAVE" at offset 8
-  return view[0] === 0x52 && view[1] === 0x49 && view[2] === 0x46 && view[3] === 0x46 &&
-         view[8] === 0x57 && view[9] === 0x41 && view[10] === 0x56 && view[11] === 0x45;
 }
 
 /**
@@ -1145,47 +919,14 @@ function concatenateWavBuffers(buffers) {
     totalDataSize += audioData.length;
   }
   
-  // Create new WAV file
-  const headerSize = 44;
-  const totalSize = headerSize + totalDataSize;
-  const result = new ArrayBuffer(totalSize);
-  const view = new Uint8Array(result);
-  const dataView = new DataView(result);
-  
-  // Write WAV header
-  // "RIFF"
-  view[0] = 0x52; view[1] = 0x49; view[2] = 0x46; view[3] = 0x46;
-  // File size - 8
-  dataView.setUint32(4, totalSize - 8, true);
-  // "WAVE"
-  view[8] = 0x57; view[9] = 0x41; view[10] = 0x56; view[11] = 0x45;
-  // "fmt "
-  view[12] = 0x66; view[13] = 0x6D; view[14] = 0x74; view[15] = 0x20;
-  // fmt chunk size (16 for PCM)
-  dataView.setUint32(16, 16, true);
-  // Audio format (1 = PCM)
-  dataView.setUint16(20, 1, true);
-  // Number of channels
-  dataView.setUint16(22, numChannels, true);
-  // Sample rate
-  dataView.setUint32(24, sampleRate, true);
-  // Byte rate
-  dataView.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
-  // Block align
-  dataView.setUint16(32, numChannels * (bitsPerSample / 8), true);
-  // Bits per sample
-  dataView.setUint16(34, bitsPerSample, true);
-  // "data"
-  view[36] = 0x64; view[37] = 0x61; view[38] = 0x74; view[39] = 0x61;
-  // Data size
-  dataView.setUint32(40, totalDataSize, true);
-  
-  // Copy all audio data
-  let offset = headerSize;
+  const pcm = new Uint8Array(totalDataSize);
+  let offset = 0;
   for (const chunk of dataChunks) {
-    view.set(chunk, offset);
+    pcm.set(chunk, offset);
     offset += chunk.length;
   }
+  const result = pcmToWav(pcm.buffer, sampleRate, bitsPerSample, numChannels);
+  const totalSize = result.byteLength;
   
   log('=== WAV CONCATENATION COMPLETE ===', { chunksCount: dataChunks.length, totalSize });
   

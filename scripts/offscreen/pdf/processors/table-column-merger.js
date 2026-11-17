@@ -3,13 +3,94 @@
 // This handles cases where tables are split across columns
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { classifyTable } from '../classifiers/table.js';
 import { extractTableStructure } from './table-extractor.js';
 import { ELEMENT_DECISION, DEFAULT_METRICS, TABLE_DETECTION } from '../constants.js';
 import { normalizeYCoordinate, getColumnIndexForElement, detectTableColumns, detectTableHeaders } from '../utils/table-helpers.js';
 import { checkGraphicsInElementArea } from '../utils/graphics-extractor.js';
-import { getGraphicsDataForPage } from '../utils/graphics-helpers.js';
+import { getGraphicsDataForPage, isTableLine } from '../utils/graphics-helpers.js';
+
+/** Find table grids with full borders or adjacent shaded header cells. */
+function getHeadingTableRegions(graphics, baseFontSize, elements) {
+  if (!graphics) return [];
+  const tolerance = baseFontSize * TABLE_DETECTION.Y_TOLERANCE_MULTIPLIER;
+  const horizontal = (graphics.lines || []).filter(line => isTableLine(line, baseFontSize).isHorizontal);
+  const vertical = (graphics.lines || []).filter(line => isTableLine(line, baseFontSize).isVertical);
+  const regions = (graphics.tableRegions || []).filter(region => {
+    if (!(region.width > 0 && region.height > 0)) return false;
+    // Candidate regions may enclose unrelated intersections; require a complete grid.
+    const rows = horizontal.filter(line =>
+      Math.min(line.x1, line.x2) <= region.x + tolerance &&
+      Math.max(line.x1, line.x2) >= region.x + region.width - tolerance &&
+      line.y1 >= region.y - tolerance && line.y1 <= region.y + region.height + tolerance);
+    const columns = vertical.filter(line =>
+      Math.min(line.y1, line.y2) <= region.y + tolerance &&
+      Math.max(line.y1, line.y2) >= region.y + region.height - tolerance &&
+      line.x1 >= region.x - tolerance && line.x1 <= region.x + region.width + tolerance);
+    return new Set(rows.map(line => normalizeYCoordinate(line.y1, tolerance))).size >= ELEMENT_DECISION.TABLE_MIN_ROWS + 1 &&
+      new Set(columns.map(line => normalizeYCoordinate(line.x1, tolerance))).size >= ELEMENT_DECISION.TABLE_MIN_COLUMNS + 1;
+  });
+  const bands = new Map();
+  for (const rectangle of graphics.rectangles || []) {
+    if (!(rectangle.width > 0 && rectangle.height > 0)) continue;
+    const key = normalizeYCoordinate(rectangle.y, tolerance);
+    if (!bands.has(key)) bands.set(key, []);
+    bands.get(key).push(rectangle);
+  }
+  const headerBands = [];
+  const textLines = [...new Set(elements.flatMap(element => element.lines || []))];
+  for (const rectangles of bands.values()) {
+    rectangles.sort((a, b) => a.x - b.x);
+    let cells = [];
+    const appendHeaderBand = () => {
+      if (cells.length < ELEMENT_DECISION.TABLE_MIN_COLUMNS) return;
+      const band = { x: cells[0].x, right: cells.at(-1).x + cells.at(-1).width,
+        y: Math.min(...cells.map(cell => cell.y)), bottom: Math.max(...cells.map(cell => cell.y + cell.height)) };
+      const rowLines = textLines.filter(line => lineInRegion(line, {
+        x: band.x, y: band.y, width: band.right - band.x, height: band.bottom - band.y
+      }));
+      headerBands.push({ ...band, isHeader: detectTableHeaders([rowLines.map(line => line.text || '')], [rowLines]) });
+    };
+    for (const rectangle of rectangles) {
+      const previous = cells.at(-1);
+      if (previous && (Math.abs(previous.x + previous.width - rectangle.x) > tolerance ||
+          Math.abs(previous.y + previous.height - rectangle.y - rectangle.height) > tolerance)) {
+        appendHeaderBand();
+        cells = [];
+      }
+      cells.push(rectangle);
+    }
+    appendHeaderBand();
+  }
+  for (const header of headerBands) {
+    const { x, right, y } = header;
+    let bottom = header.bottom;
+    const nextHeaderY = Math.min(...headerBands.filter(band => band.isHeader && band.y > bottom &&
+      Math.abs(band.x - x) <= tolerance && Math.abs(band.right - right) <= tolerance
+    ).map(band => band.y));
+    const boundaries = [...new Set(horizontal.filter(line =>
+      Math.min(line.x1, line.x2) <= x + tolerance && Math.max(line.x1, line.x2) >= right - tolerance
+    ).map(line => (line.y1 + line.y2) / 2))].sort((a, b) => a - b);
+    let rowBoundaries = 0;
+    for (const boundary of boundaries) {
+      if (boundary < y - tolerance) continue;
+      if (boundary >= nextHeaderY) break;
+      if (boundary - bottom > baseFontSize * TABLE_DETECTION.ROW_GAP_MULTIPLIER) break;
+      rowBoundaries++;
+      bottom = Math.max(bottom, boundary);
+    }
+    if (rowBoundaries >= ELEMENT_DECISION.TABLE_MIN_ROWS + 1) {
+      regions.push({ x, y, width: right - x, height: bottom - y });
+    }
+  }
+  return regions;
+}
+
+function lineInRegion(line, region) {
+  return line.x >= region.x && line.x <= region.x + region.width &&
+    line.y >= region.y && line.y <= region.y + region.height;
+}
 
 /**
  * Combine elements from different columns into tables
@@ -47,10 +128,27 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
   
   const allTables = [];
   const processedElements = new Set();
+  const processedLines = new Map();
+  const candidateOwners = new WeakMap();
+  const recordTableRows = rows => {
+    for (const row of rows) {
+      for (const candidate of row.elements || []) {
+        const element = candidateOwners.get(candidate) || candidate;
+        processedElements.add(element);
+        if (!processedLines.has(element)) processedLines.set(element, new Set());
+        for (const line of candidate.lines || []) {
+          if (line.y !== undefined && Math.abs(line.y - row.y) <= yTolerance) {
+            processedLines.get(element).add(line);
+          }
+        }
+      }
+    }
+  };
   
   // Process each page separately
   for (const [pageNumStr, pageElements] of Object.entries(elementsByPage)) {
     const pageNum = parseInt(pageNumStr, 10);
+    const headingTableRegions = getHeadingTableRegions(getGraphicsDataForPage(metrics, pageNum), baseFontSize, pageElements);
     log(`[PDF v3] mergeColumnElementsIntoTables: Processing page ${pageNum} - elementCount=${pageElements.length}`);
     
     // Find all elements that have columnIndex (from multi-column layout) OR are table-fragments
@@ -97,13 +195,15 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
     const yToleranceAdjusted = baseFontSize * TABLE_DETECTION.Y_TOLERANCE_MULTIPLIER;
     log(`[PDF v3] mergeColumnElementsIntoTables: Page ${pageNum} - Grouping elements by Y-coordinate - yTolerance=${yToleranceAdjusted.toFixed(2)}`);
     
-    for (const element of columnElements) {
-      // CRITICAL: Skip headings - they are never part of tables
+    for (const originalElement of columnElements) {
+      let element = originalElement;
       if (element.type === 'heading') {
-        log(`[PDF v3] mergeColumnElementsIntoTables: Page ${pageNum} - Skipping heading element (already classified, not a table) - text="${(element.text || '').substring(0, 50)}"`);
-        continue;
+        const lines = (element.lines || []).filter(line => headingTableRegions.some(region => lineInRegion(line, region)));
+        if (lines.length === 0) continue;
+        element = { ...element, lines, text: lines.map(line => line.text || '').join(' '),
+          minY: Math.min(...lines.map(line => line.y)), maxY: Math.max(...lines.map(line => line.y)) };
+        candidateOwners.set(element, originalElement);
       }
-      
       // For paragraph elements, check if they are likely real paragraphs (long text, many lines)
       // Short paragraph elements might be table cells, so we should still try to merge them
       // BUT: if graphics (table borders) are present, it's a strong indicator of a table
@@ -117,6 +217,9 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
         }
       }
       
+      // Bold table cells can be classified as headings before columns are reunited.
+      if (element.type === 'heading' && !hasGraphicsInArea) continue;
+
       if (element.type === 'paragraph') {
         const textLength = (element.text || '').length;
         const lineCount = element.lines ? element.lines.length : 1;
@@ -415,16 +518,7 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
                 if (table) {
                   allTables.push(table);
                   log(`[PDF v3] mergeColumnElementsIntoTables: Page ${pageNum} - Created table from ${currentTableRows.length} rows`);
-                  // Mark elements as processed
-                  for (const tableRow of currentTableRows) {
-                    if (tableRow && tableRow.elements && Array.isArray(tableRow.elements)) {
-                      for (const el of tableRow.elements) {
-                        if (el) {
-                          processedElements.add(el);
-                        }
-                      }
-                    }
-                  }
+                  recordTableRows(currentTableRows);
                 } else {
                   log(`[PDF v3] mergeColumnElementsIntoTables: Page ${pageNum} - Failed to create table from ${currentTableRows.length} rows (createTableFromRows returned null)`);
                 }
@@ -454,15 +548,7 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
           if (table) {
             allTables.push(table);
             log(`[PDF v3] mergeColumnElementsIntoTables: Page ${pageNum} - Created final table from ${currentTableRows.length} rows`);
-            for (const tableRow of currentTableRows) {
-              if (tableRow && tableRow.elements && Array.isArray(tableRow.elements)) {
-                for (const el of tableRow.elements) {
-                  if (el) {
-                    processedElements.add(el);
-                  }
-                }
-              }
-            }
+            recordTableRows(currentTableRows);
           } else {
             log(`[PDF v3] mergeColumnElementsIntoTables: Page ${pageNum} - Failed to create final table from ${currentTableRows.length} rows (createTableFromRows returned null)`);
           }
@@ -492,6 +578,27 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
   // CRITICAL: Convert table-fragment elements that weren't used in tables back to paragraphs
   const result = [];
   for (const element of elements) {
+    if (processedElements.has(element) && element.lines?.length) {
+      const used = processedLines.get(element) || new Set();
+      let remaining = [];
+      const appendRemaining = () => {
+        if (!remaining.length) return;
+        const text = remaining.map(line => line.text || '').join(' ');
+        const residual = { ...element, lines: remaining, text, combinedText: text,
+          minY: Math.min(...remaining.map(line => line.y)), maxY: Math.max(...remaining.map(line => line.y)) };
+        if (residual.type === 'table-fragment') {
+          residual.type = 'paragraph';
+          delete residual.tableFragment;
+        }
+        result.push(residual);
+        remaining = [];
+      };
+      for (const line of element.lines) {
+        if (used.has(line)) appendRemaining();
+        else remaining.push(line);
+      }
+      appendRemaining();
+    }
     if (!processedElements.has(element)) {
       // If element is table-fragment but wasn't processed, convert it back to paragraph
       if (element.type === 'table-fragment') {
@@ -796,7 +903,9 @@ function createTableFromRows(rows, metrics, pageNum) {
     .filter(row => row && row.elements && Array.isArray(row.elements))
     .map(row => (row.elements || [])
       .filter(el => el != null)
-      .flatMap(el => (el.lines && Array.isArray(el.lines)) ? el.lines : []));
+      .flatMap(el => (el.lines && Array.isArray(el.lines))
+        ? el.lines.filter(line => line.y !== undefined && Math.abs(line.y - row.y) <= yTolerance)
+        : []));
   let hasHeaders = detectTableHeaders(tableRows, rowLines);
   
   // Additional check: if first row contains common header words, mark as header
@@ -824,30 +933,13 @@ function createTableFromRows(rows, metrics, pageNum) {
     }
   }
   
-  // Find min/max Y
-  let minY = Infinity;
-  let maxY = -Infinity;
-  
-  for (const row of rows) {
-    if (row && row.elements && Array.isArray(row.elements)) {
-      for (const el of row.elements) {
-        if (el && typeof el.minY === 'number' && el.minY < minY) minY = el.minY;
-        if (el && typeof el.maxY === 'number' && el.maxY > maxY) maxY = el.maxY;
-      }
-    }
-  }
-  
   // Collect all lines for table structure extraction
-  const allLines = [];
-  for (const row of rows) {
-    if (row && row.elements && Array.isArray(row.elements)) {
-      for (const el of row.elements) {
-        if (el && el.lines && Array.isArray(el.lines) && el.lines.length > 0) {
-          allLines.push(...el.lines);
-        }
-      }
-    }
-  }
+  const allLines = [...new Set(rows.flatMap(row => (row.elements || []).flatMap(element =>
+    (element.lines || []).filter(line => line.y !== undefined && Math.abs(line.y - row.y) <= yTolerance)
+  )))];
+  const rowYs = allLines.length ? allLines.map(line => line.y) : rows.map(row => row.y);
+  const minY = Math.min(...rowYs);
+  const maxY = Math.max(...rowYs);
   
   // Try to extract column positions (baseFontSize already declared at function start)
   const columns = allLines.length > 0 ? detectTableColumns(allLines, baseFontSize) : [];

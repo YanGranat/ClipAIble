@@ -63,16 +63,16 @@ temp_*.js
 temp_*.txt
 
 # Debug/test files in root (not in tests/)
-debug-*.js
-test-*.js
+/debug-*.js
+/test-*.js
 
-# Memory bank (Cursor AI context - internal notes)
+# Local notes
 memory-bank/
 
-# Playwright MCP screenshots
+# Browser artifacts
 .playwright-mcp/
 
-# Internal documentation (not for distribution)
+# Local documentation
 doc/
 
 # Temporary assets/screenshots from development
@@ -87,3 +87,11 @@ assets/
 
 # Source maps
 *.map
+
+# Local agent files
+.codex/
+.cursor/
+.agent/
+
+# Local working files
+temporary_files/

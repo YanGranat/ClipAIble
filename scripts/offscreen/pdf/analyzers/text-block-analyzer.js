@@ -4,7 +4,7 @@
 // Helps identify paragraph boundaries by detecting empty spaces between text blocks
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 // @ts-ignore - Module resolution issue, but file exists at runtime
 import { CONFIG } from '../../../utils/config.js';
 import { DEFAULT_METRICS } from '../constants.js';

@@ -1,6 +1,8 @@
 // Test setup and mocks for Chrome Extension APIs
 
 import { vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { URL as NodeURL } from 'node:url';
 
 // Mock chrome.runtime
 global.chrome = {
@@ -106,6 +108,7 @@ const mockGetRandomValues = vi.fn((arr) => {
 });
 
 vi.stubGlobal('crypto', {
+  randomUUID,
   subtle: mockCryptoSubtle,
   getRandomValues: mockGetRandomValues
 });
@@ -119,7 +122,7 @@ global.btoa = (str) => Buffer.from(str, 'binary').toString('base64');
 global.atob = (str) => Buffer.from(str, 'base64').toString('binary');
 
 // Mock URL
-global.URL = URL;
+global.URL = NodeURL;
 
 // Suppress console logs in tests (optional)
 // global.console = {

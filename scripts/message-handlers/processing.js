@@ -4,7 +4,8 @@
 
 import { log, logError } from '../utils/logging.js';
 import { handleError } from '../utils/error-handler.js';
-import { completeProcessing, setError } from '../state/processing.js';
+import { getProcessingState, setError, updateState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
+import { finalizeProcessing } from '../utils/pipeline-helpers.js';
 import { generatePdfWithDebugger } from '../generation/pdf.js';
 
 /**
@@ -148,7 +149,7 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
       }
       
       try {
-        sendResponse({ started: true });
+        sendResponse({ started: result === true });
         log('=== handleProcessArticle: Response sent ===', {
           timestamp: Date.now()
         });
@@ -226,8 +227,17 @@ export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKee
     return true;
   }
   
-  const { title, pageMode, contentWidth, contentHeight } = request.data;
+  const { title, pageMode, contentWidth, contentHeight, processingRunId, sourceUrl } = request.data;
+  if (!isValidProcessingRunId(processingRunId) || isCancelled(processingRunId)) {
+    sendResponse({ success: true, ignored: true });
+    return true;
+  }
   const tabId = sender.tab?.id;
+  const state = getProcessingState();
+  if (!state.isProcessing || state.outputFormat !== 'pdf' || state.pdfPrintTabId !== tabId || state.pdfDebuggerStarted) {
+    sendResponse({ success: true, ignored: true });
+    return true;
+  }
   
   if (!tabId) {
     sendResponse({ error: 'No tab ID' });
@@ -235,11 +245,14 @@ export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKee
   }
   
   log('generatePdfDebugger', { title, pageMode, contentWidth, contentHeight, tabId });
+  updateState({ pdfDebuggerStarted: true }, processingRunId);
+  const processingStartTime = getProcessingState().startTime;
   
   generatePdfWithDebugger(
     tabId, title, pageMode, contentWidth, contentHeight,
-    async () => await completeProcessing(stopKeepAlive),
-    async (errorMsg) => await setError(errorMsg, stopKeepAlive)
+    async () => await finalizeProcessing({ processingRunId, title, url: sourceUrl || '', outputFormat: 'pdf' }, stopKeepAlive, { current: processingStartTime }),
+    async (errorMsg) => await setError(errorMsg, stopKeepAlive, processingRunId),
+    processingRunId
   )
     .then(() => log('PDF generated and downloaded'))
     .catch(async error => {
@@ -253,6 +266,21 @@ export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKee
     });
   
   sendResponse({ success: true });
+  return true;
+}
+
+export function handlePrintJobFailed(request, sender, sendResponse, stopKeepAlive) {
+  const { processingRunId, printJobId, error } = request.data || {};
+  const state = getProcessingState();
+  if (!isValidProcessingRunId(printJobId) || state.pdfPrintJobId !== printJobId ||
+      (processingRunId !== undefined && (!isValidProcessingRunId(processingRunId) || processingRunId !== state.processingRunId)) ||
+      isCancelled(state.processingRunId) || !state.isProcessing || state.outputFormat !== 'pdf' || state.pdfPrintTabId !== sender.tab?.id) {
+    sendResponse({ success: true, ignored: true });
+    return true;
+  }
+  setError(typeof error === 'string' ? error : 'PDF preparation failed', stopKeepAlive, state.processingRunId)
+    .then(() => sendResponse({ success: true }))
+    .catch((failure) => sendResponse({ success: false, error: failure?.message || 'PDF preparation failed' }));
   return true;
 }
 

@@ -12,6 +12,7 @@ vi.mock('../../scripts/utils/logging.js', () => ({
 }));
 
 vi.mock('../../scripts/api/index.js', () => ({
+  resolveAIProvider: vi.fn((model, provider) => provider === undefined ? (model.includes('claude') ? 'claude' : model.includes('gemini') ? 'gemini' : 'openai') : provider),
   getProviderFromModel: vi.fn((model) => {
     if (model.includes('gpt') || model.includes('o1')) return 'openai';
     if (model.includes('claude')) return 'claude';
@@ -57,19 +58,16 @@ describe('translation/detection', () => {
 
     it('should detect language using OpenAI API', async () => {
       const content = [
-        { type: 'paragraph', text: 'Привет мир. Это тестовый текст на русском языке.' }
+        { type: 'paragraph', text: 'This English sample uses a deliberately different mocked AI result.' }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'ru'
             }
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       const result = await detectContentLanguage(content, 'test-key', 'gpt-4');
       
@@ -91,19 +89,16 @@ describe('translation/detection', () => {
         { type: 'paragraph', text: 'Hello world' }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           content: [{
             type: 'text',
-            text: 'en'
+            text: 'de'
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       const result = await detectContentLanguage(content, 'test-key', 'claude-3-opus');
       
-      expect(result).toBe('en');
+      expect(result).toBe('de');
       expect(global.fetch).toHaveBeenCalledWith(
         'https://api.anthropic.com/v1/messages',
         expect.any(Object)
@@ -115,9 +110,7 @@ describe('translation/detection', () => {
         { type: 'paragraph', text: 'Bonjour le monde' }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           candidates: [{
             content: {
               parts: [{
@@ -125,8 +118,7 @@ describe('translation/detection', () => {
               }]
             }
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       const result = await detectContentLanguage(content, 'test-key', 'gemini-pro');
       
@@ -142,16 +134,13 @@ describe('translation/detection', () => {
         { type: 'paragraph', text: 'Привет мир '.repeat(20) }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'invalid-format-xyz'
             }
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       const result = await detectContentLanguage(content, 'test-key', 'gpt-4');
       
@@ -178,16 +167,13 @@ describe('translation/detection', () => {
         { type: 'paragraph', text: longText }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'en'
             }
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       await detectContentLanguage(content, 'test-key', 'gpt-4');
       
@@ -204,16 +190,13 @@ describe('translation/detection', () => {
         { type: 'paragraph', text: 'Test' }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'en'
             }
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       await detectContentLanguage(content, 'test-key', 'gpt-5.1');
       
@@ -231,16 +214,13 @@ describe('translation/detection', () => {
         { type: 'paragraph', text: 'Second paragraph' }
       ];
 
-      global.fetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
+      global.fetch.mockResolvedValueOnce(new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'en'
             }
           }]
-        })
-      });
+        }), { status: 200, headers: { 'content-type': 'application/json' } }));
 
       await detectContentLanguage(content, 'test-key', 'gpt-4');
       

@@ -1,10 +1,14 @@
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
 // @ts-check
 // ElevenLabs Text-to-Speech API module for ClipAIble extension
 
 import { log, logError, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_VOICE, ELEVENLABS_TTS_MODELS, ELEVENLABS_TTS_VOICES, getElevenLabsCapabilities } from './tts-catalog.js';
+import { isWavBuffer, muLawToPcm, pcmToWav } from './audio-format.js';
 
 /**
  * ElevenLabs TTS API configuration
@@ -26,39 +30,22 @@ export const ELEVENLABS_CONFIG = {
   // API endpoint
   API_URL: 'https://api.elevenlabs.io/v1/text-to-speech',
   
-  // Default model (eleven_v3 is most expressive, supports 70+ languages)
-  DEFAULT_MODEL: 'eleven_v3',
+  DEFAULT_MODEL: DEFAULT_ELEVENLABS_TTS_MODEL,
   
   // Available models
-  MODELS: [
-    { id: 'eleven_multilingual_v2', name: 'Multilingual v2 (stable, natural)' },
-    { id: 'eleven_v3', name: 'v3 (most expressive)' },
-    { id: 'eleven_turbo_v2_5', name: 'Turbo v2.5 (fast)' }
-  ],
+  MODELS: ELEVENLABS_TTS_MODELS,
   
-  // Default voice (Rachel - popular English voice)
-  // Users can change this in settings
-  DEFAULT_VOICE_ID: '21m00Tcm4TlvDq8ikWAM',
+  // Default narration voice
+  DEFAULT_VOICE_ID: DEFAULT_ELEVENLABS_TTS_VOICE,
   
   // Popular voices (voice IDs from ElevenLabs library)
-  POPULAR_VOICES: [
-    { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (female, clear)' },
-    { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi (female, strong)' },
-    { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (female, warm)' },
-    { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (male, deep)' },
-    { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli (female, young)' },
-    { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh (male, calm)' },
-    { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold (male, authoritative)' },
-    { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (male, expressive)' },
-    { id: 'yoZ06aMxZJJ28mfd3POQ', name: 'Sam (male, friendly)' }
-  ],
+  POPULAR_VOICES: ELEVENLABS_TTS_VOICES,
   
-  // Text length limits (ElevenLabs has 5000 char limit per request)
+  // Conservative chunk bound shared by the supported models.
   MAX_INPUT: 5000,
   
-  // Speed range (0.25 - 4.0)
-  MIN_SPEED: 0.25,
-  MAX_SPEED: 4.0,
+  MIN_SPEED: 0.7,
+  MAX_SPEED: 1.2,
   DEFAULT_SPEED: 1.0,
   
   // Output formats
@@ -148,19 +135,21 @@ export async function textToSpeech(text, apiKey, options = {}) {
     ? stability 
     : 0.5; // Default fallback if invalid value somehow passed
   
+  const capabilities = getElevenLabsCapabilities(modelId);
   const requestBody = {
     text: text,
     model_id: modelId,
     voice_settings: {
       stability: validStability,
-      similarity_boost: Math.max(0, Math.min(1, similarityBoost)),
-      style: Math.max(0, Math.min(1, style)),
-      use_speaker_boost: useSpeakerBoost,
-      speed: validSpeed
+      ...(capabilities.similarity ? { similarity_boost: Math.max(0, Math.min(1, similarityBoost)) } : {}),
+      ...(capabilities.style ? { style: Math.max(0, Math.min(1, style)) } : {}),
+      ...(capabilities.speakerBoost ? { use_speaker_boost: useSpeakerBoost } : {}),
+      ...(capabilities.speed ? { speed: validSpeed } : {})
     }
   };
   
-  const url = `${ELEVENLABS_CONFIG.API_URL}/${voiceId}`;
+  if (!Object.hasOwn(ELEVENLABS_CONFIG.FORMATS, format)) throw new Error('Unsupported ElevenLabs audio format.');
+  const url = `${ELEVENLABS_CONFIG.API_URL}/${encodeURIComponent(voiceId)}?output_format=${encodeURIComponent(format)}`;
   
   let response;
   
@@ -169,19 +158,17 @@ export async function textToSpeech(text, apiKey, options = {}) {
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+        await checkCancellation('ElevenLabs TTS request', options.processingRunId);
         
         try {
-          const fetchResponse = await fetch(url, {
+          const fetchResponse = await fetchBufferedResponse(url, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'xi-api-key': apiKey
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
           
           if (!fetchResponse.ok) {
             const error = await handleApiError(fetchResponse, 'ElevenLabs', {
@@ -206,11 +193,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
           return fetchResponse;
         } catch (e) {
           throw e;
-        } finally {
-          // CRITICAL: Always clear timeout in finally to prevent memory leaks
-          if (timeout) {
-            clearTimeout(timeout);
-          }
         }
       },
       {
@@ -220,13 +202,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
       }
     );
   } catch (fetchError) {
+    await checkCancellation('ElevenLabs TTS response', options.processingRunId);
     if (fetchError.name === 'AbortError') {
-      throw handleTimeoutError('ElevenLabs');
+      throw await handleTimeoutError('ElevenLabs');
     }
     if (fetchError.status) {
       throw fetchError; // Already handled by handleApiError
     }
-    throw handleNetworkError(fetchError, 'ElevenLabs');
+    throw await handleNetworkError(fetchError, 'ElevenLabs');
   }
   
   // Get audio data as ArrayBuffer
@@ -237,6 +220,9 @@ export async function textToSpeech(text, apiKey, options = {}) {
     contentType: response.headers.get('content-type')
   });
   
+  if (isWavBuffer(audioBuffer)) return audioBuffer;
+  if (format.startsWith('pcm_')) return pcmToWav(audioBuffer, Number(format.slice(4)));
+  if (format === 'ulaw_8000') return pcmToWav(muLawToPcm(audioBuffer), 8000);
   return audioBuffer;
 }
 
@@ -251,7 +237,7 @@ export async function getVoices(apiKey) {
   }
   
   try {
-    const response = await fetch('https://api.elevenlabs.io/v1/voices', {
+    const response = await fetchBufferedResponse('https://api.elevenlabs.io/v1/voices', {
       method: 'GET',
       headers: {
         'xi-api-key': apiKey

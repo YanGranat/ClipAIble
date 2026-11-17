@@ -1,13 +1,18 @@
+import { assertCompleteAIResponse } from '../api/response-validation.js';
 // Language detection module for ClipAIble extension
 // Handles detection of source language from content
 
 // @ts-check
 
+import { fetchBufferedResponse } from '../api/fetch-buffered-response.js';
 import { log, logWarn } from '../utils/logging.js';
-import { getProviderFromModel, parseModelConfig } from '../api/index.js';
+import { resolveAIProvider, parseModelConfig } from '../api/index.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
 import { handleError } from '../utils/error-handler.js';
+import { getClaudeRequestConfig, getClaudeResponseText } from '../api/claude.js';
+import { getGeminiModelName, getGeminiGenerationConfig, getGeminiResponseText } from '../api/gemini.js';
+import { getOpenAIRequestConfig } from '../api/openai.js';
 
 /**
  * Detect source language from content
@@ -270,7 +275,8 @@ export function detectLanguageByCharacters(text) {
  * @param {string} model - Model name
  * @returns {Promise<string>} Detected language code (e.g., 'ru', 'en', 'ua', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko', 'ar')
  */
-export async function detectContentLanguage(content, apiKey, model) {
+export async function detectContentLanguage(content, apiKey, model, options = {}) {
+  options.checkCancelled?.();
   log('🔍 LANGUAGE DETECTION: Starting AI-based content language detection', {
     contentItemsCount: content?.length || 0,
     hasApiKey: !!apiKey,
@@ -331,13 +337,14 @@ export async function detectContentLanguage(content, apiKey, model) {
   }
   
   // Get provider from model for automatic encryption
-  const provider = getProviderFromModel(model);
+  const provider = resolveAIProvider(model, options.provider);
   
   // Decrypt API key if needed (with automatic encryption for unencrypted keys)
   let decryptedApiKey = apiKey;
   try {
     decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
   } catch (error) {
+    options.checkCancelled?.();
     log('API key decryption failed for detectContentLanguage, using as-is', error);
   }
   
@@ -374,7 +381,7 @@ Example outputs: ru, en, ua, de`;
   const textForAI = sampleText.substring(0, 30000);
   
   try {
-    const provider = getProviderFromModel(model);
+    const provider = resolveAIProvider(model, options.provider);
     const { modelName } = parseModelConfig(model);
     let langCode = null;
     let rawResponse = null;
@@ -389,37 +396,27 @@ Example outputs: ru, en, ua, de`;
     });
     
     if (provider === 'openai') {
-      // GPT-5.1 and GPT-5.2 models don't support max_tokens parameter
-      const supportsMaxTokens = !modelName.startsWith('gpt-5.1') && !modelName.startsWith('gpt-5.2');
-      
       const requestBody = {
-        model: modelName,
+        ...getOpenAIRequestConfig(model, { maxTokens: 10, temperature: 0, shortResponse: true }),
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: `Detect the language of this text:\n\n${textForAI}` }
-        ],
-        temperature: 0
+        ]
       };
-      
-      // Only add max_tokens for models that support it
-      if (supportsMaxTokens) {
-        requestBody.max_tokens = 10;
-      }
       
       log('Sending request to OpenAI', { 
         model: modelName, 
-        maxTokens: supportsMaxTokens ? 10 : 'not supported',
-        supportsMaxTokens 
+        maxTokens: requestBody.max_completion_tokens ?? requestBody.max_tokens
       });
       
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      const response = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${decryptedApiKey}`
         },
         body: JSON.stringify(requestBody)
-      });
+      }, undefined, options);
       
       log('OpenAI response received', { 
         status: response.status, 
@@ -429,6 +426,7 @@ Example outputs: ru, en, ua, de`;
       
       if (response.ok) {
         parsedResult = await response.json();
+        assertCompleteAIResponse(parsedResult, provider);
         rawResponse = JSON.stringify(parsedResult);
         
         log('OpenAI response parsed', {
@@ -468,15 +466,14 @@ Example outputs: ru, en, ua, de`;
       }
     } else if (provider === 'claude') {
       const requestBody = {
-        model: modelName,
-        max_tokens: 10,
+        ...getClaudeRequestConfig(model, { maxTokens: 10, shortResponse: true }),
         system: systemPrompt,
         messages: [{ role: 'user', content: `Detect the language of this text:\n\n${textForAI}` }]
       };
       
-      log('Sending request to Claude', { model: modelName, maxTokens: 10 });
+      log('Sending request to Claude', { model: requestBody.model, maxTokens: requestBody.max_tokens });
       
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -485,7 +482,7 @@ Example outputs: ru, en, ua, de`;
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify(requestBody)
-      });
+      }, undefined, options);
       
       log('Claude response received', { 
         status: response.status, 
@@ -495,6 +492,7 @@ Example outputs: ru, en, ua, de`;
       
       if (response.ok) {
         parsedResult = await response.json();
+        assertCompleteAIResponse(parsedResult, provider);
         rawResponse = JSON.stringify(parsedResult);
         
         log('Claude response parsed', {
@@ -504,7 +502,7 @@ Example outputs: ru, en, ua, de`;
           fullResponseFull: rawResponse // FULL RESPONSE - NO TRUNCATION
         });
         
-        const rawText = parsedResult.content?.[0]?.text;
+        const rawText = getClaudeResponseText(parsedResult);
         log('Extracting langCode from Claude response', {
           rawText: rawText,
           rawTextType: typeof rawText,
@@ -534,16 +532,17 @@ Example outputs: ru, en, ua, de`;
       }
     } else if (provider === 'gemini') {
       const requestBody = {
+        generationConfig: getGeminiGenerationConfig(model),
         contents: [{ parts: [{ text: `${systemPrompt}\n\nDetect the language of this text:\n\n${textForAI}` }] }]
       };
       
       log('Sending request to Gemini', { model: modelName });
       
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${decryptedApiKey}`, {
+      const response = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${getGeminiModelName(model)}:generateContent?key=${decryptedApiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
-      });
+      }, undefined, options);
       
       log('Gemini response received', { 
         status: response.status, 
@@ -553,6 +552,7 @@ Example outputs: ru, en, ua, de`;
       
       if (response.ok) {
         parsedResult = await response.json();
+        assertCompleteAIResponse(parsedResult, provider);
         rawResponse = JSON.stringify(parsedResult);
         
         log('Gemini response parsed', {
@@ -562,7 +562,7 @@ Example outputs: ru, en, ua, de`;
           fullResponseFull: rawResponse // FULL RESPONSE - NO TRUNCATION
         });
         
-        const rawText = parsedResult.candidates?.[0]?.content?.parts?.[0]?.text;
+        const rawText = getGeminiResponseText(parsedResult);
         log('Extracting langCode from Gemini response', {
           rawText: rawText,
           rawTextType: typeof rawText,
@@ -627,6 +627,7 @@ Example outputs: ru, en, ua, de`;
     });
     return fallbackLang;
   } catch (error) {
+    options.checkCancelled?.();
     // Normalize error with context for better logging and error tracking
     await handleError(error, {
       source: 'languageDetection',

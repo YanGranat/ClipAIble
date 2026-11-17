@@ -33,6 +33,14 @@ export function setupPanelHandlers(deps) {
 
   const scheduler = typeof self !== 'undefined' && 'scheduler' in self ? self.scheduler : undefined;
 
+  for (const [button, panel] of [[elements.toggleSettings, elements.settingsPanel], [elements.toggleStats, elements.statsPanel]]) {
+    if (!button || !panel) continue;
+    button.setAttribute('aria-controls', panel.id);
+    const sync = () => button.setAttribute('aria-expanded', String(panel.classList.contains('open')));
+    new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
+    sync();
+  }
+
   // Settings panel toggle
   if (elements.toggleSettings) {
     elements.toggleSettings.addEventListener('click', (e) => {

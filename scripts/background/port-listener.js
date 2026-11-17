@@ -3,6 +3,7 @@
 // Uses dependency injection pattern for better testability and modularity
 
 import { validateDeps } from '../utils/di-validation.js';
+import { sanitizeLogData, shouldLogDiagnostic } from '../utils/logging.js';
 
 /**
  * Initialize port connection listener for offscreen document logging
@@ -39,7 +40,10 @@ export function initPortListener(deps) {
             const { logs, batchSize, totalQueued } = message;
             
             for (const logEntry of logs) {
-              const { message: logMsg, marker, data, timestamp } = logEntry;
+              const level = logEntry.level || 'debug';
+              if (!shouldLogDiagnostic(level)) continue;
+              const { message: logMsg, marker, timestamp } = logEntry;
+              const data = sanitizeLogData(logEntry.data);
               const fullLogMessage = `[CRITICAL_LOG${marker ? ` ${marker}` : ''}] ${logMsg}`;
               
               // Add to unlimited log collection (bypasses Chrome console limit)
@@ -49,10 +53,11 @@ export function initPortListener(deps) {
                 timestamp,
                 source: 'offscreen-port',
                 senderUrl: port.sender?.url
-              }, 'error');
+              }, level);
               
               // Log to background console (ALWAYS VISIBLE)
-              console.error(fullLogMessage, data || '');
+              const consoleMethod = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'debug';
+              console[consoleMethod](fullLogMessage, data || '');
               
               // Also use standard log function
               log(fullLogMessage, {

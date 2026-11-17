@@ -180,7 +180,12 @@ export const PIPER_VOICES_MAPPING = {
  * @param {string} language - Optional language code (e.g., 'ru', 'en') to help construct ID
  * @returns {string|null} Voice ID or null if not found
  */
+export function normalizePiperVoiceId(voiceId) {
+  return voiceId === 'fr_FR-mls_fr-medium' ? 'fr_FR-mls-medium' : voiceId;
+}
+
 export function findVoiceIdByName(voiceName, language = null) {
+  voiceName = normalizePiperVoiceId(voiceName);
   if (!voiceName || voiceName === '0' || voiceName === '') {
     return null;
   }

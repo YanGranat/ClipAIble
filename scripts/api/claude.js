@@ -3,10 +3,37 @@
 
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { assertCompleteAIResponse } from './response-validation.js';
+import { parseBase64Image } from './image-data.js';
 import { callWithRetry } from '../utils/retry.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
+import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
+
+/** Build Messages API parameters for the selected model and response role. */
+export function getClaudeRequestConfig(model, { maxTokens = 50000, shortResponse = false } = {}) {
+  const selectedModel = model || getDefaultModel('claude');
+  const metadata = getModelMetadata('claude', selectedModel);
+  const modelName = metadata?.apiModel || selectedModel;
+  const config = { model: modelName, max_tokens: maxTokens };
+  if (metadata?.reasoningEffort) {
+    config.output_config = { effort: metadata.reasoningEffort };
+    config.thinking = { type: 'adaptive' };
+  }
+  if (shortResponse) {
+    if (modelName === 'claude-sonnet-5-5') config.thinking = { type: 'between_tools' };
+    else if (modelName === 'claude-haiku-5-5') config.thinking = { type: 'disabled' };
+    else if (modelName === 'claude-opus-5-5') config.max_tokens = 50000;
+  }
+  return config;
+}
+
+/** Select answer text without treating thinking or signatures as content. */
+export function getClaudeResponseText(response) {
+  return (response?.content || []).filter(block => block.type === 'text' && typeof block.text === 'string').map(block => block.text).join('');
+}
 
 /**
  * Call Claude API
@@ -17,12 +44,11 @@ import { handleError } from '../utils/error-handler.js';
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
+export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callClaudeAPI', { model, systemPromptLength: systemPrompt.length, userPromptLength: userPrompt.length });
   
   const requestBody = {
-    model: model || 'claude-sonnet-4-5',
-    max_tokens: 50000,
+    ...getClaudeRequestConfig(model),
     messages: [
       { role: 'user', content: userPrompt }
     ]
@@ -39,69 +65,58 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
     logDebug('Sending request to Claude API...');
     
     // Use retry wrapper for fetch
-    // Create new AbortController for each retry attempt to avoid timeout conflict
+    // Each retry has an independent request deadline.
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Api-Key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
         
-          // If not ok and retryable, throw error for retry logic
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              throw error;
-            }
-            // Non-retryable error - throw immediately
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            
-            // Provide more helpful error messages for common errors
-            const uiLang = await getUILanguageCached();
-            let errorMessage = errorData.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-            if (fetchResponse.status === 401) {
-              errorMessage = tSync('errorApiKeyInvalid', uiLang);
-            } else if (fetchResponse.status === 403) {
-              errorMessage = tSync('errorApiAccessForbidden', uiLang);
-            } else if (fetchResponse.status === 429) {
-              errorMessage = tSync('errorRateLimit', uiLang);
-            }
-            
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorMessage);
+        // If not ok and retryable, throw error for retry logic
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
             error.status = fetchResponse.status;
+            error.response = fetchResponse;
             throw error;
           }
-          
-          return fetchResponse;
-        } catch (e) {
-          throw e;
-        } finally {
-          // CRITICAL: Always clear timeout in finally to prevent memory leaks
-          if (timeout) {
-            clearTimeout(timeout);
+          // Non-retryable error - throw immediately
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
           }
+          
+          // Provide more helpful error messages for common errors
+          const uiLang = await getUILanguageCached();
+          let errorMessage = errorData.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
+          if (fetchResponse.status === 401) {
+            errorMessage = tSync('errorApiKeyInvalid', uiLang);
+          } else if (fetchResponse.status === 403) {
+            errorMessage = tSync('errorApiAccessForbidden', uiLang);
+          } else if (fetchResponse.status === 429) {
+            errorMessage = tSync('errorRateLimit', uiLang);
+          }
+
+          /** @type {Error & {status?: number}} */
+          const error = new Error(errorMessage);
+          error.status = fetchResponse.status;
+          throw error;
         }
+
+        return fetchResponse;
+
       },
       {
         onRetry: (attempt, delay) => {
@@ -110,6 +125,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
       }
     );
   } catch (fetchError) {
+    await requestOptions.checkCancelled?.();
     if (fetchError.name === 'AbortError') {
       // Normalize timeout error with context
       const normalized = await handleError(fetchError, {
@@ -119,7 +135,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
         createUserMessage: true, // Use centralized user-friendly message
         context: {
           operation: 'fetchRequest',
-          model: model || 'claude-sonnet-4-5',
+          model: requestBody.model,
           errorName: 'AbortError'
         }
       });
@@ -153,7 +169,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
         createUserMessage: true, // Use centralized user-friendly message with status handling
         context: {
           operation: 'fetchRequest',
-          model: model || 'claude-sonnet-4-5',
+          model: requestBody.model,
           statusCode: fetchError.status,
           errorData: errorData?.error
         }
@@ -191,7 +207,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
       createUserMessage: false, // Keep existing localized message
       context: {
         operation: 'fetchRequest',
-        model: model || 'claude-sonnet-4-5',
+        model: requestBody.model,
         errorName: fetchError.name
       }
     });
@@ -209,10 +225,13 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
   log('Claude response', { status: response.status, ok: response.ok });
 
   const result = await response.json();
-  log('Claude response received', { contentLength: result.content?.[0]?.text?.length });
+  await requestOptions.checkCancelled?.();
+  assertCompleteAIResponse(result, 'claude');
+  log('Claude response received', { contentLength: getClaudeResponseText(result).length });
   
   // Claude returns content as array with text blocks
-  const textContent = result.content?.find(c => c.type === 'text')?.text;
+  const textContent = getClaudeResponseText(result);
+  if (!textContent) throw new Error('No content in API response');
   
   if (jsonResponse && textContent) {
     try {
@@ -232,7 +251,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
             createUserMessage: false, // Keep existing localized message
             context: {
               operation: 'parseJsonResponse',
-              model: model || 'claude-sonnet-4-5',
+              model: requestBody.model,
               contentLength: textContent.length,
               contentPreview: textContent.substring(0, 500),
               extractedFromMarkdown: true
@@ -258,7 +277,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
         createUserMessage: true, // Use centralized user-friendly message
         context: {
           operation: 'parseJsonResponse',
-          model: model || 'claude-sonnet-4-5',
+          model: requestBody.model,
           contentLength: textContent.length,
           contentPreview: textContent.substring(0, 500),
           extractedFromMarkdown: false
@@ -289,15 +308,14 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true) {
+export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callClaudeAPIWithImage', { model, imageSize: imageData.length });
   
   // Claude expects base64 without data URL prefix
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   const requestBody = {
-    model: model || 'claude-sonnet-4-5',
-    max_tokens: 50000,
+    ...getClaudeRequestConfig(model),
     messages: [
       {
         role: 'user',
@@ -306,7 +324,7 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
             type: 'image',
             source: {
               type: 'base64',
-              media_type: 'image/png',
+              media_type: mimeType,
               data: base64Image
             }
           },
@@ -331,50 +349,42 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Api-Key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              clearTimeout(timeout);
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            const uiLang = await getUILanguageCached();
-            const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
-            clearTimeout(timeout);
-            throw new Error(errorMessage);
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+
+            throw error;
           }
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
+          }
+          const uiLang = await getUILanguageCached();
+          const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
           
-          clearTimeout(timeout);
-          return fetchResponse;
-        } catch (e) {
-          clearTimeout(timeout);
-          throw e;
+          throw new Error(errorMessage);
         }
+
+        return fetchResponse;
+
       },
       {
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -384,7 +394,9 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
     );
     
     const data = await response.json();
-    const content = data.content?.[0]?.text;
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(data, 'claude');
+    const content = getClaudeResponseText(data);
     if (!content) {
       logError('Claude API response missing content', { data });
       throw new Error('No content in API response');
@@ -401,6 +413,7 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
     
     return content;
   } catch (error) {
+    await requestOptions.checkCancelled?.();
     logError('Claude API call with image failed', error);
     throw error;
   }
@@ -415,12 +428,12 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
  * @param {string} apiKey - Claude API key
  * @param {string} model - Model name
  * @param {boolean} jsonResponse - Whether to expect JSON response
- * @returns {Promise<{result: Object|string, assistantMessage: string, userMessage: Object}>}
+ * @returns {Promise<{result: Object|string, assistantMessage: Array<Object>, userMessage: Object}>}
  */
-export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true) {
+export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callClaudeAPIWithImageAndHistory', { model, imageSize: imageData.length, historyLength: messageHistory.length });
   
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Build current user message with image
   const currentUserMessage = {
@@ -430,7 +443,7 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
         type: 'image',
         source: {
           type: 'base64',
-          media_type: 'image/png',
+          media_type: mimeType,
           data: base64Image
         }
       },
@@ -448,8 +461,7 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
   ];
   
   const requestBody = {
-    model: model || 'claude-sonnet-4-5',
-    max_tokens: 50000,
+    ...getClaudeRequestConfig(model),
     messages: messages
   };
   
@@ -465,50 +477,42 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Api-Key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-dangerous-direct-browser-access': 'true'
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Api-Key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              clearTimeout(timeout);
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            const uiLang = await getUILanguageCached();
-            const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
-            clearTimeout(timeout);
-            throw new Error(errorMessage);
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+
+            throw error;
           }
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
+          }
+          const uiLang = await getUILanguageCached();
+          const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
           
-          clearTimeout(timeout);
-          return fetchResponse;
-        } catch (e) {
-          clearTimeout(timeout);
-          throw e;
+          throw new Error(errorMessage);
         }
+
+        return fetchResponse;
+
       },
       {
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -518,7 +522,9 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
     );
     
     const data = await response.json();
-    const content = data.content?.[0]?.text;
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(data, 'claude');
+    const content = getClaudeResponseText(data);
     if (!content) {
       logError('Claude API response missing content', { data });
       throw new Error('No content in API response');
@@ -646,10 +652,11 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
     
     return {
       result,
-      assistantMessage: content, // Store for history
+      assistantMessage: data.content, // Preserve signed thinking blocks in history.
       userMessage: currentUserMessage // Store full user message with image for history
     };
   } catch (error) {
+    await requestOptions.checkCancelled?.();
     logError('Claude API call with image and history failed', error);
     throw error;
   }

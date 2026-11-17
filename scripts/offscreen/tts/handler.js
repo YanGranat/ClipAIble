@@ -162,6 +162,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
     // 8. Synthesize
     const wavBlob = await synthesizeText({
       text: sanitizedText,
+      processingRunId: data.processingRunId,
       voiceId: downloadedVoiceId,
       langCode,
       messageId,

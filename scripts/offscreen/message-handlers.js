@@ -6,7 +6,7 @@
 import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { extractPdfContent } from './pdf/extract.js';
-import { loadPdfDocument } from './pdf/core/pdf-loader.js';
+import { loadPdfDocument, destroyPdfDocument } from './pdf/core/pdf-loader.js';
 import { loadPdfJs } from './pdf/utils/pdf-loader.js';
 
 /**
@@ -38,7 +38,7 @@ export async function handleGetVoices(messageId, initTTSWorker, getVoicesWithWor
   
   // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
   if (!ttsWorker) {
-    await initTTSWorker();
+    ttsWorker = await initTTSWorker();
   }
   if (!ttsWorker) {
     throw new Error('TTS Worker is not available. Cannot get available voices without Worker.');
@@ -189,7 +189,7 @@ export async function handleGetStoredVoices(messageId, initTTSWorker, getStoredW
   
   // CRITICAL: All TTS operations must go through Worker - no fallback to direct calls
   if (!ttsWorker) {
-    await initTTSWorker();
+    ttsWorker = await initTTSWorker();
   }
   if (!ttsWorker) {
     throw new Error('TTS Worker is not available. Cannot get stored voices without Worker.');
@@ -320,6 +320,7 @@ export async function handleExtractPdf(messageId, data, sendResponse) {
  * @throws {Error} If PDF loading fails
  */
 export async function handleExtractPdfPageText(messageId, data, sendResponse) {
+  let pdf = null;
   // Only log if verbose
   if (CONFIG?.VERBOSE_LOGGING) {
     log(`[ClipAIble Offscreen] EXTRACT_PDF_PAGE_TEXT request`, {
@@ -329,7 +330,9 @@ export async function handleExtractPdfPageText(messageId, data, sendResponse) {
   }
   
   try {
-    const { pdf, numPages } = await loadPdfDocument(data.pdfUrl);
+    const loaded = await loadPdfDocument(data.pdfUrl);
+    pdf = loaded.pdf;
+    const { numPages } = loaded;
     const pageNum = data.pageNum || 1;
     
     if (pageNum < 1 || pageNum > numPages) {
@@ -372,6 +375,8 @@ export async function handleExtractPdfPageText(messageId, data, sendResponse) {
       success: false,
       error: error.message
     });
+  } finally {
+    await destroyPdfDocument(pdf);
   }
 }
 
@@ -385,13 +390,16 @@ export async function handleExtractPdfPageText(messageId, data, sendResponse) {
  * @throws {Error} If PDF loading fails
  */
 export async function handleGetPdfMetadata(messageId, data, sendResponse) {
+  let pdf = null;
   // Only log if verbose
   if (CONFIG?.VERBOSE_LOGGING) {
     log(`[ClipAIble Offscreen] GET_PDF_METADATA request`, { messageId });
   }
   
   try {
-    const { pdf, numPages, metadata } = await loadPdfDocument(data.pdfUrl);
+    const loaded = await loadPdfDocument(data.pdfUrl);
+    pdf = loaded.pdf;
+    const { numPages, metadata } = loaded;
     
     // Only log if verbose
     if (CONFIG?.VERBOSE_LOGGING) {
@@ -418,6 +426,8 @@ export async function handleGetPdfMetadata(messageId, data, sendResponse) {
       success: false,
       error: error.message
     });
+  } finally {
+    await destroyPdfDocument(pdf);
   }
 }
 
@@ -432,6 +442,7 @@ export async function handleGetPdfMetadata(messageId, data, sendResponse) {
  * @throws {Error} If PDF loading fails
  */
 export async function handleGetPdfPageDimensions(messageId, data, sendResponse) {
+  let pdf = null;
   log(`[ClipAIble Offscreen] GET_PDF_PAGE_DIMENSIONS request for ${messageId}`, {
     messageId,
     pdfUrl: data?.pdfUrl,
@@ -525,14 +536,13 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
       }
     }
     // Load PDF document (use pdfData if provided, otherwise load from URL)
-    let pdf;
     let numPages;
     
     if (pdfData) {
       // Use provided PDF data (already decoded from base64)
       try {
         const pdfjsLib = await loadPdfJs();
-        const loadingTask = pdfjsLib.getDocument({ data: pdfData, disableWorker: true });
+        const loadingTask = pdfjsLib.getDocument({ data: pdfData, disableWorker: true, isEvalSupported: false });
         const pdfDocument = await loadingTask.promise;
         pdf = pdfDocument;
         numPages = pdfDocument.numPages;
@@ -645,6 +655,8 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
       success: false,
       error: error.message
     });
+  } finally {
+    await destroyPdfDocument(pdf);
   }
 }
 
@@ -659,6 +671,7 @@ export async function handleGetPdfPageDimensions(messageId, data, sendResponse) 
  * @throws {Error} If PDF loading fails
  */
 export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
+  let pdf = null;
   const startTime = Date.now();
   log(`[ClipAIble Offscreen] RENDER_PDF_PAGE_IMAGE request for ${messageId}`, 'RENDER_PDF_PAGE_IMAGE_START', {
     messageId,
@@ -807,7 +820,9 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     });
     
     const loadStartTime = Date.now();
-    const { pdf, numPages } = await loadPdfDocument(data.pdfUrl, pdfData);
+    const loaded = await loadPdfDocument(data.pdfUrl, pdfData);
+    pdf = loaded.pdf;
+    const { numPages } = loaded;
     const loadDuration = Date.now() - loadStartTime;
     
     log(`[ClipAIble Offscreen] PDF document loaded successfully for ${messageId}`, 'PDF_DOCUMENT_LOADED', {
@@ -849,7 +864,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       scale
     });
     
-    // CRITICAL: Create NEW canvas for EACH page (per Perplexity analysis)
+    // Create a new canvas for each page.
     // PDF.js cannot reuse the same canvas - causes "Cannot use the same canvas" error
     // Always use standard HTMLCanvasElement (NOT OffscreenCanvas) for offscreen document
     if (typeof document === 'undefined' || !document.createElement) {
@@ -861,6 +876,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
     let canvas = null;
     let context = null;
     let renderTask = null;
+    let renderTimeoutId = null;
     
     try {
       canvas = document.createElement('canvas');
@@ -879,7 +895,8 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       // Render PDF page to canvas with timeout
       const renderContext = {
         canvasContext: context,
-        viewport: viewport
+        viewport: viewport,
+        intent: 'print'
       };
     
     log(`[ClipAIble Offscreen] Starting page render for ${messageId}...`, 'PDF_PAGE_RENDER_START', { 
@@ -972,12 +989,12 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       });
       
       // CRITICAL: Use longer timeout (5 minutes) for PDF rendering
-      // According to PDF.js documentation and Perplexity analysis, rendering can take time
+      // Rendering large documents can take time.
       // Very large PDFs (up to 1000 pages) can take significantly longer to render
       // With disableWorker=true set BEFORE import, rendering should work in main thread
       const RENDER_TIMEOUT_MS = CONFIG.PDF_RENDER_TIMEOUT_MS;
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
+        renderTimeoutId = setTimeout(() => {
           log(`[ClipAIble Offscreen] PDF page render TIMEOUT for ${messageId}`, 'PDF_PAGE_RENDER_TIMEOUT', {
             messageId,
             pageNum,
@@ -1050,7 +1067,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       log(`[ClipAIble Offscreen] Converting canvas to base64 for ${messageId}...`, { messageId, pageNum });
       const convertStart = Date.now();
       
-      // CRITICAL: Use JPEG format with quality for smaller file size (per Perplexity recommendation)
+      // Use JPEG with a quality setting to reduce file size.
       const imageData = canvas.toDataURL('image/jpeg', 0.92);
       
       log(`[ClipAIble Offscreen] Canvas converted for ${messageId}`, {
@@ -1062,7 +1079,7 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
         format: 'image/jpeg'
       });
       
-      // CRITICAL: Cleanup page BEFORE canvas cleanup (per Perplexity recommendation)
+      // Release the page before clearing the canvas.
       page.cleanup();
       
       const totalDuration = Date.now() - startTime;
@@ -1081,7 +1098,10 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
         height: viewport.height
       });
     } finally {
-      // CRITICAL: Always cleanup canvas (per Perplexity - prevents "Cannot use the same canvas" error)
+      if (renderTimeoutId) {
+        clearTimeout(renderTimeoutId);
+      }
+      // Always clear the canvas after rendering.
       // This must happen in finally block to ensure cleanup even if error occurs
       if (canvas) {
         try {
@@ -1117,12 +1137,14 @@ export async function handleRenderPdfPageImage(messageId, data, sendResponse) {
       success: false,
       error: error.message
     });
+  } finally {
+    await destroyPdfDocument(pdf);
   }
 }
 
 /**
  * Handle RENDER_ALL_PDF_PAGES message - render all pages of a PDF document
- * CRITICAL: Loads PDF ONCE and renders all pages sequentially (per Perplexity analysis)
+ * Loads the PDF once and renders its pages sequentially.
  * This is MUCH faster than loading PDF for each page separately
  * 
  * @param {string} messageId - Message ID for logging
@@ -1330,7 +1352,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         renderTask = page.render({
           canvasContext: context,
           viewport: viewport,
-          intent: 'display'
+          intent: 'print'
         });
         
         log(`[ClipAIble Offscreen] Render task created for page ${pageNum} (${messageId})`, {
@@ -1371,7 +1393,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
           throw error;
         });
         
-        // CRITICAL: Increased timeout for fake worker (Perplexity recommendation)
+        // Allow additional initialization time for the first page.
         // Fake worker runs in main thread and is slower, especially for first page
         // First page: 10 minutes (initialization), other pages: 5 minutes
         const RENDER_TIMEOUT_MS = pageNum === 1 ? CONFIG.PDF_FIRST_PAGE_RENDER_TIMEOUT_MS : CONFIG.PDF_RENDER_TIMEOUT_MS;
@@ -1541,8 +1563,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     // CRITICAL: Cleanup PDF document AFTER all pages
     if (pdf) {
       try {
-        pdf.cleanup();
-        pdf.destroy();
+        await destroyPdfDocument(pdf);
         log(`[ClipAIble Offscreen] PDF document cleaned up for ${messageId}`, {
           messageId
         });

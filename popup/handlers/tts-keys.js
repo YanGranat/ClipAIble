@@ -1,6 +1,8 @@
 // @ts-check
 // TTS API key save handlers (ElevenLabs, Qwen, Respeecher, Google TTS)
 
+import { saveApiKeySettings } from '../../scripts/utils/encryption.js';
+
 /**
  * Generic function to save TTS API key
  * @param {Object} config - Configuration
@@ -33,7 +35,8 @@ async function saveTtsApiKey(config) {
 
   const key = input.value.trim();
   if (!key) {
-    const pleaseEnterKeyText = await t(`pleaseEnter${keyName}ApiKey`);
+    const inputKeyName = keyName === 'Respeecher' ? 'Respecher' : keyName;
+    const pleaseEnterKeyText = await t(`pleaseEnter${inputKeyName}ApiKey`);
     showToast(pleaseEnterKeyText, 'error');
     return;
   }
@@ -48,13 +51,13 @@ async function saveTtsApiKey(config) {
     return;
   }
   
-  if (validateKey && !validateKey(key)) {
+  if (validateKey && !await validateKey(key)) {
     return;
   }
   
   try {
     const encrypted = await encryptApiKey(key);
-    await chrome.storage.local.set({ [storageKey]: encrypted });
+    await saveApiKeySettings({ [storageKey]: encrypted });
     input.value = maskApiKey(key);
     input.type = 'password';
     input.dataset.encrypted = encrypted;
@@ -64,7 +67,8 @@ async function saveTtsApiKey(config) {
         eyeIcon.textContent = '👁';
       }
     }
-    const keySavedText = await t(`${keyName.toLowerCase()}KeySaved`);
+    const savedKeyName = keyName === 'GoogleTts' ? 'googleTts' : keyName.toLowerCase();
+    const keySavedText = await t(`${savedKeyName}KeySaved`);
     showToast(keySavedText, 'success');
   } catch (error) {
     logError(`Failed to save ${keyName} API key`, error);

@@ -353,6 +353,7 @@ export function extractLastResortContainerSearch(win, doc, state, constants, bas
  */
 export function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
   const content = [];
+  const sourceElements = new Map();
   
   // Get all headings (limit 50)
   const allHeadings = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
@@ -373,7 +374,9 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
     state.addedHeadings.add(normalized);
     
     const level = parseInt(heading.tagName.charAt(1));
-    content.push({ type: 'heading', level, text });
+    const item = { type: 'heading', level, text };
+    content.push(item);
+    sourceElements.set(item, heading);
     headingCount++;
   }
   
@@ -397,10 +400,13 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
     const originalText = getOriginalTextIfTranslated(p);
     const finalText = originalText || p.innerHTML;
     
-    content.push({ type: 'paragraph', text: finalText, html: finalText });
+    const item = { type: 'paragraph', text: finalText, html: finalText };
+    content.push(item);
+    sourceElements.set(item, p);
     paragraphCount++;
   }
   
+  content.sort((a, b) => compareDomOrder(sourceElements.get(a), sourceElements.get(b)));
   return content.length > 0 ? content : null;
 }
 

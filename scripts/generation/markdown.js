@@ -14,26 +14,8 @@ import { isCancelled } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
+import { filterFigureParagraphs } from './content.js';
 
-/**
- * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
- * This prevents duplicate caption text in Markdown.
- * 
- * @param {Array<import('../types.js').ContentItem>} content - Content array
- * @returns {Array<import('../types.js').ContentItem>} Filtered content array
- */
-function filterFigureParagraphs(content) {
-  if (!content || !Array.isArray(content)) return content;
-  
-  return content.filter((item, index) => {
-    if (item.type !== 'paragraph') return true;
-    const text = item.text || item.html || '';
-    if (!text.includes('<figure')) return true;
-    const nextItem = content[index + 1];
-    if (!nextItem || nextItem.type !== 'image') return true;
-    return false;
-  });
-}
 
 // Simple cache for localization strings (performance optimization)
 // Limited to prevent unbounded growth
@@ -113,7 +95,7 @@ export async function generateMarkdown(data, updateState) {
   if (updateState) updateState({ status: 'Building Markdown...', progress: 85 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = filterFigureParagraphs(content);
+  const filteredContent = filterFigureParagraphs(content, sourceUrl);
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
@@ -184,7 +166,7 @@ export async function generateMarkdown(data, updateState) {
   // Translate date if language is not auto and API key is available
   if (language !== 'auto' && apiKey && translatedDate) {
     try {
-      const translated = await translateMetadata(translatedDate, language, apiKey, model, 'date');
+      const translated = await translateMetadata(translatedDate, language, apiKey, model, 'date', data.aiRequestOptions);
       if (translated) translatedDate = translated;
     } catch (error) {
       logWarn('Failed to translate date, using formatted original', error);
@@ -367,7 +349,7 @@ export async function generateMarkdown(data, updateState) {
   const filename = `${safeTitle}.md`;
   
   // Check if processing was cancelled before downloading
-  if (isCancelled()) {
+  if (isCancelled(data.processingRunId)) {
     log('Processing cancelled, skipping Markdown download');
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
@@ -382,7 +364,7 @@ export async function generateMarkdown(data, updateState) {
     const objectUrl = urlApi.createObjectURL(blob);
     try {
       // Check again before actual download
-      if (isCancelled()) {
+      if (isCancelled(data.processingRunId)) {
         log('Processing cancelled, skipping Markdown download');
         throw new Error(tSync('statusCancelled', await getUILanguage()));
       }
@@ -412,7 +394,7 @@ export async function generateMarkdown(data, updateState) {
     });
     
     // Check again before actual download
-    if (isCancelled()) {
+    if (isCancelled(data.processingRunId)) {
       log('Processing cancelled, skipping Markdown download');
       throw new Error(tSync('statusCancelled', await getUILanguage()));
     }

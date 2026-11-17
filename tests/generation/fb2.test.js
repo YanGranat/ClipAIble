@@ -11,7 +11,8 @@ vi.mock('../../scripts/utils/logging.js', () => ({
   logDebug: vi.fn()
 }));
 
-vi.mock('../../scripts/utils/html.js', () => ({
+vi.mock('../../scripts/utils/html.js', async (importOriginal) => ({
+  ...await importOriginal(),
   stripHtml: vi.fn((text) => text?.replace(/<[^>]*>/g, '') || '')
 }));
 

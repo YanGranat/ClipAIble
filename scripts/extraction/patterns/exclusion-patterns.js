@@ -407,9 +407,7 @@ export const LOGO_PATTERNS = [
   'facebook-logo', 'twitter-logo', 'instagram-logo',
   'arrow', 'chevron', 'bullet', 'dot', 'gradient', 'bg', 'background', 'shadow', 'border',
   'divider', 'line', 'separator', 'spinner', 'loader', 'loading',
-  'placeholder', 'default', 'avatar', 'user', 'profile', 'gravatar',
-  'data:image/gif;base64,r0lgodlh', // Common 1x1 transparent GIF
-  'data:image/png;base64,i' // Common small transparent PNG
+  'placeholder', 'default', 'avatar', 'user', 'profile', 'gravatar'
 ];
 
 /**

@@ -8,12 +8,13 @@ import { generateEpub } from './epub.js';
 import { generateFb2 } from './fb2.js';
 import { generateMarkdown } from './markdown.js';
 import { generateAudio } from './audio.js';
-import { updateProgress } from '../utils/pipeline-helpers.js';
-import { PROCESSING_STAGES } from '../state/processing.js';
+import { updateProgress, getAIRequestOptions } from '../utils/pipeline-helpers.js';
+import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { log, logError, logDebug } from '../utils/logging.js';
 import { TTSApiKeyManager } from '../utils/api-key-manager.js';
 import { VoiceValidator } from '../utils/voice-validator.js';
 import { CONFIG } from '../utils/config.js';
+import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice } from '../api/tts-catalog.js';
 
 /**
  * @typedef {import('../types.js').GenerationData} GenerationData
@@ -65,7 +66,16 @@ export class DocumentGeneratorFactory {
    * // Audio file will be downloaded automatically
    */
   static async generate(format, data, result, updateState) {
+    if (data.processingRunId !== undefined && isCancelled(data.processingRunId)) {
+      throw new Error('Processing cancelled');
+    }
+    const onUpdate = data.processingRunId === undefined ? updateState : (updates) => {
+      if (!isCancelled(data.processingRunId)) updateState?.(updates);
+    };
+    const progressOptions = { processingRunId: data.processingRunId };
     const commonParams = {
+      aiRequestOptions: getAIRequestOptions(data),
+      ...(data.processingRunId === undefined ? {} : { processingRunId: data.processingRunId }),
       content: result.content,
       title: result.title,
       author: result.author || '',
@@ -81,39 +91,39 @@ export class DocumentGeneratorFactory {
     
     switch (format) {
       case 'markdown': {
-        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingMarkdown', 65);
+        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingMarkdown', 65, progressOptions);
         const markdownResult = await generateMarkdown({
           ...commonParams,
           apiKey: data.apiKey,
           model: data.model
-        }, updateState);
+        }, onUpdate);
         log('✅ Markdown document generated successfully');
         return markdownResult;
       }
 
       case 'epub': {
-        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingEpub', 65);
-        const epubResult = await generateEpub(commonParams, updateState);
+        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingEpub', 65, progressOptions);
+        const epubResult = await generateEpub(commonParams, onUpdate);
         log('✅ EPUB document generated successfully');
         return epubResult;
       }
 
       case 'fb2': {
-        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingFb2', 65);
-        const fb2Result = await generateFb2(commonParams, updateState);
+        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingFb2', 65, progressOptions);
+        const fb2Result = await generateFb2(commonParams, onUpdate);
         log('✅ FB2 document generated successfully');
         return fb2Result;
       }
 
       case 'audio': {
-        await DocumentGeneratorFactory._generateAudio(data, result, updateState);
+        await DocumentGeneratorFactory._generateAudio(data, result, onUpdate);
         log('✅ Audio file generated successfully');
         return;
       }
 
       case 'pdf':
       default: {
-        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingPdf', 65);
+        await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingPdf', 65, progressOptions);
         const pdfResult = await generatePdf({
           ...commonParams,
           apiKey: data.apiKey,
@@ -126,7 +136,7 @@ export class DocumentGeneratorFactory {
           headingColor: data.headingColor || '#cfcfcf',
           linkColor: data.linkColor || '#6cacff',
           pageMode: data.pageMode || 'single'
-        }, updateState);
+        }, onUpdate);
         log('✅ PDF document generated successfully');
         return pdfResult;
       }
@@ -156,7 +166,7 @@ export class DocumentGeneratorFactory {
     });
     
     // Don't set progress here - let generateAudio manage its own progress
-    await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingAudio', 65);
+    await updateProgress(PROCESSING_STAGES.GENERATING, 'statusGeneratingAudio', 65, { processingRunId: data.processingRunId });
     
     // Get TTS API key based on provider
     const ttsProvider = data.audioProvider || 'openai';
@@ -226,6 +236,8 @@ export class DocumentGeneratorFactory {
     
     /** @type {AudioGenerationData} */
     const audioParams = {
+      aiRequestOptions: getAIRequestOptions(data),
+      ...(data.processingRunId === undefined ? {} : { processingRunId: data.processingRunId }),
       content: result.content,
       title: result.title,
       apiKey: data.apiKey, // For text preparation
@@ -237,7 +249,7 @@ export class DocumentGeneratorFactory {
         ttsProvider,
         data.audioVoice,
         data.googleTtsVoice,
-        CONFIG.DEFAULT_AUDIO_VOICE
+        getDefaultTtsVoice(ttsProvider, data.qwenModel)
       ),
       speed: data.audioSpeed || CONFIG.DEFAULT_AUDIO_SPEED,
       format: data.audioFormat || CONFIG.DEFAULT_AUDIO_FORMAT,
@@ -250,7 +262,10 @@ export class DocumentGeneratorFactory {
       elevenlabsStyle: data.elevenlabsStyle !== undefined ? data.elevenlabsStyle : 0.0,
       elevenlabsSpeakerBoost: data.elevenlabsSpeakerBoost !== undefined ? data.elevenlabsSpeakerBoost : true,
       openaiInstructions: data.openaiInstructions || null,
-      googleTtsModel: data.googleTtsModel || 'gemini-2.5-pro-preview-tts',
+      googleTtsModel: data.googleTtsModel || DEFAULT_GOOGLE_TTS_MODEL,
+      qwenModel: data.qwenModel || DEFAULT_QWEN_TTS_MODEL,
+      qwenWorkspaceId: data.qwenWorkspaceId || '',
+      qwenRegion: data.qwenRegion || 'singapore',
       googleTtsVoice: data.googleTtsVoice || 'Callirrhoe',
       googleTtsPrompt: data.googleTtsPrompt || null,
       respeecherTemperature: data.respeecherTemperature !== undefined ? data.respeecherTemperature : 1.0,

@@ -33,6 +33,9 @@ export function initUI(deps) {
     timerInterval
   } = deps;
 
+  let themeMediaQuery = null;
+  let themeChangeListener = null;
+
   // Apply UI localization with batched DOM updates for better performance
   async function applyLocalization() {
     const langCode = await getUILanguage();
@@ -240,6 +243,12 @@ export function initUI(deps) {
     }
     const theme = elements.themeSelect.value;
     let actualTheme = theme;
+
+    if (themeMediaQuery && themeChangeListener) {
+      themeMediaQuery.removeListener(themeChangeListener);
+      themeMediaQuery = null;
+      themeChangeListener = null;
+    }
     
     if (theme === 'auto') {
       // Detect system theme
@@ -259,15 +268,8 @@ export function initUI(deps) {
         document.documentElement.setAttribute('data-theme', newTheme);
       };
       
-      // Remove old listener if exists
-      // @ts-ignore - custom property on window
-      if (window.themeChangeListener) {
-        // @ts-ignore - custom property on window
-        mediaQuery.removeListener(window.themeChangeListener);
-      }
-      
-      // @ts-ignore - custom property on window
-      window.themeChangeListener = handleThemeChange;
+      themeMediaQuery = mediaQuery;
+      themeChangeListener = handleThemeChange;
       mediaQuery.addListener(handleThemeChange);
     }
   }

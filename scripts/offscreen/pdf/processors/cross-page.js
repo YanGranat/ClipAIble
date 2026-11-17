@@ -4,7 +4,7 @@
 // Supports: paragraphs, headings, lists
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { countBy } from '../utils/array-helpers.js';
 import { shouldContinueBlock } from './continuation.js';
 import { 

@@ -1,9 +1,9 @@
 // @ts-check
 // Font detection utility - determines bold/italic from font metrics
-// SIMPLIFIED: Only determines base font, formatting is determined by comparing widthHeightRatio in context
+// Combines font metadata with width-to-height ratio comparisons.
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn, criticalLog } from '../../../../utils/logging.js';
+import { log, logWarn, criticalLog } from '../../../utils/logging.js';
 import { TEXT_FORMATTING } from '../constants.js';
 
 /**

@@ -3,7 +3,7 @@
 // This is a proven algorithm from Python pdfplumber library
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 
 /**
  * Cluster objects by a key value with tolerance

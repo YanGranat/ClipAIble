@@ -1,23 +1,22 @@
 // @ts-check
-// Contextual formatting detection - SIMPLIFIED: Only uses reliable sources
-// Reliable sources: font name (Bold/Italic), direct fontWeight/fontStyle from PDF, fontToFormats map
-// No ratio-based heuristics to avoid false positives
+// Contextual formatting detection from font metadata and relative text metrics.
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn, criticalLog } from '../../../../utils/logging.js';
+import { log, logWarn, criticalLog } from '../../../utils/logging.js';
 import { TEXT_FORMATTING } from '../constants.js';
 
 /**
- * Detect formatting using only reliable sources
+ * Detect formatting from explicit font metadata and contextual metrics.
  * 
- * Reliable sources:
+ * Formatting inputs:
  * 1. Font name contains "Bold" or "Italic" (from fontNameMap)
  * 2. Direct fontWeight="bold" or fontStyle="italic"/"oblique" from PDF
- * 3. fontToFormats map (only for fonts explicitly marked in name)
+ * 3. fontToFormats map from global font analysis
+ * 4. Width-to-height ratios relative to the base font and neighboring items
  * 
  * @param {Array} lines - Array of line objects with items property
  * @param {Map<string, import('./font-name-extractor.js').FontInfo|string>|null} fontNameMap - Map from internal font name to FontInfo object or string
- * @param {Map<string, string>} fontToFormats - Map from font name to format (only for fonts explicitly marked in name)
+ * @param {Map<string, string>} fontToFormats - Map from global font analysis
  * @param {number|string} pageNum - Page number for logging
  * @returns {void} Modifies items in place, setting isBold, isItalic properties
  */

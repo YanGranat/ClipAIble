@@ -214,10 +214,6 @@ export function initState(deps) {
     if (isExtensionReload) {
       // Extension was reloaded - don't show old state, start fresh
       log('Extension reloaded detected - starting with clean state (not restoring old processing state)');
-      // CRITICAL: Clear any old error state from storage when extension is reloaded
-      chrome.storage.local.remove(['processingState']).catch(() => {
-        // Ignore errors when clearing
-      });
       return; // Return without updating UI - will show default "ready" state
     }
     
@@ -233,8 +229,6 @@ export function initState(deps) {
         log('State in storage is cancelled - ignoring (should be cleared)', {
           timeSinceUpdate: Date.now() - (savedState.lastUpdate || 0)
         });
-        // Try to clear it
-        chrome.storage.local.remove(['processingState']).catch(() => {});
         return;
       }
       
@@ -249,7 +243,6 @@ export function initState(deps) {
             error: savedState.error,
             errorCode: savedState.errorCode
           });
-          chrome.storage.local.remove(['processingState']).catch(() => {});
           return;
         }
       }

@@ -2,7 +2,7 @@
 // Paragraph classifier - multiple algorithms to determine if element is a paragraph
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { PARAGRAPH_LENGTH } from '../constants.js';
 
 /**

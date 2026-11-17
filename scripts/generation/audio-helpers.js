@@ -6,6 +6,7 @@ import { log, logDebug } from '../utils/logging.js';
 import { AUDIO_CONFIG } from './audio-prep.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
+import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint } from '../api/tts-catalog.js';
 
 // Language to TTS instruction mapping
 const LANGUAGE_TTS_INSTRUCTIONS = {
@@ -125,13 +126,16 @@ export async function validateAudioParams(params, provider) {
     throw new Error(tSync('errorNoContentToConvert', uiLang));
   }
 
-  if (!apiKey) {
+  if (!apiKey && provider !== 'offline') {
     throw new Error(tSync('errorNoApiKeyForTextPrep', uiLang));
   }
 
   if (!ttsApiKey && provider !== 'offline') {
     const providerName = getProviderName(provider);
     throw new Error(tSync('errorNoTtsApiKey', uiLang).replace('{provider}', providerName));
+  }
+  if (provider === 'qwen') {
+    getQwenTtsEndpoint(params.qwenModel || DEFAULT_QWEN_TTS_MODEL, params.qwenWorkspaceId, params.qwenRegion);
   }
 }
 
@@ -197,6 +201,9 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
     elevenlabsStyle,
     elevenlabsSpeakerBoost,
     googleTtsModel,
+    qwenModel,
+    qwenWorkspaceId,
+    qwenRegion,
     respeecherTemperature,
     respeecherRepetitionPenalty,
     respeecherTopP,
@@ -206,6 +213,7 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
 
   return {
     provider,
+    ...(params.processingRunId === undefined ? {} : { processingRunId: params.processingRunId }),
     voice: ttsVoice,
     speed,
     format: ttsFormat,
@@ -220,6 +228,9 @@ export function buildTTSOptions(params, ttsVoice, ttsFormat, ttsPrompt, instruct
     elevenlabsStyle,
     elevenlabsSpeakerBoost,
     googleTtsModel,
+    qwenModel,
+    qwenWorkspaceId,
+    qwenRegion,
     respeecherTemperature,
     respeecherRepetitionPenalty,
     respeecherTopP,

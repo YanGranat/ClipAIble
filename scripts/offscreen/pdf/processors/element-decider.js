@@ -3,7 +3,7 @@
 // Decides final element type based on classification results and context
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { ELEMENT_DECISION, CONFIDENCE, GAP_ANALYSIS, DEFAULT_METRICS } from '../constants.js';
 
 /**
@@ -42,11 +42,6 @@ export function decideElementType(headingResult, paraResult, listResult, tableRe
   let elementType = 'paragraph';
   let maxConfidence = paraResult.confidence || 0.5;
   
-  // Very long text is always a paragraph
-  if (isVeryLongText) {
-    return { elementType: 'paragraph', confidence: Math.max(paraResult.confidence, CONFIDENCE.HIGH) };
-  }
-  
   // Check table BEFORE paragraph (tables can look like paragraphs)
   log(`[PDF v3] decideElementType: Evaluating table classification - tableResult=${tableResult?.type || 'none'}, tableConfidence=${tableResult?.confidence?.toFixed(3) || 'N/A'}, tableMinConfidence=${ELEMENT_DECISION.TABLE_MIN_CONFIDENCE}, paraConfidence=${paraResult?.confidence?.toFixed(3) || 'N/A'}`);
   
@@ -66,6 +61,11 @@ export function decideElementType(headingResult, paraResult, listResult, tableRe
     }
   }
   
+  // Keep long prose as a paragraph after checking the table structure.
+  if (isVeryLongText) {
+    return { elementType: 'paragraph', confidence: Math.max(paraResult.confidence, CONFIDENCE.HIGH) };
+  }
+
   // Special rules for homogeneous documents (all same font size/style)
   if (structure && structure.isHomogeneous && !structure.likelyHasHeadings) {
     // In homogeneous documents without variation, be very conservative about headings

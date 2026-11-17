@@ -76,6 +76,8 @@ export function initializeDOMElements(elements) {
   elements.useCache = document.getElementById(ELEMENT_IDS.USE_CACHE);
   elements.useCacheGroup = document.getElementById(ELEMENT_IDS.USE_CACHE_GROUP);
   elements.modelSelect = document.getElementById(ELEMENT_IDS.MODEL_SELECT);
+  elements.modelSelectTrigger = document.getElementById(ELEMENT_IDS.MODEL_SELECT_TRIGGER);
+  elements.modelSelectValue = document.getElementById(ELEMENT_IDS.MODEL_SELECT_VALUE);
   elements.addModelBtn = document.getElementById(ELEMENT_IDS.ADD_MODEL_BTN);
   elements.customModelDropdown = document.getElementById(ELEMENT_IDS.CUSTOM_MODEL_DROPDOWN);
   elements.customModelOptions = document.getElementById(ELEMENT_IDS.CUSTOM_MODEL_OPTIONS);
@@ -146,6 +148,9 @@ export function initializeDOMElements(elements) {
   elements.elevenlabsSpeakerBoost = document.getElementById(ELEMENT_IDS.ELEVENLABS_SPEAKER_BOOST);
   elements.openaiInstructions = document.getElementById(ELEMENT_IDS.OPENAI_INSTRUCTIONS);
   elements.openaiInstructionsGroup = document.getElementById(ELEMENT_IDS.OPENAI_INSTRUCTIONS_GROUP);
+  for (const [name, id] of [['qwenModel', ELEMENT_IDS.QWEN_MODEL], ['qwenModelGroup', ELEMENT_IDS.QWEN_MODEL_GROUP], ['qwenWorkspaceId', ELEMENT_IDS.QWEN_WORKSPACE_ID], ['qwenWorkspaceGroup', ELEMENT_IDS.QWEN_WORKSPACE_GROUP], ['qwenRegion', ELEMENT_IDS.QWEN_REGION], ['qwenRegionGroup', ELEMENT_IDS.QWEN_REGION_GROUP]]) {
+    elements[name] = document.getElementById(id);
+  }
   elements.qwenApiKey = document.getElementById(ELEMENT_IDS.QWEN_API_KEY);
   elements.toggleQwenApiKey = document.getElementById(ELEMENT_IDS.TOGGLE_QWEN_API_KEY);
   elements.saveQwenApiKey = document.getElementById(ELEMENT_IDS.SAVE_QWEN_API_KEY);
@@ -219,7 +224,7 @@ export function initializeModules(rawDeps) {
   const setElementDisplay = domHelpers.setElementDisplay;
   const setElementGroupDisplay = domHelpers.setElementGroupDisplay;
   const setDisplayForIds = domHelpers.setDisplayForIds;
-  const setCustomSelectValue = deps.setCustomSelectValue;
+  const setCustomSelectValue = settingsHelpers.setCustomSelectValue;
   const currentStartTimeRef = stateRefsGroup.currentStartTimeRef;
   const timerIntervalRef = stateRefsGroup.timerIntervalRef;
   const showToast = uiHelpers.showToast;
@@ -490,13 +495,13 @@ export async function finalizeInitialization(modules, initAllCustomSelects, setC
     // Fallback: try to get from manifest directly
     try {
       const manifest = chrome.runtime.getManifest();
-      const version = manifest?.version || '3.3.4';
+      const version = manifest?.version || '3.3.9';
       const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
       if (versionElement) {
         versionElement.textContent = `v${version}`;
       }
     } catch (fallbackError) {
-      // If all fails, leave default from HTML (v3.3.4)
+      // If all fails, leave the default from HTML.
     }
   }
 }

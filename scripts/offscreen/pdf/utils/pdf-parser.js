@@ -43,7 +43,7 @@ export async function parsePdfDocument(arrayBuffer) {
   // CRITICAL: Create fake ownerDocument for offscreen document
   // This fixes "ReferenceError: document is not defined" when PDF.js tries to create style elements
   // Based on solution from: https://github.com/mozilla/pdf.js/issues/10319#issuecomment-1074078410
-  // CRITICAL FIX (per Perplexity): Use document.createElement('canvas'), NOT OffscreenCanvas
+  // Use a DOM canvas for PDF.js rendering in the offscreen document.
   // OffscreenCanvas can cause issues in offscreen document context
   const fakeOwnerDocument = {
     // Safe access to fonts property - TypeScript doesn't know about fonts on Window/WorkerGlobalScope
@@ -51,7 +51,7 @@ export async function parsePdfDocument(arrayBuffer) {
     createElement: (name) => {
       if (name === 'canvas') {
         // CRITICAL: Use document.createElement('canvas'), NOT OffscreenCanvas
-        // Perplexity analysis: OffscreenCanvas can cause rendering issues
+        // Prefer the document's canvas implementation.
         // Offscreen document HAS document.createElement, so use it
         if (typeof document !== 'undefined' && document.createElement) {
           return document.createElement('canvas');
@@ -105,6 +105,7 @@ export async function parsePdfDocument(arrayBuffer) {
   
   loadingTask = pdfjsLib.getDocument({ 
     data: arrayBuffer,
+    isEvalSupported: false,
     verbosity: 0,
     stopAtErrors: false,
     // CRITICAL: Provide fake ownerDocument to fix document.createElement() errors

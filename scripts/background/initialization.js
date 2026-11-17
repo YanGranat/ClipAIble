@@ -1,135 +1,26 @@
 // @ts-check
-// Initialization logic for background service worker
-// Uses dependency injection pattern for better testability and modularity
+// Background startup recovery and initialization.
 
 import { validateDeps } from '../utils/di-validation.js';
 
 /**
- * Initialize extension initialization module with dependencies
- * @param {import('../types.js').InitializationDeps} deps - Dependencies object
- * @returns {function(): void} initExtension function
+ * @param {import('../types.js').InitializationDeps} deps
+ * @returns {function(): Promise<void>}
  */
 export function initInitialization(deps) {
-  // CRITICAL: Validate DI dependencies to prevent runtime errors
   validateDeps(deps, 'InitializationDeps', 'initialization');
+  const { log, logWarn, CONFIG, handleError, clearDecryptedKeyCache,
+    getProcessingState, restoreStateFromStorage, runInitialization, startKeepAlive } = deps;
 
-  const {
-    log,
-    logWarn,
-    CONFIG,
-    handleError,
-    clearDecryptedKeyCache,
-    getProcessingState,
-    restoreStateFromStorage,
-    runInitialization,
-    startKeepAlive
-  } = deps;
-
-  /**
-   * Initialize extension - use setTimeout to avoid blocking module loading
-   * This function handles:
-   * - Clearing decrypted key cache (security)
-   * - Resetting stale processing state on extension reload
-   * - Clearing summary on extension reload
-   * - Restoring state if it's recent (quick restart)
-   * - Running initialization tasks (migration, default settings)
-   * @returns {void}
-   */
-  function initExtension() {
-  setTimeout(() => {
-    try {
-      log('Extension loaded', { config: CONFIG });
-    } catch (error) {
-      // CRITICAL: Fallback to console.error if logging system itself fails
-      // This is the only place where console.error is acceptable - it's a fallback
-      // when the centralized logging system cannot be used
-      console.error('[ClipAIble] Failed to log (logging system error):', error);
-    }
-
-    // SECURITY: Clear decrypted key cache on service worker restart
-    // This ensures keys don't remain in memory after SW restart
-    clearDecryptedKeyCache();
-    log('Decrypted key cache cleared on service worker start (security)');
-
-    // CRITICAL: On extension reload/restart, ALWAYS reset all generation flags AND clear summary
-    // This ensures clean state after extension reload
-    // Check if this is a fresh start (no active processing) and reset flags
-    (async () => {
-      try {
-        const result = /** @type {import('../types.js').ChromeStorageResult & {summary_text?: string, summary_saved_timestamp?: number, key_theses_text?: string, key_theses_saved_timestamp?: number, key_theses_generating?: boolean, key_theses_generating_start_time?: number}} */ (
-          await chrome.storage.local.get(['processingState', 'summary_generating', 'summary_generating_start_time', 'summary_text', 'summary_saved_timestamp', 'key_theses_text', 'key_theses_saved_timestamp', 'key_theses_generating', 'key_theses_generating_start_time'])
-        );
-        /** @type {Partial<import('../types.js').ProcessingState>|undefined} */
-        const processingState = result.processingState && typeof result.processingState === 'object' ? result.processingState : undefined;
-        const hasProcessingState = processingState && processingState.isProcessing === true;
-        const hasSummaryGenerating = result.summary_generating;
-        const hasSummary = result.summary_text;
-        const hasKeyTheses = result.key_theses_text;
-
-        // CRITICAL: If extension was reloaded, reset all flags AND clear summary/key theses completely
-        // We can't distinguish reload from restart, so we ALWAYS reset on service worker start
-        // Only restore if state is very recent (< 1 minute) - this handles quick service worker restarts
-        const RESET_THRESHOLD = CONFIG.RESET_THRESHOLD_MS;
-        
-        if (hasSummary || hasKeyTheses) {
-          log('Extension reloaded - clearing summary and key theses from storage', {
-            hasSummary,
-            hasKeyTheses,
-            timestamp: Date.now()
-          });
-          try {
-            await chrome.storage.local.remove([
-              'summary_text', 'summary_saved_timestamp',
-              'key_theses_text', 'key_theses_saved_timestamp', 'key_theses_article_title'
-            ]);
-            log('Summary and key theses cleared from storage on extension reload');
-          } catch (error) {
-            const normalized = await handleError(error, {
-              source: 'initialization',
-              errorType: 'storageRemoveFailed',
-              logError: false,
-              createUserMessage: true,
-              context: { operation: 'removeSummaryAndKeyThesesText' }
-            });
-            logWarn('Failed to remove summary/key theses on reload', normalized);
-          }
-        } else {
-          log('Extension reloaded - no summary or key theses to clear');
-        }
-        
-        if (hasProcessingState && processingState) {
-          const lastUpdate = processingState.lastUpdate;
-          const timeSinceUpdate = lastUpdate && typeof lastUpdate === 'number' ? (Date.now() - lastUpdate) : Infinity;
-          if (timeSinceUpdate > RESET_THRESHOLD) {
-            log('Extension reloaded - resetting processingState (too old)', {
-              timeSinceUpdate,
-              threshold: RESET_THRESHOLD
-            });
-            try {
-              await chrome.storage.local.remove(['processingState']);
-            } catch (error) {
-              const normalized = await handleError(error, {
-                source: 'initialization',
-                errorType: 'storageRemoveFailed',
-                logError: false,
-                createUserMessage: true, // Use centralized user-friendly message
-                context: { operation: 'removeProcessingState' }
-              });
-              logWarn('Failed to remove processingState on reload', normalized);
-            }
-          } else {
-            log('ProcessingState is recent - may restore (quick restart)', {
-              timeSinceUpdate,
-              threshold: RESET_THRESHOLD
-            });
-          }
-        }
-        
-        if (hasSummaryGenerating || result.key_theses_generating) {
-          log('Extension reloaded - resetting summary and key theses generating flags', {
-            timestamp: Date.now()
-          });
-          try {
+  return function initExtension() {
+    return new Promise((resolve, reject) => {
+      setTimeout(async () => {
+        let initializationStarted = false;
+        try {
+          log('Extension loaded', { config: CONFIG });
+          clearDecryptedKeyCache();
+          const saved = await chrome.storage.local.get(['summary_generating', 'key_theses_generating']);
+          if (saved.summary_generating || saved.key_theses_generating) {
             await chrome.storage.local.set({
               summary_generating: false,
               summary_generating_start_time: null,
@@ -137,90 +28,31 @@ export function initInitialization(deps) {
               key_theses_generating_start_time: null,
               key_theses_cancel_requested: false
             });
-            log('summary_generating and key_theses_generating flags cleared on extension reload');
-          } catch (error) {
-            const normalized = await handleError(error, {
-              source: 'initialization',
-              errorType: 'storageSetFailed',
-              logError: false,
-              createUserMessage: true,
-              context: { operation: 'clearSummaryAndKeyThesesGenerating' }
-            });
-            logWarn('Failed to clear generating flags on reload', normalized);
           }
-        }
-        
-        // CRITICAL: After resetting stale flags, restore state only if it's recent (quick restart)
-        // This handles service worker restarts during active generation, but resets on extension reload
-        try {
           await restoreStateFromStorage();
-          setTimeout(async () => {
-            try {
-              const state = getProcessingState();
-              
-              // CRITICAL: Only restore keep-alive if state is very recent (< 1 minute)
-              // This ensures we don't restore on extension reload
-              if (state.isProcessing) {
-                const stateAge = Date.now() - (state.startTime || 0);
-                if (stateAge < RESET_THRESHOLD) {
-                  log('Processing state is recent - restoring keep-alive (quick restart)', {
-                    status: state.status,
-                    progress: state.progress,
-                    stage: state.currentStage,
-                    stateAge
-                  });
-                  startKeepAlive();
-                } else {
-                  log('Processing state is too old - not restoring (extension reload)', {
-                    stateAge,
-                    threshold: RESET_THRESHOLD
-                  });
-                }
-              } else {
-                // CRITICAL: Don't restore summary_generating on service worker start
-                // Extension reload always means generation was interrupted - flag is already cleared above
-                // This prevents infinite "generating" state after extension reload
-                log('Service worker started - summary_generating was already cleared on extension reload');
-              }
-            } catch (error) {
-              const normalized = await handleError(error, {
-                source: 'initialization',
-                errorType: 'keepAliveRestoreFailed',
-                logError: false,
-                createUserMessage: false
-              });
-              logWarn('Failed to restore keep-alive on service worker start', normalized);
+          initializationStarted = true;
+          await runInitialization();
+          setTimeout(() => {
+            const state = getProcessingState();
+            if (state.isProcessing) {
+              Promise.resolve(startKeepAlive()).catch((error) => logWarn('Failed to restore keep-alive', error));
             }
           }, 100);
+          resolve();
         } catch (error) {
-          const normalized = await handleError(error, {
-            source: 'initialization',
-            errorType: 'stateRestoreFailed',
-            logError: false,
-            createUserMessage: false
-          });
-          logWarn('Failed to restore state on service worker start', normalized);
+          try {
+            if (!initializationStarted) await runInitialization();
+            const normalized = await handleError(error, {
+              source: 'initialization', errorType: 'stateCheckFailed',
+              logError: false, createUserMessage: false
+            });
+            logWarn('Background initialization failed', normalized);
+          } catch (reportError) {
+            logWarn('Background initialization recovery failed', reportError);
+          }
+          reject(error);
         }
-      } catch (error) {
-        const normalized = await handleError(error, {
-          source: 'initialization',
-          errorType: 'stateCheckFailed',
-          logError: false,
-          createUserMessage: false
-        });
-        logWarn('Failed to check state on extension load', normalized);
-      }
-    })();
-
-    // Run initialization tasks (migration and default settings)
-    runInitialization();
-  }, 0);
-  }
-
-  return initExtension;
+      }, 0);
+    });
+  };
 }
-
-/**
- * @typedef {function(): void} ExtensionInitFunction
- */
-

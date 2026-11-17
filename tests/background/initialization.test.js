@@ -1,313 +1,153 @@
-// Tests for background.js initialization and event handlers
-// Critical for service worker startup
-// Tests verify that critical initialization steps don't fail
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { initInitialization } from '../../scripts/background/initialization.js';
+import { initPortListener } from '../../scripts/background/port-listener.js';
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+let deps;
+let storage;
+let onConnect;
 
-// Mock dependencies
-vi.mock('../../scripts/utils/logging.js', () => ({
-  log: vi.fn(),
-  logError: vi.fn(),
-  logWarn: vi.fn(),
-  logDebug: vi.fn(),
-  LOG_LEVELS: {}
-}));
+beforeEach(() => {
+  vi.useFakeTimers();
+  storage = {
+    get: vi.fn().mockResolvedValue({}),
+    set: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined)
+  };
+  onConnect = { addListener: vi.fn() };
+  vi.stubGlobal('chrome', { runtime: { onConnect }, storage: { local: storage } });
+  deps = {
+    log: vi.fn(), logWarn: vi.fn(), CONFIG: { RESET_THRESHOLD_MS: 60000 },
+    handleError: vi.fn(async error => ({ message: error.message })),
+    clearDecryptedKeyCache: vi.fn(), getProcessingState: vi.fn(() => ({ isProcessing: false })),
+    restoreStateFromStorage: vi.fn().mockResolvedValue(undefined),
+    runInitialization: vi.fn().mockResolvedValue(undefined), startKeepAlive: vi.fn()
+  };
+});
 
-vi.mock('../../scripts/utils/config.js', () => ({
-  CONFIG: {
-    KEEP_ALIVE_INTERVAL: 1,
-    STATE_SAVE_INTERVAL: 2000,
-    RESET_THRESHOLD_MS: 60000
-  }
-}));
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
-vi.mock('../../scripts/state/processing.js', () => ({
-  getProcessingState: vi.fn(() => ({ isProcessing: false, lastUpdate: Date.now() })),
-  updateState: vi.fn(),
-  cancelProcessing: vi.fn(),
-  completeProcessing: vi.fn(),
-  setError: vi.fn(),
-  startProcessing: vi.fn(),
-  setResult: vi.fn(),
-  restoreStateFromStorage: vi.fn(() => Promise.resolve()),
-  PROCESSING_STAGES: {},
-  ERROR_CODES: {},
-  isCancelled: vi.fn(() => false)
-}));
-
-vi.mock('../../scripts/utils/encryption.js', () => ({
-  clearDecryptedKeyCache: vi.fn(),
-  encryptApiKey: vi.fn(),
-  isEncrypted: vi.fn(() => false),
-  decryptApiKey: vi.fn()
-}));
-
-vi.mock('../../scripts/initialization/index.js', () => ({
-  runInitialization: vi.fn(() => Promise.resolve())
-}));
-
-vi.mock('../../scripts/utils/context-menu.js', () => ({
-  updateContextMenuWithLang: vi.fn(() => Promise.resolve())
-}));
-
-vi.mock('../../scripts/locales.js', () => ({
-  getUILanguage: vi.fn(() => Promise.resolve('en')),
-  tSync: vi.fn((key) => key)
-}));
-
-// Mock chrome APIs
-const mockChrome = {
-  runtime: {
-    id: 'test-extension-id',
-    getURL: vi.fn((path) => `chrome-extension://test-extension-id/${path}`),
-    onMessage: {
-      addListener: vi.fn()
-    },
-    onInstalled: {
-      addListener: vi.fn()
-    },
-    onStartup: {
-      addListener: vi.fn()
-    },
-    lastError: null
-  },
-  storage: {
-    local: {
-      get: vi.fn(() => Promise.resolve({})),
-      set: vi.fn(() => Promise.resolve()),
-      remove: vi.fn(() => Promise.resolve()),
-      onChanged: {
-        addListener: vi.fn()
-      }
-    }
-  },
-  alarms: {
-    create: vi.fn(),
-    clear: vi.fn(),
-    onAlarm: {
-      addListener: vi.fn()
-    }
-  },
-  notifications: {
-    create: vi.fn((options, callback) => {
-      if (callback) callback('notification-id');
-    })
-  },
-  contextMenus: {
-    onClicked: {
-      addListener: vi.fn()
-    }
-  }
-};
-
-global.chrome = mockChrome;
-
-// Mock self (service worker global)
-global.self = {
-  addEventListener: vi.fn()
-};
-
-describe('background.js critical initialization', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.useFakeTimers();
+describe('background initialization lifecycle', () => {
+  it('runs initialization through the actual scheduled entry point', async () => {
+    const ready = initInitialization(deps)();
+    expect(deps.clearDecryptedKeyCache).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    await ready;
+    expect(deps.clearDecryptedKeyCache).toHaveBeenCalledTimes(1);
+    expect(deps.runInitialization).toHaveBeenCalledTimes(1);
+    expect(deps.restoreStateFromStorage).toHaveBeenCalledTimes(1);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  describe('Chrome API event handler registration', () => {
-    it('should be able to register runtime.onMessage listener', () => {
-      const listener = vi.fn();
-      chrome.runtime.onMessage.addListener(listener);
-      
-      expect(chrome.runtime.onMessage.addListener).toHaveBeenCalledWith(listener);
+  it('clears interrupted job flags while preserving completed text', async () => {
+    storage.get.mockResolvedValue({
+      summary_text: 'Summary', key_theses_text: 'Theses',
+      summary_generating: true, key_theses_generating: true
     });
-
-    it('should be able to register alarms.onAlarm listener', () => {
-      const listener = vi.fn();
-      chrome.alarms.onAlarm.addListener(listener);
-      
-      expect(chrome.alarms.onAlarm.addListener).toHaveBeenCalledWith(listener);
-    });
-
-    it('should be able to register storage.onChanged listener', () => {
-      const listener = vi.fn();
-      chrome.storage.local.onChanged.addListener(listener);
-      
-      expect(chrome.storage.local.onChanged.addListener).toHaveBeenCalledWith(listener);
-    });
-
-    it('should be able to register contextMenus.onClicked listener', () => {
-      const listener = vi.fn();
-      chrome.contextMenus.onClicked.addListener(listener);
-      
-      expect(chrome.contextMenus.onClicked.addListener).toHaveBeenCalledWith(listener);
-    });
-
-    it('should be able to register runtime.onInstalled listener', () => {
-      const listener = vi.fn();
-      chrome.runtime.onInstalled.addListener(listener);
-      
-      expect(chrome.runtime.onInstalled.addListener).toHaveBeenCalledWith(listener);
-    });
-
-    it('should be able to register runtime.onStartup listener', () => {
-      const listener = vi.fn();
-      chrome.runtime.onStartup.addListener(listener);
-      
-      expect(chrome.runtime.onStartup.addListener).toHaveBeenCalledWith(listener);
+    const ready = initInitialization(deps)();
+    await vi.advanceTimersByTimeAsync(0);
+    await ready;
+    expect(storage.remove).not.toHaveBeenCalled();
+    expect(storage.set).toHaveBeenCalledWith({
+      summary_generating: false, summary_generating_start_time: null,
+      key_theses_generating: false, key_theses_generating_start_time: null,
+      key_theses_cancel_requested: false
     });
   });
 
-  describe('initialization functions', () => {
-    it('should call clearDecryptedKeyCache without errors', async () => {
-      const { clearDecryptedKeyCache } = await import('../../scripts/utils/encryption.js');
-      
-      expect(() => clearDecryptedKeyCache()).not.toThrow();
-      expect(clearDecryptedKeyCache).toHaveBeenCalled();
-    });
-
-    it('should call runInitialization without errors', async () => {
-      const { runInitialization } = await import('../../scripts/initialization/index.js');
-      
-      await expect(runInitialization()).resolves.not.toThrow();
-      expect(runInitialization).toHaveBeenCalled();
-    });
-
-    it('should handle initialization errors gracefully', async () => {
-      const { runInitialization } = await import('../../scripts/initialization/index.js');
-      const { handleError } = await import('../../scripts/utils/error-handler.js');
-      
-      // Mock runInitialization to throw
-      runInitialization.mockRejectedValueOnce(new Error('Init failed'));
-      
-      // Should handle error gracefully (wrapped in try-catch in background.js)
-      await expect(runInitialization()).rejects.toThrow('Init failed');
-    });
+  it('delegates persisted processing recovery to its state owner', async () => {
+    const ready = initInitialization(deps)();
+    await vi.advanceTimersByTimeAsync(0);
+    await ready;
+    expect(storage.get).toHaveBeenCalledWith(['summary_generating', 'key_theses_generating']);
+    expect(storage.remove).not.toHaveBeenCalled();
+    expect(deps.restoreStateFromStorage).toHaveBeenCalledTimes(1);
+    expect(deps.restoreStateFromStorage.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.runInitialization.mock.invocationCallOrder[0]);
   });
 
-  describe('keep-alive mechanism', () => {
-    it('should create alarm without errors', () => {
-      expect(() => {
-        chrome.alarms.create('keepAlive', { periodInMinutes: 1 });
-      }).not.toThrow();
-      
-      expect(chrome.alarms.create).toHaveBeenCalledWith(
-        'keepAlive',
-        { periodInMinutes: 1 }
-      );
-    });
-
-    it('should clear alarm without errors', () => {
-      expect(() => {
-        chrome.alarms.clear('keepAlive');
-      }).not.toThrow();
-      
-      expect(chrome.alarms.clear).toHaveBeenCalledWith('keepAlive');
-    });
-
-    it('should handle alarm creation errors gracefully', () => {
-      chrome.runtime.lastError = { message: 'Alarm creation failed' };
-      
-      // Should not throw even if lastError is set
-      expect(() => {
-        chrome.alarms.create('keepAlive', { periodInMinutes: 1 });
-      }).not.toThrow();
-    });
-
-    it('should handle storage operations for keep-alive', async () => {
-      const { getProcessingState } = await import('../../scripts/state/processing.js');
-      
-      const state = getProcessingState();
-      const result = await chrome.storage.local.get(['summary_generating', 'summary_generating_start_time']);
-      
-      expect(chrome.storage.local.get).toHaveBeenCalled();
-      expect(result).toBeDefined();
-      
-      // Simulate keep-alive ping
-      if (state.isProcessing) {
-        await chrome.storage.local.set({
-          processingState: { ...state, lastUpdate: Date.now() }
-        });
-        expect(chrome.storage.local.set).toHaveBeenCalled();
-      }
-    });
+  it('waits for recovery and persistence before opening the startup gate', async () => {
+    let finishRecovery;
+    let finishInitialization;
+    deps.restoreStateFromStorage.mockReturnValue(new Promise(resolve => { finishRecovery = resolve; }));
+    deps.runInitialization.mockReturnValue(new Promise(resolve => { finishInitialization = resolve; }));
+    const settled = vi.fn();
+    const ready = initInitialization(deps)().then(settled);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).not.toHaveBeenCalled();
+    expect(deps.runInitialization).not.toHaveBeenCalled();
+    finishRecovery();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.runInitialization).toHaveBeenCalledTimes(1);
+    expect(settled).not.toHaveBeenCalled();
+    finishInitialization();
+    await ready;
+    expect(settled).toHaveBeenCalledTimes(1);
   });
 
-  describe('notification creation', () => {
-    it('should create notification with correct parameters', () => {
-      const iconUrl = chrome.runtime.getURL('icons/icon128.png');
-      
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: iconUrl,
-        title: 'ClipAIble',
-        message: 'Test message',
-        requireInteraction: false
-      }, (notificationId) => {
-        expect(notificationId).toBe('notification-id');
-      });
-      
-      expect(chrome.notifications.create).toHaveBeenCalled();
-      expect(chrome.runtime.getURL).toHaveBeenCalledWith('icons/icon128.png');
+  it('restores keep-alive for a recent active process', async () => {
+    storage.get.mockResolvedValue({
+      processingState: { isProcessing: true, lastUpdate: Date.now() - 1000 }
     });
-
-    it('should handle notification API unavailability', () => {
-      const originalNotifications = chrome.notifications;
-      chrome.notifications = undefined;
-      
-      // Should not throw
-      expect(() => {
-        if (!chrome.notifications || !chrome.notifications.create) {
-          return;
-        }
-      }).not.toThrow();
-      
-      chrome.notifications = originalNotifications;
-    });
-
-    it('should handle notification creation errors', () => {
-      chrome.runtime.lastError = { message: 'Notification failed' };
-      
-      // Should not throw
-      expect(() => {
-        chrome.notifications.create({}, (id) => {
-          if (chrome.runtime.lastError) {
-            // Error handling
-          }
-        });
-      }).not.toThrow();
-    });
+    deps.getProcessingState.mockReturnValue({ isProcessing: true, startTime: Date.now() - 1000 });
+    const ready = initInitialization(deps)();
+    await vi.advanceTimersByTimeAsync(100);
+    await ready;
+    expect(storage.remove).not.toHaveBeenCalledWith(['processingState']);
+    expect(deps.startKeepAlive).toHaveBeenCalledTimes(1);
   });
 
-  describe('state restoration', () => {
-    it('should restore state from storage without errors', async () => {
-      const { restoreStateFromStorage } = await import('../../scripts/state/processing.js');
-      
-      await expect(restoreStateFromStorage()).resolves.not.toThrow();
-    });
+  it('does not restore keep-alive for an idle recovered process', async () => {
+    deps.getProcessingState.mockReturnValue({ isProcessing: false });
+    const ready = initInitialization(deps)();
+    await vi.advanceTimersByTimeAsync(100);
+    await ready;
+    expect(deps.startKeepAlive).not.toHaveBeenCalled();
+  });
 
-    it('should handle storage errors gracefully', async () => {
-      chrome.storage.local.get.mockRejectedValueOnce(new Error('Storage error'));
-      
-      await expect(chrome.storage.local.get(['processingState'])).rejects.toThrow('Storage error');
-    });
+  it('handles storage-read failure without abandoning default initialization', async () => {
+    const error = new Error('Storage unavailable');
+    storage.get.mockRejectedValue(error);
+    const ready = initInitialization(deps)().catch(reason => reason);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await ready).toBe(error);
+    expect(deps.handleError).toHaveBeenCalledWith(expect.any(Error), expect.objectContaining({
+      source: 'initialization', errorType: 'stateCheckFailed'
+    }));
+    expect(deps.runInitialization).toHaveBeenCalledTimes(1);
+    expect(deps.startKeepAlive).not.toHaveBeenCalled();
+  });
+});
 
-    it('should check state age correctly', () => {
-      const now = Date.now();
-      const oldState = { isProcessing: true, startTime: now - 120000 }; // 2 minutes ago
-      const recentState = { isProcessing: true, startTime: now - 30000 }; // 30 seconds ago
-      
-      const RESET_THRESHOLD_MS = 60000; // 1 minute
-      
-      const oldAge = now - oldState.startTime;
-      const recentAge = now - recentState.startTime;
-      
-      expect(oldAge).toBeGreaterThan(RESET_THRESHOLD_MS);
-      expect(recentAge).toBeLessThan(RESET_THRESHOLD_MS);
+describe('background port registration', () => {
+  it('registers the actual listener and ignores unrelated port names', () => {
+    const setup = initPortListener({ log: vi.fn(), logError: vi.fn(), addLogToCollection: vi.fn() });
+    setup();
+    expect(onConnect.addListener).toHaveBeenCalledTimes(1);
+    const port = { name: 'unrelated', onMessage: { addListener: vi.fn() } };
+    onConnect.addListener.mock.calls[0][0](port);
+    expect(port.onMessage.addListener).not.toHaveBeenCalled();
+  });
+
+  it('connects the logging port and forwards a received batch', () => {
+    const addLogToCollection = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    initPortListener({ log: vi.fn(), logError: vi.fn(), addLogToCollection })();
+    const port = {
+      name: 'clipaible_logs', sender: { url: 'chrome-extension://test-extension-id/offscreen.html' },
+      onMessage: { addListener: vi.fn() }, onDisconnect: { addListener: vi.fn() }
+    };
+    onConnect.addListener.mock.calls[0][0](port);
+    expect(port.onDisconnect.addListener).toHaveBeenCalledTimes(1);
+    port.onMessage.addListener.mock.calls[0][0]({
+      type: 'logBatch', logs: [{ message: 'Worker failed', marker: 'TEST', level: 'error', timestamp: 123, data: { count: 2 } }]
     });
+    expect(addLogToCollection).toHaveBeenCalledWith('[CRITICAL_LOG TEST] Worker failed', expect.objectContaining({
+      timestamp: 123, source: 'offscreen-port', data: { count: 2 }
+    }), 'error');
   });
 });
 

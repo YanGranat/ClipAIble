@@ -4,7 +4,7 @@
 
 import { log, logError, logWarn, criticalLog } from '../utils/logging.js';
 import { tSync } from '../locales.js';
-import { checkCancellation, updateProgress, getUILanguageCached } from '../utils/pipeline-helpers.js';
+import { checkCancellation, updateProgress, getUILanguageCached, getProcessingCallbacks, getAIRequestOptions } from '../utils/pipeline-helpers.js';
 import { PROCESSING_STAGES, updateState } from '../state/processing.js';
 import { extractPdfContent } from '../extraction/pdf.js';
 import { callAIWithImageAndHistory } from '../api/index.js';
@@ -16,6 +16,8 @@ import { extractPdfDataFromTab } from '../api/pdf-data-extractor.js';
 import { getPdfData, savePdfData, removePdfData, validatePdfData } from '../api/pdf-storage.js';
 import { measurePdfLayoutInOriginalTab } from '../api/pdf-cdp-render.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
+import { fetchPdfFile } from '../offscreen/pdf/utils/pdf-fetcher.js';
+import { isTerminalAIResponseError } from '../api/response-validation.js';
 
 /**
  * Get PDF data with fallback strategies
@@ -25,18 +27,20 @@ import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
  * @returns {Promise<ArrayBuffer>} PDF file data as ArrayBuffer
  * @throws {Error} If PDF data cannot be obtained
  */
-async function getPdfDataWithFallback(pdfUrl, tabId = null) {
+async function getPdfDataWithFallback(pdfUrl, tabId = null, requestOptions = {}) {
+  await requestOptions.checkCancelled?.();
   const isLocalFile = pdfUrl.startsWith('file://');
   
   // PRIORITY 1: Try IndexedDB (fastest if previously saved)
   let pdfData = await getPdfData(pdfUrl);
+  await requestOptions.checkCancelled?.();
   if (pdfData) {
     log('[ClipAIble PDF Processing] ✅ PDF data loaded from IndexedDB', {
       size: pdfData.byteLength,
       sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
       method: 'indexeddb'
     });
-    return pdfData;
+    return fetchPdfFile(pdfUrl, pdfData, requestOptions);
   }
   
   if (isLocalFile && tabId) {
@@ -49,6 +53,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
         tabId
       });
       pdfData = await extractPdfDataFromTab(pdfUrl, tabId);
+      await requestOptions.checkCancelled?.();
       
       // Save to IndexedDB for future use
       if (pdfData) {
@@ -60,11 +65,12 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
         savePdfData(pdfUrl, pdfData).catch(err => {
           logWarn('[ClipAIble PDF Processing] Failed to save PDF data to IndexedDB', { error: err.message });
         });
-        return pdfData;
+        return fetchPdfFile(pdfUrl, pdfData, requestOptions);
       } else {
         logWarn('[ClipAIble PDF Processing] extractPdfDataFromTab returned null/undefined', { tabId });
       }
     } catch (extractError) {
+      await requestOptions.checkCancelled?.();
       // This is expected for Chrome built-in PDFium viewer - preserve error context for diagnostics
       const errorContext = {
         error: extractError.message,
@@ -91,6 +97,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
     try {
       // Use message-based approach (dynamic import() is not allowed in service worker)
       pdfData = await requestPdfFileSelectionViaMessage(pdfUrl);
+      await requestOptions.checkCancelled?.();
       
       if (pdfData) {
         log('[ClipAIble PDF Processing] ✅ PDF file selected by user, saving to IndexedDB', { 
@@ -104,6 +111,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
           // CRITICAL: Save to IndexedDB first, then reload from IndexedDB
           // This ensures data is properly stored and can be accessed by offscreen document
           await savePdfData(pdfUrl, pdfData);
+          await requestOptions.checkCancelled?.();
           log('[ClipAIble PDF Processing] ✅ PDF data saved to IndexedDB successfully', {
             pdfUrl,
             size: pdfData.byteLength
@@ -122,6 +130,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
           // Reload from IndexedDB to ensure consistency
           // This matches the successful case where data comes from IndexedDB
           pdfData = await getPdfData(pdfUrl);
+          await requestOptions.checkCancelled?.();
           if (!pdfData) {
             logError('[ClipAIble PDF Processing] ❌ Failed to retrieve PDF data from IndexedDB after saving', {
               pdfUrl,
@@ -136,7 +145,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
             method: 'indexeddb_after_user_selection',
             pdfUrl
           });
-          return pdfData;
+          return fetchPdfFile(pdfUrl, pdfData, requestOptions);
         } catch (retrieveError) {
           logError('[ClipAIble PDF Processing] ❌ Failed to retrieve PDF data from IndexedDB', {
             error: retrieveError.message,
@@ -149,6 +158,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
         throw new Error('User cancelled PDF file selection');
       }
     } catch (fileSelectionError) {
+      await requestOptions.checkCancelled?.();
       // Preserve original error context for diagnostics
       const errorContext = {
         error: fileSelectionError.message,
@@ -173,11 +183,8 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
     // PRIORITY 2: Fetch from web
     try {
       log('[ClipAIble PDF Processing] PDF data not in IndexedDB, fetching from web', { pdfUrl });
-      const response = await fetch(pdfUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
-      }
-      pdfData = await response.arrayBuffer();
+      pdfData = await fetchPdfFile(pdfUrl, null, requestOptions);
+      await requestOptions.checkCancelled?.();
       
       // Save to IndexedDB for next time (async, non-blocking)
       savePdfData(pdfUrl, pdfData).catch(() => {});
@@ -189,6 +196,7 @@ async function getPdfDataWithFallback(pdfUrl, tabId = null) {
       });
       return pdfData;
     } catch (fetchError) {
+      await requestOptions.checkCancelled?.();
       logError('[ClipAIble PDF Processing] Failed to fetch PDF from web', {
         error: fetchError.message,
         pdfUrl
@@ -416,245 +424,26 @@ function extractMetadataFromPage(pageMetadata, pageNum, currentMetadata, data) {
  * @returns {Object} Parsed page data: { text, mergeWithPrevious, metadata }
  */
 function parseLLMResponse(pageResponse, pageNum) {
-  let pageData;
-  
-  // CRITICAL: Log raw response immediately to understand what LLM returns
-  log(`[parseLLMResponse] Page ${pageNum}: RAW LLM RESPONSE RECEIVED`, {
-    pageNum,
-    responseType: typeof pageResponse,
-    isString: typeof pageResponse === 'string',
-    isObject: typeof pageResponse === 'object' && pageResponse !== null,
-    isNull: pageResponse === null,
-    isUndefined: pageResponse === undefined,
-    responseLength: typeof pageResponse === 'string' ? pageResponse.length : null,
-    responseKeys: typeof pageResponse === 'object' && pageResponse !== null ? Object.keys(pageResponse) : null,
-    // Log response preview (truncated to avoid huge logs)
-    responsePreview: typeof pageResponse === 'string' 
-      ? pageResponse.substring(0, 500) + (pageResponse.length > 500 ? '...' : '')
-      : (typeof pageResponse === 'object' && pageResponse !== null 
-          ? JSON.stringify(pageResponse).substring(0, 500) + (JSON.stringify(pageResponse).length > 500 ? '...' : '')
-          : String(pageResponse).substring(0, 500)),
-    // If it's an object, log text field specifically
-    textField: typeof pageResponse === 'object' && pageResponse !== null && 'text' in pageResponse
-      ? (typeof pageResponse.text === 'string' 
-          ? `"${pageResponse.text.substring(0, 500)}"` 
-          : `[${typeof pageResponse.text}] ${JSON.stringify(pageResponse.text).substring(0, 200)}`)
-      : null,
-    textFieldType: typeof pageResponse === 'object' && pageResponse !== null && 'text' in pageResponse
-      ? typeof pageResponse.text
-      : null,
-    textFieldLength: typeof pageResponse === 'object' && pageResponse !== null && 'text' in pageResponse && typeof pageResponse.text === 'string'
-      ? pageResponse.text.length
-      : null
-  });
-  
-  try {
-    // Parse response based on type
-    if (typeof pageResponse === 'string') {
-      let jsonString = pageResponse.trim();
-      log(`[parseLLMResponse] Page ${pageNum}: Parsing string response`, {
-        pageNum,
-        originalLength: pageResponse.length,
-        trimmedLength: jsonString.length,
-        startsWithJsonBlock: jsonString.startsWith('```json'),
-        startsWithCodeBlock: jsonString.startsWith('```')
-      });
-      
-      // Remove code blocks if present
-      if (jsonString.startsWith('```json')) {
-        jsonString = jsonString.replace(/^```json\s*/i, '').replace(/```\s*$/, '');
-        log(`[parseLLMResponse] Page ${pageNum}: Removed json code block`, {
-          pageNum,
-          afterRemovalLength: jsonString.length
-        });
-      } else if (jsonString.startsWith('```')) {
-        jsonString = jsonString.replace(/^```\s*/, '').replace(/```\s*$/, '');
-        log(`[parseLLMResponse] Page ${pageNum}: Removed code block`, {
-          pageNum,
-          afterRemovalLength: jsonString.length
-        });
-      }
-      
-      log(`[parseLLMResponse] Page ${pageNum}: About to parse JSON`, {
-        pageNum,
-        jsonStringPreview: jsonString.substring(0, 500),
-        jsonStringLength: jsonString.length
-      });
-      
-      pageData = JSON.parse(jsonString);
-      
-      log(`[parseLLMResponse] Page ${pageNum}: JSON parsed successfully`, {
-        pageNum,
-        parsedKeys: Object.keys(pageData || {}),
-        hasText: 'text' in (pageData || {}),
-        textType: typeof (pageData?.text),
-        textValue: typeof pageData?.text === 'string' ? `"${pageData.text.substring(0, 200)}"` : JSON.stringify(pageData?.text).substring(0, 200),
-        textLength: typeof pageData?.text === 'string' ? pageData.text.length : null
-      });
-    } else if (typeof pageResponse === 'object' && pageResponse !== null) {
-      log(`[parseLLMResponse] Page ${pageNum}: Response is already an object, using directly`, {
-        pageNum,
-        objectKeys: Object.keys(pageResponse),
-        hasText: 'text' in pageResponse,
-        textType: typeof pageResponse.text,
-        textValue: typeof pageResponse.text === 'string' ? `"${pageResponse.text.substring(0, 200)}"` : JSON.stringify(pageResponse.text).substring(0, 200),
-        textLength: typeof pageResponse.text === 'string' ? pageResponse.text.length : null
-      });
-      pageData = pageResponse;
-    } else {
-      throw new Error('Invalid response type');
+  let pageData = pageResponse;
+  if (typeof pageData === 'string') {
+    const json = pageData.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+    try {
+      pageData = JSON.parse(json);
+    } catch (cause) {
+      throw new Error(`Invalid JSON response for PDF page ${pageNum}`, { cause });
     }
-    
-    // Validate and extract text field
-    // CRITICAL: Allow empty strings - they are valid strings, just empty content
-    log(`[parseLLMResponse] Page ${pageNum}: Validating text field`, {
-      pageNum,
-      textExists: 'text' in pageData,
-      textValue: pageData.text,
-      textType: typeof pageData.text,
-      textIsUndefined: pageData.text === undefined,
-      textIsNull: pageData.text === null,
-      textIsString: typeof pageData.text === 'string',
-      textLength: typeof pageData.text === 'string' ? pageData.text.length : null,
-      textPreview: typeof pageData.text === 'string' ? pageData.text.substring(0, 500) : JSON.stringify(pageData.text).substring(0, 200)
-    });
-    
-    if (pageData.text === undefined || pageData.text === null || typeof pageData.text !== 'string') {
-      logError(`[parseLLMResponse] Page ${pageNum}: Text field validation failed`, {
-        pageNum,
-        textExists: 'text' in pageData,
-        textValue: pageData.text,
-        textType: typeof pageData.text,
-        textIsUndefined: pageData.text === undefined,
-        textIsNull: pageData.text === null,
-        textIsString: typeof pageData.text === 'string',
-        fullPageData: JSON.stringify(pageData, null, 2).substring(0, 1000)
-      });
-      throw new Error('Missing or invalid "text" field in response');
-    }
-    
-    // CRITICAL: Check if text field contains JSON string (should not happen, but LLM might return it)
-    let extractedText = pageData.text;
-    
-    log(`[parseLLMResponse] Page ${pageNum}: Text field extracted`, {
-      pageNum,
-      extractedTextLength: extractedText.length,
-      extractedTextPreview: extractedText.substring(0, 500),
-      extractedTextFirstChars: extractedText.substring(0, 100),
-      startsWithBrace: extractedText.trim().startsWith('{'),
-      isEmpty: extractedText.trim().length === 0
-    });
-    
-    // Check if text is a JSON string (should not happen, but LLM might return it)
-    if (typeof extractedText === 'string' && extractedText.trim().startsWith('{')) {
-      log(`[parseLLMResponse] Page ${pageNum}: Text field starts with '{', checking if it's nested JSON`, {
-        pageNum,
-        textPreview: extractedText.substring(0, 200)
-      });
-      try {
-        const testParsed = JSON.parse(extractedText);
-        // If parsing succeeds and contains "text" field, it's likely a JSON string
-        if (testParsed.text && typeof testParsed.text === 'string') {
-          logWarn(`Page ${pageNum}: Found JSON string in text field, extracting inner text`, { 
-            pageNum,
-            originalLength: extractedText.length,
-            extractedLength: testParsed.text.length,
-            hasMergeWithPrevious: !!testParsed.mergeWithPrevious,
-            hasMetadata: !!testParsed.metadata
-          });
-          extractedText = testParsed.text;
-          // Also update mergeWithPrevious and metadata if present
-          if (testParsed.mergeWithPrevious && ['direct', 'newline', 'paragraph'].includes(testParsed.mergeWithPrevious)) {
-            pageData.mergeWithPrevious = testParsed.mergeWithPrevious;
-          }
-          if (testParsed.metadata && typeof testParsed.metadata === 'object') {
-            pageData.metadata = testParsed.metadata;
-          }
-        } else if (testParsed.mergeWithPrevious || testParsed.metadata) {
-          // If it's the full JSON object, extract all fields
-          logWarn(`Page ${pageNum}: Found full JSON object in text field, extracting all fields`, { 
-            pageNum,
-            hasText: !!testParsed.text,
-            hasMergeWithPrevious: !!testParsed.mergeWithPrevious,
-            hasMetadata: !!testParsed.metadata
-          });
-          if (testParsed.text && typeof testParsed.text === 'string') {
-            extractedText = testParsed.text;
-          }
-          if (testParsed.mergeWithPrevious && ['direct', 'newline', 'paragraph'].includes(testParsed.mergeWithPrevious)) {
-            pageData.mergeWithPrevious = testParsed.mergeWithPrevious;
-          }
-          if (testParsed.metadata && typeof testParsed.metadata === 'object') {
-            pageData.metadata = testParsed.metadata;
-          }
-        }
-      } catch (e) {
-        // Not valid JSON, use as-is (might be valid markdown starting with {)
-        log(`Page ${pageNum}: Text field starts with '{' but is not valid JSON, using as-is`, {
-          pageNum,
-          preview: extractedText.substring(0, 100)
-        });
-      }
-    }
-    
-    // Validate mergeWithPrevious
-    if (!pageData.mergeWithPrevious || !['direct', 'newline', 'paragraph'].includes(pageData.mergeWithPrevious)) {
-      pageData.mergeWithPrevious = 'paragraph';
-    }
-    
-    // Validate metadata
-    if (!pageData.metadata || typeof pageData.metadata !== 'object') {
-      pageData.metadata = { title: '', author: '', date: '' };
-    }
-    
-    pageData.text = extractedText;
-    
-    log(`[parseLLMResponse] Page ${pageNum}: FINAL RESULT`, {
-      pageNum,
-      finalTextLength: pageData.text.length,
-      finalTextPreview: pageData.text.substring(0, 500),
-      finalTextFirstChars: pageData.text.substring(0, 100),
-      finalTextLastChars: pageData.text.length > 100 ? pageData.text.substring(pageData.text.length - 100) : pageData.text,
-      isEmpty: pageData.text.trim().length === 0,
-      mergeWithPrevious: pageData.mergeWithPrevious,
-      hasMetadata: !!pageData.metadata,
-      metadata: pageData.metadata
-    });
-    
-    return pageData;
-  } catch (parseError) {
-    logError(`Failed to parse JSON response from LLM for page ${pageNum}`, {
-      error: parseError.message,
-      responseType: typeof pageResponse,
-      responsePreview: typeof pageResponse === 'string' ? pageResponse.substring(0, 500) : (typeof pageResponse === 'object' && pageResponse !== null ? JSON.stringify(pageResponse).substring(0, 500) : String(pageResponse).substring(0, 500)),
-      pageNum
-    });
-    // Fallback: try to extract text from object, or use empty string
-    let fallbackText = '';
-    if (typeof pageResponse === 'string') {
-      fallbackText = pageResponse;
-    } else if (typeof pageResponse === 'object' && pageResponse !== null) {
-      // Try to extract text from object
-      if (pageResponse.text && typeof pageResponse.text === 'string') {
-        fallbackText = pageResponse.text;
-      } else {
-        // Last resort: stringify the object (should not happen, but for safety)
-        logWarn(`Page ${pageNum}: Fallback - pageResponse is object without text field, using empty string`, {
-          pageNum,
-          responseKeys: Object.keys(pageResponse || {})
-        });
-        fallbackText = '';
-      }
-    } else {
-      fallbackText = String(pageResponse || '');
-    }
-    
-    return {
-      text: fallbackText,
-      mergeWithPrevious: 'paragraph',
-      metadata: { title: '', author: '', date: '' }
-    };
   }
+  if (!pageData || Array.isArray(pageData) || typeof pageData !== 'object' || typeof pageData.text !== 'string') {
+    throw new Error(`Missing or invalid "text" field for PDF page ${pageNum}`);
+  }
+  return {
+    text: pageData.text,
+    mergeWithPrevious: ['direct', 'newline', 'paragraph'].includes(pageData.mergeWithPrevious)
+      ? pageData.mergeWithPrevious : 'paragraph',
+    metadata: Object.fromEntries(['title', 'author', 'date'].map(key => [
+      key, typeof pageData.metadata?.[key] === 'string' ? pageData.metadata[key] : ''
+    ]))
+  };
 }
 
 /**
@@ -664,6 +453,7 @@ function parseLLMResponse(pageResponse, pageNum) {
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processPdfPage(data, pdfUrl) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const { url, tabId } = data;
   
   log('📄 Processing PDF document', { pdfUrl, url, tabId });
@@ -732,8 +522,11 @@ export async function processPdfPage(data, pdfUrl) {
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processPdfPageWithAI(data, pdfUrl) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const startTime = Date.now();
   const { url, tabId, apiKey, model } = data;
+  const requestOptions = getAIRequestOptions(data);
+  const captureOptions = { ...requestOptions, processingRunId: data.processingRunId };
   
   log('[ClipAIble PDF Processing] === FUNCTION ENTRY ===', {
     function: 'processPdfPageWithAI',
@@ -776,7 +569,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   if (isLocalFile && tabId) {
     log('[ClipAIble PDF Processing] Local file detected - getting PDF data first (before dimensions)', { pdfUrl: cleanPdfUrl, tabId });
     
-    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId);
+    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId, requestOptions);
     
     try {
       validatePdfData(pdfData, 'processPdfPageWithAI');
@@ -796,7 +589,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   } else if (isWebUrl) {
     log('[ClipAIble PDF Processing] Web PDF URL - getting PDF data in background (before dimensions)', { pdfUrl: cleanPdfUrl });
     
-    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId);
+    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId, requestOptions);
     
     try {
       validatePdfData(pdfData, 'processPdfPageWithAI');
@@ -873,7 +666,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       });
       
       // Use static import (already imported at top of file)
-      originalTabLayout = await measurePdfLayoutInOriginalTab(tabId);
+      originalTabLayout = await measurePdfLayoutInOriginalTab(tabId, captureOptions);
       
       if (originalTabLayout) {
         criticalLog('[ClipAIble PDF Processing] ✅ PDF layout measured in original tab', 'PDF_LAYOUT_MEASURED_ORIGINAL_TAB', {
@@ -967,7 +760,8 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     messageHistoryInitialLength: messageHistory.length,
     systemPromptLength: PDF_TO_MARKDOWN_SYSTEM_PROMPT.length
   });
-  let documentTitle = data.title || metadata.title || 'Untitled PDF';
+  let documentTitle = metadata.title || data.title || 'Untitled PDF';
+  let hasDocumentTitle = typeof metadata.title === 'string' && metadata.title.trim().length > 0;
   let documentAuthor = metadata.author || '';
   let documentPublishDate = metadata.publishDate || '';
   
@@ -989,7 +783,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       return false;
     }
     
-    const hasTitle = documentTitle && documentTitle !== 'Untitled PDF' && documentTitle !== data.title;
+    const hasTitle = hasDocumentTitle;
     const hasAuthor = documentAuthor && documentAuthor.trim() !== '';
     const hasDate = documentPublishDate && documentPublishDate.trim() !== '';
     
@@ -1012,7 +806,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   // CRITICAL: Render ALL pages at once (loads PDF ONCE - much faster)
   // pdfPageDimensions was already retrieved at the very beginning of the function
-  // Per Perplexity analysis: Loading PDF for each page is 10x slower
+  // Render pages together to avoid repeatedly loading the document.
   log('[ClipAIble PDF Processing] Rendering all PDF pages at once (loads PDF once)', {
     numPages,
     pdfDataSize: pdfData ? pdfData.byteLength : null,
@@ -1026,7 +820,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   updateState({ progress: 10, status: `Rendering ${numPages} pages...` });
   
   try {
-    const renderedPages = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, pdfPageDimensions, originalTabLayout);
+    const renderedPages = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, pdfPageDimensions, originalTabLayout, captureOptions);
     
     // Convert rendered pages to pageImages array
     for (const renderedPage of renderedPages) {
@@ -1092,7 +886,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       try {
-        const renderedImage = await renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData);
+        const renderedImage = await renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData, captureOptions);
         
         // CRITICAL: Use full imageData (with prefix) instead of extracting base64
         // imageData already has full data URL like "data:image/png;base64,..."
@@ -1255,15 +1049,19 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           // Send image to selected LLM with conversation history
           // CRITICAL: Use jsonResponse = true to get JSON with text and mergeWithPrevious
           const { result: pageResponse, assistantMessage, userMessage } = await callWithRetry(
-            () => callAIWithImageAndHistory(
+            async () => {
+              await checkCancellation('PDF page request');
+              return callAIWithImageAndHistory(
               PDF_TO_MARKDOWN_SYSTEM_PROMPT,
               userPrompt,
               imageDataToUse, // Use corrected imageData with prefix
               messageHistory,
               apiKey,
               model,
-              true // jsonResponse = true - expect JSON with text and mergeWithPrevious
-            ),
+              true, // jsonResponse = true - expect JSON with text and mergeWithPrevious
+              requestOptions
+              );
+            },
             {
               maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
               delays: CONFIG.RETRY_DELAYS,
@@ -1297,9 +1095,11 @@ export async function processPdfPageWithAI(data, pdfUrl) {
             timestamp: Date.now()
           });
           
-          // Add to conversation history - use pageMarkdown (text) instead of assistantMessage (JSON)
+          // Preserve provider-signed content blocks for the next page.
           const historyBefore = messageHistory.length;
-          messageHistory.push(userMessage, { role: 'assistant', content: pageMarkdown });
+          if (pageMarkdown.trim()) messageHistory.push(userMessage, {
+            role: 'assistant', content: Array.isArray(assistantMessage) ? assistantMessage : pageMarkdown
+          });
           const historyAfter = messageHistory.length;
           
           log(`[ClipAIble PDF Processing] === HISTORY UPDATED ===`, {
@@ -1325,6 +1125,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
             // Apply updates to document metadata
             if (metadataUpdates.title) {
               documentTitle = metadataUpdates.title;
+              hasDocumentTitle = true;
             }
             if (metadataUpdates.author) {
               documentAuthor = metadataUpdates.author;
@@ -1372,6 +1173,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
                   // Apply updates to document metadata
                   if (metadataUpdates.title) {
                     documentTitle = metadataUpdates.title;
+              hasDocumentTitle = true;
                   }
                   if (metadataUpdates.author) {
                     documentAuthor = metadataUpdates.author;
@@ -1471,6 +1273,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           });
           
         } catch (error) {
+          if ((isTerminalAIResponseError(error) && error.code !== 'AI_RESPONSE_INCOMPLETE') || error.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
           // Store error for retry logic
           lastPageError = error;
           
@@ -1513,7 +1316,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       // For remote PDFs: Fetch and render in parallel ONLY if not all pages were rendered
       // Use unified function to get PDF data with fallback strategies
       if (!pdfData) {
-        pdfData = await getPdfDataWithFallback(cleanPdfUrl, null);
+        pdfData = await getPdfDataWithFallback(cleanPdfUrl, null, requestOptions);
       }
       
       // Render all pages in parallel using offscreen render
@@ -1526,7 +1329,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     const renderPromises = [];
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       renderPromises.push(
-        renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData)
+        renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData, captureOptions)
           .then(pageImage => {
             // CRITICAL: Use full imageData (with prefix) instead of extracting base64
             // imageData already has full data URL like "data:image/png;base64,..."
@@ -1696,15 +1499,19 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           // LLM will see: system prompt → page 1 (image + prompt) → response → page 2 (image + prompt) → response → ...
           // LLM returns JSON with text and merge instruction
           const { result: pageResponse, assistantMessage, userMessage } = await callWithRetry(
-            () => callAIWithImageAndHistory(
+            async () => {
+              await checkCancellation('PDF page request');
+              return callAIWithImageAndHistory(
               PDF_TO_MARKDOWN_SYSTEM_PROMPT,
               userPrompt,
               imageDataToUse, // Use corrected imageData with prefix
               messageHistory,
               apiKey,
               model,
-              true // jsonResponse = true - expect JSON with text and mergeWithPrevious
-            ),
+              true, // jsonResponse = true - expect JSON with text and mergeWithPrevious
+              requestOptions
+              );
+            },
             {
               maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
               delays: CONFIG.RETRY_DELAYS,
@@ -1761,7 +1568,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
             isObject: typeof pageResponseAny === 'object' && pageResponseAny !== null,
             responsePreview: typeof pageResponseAny === 'string' 
               ? pageResponseAny.substring(0, 500) 
-              : JSON.stringify(pageResponseAny).substring(0, 500)
+              : String(JSON.stringify(pageResponseAny)).substring(0, 500)
           });
           
           const pageData = parseLLMResponse(pageResponseAny, pageNum);
@@ -1863,16 +1670,15 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           
           // Add user message (with image) and assistant response to history for next page
           // This way LLM sees the full conversation: previous pages with images + responses
-          // IMPORTANT: Use pageMarkdown (extracted text) instead of assistantMessage (raw JSON)
-          // This ensures LLM sees only the text content, not the JSON structure
-          messageHistory.push(
+          // Signed provider blocks must remain intact; plain-text providers use extracted text.
+          if (pageMarkdown.trim()) messageHistory.push(
             userMessage, // Full user message with image
-            { role: 'assistant', content: pageMarkdown } // Assistant response - only text, not JSON
+            { role: 'assistant', content: Array.isArray(assistantMessage) ? assistantMessage : pageMarkdown }
           );
           
           // Collect markdown text from this page
           // Result is parsed from JSON with text and merge instruction
-          if (pageMarkdown && typeof pageMarkdown === 'string' && pageMarkdown.trim()) {
+          if (typeof pageMarkdown === 'string') {
         let cleanMarkdown = pageMarkdown.trim();
         
         // Extract document information from page if present and we're still looking for it
@@ -1884,6 +1690,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           // Apply updates to document metadata
           if (metadataUpdates.title) {
             documentTitle = metadataUpdates.title;
+              hasDocumentTitle = true;
           }
           if (metadataUpdates.author) {
             documentAuthor = metadataUpdates.author;
@@ -1978,6 +1785,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       }
       
     } catch (error) {
+      if ((isTerminalAIResponseError(error) && error.code !== 'AI_RESPONSE_INCOMPLETE') || error.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
       // Store detailed error information for analysis
       lastPageError = error;
       
@@ -2012,6 +1820,14 @@ export async function processPdfPageWithAI(data, pdfUrl) {
       } // End of if (alreadyProcessedAll)
   } // End of else (isLocalFile check)
   
+  await checkCancellation('PDF processing completion');
+  const processedSet = new Set(processedPages);
+  const missingPages = Array.from({ length: numPages }, (_, index) => index + 1).filter(page => !processedSet.has(page));
+  if (missingPages.length) {
+    throw new Error(`PDF extraction is incomplete. Failed pages: ${missingPages.join(', ')}.`);
+  }
+  failedPages.length = 0;
+
   // Log processing summary with detailed error information
   const errorSummary = {
     total: failedPages.length,
@@ -2133,11 +1949,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   // Extract title from first H1 heading (if exists) and remove it from markdown
   // CRITICAL: If title was extracted from metadata, we MUST remove the duplicate H1 from markdown
   // Check if title is from metadata (not default/fallback values)
-  const isDefaultTitle = !documentTitle || 
-                         documentTitle === 'Untitled PDF' || 
-                         documentTitle === data.title ||
-                         documentTitle.match(/\.pdf$/i) ||
-                         documentTitle.match(/^\d+[-_]/);
+  const isDefaultTitle = !hasDocumentTitle;
   const titleFromMetadata = !isDefaultTitle;
   
   if (!titleFromMetadata) {
@@ -2189,10 +2001,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
         const h1Lower = h1Title.toLowerCase().trim();
         
         // Check if this H1 matches the metadata title
-        if (titleLower === h1Lower || 
-            h1Lower.includes(titleLower) || 
-            titleLower.includes(h1Lower) ||
-            (h1Lower.length > titleLower.length * 0.8 && titleLower.length > h1Lower.length * 0.8)) { // At least 80% match both ways
+        if (titleLower === h1Lower) {
           bestMatch = h1Title;
           bestMatchIndex = i;
           break; // Found a match, use it
@@ -2215,10 +2024,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
               // This is the H1 we want to remove
               const h1Title = h1Match[1].trim();
               const h1Lower = h1Title.toLowerCase().trim();
-              if (titleLower === h1Lower || 
-                  h1Lower.includes(titleLower) || 
-                  titleLower.includes(h1Lower) ||
-                  (h1Lower.length > titleLower.length * 0.8 && titleLower.length > h1Lower.length * 0.8)) {
+              if (titleLower === h1Lower) {
                 removed = true;
                 log('Removing duplicate H1 title from markdown', { 
                   metadataTitle: documentTitle, 

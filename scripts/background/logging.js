@@ -3,6 +3,8 @@
 // Uses dependency injection pattern for better testability and modularity
 
 import { validateDeps } from '../utils/di-validation.js';
+import { sanitizeLogData } from '../utils/logging.js';
+import { sanitizeLogText } from '../utils/security.js';
 
 /**
  * @typedef {Object} ServiceWorkerGlobalScopeWithLogging
@@ -40,6 +42,8 @@ export function initLogging(deps) {
    */
   function addLogToCollection(message, data = null, level = 'log') {
   try {
+    message = sanitizeLogText(message);
+    data = sanitizeLogData(data);
     // Truncate data if too large to prevent memory issues
     let dataStr = null;
     if (data !== null) {

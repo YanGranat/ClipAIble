@@ -11,7 +11,8 @@ vi.mock('../../scripts/utils/logging.js', () => ({
   logDebug: vi.fn()
 }));
 
-vi.mock('../../scripts/utils/html.js', () => ({
+vi.mock('../../scripts/utils/html.js', async (importOriginal) => ({
+  ...await importOriginal(),
   stripHtml: vi.fn((text) => text?.replace(/<[^>]*>/g, '') || ''),
   htmlToMarkdown: vi.fn((text) => text?.replace(/<[^>]*>/g, '') || '')
 }));
@@ -88,7 +89,8 @@ describe('generation/markdown', () => {
         publishDate: '2025-12-23',
         language: 'en',
         apiKey: 'test-key',
-        model: 'gpt-4'
+        model: 'gpt-4',
+        aiRequestOptions: { provider: 'openrouter' }
       }, updateState);
 
       expect(updateState).toHaveBeenCalledWith(
@@ -161,7 +163,8 @@ describe('generation/markdown', () => {
         publishDate: '2025-12-23',
         language: 'ru',
         apiKey: 'test-key',
-        model: 'gpt-4'
+        model: 'gpt-4',
+        aiRequestOptions: { provider: 'openrouter' }
       });
 
       expect(translateMetadata).toHaveBeenCalledWith(
@@ -169,7 +172,8 @@ describe('generation/markdown', () => {
         'ru',
         'test-key',
         'gpt-4',
-        'date'
+        'date',
+        { provider: 'openrouter' }
       );
     });
 

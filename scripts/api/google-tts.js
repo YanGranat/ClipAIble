@@ -1,21 +1,17 @@
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { isWavBuffer, pcmToWav } from './audio-format.js';
 // @ts-check
-// Google Gemini 2.5 TTS API module for ClipAIble extension
-// 
-// Uses Generative Language API (generativelanguage.googleapis.com)
-// - API key via x-goog-api-key header
-// - IMPORTANT: Prompt style is combined with text in contents field as "Say {prompt}: {text}"
-//   According to Google API documentation, the API handles this correctly and the prompt is NOT spoken
-//   However, the format requires combining prompt and text in the contents field
-//
-// NO FALLBACKS - if API fails, error is thrown immediately
+// Google Gemini TTS API module
 
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { DEFAULT_GOOGLE_TTS_MODEL, GOOGLE_TTS_MODELS, isModernGoogleTtsModel } from './tts-catalog.js';
 
 /**
- * Google Gemini 2.5 TTS API configuration
+ * Google Gemini TTS API configuration
  * @readonly
  * @const {{
  *   MODELS: Array<string>,
@@ -29,20 +25,16 @@ import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils
 export const GOOGLE_TTS_CONFIG = {
   // Supported TTS models (using Generative Language API endpoint)
   // Note: These models work with generativelanguage.googleapis.com endpoint
-  MODELS: [
-    'gemini-2.5-pro-preview-tts',           // High control for structured workflows
-    'gemini-2.5-flash-preview-tts',         // Low latency, cost-efficient
-    'gemini-2.5-flash-lite-preview-tts'  // Preview: single-speaker only
-  ],
+  MODELS: GOOGLE_TTS_MODELS.map(model => model.id),
   
   // Default model
-  MODEL: 'gemini-2.5-pro-preview-tts',
+  MODEL: DEFAULT_GOOGLE_TTS_MODEL,
   
   // API endpoint base URL
   // Generative Language API - uses API key via x-goog-api-key header
   API_BASE: 'https://generativelanguage.googleapis.com/v1beta',
   
-  // Text length limit per request (32k tokens, roughly 24k characters)
+  // Character bound; the API also enforces its model token budget.
   MAX_INPUT: 24000,
   
   // Default voice (Callirrhoe from documentation)
@@ -86,86 +78,7 @@ export const GOOGLE_TTS_CONFIG = {
 };
 
 /**
- * Convert raw PCM audio data to WAV format
- * @param {ArrayBuffer} pcmData - Raw PCM audio data
- * @param {number} sampleRate - Sample rate in Hz (default: 24000)
- * @param {number} bitsPerSample - Bits per sample (default: 16)
- * @param {number} numChannels - Number of channels (default: 1 for mono)
- * @returns {ArrayBuffer} WAV-formatted audio buffer
- */
-function pcmToWav(pcmData, sampleRate = 24000, bitsPerSample = 16, numChannels = 1) {
-  const pcmLength = pcmData.byteLength;
-  const headerSize = 44;
-  const totalSize = headerSize + pcmLength;
-  
-  const wavBuffer = new ArrayBuffer(totalSize);
-  const view = new Uint8Array(wavBuffer);
-  const dataView = new DataView(wavBuffer);
-  
-  // Write WAV header
-  // "RIFF" chunk descriptor
-  view[0] = 0x52; // R
-  view[1] = 0x49; // I
-  view[2] = 0x46; // F
-  view[3] = 0x46; // F
-  
-  // File size - 8
-  dataView.setUint32(4, totalSize - 8, true);
-  
-  // "WAVE" format
-  view[8] = 0x57;  // W
-  view[9] = 0x41;  // A
-  view[10] = 0x56; // V
-  view[11] = 0x45; // E
-  
-  // "fmt " sub-chunk
-  view[12] = 0x66; // f
-  view[13] = 0x6D; // m
-  view[14] = 0x74; // t
-  view[15] = 0x20; // (space)
-  
-  // Sub-chunk size (16 for PCM)
-  dataView.setUint32(16, 16, true);
-  
-  // Audio format (1 = PCM)
-  dataView.setUint16(20, 1, true);
-  
-  // Number of channels
-  dataView.setUint16(22, numChannels, true);
-  
-  // Sample rate
-  dataView.setUint32(24, sampleRate, true);
-  
-  // Byte rate (sample rate * num channels * bytes per sample)
-  dataView.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
-  
-  // Block align (num channels * bytes per sample)
-  dataView.setUint16(32, numChannels * (bitsPerSample / 8), true);
-  
-  // Bits per sample
-  dataView.setUint16(34, bitsPerSample, true);
-  
-  // "data" sub-chunk
-  view[36] = 0x64; // d
-  view[37] = 0x61; // a
-  view[38] = 0x74; // t
-  view[39] = 0x61; // a
-  
-  // Data chunk size
-  dataView.setUint32(40, pcmLength, true);
-  
-  // Copy PCM data
-  const pcmView = new Uint8Array(pcmData);
-  view.set(pcmView, 44);
-  
-  return wavBuffer;
-}
-
-// formatTextWithPrompt function removed - no longer needed
-// Cloud Text-to-Speech API uses separate prompt/text fields, so no formatting needed
-
-/**
- * Convert text to speech using Google Gemini 2.5 TTS API
+ * Convert text to speech using Google Gemini TTS API
  * @param {string} text - Text to convert (max 24000 characters)
  * @param {string} apiKey - Google API key (same as Gemini API key)
  * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
@@ -212,8 +125,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
     throw new Error(`Invalid Google TTS voice "${voice}". Supported voices: ${GOOGLE_TTS_CONFIG.VOICES.map(v => v.id).join(', ')}`);
   }
   
-  // API expects voice name in lowercase
-  const voiceNameForApi = validVoice.id.toLowerCase();
+  const modernModel = isModernGoogleTtsModel(model);
+  const voiceNameForApi = modernModel ? validVoice.id : validVoice.id.toLowerCase();
   
   // Validate model (NO FALLBACK)
   if (!GOOGLE_TTS_CONFIG.MODELS.includes(model)) {
@@ -229,7 +142,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     // Combine prompt and text if prompt is provided
     // Format: "Say {prompt}: {text}" or just "{text}" if no prompt
     let contentsText = text;
-    if (prompt) {
+    if (prompt && !modernModel) {
       // Format prompt as instruction for the entire text
       // Example from documentation: "Say cheerfully: Have a wonderful day!"
       // API correctly processes this format and does NOT speak the prompt part
@@ -245,18 +158,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
       contents: [
         {
           parts: [
-            { text: contentsText }
+            { text: contentsText, ...(modernModel && prompt?.trim() ? { speech_metadata: { style: prompt.trim() } } : {}) }
           ]
         }
       ],
       generationConfig: {
         responseModalities: ['AUDIO'],
         speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: voiceNameForApi
-            }
-          }
+          voiceConfig: modernModel ? { voice: voiceNameForApi } : { prebuiltVoiceConfig: { voiceName: voiceNameForApi } }
         }
       }
     };
@@ -282,20 +191,18 @@ export async function textToSpeech(text, apiKey, options = {}) {
     try {
       response = await callWithRetry(
         async () => {
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+          await checkCancellation('Google TTS request', options.processingRunId);
           
           try {
             // Generative Language API: API key via x-goog-api-key header
-            const fetchResponse = await fetch(endpointUrl, {
+            const fetchResponse = await fetchBufferedResponse(endpointUrl, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'x-goog-api-key': apiKey.trim()
               },
-              body: JSON.stringify(requestBody),
-              signal: controller.signal
-            });
+              body: JSON.stringify(requestBody)
+            }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
             
             if (!fetchResponse.ok) {
               // Log response details for errors to help diagnose
@@ -334,11 +241,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
             return fetchResponse;
           } catch (e) {
             throw e;
-          } finally {
-            // CRITICAL: Always clear timeout in finally to prevent memory leaks
-            if (timeout) {
-              clearTimeout(timeout);
-            }
           }
         },
         {
@@ -348,15 +250,16 @@ export async function textToSpeech(text, apiKey, options = {}) {
         }
       );
     } catch (fetchError) {
+      await checkCancellation('Google TTS response', options.processingRunId);
       if (fetchError.name === 'AbortError') {
-        throw handleTimeoutError('Google Gemini TTS');
+        throw await handleTimeoutError('Google Gemini TTS');
       }
       
       if (fetchError.status) {
         throw fetchError; // Already handled by handleApiError
       }
       
-      throw handleNetworkError(fetchError, 'Google Gemini TTS');
+      throw await handleNetworkError(fetchError, 'Google Gemini TTS');
     }
     
     if (!response) {
@@ -386,8 +289,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
   // Extract audio data from response
   // Generative Language API returns candidates[0].content.parts[0].inlineData.data (base64-encoded PCM audio)
   let base64Data;
+  let audioMimeType;
   if (responseData.candidates && responseData.candidates[0]) {
     const candidate = responseData.candidates[0];
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+      throw new Error(`Incomplete audio from Google Gemini TTS: ${candidate.finishReason}`);
+    }
     if (!candidate.content || !candidate.content.parts || !candidate.content.parts[0]) {
       logError('Invalid candidate structure in Google Gemini TTS response', { 
         candidate: JSON.stringify(candidate).substring(0, 500)
@@ -403,6 +310,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
       throw new Error('No audio data in Google Gemini TTS API response');
     }
     base64Data = part.inlineData.data;
+    audioMimeType = part.inlineData.mimeType;
   } else {
     logError('No candidates in Google Gemini TTS response', { 
       responseData: JSON.stringify(responseData).substring(0, 500),
@@ -430,9 +338,19 @@ export async function textToSpeech(text, apiKey, options = {}) {
     throw new Error('Empty audio data from Google Gemini TTS API');
   }
   
-  // Google TTS returns raw PCM data (24kHz, 16-bit, mono) without WAV header
-  // Need to wrap it in WAV header for playback
-  const audioBuffer = pcmToWav(pcmData, 24000, 16, 1);
+  const hasWavHeader = isWavBuffer(pcmData);
+  const wavResponse = /^audio\/(?:wav|x-wav|wave)(?:;|$)/i.test(audioMimeType || '');
+  if (wavResponse && !hasWavHeader) throw new Error('Invalid WAV audio from Google Gemini TTS');
+  if (modernModel && !audioMimeType && !hasWavHeader) throw new Error('Missing audio format from Google Gemini TTS');
+  if (!hasWavHeader && audioMimeType && !/^audio\/(?:l16|pcm)(?:;|$)/i.test(audioMimeType)) {
+    throw new Error('Unsupported audio format from Google Gemini TTS');
+  }
+  if (!hasWavHeader && pcmData.byteLength % 2 !== 0) throw new Error('Incomplete PCM audio from Google Gemini TTS');
+  const sampleRate = Number(/(?:^|;)\s*rate=([^;]+)/i.exec(audioMimeType || '')?.[1] || 24000);
+  if (!Number.isInteger(sampleRate) || sampleRate <= 0 || sampleRate > 0x7fffffff) {
+    throw new Error('Invalid PCM sample rate from Google Gemini TTS');
+  }
+  const audioBuffer = hasWavHeader ? pcmData : pcmToWav(pcmData, sampleRate, 16, 1);
   
   log('Google Gemini TTS audio ready', { 
     pcmSize: pcmData.byteLength, 

@@ -16,7 +16,8 @@ vi.mock('../../scripts/state/processing.js', () => ({
   updateState: vi.fn(),
   getProcessingState: vi.fn(() => ({ isProcessing: false })),
   cancelProcessing: vi.fn(),
-  isCancelled: vi.fn(() => false)
+  isCancelled: vi.fn(() => false),
+  isValidProcessingRunId: (value) => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value)
 }));
 
 // Mock all handler modules
@@ -100,6 +101,41 @@ describe('background.js message handlers', () => {
   });
 
   describe('routeMessage', () => {
+    it('keeps the response channel open until startup recovery finishes', async () => {
+      let releaseStartup;
+      const initializationReady = new Promise((resolve) => { releaseStartup = resolve; });
+      const respond = vi.fn();
+      simpleHandlers.handlePing.mockImplementationOnce((_request, _sender, sendResponse) => {
+        sendResponse({ pong: true });
+        return true;
+      });
+      expect(routeMessage({ action: 'ping' }, mockSender, respond, { ...mockDeps, initializationReady })).toBe(true);
+      expect(simpleHandlers.handlePing).not.toHaveBeenCalled();
+      expect(respond).not.toHaveBeenCalled();
+      releaseStartup();
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledOnce());
+      expect(respond).toHaveBeenCalledWith({ pong: true });
+      expect(simpleHandlers.handlePing).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects commands when startup recovery fails', async () => {
+      const respond = vi.fn();
+      expect(routeMessage({ action: 'ping' }, mockSender, respond, {
+        ...mockDeps, initializationReady: Promise.reject(new Error('Storage unavailable'))
+      })).toBe(true);
+      await vi.waitFor(() => expect(respond).toHaveBeenCalledOnce());
+      expect(simpleHandlers.handlePing).not.toHaveBeenCalled();
+      expect(respond).toHaveBeenCalledWith({ success: false, error: 'Storage unavailable' });
+    });
+
+    it('passes offscreen transport through while startup recovery is pending', () => {
+      const respond = vi.fn();
+      expect(routeMessage({ target: 'offscreen', type: 'PING' }, mockSender, respond, {
+        ...mockDeps, initializationReady: new Promise(() => {})
+      })).toBe(false);
+      expect(respond).not.toHaveBeenCalled();
+    });
+
     it('should pass through offscreen messages', () => {
       const request = { action: 'test', target: 'offscreen' };
       const sendResponse = vi.fn();
@@ -252,6 +288,8 @@ describe('background.js message handlers', () => {
       expect(() => {
         routeMessage(request, mockSender, sendResponse, mockDeps);
       }).not.toThrow();
+      await vi.waitFor(() => expect(sendResponse).toHaveBeenCalledTimes(1));
+      expect(sendResponse).toHaveBeenCalledWith(expect.objectContaining({ error: 'Async handler error' }));
     });
   });
 });

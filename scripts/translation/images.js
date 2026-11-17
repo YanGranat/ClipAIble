@@ -1,3 +1,6 @@
+import { assertCompleteAIResponse } from '../api/response-validation.js';
+import { fetchBufferedResponse } from '../api/fetch-buffered-response.js';
+import { parseBase64Image } from '../api/image-data.js';
 // Image translation module for ClipAIble extension
 // Handles translation of text in images using OCR
 
@@ -6,9 +9,13 @@
 // @typedef {import('../types.js').ContentItem} ContentItem
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { LANGUAGE_NAMES } from '../utils/config.js';
-import { getProviderFromModel, parseModelConfig, callAIWithImage } from '../api/index.js';
-import { translateImageWithGemini } from '../api/gemini.js';
+import { LANGUAGE_NAMES, CONFIG } from '../utils/config.js';
+import { resolveAIProvider, parseModelConfig, callAIWithImage } from '../api/index.js';
+import { translateImageWithGemini, getGeminiModelName, getGeminiGenerationConfig, getGeminiResponseText } from '../api/gemini.js';
+import { getClaudeRequestConfig, getClaudeResponseText } from '../api/claude.js';
+import { getOpenAIRequestConfig } from '../api/openai.js';
+import { getGrokRequestConfig } from '../api/grok.js';
+import { getOpenRouterRequestConfig } from '../api/openrouter.js';
 import { imageToBase64 } from '../utils/images.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
@@ -23,7 +30,8 @@ import { checkCancellation } from '../utils/pipeline-helpers.js';
  * @param {string} model - Model name
  * @returns {Promise<boolean>}
  */
-export async function detectImageText(imageBase64, targetLang, apiKey, model) {
+export async function detectImageText(imageBase64, targetLang, apiKey, model, options = {}) {
+  options.checkCancelled?.();
   log('detectImageText', { targetLang, model });
   
   const prompt = `Analyze this image. Does it contain meaningful text that is NOT in ${targetLang}?
@@ -36,66 +44,23 @@ Consider:
 Respond with ONLY "yes" or "no".`;
 
   try {
-    const provider = getProviderFromModel(model);
+    const provider = resolveAIProvider(model, options.provider);
     const { modelName } = parseModelConfig(model);
     let answer;
     
     if (provider === 'deepseek') {
-      // CRITICAL: deepseek-reasoner (DeepSeek 3.2) does NOT support vision/images
-      // Use deepseek-chat for vision tasks if model is deepseek-reasoner
-      // According to DeepSeek docs: deepseek-reasoner is for reasoning only, not vision
-      const visionModel = modelName.includes('reasoner') ? 'deepseek-chat' : modelName;
-      
-      if (visionModel !== modelName) {
-        log('Using deepseek-chat for vision (deepseek-reasoner does not support images)', {
-          originalModel: modelName,
-          visionModel
-        });
-      }
-      
-      try {
-        const result = await callAIWithImage('', prompt, imageBase64, apiKey, visionModel, false);
-        answer = typeof result === 'string' ? result.toLowerCase().trim() : String(result).toLowerCase().trim();
-      } catch (error) {
-        // Check if error indicates that model doesn't support images
-        const errorMessage = error?.message || '';
-        const errorDetails = error?.context?.errorData || {};
-        const isVisionNotSupported = 
-          errorMessage.includes('unknown variant') && errorMessage.includes('image_url') ||
-          errorMessage.includes('image_url') && errorMessage.includes('expected') ||
-          errorDetails.error?.includes('image_url');
-        
-        if (isVisionNotSupported) {
-          logWarn('DeepSeek model does not support vision/images', { 
-            model: visionModel,
-            originalModel: modelName,
-            error: errorMessage,
-            note: 'Model does not support image processing - assuming translation NOT needed'
-          });
-          // Model doesn't support images - assume translation is NOT needed (default behavior)
-          return false;
-        }
-        
-        // For other errors, also assume translation is NOT needed (default behavior)
-        logWarn('DeepSeek API error in detectImageText', { 
-          model: visionModel,
-          originalModel: modelName,
-          error: errorMessage,
-          errorDetails: JSON.stringify(errorDetails).substring(0, 500),
-          note: 'API error - assuming translation NOT needed (default behavior)'
-        });
-        return false;
-      }
+      const result = await callAIWithImage('', prompt, imageBase64, apiKey, model, false, options);
+      answer = typeof result === 'string' ? result.toLowerCase().trim() : String(result).toLowerCase().trim();
     } else if (provider === 'grok') {
       // Grok API format (same as OpenAI)
-      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+      const response = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: modelName,
+          ...getGrokRequestConfig(model, { shortResponse: true, imageInput: true }),
           messages: [
             { 
               role: 'user', 
@@ -106,20 +71,21 @@ Respond with ONLY "yes" or "no".`;
             }
           ]
         })
-      });
+      }, undefined, options);
 
       if (!response.ok) {
         logWarn('Grok API error in detectImageText', { status: response.status, model: modelName });
         return false;
       }
       const data = await response.json();
+      assertCompleteAIResponse(data, provider);
       answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
     } else if (provider === 'openrouter') {
       // OpenRouter API format (similar to OpenAI but with different endpoint)
       const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
-      const base64Image = matches ? matches[2] : (imageBase64.includes(',') ? imageBase64.split(',')[1] : imageBase64);
+      const { base64Image, mimeType } = parseBase64Image(imageBase64);
       
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const response = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -128,34 +94,35 @@ Respond with ONLY "yes" or "no".`;
           'X-Title': 'ClipAIble'
         },
         body: JSON.stringify({
-          model: modelName,
+          ...getOpenRouterRequestConfig(model, { shortResponse: true, imageInput: true }),
           messages: [
             { 
               role: 'user', 
               content: [
                 { type: 'text', text: prompt },
-                { type: 'image_url', image_url: { url: `data:image/png;base64,${base64Image}` } }
+                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Image}` } }
               ]
             }
           ]
         })
-      });
+      }, undefined, options);
 
       if (!response.ok) {
         logWarn('OpenRouter API error in detectImageText', { status: response.status, model: modelName });
         return false;
       }
       const data = await response.json();
+      assertCompleteAIResponse(data, provider);
       answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
     } else if (provider === 'openai') {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      const response = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: modelName,
+          ...getOpenAIRequestConfig(model, { shortResponse: true }),
           messages: [
             { 
               role: 'user', 
@@ -166,16 +133,17 @@ Respond with ONLY "yes" or "no".`;
             }
           ]
         })
-      });
+      }, undefined, options);
 
       if (!response.ok) return false;
       const data = await response.json();
+      assertCompleteAIResponse(data, provider);
       answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
     } else if (provider === 'claude') {
       const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
       if (!matches) return false;
       
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -184,8 +152,7 @@ Respond with ONLY "yes" or "no".`;
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: model,
-          max_tokens: 100,
+          ...getClaudeRequestConfig(model, { maxTokens: 100, shortResponse: true }),
           messages: [{
             role: 'user',
             content: [
@@ -194,22 +161,24 @@ Respond with ONLY "yes" or "no".`;
             ]
           }]
         })
-      });
+      }, undefined, options);
 
       if (!response.ok) return false;
       const data = await response.json();
-      answer = data.content?.find(c => c.type === 'text')?.text?.toLowerCase()?.trim();
+      assertCompleteAIResponse(data, provider);
+      answer = getClaudeResponseText(data).toLowerCase().trim();
     } else if (provider === 'gemini') {
       const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
       if (!matches) return false;
       
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      const response = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${getGeminiModelName(model)}:generateContent`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-goog-api-key': apiKey
         },
         body: JSON.stringify({
+          generationConfig: getGeminiGenerationConfig(model),
           contents: [{
             parts: [
               { text: prompt },
@@ -217,16 +186,19 @@ Respond with ONLY "yes" or "no".`;
             ]
           }]
         })
-      });
+      }, undefined, options);
 
       if (!response.ok) return false;
       const data = await response.json();
-      answer = data.candidates?.[0]?.content?.parts?.[0]?.text?.toLowerCase()?.trim();
+      assertCompleteAIResponse(data, provider);
+      answer = getGeminiResponseText(data).toLowerCase().trim();
     }
     
     log('detectImageText result', { answer });
     return answer === 'yes';
   } catch (error) {
+    options.checkCancelled?.();
+    if (error?.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
     // Normalize error with context for better logging and error tracking
     await handleError(error, {
       source: 'imageTranslation',
@@ -254,7 +226,8 @@ Respond with ONLY "yes" or "no".`;
  * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
  * @returns {Promise<Array<import('../types.js').ContentItem>>} Content items with translated image text
  */
-export async function translateImages(content, sourceLang, targetLang, apiKey, googleApiKey, model, updateState) {
+export async function translateImages(content, sourceLang, targetLang, apiKey, googleApiKey, model, updateState, options = {}) {
+  options.checkCancelled?.();
   log('=== IMAGE TRANSLATION START ===', { sourceLang, targetLang });
   
   // Decrypt API keys if needed
@@ -264,6 +237,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
   try {
     decryptedApiKey = await decryptApiKey(apiKey);
   } catch (error) {
+    options.checkCancelled?.();
     log('API key decryption failed for image detection, using as-is', error);
   }
   
@@ -271,6 +245,8 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
     try {
       decryptedGoogleApiKey = await decryptApiKey(googleApiKey);
     } catch (error) {
+    options.checkCancelled?.();
+      if (error?.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
       log('Google API key decryption failed, using as-is', error);
     }
   }
@@ -298,7 +274,8 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
   
   for (let i = 0; i < imageIndices.length; i++) {
     // Check if processing was cancelled before processing each image
-    await checkCancellation(`image translation (${i + 1}/${imageIndices.length})`);
+    if (options.checkCancelled) options.checkCancelled();
+    else await checkCancellation(`image translation (${i + 1}/${imageIndices.length})`);
     
     const idx = imageIndices[i];
     const img = content[idx];
@@ -322,7 +299,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         }
       }
       
-      const needsTranslation = await detectImageText(imageBase64, langName, decryptedApiKey, model);
+      const needsTranslation = await detectImageText(imageBase64, langName, decryptedApiKey, model, options);
       
       if (!needsTranslation) {
         log(`Image ${i + 1} does not need translation`);
@@ -339,8 +316,9 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         });
       }
       
-      const translatedImage = await translateImageWithGemini(imageBase64, langName, decryptedGoogleApiKey);
+      const translatedImage = await translateImageWithGemini(imageBase64, langName, decryptedGoogleApiKey, options);
       
+      options.checkCancelled?.();
       if (translatedImage) {
         content[idx].src = translatedImage;
         content[idx].translated = true;
@@ -356,6 +334,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
         failed++;
       }
     } catch (error) {
+    options.checkCancelled?.();
       // Normalize error with context for better logging and error tracking
       await handleError(error, {
         source: 'imageTranslation',

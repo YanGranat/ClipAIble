@@ -1,3 +1,4 @@
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
 // @ts-check
 // Respeecher Text-to-Speech API module for ClipAIble extension
 // Ukrainian company - supports English and Ukrainian TTS
@@ -20,6 +21,7 @@
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
 
 /**
@@ -224,6 +226,7 @@ function getApiUrl(voice, textLanguage = null) {
  * @throws {Error} If network error occurs
  */
 export async function textToSpeech(text, apiKey, options = {}) {
+  await checkCancellation('Respeecher TTS', options.processingRunId);
   log('Respeecher TTS start', { textLength: text?.length, voice: options.voice, language: options.language });
   
   const {
@@ -330,12 +333,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
   if (isUkrainianEndpoint) {
     try {
       const voicesUrl = RESPEECHER_CONFIG.VOICES_URL_UA;
-      const voicesResponse = await fetch(voicesUrl, {
+      const voicesResponse = await fetchBufferedResponse(voicesUrl, {
         method: 'GET',
         headers: {
           'X-API-Key': apiKey.trim()
         }
-      });
+      }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Respeecher voice list', options.processingRunId) });
       if (voicesResponse.ok) {
         const availableVoices = await voicesResponse.json();
         const voiceFound = availableVoices?.find(v => v.id === validVoice);
@@ -357,8 +360,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   try {
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+        await checkCancellation('Respeecher TTS request', options.processingRunId);
         
           try {
           // Respeecher supports both header and query parameter auth
@@ -371,15 +373,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
           // since it's recommended for browser environments
           
           // Method: X-API-Key header (as required by OpenAPI spec)
-          let fetchResponse = await fetch(apiUrl, {
+          let fetchResponse = await fetchBufferedResponse(apiUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'X-API-Key': apiKeyParam
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
           
           if (!fetchResponse.ok) {
             // Log full response details for debugging
@@ -454,11 +455,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
           return fetchResponse;
         } catch (e) {
           throw e;
-        } finally {
-          // CRITICAL: Always clear timeout in finally to prevent memory leaks
-          if (timeout) {
-            clearTimeout(timeout);
-          }
         }
       },
       {
@@ -468,13 +464,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
       }
     );
   } catch (fetchError) {
+    await checkCancellation('Respeecher TTS response', options.processingRunId);
     if (fetchError.name === 'AbortError') {
-      throw handleTimeoutError('Respeecher');
+      throw await handleTimeoutError('Respeecher');
     }
     if (fetchError.status) {
       throw fetchError; // Already handled by handleApiError
     }
-    throw handleNetworkError(fetchError, 'Respeecher');
+    throw await handleNetworkError(fetchError, 'Respeecher');
   }
   
   // Respeecher returns WAV audio directly as binary
@@ -557,7 +554,7 @@ export async function getVoicesFromAPI(apiKey, language = 'en') {
   try {
     // Use X-API-Key header only (as per OpenAPI spec)
     // Security: Never use query parameters for API keys - they can leak in logs/proxy/history
-    const response = await fetch(voicesUrl, {
+    const response = await fetchBufferedResponse(voicesUrl, {
       method: 'GET',
       headers: {
         'X-API-Key': apiKey.trim()

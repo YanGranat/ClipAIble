@@ -13,6 +13,7 @@ import { DEFAULT_VOICES, FALLBACK_VOICES } from './voice-selection.js';
  * @param {string} params.voiceId - Voice ID
  * @param {string} params.langCode - Language code
  * @param {string} params.messageId - Message ID
+ * @param {string} [params.processingRunId] - Processing run owner
  * @param {function(string, string): Promise<Blob>} params.predictWithWorker - Predict function
  * @param {function(): Promise<string[]>} params.getStoredWithWorker - Get stored function
  * @param {function(string, function?): Promise<void>} params.downloadWithWorker - Download function
@@ -23,6 +24,7 @@ import { DEFAULT_VOICES, FALLBACK_VOICES } from './voice-selection.js';
  */
 export async function synthesizeText({
   text,
+  processingRunId,
   voiceId,
   langCode,
   messageId,
@@ -34,7 +36,7 @@ export async function synthesizeText({
   state
 }) {
   const sentences = splitIntoSentences(text);
-  let useStreaming = sentences.length > 1 && text.length > 2000;
+  let useStreaming = text.length > 2000;
   
   log(`[ClipAIble TTS] Synthesis start`, {
     messageId,
@@ -58,9 +60,10 @@ export async function synthesizeText({
         useStreaming = true;
       }
       
-      if (useStreaming && sentences.length > 1) {
+      if (useStreaming) {
         wavBlob = await synthesizeStreaming({
           sentences,
+          processingRunId,
           voiceId: currentVoiceId,
           messageId,
           predictWithWorker,
@@ -69,12 +72,6 @@ export async function synthesizeText({
           state
         });
       } else {
-        // Force streaming for long text
-        if (text.length > 2000) {
-          useStreaming = true;
-          continue;
-        }
-        
         wavBlob = await synthesizeSinglePass({
           text,
           voiceId: currentVoiceId,
@@ -153,6 +150,7 @@ export async function synthesizeText({
  */
 async function synthesizeStreaming({
   sentences,
+  processingRunId,
   voiceId,
   messageId,
   predictWithWorker,
@@ -165,11 +163,14 @@ async function synthesizeStreaming({
   const audioChunks = [];
   
   for (let i = 0; i < sentences.length; i++) {
+    if (processingRunId && state.getProcessingRunId() !== processingRunId) {
+      throw new Error('TTS processing cancelled');
+    }
     const sentence = sentences[i];
     
     if (!checkMemory()) {
       logWarn(`[ClipAIble TTS] Memory critical, stopping`, { messageId, processed: i });
-      break;
+      throw new Error('Insufficient memory to finish audio synthesis');
     }
     
     // Validate voice before predict - use ensureTTSWorker to handle recreation after timeout
@@ -196,6 +197,9 @@ async function synthesizeStreaming({
     });
     
     const blob = await predictWithWorker(sentence, predictVoiceId);
+    if (processingRunId && state.getProcessingRunId() !== processingRunId) {
+      throw new Error('TTS processing cancelled');
+    }
     audioChunks.push(blob);
     
     // Send progress (debounced)
@@ -204,6 +208,7 @@ async function synthesizeStreaming({
         chrome.runtime.sendMessage({
           action: 'TTS_PROGRESS',
           data: {
+            processingRunId,
             sentenceIndex: i + 1,
             totalSentences: sentences.length,
             progressBase: 60,

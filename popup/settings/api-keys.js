@@ -2,10 +2,10 @@
 // API Keys and Provider management module
 // Handles API key encryption, validation, and provider UI updates
 
-import { encryptApiKey, decryptApiKey, maskApiKey } from '../../scripts/utils/encryption.js';
+import { encryptApiKey, decryptApiKey, maskApiKey, saveApiKeySettings } from '../../scripts/utils/encryption.js';
 import { t, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { logError } from '../../scripts/utils/logging.js';
-import { getProviderFromModel } from '../../scripts/api/index.js';
+import { formatModelLabel as formatCatalogModelLabel } from '../../scripts/utils/model-catalog.js';
 
 /**
  * Initialize API keys module
@@ -29,29 +29,7 @@ export function initApiKeys(deps) {
 
   // Format model label with code name and reasoning effort
   function formatModelLabel(modelValue) {
-    if (!modelValue) return '';
-    
-    let modelName = modelValue;
-    let reasoningEffort = null;
-    
-    // Check for high reasoning suffix (e.g., gpt-5.1-high)
-    if (modelValue.endsWith('-high')) {
-      modelName = modelValue.replace(/-high$/, '');
-      reasoningEffort = 'high';
-    } else if (modelValue === 'gpt-5.2' || modelValue.startsWith('gpt-5.2-pro')) {
-      // GPT-5.2 models use medium reasoning by default
-      reasoningEffort = 'medium';
-    }
-    
-    // Use code name as base label
-    let label = modelName;
-    
-    // Add reasoning effort suffix if present
-    if (reasoningEffort) {
-      label += ` (reasoning effort - ${reasoningEffort})`;
-    }
-    
-    return label;
+    return formatCatalogModelLabel(elements.apiProviderSelect?.value || 'openai', modelValue);
   }
 
   // Update API provider UI (label, placeholder, model list)
@@ -244,15 +222,7 @@ export function initApiKeys(deps) {
       }
     }
     
-    // Save keys
-    if (Object.keys(keysToSave).length > 0) {
-      await chrome.storage.local.set(keysToSave);
-    }
-    
-    // Remove keys that should be deleted
-    if (keysToRemove.length > 0) {
-      await chrome.storage.local.remove(keysToRemove);
-    }
+    await saveApiKeySettings(keysToSave, keysToRemove);
     
     const apiKeysSavedText = await t('apiKeysSaved');
     showToast(apiKeysSavedText, 'success');

@@ -1,6 +1,6 @@
 # ClipAIble
 
-Extracteur d'articles alimenté par IA. Fonctionne sur n'importe quel site web.
+Extracteur d'articles alimenté par IA.
 
 **Disponible sur le [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
 
@@ -16,7 +16,6 @@ ClipAIble extrait le contenu des articles des pages web et le convertit en diff�
 **Fonctionnalités spéciales :**
 - **Support YouTube/Vimeo** : Extrait les sous-titres vidéo et crée des articles à partir d'eux
 - **Traitement PDF** : Fonctionne avec les PDF en ligne et les fichiers PDF locaux
-- **Traduction de contenu** : Traduit les articles en 11 langues
 - **Traduction d'images** : Traduit le texte sur les images à l'aide de l'IA
 - **Génération TLDR** : Crée des résumés courts dans les documents
 - **Panneau summary** : Affiche les résumés d'articles dans le popup après traitement
@@ -52,10 +51,6 @@ ClipAIble extrait le contenu des articles des pages web et le convertit en diff�
 - **FB2** : Crée des livres électroniques structurés pour PocketBook et autres liseuses
 - **Markdown** : Préserve la structure de l'article avec les titres et les listes
 - **Audio** : Convertit le texte en parole en utilisant 6 services TTS différents
-
-### Traduction
-
-Le contenu peut être traduit en : anglais, russe, ukrainien, allemand, français, espagnol, italien, portugais, chinois, japonais, coréen.
 
 ### Audio
 
@@ -98,7 +93,6 @@ Obtenez la clé sur [space.respeecher.com](https://space.respeecher.com/)
 
 - **Statistiques** : Suivez vos articles sauvegardés avec l'historique et les compteurs mensuels
 - **Import/export des paramètres** : Sauvegardez et restaurez vos préférences
-- **Interface en 11 langues** : Basculez entre les langues sans redémarrage
 - **Stockage sécurisé** : Les clés API sont chiffrées avant la sauvegarde
 
 ## Permissions

@@ -105,7 +105,7 @@ export const ELEMENT_DECISION = {
   // Text length thresholds for type classification
   SHORT_TEXT_MAX: 150,           // Max length for short text (possible heading)
   LONG_TEXT_MIN: 200,            // Min length for long text (definitely paragraph)
-  VERY_LONG_TEXT_MIN: 300,       // Min length for very long text (always paragraph)
+  VERY_LONG_TEXT_MIN: 300,       // Min length for paragraph fallback after table classification
   
   // Confidence differences for type selection
   HEADING_VS_PARAGRAPH_MIN_DIFF: 0.1,  // Min confidence difference to prefer heading over paragraph

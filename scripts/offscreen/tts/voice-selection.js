@@ -3,6 +3,7 @@
 
 import { log, logError, logWarn } from '../../utils/logging.js';
 import { DEFAULT_VOICES, FALLBACK_VOICES } from '../utils/constants.js';
+import { normalizePiperVoiceId } from '../../api/piper-voices-mapping.js';
 
 // Re-export for convenience
 export { DEFAULT_VOICES, FALLBACK_VOICES };
@@ -58,6 +59,7 @@ export function isValidVoiceFormat(voiceId) {
  * @returns {Promise<{voiceId: string, isFallback: boolean}>} Selected voice
  */
 export async function selectVoice({ requestedVoice, langCode, messageId, getVoicesWithWorker, initTTSWorker, state }) {
+  requestedVoice = normalizePiperVoiceId(requestedVoice);
   let voiceId = null;
   let isFallback = false;
   

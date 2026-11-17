@@ -3,7 +3,7 @@
 // FIXES v2 problems: validation, adaptive thresholds, negative scores, gap after analysis
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { 
   HEADING_DETECTION, 
   HEADING_SCORES, 
@@ -428,7 +428,8 @@ function calculateHeadingScore(element, metrics, context) {
   const isHeading = (headingScore >= adaptiveThreshold || 
                      (isNumbered && headingScore >= 2) ||
                      (isVeryLargeFont && headingScore >= 1)) && 
-                    !isList(element, text);
+                    element.type !== 'list' &&
+                    (!isList(element, text) || isNumbered);
   
   return {
     score: headingScore,

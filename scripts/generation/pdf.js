@@ -9,50 +9,17 @@ import { escapeAttr, cleanTitle } from '../utils/html.js';
 import { embedImages } from '../utils/images.js';
 import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { translateMetadata } from '../translation/index.js';
-import { saveLargeData } from '../utils/storage.js';
+import { saveLargeData, removeLargeData } from '../utils/storage.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
+import { filterFigureParagraphs } from './content.js';
 import { sanitizeFilename } from '../utils/security.js';
-import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
+import { PROCESSING_STAGES, isCancelled, getProcessingRunId } from '../state/processing.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
+import { getDefaultModel } from '../utils/model-catalog.js';
 
-/**
- * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
- * 
- * Problem: AI Selector mode may return:
- * 1. A paragraph with <figure>...<figcaption>caption text</figcaption>...</figure> HTML
- * 2. Immediately followed by an image element with the same caption
- * 
- * When the paragraph is processed, sanitizeHtml strips HTML tags but preserves text from figcaption,
- * causing the caption to appear twice: once as paragraph text, once as image caption.
- * 
- * Solution: Remove paragraph elements that contain <figure> HTML if the next element is an image.
- * 
- * @param {Array<import('../types.js').ContentItem>} content - Content array
- * @returns {Array<import('../types.js').ContentItem>} Filtered content array
- */
-function filterFigureParagraphs(content) {
-  if (!content || !Array.isArray(content)) return content;
-  
-  return content.filter((item, index) => {
-    // Only check paragraph type
-    if (item.type !== 'paragraph') return true;
-    
-    // Check if paragraph text contains <figure> HTML
-    const text = item.text || item.html || '';
-    if (!text.includes('<figure')) return true;
-    
-    // Check if next element is an image
-    const nextItem = content[index + 1];
-    if (!nextItem || nextItem.type !== 'image') return true;
-    
-    // This paragraph contains <figure> and is followed by image - filter it out
-    // The image element already has the caption, so we don't need this paragraph
-    return false;
-  });
-}
 
 /**
  * Generate PDF from content
@@ -85,9 +52,13 @@ function filterFigureParagraphs(content) {
  * // Download or display PDF...
  */
 export async function generatePdf(data, updateState) {
+  const processingRunId = data.processingRunId ?? getProcessingRunId();
+  const printJobId = crypto.randomUUID();
+  const printStorageKey = `printJob:${printJobId}`;
   const { 
     content, title, author = '', pageMode = 'single', sourceUrl = '', publishDate = '', 
-    generateToc = false, generateAbstract = false, abstract = '', language = 'auto', apiKey = '', model = 'gpt-5.1',
+    generateToc = false, generateAbstract = false, abstract = '', language = 'auto', apiKey = '',
+    model = getDefaultModel(data.aiRequestOptions?.provider || data.provider),
     fontFamily = '', fontSize = '31', bgColor = '#303030', textColor = '#b9b9b9',
     headingColor = '#cfcfcf', linkColor = '#6cacff'
   } = data;
@@ -153,8 +124,8 @@ export async function generatePdf(data, updateState) {
     const shouldTranslateAuthor = cleanedAuthorBeforeTranslation && author;
     
     const [newAuthor, newDate] = await Promise.all([
-      shouldTranslateAuthor ? translateMetadata(author, language, apiKey, model, 'author') : Promise.resolve(''),
-      formattedDate ? translateMetadata(formattedDate, language, apiKey, model, 'date') : Promise.resolve('')
+      shouldTranslateAuthor ? translateMetadata(author, language, apiKey, model, 'author', data.aiRequestOptions) : Promise.resolve(''),
+      formattedDate ? translateMetadata(formattedDate, language, apiKey, model, 'date', data.aiRequestOptions) : Promise.resolve('')
     ]);
     
     // CRITICAL: Clean translated author to remove any anonymous variants
@@ -244,7 +215,7 @@ export async function generatePdf(data, updateState) {
     // Filter out paragraph elements that contain <figure> HTML when followed by image
     // This prevents duplicate content: AI Selector mode may return both <figure> HTML as paragraph
     // AND the same image separately as image type with caption, causing text duplication
-    const filteredContent = filterFigureParagraphs(content);
+    const filteredContent = filterFigureParagraphs(content, sourceUrl);
     if (filteredContent.length !== content.length) {
       log('Filtered figure-in-paragraph duplicates', {
         originalCount: content.length,
@@ -378,13 +349,15 @@ export async function generatePdf(data, updateState) {
     log('Storing HTML in storage...');
     try {
       // Save large HTML with automatic fallback to IndexedDB if needed
-      await saveLargeData('printHtml', htmlWithImages);
-      
-      // Save small metadata to chrome.storage
-      await chrome.storage.local.set({
-        printTitle: title,
-        pageMode: pageMode
+      if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
+      await saveLargeData(printStorageKey, {
+        html: htmlWithImages,
+        title,
+        sourceUrl,
+        pageMode,
+        processingRunId
       });
+      if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
       
       log('HTML stored in storage', { length: htmlWithImages.length, pageMode });
     } catch (storageError) {
@@ -417,16 +390,24 @@ export async function generatePdf(data, updateState) {
     if (updateState) updateState({ status: 'Opening PDF generator...', progress: 95 });
     
     // Open print page
-    const printPageUrl = chrome.runtime.getURL('print/print.html');
+    const printPageUrl = `${chrome.runtime.getURL('print/print.html')}?job=${encodeURIComponent(printJobId)}`;
     log('Opening print page', { url: printPageUrl });
     
     let tab;
     try {
+      if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
       tab = await chrome.tabs.create({
         url: printPageUrl,
         active: true,
         windowId: currentWindow.id
       });
+      if (isCancelled(processingRunId)) {
+        await chrome.tabs.remove(tab.id);
+        throw new Error('Processing cancelled');
+      }
+      updateState?.({ pdfPrintTabId: tab.id, pdfPrintJobId: printJobId });
+      await chrome.tabs.get(tab.id);
+      if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
       log('Print tab created', { tabId: tab.id });
     } catch (tabError) {
       // Normalize error with context for better logging and error tracking
@@ -456,10 +437,15 @@ export async function generatePdf(data, updateState) {
     // Note: Function signature says it returns Blob, but in practice it returns success object
     // The actual PDF generation happens in the print page
     /** @type {any} */
-    const result = { success: true };
+    const result = { success: true, deferred: true };
     return result;
 
   } catch (error) {
+    try {
+      await removeLargeData(printStorageKey);
+    } catch (cleanupError) {
+      logWarn('Failed to remove PDF preparation data', { error: cleanupError.message });
+    }
     logError('PDF generation failed', error);
     throw error;
   }
@@ -475,16 +461,19 @@ export async function generatePdf(data, updateState) {
  * @param {import('../types.js').CompleteProcessingFunction} completeProcessing - Completion callback
  * @param {import('../types.js').SetErrorFunction} setError - Error callback
  */
-export async function generatePdfWithDebugger(tabId, title, pageMode, contentWidth, contentHeight, completeProcessing, setError) {
+export async function generatePdfWithDebugger(tabId, title, pageMode, contentWidth, contentHeight, completeProcessing, setError, processingRunId) {
   log('=== DEBUGGER PDF START ===');
   log('Input', { tabId, title, pageMode, contentWidth, contentHeight });
   
   const debuggee = { tabId };
+  let attached = false;
   
   try {
+    if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
     // Attach debugger to the tab
     log('Attaching debugger...');
     await chrome.debugger.attach(debuggee, '1.3');
+    attached = true;
     log('Debugger attached');
     
     // Calculate page size
@@ -631,6 +620,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     }
     
     // Generate PDF
+    if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
     log('Generating PDF...');
     const result = await chrome.debugger.sendCommand(debuggee, 'Page.printToPDF', {
       paperWidth: paperWidth,
@@ -657,6 +647,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     
     // Detach debugger
     await chrome.debugger.detach(debuggee);
+    attached = false;
     log('Debugger detached');
     
     // Convert base64 to blob and download
@@ -664,7 +655,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     const filename = sanitizeFilename(title || 'article') + '.pdf';
     
     // Check if processing was cancelled before downloading
-    if (isCancelled()) {
+    if (isCancelled(processingRunId)) {
       log('Processing cancelled, skipping PDF download');
       throw new Error(tSync('statusCancelled', await getUILanguage()));
     }
@@ -682,7 +673,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
       const objectUrl = urlApi.createObjectURL(blob);
       try {
         // Check again before actual download
-        if (isCancelled()) {
+        if (isCancelled(processingRunId)) {
           log('Processing cancelled, skipping PDF download');
           throw new Error(tSync('statusCancelled', await getUILanguage()));
         }
@@ -721,7 +712,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
       });
 
       // Check again before actual download
-      if (isCancelled()) {
+      if (isCancelled(processingRunId)) {
         log('Processing cancelled, skipping PDF download');
         throw new Error(tSync('statusCancelled', await getUILanguage()));
       }
@@ -735,7 +726,9 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
       log('Download started (data URL fallback)', { downloadId, size: blob.size });
     }
     
-    // Close the print tab
+    if (!isCancelled(processingRunId) && completeProcessing) await completeProcessing();
+
+    // Close the print tab after its processing state has completed.
     setTimeout(async () => {
       try {
         await chrome.tabs.remove(tabId);
@@ -747,21 +740,17 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     
     log('=== DEBUGGER PDF END ===');
     
-    if (completeProcessing) completeProcessing();
     return { success: true };
     
   } catch (error) {
     logError('Debugger PDF failed', error);
     
-    // Try to detach debugger on error
-    try {
-      await chrome.debugger.detach(debuggee);
-    } catch (e) {
-      // Ignore detach errors
-    }
-    
-    if (setError) setError(error.message);
+    if (!isCancelled(processingRunId) && setError) await setError(error.message);
     throw error;
+  } finally {
+    if (attached) {
+      try { await chrome.debugger.detach(debuggee); } catch {}
+    }
   }
 }
 

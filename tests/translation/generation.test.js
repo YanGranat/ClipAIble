@@ -99,7 +99,8 @@ describe('translation/generation', () => {
         expect.stringContaining('Article Title: Test Article'),
         'test-key',
         'gpt-4',
-        false
+        false,
+        expect.any(Object)
       );
       expect(result).toBe('Test abstract');
     });

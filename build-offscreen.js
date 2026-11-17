@@ -4,6 +4,7 @@
 // This resolves all module imports at build time, eliminating need for import maps
 
 import * as esbuild from 'esbuild';
+import { patchPiperTtsSource } from './build-piper.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -88,58 +89,11 @@ async function build() {
             }
           });
           
-          // Handle utils/*.js imports from PDF module
-          // PDF module files use relative paths like '../../../../utils/logging.js'
-          // which need to be resolved to the actual location
-          build.onResolve({ filter: /.*\/utils\/(logging|author-validator|html|config|security|images|storage|pipeline-helpers)\.js$/ }, async (args) => {
-            // If it's a relative path, resolve it from the importer's directory
-            if (args.path.startsWith('.')) {
-              try {
-                const resolvedPath = path.resolve(path.dirname(args.importer), args.path);
-                // Check if file exists
-                try {
-                  await fs.access(resolvedPath);
-                  return { path: resolvedPath };
-                } catch (e) {
-                  // Extract filename from path
-                  const filename = path.basename(args.path);
-                  // Try to find file in scripts/utils/
-                  const utilsPath = path.resolve(__dirname, 'scripts/utils', filename);
-                  try {
-                    await fs.access(utilsPath);
-                    return { path: utilsPath };
-                  } catch (e2) {
-                    // If still not found, try relative to project root
-                    const rootPath = path.resolve(__dirname, 'scripts/utils', filename);
-                    return { path: rootPath };
-                  }
-                }
-              } catch (error) {
-                // Fallback to scripts/utils/
-                const filename = path.basename(args.path);
-                const fallbackPath = path.resolve(__dirname, 'scripts/utils', filename);
-                return { path: fallbackPath };
-              }
-            }
-            // Let esbuild handle non-relative paths
-            return undefined;
-          });
           
           // Handle dynamic imports of onnxruntime-web within piper-tts-web
           build.onLoad({ filter: /piper-tts-web/ }, async (args) => {
-            let contents = await fs.readFile(args.path, 'utf8');
-            
-            // Replace dynamic import('onnxruntime-web') with reference to global
-            // This assumes onnxruntime is made available globally
-            contents = contents.replace(
-              /import\(['"]onnxruntime-web['"]\)/g,
-              'Promise.resolve(self.onnxruntime || globalThis.onnxruntime || window?.onnxruntime)'
-            );
-            
-            // Exclude Node.js specific requires
-            contents = contents.replace(/require\("fs"\)/g, 'undefined');
-            contents = contents.replace(/require\("path"\)/g, 'undefined');
-            
+            const source = await fs.readFile(args.path, 'utf8');
+            const contents = patchPiperTtsSource(source, args.path);
             return { contents, loader: 'js' };
           });
         }

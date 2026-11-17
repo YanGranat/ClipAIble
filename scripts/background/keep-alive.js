@@ -19,7 +19,8 @@ export function initKeepAlive(deps) {
     logWarn,
     CONFIG,
     getProcessingState,
-    saveStateToStorageImmediate
+    saveStateToStorageImmediate,
+    isIndependentGenerationActive
   } = deps;
 
   const KEEP_ALIVE_ALARM = 'keepAlive';
@@ -41,85 +42,27 @@ export function initKeepAlive(deps) {
   // This ensures SW stays alive even if main thread is blocked by WASM/CPU-intensive operations
   await new Promise(resolve => setTimeout(resolve, 0));
   
-  const state = getProcessingState();
-  
   try {
     // Check both processingState AND summary_generating AND key_theses_generating
     const result = await chrome.storage.local.get([
       'summary_generating', 'summary_generating_start_time',
       'key_theses_generating', 'key_theses_generating_start_time'
     ]);
-    let isSummaryGenerating = result.summary_generating && result.summary_generating_start_time;
-    let isKeyThesesGenerating = result.key_theses_generating && result.key_theses_generating_start_time;
+    const hasIndependentGeneration = isIndependentGenerationActive
+      ? isIndependentGenerationActive()
+      : Boolean((result.summary_generating && result.summary_generating_start_time) ||
+          (result.key_theses_generating && result.key_theses_generating_start_time));
 
-    if (isSummaryGenerating && result.summary_generating_start_time && typeof result.summary_generating_start_time === 'number') {
-      const timeSinceStart = Date.now() - result.summary_generating_start_time;
-      if (timeSinceStart > CONFIG.SUMMARY_STALE_THRESHOLD_MS) {
-        await chrome.storage.local.set({
-          summary_generating: false,
-          summary_generating_start_time: null
-        });
-        isSummaryGenerating = false;
-      }
-    }
-    if (isKeyThesesGenerating && result.key_theses_generating_start_time && typeof result.key_theses_generating_start_time === 'number') {
-      const timeSinceStart = Date.now() - result.key_theses_generating_start_time;
-      if (timeSinceStart > CONFIG.KEY_THESES_STALE_THRESHOLD_MS) {
-        await chrome.storage.local.set({
-          key_theses_generating: false,
-          key_theses_generating_start_time: null,
-          key_theses_cancel_requested: false
-        });
-        isKeyThesesGenerating = false;
-      }
-    }
-
-    const isProcessing = state.isProcessing;
+    const actualIsProcessing = getProcessingState().isProcessing;
     
-    // CRITICAL: Double-check state from storage to ensure accuracy
-    // Sometimes in-memory state can be stale after service worker restart
-    const storedState = /** @type {import('../types.js').ChromeStorageResult} */ (
-      await chrome.storage.local.get(['processingState'])
-    );
-    /** @type {Partial<import('../types.js').ProcessingState>|undefined} */
-    const storedProcessingState = storedState.processingState && typeof storedState.processingState === 'object' ? storedState.processingState : undefined;
-    const storedIsProcessing = storedProcessingState?.isProcessing === true;
-    
-    // Use stored state if in-memory state is false but stored is true (more reliable)
-    const actualIsProcessing = isProcessing || storedIsProcessing;
-    
-    if (!actualIsProcessing && !isSummaryGenerating && !isKeyThesesGenerating) {
+    if (!actualIsProcessing && !hasIndependentGeneration) {
       return false;
     }
-    
-    // OPTIMIZED: Batch all storage saves into a single operation
-    // This reduces storage write operations from 2 to 1 when both processing and summary are active
-    const storageUpdates = {};
     
     if (actualIsProcessing) {
       // OPTIMIZED: Use unified saveStateToStorageImmediate() instead of duplicating save logic
       // This ensures consistency with state management module
-      try {
-        await saveStateToStorageImmediate();
-      } catch (error) {
-        // If immediate save fails, fallback to direct save for keep-alive
-        logWarn('Immediate state save failed in keep-alive, using fallback', error);
-        storageUpdates.processingState = { ...state, lastUpdate: Date.now(), isProcessing: true };
-      }
-    }
-    
-    if (isSummaryGenerating) {
-      storageUpdates.summary_generating = true;
-      storageUpdates.summary_generating_start_time = result.summary_generating_start_time;
-    }
-    if (isKeyThesesGenerating) {
-      storageUpdates.key_theses_generating = true;
-      storageUpdates.key_theses_generating_start_time = result.key_theses_generating_start_time;
-    }
-    
-    // Batch save all updates in a single operation
-    if (Object.keys(storageUpdates).length > 0) {
-      await chrome.storage.local.set(storageUpdates);
+      await saveStateToStorageImmediate();
     }
     
     // CRITICAL: Additional event loop wake-up after storage operations
@@ -172,6 +115,7 @@ export function initKeepAlive(deps) {
       }
     }
     
+    if (isIndependentGenerationActive?.()) return true;
     // Not processing - stop keep-alive
     return false; // Stop on error if not processing
   }
@@ -203,9 +147,9 @@ export function initKeepAlive(deps) {
     if (activeKeepAliveInterval) {
       clearInterval(activeKeepAliveInterval);
     }
-    activeKeepAliveInterval = setInterval(async () => {
+    const intervalId = setInterval(async () => {
       const shouldContinue = await performKeepAlivePing();
-      if (!shouldContinue) {
+      if (!shouldContinue && activeKeepAliveInterval === intervalId) {
         // Processing stopped - clear interval
         if (activeKeepAliveInterval) {
           clearInterval(activeKeepAliveInterval);
@@ -213,6 +157,7 @@ export function initKeepAlive(deps) {
         }
       }
     }, ACTIVE_PROCESSING_PING_INTERVAL_MS);
+    activeKeepAliveInterval = intervalId;
     
     // CRITICAL: Also set up alarms as backup (can wake terminated service workers)
     // Alarms can wake up terminated service workers, intervals cannot
@@ -247,13 +192,14 @@ export function initKeepAlive(deps) {
     ]);
     const isSummaryGenerating = genState.summary_generating && genState.summary_generating_start_time;
     const isKeyThesesGenerating = genState.key_theses_generating && genState.key_theses_generating_start_time;
-    if (isSummaryGenerating || isKeyThesesGenerating) {
+    if (isIndependentGenerationActive ? isIndependentGenerationActive() : (isSummaryGenerating || isKeyThesesGenerating)) {
       log('Keep-alive kept active - summary or key theses generation in progress', { timestamp: Date.now() });
       return;
     }
   } catch (error) {
     logWarn('Failed to check generation flags in stopKeepAlive', error);
   }
+  if (getProcessingState().isProcessing || isIndependentGenerationActive?.()) return;
   
   // CRITICAL: Clear frequent ping interval
   if (activeKeepAliveInterval) {

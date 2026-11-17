@@ -1,4 +1,5 @@
 // @ts-check
+import { enhanceCustomSelect } from '../utils/custom-select.js';
 // Style handlers (presets, fonts, colors, reset buttons)
 
 /**
@@ -175,6 +176,8 @@ export function setupStyleHandlers(deps) {
     });
   }
 
+  enhanceCustomSelect(elements.fontFamily, elements.fontFamilyContainer);
+
   // Close dropdown when clicking outside
   const windowWithModules = /** @type {Window & { customSelectClickHandlerAdded?: boolean }} */ (window);
   if (!windowWithModules.customSelectClickHandlerAdded) {
@@ -191,18 +194,6 @@ export function setupStyleHandlers(deps) {
           elements.fontFamilyContainer.classList.remove('open');
         }
         
-        const target = e.target instanceof Node ? e.target : null;
-        if (elements.customModelDropdown && 
-            !elements.customModelDropdown.classList.contains('hidden') &&
-            elements.customModelDropdown.style.display !== 'none' &&
-            target &&
-            !elements.customModelDropdown.contains(target) &&
-            !(elements.modelSelect && elements.modelSelect.contains(target)) &&
-            !(elements.addModelBtn && elements.addModelBtn.contains(target))) {
-          // CRITICAL: Add 'hidden' class (it has display: none !important)
-          elements.customModelDropdown.classList.add('hidden');
-          elements.customModelDropdown.style.display = 'none';
-        }
       });
     });
     windowWithModules.customSelectClickHandlerAdded = true;

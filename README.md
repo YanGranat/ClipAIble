@@ -1,115 +1,39 @@
 # ClipAIble
 
-AI-powered article extractor. Works on any website.
+Save web articles as PDF, EPUB, FB2, Markdown, or audio.
 
-**Available on [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)
 
-## What it does
+## Usage
 
-ClipAIble extracts article content from web pages and converts it to different formats:
-- PDF documents
-- EPUB files
-- FB2 files
-- Markdown text
-- Audio files
+1. Open an article, supported video, or PDF.
+2. Click the ClipAIble toolbar icon.
+3. Select an output format and extraction mode.
+4. Click **Save**.
 
-**Special features:**
-- **YouTube/Vimeo support**: Extracts video subtitles and creates articles from them
-- **PDF processing**: Works with online PDFs and local PDF files
-- **Content translation**: Translate articles to 11 languages
-- **Image translation**: Translate text on images using AI
-- **TLDR generation**: Creates brief summaries within documents
-- **Summary panel**: Shows article summaries in the popup after processing
+The page context menu also provides save actions. For local PDFs, AI modes request the file through a file picker.
 
-## How to use
+**Automatic** uses local extraction heuristics. **AI Selector** asks an AI provider for content selectors, then extracts the selected page content. **AI Extractor** asks an AI provider to structure the content.
 
-1. Click the ClipAIble icon in your browser toolbar
-2. Open any article, YouTube video, or PDF
-3. Select the format you want (PDF, EPUB, FB2, Markdown, or Audio)
-4. Click save
+Settings include translation, image translation, document styles, a table of contents, summaries, and key theses. Audio can use a configured TTS service or local Piper synthesis after downloading a voice model.
 
-**Alternative ways to save:**
-- Right-click on any webpage and use the context menu options
+Add the API keys required by the AI and TTS features you select. Settings export excludes API keys and can optionally include statistics and selector cache.
 
-**For local PDF files**: In AI modes, you'll be prompted to select the PDF file due to browser restrictions.
+## Development
 
-## Settings
+Requires Node.js `^20.19.0`, `^22.12.0`, or `>=24.0.0`.
 
-### Extraction modes
+Install dependencies and build the extension:
 
-- **AI Selector**: Recommended mode for most sites. Uses AI to find article content.
-- **Automatic**: Basic mode that works without API keys.
-- **AI Extractor**: Alternative AI mode (not recommended for regular use).
+```sh
+npm ci
+npm run build
+```
 
-### Performance features
+Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this project folder.
 
-- **Selector caching**: Speeds up processing of previously visited sites by reusing AI-learned selectors
+```sh
+npm test
+```
 
-### Output formats
-
-- **PDF**: Creates formatted documents with 4 preset styles (Dark, Light, Sepia, High Contrast) and customizable fonts/colors
-- **EPUB**: Creates structured e-books for readers like Kindle
-- **FB2**: Creates structured e-books for PocketBook and other readers
-- **Markdown**: Preserves article structure with headings and lists
-- **Audio**: Converts text to speech using 6 different TTS services
-
-### Translation
-
-Content can be translated to: English, Russian, Ukrainian, German, French, Spanish, Italian, Portuguese, Chinese, Japanese, Korean.
-
-### Audio
-
-Audio can be generated using different TTS providers:
-- OpenAI TTS
-- ElevenLabs
-- Google Gemini
-- Qwen
-- Respeecher (English and Ukrainian only)
-- Piper (offline, no API keys needed)
-
-## API keys (optional)
-
-For AI features, you can add API keys from these providers:
-
-### OpenAI
-Get key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-
-### Google Gemini
-Get key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-
-For TTS, enable [Generative Language API](https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com) in Google Cloud Console
-
-### Anthropic Claude
-Get key from [console.anthropic.com](https://console.anthropic.com/)
-
-### DeepSeek
-Get key from [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
-
-### ElevenLabs
-Get key from [elevenlabs.io](https://elevenlabs.io/)
-
-### Qwen
-Get key from [alibaba cloud dashscope](https://dashscope-intl.console.aliyun.com/)
-
-### Respeecher
-Get key from [space.respeecher.com](https://space.respeecher.com/)
-
-## Additional features
-
-- **Statistics**: Track your saved articles with history and monthly counts
-- **Settings import/export**: Backup and restore your preferences
-- **11 language interface**: Switch between languages without restarting
-- **Secure storage**: API keys are encrypted before saving
-
-## Permissions
-
-The extension needs these permissions to work:
-- Read web pages you visit
-- Save files to your computer
-- Make API calls to AI providers (only when you use those features)
-
-**Security**: API keys are encrypted before being stored in your browser.
-
----
-
-ClipAIble extracts and converts web articles.
+See [Permissions](PERMISSIONS.md), [Privacy](PRIVACY.md), and the [technical overview](docs/technical-overview.md).

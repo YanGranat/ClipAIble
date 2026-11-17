@@ -2,7 +2,7 @@
 // PDF metadata extraction utility
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { shouldIgnoreMetadataTitle } from './title-extractor.js';
 import { parsePdfDate } from './date-parser.js';
 import { isAnonymousAuthor, cleanAuthor } from '../../../utils/author-validator.js';
@@ -23,13 +23,19 @@ export async function extractPdfMetadata(pdf) {
     // CRITICAL: Add timeout for metadata extraction (can hang on corrupted PDFs)
     const METADATA_TIMEOUT_MS = 10000; // 10 seconds
     const metadataPromise = pdf.getMetadata();
+    let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         reject(new Error(`PDF metadata extraction timeout after ${METADATA_TIMEOUT_MS / 1000} seconds`));
       }, METADATA_TIMEOUT_MS);
     });
     
-    const metadata = await Promise.race([metadataPromise, timeoutPromise]);
+    let metadata;
+    try {
+      metadata = await Promise.race([metadataPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (metadata && metadata.info) {
       if (metadata.info.Title) {
         const metadataTitle = metadata.info.Title.trim();

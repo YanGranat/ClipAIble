@@ -181,7 +181,7 @@ export function sanitizeHtml(html, sourceUrl = '', options = {}) {
         if (m) {
           if (attr === 'href') {
             // Trim whitespace that might be in unquoted href (handles line breaks in long URLs)
-            let href = m[1].trim();
+            let href = decodeHtmlEntities(m[1], true).trim();
             
             // CRITICAL: Log href extraction for debugging
             if (tag === 'a' && (href === '#' || href.startsWith('#'))) {
@@ -195,24 +195,6 @@ export function sanitizeHtml(html, sourceUrl = '', options = {}) {
             
             // SECURITY: Decode HTML entities BEFORE protocol check to prevent bypass
             // Example: javascript&#58;alert(1) should be decoded to javascript:alert(1) before check
-            if (typeof document !== 'undefined' && document.createElement) {
-              // Browser context: use DOM to decode entities by creating element with href attribute
-              const tempA = document.createElement('a');
-              tempA.setAttribute('href', href); // Browser will decode entities automatically
-              href = tempA.getAttribute('href') || href;
-            } else {
-              // Service worker context: decode manually - decode common entity patterns for dangerous protocols
-              // Decode numeric and hex entities for colon (most common bypass vector)
-              href = href
-                .replace(/&#58;/g, ':')      // &#58; -> :
-                .replace(/&#x3a;/gi, ':')    // &#x3a; -> :
-                .replace(/&#x3A;/g, ':')    // &#x3A; -> :
-                .replace(/&colon;/gi, ':')   // &colon; -> :
-                .replace(/&#59;/g, ';')     // &#59; -> ;
-                .replace(/&#x3b;/gi, ';')   // &#x3b; -> ;
-                .replace(/&#x3B;/g, ';')    // &#x3B; -> ;
-                .replace(/&semi;/gi, ';');  // &semi; -> ;
-            }
             
             // SECURITY: Block dangerous protocols AFTER decoding entities
             const hrefLower = href.toLowerCase().trim();
@@ -302,7 +284,7 @@ export function sanitizeHtml(html, sourceUrl = '', options = {}) {
               }
             }
           } else {
-            attrs.push(`${attr}="${escapeAttr(m[1])}"`);
+            attrs.push(`${attr}="${escapeAttr(decodeHtmlEntities(m[1], true))}"`);
           }
         }
       }
@@ -771,28 +753,10 @@ export function sanitizeMarkdownHtml(html) {
         }
         if (m) {
           if (attr === 'href') {
-            let href = m[1];
+            let href = decodeHtmlEntities(m[1], true).trim();
             
             // SECURITY: Decode HTML entities BEFORE protocol check to prevent bypass
             // Example: javascript&#58;alert(1) should be decoded to javascript:alert(1) before check
-            if (typeof document !== 'undefined' && document.createElement) {
-              // Browser context: use DOM to decode entities by creating element with href attribute
-              const tempA = document.createElement('a');
-              tempA.setAttribute('href', href); // Browser will decode entities automatically
-              href = tempA.getAttribute('href') || href;
-            } else {
-              // Service worker context: decode manually - decode common entity patterns for dangerous protocols
-              // Decode numeric and hex entities for colon (most common bypass vector)
-              href = href
-                .replace(/&#58;/g, ':')      // &#58; -> :
-                .replace(/&#x3a;/gi, ':')    // &#x3a; -> :
-                .replace(/&#x3A;/g, ':')    // &#x3A; -> :
-                .replace(/&colon;/gi, ':')   // &colon; -> :
-                .replace(/&#59;/g, ';')     // &#59; -> ;
-                .replace(/&#x3b;/gi, ';')   // &#x3b; -> ;
-                .replace(/&#x3B;/g, ';')    // &#x3B; -> ;
-                .replace(/&semi;/gi, ';');  // &semi; -> ;
-            }
             
             // SECURITY: Block dangerous protocols AFTER decoding entities
             const hrefLower = href.toLowerCase().trim();
@@ -809,7 +773,7 @@ export function sanitizeMarkdownHtml(html) {
               attrs.push(`${attr}="${escapeAttr(href)}"`);
             }
           } else {
-            attrs.push(`${attr}="${escapeAttr(m[1])}"`);
+            attrs.push(`${attr}="${escapeAttr(decodeHtmlEntities(m[1], true))}"`);
           }
         }
       }
@@ -1037,14 +1001,12 @@ export function cleanTildaArtifactsFromText(text) {
 /**
  * Decode common HTML entities
  * @param {string} text - Text with entities
+ * @param {boolean} [singlePass=false] - Decode an HTML attribute once
  * @returns {string} Decoded text
  */
-export function decodeHtmlEntities(text) {
+export function decodeHtmlEntities(text, singlePass = false) {
   if (!text) return '';
   text = typeof text === 'string' ? text : String(text);
-  
-  // First pass: decode &amp; to handle double-encoded entities like &amp;nbsp;
-  text = text.replace(/&amp;/g, '&');
   
   // Second pass: decode all other named entities
   const entities = {
@@ -1063,6 +1025,24 @@ export function decodeHtmlEntities(text) {
     '&reg;': '®',
     '&trade;': '™'
   };
+
+  if (singlePass) {
+    const attributeEntities = {
+      ...entities, '&amp;': '&', '&AMP;': '&', '&QUOT;': '"', '&LT;': '<', '&GT;': '>',
+      '&colon;': ':', '&semi;': ';', '&Tab;': '\t', '&NewLine;': '\n'
+    };
+    return text.replace(/&#(\d+);?|&#x([a-f0-9]+);?|&[a-z][a-z0-9]+;/gi, (entity, decimal, hex) => {
+      if (decimal !== undefined || hex !== undefined) {
+        const point = decimal !== undefined ? Number(decimal) : parseInt(hex, 16);
+        return point > 0 && point <= 0x10ffff && !(point >= 0xd800 && point <= 0xdfff)
+          ? String.fromCodePoint(point) : '\uFFFD';
+      }
+      return attributeEntities[entity] ?? entity;
+    });
+  }
+
+  // Decode nested entities in plain extracted text.
+  text = text.replace(/&amp;/g, '&');
   
   for (const [entity, char] of Object.entries(entities)) {
     text = text.replace(new RegExp(entity, 'g'), char);
@@ -1357,11 +1337,9 @@ export function cleanTitleFromServiceTokens(title, fallback = null) {
   // Remove budget token patterns (budgettoken_budget, budget199985, etc.)
   cleaned = cleaned.replace(/budgettoken[_\s]*budget\d*/gi, '');
   cleaned = cleaned.replace(/budget\d+/gi, '');
-  cleaned = cleaned.replace(/token/gi, '');
-  cleaned = cleaned.replace(/budget\w+/gi, '');
   
   // Remove common service markers
-  cleaned = cleaned.replace(/#+/g, ''); // Remove # symbols
+  cleaned = cleaned.replace(/^\s*#{1,6}\s+|\s+#{1,6}\s*$/g, '');
   
   // Clean up underscores and whitespace
   cleaned = cleaned.replace(/_+/g, ' '); // Replace underscores with spaces

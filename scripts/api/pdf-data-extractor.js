@@ -199,7 +199,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
                 
                 if (uint8Array && uint8Array instanceof Uint8Array && uint8Array.length > 0) {
                   // Convert Uint8Array to ArrayBuffer for transmission
-                  pdfBlob = uint8Array.buffer;
+                  pdfBlob = uint8Array.buffer.slice(uint8Array.byteOffset, uint8Array.byteOffset + uint8Array.byteLength);
                   // Store method name for later return
                   win._clipaible_pdf_extraction_method = 'getData';
                   console.log('[PDF Extractor] ✅ SUCCESS! Found PDF data via getData() (PUBLIC API)', {
@@ -283,7 +283,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
                 
                 if (uint8Array && uint8Array instanceof Uint8Array && uint8Array.length > 0) {
                   // Convert Uint8Array to ArrayBuffer for transmission
-                  pdfBlob = uint8Array.buffer;
+                  pdfBlob = uint8Array.buffer.slice(uint8Array.byteOffset, uint8Array.byteOffset + uint8Array.byteLength);
                   // Store method name for later return
                   win._clipaible_pdf_extraction_method = 'saveDocument';
                   console.log('[PDF Extractor] ✅ SUCCESS! Found PDF data via saveDocument() (PUBLIC API)', {
@@ -696,7 +696,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
         error: chrome.runtime.lastError.message,
         tabId,
         pdfUrl
-      });
+      }, 'error');
       throw new Error(`Failed to execute script in tab: ${chrome.runtime.lastError.message}`);
     }
     
@@ -706,7 +706,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
         pdfUrl,
         hasResults: !!results,
         resultsType: typeof results
-      });
+      }, 'error');
       throw new Error('Script execution returned no results');
     }
     
@@ -717,7 +717,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
         resultsLength: results.length,
         firstResult: results[0],
         hasResult: !!results[0]?.result
-      });
+      }, 'error');
       throw new Error('Script execution returned invalid result structure');
     }
     
@@ -750,7 +750,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
         tabId,
         pdfUrl,
         hasDiagnostics: !!result.diagnostics
-      });
+      }, 'error');
       
       throw new Error(errorMsg + method + debugInfo);
     }
@@ -801,7 +801,7 @@ export async function extractPdfDataFromTab(pdfUrl, tabId) {
       tabId,
       duration: Date.now() - startTime,
       stack: error.stack
-    });
+    }, 'error');
     throw error;
   }
 }

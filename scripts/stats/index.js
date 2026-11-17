@@ -38,6 +38,29 @@ function getDefaultStats() {
   };
 }
 
+/** Restore valid stored fields and default malformed optional statistics. */
+export function normalizeStats(value) {
+  const defaults = getDefaultStats();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
+  const nonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  const count = value => nonnegative(value) ? value : 0;
+  const counts = value => value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).filter(([, number]) => nonnegative(number))) : {};
+  return {
+    ...defaults,
+    totalSaved: count(value.totalSaved),
+    byFormat: { ...defaults.byFormat, ...counts(value.byFormat) },
+    byMonth: counts(value.byMonth),
+    topSites: counts(value.topSites),
+    totalProcessingTime: count(value.totalProcessingTime),
+    lastSaved: nonnegative(value.lastSaved) ? value.lastSaved : null,
+    history: Array.isArray(value.history) ? value.history.filter(item =>
+      item && typeof item === 'object' && typeof item.title === 'string' &&
+      typeof item.url === 'string' && typeof item.format === 'string' && nonnegative(item.date)
+    ).slice(0, 50).map(item => ({ ...item, processingTime: count(item.processingTime) })) : []
+  };
+}
+
 /**
  * Load stats from storage
  * @returns {Promise<StatsData>} Stats object
@@ -46,11 +69,7 @@ export async function loadStats() {
   try {
     const result = await chrome.storage.local.get([STORAGE_KEY]);
     const stats = result[STORAGE_KEY];
-    if (!stats || typeof stats !== 'object') {
-      return getDefaultStats();
-    }
-    // Type assertion: chrome.storage returns any, but we know it should be StatsData
-    return /** @type {StatsData} */ (stats);
+    return normalizeStats(stats);
   } catch (error) {
     logError('Failed to load stats', error);
     return getDefaultStats();

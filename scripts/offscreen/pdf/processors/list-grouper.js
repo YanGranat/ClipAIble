@@ -6,6 +6,11 @@ import { log } from '../utils/logging.js';
 import { LIST_ITEM_START_PATTERN, LIST_ITEM_PATTERNS } from '../utils/regex-patterns.js';
 import { validateArrayInput } from '../utils/array-helpers.js';
 
+function sameListColumn(first, second) {
+  return !first || first.columnIndex === undefined || second.columnIndex === undefined ||
+    first.columnIndex === second.columnIndex;
+}
+
 /**
  * Calculate nesting level based on X-coordinate (indentation)
  * 
@@ -328,9 +333,13 @@ export function groupConsecutiveListItems(elements, metrics = {}) {
     const element = elements[i];
     
     if (element.type === 'list') {
+      if (currentList && !sameListColumn(currentList, element)) {
+        processed.push(currentList);
+        currentList = null;
+      }
       // Build context for nesting level calculation
       const context = {
-        previousElements: processed.filter(el => el.type === 'list'),
+        previousElements: processed.filter(el => el.type === 'list' && sameListColumn(el, element)),
         baseFontSize
       };
       
@@ -488,6 +497,7 @@ export function groupConsecutiveListItems(elements, metrics = {}) {
             // Check processed lists (reverse order)
             for (let j = processed.length - 1; j >= 0; j--) {
               const prevEl = processed[j];
+              if (!sameListColumn(prevEl, element)) break;
               if (prevEl.type === 'list') {
                 const prevText = (prevEl.text || '').trim();
                 const prevIsOrdered = /^\s*\d+[\.\)]\s+/.test(prevText);

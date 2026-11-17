@@ -1,18 +1,20 @@
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
 // @ts-check
-// Qwen3-TTS-Flash Text-to-Speech API module for ClipAIble extension
-// Uses DashScope multimodal-generation API
+// Qwen TTS Text-to-Speech API module for ClipAIble extension
+// Uses workspace synthesis or the legacy multimodal endpoint.
 
 import { log, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
+import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
+import { DEFAULT_QWEN_TTS_MODEL, DEFAULT_QWEN_TTS_VOICE, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getQwenTtsEndpoint, isQwenAudioModel } from './tts-catalog.js';
 import { isValidExternalUrl } from '../utils/security.js';
 
 /**
- * Qwen3-TTS-Flash API configuration
+ * Qwen TTS API configuration
  * @readonly
  * @const {{
- *   API_URL: string,
  *   MODEL: string,
  *   MAX_INPUT: number,
  *   SAMPLE_RATE: number,
@@ -23,80 +25,26 @@ import { isValidExternalUrl } from '../utils/security.js';
  * }}
  */
 export const QWEN_CONFIG = {
-  // API endpoint (Alibaba Cloud DashScope - International/Singapore)
-  API_URL: 'https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+  // Default synthesis model
+  MODEL: DEFAULT_QWEN_TTS_MODEL,
   
-  // Model name - using 2025-11-27 snapshot with 49 voices
-  MODEL: 'qwen3-tts-flash-2025-11-27',
-  
-  // Text length limit per request (Qwen3-TTS-Flash limit is 600 characters!)
+  // Text length limit per request (Qwen TTS limit is 600 characters!)
   MAX_INPUT: 600,
   
-  // Speed is not supported by Qwen3-TTS-Flash API
-  // Sample rate is fixed at 24kHz, format is always WAV
+  // Output requested by the audio pipeline
   SAMPLE_RATE: 24000,
   FORMAT: 'wav',
   
   // Default voice
-  DEFAULT_VOICE: 'Elias',
+  DEFAULT_VOICE: DEFAULT_QWEN_TTS_VOICE,
   
   // Speed is not supported; keep neutral value for UI consistency
   DEFAULT_SPEED: 1.0,
   
-  // Available voices for Qwen3-TTS-Flash-2025-11-27 (49 voices)
-  // Grouped by use case for better selection
-  VOICES: [
-    // Best for articles/education
-    { id: 'Elias', name: 'Elias (academic, storytelling)' },
-    { id: 'Neil', name: 'Neil (news anchor, professional)' },
-    { id: 'Katerina', name: 'Katerina (female, mature, rhythmic)' },
-    { id: 'Ryan', name: 'Ryan (male, dramatic, realistic)' },
-    
-    // Language-specific voices
-    { id: 'Alek', name: 'Alek (Russian voice)' },
-    { id: 'Jennifer', name: 'Jennifer (American English female)' },
-    { id: 'Emilien', name: 'Emilien (French gentleman)' },
-    { id: 'Lenn', name: 'Lenn (German, rational)' },
-    { id: 'Dolce', name: 'Dolce (Italian)' },
-    { id: 'Bodega', name: 'Bodega (Spanish)' },
-    { id: 'Sonrisa', name: 'Sonrisa (Latin American Spanish)' },
-    { id: 'Andre', name: 'Andre (Portuguese European)' },
-    { id: 'Radio Gol', name: 'Radio Gol (Portuguese Brazilian)' },
-    { id: 'Sohee', name: 'Sohee (Korean)' },
-    { id: 'Ono Anna', name: 'Ono Anna (Japanese)' },
-    
-    // General purpose
-    { id: 'Cherry', name: 'Cherry (female, sunny, friendly)' },
-    { id: 'Ethan', name: 'Ethan (male, warm, energetic)' },
-    { id: 'Serena', name: 'Serena (female, gentle)' },
-    { id: 'Chelsie', name: 'Chelsie (female, anime style)' },
-    { id: 'Aiden', name: 'Aiden (American young man)' },
-    { id: 'Maia', name: 'Maia (female, intelligent, gentle)' },
-    { id: 'Kai', name: 'Kai (male, relaxing)' },
-    { id: 'Nofish', name: 'Nofish (designer, no retroflex)' },
-    
-    // Character voices
-    { id: 'Eldric Sage', name: 'Eldric Sage (old wise man)' },
-    { id: 'Arthur', name: 'Arthur (old storyteller)' },
-    { id: 'Bellona', name: 'Bellona (powerful, epic)' },
-    { id: 'Vincent', name: 'Vincent (raspy, heroic)' },
-    { id: 'Mia', name: 'Mia (female, gentle as snow)' },
-    { id: 'Seren', name: 'Seren (female, soothing, ASMR)' },
-    
-    // Playful/Cute
-    { id: 'Momo', name: 'Momo (playful, cute)' },
-    { id: 'Vivian', name: 'Vivian (cool, slightly grumpy)' },
-    { id: 'Moon', name: 'Moon (carefree)' },
-    { id: 'Bella', name: 'Bella (loli voice)' },
-    { id: 'Mochi', name: 'Mochi (child voice)' },
-    { id: 'Bunny', name: 'Bunny (cute loli)' },
-    { id: 'Pip', name: 'Pip (mischievous child)' },
-    { id: 'Stella', name: 'Stella (magical girl)' },
-    { id: 'Nini', name: 'Nini (sweet neighbor girl)' },
-    { id: 'Ebona', name: 'Ebona (whispering, scary)' }
-  ],
-  
-  // Supported language types for Qwen3-TTS-Flash
+  // Voices shared by the current Flash and Plus models
+  VOICES: QWEN_AUDIO_VOICES,
+  LEGACY_VOICES: QWEN_LEGACY_VOICES,
+  // Supported language types for Qwen TTS
   LANGUAGES: {
     'en': 'English',
     'zh': 'Chinese',
@@ -136,7 +84,7 @@ function detectLanguage(text) {
 }
 
 /**
- * Convert text to speech using Qwen3-TTS-Flash API
+ * Convert text to speech using Qwen TTS API
  * @param {string} text - Text to convert (max 500 characters)
  * @param {string} apiKey - Alibaba Cloud DashScope API key
  * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
@@ -148,8 +96,12 @@ function detectLanguage(text) {
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   const {
-    voice = QWEN_CONFIG.DEFAULT_VOICE,
-    language = null
+    qwenModel = QWEN_CONFIG.MODEL,
+    voice = getDefaultTtsVoice('qwen', qwenModel),
+    language = null,
+    qwenWorkspaceId = '',
+    qwenRegion = 'singapore',
+    speed = 1.0
   } = options;
   
   log('Qwen TTS start', { textLength: text?.length, voice, language });
@@ -159,7 +111,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   }
   
   if (text.length > QWEN_CONFIG.MAX_INPUT) {
-    throw new Error(`Text exceeds Qwen3-TTS-Flash limit: ${text.length} > ${QWEN_CONFIG.MAX_INPUT} characters. Text must be split into smaller chunks.`);
+    throw new Error(`Text exceeds Qwen TTS limit: ${text.length} > ${QWEN_CONFIG.MAX_INPUT} characters. Text must be split into smaller chunks.`);
   }
   
   if (!apiKey) {
@@ -177,19 +129,30 @@ export async function textToSpeech(text, apiKey, options = {}) {
   }
   
   // Validate voice - use default if invalid
-  const validVoice = QWEN_CONFIG.VOICES.find(v => v.id === voice) 
-    ? voice 
-    : QWEN_CONFIG.DEFAULT_VOICE;
+  const modernModel = isQwenAudioModel(qwenModel);
+  const apiUrl = getQwenTtsEndpoint(qwenModel, qwenWorkspaceId, qwenRegion);
+  if (modernModel && QWEN_CONFIG.LEGACY_VOICES.some(v => v.id === voice)) {
+    throw new Error('Select a Qwen Audio 3.1 voice in audio settings.');
+  }
+  if (!modernModel && QWEN_AUDIO_VOICES.some(v => v.id === voice)) {
+    throw new Error('Select a voice supported by the selected Qwen TTS model in audio settings.');
+  }
+  const validVoice = voice;
   
   // Detect or use provided language
   const detectedLang = language || detectLanguage(text);
   const languageType = QWEN_CONFIG.LANGUAGES[detectedLang] || 'English';
   
-  // Qwen3-TTS-Flash request body format
-  // Note: API only supports WAV format at 24kHz, no format/sample_rate parameters
+  // Each API generation uses its own synthesis parameters.
   const requestBody = {
-    model: QWEN_CONFIG.MODEL,
-    input: {
+    model: qwenModel,
+    input: modernModel ? {
+      text,
+      voice: validVoice,
+      format: 'wav',
+      sample_rate: 24000,
+      rate: Math.max(0.5, Math.min(2.0, Number(speed) || 1.0))
+    } : {
       text: text,
       voice: validVoice,
       language_type: languageType
@@ -201,49 +164,43 @@ export async function textToSpeech(text, apiKey, options = {}) {
   try {
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+        await checkCancellation('Qwen TTS request', options.processingRunId);
         
         try {
-          const fetchResponse = await fetch(QWEN_CONFIG.API_URL, {
+          const fetchResponse = await fetchBufferedResponse(apiUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey.trim()}`
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
           
           if (!fetchResponse.ok) {
-            const error = await handleApiError(fetchResponse, 'Qwen3-TTS-Flash');
+            const error = await handleApiError(fetchResponse, 'Qwen TTS');
             throw error;
           }
           
           return fetchResponse;
         } catch (e) {
           throw e;
-        } finally {
-          // CRITICAL: Always clear timeout in finally to prevent memory leaks
-          if (timeout) {
-            clearTimeout(timeout);
-          }
         }
       },
       {
         onRetry: (attempt, delay) => {
-          log(`Qwen3-TTS-Flash API retry attempt ${attempt}, waiting ${delay}ms...`);
+          log(`Qwen TTS API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
       }
     );
   } catch (fetchError) {
+    await checkCancellation('Qwen TTS response', options.processingRunId);
     if (fetchError.name === 'AbortError') {
-      throw handleTimeoutError('Qwen3-TTS-Flash');
+      throw await handleTimeoutError('Qwen TTS');
     }
     if (fetchError.status) {
       throw fetchError; // Already handled by handleApiError
     }
-    throw handleNetworkError(fetchError, 'Qwen3-TTS-Flash');
+    throw await handleNetworkError(fetchError, 'Qwen TTS');
   }
   
   // Parse JSON response
@@ -251,20 +208,21 @@ export async function textToSpeech(text, apiKey, options = {}) {
   try {
     responseData = await response.json();
   } catch (e) {
-    logError('Failed to parse Qwen3-TTS-Flash response', e);
-    throw new Error('Invalid response from Qwen3-TTS-Flash API');
+    logError('Failed to parse Qwen TTS response', e);
+    throw new Error('Invalid response from Qwen TTS API');
   }
   
   log('Qwen TTS response received', { code: responseData.code, hasOutput: !!responseData.output });
+  await checkCancellation('Qwen audio download', options.processingRunId);
   
   // Check for API errors
   if (responseData.code && responseData.code !== 'Success' && responseData.code !== '200') {
-    logError('Qwen3-TTS-Flash API error', responseData);
-    throw new Error(responseData.message || `Qwen3-TTS-Flash API error: ${responseData.code}`);
+    logError('Qwen TTS API error', responseData);
+    throw new Error(responseData.message || `Qwen TTS API error: ${responseData.code}`);
   }
   
   // Extract audio data from response
-  // Qwen3-TTS-Flash returns audio URL that needs to be fetched
+  // Qwen TTS returns audio URL that needs to be fetched
   let audioBuffer;
   
   if (responseData.output?.audio) {
@@ -279,7 +237,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
       }
       
       try {
-        const audioResponse = await fetch(audioData.url);
+        const audioResponse = await fetchBufferedResponse(audioData.url, {}, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
         if (!audioResponse.ok) {
           throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
         }
@@ -299,7 +257,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     }
     else {
       logError('Unknown audio format', { audioData });
-      throw new Error('Unknown audio format in Qwen3-TTS-Flash response');
+      throw new Error('Unknown audio format in Qwen TTS response');
     }
   }
   // Check for audio_url at output level
@@ -313,7 +271,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     }
     
     try {
-      const audioResponse = await fetch(responseData.output.audio_url);
+      const audioResponse = await fetchBufferedResponse(responseData.output.audio_url, {}, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
       if (!audioResponse.ok) {
         throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
       }
@@ -324,16 +282,16 @@ export async function textToSpeech(text, apiKey, options = {}) {
     }
   }
   else {
-    logError('No audio data in Qwen3-TTS-Flash response', { 
+    logError('No audio data in Qwen TTS response', {
       responseKeys: Object.keys(responseData),
       outputKeys: responseData.output ? Object.keys(responseData.output) : [],
       output: responseData.output
     });
-    throw new Error('No audio data received from Qwen3-TTS-Flash API');
+    throw new Error('No audio data received from Qwen TTS API');
   }
   
   if (!audioBuffer || audioBuffer.byteLength === 0) {
-    throw new Error('Empty audio data from Qwen3-TTS-Flash API');
+    throw new Error('Empty audio data from Qwen TTS API');
   }
   
   log('Qwen TTS audio ready', { audioSize: audioBuffer.byteLength });

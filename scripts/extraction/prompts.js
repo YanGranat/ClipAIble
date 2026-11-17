@@ -497,7 +497,7 @@ CRITICAL - PROCESS ONE PAGE AT A TIME:
 - Convert ONLY the content visible on THIS specific page image
 - Do NOT include content from previous pages (even if you see it in conversation history)
 - Do NOT summarize or combine content from multiple pages
-- Return ONLY the Markdown for the current page image you are viewing
+- Put only the current page's Markdown in the JSON "text" field
 - Each page is processed independently - you only see previous pages for heading hierarchy context
 
 CONTEXT FOR HEADING HIERARCHY:
@@ -546,16 +546,14 @@ DOCUMENT INFORMATION EXTRACTION (WHEN REQUESTED):
      - Use ISO date format: YYYY-MM-DD, YYYY-MM, or YYYY, or empty string if not found
      - CRITICAL: If you see a year in publication information (e.g., "2020, Volume 11, Issue 4"), extract "2020" as the date
 
-- Format your response as follows:
-  - Start with: METADATA:{"title":"...","author":"...","date":"..."}
-  - If title is not visible, use empty string: ""
-  - If author is not visible or not found, use empty string: "" - NEVER use "anonymous", "анонимный", "анонімний", "(anonymous)", "unknown", "N/A", or any placeholder text
-  - If date is not visible, use empty string: ""
-  - After this line, add exactly two blank lines
-  - Then return the Markdown content of the page
+- Put document information in the JSON "metadata" object:
+  - Use "title", "author", and "date" fields
+  - Use an empty string for any field that is not visible
+  - NEVER use "anonymous", "анонимный", "анонімний", "(anonymous)", "unknown", "N/A", or other placeholder text
+  - Put the page's Markdown content in the JSON "text" field
 
 - Extract information only if it is clearly visible on this page - do not guess or make up information
-- If you are NOT asked to provide document information, return ONLY the Markdown text of the page content
+- If document information is not requested, set all "metadata" fields to empty strings
 
 CRITICAL RULES - TEXT EXTRACTION (HIGHEST PRIORITY):
 1. Extract text EXACTLY as written - word for word, character for character
@@ -852,7 +850,7 @@ CRITICAL - PROCESS ONLY THIS PAGE:
 - Convert ONLY the content visible on THIS page image
 - Do NOT include any content from previous pages
 - Do NOT summarize or combine with other pages
-- Return ONLY the Markdown for THIS specific page
+- Put only this page's Markdown in the JSON "text" field
 
 CRITICAL - TEXT EXTRACTION RULES:
 - Copy ALL text EXACTLY as it appears on THIS page - word for word, character for character
@@ -956,7 +954,7 @@ CRITICAL - PROCESS ONLY THIS PAGE:
 - Convert ONLY the content visible on THIS page image
 - Do NOT include any content from previous pages (even if you see them in conversation history)
 - Do NOT summarize or combine with other pages
-- Return ONLY the Markdown for THIS specific page
+- Put only this page's Markdown in the JSON "text" field
 - Previous pages are shown ONLY for heading hierarchy context - do NOT include their text
 
 CRITICAL - TEXT EXTRACTION RULES:

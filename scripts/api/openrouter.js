@@ -3,10 +3,34 @@
 
 import { log, logError, logDebug, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { assertCompleteAIResponse } from './response-validation.js';
+import { parseBase64Image } from './image-data.js';
 import { callWithRetry } from '../utils/retry.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
+
+/** OpenRouter normalizes provider reasoning controls through its reasoning object. */
+export function getOpenRouterRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort, imageInput = false } = {}) {
+  const selected = typeof model === 'string' && model ? model : getDefaultModel('openrouter');
+  const metadata = getModelMetadata('openrouter', selected);
+  if (imageInput && metadata && !metadata.inputModalities.includes('image')) throw Object.assign(new Error('The selected model does not support image input.'), { code: 'AI_MODEL_UNSUPPORTED_IMAGE' });
+  const disabled = metadata?.reasoningEnabled === false;
+  let effort = requestedEffort && metadata?.reasoningEfforts?.includes(requestedEffort) ? requestedEffort : metadata?.reasoningEffort;
+  if (shortResponse && !disabled && metadata?.reasoningEfforts) {
+    effort = metadata.reasoningEfforts.includes('none') ? 'none' : 'low';
+  }
+  const parameters = { model: metadata?.apiModel || selected };
+  if (disabled) parameters.reasoning = { enabled: false };
+  else if (effort) parameters.reasoning = { effort };
+  if (parameters.reasoning) parameters.provider = { require_parameters: true };
+  const reasoning = Boolean(metadata?.reasoningEfforts?.length || metadata?.reasoningEnabled !== undefined);
+  if (maxTokens !== undefined && !(shortResponse && reasoning && !disabled && effort !== 'none')) parameters.max_tokens = maxTokens;
+  if (temperature !== undefined && (!reasoning || disabled || effort === 'none')) parameters.temperature = temperature;
+  return parameters;
+}
 
 /**
  * Call OpenRouter API
@@ -17,42 +41,19 @@ import { handleError } from '../utils/error-handler.js';
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
+export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callOpenRouterAPI', { model, systemPromptLength: systemPrompt.length, userPromptLength: userPrompt.length });
   
-  const modelName = model || 'openai/gpt-4o';
+  const requestConfig = getOpenRouterRequestConfig(model);
+  const modelName = requestConfig.model;
   
-  // OpenRouter is an aggregator - response_format support varies by model and provider
-  // According to OpenRouter docs, structured outputs (json_object/json_schema) are supported by:
-  // - OpenAI models (GPT-4o and later)
-  // - Google Gemini models
-  // - Anthropic models (Sonnet 4.5 and Opus 4.1)
-  // - Most open-source models
-  // - All Fireworks provided models
-  // We'll try with response_format for all models when jsonResponse=true, but fallback without it if we get 400 error
-  // Using require_parameters: true ensures provider supports response_format
-  const isOpenAIModel = modelName.startsWith('openai/');
-  const isGoogleModel = modelName.startsWith('google/');
-  const isAnthropicModel = modelName.startsWith('anthropic/');
-  const isNitroModel = modelName.includes('nitro') || modelName.includes('nitro-');
-  const isFireworksModel = modelName.includes('fireworks') || modelName.includes('@fireworks');
-  
-  // Most modern models support json_object (JSON mode), so we'll try for all when jsonResponse=true
-  // The fallback logic will handle cases where it's not supported
-  const likelySupportsResponseFormat = isOpenAIModel || isGoogleModel || isAnthropicModel || 
-                                       isNitroModel || isFireworksModel || 
-                                       modelName.includes('deepseek') || modelName.includes('mistralai') ||
-                                       modelName.includes('qwen') || modelName.includes('z-ai') ||
-                                       modelName.includes('nex-agi');
-  
-  // Try with response_format first if jsonResponse is requested
-  // We'll be optimistic and try for all models, with fallback on 400 error
+  // Negotiate JSON output without changing model or reasoning settings.
   let useResponseFormat = jsonResponse;
   
   // Internal function to make the actual API call
   async function makeRequest(withResponseFormat) {
     const requestBody = {
-      model: modelName,
+      ...requestConfig,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
@@ -68,105 +69,96 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       };
     }
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://github.com/clipaiable',
+        'X-Title': 'ClipAIble'
+      },
+      body: JSON.stringify(requestBody)
+    }, CONFIG.API_TIMEOUT_MS, requestOptions);
     
-    try {
-      const fetchResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/clipaiable',
-          'X-Title': 'ClipAIble'
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
-      });
-    
-      // If not ok and retryable, throw error for retry logic
-      if (!fetchResponse.ok) {
-        const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-        if (retryableCodes.includes(fetchResponse.status)) {
-          /** @type {Error & {status?: number, response?: Response}} */
-          const error = new Error(`HTTP ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          error.response = fetchResponse;
-          throw error;
-        }
-        // Non-retryable error - get error details
-        let errorData;
-        try {
-          errorData = await fetchResponse.json();
-        } catch (e) {
-          errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-        }
-        
-        // Log full error details
-        logError('OpenRouter API error response', {
-          status: fetchResponse.status,
-          errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
-          model: modelName,
-          hasResponseFormat: withResponseFormat,
-          note: 'OpenRouter is an aggregator - errors may come from underlying provider'
-        });
-        
-        // For 400 errors with response_format, mark for retry without it
-        // OpenRouter is an aggregator - even openai/* models may not support response_format
-        if (fetchResponse.status === 400 && withResponseFormat) {
-          const errorText = JSON.stringify(errorData).toLowerCase();
-          // Check if error might be related to response_format
-          // We'll be conservative and retry without it for any 400 when using response_format
-          // This is safer than trying to parse specific error messages
-          const mightBeResponseFormatIssue = errorText.includes('response_format') || 
-            errorText.includes('response format') || 
-            errorText.includes('unsupported') || 
-            errorText.includes('invalid parameter') ||
-            errorText.includes('bad request') ||
-            !errorText.includes('api key') && !errorText.includes('unauthorized') && 
-            !errorText.includes('forbidden') && !errorText.includes('rate limit');
-          
-          if (mightBeResponseFormatIssue) {
-            // Return special marker to retry without response_format
-            /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
-            const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
-            error.status = 400;
-            error.retryWithoutResponseFormat = true;
-            error.errorData = errorData;
-            logWarn('OpenRouter 400 error with response_format - will retry without it', {
-              model: modelName,
-              errorPreview: JSON.stringify(errorData).substring(0, 200),
-              note: 'OpenRouter aggregator may not support response_format for this model'
-            });
-            throw error;
-          }
-        }
-        
-        // Provide more helpful error messages for common errors
-        const uiLang = await getUILanguageCached();
-        const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
-        let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-        
-        if (fetchResponse.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchResponse.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchResponse.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        }
-        
-        /** @type {Error & {status?: number}} */
-        const error = new Error(errorMessage);
+    // If not ok and retryable, throw error for retry logic
+    if (!fetchResponse.ok) {
+      const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+      if (retryableCodes.includes(fetchResponse.status)) {
+        /** @type {Error & {status?: number, response?: Response}} */
+        const error = new Error(`HTTP ${fetchResponse.status}`);
         error.status = fetchResponse.status;
+        error.response = fetchResponse;
         throw error;
       }
-      
-      return fetchResponse;
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
+      // Non-retryable error - get error details
+      let errorData;
+      try {
+        errorData = await fetchResponse.json();
+      } catch (e) {
+        errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
       }
+
+      // Log full error details
+      logError('OpenRouter API error response', {
+        status: fetchResponse.status,
+        errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
+        model: modelName,
+        hasResponseFormat: withResponseFormat,
+        note: 'OpenRouter is an aggregator - errors may come from underlying provider'
+      });
+    
+      // For 400 errors with response_format, mark for retry without it
+      // OpenRouter is an aggregator - even openai/* models may not support response_format
+      if (fetchResponse.status === 400 && withResponseFormat) {
+        const errorText = JSON.stringify(errorData).toLowerCase();
+        // Check if error might be related to response_format
+        // We'll be conservative and retry without it for any 400 when using response_format
+        // This is safer than trying to parse specific error messages
+        const mightBeResponseFormatIssue = errorText.includes('response_format') ||
+          errorText.includes('response format') ||
+          errorText.includes('unsupported') ||
+          errorText.includes('invalid parameter') ||
+          errorText.includes('bad request') ||
+          !errorText.includes('api key') && !errorText.includes('unauthorized') &&
+          !errorText.includes('forbidden') && !errorText.includes('rate limit');
+
+        if (mightBeResponseFormatIssue) {
+          // Return special marker to retry without response_format
+          /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
+          const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
+          error.status = 400;
+          error.retryWithoutResponseFormat = true;
+          error.errorData = errorData;
+          logWarn('OpenRouter 400 error with response_format - will retry without it', {
+            model: modelName,
+            errorPreview: JSON.stringify(errorData).substring(0, 200),
+            note: 'OpenRouter aggregator may not support response_format for this model'
+          });
+          throw error;
+        }
+      }
+      
+      // Provide more helpful error messages for common errors
+      const uiLang = await getUILanguageCached();
+      const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
+      let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
+
+      if (fetchResponse.status === 401) {
+        errorMessage = tSync('errorApiKeyInvalid', uiLang);
+      } else if (fetchResponse.status === 403) {
+        errorMessage = tSync('errorApiAccessForbidden', uiLang);
+      } else if (fetchResponse.status === 429) {
+        errorMessage = tSync('errorRateLimit', uiLang);
+      }
+
+      /** @type {Error & {status?: number}} */
+      const error = new Error(errorMessage);
+      error.status = fetchResponse.status;
+      throw error;
     }
+
+    return fetchResponse;
+
   }
   
   let response;
@@ -219,6 +211,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       );
     }
   } catch (fetchError) {
+    await requestOptions.checkCancelled?.();
     if (fetchError.name === 'AbortError') {
       // Normalize timeout error with context
       const normalized = await handleError(fetchError, {
@@ -320,12 +313,14 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
   let result;
   try {
     result = await response.json();
+    assertCompleteAIResponse(result, 'openrouter');
     log('OpenRouter response parsed', { 
       id: result.id, 
       model: result.model,
       usage: result.usage 
     });
   } catch (parseError) {
+    if (parseError.code === 'AI_RESPONSE_TRUNCATED') throw parseError;
     // Normalize error with context for better logging and error tracking
     const normalized = await handleError(parseError, {
       source: 'openrouter',
@@ -541,45 +536,22 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true) {
+export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callOpenRouterAPIWithImage', { model, imageSize: imageData.length });
   
-  const modelName = model || 'openai/gpt-4o';
+  const requestConfig = getOpenRouterRequestConfig(model, { imageInput: true });
+  const modelName = requestConfig.model;
   
-  // OpenRouter is an aggregator - response_format support varies by model and provider
-  // According to OpenRouter docs, structured outputs (json_object/json_schema) are supported by:
-  // - OpenAI models (GPT-4o and later)
-  // - Google Gemini models
-  // - Anthropic models (Sonnet 4.5 and Opus 4.1)
-  // - Most open-source models
-  // - All Fireworks provided models
-  // We'll try with response_format for all models when jsonResponse=true, but fallback without it if we get 400 error
-  // Using require_parameters: true ensures provider supports response_format
-  const isOpenAIModel = modelName.startsWith('openai/');
-  const isGoogleModel = modelName.startsWith('google/');
-  const isAnthropicModel = modelName.startsWith('anthropic/');
-  const isNitroModel = modelName.includes('nitro') || modelName.includes('nitro-');
-  const isFireworksModel = modelName.includes('fireworks') || modelName.includes('@fireworks');
-  
-  // Most modern models support json_object (JSON mode), so we'll try for all when jsonResponse=true
-  // The fallback logic will handle cases where it's not supported
-  const likelySupportsResponseFormat = isOpenAIModel || isGoogleModel || isAnthropicModel || 
-                                       isNitroModel || isFireworksModel || 
-                                       modelName.includes('deepseek') || modelName.includes('mistralai') ||
-                                       modelName.includes('qwen') || modelName.includes('z-ai') ||
-                                       modelName.includes('nex-agi');
-  
-  // Try with response_format first if jsonResponse is requested
-  // We'll be optimistic and try for all models, with fallback on 400 error
+  // Negotiate JSON output without changing model or reasoning settings.
   let useResponseFormat = jsonResponse;
   
   // Extract base64 data (remove data:image/png;base64, prefix)
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Internal function to make the actual API call
   async function makeRequest(withResponseFormat) {
     const requestBody = {
-      model: modelName,
+      ...requestConfig,
       messages: [
         { role: 'system', content: systemPrompt },
         {
@@ -592,7 +564,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
             {
               type: 'image_url',
               image_url: {
-                url: `data:image/png;base64,${base64Image}`
+                url: `data:${mimeType};base64,${base64Image}`
               }
             }
           ]
@@ -609,121 +581,111 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
       };
     }
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://github.com/clipaiable',
+        'X-Title': 'ClipAIble'
+      },
+      body: JSON.stringify(requestBody)
+    }, CONFIG.API_TIMEOUT_MS, requestOptions);
     
-    try {
-      const fetchResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/clipaiable',
-          'X-Title': 'ClipAIble'
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
-      });
-    
-      // If not ok and retryable, throw error for retry logic
-      if (!fetchResponse.ok) {
-        const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-        if (retryableCodes.includes(fetchResponse.status)) {
-          /** @type {Error & {status?: number, response?: Response}} */
-          const error = new Error(`HTTP ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          error.response = fetchResponse;
-          clearTimeout(timeout);
-          throw error;
-        }
-        // Non-retryable error - get error details
-        let errorData;
-        try {
-          errorData = await fetchResponse.json();
-        } catch (e) {
-          errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-        }
-        
-        // Log full error details
-        logError('OpenRouter API error response', {
-          status: fetchResponse.status,
-          errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
-          model: modelName,
-          hasResponseFormat: withResponseFormat,
-          note: 'OpenRouter is an aggregator - errors may come from underlying provider'
-        });
-        
-        // For 400 errors with response_format, mark for retry without it
-        // OpenRouter is an aggregator - even openai/* models may not support response_format
-        if (fetchResponse.status === 400 && withResponseFormat) {
-          const errorText = JSON.stringify(errorData).toLowerCase();
-          // Check if error might be related to response_format
-          // We'll be conservative and retry without it for any 400 when using response_format
-          const mightBeResponseFormatIssue = errorText.includes('response_format') || 
-            errorText.includes('response format') || 
-            errorText.includes('unsupported') || 
-            errorText.includes('invalid parameter') ||
-            errorText.includes('bad request') ||
-            (!errorText.includes('api key') && !errorText.includes('unauthorized') && 
-            !errorText.includes('forbidden') && !errorText.includes('rate limit'));
-          
-          if (mightBeResponseFormatIssue) {
-            // Return special marker to retry without response_format
-            /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
-            const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
-            error.status = 400;
-            error.retryWithoutResponseFormat = true;
-            error.errorData = errorData;
-            logWarn('OpenRouter 400 error with response_format - will retry without it', {
-              model: modelName,
-              errorPreview: JSON.stringify(errorData).substring(0, 200),
-              note: 'OpenRouter aggregator may not support response_format for this model'
-            });
-            clearTimeout(timeout);
-            throw error;
-          }
-        }
-        
-        // Provide more helpful error messages for common errors
-        const uiLang = await getUILanguageCached();
-        const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
-        let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-        
-        if (fetchResponse.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchResponse.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchResponse.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        } else if (fetchResponse.status === 404) {
-          // Check if this is a "model doesn't support images" error
-          const errorText = errorMessageFromAPI?.toLowerCase() || '';
-          if (errorText.includes('no endpoints found that support image input') || 
-              errorText.includes('does not support image') ||
-              errorText.includes('image input not supported')) {
-            errorMessage = `Модель "${modelName}" не поддерживает обработку изображений. Выберите другую модель, которая поддерживает vision (например, anthropic/claude-sonnet-4.5, openai/gpt-4o, или google/gemini-pro-vision).`;
-            logWarn('Model does not support image input', {
-              model: modelName,
-              error: errorMessageFromAPI,
-              suggestion: 'User should select a vision-capable model'
-            });
-          }
-        }
-        
-        /** @type {Error & {status?: number}} */
-        const error = new Error(errorMessage);
+    // If not ok and retryable, throw error for retry logic
+    if (!fetchResponse.ok) {
+      const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+      if (retryableCodes.includes(fetchResponse.status)) {
+        /** @type {Error & {status?: number, response?: Response}} */
+        const error = new Error(`HTTP ${fetchResponse.status}`);
         error.status = fetchResponse.status;
-        clearTimeout(timeout);
+        error.response = fetchResponse;
+
         throw error;
       }
-      
-      clearTimeout(timeout);
-      return fetchResponse;
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
+      // Non-retryable error - get error details
+      let errorData;
+      try {
+        errorData = await fetchResponse.json();
+      } catch (e) {
+        errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
       }
+
+      // Log full error details
+      logError('OpenRouter API error response', {
+        status: fetchResponse.status,
+        errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
+        model: modelName,
+        hasResponseFormat: withResponseFormat,
+        note: 'OpenRouter is an aggregator - errors may come from underlying provider'
+      });
+    
+      // For 400 errors with response_format, mark for retry without it
+      // OpenRouter is an aggregator - even openai/* models may not support response_format
+      if (fetchResponse.status === 400 && withResponseFormat) {
+        const errorText = JSON.stringify(errorData).toLowerCase();
+        // Check if error might be related to response_format
+        // We'll be conservative and retry without it for any 400 when using response_format
+        const mightBeResponseFormatIssue = errorText.includes('response_format') ||
+          errorText.includes('response format') ||
+          errorText.includes('unsupported') ||
+          errorText.includes('invalid parameter') ||
+          errorText.includes('bad request') ||
+          (!errorText.includes('api key') && !errorText.includes('unauthorized') &&
+          !errorText.includes('forbidden') && !errorText.includes('rate limit'));
+
+        if (mightBeResponseFormatIssue) {
+          // Return special marker to retry without response_format
+          /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
+          const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
+          error.status = 400;
+          error.retryWithoutResponseFormat = true;
+          error.errorData = errorData;
+          logWarn('OpenRouter 400 error with response_format - will retry without it', {
+            model: modelName,
+            errorPreview: JSON.stringify(errorData).substring(0, 200),
+            note: 'OpenRouter aggregator may not support response_format for this model'
+          });
+
+          throw error;
+        }
+      }
+      
+      // Provide more helpful error messages for common errors
+      const uiLang = await getUILanguageCached();
+      const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
+      let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
+
+      if (fetchResponse.status === 401) {
+        errorMessage = tSync('errorApiKeyInvalid', uiLang);
+      } else if (fetchResponse.status === 403) {
+        errorMessage = tSync('errorApiAccessForbidden', uiLang);
+      } else if (fetchResponse.status === 429) {
+        errorMessage = tSync('errorRateLimit', uiLang);
+      } else if (fetchResponse.status === 404) {
+        // Check if this is a "model doesn't support images" error
+        const errorText = errorMessageFromAPI?.toLowerCase() || '';
+        if (errorText.includes('no endpoints found that support image input') ||
+            errorText.includes('does not support image') ||
+            errorText.includes('image input not supported')) {
+          errorMessage = `Model "${modelName}" does not support images. Choose a model with vision support.`;
+          logWarn('Model does not support image input', {
+            model: modelName,
+            error: errorMessageFromAPI,
+            suggestion: 'User should select a vision-capable model'
+          });
+        }
+      }
+
+      /** @type {Error & {status?: number}} */
+      const error = new Error(errorMessage);
+      error.status = fetchResponse.status;
+
+      throw error;
     }
+
+    return fetchResponse;
+
   }
   
   let response;
@@ -777,6 +739,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
     }
     
     const data = await response.json();
+    assertCompleteAIResponse(data, 'openrouter');
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       logError('OpenRouter API response missing content', { data });
@@ -878,39 +841,16 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<{result: Object|string, assistantMessage: string, userMessage: Object}>}
  */
-export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true) {
+export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callOpenRouterAPIWithImageAndHistory', { model, imageSize: imageData.length, historyLength: messageHistory.length });
   
-  const modelName = model || 'openai/gpt-4o';
+  const requestConfig = getOpenRouterRequestConfig(model, { imageInput: true });
+  const modelName = requestConfig.model;
   
-  // OpenRouter is an aggregator - response_format support varies by model and provider
-  // According to OpenRouter docs, structured outputs (json_object/json_schema) are supported by:
-  // - OpenAI models (GPT-4o and later)
-  // - Google Gemini models
-  // - Anthropic models (Sonnet 4.5 and Opus 4.1)
-  // - Most open-source models
-  // - All Fireworks provided models
-  // We'll try with response_format for all models when jsonResponse=true, but fallback without it if we get 400 error
-  // Using require_parameters: true ensures provider supports response_format
-  const isOpenAIModel = modelName.startsWith('openai/');
-  const isGoogleModel = modelName.startsWith('google/');
-  const isAnthropicModel = modelName.startsWith('anthropic/');
-  const isNitroModel = modelName.includes('nitro') || modelName.includes('nitro-');
-  const isFireworksModel = modelName.includes('fireworks') || modelName.includes('@fireworks');
-  
-  // Most modern models support json_object (JSON mode), so we'll try for all when jsonResponse=true
-  // The fallback logic will handle cases where it's not supported
-  const likelySupportsResponseFormat = isOpenAIModel || isGoogleModel || isAnthropicModel || 
-                                       isNitroModel || isFireworksModel || 
-                                       modelName.includes('deepseek') || modelName.includes('mistralai') ||
-                                       modelName.includes('qwen') || modelName.includes('z-ai') ||
-                                       modelName.includes('nex-agi');
-  
-  // Try with response_format first if jsonResponse is requested
-  // We'll be optimistic and try for all models, with fallback on 400 error
+  // Negotiate JSON output without changing model or reasoning settings.
   let useResponseFormat = jsonResponse;
   
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Build current user message with image
   const currentUserMessage = {
@@ -919,7 +859,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       { type: 'text', text: userPrompt },
       {
         type: 'image_url',
-        image_url: { url: `data:image/png;base64,${base64Image}` }
+        image_url: { url: `data:${mimeType};base64,${base64Image}` }
       }
     ]
   };
@@ -934,7 +874,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
   // Internal function to make the actual API call
   async function makeRequest(withResponseFormat) {
     const requestBody = {
-      model: modelName,
+      ...requestConfig,
       messages: messages
     };
     
@@ -947,121 +887,111 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       };
     }
     
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://github.com/clipaiable',
+        'X-Title': 'ClipAIble'
+      },
+      body: JSON.stringify(requestBody)
+    }, CONFIG.API_TIMEOUT_MS, requestOptions);
     
-    try {
-      const fetchResponse = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'HTTP-Referer': 'https://github.com/clipaiable',
-          'X-Title': 'ClipAIble'
-        },
-        body: JSON.stringify(requestBody),
-        signal: controller.signal
-      });
-    
-      // If not ok and retryable, throw error for retry logic
-      if (!fetchResponse.ok) {
-        const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-        if (retryableCodes.includes(fetchResponse.status)) {
-          /** @type {Error & {status?: number, response?: Response}} */
-          const error = new Error(`HTTP ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          error.response = fetchResponse;
-          clearTimeout(timeout);
-          throw error;
-        }
-        // Non-retryable error - get error details
-        let errorData;
-        try {
-          errorData = await fetchResponse.json();
-        } catch (e) {
-          errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-        }
-        
-        // Log full error details
-        logError('OpenRouter API error response', {
-          status: fetchResponse.status,
-          errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
-          model: modelName,
-          hasResponseFormat: withResponseFormat,
-          note: 'OpenRouter is an aggregator - errors may come from underlying provider'
-        });
-        
-        // For 400 errors with response_format, mark for retry without it
-        // OpenRouter is an aggregator - even openai/* models may not support response_format
-        if (fetchResponse.status === 400 && withResponseFormat) {
-          const errorText = JSON.stringify(errorData).toLowerCase();
-          // Check if error might be related to response_format
-          // We'll be conservative and retry without it for any 400 when using response_format
-          const mightBeResponseFormatIssue = errorText.includes('response_format') || 
-            errorText.includes('response format') || 
-            errorText.includes('unsupported') || 
-            errorText.includes('invalid parameter') ||
-            errorText.includes('bad request') ||
-            (!errorText.includes('api key') && !errorText.includes('unauthorized') && 
-            !errorText.includes('forbidden') && !errorText.includes('rate limit'));
-          
-          if (mightBeResponseFormatIssue) {
-            // Return special marker to retry without response_format
-            /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
-            const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
-            error.status = 400;
-            error.retryWithoutResponseFormat = true;
-            error.errorData = errorData;
-            logWarn('OpenRouter 400 error with response_format - will retry without it', {
-              model: modelName,
-              errorPreview: JSON.stringify(errorData).substring(0, 200),
-              note: 'OpenRouter aggregator may not support response_format for this model'
-            });
-            clearTimeout(timeout);
-            throw error;
-          }
-        }
-        
-        // Provide more helpful error messages for common errors
-        const uiLang = await getUILanguageCached();
-        const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
-        let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-        
-        if (fetchResponse.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchResponse.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchResponse.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        } else if (fetchResponse.status === 404) {
-          // Check if this is a "model doesn't support images" error
-          const errorText = errorMessageFromAPI?.toLowerCase() || '';
-          if (errorText.includes('no endpoints found that support image input') || 
-              errorText.includes('does not support image') ||
-              errorText.includes('image input not supported')) {
-            errorMessage = `Модель "${modelName}" не поддерживает обработку изображений. Выберите другую модель, которая поддерживает vision (например, anthropic/claude-sonnet-4.5, openai/gpt-4o, или google/gemini-pro-vision).`;
-            logWarn('Model does not support image input', {
-              model: modelName,
-              error: errorMessageFromAPI,
-              suggestion: 'User should select a vision-capable model'
-            });
-          }
-        }
-        
-        /** @type {Error & {status?: number}} */
-        const error = new Error(errorMessage);
+    // If not ok and retryable, throw error for retry logic
+    if (!fetchResponse.ok) {
+      const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+      if (retryableCodes.includes(fetchResponse.status)) {
+        /** @type {Error & {status?: number, response?: Response}} */
+        const error = new Error(`HTTP ${fetchResponse.status}`);
         error.status = fetchResponse.status;
-        clearTimeout(timeout);
+        error.response = fetchResponse;
+
         throw error;
       }
-      
-      clearTimeout(timeout);
-      return fetchResponse;
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
+      // Non-retryable error - get error details
+      let errorData;
+      try {
+        errorData = await fetchResponse.json();
+      } catch (e) {
+        errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
       }
+
+      // Log full error details
+      logError('OpenRouter API error response', {
+        status: fetchResponse.status,
+        errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
+        model: modelName,
+        hasResponseFormat: withResponseFormat,
+        note: 'OpenRouter is an aggregator - errors may come from underlying provider'
+      });
+    
+      // For 400 errors with response_format, mark for retry without it
+      // OpenRouter is an aggregator - even openai/* models may not support response_format
+      if (fetchResponse.status === 400 && withResponseFormat) {
+        const errorText = JSON.stringify(errorData).toLowerCase();
+        // Check if error might be related to response_format
+        // We'll be conservative and retry without it for any 400 when using response_format
+        const mightBeResponseFormatIssue = errorText.includes('response_format') ||
+          errorText.includes('response format') ||
+          errorText.includes('unsupported') ||
+          errorText.includes('invalid parameter') ||
+          errorText.includes('bad request') ||
+          (!errorText.includes('api key') && !errorText.includes('unauthorized') &&
+          !errorText.includes('forbidden') && !errorText.includes('rate limit'));
+
+        if (mightBeResponseFormatIssue) {
+          // Return special marker to retry without response_format
+          /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
+          const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
+          error.status = 400;
+          error.retryWithoutResponseFormat = true;
+          error.errorData = errorData;
+          logWarn('OpenRouter 400 error with response_format - will retry without it', {
+            model: modelName,
+            errorPreview: JSON.stringify(errorData).substring(0, 200),
+            note: 'OpenRouter aggregator may not support response_format for this model'
+          });
+
+          throw error;
+        }
+      }
+      
+      // Provide more helpful error messages for common errors
+      const uiLang = await getUILanguageCached();
+      const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
+      let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
+
+      if (fetchResponse.status === 401) {
+        errorMessage = tSync('errorApiKeyInvalid', uiLang);
+      } else if (fetchResponse.status === 403) {
+        errorMessage = tSync('errorApiAccessForbidden', uiLang);
+      } else if (fetchResponse.status === 429) {
+        errorMessage = tSync('errorRateLimit', uiLang);
+      } else if (fetchResponse.status === 404) {
+        // Check if this is a "model doesn't support images" error
+        const errorText = errorMessageFromAPI?.toLowerCase() || '';
+        if (errorText.includes('no endpoints found that support image input') ||
+            errorText.includes('does not support image') ||
+            errorText.includes('image input not supported')) {
+          errorMessage = `Model "${modelName}" does not support images. Choose a model with vision support.`;
+          logWarn('Model does not support image input', {
+            model: modelName,
+            error: errorMessageFromAPI,
+            suggestion: 'User should select a vision-capable model'
+          });
+        }
+      }
+
+      /** @type {Error & {status?: number}} */
+      const error = new Error(errorMessage);
+      error.status = fetchResponse.status;
+
+      throw error;
     }
+
+    return fetchResponse;
+
   }
   
   let response;
@@ -1115,6 +1045,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
     }
     
     const data = await response.json();
+    assertCompleteAIResponse(data, 'openrouter');
     let content = data.choices?.[0]?.message?.content;
     if (!content) {
       logError('OpenRouter API response missing content', { data });
@@ -1213,10 +1144,4 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
     throw error;
   }
 }
-
-
-
-
-
-
 

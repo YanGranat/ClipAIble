@@ -35,7 +35,8 @@ vi.mock('../../scripts/generation/audio.js', () => ({
 }));
 
 // Mock dependencies
-vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
+vi.mock('../../scripts/utils/pipeline-helpers.js', async importOriginal => ({
+  ...await importOriginal(),
   updateProgress: vi.fn(async () => {})
 }));
 

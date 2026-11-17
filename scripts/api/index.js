@@ -7,10 +7,11 @@
  */
 
 import { log, logWarn } from '../utils/logging.js';
+import { getModelProvider } from '../utils/model-catalog.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { callOpenAI, parseModelConfig, callOpenAIWithImage, callOpenAIWithImageAndHistory } from './openai.js';
 import { callClaudeAPI, callClaudeAPIWithImage, callClaudeAPIWithImageAndHistory } from './claude.js';
-import { callGeminiAPI, translateImageWithGemini, callGeminiAPIWithImage } from './gemini.js';
+import { callGeminiAPI, translateImageWithGemini, callGeminiAPIWithImage, callGeminiAPIWithImageAndHistory } from './gemini.js';
 import { callGrokAPI, callGrokAPIWithImage, callGrokAPIWithImageAndHistory } from './grok.js';
 import { callOpenRouterAPI, callOpenRouterAPIWithImage, callOpenRouterAPIWithImageAndHistory } from './openrouter.js';
 import { callDeepSeekAPI, callDeepSeekAPIWithImage, callDeepSeekAPIWithImageAndHistory } from './deepseek.js';
@@ -18,7 +19,7 @@ import { callDeepSeekAPI, callDeepSeekAPIWithImage, callDeepSeekAPIWithImageAndH
 // Re-export for convenience
 export { callOpenAI, parseModelConfig, callOpenAIWithImage, callOpenAIWithImageAndHistory } from './openai.js';
 export { callClaudeAPI, callClaudeAPIWithImage, callClaudeAPIWithImageAndHistory } from './claude.js';
-export { callGeminiAPI, translateImageWithGemini, callGeminiAPIWithImage } from './gemini.js';
+export { callGeminiAPI, translateImageWithGemini, callGeminiAPIWithImage, callGeminiAPIWithImageAndHistory } from './gemini.js';
 export { callGrokAPI, callGrokAPIWithImage, callGrokAPIWithImageAndHistory } from './grok.js';
 export { callOpenRouterAPI, callOpenRouterAPIWithImage, callOpenRouterAPIWithImageAndHistory } from './openrouter.js';
 export { callDeepSeekAPI, callDeepSeekAPIWithImage, callDeepSeekAPIWithImageAndHistory } from './deepseek.js';
@@ -51,15 +52,16 @@ function getProviderName(provider) {
  * @returns {import('../types.js').AIProvider} Provider name
  */
 export function getProviderFromModel(model) {
-  if (!model) return 'openai';
-  // OpenRouter models are in format: provider/model-name (e.g., openai/gpt-4o, anthropic/claude-opus-4.5)
-  if (model.includes('/')) return 'openrouter';
-  if (model.startsWith('gpt-')) return 'openai';
-  if (model.startsWith('claude-')) return 'claude';
-  if (model.startsWith('gemini-')) return 'gemini';
-  if (model.startsWith('grok-')) return 'grok';
-  if (model.startsWith('deepseek-')) return 'deepseek';
-  return 'openai';
+  return getModelProvider(model);
+}
+
+/** Select the explicitly configured provider before interpreting model names. */
+export function resolveAIProvider(model, provider) {
+  if (provider === undefined) return getProviderFromModel(model);
+  if (typeof provider !== 'string' || !Object.hasOwn(PROVIDER_NAMES, provider)) {
+    throw new Error('Unsupported AI provider');
+  }
+  return provider;
 }
 
 /**
@@ -155,9 +157,10 @@ function validateDecryptedKey(decryptedKey, provider, includeSettingsHint = true
  * );
  * console.log('Translation:', text);
  */
-export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
+export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true, options = {}) {
   const aiCallStartTime = Date.now();
-  const provider = getProviderFromModel(model);
+  const provider = resolveAIProvider(model, options.provider);
+  await options.checkCancelled?.();
   const promptSize = systemPrompt.length + userPrompt.length;
   const estimatedTokens = Math.ceil(promptSize / 4); // Rough estimate: ~4 chars per token
   
@@ -175,6 +178,7 @@ export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonRespon
   
   // Decrypt API key before use (with caching for performance)
   const decryptedKey = await getDecryptedKeySafe(apiKey, provider);
+  await options.checkCancelled?.();
   
   // Validate decrypted key is not empty
   validateDecryptedKey(decryptedKey, provider, true);
@@ -182,23 +186,23 @@ export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonRespon
   let result;
   switch (provider) {
     case 'claude':
-      result = await callClaudeAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse);
+      result = await callClaudeAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse, options);
       break;
     case 'gemini':
-      result = await callGeminiAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse);
+      result = await callGeminiAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse, options);
       break;
     case 'grok':
-      result = await callGrokAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse);
+      result = await callGrokAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse, options);
       break;
     case 'openrouter':
-      result = await callOpenRouterAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse);
+      result = await callOpenRouterAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse, options);
       break;
     case 'deepseek':
-      result = await callDeepSeekAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse);
+      result = await callDeepSeekAPI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse, options);
       break;
     case 'openai':
     default:
-      result = await callOpenAI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse);
+      result = await callOpenAI(systemPrompt, userPrompt, decryptedKey, model, jsonResponse, options);
       break;
   }
   
@@ -247,8 +251,9 @@ export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonRespon
  * );
  * console.log('Image description:', response);
  */
-export async function callAIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true) {
-  const provider = getProviderFromModel(model);
+export async function callAIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true, options = {}) {
+  const provider = resolveAIProvider(model, options.provider);
+  await options.checkCancelled?.();
   
   log('callAIWithImage', { provider, model, imageSize: imageData.length });
   
@@ -257,24 +262,25 @@ export async function callAIWithImage(systemPrompt, userPrompt, imageData, apiKe
   
   // Decrypt API key before use (with caching for performance)
   const decryptedKey = await getDecryptedKeySafe(apiKey, provider);
+  await options.checkCancelled?.();
   
   // Validate decrypted key is not empty
   validateDecryptedKey(decryptedKey, provider, true);
   
   switch (provider) {
     case 'claude':
-      return callClaudeAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
+      return callClaudeAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse, options);
     case 'gemini':
-      return callGeminiAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
+      return callGeminiAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse, options);
     case 'openrouter':
-      return callOpenRouterAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
+      return callOpenRouterAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse, options);
     case 'deepseek':
-      return callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
+      return callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse, options);
     case 'grok':
-      return callGrokAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
+      return callGrokAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse, options);
     case 'openai':
     default:
-      return callOpenAIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
+      return callOpenAIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse, options);
   }
 }
 
@@ -288,7 +294,7 @@ export async function callAIWithImage(systemPrompt, userPrompt, imageData, apiKe
  * @param {string} apiKey - API key for the provider
  * @param {string} model - Model name
  * @param {boolean} [jsonResponse=true] - Whether to expect JSON response
- * @returns {Promise<{result: import('../types.js').AIResponse|string, assistantMessage: string, userMessage: {role: string, content: string|Object}}>} Result and messages for history
+ * @returns {Promise<{result: import('../types.js').AIResponse|string, assistantMessage: string|Array<Object>, userMessage: {role: string, content: string|Array<Object>}}>} Result and messages for history
  * @throws {Error} If API key is missing
  * @throws {Error} If API key decryption fails
  * @throws {Error} If AI provider API request fails
@@ -314,8 +320,9 @@ export async function callAIWithImage(systemPrompt, userPrompt, imageData, apiKe
  * );
  * console.log('Comparison:', result.result);
  */
-export async function callAIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true) {
-  const provider = getProviderFromModel(model);
+export async function callAIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true, options = {}) {
+  const provider = resolveAIProvider(model, options.provider);
+  await options.checkCancelled?.();
   
   log('callAIWithImageAndHistory', { provider, model, imageSize: imageData.length, historyLength: messageHistory.length });
   
@@ -324,40 +331,25 @@ export async function callAIWithImageAndHistory(systemPrompt, userPrompt, imageD
   
   // Decrypt API key
   const decryptedKey = await getDecryptedKeySafe(apiKey, provider);
+  await options.checkCancelled?.();
   
   // Validate decrypted key is not empty (without settings hint for consistency with original)
   validateDecryptedKey(decryptedKey, provider, false);
   
   switch (provider) {
     case 'claude':
-      return callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse);
+      return callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse, options);
     case 'gemini':
-      // Gemini doesn't support history well, fall back to regular call
-      logWarn('Gemini does not support conversation history well, using regular call');
-      const result = await callGeminiAPIWithImage(systemPrompt, userPrompt, imageData, decryptedKey, model, jsonResponse);
-      const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
-      const userMessage = {
-        role: 'user',
-        content: [
-          { text: userPrompt },
-          {
-            inline_data: {
-              mime_type: 'image/png',
-              data: base64Image
-            }
-          }
-        ]
-      };
-      return { result, assistantMessage: typeof result === 'string' ? result : JSON.stringify(result), userMessage };
+      return callGeminiAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse, options);
     case 'openrouter':
-      return callOpenRouterAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse);
+      return callOpenRouterAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse, options);
     case 'deepseek':
-      return callDeepSeekAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse);
+      return callDeepSeekAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse, options);
     case 'grok':
-      return callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse);
+      return callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse, options);
     case 'openai':
     default:
-      return callOpenAIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse);
+      return callOpenAIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, decryptedKey, model, jsonResponse, options);
   }
 }
 

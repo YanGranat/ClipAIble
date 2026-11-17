@@ -5,7 +5,7 @@
 
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
-import { PROCESSING_STAGES, updateState } from '../state/processing.js';
+import { PROCESSING_STAGES } from '../state/processing.js';
 import { callAI, getProviderFromModel } from '../api/index.js';
 import { callWithRetry } from '../utils/retry.js';
 import { 
@@ -20,7 +20,7 @@ import { cleanTitleFromServiceTokens } from '../utils/html.js';
 import { detectLanguageByCharacters } from '../translation/index.js';
 import { extractAutomaticallyInlined } from '../extraction/automatic.js';
 import { getUILanguage, tSync } from '../locales.js';
-import { checkCancellation, getUILanguageCached, updateProgress } from '../utils/pipeline-helpers.js';
+import { getUILanguageCached, getProcessingCallbacks, getAIRequestOptions } from '../utils/pipeline-helpers.js';
 import { cleanAuthor } from '../utils/author-validator.js';
 import { 
   getCachedSelectors, 
@@ -38,7 +38,7 @@ import {
  * @param {string} model - Model name
  * @returns {Promise<Object>} Selectors object
  */
-export async function getSelectorsFromAI(html, url, title, apiKey, model) {
+export async function getSelectorsFromAI(html, url, title, apiKey, model, options = {}) {
   logDebug('getSelectorsFromAI called', { url, model, htmlLength: html.length });
   
   // SECURITY: Validate HTML size before processing
@@ -62,7 +62,10 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
     retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
   };
   const rawResponse = await callWithRetry(
-    () => callAI(systemPrompt, userPrompt, apiKey, model, true),
+    async () => {
+      options.checkCancelled?.();
+      return callAI(systemPrompt, userPrompt, apiKey, model, true, options);
+    },
     retryOptions
   );
   
@@ -97,6 +100,7 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model) {
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithoutAI(data, extractFromPageInlined) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   log('=== processWithoutAI: ENTRY ===', {
     hasData: !!data,
     dataKeys: data ? Object.keys(data) : [],
@@ -704,6 +708,7 @@ export async function processWithoutAI(data, extractFromPageInlined) {
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithExtractMode(data) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const { html, url, title, apiKey, model } = data;
 
   log('🤖 AI Extract mode: Starting content extraction with AI');
@@ -755,9 +760,9 @@ export async function processWithExtractMode(data) {
   
   let result;
   if (chunks.length === 1) {
-    result = await processSingleChunk(chunks[0], url, title, apiKey, model);
+    result = await processSingleChunk(chunks[0], url, title, apiKey, model, data);
   } else {
-    result = await processMultipleChunks(chunks, url, title, apiKey, model);
+    result = await processMultipleChunks(chunks, url, title, apiKey, model, data);
   }
   
   log(`✅ AI Extract mode complete: ${result.content?.length || 0} content items extracted`, { title: result.title });
@@ -784,7 +789,8 @@ export async function processWithExtractMode(data) {
  * @param {string} model - Model name
  * @returns {Promise<Object>} {title, content, publishDate}
  */
-async function processSingleChunk(html, url, title, apiKey, model) {
+async function processSingleChunk(html, url, title, apiKey, model, data) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   log('processSingleChunk', { url, htmlLength: html.length });
   
   // Check if processing was cancelled before single chunk processing
@@ -808,7 +814,10 @@ ${html}`;
     retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
   };
   const result = await callWithRetry(
-    () => callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true),
+    async () => {
+      await checkCancellation('single chunk request');
+      return callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true, getAIRequestOptions(data));
+    },
     retryOptions2
   );
   
@@ -835,7 +844,8 @@ ${html}`;
  * @param {string} model - Model name
  * @returns {Promise<Object>} {title, content, publishDate}
  */
-async function processMultipleChunks(chunks, url, title, apiKey, model) {
+async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const chunksStartTime = Date.now();
   const totalChunks = chunks.length;
   const totalSize = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -919,7 +929,10 @@ async function processMultipleChunks(chunks, url, title, apiKey, model) {
         retryableStatusCodes: [429, 500, 502, 503, 504]
       };
       const result = await callWithRetry(
-        () => callAI(systemPrompt, userPrompt, apiKey, model, true),
+        async () => {
+          await checkCancellation('chunk request');
+          return callAI(systemPrompt, userPrompt, apiKey, model, true, getAIRequestOptions(data));
+        },
         retryOptions4
       );
       
@@ -1063,23 +1076,6 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   // The script will execute on that tab, extracting content from the page that was active
   // when the button was clicked. This ensures we process the correct page.
   
-  // Verify that the tab still has the expected URL (user might have navigated away)
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab.url !== baseUrl) {
-      log('Tab URL mismatch detected', { 
-        expectedUrl: baseUrl, 
-        actualUrl: tab.url,
-        message: 'Tab URL differs from expected URL - page may have navigated. Continuing anyway, but content may be from wrong page.'
-      });
-      // Note: We continue anyway because the user might have intentionally navigated,
-      // but we log the mismatch for debugging
-    }
-  } catch (tabError) {
-    log('Failed to verify tab URL', { error: tabError?.message, tabId });
-    // Continue anyway - tab might be closed, but we'll try to execute script
-  }
-  
   // SECURITY: Validate baseUrl before passing to executeScript
   if (!baseUrl || typeof baseUrl !== 'string') {
     throw new Error(tSync('errorInvalidBaseUrl', uiLang));
@@ -1095,6 +1091,17 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     throw new Error(tSync('errorInvalidSelectorsExclude', uiLang));
   }
   
+  let tab;
+  try { tab = await chrome.tabs.get(tabId); }
+  catch { throw new Error(tSync('errorTabClosedDuringProcessing', uiLang)); }
+  const expectedUrl = new URL(baseUrl);
+  const currentUrl = new URL(tab.url);
+  expectedUrl.hash = '';
+  currentUrl.hash = '';
+  if (expectedUrl.href !== currentUrl.href) {
+    throw new Error('The page changed during processing. Open the intended page and try again.');
+  }
+
   let results;
   try {
     // Execute extraction function directly in the page context
@@ -1391,31 +1398,19 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
 }
 
 /**
- * Throw if key theses generation was cancelled (so extractContentOnly can respond with cancelled immediately).
- * @throws {Error} Error with keyThesesCancelled=true when key_theses_cancel_requested is set in storage
- */
-async function checkKeyThesesCancel() {
-  const r = await chrome.storage.local.get('key_theses_cancel_requested');
-  if (r.key_theses_cancel_requested) {
-    const e = new Error('Key theses cancelled');
-    e.keyThesesCancelled = true;
-    throw e;
-  }
-}
-
-/**
  * Process content with selector mode (AI Selector)
  * @param {import('../types.js').ProcessingData} data - Processing data
  * @param {(selectors: Object, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithSelectorMode(data, extractFromPageInlined) {
+  const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const { html, url, title, apiKey, model, tabId } = data;
   
   log('🎯 AI Selector mode: Starting content extraction');
   log('Input data', { url, title, htmlLength: html?.length, tabId });
 
-  await checkKeyThesesCancel();
+  await checkCancellation('selector extraction');
   
   const uiLang = await getUILanguage();
   if (!html) throw new Error(tSync('errorNoHtmlContent', uiLang));
@@ -1471,7 +1466,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     // Get selectors from AI
     log('🤖 Requesting selectors from AI...');
     try {
-      selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model);
+      selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model, getAIRequestOptions(data));
       log('✅ Selectors received from AI', selectors);
     } catch (error) {
       logError('Failed to get selectors from AI', error);
@@ -1483,12 +1478,10 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       const uiLang = await getUILanguage();
       throw new Error(tSync('errorAiEmptySelectors', uiLang));
     }
-    await checkKeyThesesCancel();
   }
   
   // Check if processing was cancelled before content extraction
   await checkCancellation('content extraction');
-  await checkKeyThesesCancel();
   
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
   

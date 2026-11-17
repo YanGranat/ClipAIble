@@ -9,7 +9,6 @@
  *   coreModule?: Object;
  *   handlersModule?: Object;
  *   themeChangeListener?: (e: MediaQueryListEvent) => void;
- *   saveVoiceBeforeClose?: () => Promise<void>;
  * }} WindowWithModules
  */
 //
@@ -43,7 +42,7 @@
 
 log('[ClipAIble Popup] Starting imports', { timestamp: Date.now() });
 
-import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
+import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey, saveApiKeySettings } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logWarn, logDebug } from '../scripts/utils/logging.js';
 import { enhancedLogError, initGlobalErrorHandlers } from './utils/error-handling.js';
@@ -53,20 +52,18 @@ import { getProviderFromModel } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
 import { sanitizeMarkdownHtml, escapeHtml as escapeHtmlUtil } from '../scripts/utils/html.js';
 import { initUI } from './ui.js';
-import { initStats } from './stats.js';
+import { initCustomSelect } from './utils/custom-select.js';
+import { initStats, getSafeHistoryUrl } from './stats.js';
 import { initSettings } from './settings.js';
 import { initCore } from './core.js';
 import { initHandlers } from './handlers.js';
 import { initializeDOMElements, initializeModules, finalizeInitialization } from './utils/init-helpers.js';
 import { groupDependencies } from './utils/dependencies.js';
-import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, MODE_HINTS, ELEMENT_IDS } from './constants.js';
+import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, ELEMENT_IDS } from './constants.js';
 import { getElement, setElementDisplay, setElementGroupDisplay, setDisplayForIds } from './utils/dom-helpers.js';
 import { markdownToHtml, formatTime, escapeHtml, formatRelativeDate } from './utils/format-helpers.js';
 import { debouncedSaveSettings, saveAudioVoice } from './utils/settings-helpers.js';
 
-// Settings save state (imported from settings-helpers via closure, but we need local references)
-let settingsSaveTimer = null;
-let isSavingSettings = false;
 import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils/timer-helpers.js';
 
 // Long-lived port to signal to service worker that popup is open.
@@ -233,6 +230,12 @@ const elements = {
   elevenlabsFormat: null,
   elevenlabsFormatGroup: null,
   qwenApiKey: null,
+  qwenModel: null,
+  qwenModelGroup: null,
+  qwenWorkspaceId: null,
+  qwenWorkspaceGroup: null,
+  qwenRegion: null,
+  qwenRegionGroup: null,
   toggleQwenApiKey: null,
   saveQwenApiKey: null,
   qwenApiKeyGroup: null,
@@ -442,9 +445,11 @@ async function applyLocalization() {
   // Update specific dynamic elements
   if (elements.modeHint) {
     const mode = elements.modeSelect?.value || 'selector';
-    elements.modeHint.textContent = mode === 'selector' 
-      ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
-      : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
+    elements.modeHint.textContent = mode === 'automatic'
+      ? (locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic)
+      : mode === 'selector'
+        ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
+        : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
   }
   
   // Update output format button text
@@ -551,81 +556,6 @@ async function init() {
     uiModuleRef = modules.uiModule;
     statsModuleRef = modules.statsModule;
     settingsModuleRef = modules.settingsModule;
-    
-    // Override saveVoiceBeforeClose to use settingsModule from modules
-    const originalSaveVoiceBeforeClose = saveVoiceBeforeClose;
-    // @ts-ignore - saveVoiceBeforeClose is added to window at runtime for event listeners
-    window.saveVoiceBeforeClose = async function() {
-      // Use settingsModule from modules instead of window
-      if (!isSavingSettings && elements.audioVoice && elements.audioProvider && settingsModuleRef && settingsModuleRef.saveAudioVoice) {
-        isSavingSettings = true;
-        try {
-          const provider = elements.audioProvider.value || 'openai';
-          const selectedIndex = elements.audioVoice.selectedIndex;
-          const selectedOption = elements.audioVoice.options[selectedIndex];
-          
-          // CRITICAL: Use the same logic as saveAudioVoice - get voice ID from dataset.voiceId or option.value
-          let voiceToSave = null;
-          
-          if (selectedOption) {
-            // Priority 1: dataset.voiceId (most reliable)
-            if (selectedOption.dataset && selectedOption.dataset.voiceId) {
-              voiceToSave = selectedOption.dataset.voiceId;
-            }
-            // Priority 2: option.value (if not an index)
-            else if (selectedOption.value && !/^\d+$/.test(String(selectedOption.value))) {
-              voiceToSave = selectedOption.value;
-            }
-            // Priority 3: Use getVoiceIdByIndex if value is an index
-            else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModuleRef && settingsModuleRef.getVoiceIdByIndex) {
-              voiceToSave = settingsModuleRef.getVoiceIdByIndex(provider, selectedIndex);
-            }
-          }
-          
-          // If still no valid voice, try to get from current value
-          if (!voiceToSave && elements.audioVoice.value && !/^\d+$/.test(String(elements.audioVoice.value))) {
-            voiceToSave = elements.audioVoice.value;
-          }
-          
-          // Only save if we have a valid voice ID (not an index)
-          if (voiceToSave && voiceToSave !== '' && !/^\d+$/.test(String(voiceToSave))) {
-            // CRITICAL: Use saveAudioVoice from settings module - it handles audioVoiceMap correctly
-            settingsModuleRef.saveAudioVoice(provider, voiceToSave);
-            
-            // CRITICAL: Also force immediate save (don't wait for debounce)
-            // Get current audioVoiceMap from storage to ensure we have latest
-            const storageResult = await chrome.storage.local.get([STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP]);
-            let currentMap = storageResult[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP] || {};
-            
-            // CRITICAL: Ensure format is correct (with 'current' property)
-            /** @type {{current?: Record<string, string>}} */
-            let typedCurrentMap = currentMap;
-            if (!typedCurrentMap.current || typeof typedCurrentMap.current !== 'object' || Array.isArray(typedCurrentMap.current)) {
-              // Convert old format to new format
-              if (typeof currentMap === 'object' && !Array.isArray(currentMap) && !('current' in currentMap)) {
-                typedCurrentMap = { current: { ...currentMap } };
-              } else {
-                typedCurrentMap = { current: {} };
-              }
-            }
-            
-            // Update the voice for the provider
-            if (typedCurrentMap.current) {
-              typedCurrentMap.current[provider] = voiceToSave;
-            }
-            
-            currentMap = typedCurrentMap;
-            
-            // Save immediately
-            await chrome.storage.local.set({ [STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP]: currentMap });
-          }
-        } catch (error) {
-          logError('Error saving voice before close', error);
-        } finally {
-          isSavingSettings = false;
-        }
-      }
-    };
     
     log('popup.js: init() completed successfully');
   } catch (error) {
@@ -795,181 +725,6 @@ function setCustomSelectValue(value) {
 }
 
 // Universal function to convert native select to custom-select
-function initCustomSelect(selectId, options = {}) {
-  const select = document.getElementById(selectId);
-  if (!select) return null;
-  
-  // Skip if already converted
-  if (select.closest('.custom-select')) return select.closest('.custom-select');
-  
-  // Create wrapper structure
-  const container = document.createElement('div');
-  container.className = 'custom-select';
-  container.id = `${selectId}Container`;
-  
-  const trigger = document.createElement('div');
-  trigger.className = 'custom-select-trigger';
-  trigger.id = `${selectId}Trigger`;
-  
-  const valueSpan = document.createElement('span');
-  valueSpan.className = 'custom-select-value';
-  valueSpan.id = `${selectId}Value`;
-  
-  const arrow = document.createElement('span');
-  arrow.className = 'custom-select-arrow';
-  arrow.textContent = '▾';
-  
-  trigger.appendChild(valueSpan);
-  trigger.appendChild(arrow);
-  
-  const optionsDiv = document.createElement('div');
-  optionsDiv.className = 'custom-select-options';
-  optionsDiv.id = `${selectId}Options`;
-  
-  // Function to populate options
-  const populateOptions = () => {
-    optionsDiv.innerHTML = '';
-    if (!(select instanceof HTMLSelectElement)) return;
-    Array.from(select.options).forEach((option) => {
-      const customOption = document.createElement('div');
-      customOption.className = 'custom-select-option';
-      customOption.dataset.value = option.value;
-      
-      // Preserve data-i18n attribute if present
-      if (option.hasAttribute('data-i18n')) {
-        customOption.setAttribute('data-i18n', option.getAttribute('data-i18n'));
-      }
-      
-      customOption.textContent = option.textContent;
-      if (option.selected || select.value === option.value) {
-        customOption.classList.add('selected');
-        valueSpan.textContent = option.textContent;
-      }
-      optionsDiv.appendChild(customOption);
-    });
-  };
-  
-  populateOptions();
-  
-  container.appendChild(trigger);
-  container.appendChild(optionsDiv);
-  
-  // Replace select with container structure
-  select.style.display = 'none';
-  select.style.position = 'absolute';
-  select.style.opacity = '0';
-  select.style.pointerEvents = 'none';
-  select.parentNode.insertBefore(container, select);
-  container.appendChild(select);
-  
-  // Event handlers
-  trigger.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const isOpen = container.classList.contains('open');
-    
-    // Close all other custom selects
-    document.querySelectorAll('.custom-select.open').forEach(otherSelect => {
-      if (otherSelect !== container) {
-        otherSelect.classList.remove('open');
-      }
-    });
-    
-    // Close model dropdown if open
-    if (elements.customModelDropdown && 
-        !elements.customModelDropdown.classList.contains('hidden') &&
-        elements.customModelDropdown.style.display !== 'none') {
-      // CRITICAL: Add 'hidden' class (it has display: none !important)
-      elements.customModelDropdown.classList.add('hidden');
-      elements.customModelDropdown.style.display = 'none';
-    }
-    
-    // Toggle current select
-    if (isOpen) {
-      container.classList.remove('open');
-    } else {
-      container.classList.add('open');
-    }
-  });
-  
-  optionsDiv.addEventListener('click', (e) => {
-    // Defer all work to avoid blocking main thread
-    setTimeout(() => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      const option = target.closest('.custom-select-option');
-      if (!(option instanceof HTMLElement)) return;
-      
-      const value = option.dataset.value;
-      if (!value) return;
-      
-      // Defer DOM updates to requestAnimationFrame
-      requestAnimationFrame(() => {
-        // Update native select
-        if (select instanceof HTMLSelectElement) {
-          select.value = value;
-        }
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-        
-        // Update display
-        valueSpan.textContent = option.textContent;
-        
-        // Update selected state
-        optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
-          opt.classList.remove('selected');
-        });
-        option.classList.add('selected');
-        
-        // Close dropdown
-        container.classList.remove('open');
-        
-        // Call custom callback if provided
-        if (options.onChange) {
-          options.onChange(value);
-        }
-      });
-    }, 0);
-  }, { passive: true });
-  
-  // Close dropdown when clicking outside (handled globally for all selects)
-  
-  // Sync with native select value changes
-  select.addEventListener('change', () => {
-    if (!(select instanceof HTMLSelectElement)) return;
-    const selectedOption = optionsDiv.querySelector(`[data-value="${select.value}"]`);
-    if (selectedOption instanceof HTMLElement) {
-      valueSpan.textContent = selectedOption.textContent;
-      optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
-        if (opt instanceof HTMLElement) {
-          opt.classList.remove('selected');
-        }
-      });
-      selectedOption.classList.add('selected');
-    } else {
-      // If option not found, repopulate (for dynamic selects)
-      populateOptions();
-    }
-  });
-  
-  // Watch for option changes (for dynamic selects)
-  const observer = new MutationObserver(() => {
-    if (!(select instanceof HTMLSelectElement)) return;
-    const currentValue = select.value;
-    populateOptions();
-    // Restore value after repopulation
-    if (currentValue && select instanceof HTMLSelectElement) {
-      select.value = currentValue;
-      const selectedOption = optionsDiv.querySelector(`[data-value="${currentValue}"]`);
-      if (selectedOption) {
-        selectedOption.classList.add('selected');
-        valueSpan.textContent = selectedOption.textContent;
-      }
-    }
-  });
-  observer.observe(select, { childList: true, subtree: true });
-  
-  return container;
-}
-
 // Initialize all custom selects
 function initAllCustomSelects() {
   // List of select IDs to convert (excluding modelSelect which has its own custom dropdown)
@@ -979,6 +734,8 @@ function initAllCustomSelects() {
     'modeSelect',
     'mainFormatSelect',
     'audioProvider',
+    'qwenModel',
+    'qwenRegion',
     'elevenlabsModel',
     'elevenlabsFormat',
     'googleTtsModel',
@@ -994,7 +751,12 @@ function initAllCustomSelects() {
   selectIds.forEach(selectId => {
     const select = document.getElementById(selectId);
     if (select && !select.closest('.custom-select')) {
-      initCustomSelect(selectId);
+      initCustomSelect(selectId, { onOpen: () => {
+        if (elements.customModelDropdown) {
+          elements.customModelDropdown.classList.add('hidden');
+          elements.customModelDropdown.style.display = 'none';
+        }
+      } });
     }
   });
 }
@@ -1140,15 +902,7 @@ async function saveApiKey() {
     }
   }
   
-  // Save keys
-  if (Object.keys(keysToSave).length > 0) {
-    await chrome.storage.local.set(keysToSave);
-  }
-  
-  // Remove keys that should be deleted
-  if (keysToRemove.length > 0) {
-    await chrome.storage.local.remove(keysToRemove);
-  }
+  await saveApiKeySettings(keysToSave, keysToRemove);
   
   const apiKeysSavedText = await t('apiKeysSaved');
   showToast(apiKeysSavedText, 'success');
@@ -1218,26 +972,6 @@ function showToast(message, type = 'success') {
 }
 
 
-// CRITICAL: Function to save voice before popup closes
-// This function is overridden in init() to use settingsModule from modules instead of window
-// The override is set up after modules are initialized
-async function saveVoiceBeforeClose() {
-  // Save any pending debounced settings first
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-    settingsSaveTimer = null;
-  }
-  
-  // This function is overridden in init() with the actual implementation
-  // that uses settingsModule from modules instead of window.settingsModule
-  logWarn('saveVoiceBeforeClose called but not yet initialized - this should not happen');
-}
-
-// Cleanup on popup close - use multiple events for reliability
-window.addEventListener('beforeunload', saveVoiceBeforeClose);
-window.addEventListener('unload', saveVoiceBeforeClose);
-window.addEventListener('pagehide', saveVoiceBeforeClose);
-
 // Best-effort: explicitly disconnect popup port on close.
 window.addEventListener('beforeunload', () => {
   try {
@@ -1302,20 +1036,21 @@ async function displayStats(stats) {
   
   // Update history
   const historyContainer = document.getElementById(ELEMENT_IDS.STATS_HISTORY);
-  if (stats.history && stats.history.length > 0) {
+  if (Array.isArray(stats.history) && stats.history.length > 0) {
     const langCode = await getUILanguage();
     const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
     const openOriginalArticleText = locale.openOriginalArticle || UI_LOCALES.en.openOriginalArticle;
     historyContainer.innerHTML = stats.history.map((item, index) => {
+      if (!item || typeof item !== 'object') return '';
       const date = new Date(item.date);
       const dateStr = formatRelativeDate(date);
       const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
       return `
         <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
-          <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="${escapeHtml(openOriginalArticleText)}">
+          <a href="${escapeHtml(getSafeHistoryUrl(item.url))}" class="history-link" target="_blank" rel="noopener" title="${escapeHtml(openOriginalArticleText)}">
             <div class="history-title">${escapeHtml(item.title)}</div>
             <div class="history-meta">
-              <span class="history-format">${item.format}</span>
+              <span class="history-format">${escapeHtml(item.format)}</span>
               <span class="history-domain">${escapeHtml(item.domain)}</span>
               ${timeStr ? `<span class="history-time">${timeStr}</span>` : ''}
               <span class="history-date">${dateStr}</span>
@@ -1357,19 +1092,20 @@ async function displayCacheStats(stats) {
   
   // Display cached domains list
   const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
-  if (domainsListEl && stats.domains) {
+  if (domainsListEl && Array.isArray(stats.domains)) {
     if (stats.domains.length === 0) {
       const noCachedDomainsText = await t('noCachedDomains');
       domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
     } else {
       domainsListEl.innerHTML = stats.domains.map(item => {
+        if (!item || typeof item !== 'object') return '';
         if (item.invalidated) return ''; // Skip invalidated domains
         
         return `
           <div class="cache-domain-item">
             <span class="cache-domain-name" title="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</span>
             <div class="cache-domain-meta">
-              <span>${item.age}</span>
+              <span>${escapeHtml(item.age)}</span>
             </div>
             <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" data-i18n-title="deleteFromCache">✕</button>
           </div>

@@ -110,47 +110,6 @@ export function splitHtmlIntoChunks(html, chunkSize = CONFIG.CHUNK_SIZE, overlap
 }
 
 /**
- * Remove duplicates from extracted content
- * @param {Array} content - Content array
- * @returns {Array} Deduplicated content
- */
-/**
- * Simple hash function for string (djb2 algorithm)
- * Used for content deduplication to create unique keys for content items.
- * djb2 is a fast, non-cryptographic hash suitable for this use case.
- * 
- * @param {string} str - String to hash
- * @returns {string} Hash as hex string (first 8 characters)
- * 
- * Algorithm: djb2 hash with initial value 5381
- * - Fast computation suitable for real-time content processing
- * - Low collision rate for typical content lengths
- * - Returns 8 hex characters (32 bits) for uniqueness
- */
-function simpleHash(str) {
-  let hash = 5381; // djb2 initial value
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i); // hash * 33 + char
-    hash = hash & hash; // Convert to 32-bit integer (prevent overflow)
-  }
-  // Convert to positive hex string and take first 8 chars
-  return Math.abs(hash).toString(16).substring(0, 8);
-}
-
-/**
- * Remove duplicate content items from array
- * Uses hash-based deduplication to avoid collisions from similar content.
- * 
- * Strategy:
- * - Creates unique key from: type + length + hash(plain text content)
- * - Uses stripHtml to extract plain text from HTML, so items with same text but different HTML are treated as duplicates
- * - Hash prevents collisions from similar beginnings/endings (unlike prefix-based approach)
- * - Type and length provide additional uniqueness guarantees
- * 
- * @param {Array} content - Content array with items {type, text, src, items, ...}
- * @returns {Array} Deduplicated content array
- */
-/**
  * Extract plain text from a single sub-item (for items[].html / items[].text)
  */
 function extractSubItemText(sub) {
@@ -187,6 +146,11 @@ function extractTextForDedup(item) {
   return '';
 }
 
+/**
+ * Remove items with identical types and normalized text, preserving first occurrence order.
+ * @param {Array} content - Extracted content items
+ * @returns {Array} Deduplicated content
+ */
 export function deduplicateContent(content) {
   log('deduplicateContent', { inputCount: content.length });
   
@@ -203,13 +167,7 @@ export function deduplicateContent(content) {
       continue;
     }
     
-    const lengthPart = sample.length;
-    
-    // Use hash instead of head/tail to avoid collisions with similar beginnings/endings
-    // Hash is based on plain text (not HTML), so items with same text but different HTML are treated as duplicates
-    // Format: "type:length:hash" ensures uniqueness even for similar content
-    const sampleHash = simpleHash(sample);
-    const key = `${type}:${lengthPart}:${sampleHash}`;
+    const key = `${type}:${sample.length}:${sample}`;
 
     if (!seen.has(key)) {
       seen.add(key);
@@ -252,9 +210,7 @@ function getItemPlainText(item) {
 }
 
 /**
- * Filter extraction noise: orphan number-only headings and page header blocks.
- * Orphan headings (e.g. "2") come from Tilda when a layout element contains only a section number.
- * Page header block is the duplicated title/breadcrumb (e.g. "Стратегия / Дорожная карта...").
+ * Remove orphan number-only headings while preserving article paragraphs.
  * @param {Array<import('../types.js').ContentItem>} content
  * @returns {Array<import('../types.js').ContentItem>}
  */
@@ -262,7 +218,6 @@ export function filterExtractionNoise(content) {
   if (!content || !content.length) return content;
   const result = [];
   let removedHeadings = 0;
-  let removedParagraphs = 0;
   for (const item of content) {
     const type = item.type || 'unknown';
     const plain = getItemPlainText(item);
@@ -270,19 +225,10 @@ export function filterExtractionNoise(content) {
       removedHeadings++;
       continue;
     }
-    if (type === 'paragraph' && plain) {
-      const hasStrategy = plain.includes('Стратегия');
-      const hasRoadmap = plain.includes('Дорожная карта');
-      const hasDirections = plain.includes('Направления научного поиска');
-      if (hasStrategy && hasRoadmap && hasDirections) {
-        removedParagraphs++;
-        continue;
-      }
-    }
     result.push(item);
   }
-  if (removedHeadings > 0 || removedParagraphs > 0) {
-    log('filterExtractionNoise', { inputCount: content.length, outputCount: result.length, removedHeadings, removedParagraphs });
+  if (removedHeadings > 0) {
+    log('filterExtractionNoise', { inputCount: content.length, outputCount: result.length, removedHeadings });
   }
   return result;
 }

@@ -6,7 +6,7 @@
 import { log, logError } from '../../utils/logging.js';
 
 // Core modules
-import { loadPdfDocument } from './core/pdf-loader.js';
+import { loadPdfDocument, destroyPdfDocument } from './core/pdf-loader.js';
 import { collectSampleItems } from './core/metrics-collector.js';
 import { collectAllLinesForGapAnalysis } from './core/gap-analysis-collector.js';
 import { extractContentFromPages } from './core/content-extractor.js';
@@ -35,9 +35,12 @@ export async function extractPdfContent(url) {
   const marker = '=== PDF_EXTRACTION_START_MARKER_V6 ===';
   log(startMsg, marker, { url, version: 'v6' });
   
+  let pdf = null;
   try {
     // Step 1: Load PDF document
-    const { pdf, numPages, metadata, outline } = await loadPdfDocument(url);
+    const loaded = await loadPdfDocument(url);
+    pdf = loaded.pdf;
+    const { numPages, metadata, outline } = loaded;
     
     // Step 2: Collect sample items for metrics analysis
     const sampleItems = await collectSampleItems(pdf, numPages);
@@ -92,5 +95,7 @@ export async function extractPdfContent(url) {
   } catch (error) {
     logError('[PDF v3] PDF extraction failed', error);
     throw error;
+  } finally {
+    await destroyPdfDocument(pdf);
   }
 }

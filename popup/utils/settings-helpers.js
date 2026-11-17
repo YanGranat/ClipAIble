@@ -5,89 +5,51 @@
  * Handles complex settings interactions and state synchronization
  */
 
-import { log, logError } from '../../scripts/utils/logging.js';
+import { logError } from '../../scripts/utils/logging.js';
 import { CONFIG } from '../../scripts/utils/config.js';
 import { STORAGE_KEYS } from '../constants.js';
 
-// Debounce timer for settings save
-let settingsSaveTimer = null;
-let isSavingSettings = false; // Flag to prevent concurrent saves
+const callbackTimers = new Map();
+const revisions = new Map();
 
 /**
- * Debounced settings save - saves settings after delay of inactivity
+ * Persist settings immediately and debounce each setting's UI callback.
  * @param {string} key - Storage key
  * @param {*} value - Value to save
  * @param {Function} [callback] - Optional callback after save
  */
 export function debouncedSaveSettings(key, value, callback = null) {
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer);
-  }
-  
-  settingsSaveTimer = setTimeout(async () => {
-    // Prevent concurrent saves
-    if (isSavingSettings) {
-      // If already saving, schedule another save after current one completes
-      if (callback) {
-        const originalCallback = callback;
-        callback = async () => {
-          await originalCallback();
-          // Retry save after current one completes
-          setTimeout(() => debouncedSaveSettings(key, value, null), CONFIG.UI_RETRY_DELAY);
-        };
-      } else {
-        // Retry save after current one completes
-        setTimeout(() => debouncedSaveSettings(key, value, callback), CONFIG.UI_RETRY_DELAY);
-      }
-      return;
-    }
-    
-    isSavingSettings = true;
+  const revision = (revisions.get(key) || 0) + 1;
+  revisions.set(key, revision);
+  const write = chrome.storage.local.set({ [key]: value }).then(() => {
     try {
-      // Log only in DEBUG mode to reduce production noise
-      if (CONFIG.LOG_LEVEL === 0) {
-        const valueSize = typeof value === 'string' ? value.length :
-                         typeof value === 'object' && value !== null ? JSON.stringify(value).length : 0;
-        const valuePreview = typeof value === 'string' ? (value.length > 100 ? value.substring(0, 100) + '...' : value) :
-                            typeof value === 'object' && value !== null ? `[object with ${Object.keys(value).length} keys]` : value;
+      chrome.runtime.sendMessage({
+        action: 'logSetting',
+        data: { key, value, valueType: typeof value, timestamp: Date.now() }
+      }).catch(() => {});
+    } catch (_) {}
+    return true;
+  }).catch(error => {
+    logError('Failed to save settings', error);
+    return false;
+  });
 
-        log('[ClipAIble Popup] Saving setting', {
-          key,
-          valueType: typeof value,
-          valueSize,
-          valuePreview,
-          isObject: typeof value === 'object' && !Array.isArray(value) && value !== null,
-          objectKeys: typeof value === 'object' && !Array.isArray(value) && value !== null ? Object.keys(value) : null
-        });
-      }
-      
-      await chrome.storage.local.set({ [key]: value });
-      
-      // CRITICAL: Send setting change to service worker for centralized logging
+  clearTimeout(callbackTimers.get(key));
+  callbackTimers.delete(key);
+  if (callback) {
+    const timer = setTimeout(async () => {
       try {
-        chrome.runtime.sendMessage({
-          action: 'logSetting',
-          data: {
-            key,
-            value,
-            valueType: typeof value,
-            timestamp: Date.now()
-          }
-        }).catch(() => {
-          // Ignore errors when sending log (non-critical)
-        });
-      } catch (sendError) {
-        // Ignore errors when sending log (non-critical)
+        const saved = await write;
+        if (saved && revisions.get(key) === revision) await callback();
+      } catch (error) {
+        logError('Failed to update settings UI', error);
+      } finally {
+        if (callbackTimers.get(key) === timer) callbackTimers.delete(key);
       }
-      
-      if (callback) await callback();
-    } catch (error) {
-      logError('Failed to save settings', error);
-    } finally {
-      isSavingSettings = false;
-      settingsSaveTimer = null;
-    }
-  }, CONFIG.UI_DEBOUNCE_DELAY);
+    }, CONFIG.UI_DEBOUNCE_DELAY);
+    callbackTimers.set(key, timer);
+  }
+  return write;
 }
 
 /**

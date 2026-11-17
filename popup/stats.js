@@ -5,6 +5,17 @@
 import { t, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { logError, log } from '../scripts/utils/logging.js';
 import { ELEMENT_IDS } from './constants.js';
+import { escapeHtml } from '../scripts/utils/html.js';
+
+export function getSafeHistoryUrl(value) {
+  if (typeof value !== 'string') return '#';
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:', 'file:'].includes(url.protocol) ? url.href : '#';
+  } catch {
+    return '#';
+  }
+}
 
 /**
  * Initialize stats module with dependencies
@@ -15,13 +26,8 @@ import { ELEMENT_IDS } from './constants.js';
 export function initStats(deps) {
   const { showToast } = deps;
 
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
   function formatRelativeDate(date) {
+    if (!Number.isFinite(date.getTime())) return '';
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
@@ -82,7 +88,7 @@ export function initStats(deps) {
           return;
         }
         
-        if (stats.history && stats.history.length > 0) {
+        if (Array.isArray(stats.history) && stats.history.length > 0) {
           // Use DocumentFragment to batch DOM operations
           const fragment = document.createDocumentFragment();
           const tempDiv = document.createElement('div');
@@ -92,15 +98,16 @@ export function initStats(deps) {
           const openOriginalArticleText = locale.openOriginalArticle || UI_LOCALES.en.openOriginalArticle;
           
           tempDiv.innerHTML = stats.history.map((item, index) => {
+            if (!item || typeof item !== 'object') return '';
             const date = new Date(item.date);
             const dateStr = formatRelativeDate(date);
             const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
             return `
               <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
-                <a href="${escapeHtml(item.url || '#')}" class="history-link" target="_blank" title="${escapeHtml(openOriginalArticleText)}">
+                <a href="${escapeHtml(getSafeHistoryUrl(item.url))}" class="history-link" target="_blank" rel="noopener" title="${escapeHtml(openOriginalArticleText)}">
                   <div class="history-title">${escapeHtml(item.title)}</div>
                   <div class="history-meta">
-                    <span class="history-format">${item.format}</span>
+                    <span class="history-format">${escapeHtml(item.format)}</span>
                     <span class="history-domain">${escapeHtml(item.domain)}</span>
                     ${timeStr ? `<span class="history-time">${timeStr}</span>` : ''}
                     <span class="history-date">${dateStr}</span>
@@ -156,7 +163,7 @@ export function initStats(deps) {
         
         // Display cached domains list
         const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
-        if (domainsListEl && stats.domains) {
+        if (domainsListEl && Array.isArray(stats.domains)) {
           if (stats.domains.length === 0) {
             const noCachedDomainsText = await t('noCachedDomains');
             domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
@@ -167,13 +174,14 @@ export function initStats(deps) {
             const tempDiv = document.createElement('div');
             
             tempDiv.innerHTML = stats.domains.map(item => {
+              if (!item || typeof item !== 'object') return '';
               if (item.invalidated) return ''; // Skip invalidated domains
               
               return `
                 <div class="cache-domain-item">
                   <span class="cache-domain-name" title="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</span>
                   <div class="cache-domain-meta">
-                    <span>${item.age}</span>
+                    <span>${escapeHtml(item.age)}</span>
                   </div>
                   <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" data-i18n-title="deleteFromCache">✕</button>
                 </div>

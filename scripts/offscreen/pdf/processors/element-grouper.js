@@ -3,7 +3,7 @@
 // Strategy: First group lines into blocks by gaps, then classify grouped blocks
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { FONT_SIZE_THRESHOLDS, CROSS_PAGE_BREAK_MARKER, PAGE_BREAK_CONTEXT, CONTINUATION_THRESHOLDS, DEFAULT_METRICS } from '../constants.js';
 import { shouldContinueBlock } from './continuation.js';
 import { analyzeStructure } from '../analyzers/structure.js';

@@ -3,18 +3,19 @@
 // Facade module that imports and combines all settings submodules
 // Handles settings loading, saving, API keys, models, UI updates, etc.
 
-import { decryptApiKey, maskApiKey } from '../scripts/utils/encryption.js';
+import { decryptApiKey, maskApiKey, removeApiKeyIfUnchanged } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
-import { getProviderFromModel } from '../scripts/api/index.js';
 import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
+import { resolveStoredModelSelection } from '../scripts/utils/model-catalog.js';
 import { ELEMENT_IDS, STORAGE_KEYS } from './constants.js';
 
 // Import submodules
 import { initApiKeys } from './settings/api-keys.js';
 import { initModels } from './settings/models.js';
 import { initStyles } from './settings/styles.js';
+import { restoreTtsSelect } from './settings/audio.js';
 import { initAudio } from './settings/audio.js';
 import { initUIVisibility } from './settings/ui-visibility.js';
 
@@ -161,6 +162,9 @@ export function initSettings(deps) {
         STORAGE_KEYS.ELEVENLABS_SPEAKER_BOOST,
         STORAGE_KEYS.ELEVENLABS_FORMAT,
         STORAGE_KEYS.STORAGE_QWEN_API_KEY,
+        STORAGE_KEYS.QWEN_MODEL,
+        STORAGE_KEYS.QWEN_WORKSPACE_ID,
+        STORAGE_KEYS.QWEN_REGION,
         STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY,
         STORAGE_KEYS.RESPEECHER_TEMPERATURE,
         STORAGE_KEYS.RESPEECHER_REPETITION_PENALTY,
@@ -186,7 +190,7 @@ export function initSettings(deps) {
       });
       
       // Load API provider (default: openai)
-      const apiProvider = String(result[STORAGE_KEYS.API_PROVIDER] || 'openai');
+      const apiProvider = resolveStoredModelSelection(result).provider;
       log('loadSettings: setting API provider', { apiProvider, hasElement: !!elements.apiProviderSelect });
       if (elements.apiProviderSelect) {
         elements.apiProviderSelect.value = apiProvider;
@@ -296,26 +300,6 @@ export function initSettings(deps) {
           const apiKey = String(result[STORAGE_KEYS.GOOGLE_API_KEY] || '');
           elements.googleApiKey.value = maskApiKey(apiKey);
           elements.googleApiKey.dataset.encrypted = apiKey;
-        }
-      }
-      
-      // Model is already set by updateApiProviderUI() -> updateModelList()
-      // But we need to ensure saved model is selected if it belongs to current provider
-      if (result[STORAGE_KEYS.MODEL] && elements.modelSelect) {
-        const savedModel = String(result[STORAGE_KEYS.MODEL]);
-        const savedModelProvider = getProviderFromModel(savedModel);
-        const currentProvider = elements.apiProviderSelect?.value || 'openai';
-        
-        // Only set saved model if it belongs to current provider
-        // Otherwise updateModelList() has already set the first model of the provider
-        if (savedModelProvider === currentProvider) {
-          // Check if the model option exists in the select
-          const optionExists = Array.from(elements.modelSelect.options).some(
-            opt => opt.value === savedModel
-          );
-          if (optionExists) {
-            elements.modelSelect.value = savedModel;
-          }
         }
       }
       
@@ -575,11 +559,7 @@ export function initSettings(deps) {
         elements.themeSelect.value = String(result[STORAGE_KEYS.STORAGE_THEME]);
       }
       
-      if (result[STORAGE_KEYS.STORAGE_UI_LANGUAGE] && elements.uiLanguageSelect) {
-        elements.uiLanguageSelect.value = String(result[STORAGE_KEYS.STORAGE_UI_LANGUAGE]);
-      } else if (elements.uiLanguageSelect) {
-        elements.uiLanguageSelect.value = 'en';
-      }
+      if (elements.uiLanguageSelect) elements.uiLanguageSelect.value = await getUILanguage();
       
       // Load audio settings
       if (result[STORAGE_KEYS.AUDIO_PROVIDER]) {
@@ -677,7 +657,7 @@ export function initSettings(deps) {
             logWarn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
             elements.elevenlabsApiKey.value = '';
             elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
-            await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY);
+            await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY, result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]);
           } else {
             elements.elevenlabsApiKey.value = maskApiKey(decrypted);
             elements.elevenlabsApiKey.dataset.encrypted = apiKey;
@@ -687,7 +667,7 @@ export function initSettings(deps) {
           // Clear corrupted key - user needs to re-enter
           elements.elevenlabsApiKey.value = '';
           elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
-          await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY);
+          await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY, result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]);
         }
       }
       
@@ -702,7 +682,7 @@ export function initSettings(deps) {
             logWarn('Qwen API key in storage is corrupted (contains mask), clearing...');
             elements.qwenApiKey.value = '';
             elements.qwenApiKey.placeholder = await t('keyCorrupted');
-            await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_QWEN_API_KEY);
+            await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_QWEN_API_KEY, result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]);
           } else {
             elements.qwenApiKey.value = maskApiKey(decrypted);
             elements.qwenApiKey.dataset.encrypted = apiKey;
@@ -712,10 +692,14 @@ export function initSettings(deps) {
           // Clear corrupted key - user needs to re-enter
           elements.qwenApiKey.value = '';
           elements.qwenApiKey.placeholder = await t('keyCorrupted');
-          await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_QWEN_API_KEY);
+          await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_QWEN_API_KEY, result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]);
         }
       }
       
+      restoreTtsSelect(elements.qwenModel, result[STORAGE_KEYS.QWEN_MODEL]);
+      restoreTtsSelect(elements.qwenRegion, result[STORAGE_KEYS.QWEN_REGION]);
+      if (elements.qwenWorkspaceId) elements.qwenWorkspaceId.value = String(result[STORAGE_KEYS.QWEN_WORKSPACE_ID] || '');
+
       // Load and mask Respeecher API key
       if (result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY] && elements.respeecherApiKey) {
         try {
@@ -727,7 +711,7 @@ export function initSettings(deps) {
             logWarn('Respeecher API key in storage is corrupted (contains mask), clearing...');
             elements.respeecherApiKey.value = '';
             elements.respeecherApiKey.placeholder = await t('keyCorrupted');
-            await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY);
+            await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY, result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]);
           } else {
             elements.respeecherApiKey.value = maskApiKey(decrypted);
             elements.respeecherApiKey.dataset.encrypted = apiKey;
@@ -737,7 +721,7 @@ export function initSettings(deps) {
           // Clear corrupted key - user needs to re-enter
           elements.respeecherApiKey.value = '';
           elements.respeecherApiKey.placeholder = await t('keyCorrupted');
-          await chrome.storage.local.remove(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY);
+          await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY, result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]);
         }
       }
       
@@ -758,7 +742,7 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.ELEVENLABS_MODEL]) {
-        elements.elevenlabsModel.value = String(result[STORAGE_KEYS.ELEVENLABS_MODEL]);
+        restoreTtsSelect(elements.elevenlabsModel, String(result[STORAGE_KEYS.ELEVENLABS_MODEL]));
       }
       
       if (result[STORAGE_KEYS.ELEVENLABS_STABILITY] !== undefined) {
@@ -853,7 +837,7 @@ export function initSettings(deps) {
       }
       
       if (result[STORAGE_KEYS.GOOGLE_TTS_MODEL] && elements.googleTtsModel) {
-        elements.googleTtsModel.value = String(result[STORAGE_KEYS.GOOGLE_TTS_MODEL]);
+        restoreTtsSelect(elements.googleTtsModel, String(result[STORAGE_KEYS.GOOGLE_TTS_MODEL]));
       }
       
       if (result[STORAGE_KEYS.OPENAI_INSTRUCTIONS] !== undefined) {
@@ -934,21 +918,7 @@ export function initSettings(deps) {
       // 2. It calls updateTranslationVisibility() internally (which depends on format)
       // 3. It handles all format-specific visibility (PDF style, audio fields, TOC/abstract)
       
-      // Step 1: Update voice list for current provider (populates dropdown)
-      // CRITICAL: Save current value before updating to prevent loss
-      const currentVoiceValue = elements.audioVoice?.value;
       const currentProvider = elements.audioProvider.value;
-      
-      // If we have a valid voice value, save it before updateVoiceList potentially overwrites it
-      if (currentVoiceValue && currentVoiceValue !== '' && !/^\d+$/.test(String(currentVoiceValue))) {
-        log('[ClipAIble Settings] Preserving current voice value before updateVoiceList', {
-          provider: currentProvider,
-          currentVoiceValue
-        });
-        // Save it to ensure it's not lost
-        audioModule.saveAudioVoice(currentProvider, currentVoiceValue);
-      }
-      
       audioModule.updateVoiceList(currentProvider);
       
       // Step 2: Apply preset colors (if preset is selected) - already done in loadSettings()
@@ -977,67 +947,6 @@ export function initSettings(deps) {
       applyTheme();
       
       // Step 8: Restore summary if it exists or check if generation is in progress
-      // Check if generation flag is stale first
-      if (result[STORAGE_KEYS.SUMMARY_GENERATING]) {
-        const stored = await chrome.storage.local.get(['summary_generating_start_time']);
-        // CRITICAL: Use shorter threshold - summary should not take more than 15 minutes
-        // If it takes longer, it's likely stuck or failed
-        const STALE_THRESHOLD = 15 * 60 * 1000; // 15 minutes (reduced from 30)
-        
-        // If no timestamp exists, or timestamp is stale, reset the flag
-        if (!stored.summary_generating_start_time) {
-          // No timestamp - flag is from old version or was set incorrectly, reset it
-          logWarn('Summary generation flag has no timestamp, resetting', {});
-          await chrome.storage.local.set({ 
-            [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-            summary_generating_start_time: null
-          });
-          result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
-          
-          // Ensure button is enabled after reset
-          if (elements.generateSummaryBtn) {
-            elements.generateSummaryBtn.disabled = false;
-            const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-            elements.generateSummaryBtn.textContent = generateSummaryText;
-          }
-        } else {
-          const startTime = stored.summary_generating_start_time;
-          if (typeof startTime !== 'number') {
-            // Invalid timestamp - reset flag
-            logWarn('Summary generation flag has invalid timestamp, resetting', { startTime });
-            await chrome.storage.local.set({ 
-              [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-              summary_generating_start_time: null
-            });
-            result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
-            if (elements.generateSummaryBtn) {
-              elements.generateSummaryBtn.disabled = false;
-              const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-              elements.generateSummaryBtn.textContent = generateSummaryText;
-            }
-          } else {
-            const timeSinceStart = Date.now() - startTime;
-            
-            if (timeSinceStart > STALE_THRESHOLD) {
-              // Flag is stale - reset it
-              logWarn('Summary generation flag is stale on load, resetting', { timeSinceStart });
-              await chrome.storage.local.set({ 
-                [STORAGE_KEYS.SUMMARY_GENERATING]: false,
-                summary_generating_start_time: null
-              });
-              result[STORAGE_KEYS.SUMMARY_GENERATING] = false;
-              
-              // Ensure button is enabled after reset
-              if (elements.generateSummaryBtn) {
-                elements.generateSummaryBtn.disabled = false;
-                const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-                elements.generateSummaryBtn.textContent = generateSummaryText;
-              }
-            }
-          }
-        }
-      }
-      
       if (result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
         // Summary generation was in progress - show status
         const generatingText = await t('generatingSummary') || 'Generating summary...';
@@ -1050,10 +959,7 @@ export function initSettings(deps) {
         log('loadSettings: Summary generation in progress - will be handled by checkSummaryStatus polling');
       }
       
-      // CRITICAL: Summary persists across popup opens/closes
-      // Only cleared by: 1) extension reload (handled in background.js), 2) new generation start, 3) close button
-      // If summary exists and not generating, show it immediately
-      // Background.js clears summary on reload, so if it exists here, it's valid
+      // Restore completed summary text while the background owns generation status.
       if (result[STORAGE_KEYS.SUMMARY_TEXT] && !result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryText && elements.summaryContainer) {
         const savedSummary = String(result[STORAGE_KEYS.SUMMARY_TEXT]);
         elements.summaryText.dataset.originalMarkdown = savedSummary;
@@ -1116,6 +1022,7 @@ export function initSettings(deps) {
     
     // From models module
     updateModelList: modelsModule.updateModelList,
+    selectModel: modelsModule.selectModel,
     showCustomModelDropdown: modelsModule.showCustomModelDropdown,
     showAddModelDialog: modelsModule.showAddModelDialog,
     addCustomModel: modelsModule.addCustomModel,

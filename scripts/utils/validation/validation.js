@@ -1,6 +1,7 @@
 // @ts-check
 // Validation utilities for ClipAIble extension
 
+import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint } from '../../api/tts-catalog.js';
 import { setError, ERROR_CODES } from '../../state/processing.js';
 
 /**
@@ -25,11 +26,24 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
   if (provider === 'offline') {
     return true;
   }
+
+  let openaiKey;
+  if (provider === 'openai') {
+    try {
+      openaiKey = (await chrome.storage.local.get(['openai_api_key'])).openai_api_key;
+    } catch (error) {
+      await setError({
+        message: 'Could not read the OpenAI TTS API key. Please try again.',
+        code: ERROR_CODES.VALIDATION_ERROR
+      }, stopKeepAlive, data.processingRunId);
+      return false;
+    }
+  }
   
   // Map of provider names to their API key fields and display names
   const providerConfig = {
     openai: {
-      key: data.apiKey,
+      key: openaiKey,
       name: 'OpenAI'
     },
     elevenlabs: {
@@ -56,7 +70,7 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
     await setError({
       message: `Unknown audio provider: ${provider}`,
       code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive);
+    }, stopKeepAlive, data.processingRunId);
     return false;
   }
   
@@ -64,10 +78,18 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
     await setError({
       message: `${config.name} API key is required for audio. Please add it in settings.`,
       code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive);
+    }, stopKeepAlive, data.processingRunId);
     return false;
   }
   
+  if (provider === 'qwen') {
+    try {
+      getQwenTtsEndpoint(data.qwenModel || DEFAULT_QWEN_TTS_MODEL, data.qwenWorkspaceId, data.qwenRegion);
+    } catch (error) {
+      await setError({ message: error.message, code: ERROR_CODES.VALIDATION_ERROR }, stopKeepAlive, data.processingRunId);
+      return false;
+    }
+  }
   return true;
 }
 

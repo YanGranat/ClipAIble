@@ -11,7 +11,8 @@ vi.mock('../../scripts/utils/logging.js', () => ({
   logDebug: vi.fn()
 }));
 
-vi.mock('../../scripts/utils/html.js', () => ({
+vi.mock('../../scripts/utils/html.js', async (importOriginal) => ({
+  ...await importOriginal(),
   escapeHtml: vi.fn((text) => {
     return String(text || '')
       .replace(/&/g, '&amp;')
@@ -358,7 +359,6 @@ describe('generation/html-builder', () => {
       );
 
       // TOC is only added when generateToc is true and headings exist
-      // For this test, we just verify HTML structure is correct
       expect(htmlEn).toContain('<html');
       expect(htmlRu).toContain('<html');
     });

@@ -4,7 +4,7 @@
 // from being grouped into the same line
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { clusterObjects } from '../core/clustering.js';
 import { CLUSTERING, DEFAULT_METRICS } from '../constants.js';
 import { calculateGapStatistics } from '../utils/statistics.js';
@@ -34,7 +34,10 @@ export function detectPreliminaryColumns(items, viewport, metrics = {}) {
   log(`[PDF v3] detectPreliminaryColumns: Starting preliminary column detection - totalItems=${items.length}, baseFontSize=${baseFontSize}`);
   
   // Step 1: Collect X-coordinates (leftmost position of each item)
-  const xCoordinates = items.map(item => item.x || 0).filter(x => x >= 0 && isFinite(x));
+  const indexedCoordinates = items
+    .map((item, itemIndex) => ({ x: item.x || 0, itemIndex }))
+    .filter(item => item.x >= 0 && isFinite(item.x));
+  const xCoordinates = indexedCoordinates.map(item => item.x);
   
   if (xCoordinates.length === 0) {
     log('[PDF v3] detectPreliminaryColumns: No valid X-coordinates found');
@@ -63,7 +66,7 @@ export function detectPreliminaryColumns(items, viewport, metrics = {}) {
   const binSize = Math.max(5, baseFontSize * 0.3); // 0.3x font size, minimum 5px
   const minX = Math.min(...xCoordinates);
   const maxX = Math.max(...xCoordinates);
-  const numBins = Math.ceil((maxX - minX) / binSize);
+  const numBins = Math.floor((maxX - minX) / binSize) + 1;
   
   log(`[PDF v3] detectPreliminaryColumns: Distribution analysis - binSize=${binSize.toFixed(2)}, numBins=${numBins}, xRange=[${minX.toFixed(2)}, ${maxX.toFixed(2)}]`);
   
@@ -141,8 +144,7 @@ export function detectPreliminaryColumns(items, viewport, metrics = {}) {
   // Convert modes to clusters for compatibility with existing gap analysis code
   const xClusters = modes.map((mode, idx) => {
     // Find all items that fall within this mode's X-range
-    const itemsInMode = xCoordinates
-      .map((x, itemIdx) => ({ x, itemIndex: itemIdx }))
+    const itemsInMode = indexedCoordinates
       .filter(obj => obj.x >= mode.xStart && obj.x <= mode.xEnd);
     return itemsInMode;
   }).filter(cluster => cluster.length > 0);
@@ -275,13 +277,12 @@ export function detectPreliminaryColumns(items, viewport, metrics = {}) {
       // If gap is significant, add it to significantGaps
       if (gapBetweenModes >= gapThreshold) {
         // Find or create gap info
-        const existingGap = clusterGaps.find(g => 
-          Math.abs(g.currentMaxX - currentMode.xEnd) < binSize &&
-          Math.abs(g.nextMinX - nextMode.xStart) < binSize
+        const existingGap = clusterGaps.find(g =>
+          g.isBetweenClusters && g.clusterIndex1 === i && g.clusterIndex2 === i + 1
         );
         
         if (existingGap) {
-          if (!significantGaps.includes(existingGap)) {
+          if (existingGap.gap >= gapThreshold && !significantGaps.includes(existingGap)) {
             significantGaps.push(existingGap);
             log(`[PDF v3] detectPreliminaryColumns: Added mode gap to significant gaps (existing gap found)`);
           }

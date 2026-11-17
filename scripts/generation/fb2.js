@@ -6,7 +6,7 @@
 // @typedef {import('../types.js').GenerationData} GenerationData
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { stripHtml, markdownToHtml, cleanTildaArtifactsFromText } from '../utils/html.js';
+import { stripHtml, markdownToHtml, cleanTildaArtifactsFromText, sanitizeHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { PDF_LOCALIZATION, formatDateForDisplay, getLocaleFromLanguage, getExtensionVersion } from '../utils/config.js';
 import { getUILanguage, tSync } from '../locales.js';
@@ -14,27 +14,9 @@ import { PROCESSING_STAGES, isCancelled } from '../state/processing.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
+import { filterFigureParagraphs } from './content.js';
 import { buildTocStructure, renderTocAsFb2 } from './toc-builder.js';
 
-/**
- * Filter out paragraph elements that contain <figure> HTML when followed by an image element.
- * This prevents duplicate caption text in FB2.
- * 
- * @param {Array<import('../types.js').ContentItem>} content - Content array
- * @returns {Array<import('../types.js').ContentItem>} Filtered content array
- */
-function filterFigureParagraphs(content) {
-  if (!content || !Array.isArray(content)) return content;
-  
-  return content.filter((item, index) => {
-    if (item.type !== 'paragraph') return true;
-    const text = item.text || item.html || '';
-    if (!text.includes('<figure')) return true;
-    const nextItem = content[index + 1];
-    if (!nextItem || nextItem.type !== 'image') return true;
-    return false;
-  });
-}
 
 /**
  * Generate FB2 file from content
@@ -67,7 +49,7 @@ export async function generateFb2(data, updateState) {
   } = data;
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = filterFigureParagraphs(content);
+  const filteredContent = filterFigureParagraphs(content, sourceUrl);
   if (filteredContent.length !== (content?.length || 0)) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content?.length || 0,
@@ -205,7 +187,7 @@ ${generateBinaries(images)}
   const filename = `${safeFilename}.fb2`;
   
   // Check if processing was cancelled before downloading
-  if (isCancelled()) {
+  if (isCancelled(data.processingRunId)) {
     log('Processing cancelled, skipping FB2 download');
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
@@ -222,7 +204,7 @@ ${generateBinaries(images)}
     const objectUrl = urlApi.createObjectURL(blob);
     try {
       // Check again before actual download
-      if (isCancelled()) {
+      if (isCancelled(data.processingRunId)) {
         log('Processing cancelled, skipping FB2 download');
         throw new Error(tSync('statusCancelled', await getUILanguage()));
       }
@@ -251,7 +233,7 @@ ${generateBinaries(images)}
     });
 
     // Check again before actual download
-    if (isCancelled()) {
+    if (isCancelled(data.processingRunId)) {
       log('Processing cancelled, skipping FB2 download');
       throw new Error(tSync('statusCancelled', await getUILanguage()));
     }
@@ -422,7 +404,7 @@ ${author.middleName ? `        <middle-name>${escapeXml(author.middleName)}</mid
     <title-info>
 ${authorXml}
       <book-title>${escapedTitle}</book-title>
-      <lang>${lang}</lang>
+      <lang>${escapeXml(lang)}</lang>
     </title-info>
     <document-info>
       <author>
@@ -521,7 +503,7 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
     } else {
       // For non-local files, show "Source:" label with link
       bodyContent += `
-      <p><a l:href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a></p>`;
+      <p>${convertInlineHtmlToFb2(`<a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a>`, sourceUrl)}</p>`;
     }
   }
   
@@ -973,6 +955,8 @@ function convertInlineHtmlToFb2(html, sourceUrl = '') {
     // If HTML is present, markdown conversion might break existing structure
     result = markdownToHtml(result);
   }
+
+  result = sanitizeHtml(result, sourceUrl);
   
   // Convert internal links to local anchors first
   if (sourceUrl) {

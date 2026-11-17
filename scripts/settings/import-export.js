@@ -2,11 +2,12 @@
 // Settings import/export module
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { exportStats } from '../stats/index.js';
+import { exportStats, normalizeStats } from '../stats/index.js';
 import { getCacheStats } from '../cache/selectors.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
+import { DOCUMENT_FONT_FAMILIES, isDocumentColor } from '../utils/styles-validation.js';
 
 // Get current extension version (centralized function)
 function getCurrentVersion() {
@@ -38,6 +39,9 @@ const STORAGE_KEYS_TO_EXPORT = [
   
   // Audio settings
   'audio_provider',
+  'qwen_model',
+  'qwen_region',
+  'qwen_workspace_id',
   'elevenlabs_model',
   'elevenlabs_format',
   'elevenlabs_stability',
@@ -62,6 +66,10 @@ const STORAGE_KEYS_TO_EXPORT = [
   'pdf_text_color',
   'pdf_heading_color',
   'pdf_link_color',
+  'pdf_custom_bg_color',
+  'pdf_custom_text_color',
+  'pdf_custom_heading_color',
+  'pdf_custom_link_color',
   
   // UI settings
   'popup_theme',
@@ -272,11 +280,12 @@ export async function importSettings(jsonData, options = {}) {
     // Valid enum values for validation
     const VALID_ENUMS = {
       api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter', 'deepseek'],
-      audio_provider: ['openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
+      audio_provider: ['offline', 'openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
       output_format: ['pdf', 'epub', 'fb2', 'markdown', 'audio'],
-      extraction_mode: ['auto', 'manual'],
+      extraction_mode: ['automatic', 'selector', 'extract'],
       page_mode: ['single', 'multi'],
-      pdf_style_preset: ['light', 'dark', 'sepia', 'custom'],
+      pdf_style_preset: ['light', 'dark', 'sepia', 'contrast', 'custom'],
+      pdf_font_family: DOCUMENT_FONT_FAMILIES,
       popup_theme: ['light', 'dark', 'auto']
     };
     
@@ -348,6 +357,11 @@ export async function importSettings(jsonData, options = {}) {
       }
       
       if (data.settings[key] !== undefined) {
+        if (/^pdf_(?:custom_)?(?:bg|text|heading|link)_color$/.test(key) &&
+            !isDocumentColor(data.settings[key])) {
+          result.warnings.push(`Invalid ${key} value: expected a six-digit hex color. Skipping.`);
+          continue;
+        }
         // Validate enum values
         if (VALID_ENUMS[key] && !VALID_ENUMS[key].includes(data.settings[key])) {
           logWarn('Invalid enum value for setting', { key, value: data.settings[key], valid: VALID_ENUMS[key] });
@@ -358,7 +372,11 @@ export async function importSettings(jsonData, options = {}) {
         // Validate numeric ranges
         if (NUMERIC_RANGES[key]) {
           const range = NUMERIC_RANGES[key];
-          if (typeof data.settings[key] !== 'number' || data.settings[key] < range.min || data.settings[key] > range.max) {
+          const rawValue = data.settings[key];
+          const numericValue = typeof rawValue === 'string' && rawValue.trim() !== ''
+            ? Number(rawValue)
+            : rawValue;
+          if (typeof numericValue !== 'number' || !Number.isFinite(numericValue) || numericValue < range.min || numericValue > range.max) {
             logWarn('Invalid numeric value for setting', { key, value: data.settings[key], range });
             result.warnings.push(`Invalid ${key} value: ${data.settings[key]}. Must be between ${range.min} and ${range.max}. Skipping.`);
             continue;
@@ -392,7 +410,7 @@ export async function importSettings(jsonData, options = {}) {
           }
         }
         
-        if (overwriteExisting || !currentSettings[key]) {
+        if (overwriteExisting || currentSettings[key] === undefined || currentSettings[key] === null) {
           settingsToImport[key] = data.settings[key];
           result.settingsImported++;
         } else {
@@ -457,7 +475,7 @@ export async function importSettings(jsonData, options = {}) {
     // Import statistics
     if (importStats && data.statistics) {
       try {
-        await chrome.storage.local.set({ extension_stats: data.statistics });
+        await chrome.storage.local.set({ extension_stats: normalizeStats(data.statistics) });
         result.statsImported = true;
         log('Statistics imported');
       } catch (error) {

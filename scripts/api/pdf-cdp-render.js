@@ -3,10 +3,6 @@
  * CDP-based PDF Page Rendering
  * 
  * Uses Chrome DevTools Protocol to capture PDF pages via Page.captureScreenshot
- * This replaces the problematic offscreen document rendering approach
- * 
- * @date 2026-01-01
- * @version 1.1.0 - Fixed Image API issue in Service Worker (removed Image usage)
  */
 
 import { log, logError, logWarn, criticalLog } from '../utils/logging.js';
@@ -14,13 +10,25 @@ import { CONFIG } from '../utils/config.js';
 import { checkCancellation } from '../utils/processing/pipeline-helpers.js';
 
 /**
+ * Check the caller's independent job and optional document-processing run.
+ * @param {string} context
+ * @param {{processingRunId?: string, checkCancelled?: function(): (void|Promise<void>)}} [options]
+ */
+async function checkCdpCancellation(context, options = {}) {
+  if (options.checkCancelled) await options.checkCancelled();
+  if (options.processingRunId !== undefined) await checkCancellation(context, options.processingRunId);
+}
+
+/**
  * Measure PDF layout structure in original user tab (before opening new tabs)
  * This measures sidebar width and PDF content coordinates in the tab where user opened PDF
  * 
  * @param {number} tabId - Original tab ID where user opened PDF
+ * @param {{processingRunId?: string, checkCancelled?: function(): (void|Promise<void>)}} [cancellationOptions]
  * @returns {Promise<Object|null>} Layout structure: { sidebarWidth, pdfContentX, pdfContentY, pdfContentWidth, pdfContentHeight } or null if failed
  */
-export async function measurePdfLayoutInOriginalTab(tabId) {
+export async function measurePdfLayoutInOriginalTab(tabId, cancellationOptions) {
+  await checkCdpCancellation('PDF layout measurement', cancellationOptions);
   if (!tabId) {
     const errorMsg = 'No tabId provided for layout measurement';
     logError('[CDP Render] ❌ ' + errorMsg, { tabId });
@@ -63,7 +71,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
         timestamp: Date.now()
       });
       
-      await chrome.debugger.attach(debuggee, '1.3');
+      (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.debugger.attach(debuggee, '1.3'));
       debuggerAttached = true;
       
       criticalLog('[CDP Render] ✅ Debugger attached successfully to original tab', 'PDF_LAYOUT_DEBUGGER_ATTACHED', {
@@ -82,19 +90,19 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
     }
     
     // Enable domains
-    await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
-    await chrome.debugger.sendCommand(debuggee, 'DOM.enable');
-    await chrome.debugger.sendCommand(debuggee, 'Page.enable');
+    await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
+    await sendCdpCommand(debuggee, 'DOM.enable', undefined, cancellationOptions);
+    await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
     
     // Get layout metrics
     /** @type {any} */
-    const layoutMetrics = await chrome.debugger.sendCommand(debuggee, 'Page.getLayoutMetrics', {});
+    const layoutMetrics = await sendCdpCommand(debuggee, 'Page.getLayoutMetrics', {}, cancellationOptions);
     const viewportWidth = layoutMetrics?.cssLayoutViewport?.clientWidth || 0;
     const viewportHeight = layoutMetrics?.cssLayoutViewport?.clientHeight || 0;
     
     // Get document root
     /** @type {any} */
-    const documentResult = await chrome.debugger.sendCommand(debuggee, 'DOM.getDocument', { depth: 3 });
+    const documentResult = await sendCdpCommand(debuggee, 'DOM.getDocument', { depth: 3 }, cancellationOptions);
     
     let pdfContentArea = null;
     let sidebarWidth = 0;
@@ -119,14 +127,14 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
       for (const selector of sidebarSelectors) {
         try {
           /** @type {any} */
-          const queryResult = await chrome.debugger.sendCommand(debuggee, 'DOM.querySelector', { 
+          const queryResult = await sendCdpCommand(debuggee, 'DOM.querySelector', {
             nodeId: rootNodeId, 
             selector: selector 
-          });
+          }, cancellationOptions);
           if (queryResult && queryResult.nodeId) {
             sidebarNodeId = queryResult.nodeId;
             /** @type {any} */
-            const sidebarBoxModel = await chrome.debugger.sendCommand(debuggee, 'DOM.getBoxModel', { nodeId: sidebarNodeId });
+            const sidebarBoxModel = await sendCdpCommand(debuggee, 'DOM.getBoxModel', { nodeId: sidebarNodeId }, cancellationOptions);
             if (sidebarBoxModel && sidebarBoxModel.model && sidebarBoxModel.model.content) {
               const sidebarContent = sidebarBoxModel.model.content;
               sidebarWidth = Math.abs(sidebarContent[2] - sidebarContent[0]); // Width of sidebar
@@ -152,7 +160,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
       if (sidebarWidth === 0) {
         try {
           /** @type {any} */
-          const sidebarEvalResult = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+          const sidebarEvalResult = await sendCdpCommand(debuggee, 'Runtime.evaluate', {
             expression: `
               (function() {
                 try {
@@ -268,7 +276,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
               })();
             `,
             returnByValue: true
-          });
+          }, cancellationOptions);
           
           if (sidebarEvalResult && sidebarEvalResult.result && sidebarEvalResult.result.value) {
             const sidebarInfo = sidebarEvalResult.result.value;
@@ -322,10 +330,10 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
       for (const selector of containerSelectors) {
         try {
           /** @type {any} */
-          const queryResult = await chrome.debugger.sendCommand(debuggee, 'DOM.querySelector', { 
+          const queryResult = await sendCdpCommand(debuggee, 'DOM.querySelector', {
             nodeId: rootNodeId, 
             selector: selector 
-          });
+          }, cancellationOptions);
           if (queryResult && queryResult.nodeId) {
             contentNodeId = queryResult.nodeId;
             foundSelector = selector;
@@ -347,22 +355,22 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
         // CRITICAL: Log full DOM structure for debugging to understand what elements exist
         try {
           /** @type {any} */
-          const bodyQuery = await chrome.debugger.sendCommand(debuggee, 'DOM.querySelector', { 
+          const bodyQuery = await sendCdpCommand(debuggee, 'DOM.querySelector', {
             nodeId: rootNodeId, 
             selector: 'body' 
-          });
+          }, cancellationOptions);
           if (bodyQuery && bodyQuery.nodeId) {
             // Get all child nodes of body to see what's actually in the DOM
             /** @type {any} */
-            const bodyNode = await chrome.debugger.sendCommand(debuggee, 'DOM.describeNode', { 
+            const bodyNode = await sendCdpCommand(debuggee, 'DOM.describeNode', {
               nodeId: bodyQuery.nodeId,
               depth: 5, // Deeper depth to see nested elements
               pierce: true // Include shadow DOM
-            });
+            }, cancellationOptions);
             
             // Also try to find ALL elements that might contain PDF
             /** @type {any} */
-            const allElements = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+            const allElements = await sendCdpCommand(debuggee, 'Runtime.evaluate', {
               expression: `
                 (function() {
                   const elements = [];
@@ -394,7 +402,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
                 })();
               `,
               returnByValue: true
-            });
+            }, cancellationOptions);
             
             // Type assertion for Chrome DevTools Protocol response
             /** @type {{result?: {type?: string, value?: any}, exceptionDetails?: any}} */
@@ -416,7 +424,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
       if (contentNodeId) {
         // Get box model for found element
         /** @type {any} */
-        const boxModelResult = await chrome.debugger.sendCommand(debuggee, 'DOM.getBoxModel', { nodeId: contentNodeId });
+        const boxModelResult = await sendCdpCommand(debuggee, 'DOM.getBoxModel', { nodeId: contentNodeId }, cancellationOptions);
         if (boxModelResult && boxModelResult.model && boxModelResult.model.content) {
           const content = boxModelResult.model.content;
           const x = content[0];
@@ -454,7 +462,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
             // Check if sidebar might be collapsed or hidden in original tab
             try {
               /** @type {any} */
-              const sidebarCheckResult = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+              const sidebarCheckResult = await sendCdpCommand(debuggee, 'Runtime.evaluate', {
                 expression: `
                   (function() {
                     try {
@@ -479,7 +487,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
                   })();
                 `,
                 returnByValue: true
-              });
+              }, cancellationOptions);
               
               if (sidebarCheckResult && sidebarCheckResult.result && sidebarCheckResult.result.value) {
                 const sidebarCheck = sidebarCheckResult.result.value;
@@ -584,14 +592,6 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
       }
     }
     
-    // Detach debugger
-    if (debuggerAttached) {
-      try {
-        await chrome.debugger.detach(debuggee);
-      } catch (e) {
-        logWarn('[CDP Render] Failed to detach debugger from original tab', { error: e.message, tabId });
-      }
-    }
     
     if (pdfContentArea) {
       return {
@@ -612,14 +612,6 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
         note: 'div#content element not found - cannot measure sidebar width'
       });
       
-      // Detach debugger before throwing
-      if (debuggerAttached) {
-        try {
-          await chrome.debugger.detach(debuggee);
-        } catch (e) {
-          // Ignore detach errors
-        }
-      }
       
       throw new Error(errorMsg);
     }
@@ -627,14 +619,7 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
   } catch (error) {
     // If error is already our custom error, just re-throw it
     if (error.message && (error.message.includes('No tabId') || error.message.includes('Tab does not exist') || error.message.includes('Failed to attach debugger') || error.message.includes('Failed to find PDF content area'))) {
-      // Detach debugger before re-throwing
-      if (debuggerAttached) {
-        try {
-          await chrome.debugger.detach(debuggee);
-        } catch (e) {
-          // Ignore detach errors
-        }
-      }
+
       throw error; // Re-throw our custom errors
     }
     
@@ -645,16 +630,17 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
       stack: error.stack
     });
     
-    // Detach debugger on error
+
+    throw error; // Re-throw to abort processing
+  } finally {
     if (debuggerAttached) {
+      debuggerAttached = false;
       try {
         await chrome.debugger.detach(debuggee);
-      } catch (e) {
-        // Ignore detach errors
+      } catch (error) {
+        logWarn('[CDP Render] Failed to detach debugger from original tab', { tabId, error: error.message });
       }
     }
-    
-    throw error; // Re-throw to abort processing
   }
 }
 
@@ -665,9 +651,11 @@ export async function measurePdfLayoutInOriginalTab(tabId) {
  * @param {number} pageNum - Page number (1-based)
  * @param {number} [scale=2.0] - Scale factor (not used in CDP, kept for API compatibility)
  * @param {ArrayBuffer} [pdfData] - Optional: PDF file data (not used in CDP, kept for API compatibility)
+ * @param {{processingRunId?: string, checkCancelled?: function(): (void|Promise<void>)}} [cancellationOptions]
  * @returns {Promise<Object>} { imageData (base64 data URL), width, height }
  */
-export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfData = null) {
+export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfData = null, cancellationOptions) {
+  await checkCdpCancellation('PDF page rendering', cancellationOptions);
   const startTime = Date.now();
   const stepTimes = {};
   
@@ -685,10 +673,10 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
     const step1Start = Date.now();
     
     // Create new tab for PDF
-    tab = await chrome.tabs.create({
+    tab = (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.tabs.create({
       url: pdfUrl,
       active: false  // CRITICAL: Should be invisible
-    });
+    }));
     debuggee.tabId = tab.id;
     stepTimes.step1_createTab = Date.now() - step1Start;
     
@@ -703,15 +691,15 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
 
     // Step 2: Wait for tab to load
     const step2Start = Date.now();
-    await waitForTabLoad(tab.id);
+    await waitForTabLoad(tab.id, cancellationOptions);
     stepTimes.step2_waitForLoad = Date.now() - step2Start;
 
     // Step 3: Attach debugger
-    await chrome.debugger.attach(debuggee, '1.3');
+    (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.debugger.attach(debuggee, '1.3'));
     debuggerAttached = true;
 
     // Step 4: Enable Page domain
-    await chrome.debugger.sendCommand(debuggee, 'Page.enable');
+    await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
 
     // Step 5: Navigate to specific page
     const step5Start = Date.now();
@@ -728,7 +716,7 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
       tabId: tab.id,
       debuggerAttached
     });
-    await ensureDebuggerAttached(debuggee);
+    await ensureDebuggerAttached(debuggee, undefined, cancellationOptions);
     
     log('[CDP Render] [STEP 5b] Sending Page.navigate command...', {
       tabId: tab.id,
@@ -736,7 +724,7 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
       timestamp: Date.now()
     });
     
-    const navigateResult = await chrome.debugger.sendCommand(debuggee, 'Page.navigate', { url: pageUrl });
+    const navigateResult = await sendCdpCommand(debuggee, 'Page.navigate', { url: pageUrl }, cancellationOptions);
     stepTimes.step5_navigate = Date.now() - step5Start;
     
     log('[CDP Render] [STEP 5] ✅ Navigation command sent', {
@@ -752,12 +740,12 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
     log('[CDP Render] [STEP 5c] Waiting 200ms after navigation...', {
       timestamp: step5cStart
     });
-    await sleep(200); // Reduced from 500ms to 200ms - navigation initiates quickly, waitForPageLoad handles real waiting
+    await sleep(200, cancellationOptions); // Reduced from 500ms to 200ms - navigation initiates quickly, waitForPageLoad handles real waiting
     
     log('[CDP Render] [STEP 5d] Checking debugger attachment after navigation...', {
       tabId: tab.id
     });
-    await ensureDebuggerAttached(debuggee);
+    await ensureDebuggerAttached(debuggee, undefined, cancellationOptions);
     stepTimes.step5_postNavigate = Date.now() - step5cStart;
     
     log('[CDP Render] [STEP 5c-d] ✅ Post-navigation checks complete', {
@@ -767,7 +755,7 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
 
     // Step 6: Wait for page to load
     const step6Start = Date.now();
-    await waitForPageLoad(debuggee, pageNum);
+    await waitForPageLoad(debuggee, pageNum, cancellationOptions);
     stepTimes.step6_waitForPageLoad = Date.now() - step6Start;
 
     // Step 7: Capture screenshot
@@ -782,7 +770,7 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
     }
     
     /** @type {any} */
-    const screenshotResult = await chrome.debugger.sendCommand(
+    const screenshotResult = await sendCdpCommand(
       debuggee,
       'Page.captureScreenshot',
       {
@@ -790,7 +778,7 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
         quality: 100,
         fromSurface: true  // CRITICAL for Windows
       }
-    );
+    , cancellationOptions);
     stepTimes.step7_captureScreenshot = Date.now() - step7Start;
 
     if (!screenshotResult || !screenshotResult.data) {
@@ -805,16 +793,8 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
     // Step 8: Process screenshot data
     const step8Start = Date.now();
     
-    // CDP doesn't provide exact dimensions, so we'll use reasonable defaults
-    // For PDF pages, typical dimensions are around 800-1200px width
-    // We'll use 1200x1600 as default (A4 ratio at ~150 DPI)
     const imageData = `data:image/png;base64,${screenshotResult.data}`;
-    
-    // Estimate dimensions from screenshot data size
-    // PNG screenshot from CDP is typically full viewport size
-    // Use default A4 dimensions at reasonable DPI
-    const width = 1200;  // Default width for PDF page
-    const height = 1600; // Default height for PDF page (A4 ratio)
+    const { width, height } = getImageDimensions(imageData);
     
     stepTimes.step8_processData = Date.now() - step8Start;
     
@@ -936,9 +916,11 @@ export async function renderPdfPageImageCdp(pdfUrl, pageNum, scale = 2.0, pdfDat
  * @param {number} [scale=2.0] - Scale factor (not used, kept for API compatibility)
  * @param {ArrayBuffer} [pdfData] - Optional: PDF file data (not used, kept for API compatibility)
  * @param {{width: number, height: number, widthInPoints?: number, heightInPoints?: number, conversionFactor?: number, mediaBox?: any, cropBox?: any}} [pdfPageDimensions] - Optional: PDF page dimensions from PDF.js API
+ * @param {Object|null} [originalTabLayout] - Layout measured in the source tab
+ * @param {{processingRunId?: string, checkCancelled?: function(): (void|Promise<void>)}} [cancellationOptions]
  * @returns {Promise<Array>} Array of { pageNum, imageData (base64), width, height } or { pageNum, error }
  */
-export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfData = null, pdfPageDimensions = null, originalTabLayout = null) {
+export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfData = null, pdfPageDimensions = null, originalTabLayout = null, cancellationOptions) {
   const startTime = Date.now();
   log('[CDP Render] Rendering all PDF pages via CDP', { 
     pdfUrl, 
@@ -961,7 +943,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
     // Chrome PDF viewer does NOT respond to Page.navigate with #page=N after PDF is loaded
     for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     // Check for cancellation before processing each page
-    await checkCancellation(`CDP render page ${pageNum}`);
+    await checkCdpCancellation(`CDP render page ${pageNum}`, cancellationOptions);
     
     const pageStartTime = Date.now();
     
@@ -999,7 +981,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           delay: PAGE_RETRY_DELAYS[retryAttempt - 1],
           timestamp: Date.now()
         });
-        await new Promise(resolve => setTimeout(resolve, PAGE_RETRY_DELAYS[retryAttempt - 1]));
+        await sleep(PAGE_RETRY_DELAYS[retryAttempt - 1], cancellationOptions);
       }
     
     try {
@@ -1014,40 +996,40 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
       });
       
       // Check for cancellation before opening tab
-      await checkCancellation(`CDP render opening tab for page ${pageNum}`);
+      await checkCdpCancellation(`CDP render opening tab for page ${pageNum}`, cancellationOptions);
       
       // Open PDF with page fragment in URL
-      tab = await chrome.tabs.create({
+      tab = (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.tabs.create({
         url: pageUrl,
         active: false  // CRITICAL: Should be invisible
-      });
+      }));
       debuggee.tabId = tab.id;
       
       // Step 2: Wait for tab to load
-      await waitForTabLoad(tab.id);
+      await waitForTabLoad(tab.id, cancellationOptions);
       
       // Step 3: Attach debugger
-      await chrome.debugger.attach(debuggee, '1.3');
+      (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.debugger.attach(debuggee, '1.3'));
       debuggerAttached = true;
 
       // Step 4: Enable Page and Runtime domains
-      await chrome.debugger.sendCommand(debuggee, 'Page.enable');
-      await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+      await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
+      await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
       
       
       // Step 4.5: Switch to tab, then reload page with correct URL
       // This ensures PDF is visible and properly navigated to correct page
       try {
         // Switch to the tab (make it active/visible)
-        await chrome.tabs.update(tab.id, { active: true });
-        await new Promise(resolve => setTimeout(resolve, 300));
+        (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.tabs.update(tab.id, { active: true }));
+        await sleep(300, cancellationOptions);
         
         // Update URL hash first via JavaScript, then reload
         try {
-          await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+          await sendCdpCommand(debuggee, 'Runtime.evaluate', {
             expression: `window.location.hash = '#page=${pageNum}'; window.location.hash;`,
             returnByValue: true
-          });
+          }, cancellationOptions);
         } catch (hashError) {
           logWarn('[CDP Render] [BATCH] Failed to update hash via JavaScript', {
             pageNum,
@@ -1057,9 +1039,9 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         
         // Reload page using Page.reload via CDP
         try {
-          await chrome.debugger.sendCommand(debuggee, 'Page.reload', {
+          await sendCdpCommand(debuggee, 'Page.reload', {
             ignoreCache: false
-          });
+          }, cancellationOptions);
         } catch (reloadError) {
           logWarn('[CDP Render] [BATCH] Page.reload failed, trying chrome.tabs.reload...', {
             pageNum,
@@ -1067,7 +1049,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           });
           // Fallback: try chrome.tabs.reload
           try {
-            await chrome.tabs.reload(tab.id);
+            (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.tabs.reload(tab.id));
           } catch (tabsReloadError) {
             logWarn('[CDP Render] [BATCH] chrome.tabs.reload also failed', {
               pageNum,
@@ -1077,25 +1059,25 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         }
         
         // Wait for page to reload
-        await waitForPageLoad(debuggee, pageNum);
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await waitForPageLoad(debuggee, pageNum, cancellationOptions);
+        await sleep(1000, cancellationOptions);
         
         // Reattach debugger if needed (may have been detached during reload)
         try {
-          await ensureDebuggerAttached(debuggee, 5);
-          await chrome.debugger.sendCommand(debuggee, 'Page.enable');
-          await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+          await ensureDebuggerAttached(debuggee, 5, cancellationOptions);
+          await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
+          await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
         } catch (attachError) {
           logWarn('[CDP Render] [BATCH] Failed to reattach debugger after reload', {
             pageNum,
             error: attachError.message
           });
           // Try one more time after additional delay
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await sleep(2000, cancellationOptions);
           try {
-            await ensureDebuggerAttached(debuggee, 3);
-            await chrome.debugger.sendCommand(debuggee, 'Page.enable');
-            await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+            await ensureDebuggerAttached(debuggee, 3, cancellationOptions);
+            await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
+            await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
           } catch (retryError) {
             logError('[CDP Render] [BATCH] Failed to reattach debugger even after retry', {
               pageNum,
@@ -1106,7 +1088,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         }
         
         // Wait 2.5 seconds after reload before screenshot
-        await new Promise(resolve => setTimeout(resolve, 2500));
+        await sleep(2500, cancellationOptions);
       } catch (reloadError) {
         logWarn('[CDP Render] [BATCH] Failed to reload page', {
           pageNum,
@@ -1121,7 +1103,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
       
       // Ensure debugger is attached before DOM operations
       try {
-        await ensureDebuggerAttached(debuggee, 2);
+        await ensureDebuggerAttached(debuggee, 2, cancellationOptions);
       } catch (ensureError) {
         logWarn('[CDP Render] [BATCH] Failed to ensure debugger before DOM operations', {
           pageNum,
@@ -1140,9 +1122,9 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
       });
       
       // Check for cancellation before waiting
-      await checkCancellation(`CDP render waiting for page ${pageNum} to render`);
+      await checkCdpCancellation(`CDP render waiting for page ${pageNum} to render`, cancellationOptions);
       
-      await sleep(1000);
+      await sleep(1000, cancellationOptions);
         
       // Initialize viewport dimensions
       // CRITICAL: Use larger viewport to ensure full page capture
@@ -1200,7 +1182,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           fallbackWidth: clipWidth,
           fallbackHeight: clipHeight,
           timestamp: Date.now()
-        });
+        }, 'warn');
       }
       
       criticalLog('[CDP Render] [BATCH] 🎯 INITIAL CLIP VALUES SET', 'PDF_CLIP_INITIAL', {
@@ -1235,16 +1217,16 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           });
           
           // Enable Runtime and DOM domains to find PDF content area
-          await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
-          await chrome.debugger.sendCommand(debuggee, 'DOM.enable');
+          await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
+          await sendCdpCommand(debuggee, 'DOM.enable', undefined, cancellationOptions);
           
           // Get document root
           /** @type {any} */
-          const documentResult = await chrome.debugger.sendCommand(
+          const documentResult = await sendCdpCommand(
             debuggee,
             'DOM.getDocument',
             { depth: 3 }
-          );
+          , cancellationOptions);
           
           // CRITICAL: Find PDF content area using CDP DOM methods (works even if Runtime.evaluate fails)
           try {
@@ -1268,11 +1250,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               for (const selector of containerSelectors) {
                 try {
                   /** @type {any} */
-                  const queryResult = await chrome.debugger.sendCommand(
+                  const queryResult = await sendCdpCommand(
                     debuggee,
                     'DOM.querySelector',
                     { nodeId: rootNodeId, selector: selector }
-                  );
+                  , cancellationOptions);
                   if (queryResult && queryResult.nodeId) {
                     contentNode = queryResult.nodeId;
                     criticalLog('[CDP Render] [BATCH] ✅ Found PDF container div#content (excludes sidebar)', 'PDF_CONTAINER_FOUND', {
@@ -1306,11 +1288,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 for (const selector of embedSelectors) {
                   try {
                     /** @type {any} */
-                    const queryResult = await chrome.debugger.sendCommand(
+                    const queryResult = await sendCdpCommand(
                       debuggee,
                       'DOM.querySelector',
                       { nodeId: rootNodeId, selector: selector }
-                    );
+                    , cancellationOptions);
                     if (queryResult && queryResult.nodeId) {
                       contentNode = queryResult.nodeId;
                       criticalLog('[CDP Render] [BATCH] ⚠️ Found PDF container via selector (may include sidebar)', 'PDF_CONTAINER_FOUND', {
@@ -1333,41 +1315,41 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               if (!contentNode) {
                 try {
                   /** @type {any} */
-                  const searchResult = await chrome.debugger.sendCommand(
+                  const searchResult = await sendCdpCommand(
                     debuggee,
                     'DOM.performSearch',
                     { query: '#content, #plugin, embed, div[id="content"]' }
-                  );
-                  if (searchResult && searchResult.searchId) {
+                  , cancellationOptions);
+                  if (searchResult?.searchId && searchResult.resultCount > 0) {
                     /** @type {any} */
-                    const searchNodesResult = await chrome.debugger.sendCommand(
+                    const searchNodesResult = await sendCdpCommand(
                       debuggee,
                       'DOM.getSearchResults',
-                      { searchId: searchResult.searchId, fromIndex: 0, toIndex: 10 }
-                    );
+                      { searchId: searchResult.searchId, fromIndex: 0, toIndex: Math.min(10, searchResult.resultCount) }
+                    , cancellationOptions);
                     if (searchNodesResult && searchNodesResult.nodeIds && searchNodesResult.nodeIds.length > 0) {
                       // Try each found node to see which one is the PDF container
                       for (const nodeId of searchNodesResult.nodeIds) {
                         try {
                           /** @type {any} */
-                          const nodeInfo = await chrome.debugger.sendCommand(
+                          const nodeInfo = await sendCdpCommand(
                             debuggee,
                             'DOM.describeNode',
                             { nodeId: nodeId }
-                          );
+                          , cancellationOptions);
                           if (nodeInfo && nodeInfo.node) {
                             const nodeName = nodeInfo.node.nodeName?.toLowerCase();
-                            const nodeIdAttr = nodeInfo.node.attributes?.find(attr => attr.name === 'id');
+                            const nodeIdAttr = getNodeAttribute(nodeInfo.node, 'id');
                             // Prefer div#content or embed#plugin
-                            if ((nodeName === 'div' && nodeIdAttr && nodeIdAttr.value === 'content') ||
-                                (nodeName === 'embed' && (nodeIdAttr?.value === 'plugin' || nodeInfo.node.attributes?.some(attr => attr.name === 'type' && attr.value?.includes('pdf'))))) {
+                            if ((nodeName === 'div' && nodeIdAttr === 'content') ||
+                                (nodeName === 'embed' && (nodeIdAttr === 'plugin' || getNodeAttribute(nodeInfo.node, 'type')?.includes('pdf')))) {
                               contentNode = nodeId;
                               criticalLog('[CDP Render] [BATCH] ✅ Found PDF container via DOM.performSearch', 'PDF_CONTAINER_FOUND_SEARCH', {
                                 pageNum,
                                 tabId: tab.id,
                                 nodeId: contentNode,
                                 nodeName: nodeName,
-                                nodeIdAttr: nodeIdAttr?.value,
+                                nodeIdAttr: nodeIdAttr,
                                 timestamp: Date.now()
                               });
                               break;
@@ -1379,7 +1361,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                       }
                       // Cleanup
                       try {
-                        await chrome.debugger.sendCommand(debuggee, 'DOM.discardSearchResults', { searchId: searchResult.searchId });
+                        await sendCdpCommand(debuggee, 'DOM.discardSearchResults', { searchId: searchResult.searchId }, cancellationOptions);
                       } catch (e) {
                         // Non-critical: cleanup failure is acceptable, continue processing
                         // Log at debug level only to avoid noise
@@ -1403,11 +1385,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               if (contentNode) {
                 try {
                   /** @type {any} */
-                  const boxModelResult = await chrome.debugger.sendCommand(
+                  const boxModelResult = await sendCdpCommand(
                     debuggee,
                     'DOM.getBoxModel',
                     { nodeId: contentNode }
-                  );
+                  , cancellationOptions);
                   if (boxModelResult && boxModelResult.model && boxModelResult.model.content) {
                     const content = boxModelResult.model.content;
                     if (content.length >= 8) {
@@ -1442,11 +1424,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   // Try getContentQuads as fallback
                   try {
                     /** @type {any} */
-                    const quadsResult = await chrome.debugger.sendCommand(
+                    const quadsResult = await sendCdpCommand(
                       debuggee,
                       'DOM.getContentQuads',
                       { nodeId: contentNode }
-                    );
+                    , cancellationOptions);
                     if (quadsResult && quadsResult.quads && quadsResult.quads.length > 0) {
                       const quad = quadsResult.quads[0];
                       // quad: [x0, y0, x1, y1, x2, y2, x3, y3]
@@ -1487,47 +1469,47 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 // CRITICAL: Log what we found in DOM for debugging
                 try {
                   /** @type {any} */
-                  const allNodesResult = await chrome.debugger.sendCommand(
+                  const allNodesResult = await sendCdpCommand(
                     debuggee,
                     'DOM.getDocument',
                     { depth: 5 }
-                  );
+                  , cancellationOptions);
                   if (allNodesResult && allNodesResult.root) {
                     // Try to get all element IDs and classes
                     /** @type {any} */
-                    const searchAllResult = await chrome.debugger.sendCommand(
+                    const searchAllResult = await sendCdpCommand(
                       debuggee,
                       'DOM.performSearch',
                       { query: '*' }
-                    );
-                    if (searchAllResult && searchAllResult.searchId) {
+                    , cancellationOptions);
+                    if (searchAllResult?.searchId && searchAllResult.resultCount > 0) {
                       /** @type {any} */
-                      const allNodesSearchResult = await chrome.debugger.sendCommand(
+                      const allNodesSearchResult = await sendCdpCommand(
                         debuggee,
                         'DOM.getSearchResults',
-                        { searchId: searchAllResult.searchId, fromIndex: 0, toIndex: 50 }
-                      );
+                        { searchId: searchAllResult.searchId, fromIndex: 0, toIndex: Math.min(50, searchAllResult.resultCount) }
+                      , cancellationOptions);
                       if (allNodesSearchResult && allNodesSearchResult.nodeIds) {
                         const foundElements = [];
                         for (let i = 0; i < Math.min(allNodesSearchResult.nodeIds.length, 20); i++) {
                           try {
                             /** @type {any} */
-                            const nodeInfo = await chrome.debugger.sendCommand(
+                            const nodeInfo = await sendCdpCommand(
                               debuggee,
                               'DOM.describeNode',
                               { nodeId: allNodesSearchResult.nodeIds[i] }
-                            );
+                            , cancellationOptions);
                             if (nodeInfo && nodeInfo.node) {
                               const nodeName = nodeInfo.node.nodeName?.toLowerCase();
                               const attrs = nodeInfo.node.attributes || [];
-                              const idAttr = attrs.find(attr => attr.name === 'id');
-                              const typeAttr = attrs.find(attr => attr.name === 'type');
+                              const idAttr = getNodeAttribute(nodeInfo.node, 'id');
+                              const typeAttr = getNodeAttribute(nodeInfo.node, 'type');
                               if (nodeName && (idAttr || typeAttr || nodeName === 'embed' || nodeName === 'div')) {
                                 foundElements.push({
                                   nodeName: nodeName,
-                                  id: idAttr?.value,
-                                  type: typeAttr?.value,
-                                  attributes: attrs.map(a => `${a.name}="${a.value}"`).slice(0, 5)
+                                  id: idAttr,
+                                  type: typeAttr,
+                                  attributes: attrs.slice(0, 10)
                                 });
                               }
                             }
@@ -1546,7 +1528,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                         });
                         // Cleanup
                         try {
-                          await chrome.debugger.sendCommand(debuggee, 'DOM.discardSearchResults', { searchId: searchAllResult.searchId });
+                          await sendCdpCommand(debuggee, 'DOM.discardSearchResults', { searchId: searchAllResult.searchId }, cancellationOptions);
                         } catch (e) {
                           // Non-critical: cleanup failure is acceptable, continue processing
                           log('[CDP Render] Failed to discard search results (non-critical)', {
@@ -1584,11 +1566,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           /** @type {any} */
           let layoutMetrics = null;
           try {
-            layoutMetrics = await chrome.debugger.sendCommand(
+            layoutMetrics = await sendCdpCommand(
               debuggee,
               'Page.getLayoutMetrics',
               {}
-            );
+            , cancellationOptions);
           } catch (e) {
             log('[CDP Render] [BATCH] Failed to get layout metrics via CDP', { error: e.message, pageNum });
           }
@@ -1601,11 +1583,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             if (documentResult && documentResult.root) {
               const bodyNodeId = documentResult.root.nodeId;
               /** @type {any} */
-              const boxModelResult = await chrome.debugger.sendCommand(
+              const boxModelResult = await sendCdpCommand(
                 debuggee,
                 'DOM.getBoxModel',
                 { nodeId: bodyNodeId }
-              );
+              , cancellationOptions);
               if (boxModelResult && boxModelResult.model && boxModelResult.model.content) {
                 const content = boxModelResult.model.content;
                 if (content.length >= 4) {
@@ -1625,11 +1607,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             if (documentResult && documentResult.root) {
               const bodyNodeId = documentResult.root.nodeId;
               /** @type {any} */
-              const quadsResult = await chrome.debugger.sendCommand(
+              const quadsResult = await sendCdpCommand(
                 debuggee,
                 'DOM.getContentQuads',
                 { nodeId: bodyNodeId }
-              );
+              , cancellationOptions);
               if (quadsResult && quadsResult.quads && quadsResult.quads.length > 0) {
                 const quad = quadsResult.quads[0];
                 if (quad.length >= 8) {
@@ -1647,7 +1629,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate for screen dimensions
           try {
             /** @type {any} */
-            const screenResult = await chrome.debugger.sendCommand(
+            const screenResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -1661,7 +1643,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (screenResult && screenResult.result && screenResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_screen'] = screenResult.result.value;
             }
@@ -1673,7 +1655,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate for visual viewport API
           try {
             /** @type {any} */
-            const visualViewportResult = await chrome.debugger.sendCommand(
+            const visualViewportResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -1688,7 +1670,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 } : null)`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (visualViewportResult && visualViewportResult.result && visualViewportResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_visualViewport'] = visualViewportResult.result.value;
             }
@@ -1700,7 +1682,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate for device pixel ratio and related
           try {
             /** @type {any} */
-            const devicePixelRatioResult = await chrome.debugger.sendCommand(
+            const devicePixelRatioResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -1717,7 +1699,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (devicePixelRatioResult && devicePixelRatioResult.result && devicePixelRatioResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_devicePixelRatio'] = devicePixelRatioResult.result.value;
             }
@@ -1729,7 +1711,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate for PDF.js API (if available in page context)
           try {
             /** @type {any} */
-            const pdfjsResult = await chrome.debugger.sendCommand(
+            const pdfjsResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -1751,7 +1733,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })()`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (pdfjsResult && pdfjsResult.result && pdfjsResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_pdfjs'] = pdfjsResult.result.value;
             }
@@ -1763,7 +1745,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate to get PDF page dimensions from PDF.js (if document is loaded)
           try {
             /** @type {any} */
-            const pdfjsPageDimensionsResult = await chrome.debugger.sendCommand(
+            const pdfjsPageDimensionsResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -1805,7 +1787,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })()`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (pdfjsPageDimensionsResult && pdfjsPageDimensionsResult.result && pdfjsPageDimensionsResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_pdfjsPageDimensions'] = pdfjsPageDimensionsResult.result.value;
             }
@@ -1817,37 +1799,37 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: DOM.getDocument with deeper depth to find PDF content
           try {
             /** @type {any} */
-            const deepDocumentResult = await chrome.debugger.sendCommand(
+            const deepDocumentResult = await sendCdpCommand(
               debuggee,
               'DOM.getDocument',
               { depth: 10 }
-            );
+            , cancellationOptions);
             if (deepDocumentResult && deepDocumentResult.root) {
               // Search for PDF-related nodes
               /** @type {any} */
-              const searchResult = await chrome.debugger.sendCommand(
+              const searchResult = await sendCdpCommand(
                 debuggee,
                 'DOM.performSearch',
                 { query: 'canvas,embed,object,iframe' }
-              );
-              if (searchResult && searchResult.searchId) {
+              , cancellationOptions);
+              if (searchResult?.searchId && searchResult.resultCount > 0) {
                 /** @type {any} */
-                const searchNodesResult = await chrome.debugger.sendCommand(
+                const searchNodesResult = await sendCdpCommand(
                   debuggee,
                   'DOM.getSearchResults',
-                  { searchId: searchResult.searchId, fromIndex: 0, toIndex: 100 }
-                );
+                  { searchId: searchResult.searchId, fromIndex: 0, toIndex: Math.min(100, searchResult.resultCount) }
+                , cancellationOptions);
                 if (searchNodesResult && searchNodesResult.nodeIds && searchNodesResult.nodeIds.length > 0) {
                   const nodeIds = searchNodesResult.nodeIds;
                   const nodeResults = [];
                   for (let i = 0; i < Math.min(nodeIds.length, 10); i++) {
                     try {
                       /** @type {any} */
-                      const nodeResult = await chrome.debugger.sendCommand(
+                      const nodeResult = await sendCdpCommand(
                         debuggee,
                         'DOM.getBoxModel',
                         { nodeId: nodeIds[i] }
-                      );
+                      , cancellationOptions);
                       if (nodeResult && nodeResult.model && nodeResult.model.content) {
                         const content = nodeResult.model.content;
                         if (content.length >= 8) {
@@ -1866,7 +1848,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   }
                   // Cleanup
                   try {
-                    await chrome.debugger.sendCommand(debuggee, 'DOM.discardSearchResults', { searchId: searchResult.searchId });
+                    await sendCdpCommand(debuggee, 'DOM.discardSearchResults', { searchId: searchResult.searchId }, cancellationOptions);
                   } catch (e) {
                     // Non-critical: cleanup failure is acceptable, continue processing
                     log('[CDP Render] Failed to discard search results (non-critical)', {
@@ -1888,18 +1870,18 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               const bodyNodeId = documentResult.root.nodeId;
               // Get body node
               /** @type {any} */
-              const bodyNodesResult = await chrome.debugger.sendCommand(
+              const bodyNodesResult = await sendCdpCommand(
                 debuggee,
                 'DOM.querySelector',
                 { nodeId: bodyNodeId, selector: 'body' }
-              );
+              , cancellationOptions);
               if (bodyNodesResult && bodyNodesResult.nodeId) {
                 /** @type {any} */
-                const computedStyleResult = await chrome.debugger.sendCommand(
+                const computedStyleResult = await sendCdpCommand(
                   debuggee,
                   'CSS.getComputedStyleForNode',
                   { nodeId: bodyNodesResult.nodeId }
-                );
+                , cancellationOptions);
                 if (computedStyleResult && computedStyleResult.computedStyle) {
                   const widthProp = computedStyleResult.computedStyle.find(p => p.name === 'width');
                   const heightProp = computedStyleResult.computedStyle.find(p => p.name === 'height');
@@ -1919,7 +1901,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           
           // CDP Method: Overlay.getHighlightObjectForTest (if available)
           try {
-            await chrome.debugger.sendCommand(debuggee, 'Overlay.enable', {});
+            await sendCdpCommand(debuggee, 'Overlay.enable', {}, cancellationOptions);
             // This might give us information about highlighted elements
           } catch (e) {
             // Expected: Overlay API may not be available, continue without it
@@ -1929,7 +1911,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate to get PDF.js document instance and page dimensions
           try {
             /** @type {any} */
-            const pdfjsDocumentResult = await chrome.debugger.sendCommand(
+            const pdfjsDocumentResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -1980,7 +1962,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })()`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (pdfjsDocumentResult && pdfjsDocumentResult.result && pdfjsDocumentResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_pdfjsDocument'] = pdfjsDocumentResult.result.value;
             }
@@ -1992,7 +1974,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate to get PDF page number from URL and calculate dimensions
           try {
             /** @type {any} */
-            const pdfUrlPageResult = await chrome.debugger.sendCommand(
+            const pdfUrlPageResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -2026,7 +2008,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })()`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (pdfUrlPageResult && pdfUrlPageResult.result && pdfUrlPageResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_pdfUrlPage'] = pdfUrlPageResult.result.value;
             }
@@ -2038,7 +2020,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CDP Method: Runtime.evaluate to get PDF page dimensions from Chrome PDF viewer internal API
           try {
             /** @type {any} */
-            const chromePdfViewerResult = await chrome.debugger.sendCommand(
+            const chromePdfViewerResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -2098,7 +2080,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 })()`,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             if (chromePdfViewerResult && chromePdfViewerResult.result && chromePdfViewerResult.result.value) {
               cdpAdditionalMeasurements['cdp_runtime_chromePdfViewer'] = chromePdfViewerResult.result.value;
             }
@@ -2112,12 +2094,12 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           let findResult = null;
           let evaluateError = null;
           try {
-            findResult = await chrome.debugger.sendCommand(
+            findResult = await sendCdpCommand(
             debuggee,
             'Runtime.evaluate',
             {
               expression: `
-                (function() {
+                (async function() {
                   try {
                     // Chrome PDF viewer structure:
                     // - <div id="content"> contains the PDF embed (without UI)
@@ -3259,6 +3241,87 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                         // No logging needed - this is expected when PDF.js viewer is not available
                       }
                       
+                      // Collect all width methods results FIRST (needed for bestWidth calculation)
+                      const pdfPageWidthMethods = {
+                        method1_canvas: pdfPageWidthMethod1,
+                        method2_naturalWidth: pdfPageWidthMethod2,
+                        method3_embedScrollWidth: pdfPageWidthMethod3,
+                        method4_containerScrollWidth: pdfPageWidthMethod4,
+                        method5_computedStyle: pdfPageWidthMethod5,
+                        method6_pdfContentElement: pdfPageWidthMethod6,
+                        method7_dataAttributes: pdfPageWidthMethod7,
+                        method8_bodyScrollWidth: pdfPageWidthMethod8,
+                        method9_embedOffsetWidth: pdfPageWidthMethod9,
+                        method10_containerOffsetWidth: pdfPageWidthMethod10,
+                        method11_pdfjsViewerAppViewport: pdfPageWidthMethod11,
+                        method12_pdfjsDocumentViewport: pdfPageWidthMethod12,
+                        method13_pdfjsGlobalViewport: pdfPageWidthMethod13,
+                        method14_chromePluginSvg: pdfPageWidthMethod14,
+                        method15_pdfjsMediaBox: pdfPageWidthMethod15,
+                        method16_pdfjsViewportRotate: pdfPageWidthMethod16,
+                        method17_pdfjsOriginalWidth: pdfPageWidthMethod17,
+                        method18_pdfjsViewArray: pdfPageWidthMethod18,
+                        method19_pdfjsObjDict: pdfPageWidthMethod19,
+                        method20_pdfjsPageInfo: pdfPageWidthMethod20,
+                        method21_pdfjsTransport: pdfPageWidthMethod21,
+                        method22_pdfjsPageIndex: pdfPageWidthMethod22,
+                        method23_pdfjsPageInfoPromise: pdfPageWidthMethod23,
+                        method24_pdfjsPageInfoDict: pdfPageWidthMethod24,
+                        method25_pdfjsCropBox: pdfPageWidthMethod25,
+                        method26_pdfjsArtBox: pdfPageWidthMethod26,
+                        method27_pdfjsRotate: pdfPageWidthMethod27,
+                        method28_pdfjsUserUnit: pdfPageWidthMethod28,
+                        method29_pdfjsResources: pdfPageWidthMethod29,
+                        method30_pdfjsContents: pdfPageWidthMethod30
+                      };
+
+                      // CRITICAL: Calculate bestWidth BEFORE using it in dimension methods
+                      // Find the best width value (prefer non-null, reasonable values)
+                      // Priority: methods that give actual PDF content width (not viewport/container width)
+                      // Prefer: scrollWidth, naturalWidth, canvas width (actual content)
+                      // Avoid: viewport width, container width (may include UI)
+                      let bestWidth = null;
+                      let bestMethod = null;
+                      let bestPriority = -1;
+
+                      // Priority order (higher = better):
+                      // 1. canvas width (actual rendered PDF)
+                      // 2. naturalWidth (natural size of embed)
+                      // 3. scrollWidth (actual content width)
+                      // 4. computed style (rendered width)
+                      // 5. offsetWidth (layout width)
+                      // 6. data attributes (if available)
+                      const methodPriorities = {
+                        method1_canvas: 10,
+                        method2_naturalWidth: 9,
+                        method3_embedScrollWidth: 8,
+                        method4_containerScrollWidth: 7,
+                        method5_computedStyle: 6,
+                        method9_embedOffsetWidth: 5,
+                        method10_containerOffsetWidth: 4,
+                        method7_dataAttributes: 3,
+                        method6_pdfContentElement: 2,
+                        method8_bodyScrollWidth: 1
+                      };
+
+                      for (const [method, value] of Object.entries(pdfPageWidthMethods)) {
+                        if (value && value > 100 && value < 5000) {
+                          const priority = methodPriorities[method] || 0;
+                          // Prefer higher priority methods, or if same priority, prefer smaller values (more likely to be actual PDF width, not viewport)
+                          if (priority > bestPriority || (priority === bestPriority && value < bestWidth)) {
+                            bestPriority = priority;
+                            bestWidth = value;
+                            bestMethod = method;
+                          }
+                        }
+                      }
+
+                      // If no method found a good value, use containerWidth or embedWidth as fallback
+                      if (!bestWidth) {
+                        bestWidth = containerRect ? Math.round(containerRect.width) : (embedRect ? Math.round(embedRect.width) : vw);
+                        bestMethod = 'fallback_containerOrEmbed';
+                      }
+
                       // ========== COMBINED WIDTH x HEIGHT MEASUREMENT METHODS ==========
                       // Method 1: Canvas width x height
                       let pdfPageDimensionsMethod1 = null;
@@ -3551,87 +3614,6 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                         // No logging needed - this is expected during dimension measurement attempts
                       }
                       
-                      // Collect all width methods results FIRST (needed for bestWidth calculation)
-                      const pdfPageWidthMethods = {
-                        method1_canvas: pdfPageWidthMethod1,
-                        method2_naturalWidth: pdfPageWidthMethod2,
-                        method3_embedScrollWidth: pdfPageWidthMethod3,
-                        method4_containerScrollWidth: pdfPageWidthMethod4,
-                        method5_computedStyle: pdfPageWidthMethod5,
-                        method6_pdfContentElement: pdfPageWidthMethod6,
-                        method7_dataAttributes: pdfPageWidthMethod7,
-                        method8_bodyScrollWidth: pdfPageWidthMethod8,
-                        method9_embedOffsetWidth: pdfPageWidthMethod9,
-                        method10_containerOffsetWidth: pdfPageWidthMethod10,
-                        method11_pdfjsViewerAppViewport: pdfPageWidthMethod11,
-                        method12_pdfjsDocumentViewport: pdfPageWidthMethod12,
-                        method13_pdfjsGlobalViewport: pdfPageWidthMethod13,
-                        method14_chromePluginSvg: pdfPageWidthMethod14,
-                        method15_pdfjsMediaBox: pdfPageWidthMethod15,
-                        method16_pdfjsViewportRotate: pdfPageWidthMethod16,
-                        method17_pdfjsOriginalWidth: pdfPageWidthMethod17,
-                        method18_pdfjsViewArray: pdfPageWidthMethod18,
-                        method19_pdfjsObjDict: pdfPageWidthMethod19,
-                        method20_pdfjsPageInfo: pdfPageWidthMethod20,
-                        method21_pdfjsTransport: pdfPageWidthMethod21,
-                        method22_pdfjsPageIndex: pdfPageWidthMethod22,
-                        method23_pdfjsPageInfoPromise: pdfPageWidthMethod23,
-                        method24_pdfjsPageInfoDict: pdfPageWidthMethod24,
-                        method25_pdfjsCropBox: pdfPageWidthMethod25,
-                        method26_pdfjsArtBox: pdfPageWidthMethod26,
-                        method27_pdfjsRotate: pdfPageWidthMethod27,
-                        method28_pdfjsUserUnit: pdfPageWidthMethod28,
-                        method29_pdfjsResources: pdfPageWidthMethod29,
-                        method30_pdfjsContents: pdfPageWidthMethod30
-                      };
-                      
-                      // CRITICAL: Calculate bestWidth BEFORE using it in dimension methods
-                      // Find the best width value (prefer non-null, reasonable values)
-                      // Priority: methods that give actual PDF content width (not viewport/container width)
-                      // Prefer: scrollWidth, naturalWidth, canvas width (actual content)
-                      // Avoid: viewport width, container width (may include UI)
-                      let bestWidth = null;
-                      let bestMethod = null;
-                      let bestPriority = -1;
-                      
-                      // Priority order (higher = better):
-                      // 1. canvas width (actual rendered PDF)
-                      // 2. naturalWidth (natural size of embed)
-                      // 3. scrollWidth (actual content width)
-                      // 4. computed style (rendered width)
-                      // 5. offsetWidth (layout width)
-                      // 6. data attributes (if available)
-                      const methodPriorities = {
-                        method1_canvas: 10,
-                        method2_naturalWidth: 9,
-                        method3_embedScrollWidth: 8,
-                        method4_containerScrollWidth: 7,
-                        method5_computedStyle: 6,
-                        method9_embedOffsetWidth: 5,
-                        method10_containerOffsetWidth: 4,
-                        method7_dataAttributes: 3,
-                        method6_pdfContentElement: 2,
-                        method8_bodyScrollWidth: 1
-                      };
-                      
-                      for (const [method, value] of Object.entries(pdfPageWidthMethods)) {
-                        if (value && value > 100 && value < 5000) {
-                          const priority = methodPriorities[method] || 0;
-                          // Prefer higher priority methods, or if same priority, prefer smaller values (more likely to be actual PDF width, not viewport)
-                          if (priority > bestPriority || (priority === bestPriority && value < bestWidth)) {
-                            bestPriority = priority;
-                            bestWidth = value;
-                            bestMethod = method;
-                          }
-                        }
-                      }
-                      
-                      // If no method found a good value, use containerWidth or embedWidth as fallback
-                      if (!bestWidth) {
-                        bestWidth = containerRect ? Math.round(containerRect.width) : (embedRect ? Math.round(embedRect.width) : vw);
-                        bestMethod = 'fallback_containerOrEmbed';
-                      }
-                      
                       const pdfPageHeightMethods = {
                         method1_canvas: pdfPageHeightMethod1,
                         method2_naturalHeight: pdfPageHeightMethod2,
@@ -3680,52 +3662,6 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                         method12_widthBasedRatioRelaxed: pdfPageDimensionsMethod12,
                         method13_viewportBasedRatio: pdfPageDimensionsMethod13
                       };
-                      
-                      // Find the best width value (prefer non-null, reasonable values)
-                      // Priority: methods that give actual PDF content width (not viewport/container width)
-                      // Prefer: scrollWidth, naturalWidth, canvas width (actual content)
-                      // Avoid: viewport width, container width (may include UI)
-                      let bestWidth = null;
-                      let bestMethod = null;
-                      let bestPriority = -1;
-                      
-                      // Priority order (higher = better):
-                      // 1. canvas width (actual rendered PDF)
-                      // 2. naturalWidth (natural size of embed)
-                      // 3. scrollWidth (actual content width)
-                      // 4. computed style (rendered width)
-                      // 5. offsetWidth (layout width)
-                      // 6. data attributes (if available)
-                      const methodPriorities = {
-                        method1_canvas: 10,
-                        method2_naturalWidth: 9,
-                        method3_embedScrollWidth: 8,
-                        method4_containerScrollWidth: 7,
-                        method5_computedStyle: 6,
-                        method9_embedOffsetWidth: 5,
-                        method10_containerOffsetWidth: 4,
-                        method7_dataAttributes: 3,
-                        method6_pdfContentElement: 2,
-                        method8_bodyScrollWidth: 1
-                      };
-                      
-                      for (const [method, value] of Object.entries(pdfPageWidthMethods)) {
-                        if (value && value > 100 && value < 5000) {
-                          const priority = methodPriorities[method] || 0;
-                          // Prefer higher priority methods, or if same priority, prefer smaller values (more likely to be actual PDF width, not viewport)
-                          if (priority > bestPriority || (priority === bestPriority && value < bestWidth)) {
-                            bestPriority = priority;
-                            bestWidth = value;
-                            bestMethod = method;
-                          }
-                        }
-                      }
-                      
-                      // If no method found a good value, use containerWidth or embedWidth as fallback
-                      if (!bestWidth) {
-                        bestWidth = containerRect ? Math.round(containerRect.width) : (embedRect ? Math.round(embedRect.width) : vw);
-                        bestMethod = 'fallback_containerOrEmbed';
-                      }
                       
                       // CRITICAL: Return both container and embed coordinates
                       // We'll use container (div#content) if available, as it excludes UI
@@ -4730,6 +4666,87 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                       // No logging needed - this is expected during dimensions measurement attempts
                     }
                     
+                    // Collect all width methods results FIRST (needed for bestWidth calculation)
+                    const pdfPageWidthMethods = {
+                      method1_canvas: pdfPageWidthMethod1,
+                      method2_bodyScrollWidth: pdfPageWidthMethod2,
+                      method3_bodyOffsetWidth: pdfPageWidthMethod3,
+                      method4_htmlOffsetWidth: pdfPageWidthMethod4,
+                      method5_bodyClientWidth: pdfPageWidthMethod5,
+                      method6_htmlClientWidth: pdfPageWidthMethod6,
+                      method7_computedBodyStyle: pdfPageWidthMethod7,
+                      method8_pdfContentElement: pdfPageWidthMethod8,
+                      method9_iframeContent: pdfPageWidthMethod9,
+                      method10_estimatedFromViewport: pdfPageWidthMethod10,
+                      method11_allCanvases: pdfPageWidthMethod11,
+                      method12_images: pdfPageWidthMethod12,
+                      method13_svg: pdfPageWidthMethod13,
+                      method14_objects: pdfPageWidthMethod14,
+                      method15_allEmbeds: pdfPageWidthMethod15,
+                      method16_videos: pdfPageWidthMethod16,
+                      method17_divsPattern: pdfPageWidthMethod17,
+                      method18_bodyBoundingRect: pdfPageWidthMethod18,
+                      method19_htmlBoundingRect: pdfPageWidthMethod19,
+                      method20_computedHtmlStyle: pdfPageWidthMethod20,
+                      method21_screenScaled: pdfPageWidthMethod21,
+                      method22_visualViewport: pdfPageWidthMethod22,
+                      method23_matchMedia: pdfPageWidthMethod23,
+                      method24_resizeObserver: pdfPageWidthMethod24,
+                      method25_intersectionObserver: pdfPageWidthMethod25,
+                      method26_matchMediaSpecific: pdfPageWidthMethod26,
+                      method27_shadowDom: pdfPageWidthMethod27,
+                      method28_pdfjs: pdfPageWidthMethod28,
+                      method29_chromeViewer: pdfPageWidthMethod29,
+                      method30_screenAvailWidth: pdfPageWidthMethod30
+                    };
+
+                    // CRITICAL: Calculate bestWidth BEFORE using it in dimension methods
+                    // Find the best width value (prefer non-null, reasonable values)
+                    // Priority order (higher = better)
+                    const methodPriorities = {
+                      method1_canvas: 10,
+                      method8_pdfContentElement: 9,
+                      method9_iframeContent: 8,
+                      method2_bodyScrollWidth: 7,
+                      method3_bodyOffsetWidth: 6,
+                      method5_bodyClientWidth: 5,
+                      method4_htmlOffsetWidth: 4,
+                      method6_htmlClientWidth: 3,
+                      method7_computedBodyStyle: 2,
+                      method10_estimatedFromViewport: 1
+                    };
+
+                    let bestWidth = null;
+                    let bestMethod = null;
+                    let bestPriority = -1;
+
+                    // Prefer method10_estimatedFromViewport if it has a value (it's usually more accurate)
+                    if (pdfPageWidthMethods.method10_estimatedFromViewport &&
+                        pdfPageWidthMethods.method10_estimatedFromViewport > 100 &&
+                        pdfPageWidthMethods.method10_estimatedFromViewport < 5000) {
+                      bestWidth = pdfPageWidthMethods.method10_estimatedFromViewport;
+                      bestMethod = 'method10_estimatedFromViewport';
+                      bestPriority = methodPriorities.method10_estimatedFromViewport;
+                    } else {
+                      // Otherwise use priority-based selection
+                      for (const [method, value] of Object.entries(pdfPageWidthMethods)) {
+                        if (value && value > 100 && value < 5000) {
+                          const priority = methodPriorities[method] || 0;
+                          if (priority > bestPriority || (priority === bestPriority && value < bestWidth)) {
+                            bestPriority = priority;
+                            bestWidth = value;
+                            bestMethod = method;
+                          }
+                        }
+                      }
+                    }
+
+                    // If no method found a good value, use viewport width as fallback
+                    if (!bestWidth) {
+                      bestWidth = window.innerWidth;
+                      bestMethod = 'fallback_viewportWidth';
+                    }
+
                     // ========== COMBINED DIMENSIONS METHODS (FALLBACK) ==========
                     let pdfPageDimensionsMethod1 = null;
                     try {
@@ -4745,16 +4762,16 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                       // Expected: dimensions method 2 may fail, continue with other methods
                       // No logging needed - this is expected during dimensions measurement attempts
                     }
-                    
+
                     let pdfPageDimensionsMethod2 = null;
                     try {
                       const bodyScrollWidth = document.body.scrollWidth;
                       const bodyScrollHeight = document.body.scrollHeight;
                       if (bodyScrollWidth > 0 && bodyScrollWidth < 10000 && bodyScrollHeight > 0 && bodyScrollHeight < 20000) {
-                        pdfPageDimensionsMethod2 = { 
-                          width: Math.round(bodyScrollWidth), 
-                          height: Math.round(bodyScrollHeight), 
-                          aspectRatio: (bodyScrollWidth / bodyScrollHeight).toFixed(4) 
+                        pdfPageDimensionsMethod2 = {
+                          width: Math.round(bodyScrollWidth),
+                          height: Math.round(bodyScrollHeight),
+                          aspectRatio: (bodyScrollWidth / bodyScrollHeight).toFixed(4)
                         };
                       }
                     } catch (e) {
@@ -4870,87 +4887,6 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                       }
                     } catch (e) {}
                     
-                    // Collect all width methods results FIRST (needed for bestWidth calculation)
-                    const pdfPageWidthMethods = {
-                      method1_canvas: pdfPageWidthMethod1,
-                      method2_bodyScrollWidth: pdfPageWidthMethod2,
-                      method3_bodyOffsetWidth: pdfPageWidthMethod3,
-                      method4_htmlOffsetWidth: pdfPageWidthMethod4,
-                      method5_bodyClientWidth: pdfPageWidthMethod5,
-                      method6_htmlClientWidth: pdfPageWidthMethod6,
-                      method7_computedBodyStyle: pdfPageWidthMethod7,
-                      method8_pdfContentElement: pdfPageWidthMethod8,
-                      method9_iframeContent: pdfPageWidthMethod9,
-                      method10_estimatedFromViewport: pdfPageWidthMethod10,
-                      method11_allCanvases: pdfPageWidthMethod11,
-                      method12_images: pdfPageWidthMethod12,
-                      method13_svg: pdfPageWidthMethod13,
-                      method14_objects: pdfPageWidthMethod14,
-                      method15_allEmbeds: pdfPageWidthMethod15,
-                      method16_videos: pdfPageWidthMethod16,
-                      method17_divsPattern: pdfPageWidthMethod17,
-                      method18_bodyBoundingRect: pdfPageWidthMethod18,
-                      method19_htmlBoundingRect: pdfPageWidthMethod19,
-                      method20_computedHtmlStyle: pdfPageWidthMethod20,
-                      method21_screenScaled: pdfPageWidthMethod21,
-                      method22_visualViewport: pdfPageWidthMethod22,
-                      method23_matchMedia: pdfPageWidthMethod23,
-                      method24_resizeObserver: pdfPageWidthMethod24,
-                      method25_intersectionObserver: pdfPageWidthMethod25,
-                      method26_matchMediaSpecific: pdfPageWidthMethod26,
-                      method27_shadowDom: pdfPageWidthMethod27,
-                      method28_pdfjs: pdfPageWidthMethod28,
-                      method29_chromeViewer: pdfPageWidthMethod29,
-                      method30_screenAvailWidth: pdfPageWidthMethod30
-                    };
-                    
-                    // CRITICAL: Calculate bestWidth BEFORE using it in dimension methods
-                    // Find the best width value (prefer non-null, reasonable values)
-                    // Priority order (higher = better)
-                    const methodPriorities = {
-                      method1_canvas: 10,
-                      method8_pdfContentElement: 9,
-                      method9_iframeContent: 8,
-                      method2_bodyScrollWidth: 7,
-                      method3_bodyOffsetWidth: 6,
-                      method5_bodyClientWidth: 5,
-                      method4_htmlOffsetWidth: 4,
-                      method6_htmlClientWidth: 3,
-                      method7_computedBodyStyle: 2,
-                      method10_estimatedFromViewport: 1
-                    };
-                    
-                    let bestWidth = null;
-                    let bestMethod = null;
-                    let bestPriority = -1;
-                    
-                    // Prefer method10_estimatedFromViewport if it has a value (it's usually more accurate)
-                    if (pdfPageWidthMethods.method10_estimatedFromViewport && 
-                        pdfPageWidthMethods.method10_estimatedFromViewport > 100 && 
-                        pdfPageWidthMethods.method10_estimatedFromViewport < 5000) {
-                      bestWidth = pdfPageWidthMethods.method10_estimatedFromViewport;
-                      bestMethod = 'method10_estimatedFromViewport';
-                      bestPriority = methodPriorities.method10_estimatedFromViewport;
-                    } else {
-                      // Otherwise use priority-based selection
-                      for (const [method, value] of Object.entries(pdfPageWidthMethods)) {
-                        if (value && value > 100 && value < 5000) {
-                          const priority = methodPriorities[method] || 0;
-                          if (priority > bestPriority || (priority === bestPriority && value < bestWidth)) {
-                            bestPriority = priority;
-                            bestWidth = value;
-                            bestMethod = method;
-                          }
-                        }
-                      }
-                    }
-                    
-                    // If no method found a good value, use viewport width as fallback
-                    if (!bestWidth) {
-                      bestWidth = window.innerWidth;
-                      bestMethod = 'fallback_viewportWidth';
-                    }
-                    
                     const pdfPageHeightMethods = {
                       method1_canvas: pdfPageHeightMethod1,
                       method2_bodyScrollHeight: pdfPageHeightMethod2,
@@ -5025,9 +4961,10 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   }
                 })()
               `,
+              awaitPromise: true,
               returnByValue: true
             }
-          );
+          , cancellationOptions);
           } catch (e) {
             evaluateError = e;
             log('[CDP Render] [BATCH] Runtime.evaluate ERROR', {
@@ -5547,7 +5484,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   ? `Detected width ${pdfArea.pdfPageWidthBest} is not reasonable or from low priority method`
                   : 'No width detected',
                 timestamp: Date.now()
-              });
+              }, 'warn');
             }
             
             // CRITICAL: Log ALL available height values BEFORE setting clipHeight
@@ -5918,7 +5855,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 ? `Using PDF.js API height ${pdfPageDimensions.height}px` 
                 : 'Using fixed height 1000px for one full page - no measured values available',
               timestamp: Date.now()
-            });
+            }, 'warn');
             
             logWarn('[CDP Render] [BATCH] PDF content area not found, using fallback clipping', {
               pageNum,
@@ -6005,7 +5942,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             pdfjsHeight: pdfPageDimensions?.height,
             note: 'Exception occurred while finding PDF area - using hardcoded 1000px height',
             timestamp: Date.now()
-          });
+          }, 'warn');
           
           logWarn('[CDP Render] [BATCH] Using fallback clipping after error', {
             pageNum,
@@ -6033,7 +5970,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         });
         
         const wasActive = (await chrome.tabs.get(tab.id)).active;
-        await chrome.tabs.update(tab.id, { active: true });
+        (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.tabs.update(tab.id, { active: true }));
         
         // Wait for PDF to render in visible tab - check readiness via CDP events
         log('[CDP Render] [BATCH] Waiting for PDF to render in visible tab...', {
@@ -6069,10 +6006,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         chrome.debugger.onEvent.addListener(loadListener);
         
         // Also check via Runtime.evaluate if PDF viewer is ready
+        try {
         while (!pdfReady && (Date.now() - startTime) < maxWait) {
           try {
             /** @type {any} */
-            const checkResult = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+            const checkResult = await sendCdpCommand(debuggee, 'Runtime.evaluate', {
               expression: `
                 (function() {
                   try {
@@ -6092,7 +6030,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   }
                 })()
               `
-            });
+            }, cancellationOptions);
             
             if (checkResult && checkResult.result && checkResult.result.value && checkResult.result.value.ready) {
               pdfReady = true;
@@ -6107,10 +6045,12 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             // Continue checking
           }
           
-          await new Promise(resolve => setTimeout(resolve, checkInterval));
+          await sleep(checkInterval, cancellationOptions);
         }
         
-        chrome.debugger.onEvent.removeListener(loadListener);
+        } finally {
+          chrome.debugger.onEvent.removeListener(loadListener);
+        }
         
         const actualWait = Date.now() - startTime;
         if (pdfReady) {
@@ -6151,10 +6091,10 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // CRITICAL: Get real devicePixelRatio from browser (update the value defined at loop start)
           try {
             /** @type {any} */
-            const dprResult = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+            const dprResult = await sendCdpCommand(debuggee, 'Runtime.evaluate', {
               expression: 'window.devicePixelRatio',
               returnByValue: true
-            });
+            }, cancellationOptions);
             if (dprResult && dprResult.result && dprResult.result.value !== undefined) {
               realDevicePixelRatio = dprResult.result.value;
               criticalLog('[CDP Render] [BATCH] Real devicePixelRatio from browser', 'PDF_DEVICE_PIXEL_RATIO', {
@@ -6184,12 +6124,12 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           
           // Enable Emulation domain
           // No scale factors - use 1.0 to get natural rendering
-          await chrome.debugger.sendCommand(debuggee, 'Emulation.setDeviceMetricsOverride', {
+          await sendCdpCommand(debuggee, 'Emulation.setDeviceMetricsOverride', {
             width: viewportWidthForScreenshot,
             height: viewportHeightForScreenshot,
             deviceScaleFactor: 1.0, // No scale factors - natural rendering
             mobile: false
-          });
+          }, cancellationOptions);
           
           log('[CDP Render] [BATCH] ✅ Viewport set', {
             pageNum,
@@ -6205,10 +6145,10 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           // Wait for viewport to apply - check via CDP instead of fixed delay
           let viewportApplied = false;
           for (let i = 0; i < 6; i++) {
-            await new Promise(resolve => setTimeout(resolve, 50)); // Check every 50ms
+            await sleep(50, cancellationOptions); // Check every 50ms
             try {
               /** @type {any} */
-              const metrics = await chrome.debugger.sendCommand(debuggee, 'Page.getLayoutMetrics', {});
+              const metrics = await sendCdpCommand(debuggee, 'Page.getLayoutMetrics', {}, cancellationOptions);
               if (metrics && metrics.cssLayoutViewport && metrics.cssLayoutViewport.clientWidth > 0) {
                 viewportApplied = true;
                 log('[CDP Render] [BATCH] Viewport applied confirmed via CDP', {
@@ -6257,7 +6197,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         while (!isCorrectPage && verifyAttempts < maxVerifyAttempts) {
           verifyAttempts++;
           try {
-            const verifyResult = await chrome.debugger.sendCommand(
+            const verifyResult = await sendCdpCommand(
               debuggee,
               'Runtime.evaluate',
               {
@@ -6358,7 +6298,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                 `,
                 returnByValue: true
               }
-            );
+            , cancellationOptions);
             
             // Type assertion for Chrome DevTools Protocol response
             /** @type {{result?: {type?: string, value?: any}, exceptionDetails?: any}} */
@@ -6396,7 +6336,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   maxAttempts: maxVerifyAttempts,
                   timestamp: Date.now()
                 });
-                await new Promise(resolve => setTimeout(resolve, verifyDelay));
+                await sleep(verifyDelay, cancellationOptions);
               } else {
                 logWarn('[CDP Render] [BATCH] ⚠️ PDF still not on correct page after max attempts!', {
                   pageNum,
@@ -6417,7 +6357,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               timestamp: Date.now()
             });
             if (verifyAttempts < maxVerifyAttempts) {
-              await new Promise(resolve => setTimeout(resolve, verifyDelay));
+              await sleep(verifyDelay, cancellationOptions);
             }
           }
         }
@@ -6436,7 +6376,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           
           // CRITICAL: Enable DOM domain if not already enabled
           try {
-            await chrome.debugger.sendCommand(debuggee, 'DOM.enable');
+            await sendCdpCommand(debuggee, 'DOM.enable', undefined, cancellationOptions);
           } catch (e) {
             // DOM domain might already be enabled, ignore error
           }
@@ -6446,10 +6386,10 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           let domDocument = null;
           try {
             /** @type {any} */
-            const domResult = await chrome.debugger.sendCommand(debuggee, 'DOM.getDocument', {
+            const domResult = await sendCdpCommand(debuggee, 'DOM.getDocument', {
               depth: -1, // Full depth
               pierce: true // Include shadow DOM
-            });
+            }, cancellationOptions);
             domDocument = domResult.root;
             criticalLog('[CDP Render] [BATCH] DOM.getDocument result', 'PDF_DOM_GETDOCUMENT', {
               pageNum,
@@ -6478,17 +6418,17 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
           try {
             // Search for sidebar
             /** @type {any} */
-            const sidebarSearch = await chrome.debugger.sendCommand(debuggee, 'DOM.performSearch', {
+            const sidebarSearch = await sendCdpCommand(debuggee, 'DOM.performSearch', {
               query: '#sidebar, [id*="sidebar"], [class*="sidebar"], [role="navigation"]',
               includeUserAgentShadowDOM: true
-            });
+            }, cancellationOptions);
             if (sidebarSearch.searchId && sidebarSearch.resultCount > 0) {
               /** @type {any} */
-              const sidebarResults = await chrome.debugger.sendCommand(debuggee, 'DOM.getSearchResults', {
+              const sidebarResults = await sendCdpCommand(debuggee, 'DOM.getSearchResults', {
                 searchId: sidebarSearch.searchId,
                 fromIndex: 0,
                 toIndex: Math.min(10, sidebarSearch.resultCount)
-              });
+              }, cancellationOptions);
               if (sidebarResults.nodeIds && sidebarResults.nodeIds.length > 0) {
                 sidebarNodeId = sidebarResults.nodeIds[0];
                 criticalLog('[CDP Render] [BATCH] Found sidebar via DOM.performSearch', 'PDF_DOM_SIDEBAR_FOUND', {
@@ -6503,17 +6443,17 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             
             // Search for toolbar
             /** @type {any} */
-            const toolbarSearch = await chrome.debugger.sendCommand(debuggee, 'DOM.performSearch', {
+            const toolbarSearch = await sendCdpCommand(debuggee, 'DOM.performSearch', {
               query: '#toolbar, [id*="toolbar"], [class*="toolbar"], [role="toolbar"]',
               includeUserAgentShadowDOM: true
-            });
+            }, cancellationOptions);
             if (toolbarSearch.searchId && toolbarSearch.resultCount > 0) {
               /** @type {any} */
-              const toolbarResults = await chrome.debugger.sendCommand(debuggee, 'DOM.getSearchResults', {
+              const toolbarResults = await sendCdpCommand(debuggee, 'DOM.getSearchResults', {
                 searchId: toolbarSearch.searchId,
                 fromIndex: 0,
                 toIndex: Math.min(10, toolbarSearch.resultCount)
-              });
+              }, cancellationOptions);
               if (toolbarResults.nodeIds && toolbarResults.nodeIds.length > 0) {
                 toolbarNodeId = toolbarResults.nodeIds[0];
                 criticalLog('[CDP Render] [BATCH] Found toolbar via DOM.performSearch', 'PDF_DOM_TOOLBAR_FOUND', {
@@ -6528,17 +6468,17 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             
             // Search for div#content
             /** @type {any} */
-            const contentSearch = await chrome.debugger.sendCommand(debuggee, 'DOM.performSearch', {
+            const contentSearch = await sendCdpCommand(debuggee, 'DOM.performSearch', {
               query: '#content, div#content',
               includeUserAgentShadowDOM: true
-            });
+            }, cancellationOptions);
             if (contentSearch.searchId && contentSearch.resultCount > 0) {
               /** @type {any} */
-              const contentResults = await chrome.debugger.sendCommand(debuggee, 'DOM.getSearchResults', {
+              const contentResults = await sendCdpCommand(debuggee, 'DOM.getSearchResults', {
                 searchId: contentSearch.searchId,
                 fromIndex: 0,
                 toIndex: Math.min(10, contentSearch.resultCount)
-              });
+              }, cancellationOptions);
               if (contentResults.nodeIds && contentResults.nodeIds.length > 0) {
                 contentNodeId = contentResults.nodeIds[0];
                 criticalLog('[CDP Render] [BATCH] Found div#content via DOM.performSearch', 'PDF_DOM_CONTENT_FOUND', {
@@ -6553,17 +6493,17 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             
             // Search for embed
             /** @type {any} */
-            const embedSearch = await chrome.debugger.sendCommand(debuggee, 'DOM.performSearch', {
+            const embedSearch = await sendCdpCommand(debuggee, 'DOM.performSearch', {
               query: 'embed[type*="pdf"], embed#plugin, embed',
               includeUserAgentShadowDOM: true
-            });
+            }, cancellationOptions);
             if (embedSearch.searchId && embedSearch.resultCount > 0) {
               /** @type {any} */
-              const embedResults = await chrome.debugger.sendCommand(debuggee, 'DOM.getSearchResults', {
+              const embedResults = await sendCdpCommand(debuggee, 'DOM.getSearchResults', {
                 searchId: embedSearch.searchId,
                 fromIndex: 0,
                 toIndex: Math.min(10, embedSearch.resultCount)
-              });
+              }, cancellationOptions);
               if (embedResults.nodeIds && embedResults.nodeIds.length > 0) {
                 embedNodeId = embedResults.nodeIds[0];
                 criticalLog('[CDP Render] [BATCH] Found embed via DOM.performSearch', 'PDF_DOM_EMBED_FOUND', {
@@ -6590,9 +6530,9 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             try {
               // Get box models for found elements to verify they exist
               if (sidebarNodeId) {
-                const sidebarBoxModel = await chrome.debugger.sendCommand(debuggee, 'DOM.getBoxModel', {
+                const sidebarBoxModel = await sendCdpCommand(debuggee, 'DOM.getBoxModel', {
                   nodeId: sidebarNodeId
-                });
+                }, cancellationOptions);
                 criticalLog('[CDP Render] [BATCH] Sidebar box model', 'PDF_DOM_SIDEBAR_BOXMODEL', {
                   pageNum,
                   tabId: tab.id,
@@ -6603,9 +6543,9 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               }
               
               if (toolbarNodeId) {
-                const toolbarBoxModel = await chrome.debugger.sendCommand(debuggee, 'DOM.getBoxModel', {
+                const toolbarBoxModel = await sendCdpCommand(debuggee, 'DOM.getBoxModel', {
                   nodeId: toolbarNodeId
-                });
+                }, cancellationOptions);
                 criticalLog('[CDP Render] [BATCH] Toolbar box model', 'PDF_DOM_TOOLBAR_BOXMODEL', {
                   pageNum,
                   tabId: tab.id,
@@ -6624,7 +6564,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             }
           }
           
-          const hideUiResult = await chrome.debugger.sendCommand(
+          const hideUiResult = await sendCdpCommand(
             debuggee,
             'Runtime.evaluate',
             {
@@ -7082,7 +7022,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               `,
               returnByValue: true
             }
-          );
+          , cancellationOptions);
           
           // Type assertion for Chrome DevTools Protocol response
           /** @type {{result?: {type?: string, value?: any}, exceptionDetails?: any}} */
@@ -7115,7 +7055,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               stack: hideUiData?.stack,
               domInfo: hideUiData?.domInfo,
               timestamp: Date.now()
-            });
+            }, 'warn');
           }
         } catch (hideError) {
           criticalLog('[CDP Render] [BATCH] ❌ Error hiding UI elements', 'PDF_UI_HIDE_ERROR', {
@@ -7124,7 +7064,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             error: hideError.message,
             errorStack: hideError.stack,
             timestamp: Date.now()
-          });
+          }, 'warn');
         }
         
         log('[CDP Render] [BATCH] Capturing screenshot - CRITICAL VERIFICATION', {
@@ -7242,12 +7182,12 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         // CRITICAL: Ensure debugger is attached before screenshot (may have been detached)
         
         // Check for cancellation before capturing screenshot
-        await checkCancellation(`CDP render capturing screenshot for page ${pageNum}`);
+        await checkCdpCancellation(`CDP render capturing screenshot for page ${pageNum}`, cancellationOptions);
         
         /** @type {any} */
         let screenshotResult;
         try {
-          screenshotResult = await chrome.debugger.sendCommand(
+          screenshotResult = await sendCdpCommand(
           debuggee,
           'Page.captureScreenshot',
           {
@@ -7263,7 +7203,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               scale: 1.0 // No scale factors - capture as-is
             }
           }
-        );
+        , cancellationOptions);
         } catch (screenshotError) {
           // Check if error is due to detached debugger
           const errorMsg = screenshotError.message || String(screenshotError);
@@ -7280,11 +7220,11 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             });
             
             // Reattach debugger and retry
-            await ensureDebuggerAttached(debuggee, 3);
-            await chrome.debugger.sendCommand(debuggee, 'Page.enable');
+            await ensureDebuggerAttached(debuggee, 3, cancellationOptions);
+            await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
             
             // Wait a bit for debugger to stabilize
-            await new Promise(resolve => setTimeout(resolve, 300));
+            await sleep(300, cancellationOptions);
             
             // Retry screenshot
             log('[CDP Render] [BATCH] Retrying screenshot after debugger reattachment...', {
@@ -7292,7 +7232,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               tabId: tab.id,
               timestamp: Date.now()
             });
-            screenshotResult = await chrome.debugger.sendCommand(
+            screenshotResult = await sendCdpCommand(
               debuggee,
               'Page.captureScreenshot',
               {
@@ -7307,7 +7247,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
                   scale: 1.0
                 }
               }
-            );
+            , cancellationOptions);
             log('[CDP Render] [BATCH] ✅ Screenshot captured after debugger reattachment', {
               pageNum,
               tabId: tab.id,
@@ -7327,7 +7267,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             timestamp: Date.now()
           });
           
-          const restoreUiResult = await chrome.debugger.sendCommand(
+          const restoreUiResult = await sendCdpCommand(
             debuggee,
             'Runtime.evaluate',
             {
@@ -7412,7 +7352,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               `,
               returnByValue: true
             }
-          );
+          , cancellationOptions);
           
           // Type assertion for Chrome DevTools Protocol response
           /** @type {{result?: {type?: string, value?: any}, exceptionDetails?: any}} */
@@ -7432,7 +7372,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
               tabId: tab.id,
               error: restoreUiData?.error || 'Unknown error',
               timestamp: Date.now()
-            });
+            }, 'warn');
           }
         } catch (restoreError) {
           criticalLog('[CDP Render] [BATCH] ❌ Error restoring UI elements', 'PDF_UI_RESTORE_ERROR', {
@@ -7441,7 +7381,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             error: restoreError.message,
             errorStack: restoreError.stack,
             timestamp: Date.now()
-          });
+          }, 'warn');
         }
         
         // CRITICAL: Verify tab state after screenshot
@@ -7635,7 +7575,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
             // Find the original active tab and restore it
             const originalActiveTab = (await chrome.tabs.query({ active: true }))[0];
             if (originalActiveTab && originalActiveTab.id !== tab.id) {
-              await chrome.tabs.update(originalActiveTab.id, { active: true });
+              (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.tabs.update(originalActiveTab.id, { active: true }));
               log('[CDP Render] [BATCH] ✅ Restored original active tab', {
                 pageNum,
                 restoredTabId: originalActiveTab.id,
@@ -7650,6 +7590,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
       } catch (pageError) {
         const pageErrorDuration = Date.now() - pageStartTime;
         lastPageError = pageError;
+        await checkCdpCancellation('CDP page retry', cancellationOptions);
         
         logError('[CDP Render] [BATCH] ❌ Failed to process page', {
           pageNum,
@@ -7760,6 +7701,7 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
         timestamp: Date.now()
       });
 
+      await checkCdpCancellation('CDP batch completion', cancellationOptions);
       return images;
     } catch (error) {
     const errorDuration = Date.now() - startTime;
@@ -7778,268 +7720,82 @@ export async function renderAllPdfPagesCdp(pdfUrl, totalPages, scale = 2.0, pdfD
 }
 
 /**
- * Wait for tab to load
+ * Wait for a browser event or timeout, releasing listeners on cancellation.
  */
-function waitForTabLoad(tabId) {
+function waitForRun(register, cancellationOptions) {
   return new Promise((resolve, reject) => {
-    const startTime = Date.now();
-    log('[CDP Render] [waitForTabLoad] Starting wait for tab load...', {
-      tabId,
-      timeout: CONFIG.PDF_TAB_LOAD_TIMEOUT_MS,
-      timestamp: startTime
-    });
-    
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      const duration = Date.now() - startTime;
-      logError('[CDP Render] [waitForTabLoad] ❌ Tab load timeout', {
-        tabId,
-        duration,
-        durationSeconds: (duration / 1000).toFixed(2),
-        timestamp: Date.now()
-      });
-      reject(new Error(`Tab load timeout after ${CONFIG.PDF_TAB_LOAD_TIMEOUT_MS / 1000 / 60} minutes`));
-    }, CONFIG.PDF_TAB_LOAD_TIMEOUT_MS);
-
-    const listener = (id, changeInfo) => {
-      if (id === tabId) {
-        log('[CDP Render] [waitForTabLoad] Tab status update', {
-          tabId: id,
-          status: changeInfo.status,
-          url: changeInfo.url,
-          timestamp: Date.now()
-        });
-        
-        if (changeInfo.status === 'complete') {
-          const duration = Date.now() - startTime;
-          clearTimeout(timeout);
-          chrome.tabs.onUpdated.removeListener(listener);
-          log('[CDP Render] [waitForTabLoad] ✅ Tab loaded successfully', {
-            tabId,
-            duration,
-            durationSeconds: (duration / 1000).toFixed(2),
-            timestamp: Date.now()
-          });
-          resolve();
-        }
-      }
+    let settled = false;
+    let cleanup = () => {};
+    let cancellationTimer;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(cancellationTimer);
+      cleanup();
+      if (error) reject(error);
+      else resolve();
     };
-
-    chrome.tabs.onUpdated.addListener(listener);
-
-    // Check if already loaded
-    chrome.tabs.get(tabId).then(tab => {
-      log('[CDP Render] [waitForTabLoad] Checking current tab status...', {
-        tabId,
-        currentStatus: tab.status,
-        currentUrl: tab.url,
-        timestamp: Date.now()
-      });
-      
-      if (tab.status === 'complete') {
-        const duration = Date.now() - startTime;
-        clearTimeout(timeout);
-        chrome.tabs.onUpdated.removeListener(listener);
-        log('[CDP Render] [waitForTabLoad] ✅ Tab already loaded', {
-          tabId,
-          duration,
-          durationSeconds: (duration / 1000).toFixed(2),
-          timestamp: Date.now()
-        });
-        resolve();
-      }
-    }).catch((error) => {
-      logWarn('[CDP Render] [waitForTabLoad] Failed to get tab status', {
-        tabId,
-        error: error.message,
-        timestamp: Date.now()
-      });
-    });
+    cleanup = register(() => finish(), finish);
+    const check = () => checkCdpCancellation('CDP wait', cancellationOptions).catch(finish);
+    cancellationTimer = setInterval(check, 200);
+    check();
   });
 }
 
-/**
- * Wait for page to load after navigation
- */
-function waitForPageLoad(debuggee, pageNum) {
-  return new Promise(async (resolve) => {
-    const startTime = Date.now();
-    const PAGE_LOAD_TIMEOUT_MS = CONFIG.PDF_PAGE_LOAD_TIMEOUT_MS;
-    const PAGE_LOAD_FALLBACK_TIMEOUT_MS = CONFIG.PDF_PAGE_LOAD_FALLBACK_TIMEOUT_MS;
-    log('[CDP Render] [waitForPageLoad] Starting wait for page load...', {
-      tabId: debuggee.tabId,
-      pageNum,
-      timeout: PAGE_LOAD_TIMEOUT_MS,
-      fallbackTimeout: PAGE_LOAD_FALLBACK_TIMEOUT_MS,
-      timestamp: startTime
-    });
-    
-    let resolved = false;
-    
-    // CRITICAL: Check if page is already loaded before waiting for events
-    // This prevents hanging when debugger is reattached after page load
-    try {
-      log('[CDP Render] [waitForPageLoad] Checking if page is already loaded...', {
-        tabId: debuggee.tabId,
-        pageNum,
-        timestamp: Date.now()
-      });
-      
-      const tab = await chrome.tabs.get(debuggee.tabId);
-      log('[CDP Render] [waitForPageLoad] Tab status check', {
-        tabId: debuggee.tabId,
-        pageNum,
-        hasTab: !!tab,
-        tabStatus: tab?.status,
-        timestamp: Date.now()
-      });
-      
-      if (tab && tab.status === 'complete') {
-        // Page is already loaded, check via CDP if possible
-        log('[CDP Render] [waitForPageLoad] Tab is complete, checking via CDP...', {
-          tabId: debuggee.tabId,
-          pageNum,
-          timestamp: Date.now()
-        });
-        
-        try {
-          /** @type {any} */
-          const frameTree = await chrome.debugger.sendCommand(debuggee, 'Page.getFrameTree');
-          if (frameTree && frameTree.frame) {
-            const duration = Date.now() - startTime;
-            log('[CDP Render] [waitForPageLoad] ✅ Page already loaded (checked via CDP)', {
-              tabId: debuggee.tabId,
-              pageNum,
-              tabStatus: tab.status,
-              hasFrameTree: !!frameTree,
-              duration,
-              durationSeconds: (duration / 1000).toFixed(2),
-              timestamp: Date.now()
-            });
-            resolved = true;
-            resolve();
-            return;
-          } else {
-            log('[CDP Render] [waitForPageLoad] FrameTree check returned empty, proceeding anyway', {
-              tabId: debuggee.tabId,
-              pageNum,
-              hasFrameTree: !!frameTree,
-              timestamp: Date.now()
-            });
-            // Tab is complete but frameTree is empty - proceed anyway
-            const duration = Date.now() - startTime;
-            resolved = true;
-            resolve();
-            return;
-          }
-        } catch (cdpError) {
-          // CDP check failed, but tab is complete - proceed anyway
-          const duration = Date.now() - startTime;
-          log('[CDP Render] [waitForPageLoad] ✅ Page already loaded (tab status complete, CDP check failed)', {
-            tabId: debuggee.tabId,
-            pageNum,
-            tabStatus: tab.status,
-            cdpError: cdpError.message,
-            duration,
-            durationSeconds: (duration / 1000).toFixed(2),
-            timestamp: Date.now()
-          });
-          resolved = true;
-          resolve();
-          return;
-        }
-      } else {
-        log('[CDP Render] [waitForPageLoad] Tab not complete yet, will wait for events', {
-          tabId: debuggee.tabId,
-          pageNum,
-          tabStatus: tab?.status,
-          timestamp: Date.now()
-        });
-      }
-    } catch (checkError) {
-      // Tab check failed, continue with event-based waiting
-      log('[CDP Render] [waitForPageLoad] Could not check tab status, will wait for events', {
-        tabId: debuggee.tabId,
-        pageNum,
-        error: checkError.message,
-        errorStack: checkError.stack,
-        timestamp: Date.now()
-      });
-    }
-    
-    const listener = (source, method) => {
-      if (source.tabId === debuggee.tabId) {
-        log('[CDP Render] [waitForPageLoad] CDP event received', {
-          tabId: source.tabId,
-          pageNum,
-          method,
-          timestamp: Date.now()
-        });
-        
-        if (method === 'Page.loadEventFired' || 
-            method === 'Page.frameNavigated' ||
-            method === 'Page.domContentEventFired') {
-          if (resolved) return; // Already resolved, ignore
-          resolved = true;
-          const duration = Date.now() - startTime;
-          clearTimeout(timeout);
-          clearTimeout(fallbackTimeout);
-          chrome.debugger.onEvent.removeListener(listener);
-          log('[CDP Render] [waitForPageLoad] ✅ Page load event received', {
-            tabId: debuggee.tabId,
-            pageNum,
-            method,
-            duration,
-            durationSeconds: (duration / 1000).toFixed(2),
-            timestamp: Date.now()
-          });
-          resolve();
-        }
-      }
+function waitForTabLoad(tabId, cancellationOptions) {
+  return waitForRun((done, fail) => {
+    const listener = (id, changeInfo) => {
+      if (id === tabId && changeInfo.status === 'complete') done();
     };
-
-    const timeout = setTimeout(() => {
-      if (resolved) return; // Already resolved, ignore
-      resolved = true;
-      const duration = Date.now() - startTime;
-      clearTimeout(fallbackTimeout);
-      chrome.debugger.onEvent.removeListener(listener);
-      logWarn('[CDP Render] [waitForPageLoad] ⚠️ Page load timeout (5min), proceeding anyway', {
-        tabId: debuggee.tabId,
-        pageNum,
-        duration,
-        durationSeconds: (duration / 1000).toFixed(2),
-        timestamp: Date.now()
-      });
-      resolve(); // Don't reject, just proceed
-    }, PAGE_LOAD_TIMEOUT_MS);
-
-    // Fallback timeout - save to variable for cleanup
-    // Use shorter timeout if page might already be loaded (after debugger reattach)
-    const fallbackTimeout = setTimeout(() => {
-      if (resolved) return; // Already resolved, ignore
-      resolved = true;
-      const duration = Date.now() - startTime;
+    const timeout = setTimeout(() => fail(new Error('Tab load timeout')), CONFIG.PDF_TAB_LOAD_TIMEOUT_MS);
+    chrome.tabs.onUpdated.addListener(listener);
+    chrome.tabs.get(tabId).then(tab => { if (tab.status === 'complete') done(); }).catch(fail);
+    return () => {
       clearTimeout(timeout);
-      chrome.debugger.onEvent.removeListener(listener);
-      log('[CDP Render] [waitForPageLoad] ✅ Fallback timeout reached, proceeding', {
-        tabId: debuggee.tabId,
-        pageNum,
-        duration,
-        durationSeconds: (duration / 1000).toFixed(2),
-        timestamp: Date.now()
-      });
-      resolve();
-    }, PAGE_LOAD_FALLBACK_TIMEOUT_MS);
-    
+      chrome.tabs.onUpdated.removeListener(listener);
+    };
+  }, cancellationOptions);
+}
+
+function waitForPageLoad(debuggee, pageNum, cancellationOptions) {
+  return waitForRun((done) => {
+    const listener = (source, method) => {
+      if (source.tabId === debuggee.tabId &&
+          ['Page.loadEventFired', 'Page.frameNavigated', 'Page.domContentEventFired'].includes(method)) done();
+    };
+    const timeout = setTimeout(done, CONFIG.PDF_PAGE_LOAD_TIMEOUT_MS);
+    const fallback = setTimeout(done, CONFIG.PDF_PAGE_LOAD_FALLBACK_TIMEOUT_MS);
     chrome.debugger.onEvent.addListener(listener);
-  });
+    chrome.tabs.get(debuggee.tabId).then(tab => {
+      if (tab.status === 'complete') done();
+    }).catch(error => log('[CDP Render] Could not check page status', { pageNum, error: error.message }));
+    return () => {
+      clearTimeout(timeout);
+      clearTimeout(fallback);
+      chrome.debugger.onEvent.removeListener(listener);
+    };
+  }, cancellationOptions);
+}
+
+async function sendCdpCommand(debuggee, method, params, cancellationOptions) {
+  await checkCdpCancellation(`CDP ${method}`, cancellationOptions);
+  const result = await chrome.debugger.sendCommand(debuggee, method, params);
+  await checkCdpCancellation(`CDP ${method} result`, cancellationOptions);
+  return result;
+}
+
+function getNodeAttribute(node, name) {
+  const attributes = node.attributes || [];
+  for (let index = 0; index < attributes.length; index += 2) {
+    if (attributes[index] === name) return attributes[index + 1];
+  }
+  return undefined;
 }
 
 /**
  * Ensure debugger is attached, reattach if needed with retries
  */
-async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
+async function ensureDebuggerAttached(debuggee, maxRetries = 3, cancellationOptions) {
   const startTime = Date.now();
   log('[CDP Render] [ensureDebuggerAttached] Checking debugger attachment...', {
     tabId: debuggee.tabId,
@@ -8049,7 +7805,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
   
   // First, try to check if debugger is attached
   try {
-    await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+    await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
     const duration = Date.now() - startTime;
     log('[CDP Render] [ensureDebuggerAttached] ✅ Debugger is attached', {
       tabId: debuggee.tabId,
@@ -8058,6 +7814,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
     });
     return; // Debugger is attached, exit early
   } catch (error) {
+      await checkCdpCancellation('CDP debugger recovery', cancellationOptions);
     log('[CDP Render] [ensureDebuggerAttached] Debugger check failed, will reattach', {
       tabId: debuggee.tabId,
       error: error.message,
@@ -8084,7 +7841,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
           waitTime,
           timestamp: Date.now()
         });
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+        await sleep(waitTime, cancellationOptions);
       }
       
       // Check if tab still exists
@@ -8100,6 +7857,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
           timestamp: Date.now()
         });
       } catch (tabError) {
+      await checkCdpCancellation('CDP debugger recovery', cancellationOptions);
         logError('[CDP Render] [ensureDebuggerAttached] Tab check failed', {
           tabId: debuggee.tabId,
           error: tabError.message,
@@ -8111,6 +7869,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
       
       // Detach old debugger if attached
       try {
+      await checkCdpCancellation('CDP debugger detach', cancellationOptions);
       await chrome.debugger.detach(debuggee);
       log('[CDP Render] [ensureDebuggerAttached] Old debugger detached', {
         tabId: debuggee.tabId,
@@ -8118,6 +7877,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
         timestamp: Date.now()
       });
     } catch (e) {
+      await checkCdpCancellation('CDP debugger recovery', cancellationOptions);
         // Ignore if already detached - this is expected
         log('[CDP Render] [ensureDebuggerAttached] No old debugger to detach (expected)', {
         tabId: debuggee.tabId,
@@ -8128,7 +7888,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
     }
     
       // Wait a bit more before attaching (give Chrome time to clean up)
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await sleep(200, cancellationOptions);
       
       // Attach new debugger
     log('[CDP Render] [ensureDebuggerAttached] Attaching new debugger...', {
@@ -8137,10 +7897,10 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
         attempt,
       timestamp: Date.now()
     });
-    await chrome.debugger.attach(debuggee, '1.3');
+    (await checkCdpCancellation('CDP browser operation', cancellationOptions), await chrome.debugger.attach(debuggee, '1.3'));
     
       // Wait a bit for debugger to stabilize
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await sleep(100, cancellationOptions);
       
       // Enable domains
       log('[CDP Render] [ensureDebuggerAttached] Enabling Page and Runtime domains...', {
@@ -8148,11 +7908,11 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
         attempt,
       timestamp: Date.now()
     });
-    await chrome.debugger.sendCommand(debuggee, 'Page.enable');
-      await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+    await sendCdpCommand(debuggee, 'Page.enable', undefined, cancellationOptions);
+      await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
       
       // Verify debugger is working by sending a test command
-      await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
+      await sendCdpCommand(debuggee, 'Runtime.enable', undefined, cancellationOptions);
     
     const duration = Date.now() - startTime;
     log('[CDP Render] [ensureDebuggerAttached] ✅ Debugger reattached successfully', {
@@ -8164,6 +7924,7 @@ async function ensureDebuggerAttached(debuggee, maxRetries = 3) {
       return; // Success, exit
       
     } catch (error) {
+      await checkCdpCancellation('CDP debugger recovery', cancellationOptions);
       const isLastAttempt = attempt === maxRetries;
       logWarn('[CDP Render] [ensureDebuggerAttached] ⚠️ Reattach attempt ' + attempt + ' failed', {
         tabId: debuggee.tabId,
@@ -8289,7 +8050,10 @@ function getImageDimensions(dataUrl) {
 /**
  * Sleep utility
  */
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function sleep(ms, cancellationOptions) {
+  return waitForRun((done) => {
+    const timeout = setTimeout(done, ms);
+    return () => clearTimeout(timeout);
+  }, cancellationOptions);
 }
 

@@ -43,7 +43,7 @@ export const AUDIO_CONFIG = {
   TTS_MAX_INPUT: 4096,
   
   // Voice options for gpt-4o-mini-tts
-  VOICES: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse'],
+  VOICES: ['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse', 'marin', 'cedar'],
   DEFAULT_VOICE: 'nova',
   
   // Speed range
@@ -81,7 +81,7 @@ export function contentToPlainText(content) {
     switch (item.type) {
       case 'heading':
         // Add heading with newlines for natural pauses
-        const headingText = stripHtml(item.text || '');
+        const headingText = stripHtml(item.text || item.html || '');
         if (headingText) {
           textParts.push(`\n\n${headingText}\n`);
           itemLog.extractedLength = headingText.length;
@@ -94,7 +94,7 @@ export function contentToPlainText(content) {
         break;
         
       case 'paragraph':
-        const paraText = stripHtml(item.text || '');
+        const paraText = stripHtml(item.text || item.html || '');
         if (paraText) {
           textParts.push(paraText);
           itemLog.extractedLength = paraText.length;
@@ -107,7 +107,8 @@ export function contentToPlainText(content) {
         break;
         
       case 'quote':
-        const quoteText = stripHtml(item.text || '');
+      case 'blockquote':
+        const quoteText = stripHtml(item.text || item.html || '');
         if (quoteText) {
           textParts.push(`Quote: ${quoteText}`);
           itemLog.extractedLength = quoteText.length;
@@ -122,7 +123,7 @@ export function contentToPlainText(content) {
       case 'list':
         if (item.items && Array.isArray(item.items)) {
           const listItems = item.items.map((li, index) => {
-            const text = typeof li === 'string' ? li : stripHtml(li.html || '');
+            const text = stripHtml(typeof li === 'string' ? li : (li.html || li.text || ''));
             return item.ordered ? `${index + 1}. ${text}` : `• ${text}`;
           }).filter(t => t);
           if (listItems.length > 0) {
@@ -349,12 +350,18 @@ export function splitTextIntoChunks(text) {
     }
   }
   
+  const boundedChunks = chunks.flatMap(chunk =>
+    chunk.text.length > AUDIO_CONFIG.MAX_CHUNK_SIZE
+      ? forceSplitText(chunk.text, AUDIO_CONFIG.IDEAL_CHUNK_SIZE).map(text => ({ text }))
+      : [chunk]
+  ).map((chunk, index) => ({ ...chunk, index }));
+
   log('Text split into chunks', { 
-    totalChunks: chunks.length, 
-    chunkSizes: chunks.map(c => c.text.length)
+    totalChunks: boundedChunks.length,
+    chunkSizes: boundedChunks.map(c => c.text.length)
   });
   
-  return chunks;
+  return boundedChunks;
 }
 
 /**
@@ -424,6 +431,23 @@ function forceSplitText(text, targetSize) {
   let current = '';
   
   for (const word of words) {
+    if (word.length > targetSize) {
+      if (current) {
+        parts.push(current);
+        current = '';
+      }
+      let remaining = word;
+      while (remaining.length > targetSize) {
+        let end = targetSize;
+        if (/^[\uDC00-\uDFFF]$/.test(remaining[end]) && /[\uD800-\uDBFF]$/.test(remaining[end - 1])) {
+          end--;
+        }
+        parts.push(remaining.slice(0, end));
+        remaining = remaining.slice(end);
+      }
+      current = remaining;
+      continue;
+    }
     if (current && (current.length + word.length + 1) > targetSize) {
       parts.push(current);
       current = word;
@@ -466,7 +490,7 @@ const LANGUAGE_NAMES_FOR_PROMPT = {
  * @param {string} language - Target language code (e.g., 'ru', 'en', 'auto')
  * @returns {Promise<string>} Cleaned text ready for TTS
  */
-export async function prepareChunkForAudio(chunkText, chunkIndex, totalChunks, apiKey, model, language = 'auto') {
+export async function prepareChunkForAudio(chunkText, chunkIndex, totalChunks, apiKey, model, language = 'auto', requestOptions = {}) {
   // Log all chunk preparation settings
   const chunkSettings = {
     timestamp: Date.now(),
@@ -548,7 +572,7 @@ ${chunkText}`;
       markdownCount: (chunkText.match(/[*_`#\[\]]/g) || []).length
     });
     
-    const cleanedResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false);
+    const cleanedResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false, requestOptions);
     const aiCallDuration = Date.now() - beforeAICall;
     
     // Extract string from response (callAI returns string when jsonResponse=false)
@@ -826,7 +850,7 @@ export function basicCleanup(text, language = 'auto') {
  * @param {import('../types.js').UpdateStateFunction} updateState - State update callback
  * @returns {Promise<Array<{text: string, index: number}>>} Prepared chunks ready for TTS
  */
-export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState, provider = null) {
+export async function prepareContentForAudio(content, title, apiKey, model, language = 'auto', updateState, provider = null, processingRunId, requestOptions = {}) {
   // Determine cleanup mode: use AI cleanup for online TTS, basic cleanup for offline
   const useAICleanup = Boolean(provider !== 'offline' && apiKey && model);
   
@@ -956,7 +980,7 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
   
   for (let i = 0; i < chunks.length; i++) {
     // Check if processing was cancelled before processing each chunk
-    await checkCancellation(`audio preparation chunk ${i + 1}/${chunks.length}`);
+    await checkCancellation(`audio preparation chunk ${i + 1}/${chunks.length}`, processingRunId);
     
     const chunk = chunks[i];
     
@@ -982,7 +1006,8 @@ export async function prepareContentForAudio(content, title, apiKey, model, lang
       model || '',
       language,
       prepareChunkForAudio,
-      basicCleanup
+      basicCleanup,
+      requestOptions
     );
     
     if (preparedChunk) {

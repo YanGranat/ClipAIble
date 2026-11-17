@@ -4,76 +4,81 @@
 // @ts-check
 
 import { log, logError } from '../utils/logging.js';
-import { encryptApiKey, isEncrypted } from '../utils/encryption.js';
-import { handleError } from '../utils/error-handler.js';
+import { encryptApiKey, withApiKeyStorageLock } from '../utils/encryption.js';
 
 /**
  * Migrate existing plain text API keys to encrypted format
  * Runs once on extension startup
  */
 export async function migrateApiKeys() {
-  try {
-    const result = await chrome.storage.local.get([
-      'openai_api_key',
-      'claude_api_key',
-      'gemini_api_key',
-      'grok_api_key',
-      'openrouter_api_key',
-      'google_api_key',
-      'elevenlabs_api_key',
-      'qwen_api_key',
-      'respeecher_api_key',
-      'google_tts_api_key',
-      'api_keys_migrated' // Flag to prevent repeated migration
-    ]);
+  return withApiKeyStorageLock(async () => {
+    try {
+      const result = await chrome.storage.local.get([
+        'openai_api_key',
+        'claude_api_key',
+        'deepseek_api_key',
+        'gemini_api_key',
+        'grok_api_key',
+        'openrouter_api_key',
+        'google_api_key',
+        'elevenlabs_api_key',
+        'qwen_api_key',
+        'respeecher_api_key',
+        'google_tts_api_key',
+        'api_keys_migrated' // Migration completion marker
+      ]);
 
-    const keysToEncrypt = {};
-    let hasChanges = false;
+      const keysToEncrypt = {};
+      let hasChanges = false;
 
-    // Check and encrypt each key if needed (always check, not just on first migration)
-    const keyNames = [
-      'openai_api_key',
-      'claude_api_key',
-      'gemini_api_key',
-      'grok_api_key',
-      'openrouter_api_key',
-      'google_api_key',
-      'elevenlabs_api_key',
-      'qwen_api_key',
-      'respeecher_api_key',
-      'google_tts_api_key'
-    ];
+      // Check and encrypt each key if needed (always check, not just on first migration)
+      const keyNames = [
+        'openai_api_key',
+        'claude_api_key',
+        'deepseek_api_key',
+        'gemini_api_key',
+        'grok_api_key',
+        'openrouter_api_key',
+        'google_api_key',
+        'elevenlabs_api_key',
+        'qwen_api_key',
+        'respeecher_api_key',
+        'google_tts_api_key'
+      ];
     
-    for (const keyName of keyNames) {
-      const value = result[keyName];
-      if (value && typeof value === 'string' && !isEncrypted(value)) {
-        // Key exists and is not encrypted, encrypt it
-        try {
-          keysToEncrypt[keyName] = await encryptApiKey(value);
-          hasChanges = true;
-          log(`Migrating ${keyName} to encrypted format`);
-        } catch (error) {
-          logError(`Failed to encrypt ${keyName}`, error);
-          // Continue with other keys
+      for (const keyName of keyNames) {
+        const value = result[keyName];
+        if (value && typeof value === 'string') {
+          try {
+            const encrypted = await encryptApiKey(value);
+            if (encrypted !== value) {
+              keysToEncrypt[keyName] = encrypted;
+              hasChanges = true;
+              log(`Migrating ${keyName} to encrypted format`);
+            }
+          } catch (error) {
+            logError(`Failed to encrypt ${keyName}`, error);
+            // Continue with other keys
+          }
         }
       }
-    }
 
-    if (hasChanges) {
-      keysToEncrypt.api_keys_migrated = true;
-      await chrome.storage.local.set(keysToEncrypt);
-      log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
-    } else if (!result.api_keys_migrated) {
-      // Mark as migrated only if no keys to encrypt and not already migrated
-      await chrome.storage.local.set({ api_keys_migrated: true });
-      log('API keys migration check completed (no keys to migrate)');
-    } else {
-      log('API keys already migrated, checking for unencrypted keys');
+      if (hasChanges) {
+        keysToEncrypt.api_keys_migrated = true;
+        await chrome.storage.local.set(keysToEncrypt);
+        log('API keys migrated to encrypted format', { count: Object.keys(keysToEncrypt).length - 1 });
+      } else if (!result.api_keys_migrated) {
+        // Mark as migrated only if no keys to encrypt and not already migrated
+        await chrome.storage.local.set({ api_keys_migrated: true });
+        log('API keys migration check completed (no keys to migrate)');
+      } else {
+        log('API keys already migrated, checking for unencrypted keys');
+      }
+    } catch (error) {
+      logError('API keys migration failed', error);
+      // Don't throw - migration failure shouldn't break extension
     }
-  } catch (error) {
-    logError('API keys migration failed', error);
-    // Don't throw - migration failure shouldn't break extension
-  }
+  });
 }
 
 /**
@@ -131,35 +136,7 @@ export async function initializeDefaultSettings() {
  * @returns {Promise<void>}
  */
 export async function runInitialization() {
-  // Migrate existing API keys to encrypted format (fire and forget)
-  (async () => {
-    try {
-      await migrateApiKeys();
-    } catch (error) {
-      const normalized = await handleError(error, {
-        source: 'initialization',
-        errorType: 'apiKeyMigrationFailed',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message
-      });
-      logError('API keys migration failed', normalized);
-    }
-  })();
-
-  // Initialize default settings (fire and forget)
-  (async () => {
-    try {
-      await initializeDefaultSettings();
-    } catch (error) {
-      const normalized = await handleError(error, {
-        source: 'initialization',
-        errorType: 'settingsInitializationFailed',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message
-      });
-      logError('Default settings initialization failed', normalized);
-    }
-  })();
+  await Promise.all([migrateApiKeys(), initializeDefaultSettings()]);
 }
 
 

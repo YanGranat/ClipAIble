@@ -86,3 +86,46 @@ export function setDisplayForIds(ids, displayValue) {
   });
 }
 
+/** Keep keyboard focus inside a visible modal until its existing close action runs. */
+export function activateModalDialog(modal, onCancel, initialFocus) {
+  const dialog = modal.querySelector('.modal-dialog') || modal;
+  const previousFocus = document.activeElement;
+  const title = dialog.querySelector('h1[id], h2[id], h3[id]');
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+  if (title) dialog.setAttribute('aria-labelledby', title.id);
+  dialog.tabIndex = -1;
+  const siblings = Array.from(document.body.children).filter(element => element !== modal && !element.contains(modal));
+  const inertStates = siblings.map(element => [element, element.inert]);
+  siblings.forEach(element => { element.inert = true; });
+  const focusable = () => Array.from(dialog.querySelectorAll('button, input:not([type="hidden"]), select, textarea, a[href], [tabindex]'))
+    .filter(element => element.tabIndex >= 0 && !element.disabled && !element.closest('[hidden], .hidden') &&
+      window.getComputedStyle(element).display !== 'none' && window.getComputedStyle(element).visibility !== 'hidden');
+  const focusInside = () => (initialFocus && !initialFocus.disabled ? initialFocus : focusable()[0] || dialog).focus();
+  const onKeyDown = event => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+    } else if (event.key === 'Tab') {
+      const controls = focusable();
+      const first = controls[0] || dialog;
+      const last = controls.at(-1) || dialog;
+      if (!dialog.contains(document.activeElement) || (event.shiftKey && document.activeElement === first) || (!event.shiftKey && document.activeElement === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    }
+  };
+  const onFocus = event => { if (!dialog.contains(event.target)) focusInside(); };
+  document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('focusin', onFocus, true);
+  focusInside();
+  return () => {
+    document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('focusin', onFocus, true);
+    inertStates.forEach(([element, inert]) => { element.inert = inert; });
+    if (previousFocus?.isConnected) previousFocus.focus();
+  };
+}
+

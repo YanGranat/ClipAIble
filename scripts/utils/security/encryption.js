@@ -16,11 +16,32 @@ let cachedEncryptionKey = null;
 // Security: Keys are only cached during processing, cleared on resetState()
 // Additional security: Auto-clear cache after 10 minutes of inactivity
 // Maximum security: Force clear after 30 minutes regardless of processing state
-const decryptedKeyCache = new Map(); // provider:encryptedPrefix -> decryptedKey
+const decryptedKeyCache = new Map(); // provider:ciphertext -> decryptedKey
 let cacheClearTimeout = null;
 let cacheStartTime = null; // Track when cache was first populated
 const CACHE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes - normal timeout
 const MAX_CACHE_TIME_MS = 30 * 60 * 1000; // 30 minutes - maximum time keys can stay in memory
+
+/** Serialize API key storage transactions across extension pages and workers. */
+export function withApiKeyStorageLock(operation) {
+  return navigator.locks.request('clipaible-api-key-storage', operation);
+}
+
+/** Persist validated API key settings without racing startup migration. */
+export function saveApiKeySettings(values, keysToRemove = []) {
+  return withApiKeyStorageLock(async () => {
+    if (Object.keys(values).length) await chrome.storage.local.set(values);
+    if (keysToRemove.length) await chrome.storage.local.remove(keysToRemove);
+  });
+}
+
+/** Remove a corrupt value only while it still matches the inspected snapshot. */
+export function removeApiKeyIfUnchanged(storageKey, expectedValue) {
+  return withApiKeyStorageLock(async () => {
+    const stored = await chrome.storage.local.get(storageKey);
+    if (stored[storageKey] === expectedValue) await chrome.storage.local.remove(storageKey);
+  });
+}
 
 /**
  * Get or generate encryption key based on extension ID
@@ -84,7 +105,7 @@ export function isEncrypted(value) {
   // New format: check for ENC: prefix
   if (value.startsWith(ENCRYPTION_PREFIX)) {
     const base64Part = value.substring(ENCRYPTION_PREFIX.length);
-    return /^[A-Za-z0-9+/=]{50,}$/.test(base64Part) && base64Part.length > 50;
+    return /^[A-Za-z0-9+/=]{40,}$/.test(base64Part);
   }
   
   // Old format (backward compatibility): check for base64 pattern and minimum length
@@ -102,10 +123,21 @@ export async function encryptApiKey(plaintext) {
     throw new Error('Invalid plaintext for encryption');
   }
 
-  // If already encrypted, return as is
-  if (isEncrypted(plaintext)) {
+  // Prefixed values are already stored in the current format.
+  if (plaintext.startsWith(ENCRYPTION_PREFIX) && isEncrypted(plaintext)) {
     log('API key already encrypted, skipping');
     return plaintext;
+  }
+
+  // A legacy ciphertext has no marker. Authenticate it before treating a
+  // base64-shaped API key as encrypted.
+  if (isEncrypted(plaintext)) {
+    try {
+      await decryptStoredValue(plaintext);
+      return plaintext;
+    } catch {
+      // Unmarked values that cannot be authenticated are plaintext keys.
+    }
   }
 
   try {
@@ -135,6 +167,25 @@ export async function encryptApiKey(plaintext) {
 }
 
 /**
+ * Authenticate and decrypt a stored ciphertext, including the legacy format.
+ * @param {string} value - Stored ciphertext
+ * @returns {Promise<string>} Plaintext
+ */
+async function decryptStoredValue(value) {
+  const key = await getEncryptionKey();
+  const base64Data = value.startsWith(ENCRYPTION_PREFIX)
+    ? value.substring(ENCRYPTION_PREFIX.length)
+    : value;
+  const combined = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: combined.slice(0, 12) },
+    key,
+    combined.slice(12)
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+/**
  * Decrypt API key
  * @param {string} encryptedBase64 - Base64 encoded encrypted string
  * @returns {Promise<string>} Decrypted plain text API key
@@ -151,28 +202,7 @@ export async function decryptApiKey(encryptedBase64) {
   }
 
   try {
-    const key = await getEncryptionKey();
-    
-    // Remove prefix if present (new format), otherwise use as-is (old format)
-    const base64Data = encryptedBase64.startsWith(ENCRYPTION_PREFIX) 
-      ? encryptedBase64.substring(ENCRYPTION_PREFIX.length)
-      : encryptedBase64;
-    
-    // Decode base64
-    const combined = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-    
-    // Extract IV (first 12 bytes) and encrypted data
-    const iv = combined.slice(0, 12);
-    const encrypted = combined.slice(12);
-
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      encrypted
-    );
-
-    const plaintext = new TextDecoder().decode(decrypted);
-    return plaintext;
+    return await decryptStoredValue(encryptedBase64);
   } catch (error) {
     logError('Decryption failed', error);
     // If decryption fails, try returning as plain text (for migration)
@@ -182,24 +212,8 @@ export async function decryptApiKey(encryptedBase64) {
 }
 
 /**
- * Hash string using simple hash function (for cache key)
- * Uses djb2 hash algorithm for better distribution than substring
- * @param {string} str - String to hash
- * @returns {string} Hash value
- */
-function hashString(str) {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i);
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash).toString(36);
-}
-
-/**
  * Get decrypted API key with caching (per-provider)
  * Cache is cleared after processing to ensure security
- * Automatically re-encrypts plain text keys for security
  * @param {string} encryptedKey - Encrypted API key (or plain text for backward compatibility)
  * @param {AIProvider} provider - Provider name
  * @returns {Promise<string>} Decrypted API key
@@ -209,40 +223,7 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
     throw new Error('Invalid parameters for getDecryptedKeyCached');
   }
   
-  // Check if key is encrypted, if not, encrypt it automatically
-  if (!isEncrypted(encryptedKey)) {
-    logWarn(`API key for ${provider} is not encrypted, encrypting automatically`);
-    try {
-      const encrypted = await encryptApiKey(encryptedKey);
-      // Save encrypted key back to storage (async, don't wait)
-      const storageKeyMap = {
-        'openai': 'openai_api_key',
-        'claude': 'claude_api_key',
-        'gemini': 'gemini_api_key',
-        'grok': 'grok_api_key',
-        'openrouter': 'openrouter_api_key',
-        'google': 'google_api_key',
-        'elevenlabs': 'elevenlabs_api_key',
-        'qwen': 'qwen_api_key',
-        'respeecher': 'respeecher_api_key',
-        'google-tts': 'google_tts_api_key'
-      };
-      const storageKey = storageKeyMap[provider];
-      if (storageKey) {
-        chrome.storage.local.set({ [storageKey]: encrypted }).catch(error => {
-          logError(`Failed to save encrypted ${provider} key`, error);
-        });
-      }
-      // Use encrypted version for caching
-      encryptedKey = encrypted;
-    } catch (error) {
-      logError(`Failed to encrypt ${provider} key automatically`, error);
-      // Continue with plain text key (backward compatibility)
-    }
-  }
-  
-  // Use full hash instead of prefix to avoid collisions
-  const cacheKey = `${provider}:${hashString(encryptedKey)}`;
+  const cacheKey = `${provider}:${encryptedKey}`;
   if (decryptedKeyCache.has(cacheKey)) {
     log('Using cached decrypted key', { provider });
     return decryptedKeyCache.get(cacheKey);

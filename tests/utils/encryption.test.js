@@ -1,208 +1,245 @@
-// Unit tests for scripts/utils/encryption.js
-
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { webcrypto } from 'node:crypto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  isEncrypted,
-  encryptApiKey,
-  decryptApiKey,
-  getDecryptedKeyCached,
-  clearDecryptedKeyCache
+  isEncrypted, encryptApiKey, decryptApiKey, getDecryptedKeyCached, clearDecryptedKeyCache,
+  withApiKeyStorageLock, saveApiKeySettings, removeApiKeyIfUnchanged
 } from '../../scripts/utils/encryption.js';
+import { migrateApiKeys, runInitialization } from '../../scripts/initialization/index.js';
 
-// Mock chrome.storage
-const mockStorage = {
-  local: {
-    get: vi.fn(() => Promise.resolve({})),
-    set: vi.fn(() => Promise.resolve())
-  }
-};
+vi.mock('../../scripts/utils/logging.js', () => ({
+  log: vi.fn(), logError: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn()
+}));
 
-global.chrome.storage = mockStorage;
+const plaintext = 'sk-synthetic-key-for-encryption-tests-0123456789';
+let storage;
 
-describe('isEncrypted', () => {
-  it('should return false for plain text API keys', () => {
-    expect(isEncrypted('sk-1234567890abcdef')).toBe(false);
-    expect(isEncrypted('AIza1234567890')).toBe(false);
-    expect(isEncrypted('short')).toBe(false);
-  });
-
-  it('should return true for base64 encrypted strings', () => {
-    // Base64 strings longer than 50 chars
-    const longBase64 = 'A'.repeat(60);
-    expect(isEncrypted(longBase64)).toBe(true);
-  });
-
-  it('should return false for null/undefined/empty', () => {
-    expect(isEncrypted(null)).toBe(false);
-    expect(isEncrypted(undefined)).toBe(false);
-    expect(isEncrypted('')).toBe(false);
-  });
-
-  it('should return false for non-string values', () => {
-    expect(isEncrypted(123)).toBe(false);
-    expect(isEncrypted({})).toBe(false);
-  });
+beforeEach(() => {
+  vi.stubGlobal('crypto', webcrypto);
+  const queues = new Map();
+  vi.stubGlobal('navigator', { locks: { request: vi.fn((name, operation) => {
+    const result = (queues.get(name) || Promise.resolve()).catch(() => {}).then(operation);
+    queues.set(name, result);
+    return result;
+  }) } });
+  storage = { get: vi.fn().mockResolvedValue({}), set: vi.fn().mockResolvedValue(undefined) };
+  vi.stubGlobal('chrome', { runtime: { id: 'test-extension-id' }, storage: { local: storage } });
+  clearDecryptedKeyCache();
 });
 
-describe('encryptApiKey', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+afterEach(() => {
+  clearDecryptedKeyCache();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
-  it('should encrypt plain text API key', async () => {
-    const plaintext = 'sk-1234567890abcdef';
+describe('API key encryption', () => {
+  it('round-trips plaintext through authenticated encryption', async () => {
     const encrypted = await encryptApiKey(plaintext);
-    
-    expect(encrypted).toBeTruthy();
-    expect(encrypted).not.toBe(plaintext);
-    // Note: isEncrypted checks for base64 pattern and length > 50
-    // Real encryption produces base64 strings, but mock might not
-    // For now, just check it's different and truthy
-    expect(typeof encrypted).toBe('string');
-    expect(encrypted.length).toBeGreaterThan(0);
+    expect(encrypted).toMatch(/^ENC:/);
+    expect(encrypted).not.toContain(plaintext);
+    expect(isEncrypted(encrypted)).toBe(true);
+    expect(await decryptApiKey(encrypted)).toBe(plaintext);
   });
 
-  it('should return same value if already encrypted', async () => {
-    const alreadyEncrypted = 'A'.repeat(60);
-    const result = await encryptApiKey(alreadyEncrypted);
-    
-    expect(result).toBe(alreadyEncrypted);
+  it('round-trips a short value using the current marker', async () => {
+    const encrypted = await encryptApiKey('x');
+    expect(isEncrypted(encrypted)).toBe(true);
+    expect(await decryptApiKey(encrypted)).toBe('x');
   });
 
-  it('should throw error for invalid input', async () => {
-    await expect(encryptApiKey(null)).rejects.toThrow();
-    await expect(encryptApiKey('')).rejects.toThrow();
-    await expect(encryptApiKey(123)).rejects.toThrow();
+  it('uses a fresh IV and preserves existing prefixed ciphertext', async () => {
+    const first = await encryptApiKey(plaintext);
+    const second = await encryptApiKey(plaintext);
+    expect(first).not.toBe(second);
+    expect(await decryptApiKey(second)).toBe(plaintext);
+    expect(await encryptApiKey(first)).toBe(first);
   });
 
-  it('should produce different encrypted values for same input (due to random IV)', async () => {
-    const plaintext = 'sk-1234567890abcdef';
-    const encrypted1 = await encryptApiKey(plaintext);
-    const encrypted2 = await encryptApiKey(plaintext);
-    
-    // Should be different due to random IV
-    expect(encrypted1).not.toBe(encrypted2);
-  });
-});
-
-describe('decryptApiKey', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('should decrypt encrypted API key', async () => {
-    // Note: With mocked crypto, encryption/decryption won't work correctly
-    // This test verifies the function calls work, but actual decryption
-    // requires real Web Crypto API
-    const plaintext = 'sk-1234567890abcdef';
-    try {
-      const encrypted = await encryptApiKey(plaintext);
-      const decrypted = await decryptApiKey(encrypted);
-      
-      // With mocked crypto, decryption may not work, but function should not throw
-      expect(typeof decrypted).toBe('string');
-    } catch (error) {
-      // If encryption fails due to mock, that's expected
-      // Just verify the function structure is correct
-      expect(error).toBeDefined();
+  it('encrypts long hexadecimal and base64-shaped plaintext keys', async () => {
+    for (const key of ['a1'.repeat(32), 'AbCd0123'.repeat(8)]) {
+      const encrypted = await encryptApiKey(key);
+      expect(encrypted).not.toBe(key);
+      expect(encrypted).toMatch(/^ENC:/);
+      expect(await decryptApiKey(encrypted)).toBe(key);
     }
   });
 
-  it('should return plain text as-is if not encrypted', async () => {
-    const plaintext = 'sk-1234567890abcdef';
-    const result = await decryptApiKey(plaintext);
-    
-    expect(result).toBe(plaintext);
+  it('authenticates legacy ciphertext before preserving it', async () => {
+    const legacy = (await encryptApiKey(plaintext)).slice(4);
+    expect(await decryptApiKey(legacy)).toBe(plaintext);
+    expect(await encryptApiKey(legacy)).toBe(legacy);
   });
 
-  it('should throw error for invalid input', async () => {
-    await expect(decryptApiKey(null)).rejects.toThrow();
-    await expect(decryptApiKey('')).rejects.toThrow();
+  it('retains the compatibility fallback for a corrupted stored value', async () => {
+    const encrypted = await encryptApiKey(plaintext);
+    const bytes = Buffer.from(encrypted.slice(4), 'base64');
+    bytes[bytes.length - 1] ^= 1;
+    const corrupted = 'ENC:' + bytes.toString('base64');
+    expect(await decryptApiKey(corrupted)).toBe(corrupted);
+    const decrypt = vi.spyOn(webcrypto.subtle, 'decrypt');
+    expect(await getDecryptedKeyCached(corrupted, 'openai')).toBe(corrupted);
+    expect(await getDecryptedKeyCached(corrupted, 'openai')).toBe(corrupted);
+    expect(decrypt).toHaveBeenCalledTimes(2);
   });
 
-  it('should handle decryption failure gracefully', async () => {
-    // Invalid encrypted string
-    const invalidEncrypted = 'invalid-base64-string';
-    const result = await decryptApiKey(invalidEncrypted);
-    
-    // Should return as plain text (backward compatibility)
-    expect(result).toBe(invalidEncrypted);
+  it('rejects empty or non-string inputs and passes through plain values on read', async () => {
+    for (const value of [null, undefined, '', 123, {}]) {
+      expect(isEncrypted(value)).toBe(false);
+      await expect(encryptApiKey(value)).rejects.toThrow('Invalid plaintext');
+      await expect(decryptApiKey(value)).rejects.toThrow('Invalid encrypted');
+    }
+    expect(await decryptApiKey('plain-key')).toBe('plain-key');
   });
 });
 
-describe('getDecryptedKeyCached', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+describe('decrypted key cache', () => {
+  it('keeps distinct authenticated values separate for the same provider', async () => {
+    const values = [
+      ['ENC:AAAAAAAAAAAAAGd85yQOj1iPX+L4b+iFz9eJn7oPJGAnhuAfE6zwCO4z0ckMJ1fa1MvMvKM=', 'synthetic-cache-key-26492'],
+      ['ENC:AAAAAAAAAAAAAI3Ft92ePR527djwYMGbLKUyu0QPzpKnA1l+91lWMNerLoFQmIJ/sfmnBQ4=', 'synthetic-cache-key-36293']
+    ];
+    for (const [encrypted, key] of values) {
+      expect(await decryptApiKey(encrypted)).toBe(key);
+      expect(await getDecryptedKeyCached(encrypted, 'openai')).toBe(key);
+    }
+  });
+
+  it('decrypts once per provider and decrypts again after clearing', async () => {
+    const encrypted = await encryptApiKey(plaintext);
+    const decrypt = vi.spyOn(webcrypto.subtle, 'decrypt');
+    expect(await getDecryptedKeyCached(encrypted, 'openai')).toBe(plaintext);
+    expect(await getDecryptedKeyCached(encrypted, 'openai')).toBe(plaintext);
+    expect(decrypt).toHaveBeenCalledTimes(1);
+    expect(await getDecryptedKeyCached(encrypted, 'claude')).toBe(plaintext);
+    expect(decrypt).toHaveBeenCalledTimes(2);
     clearDecryptedKeyCache();
+    expect(await getDecryptedKeyCached(encrypted, 'openai')).toBe(plaintext);
+    expect(decrypt).toHaveBeenCalledTimes(3);
   });
 
-  it('should decrypt and cache API key', async () => {
-    // Note: With mocked crypto, actual encryption/decryption won't work
-    // This test verifies caching logic works
-    const plaintext = 'sk-1234567890abcdef';
-    try {
-      const encrypted = await encryptApiKey(plaintext);
-      
-      const decrypted1 = await getDecryptedKeyCached(encrypted, 'openai');
-      const decrypted2 = await getDecryptedKeyCached(encrypted, 'openai');
-      
-      // With mocked crypto, values may differ, but caching should work
-      expect(decrypted1).toBe(decrypted2); // Cache should return same value
-      expect(typeof decrypted1).toBe('string');
-    } catch (error) {
-      // If encryption fails, that's expected with mocks
-      expect(error).toBeDefined();
-    }
+  it('reads a long unmarked key without mutating stored provider settings', async () => {
+    const key = 'a1'.repeat(32);
+    expect(await getDecryptedKeyCached(key, 'deepseek')).toBe(key);
+    expect(storage.set).not.toHaveBeenCalled();
   });
 
-  it('should auto-encrypt plain text keys', async () => {
-    const plaintext = 'sk-1234567890abcdef';
-    
-    const decrypted = await getDecryptedKeyCached(plaintext, 'openai');
-    
-    // Should return the plaintext (may be encrypted first, then decrypted)
-    expect(typeof decrypted).toBe('string');
-    // Should have saved encrypted version
-    expect(mockStorage.local.set).toHaveBeenCalled();
+  it('keeps authenticated legacy ciphertext without rewriting it', async () => {
+    const legacy = (await encryptApiKey(plaintext)).slice(4);
+    expect(await getDecryptedKeyCached(legacy, 'openai')).toBe(plaintext);
+    expect(storage.set).not.toHaveBeenCalled();
   });
 
-  it('should throw error for invalid parameters', async () => {
-    await expect(getDecryptedKeyCached(null, 'openai')).rejects.toThrow();
-    await expect(getDecryptedKeyCached('key', null)).rejects.toThrow();
+  it('does not replace a newly saved key when decrypting an older plaintext argument', async () => {
+    const replacement = await encryptApiKey('sk-synthetic-new-key');
+    const saved = { openai_api_key: plaintext };
+    storage.get.mockImplementation(async () => ({ ...saved }));
+    storage.set.mockImplementation(async values => { Object.assign(saved, values); });
+    await storage.set({ openai_api_key: replacement });
+    storage.set.mockClear();
+    expect(await getDecryptedKeyCached(plaintext, 'openai')).toBe(plaintext);
+    expect(saved.openai_api_key).toBe(replacement);
+    expect(storage.set).not.toHaveBeenCalled();
   });
 
-  it('should use different cache keys for different providers', async () => {
-    // Test that different providers use different cache entries
-    const key1 = 'key1';
-    const key2 = 'key2';
-    
-    const decrypted1 = await getDecryptedKeyCached(key1, 'openai');
-    const decrypted2 = await getDecryptedKeyCached(key2, 'claude');
-    
-    // With mocked crypto, actual values may differ, but they should be different
-    expect(decrypted1).not.toBe(decrypted2);
-    expect(typeof decrypted1).toBe('string');
-    expect(typeof decrypted2).toBe('string');
+  it('rejects missing cache parameters', async () => {
+    await expect(getDecryptedKeyCached(null, 'openai')).rejects.toThrow('Invalid parameters');
+    await expect(getDecryptedKeyCached('key', null)).rejects.toThrow('Invalid parameters');
   });
 });
 
-describe('clearDecryptedKeyCache', () => {
-  it('should clear the cache', async () => {
-    // Test that cache clearing works
-    const plaintext = 'sk-1234567890abcdef';
-    try {
-      const encrypted = await encryptApiKey(plaintext);
-      
-      await getDecryptedKeyCached(encrypted, 'openai');
-      clearDecryptedKeyCache();
-      
-      // Cache should be cleared, next call should work (may decrypt again)
-      const decrypted = await getDecryptedKeyCached(encrypted, 'openai');
-      expect(typeof decrypted).toBe('string');
-    } catch (error) {
-      // If encryption fails, that's expected with mocks
-      expect(error).toBeDefined();
-    }
+describe('stored key migration', () => {
+  it('does not replace a newly saved key while encrypting a startup snapshot', async () => {
+    const replacement = await encryptApiKey('sk-synthetic-new-key');
+    const saved = { openai_api_key: plaintext, api_keys_migrated: true };
+    storage.get.mockImplementation(async () => ({ ...saved }));
+    storage.set.mockImplementation(async values => { Object.assign(saved, values); });
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const encrypt = webcrypto.subtle.encrypt.bind(webcrypto.subtle);
+    const delayed = vi.spyOn(webcrypto.subtle, 'encrypt').mockImplementationOnce(async (...args) => {
+      await pending;
+      return encrypt(...args);
+    });
+    const migration = migrateApiKeys();
+    await vi.waitFor(() => expect(delayed).toHaveBeenCalledOnce());
+    let keySaved = false;
+    const saving = saveApiKeySettings({ openai_api_key: replacement }).then(() => { keySaved = true; });
+    await Promise.resolve();
+    expect(keySaved).toBe(false);
+    release();
+    await Promise.all([migration, saving]);
+    expect(saved.openai_api_key).toBe(replacement);
+  });
+
+  it('reads its migration snapshot after acquiring the shared storage lock', async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const held = withApiKeyStorageLock(() => pending);
+    const replacement = await encryptApiKey('sk-synthetic-new-key');
+    const saved = { openai_api_key: plaintext, api_keys_migrated: true };
+    storage.get.mockImplementation(async () => ({ ...saved }));
+    storage.set.mockImplementation(async values => { Object.assign(saved, values); });
+    const saving = saveApiKeySettings({ openai_api_key: replacement });
+    const migration = migrateApiKeys();
+    expect(storage.get).not.toHaveBeenCalled();
+    release();
+    await Promise.all([held, saving, migration]);
+    expect(saved.openai_api_key).toBe(replacement);
+    expect(storage.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes a corrupt key only if the inspected value is still current', async () => {
+    const saved = { openai_api_key: 'new-value', claude_api_key: '****' };
+    storage.get.mockImplementation(async () => ({ ...saved }));
+    storage.remove = vi.fn(async key => { delete saved[key]; });
+    await removeApiKeyIfUnchanged('openai_api_key', '****');
+    expect(saved.openai_api_key).toBe('new-value');
+    await removeApiKeyIfUnchanged('claude_api_key', '****');
+    expect(saved.claude_api_key).toBeUndefined();
+    expect(storage.remove).toHaveBeenCalledOnce();
+  });
+
+  it('releases the storage lock after a failed key save', async () => {
+    storage.set.mockRejectedValueOnce(new Error('Storage unavailable'));
+    await expect(saveApiKeySettings({ openai_api_key: 'first' })).rejects.toThrow('Storage unavailable');
+    await expect(saveApiKeySettings({ openai_api_key: 'second' })).resolves.toBeUndefined();
+    expect(storage.set).toHaveBeenLastCalledWith({ openai_api_key: 'second' });
+  });
+
+  it('waits for both migration and default settings before initialization completes', async () => {
+    let resolveMigration;
+    let resolveDefaults;
+    const migration = new Promise(resolve => { resolveMigration = resolve; });
+    const defaults = new Promise(resolve => { resolveDefaults = resolve; });
+    storage.get.mockImplementation(keys => keys.includes('openai_api_key') ? migration : defaults);
+    let completed = false;
+    const initialization = runInitialization().then(() => { completed = true; });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    resolveMigration({ api_keys_migrated: true });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    resolveDefaults({ use_selector_cache: false, enable_selector_caching: false, transcription_settings_cleaned: true });
+    await initialization;
+    expect(completed).toBe(true);
+    expect(storage.set).not.toHaveBeenCalled();
+  });
+
+  it('repairs long plaintext keys even when migration was previously marked complete', async () => {
+    const legacy = (await encryptApiKey(plaintext)).slice(4);
+    const current = await encryptApiKey(plaintext);
+    const longKey = 'a1'.repeat(32);
+    storage.get.mockResolvedValue({
+      api_keys_migrated: true, openai_api_key: longKey, deepseek_api_key: longKey,
+      claude_api_key: legacy, gemini_api_key: current
+    });
+    await migrateApiKeys();
+    expect(storage.get.mock.calls[0][0]).toContain('deepseek_api_key');
+    const saved = storage.set.mock.calls[0][0];
+    expect(Object.keys(saved).sort()).toEqual(['api_keys_migrated', 'deepseek_api_key', 'openai_api_key']);
+    expect(await decryptApiKey(saved.openai_api_key)).toBe(longKey);
+    expect(await decryptApiKey(saved.deepseek_api_key)).toBe(longKey);
+    expect(saved.openai_api_key).not.toBe(longKey);
   });
 });
 

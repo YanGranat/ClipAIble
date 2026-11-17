@@ -32,24 +32,22 @@ export function initStyles(deps) {
         await chrome.storage.local.set({ [STORAGE_KEYS.FONT_SIZE]: DEFAULT_STYLES.fontSize });
         break;
       case 'bgColor':
-        elements.bgColor.value = DEFAULT_STYLES.bgColor;
-        elements.bgColorText.value = DEFAULT_STYLES.bgColor;
-        await chrome.storage.local.set({ [STORAGE_KEYS.BG_COLOR]: DEFAULT_STYLES.bgColor });
-        break;
       case 'textColor':
-        elements.textColor.value = DEFAULT_STYLES.textColor;
-        elements.textColorText.value = DEFAULT_STYLES.textColor;
-        await chrome.storage.local.set({ [STORAGE_KEYS.TEXT_COLOR]: DEFAULT_STYLES.textColor });
-        break;
       case 'headingColor':
-        elements.headingColor.value = DEFAULT_STYLES.headingColor;
-        elements.headingColorText.value = DEFAULT_STYLES.headingColor;
-        await chrome.storage.local.set({ [STORAGE_KEYS.HEADING_COLOR]: DEFAULT_STYLES.headingColor });
-        break;
       case 'linkColor':
-        elements.linkColor.value = DEFAULT_STYLES.linkColor;
-        elements.linkColorText.value = DEFAULT_STYLES.linkColor;
-        await chrome.storage.local.set({ [STORAGE_KEYS.LINK_COLOR]: DEFAULT_STYLES.linkColor });
+        const colorKeys = {
+          bgColor: STORAGE_KEYS.CUSTOM_BG_COLOR,
+          textColor: STORAGE_KEYS.CUSTOM_TEXT_COLOR,
+          headingColor: STORAGE_KEYS.CUSTOM_HEADING_COLOR,
+          linkColor: STORAGE_KEYS.CUSTOM_LINK_COLOR
+        };
+        elements[type].value = DEFAULT_STYLES[type];
+        elements[`${type}Text`].value = DEFAULT_STYLES[type];
+        elements.stylePreset.value = 'custom';
+        await chrome.storage.local.set({
+          [colorKeys[type]]: DEFAULT_STYLES[type],
+          [STORAGE_KEYS.STYLE_PRESET]: 'custom'
+        });
         break;
     }
     const resetText = await t('resetToDefault');

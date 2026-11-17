@@ -1,6 +1,6 @@
 # ClipAIble
 
-KI-gestützter Artikel-Extraktor. Funktioniert auf jeder Website.
+KI-gestützter Artikel-Extraktor.
 
 **Erhältlich im [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
 
@@ -16,7 +16,6 @@ ClipAIble extrahiert Artikelinhalt von Webseiten und konvertiert ihn in verschie
 **Besondere Funktionen:**
 - **YouTube/Vimeo Support**: Extrahiert Videountertitel und erstellt Artikel daraus
 - **PDF Verarbeitung**: Funktioniert mit Online-PDFs und lokalen PDF-Dateien
-- **Inhaltsübersetzung**: Übersetzt Artikel in 11 Sprachen
 - **Bildübersetzung**: Übersetzt Text auf Bildern mit KI
 - **TLDR Generierung**: Erstellt kurze Zusammenfassungen innerhalb von Dokumenten
 - **Summary Panel**: Zeigt Artikelsummaries im Popup nach der Verarbeitung an
@@ -52,10 +51,6 @@ ClipAIble extrahiert Artikelinhalt von Webseiten und konvertiert ihn in verschie
 - **FB2**: Erstellt strukturierte E-Books für PocketBook und andere Reader
 - **Markdown**: Behält die Artikelstruktur mit Überschriften und Listen bei
 - **Audio**: Konvertiert Text in Sprache mit 6 verschiedenen TTS-Diensten
-
-### Übersetzung
-
-Inhalte können übersetzt werden in: Englisch, Russisch, Ukrainisch, Deutsch, Französisch, Spanisch, Italienisch, Portugiesisch, Chinesisch, Japanisch, Koreanisch.
 
 ### Audio
 
@@ -98,7 +93,6 @@ Schlüssel erhalten auf [space.respeecher.com](https://space.respeecher.com/)
 
 - **Statistiken**: Verfolgen Sie Ihre gespeicherten Artikel mit Verlauf und monatlichen Zählern
 - **Einstellungen Import/Export**: Sichern und Wiederherstellen Ihrer Einstellungen
-- **11-sprachige Oberfläche**: Wechseln zwischen Sprachen ohne Neustart
 - **Sichere Speicherung**: API-Schlüssel werden vor dem Speichern verschlüsselt
 
 ## Berechtigungen

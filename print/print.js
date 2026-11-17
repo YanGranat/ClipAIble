@@ -4,6 +4,7 @@
 import { getLargeData, removeLargeData } from '../scripts/utils/storage.js';
 import { cleanTitleForFilename, escapeHtml } from '../scripts/utils/html.js';
 import { getUILanguage, tSync } from '../scripts/locales.js';
+import { CONFIG } from '../scripts/utils/config.js';
 
 const LOG_PREFIX = '[ClipAIble:Print]';
 
@@ -13,7 +14,8 @@ const LOG_PREFIX = '[ClipAIble:Print]';
  * @param {string} message - Log message
  * @param {*} data - Optional data to log
  */
-function log(message, data = null) {
+function log(message, data = null, level = 'debug') {
+  if (!CONFIG.VERBOSE_LOGGING && level !== 'error') return;
   const logMessage = `${LOG_PREFIX} ${message}`;
   
   // CRITICAL: ALL logs MUST go to service worker - this is the primary logging destination
@@ -24,19 +26,24 @@ function log(message, data = null) {
       action: 'logFromPrintPage',
       data: {
         message: logMessage,
-        data: data
+        data: data,
+        level
       }
     }).catch(() => {
       // Fallback to console if service worker is not available (acceptable in print page context)
-      console.log(logMessage, data || '');
+      (level === 'error' ? console.error : console.log)(logMessage, data || '');
     });
   } catch (e) {
     // Fallback to console if sendMessage fails (acceptable in print page context)
-    console.log(logMessage, data || '');
+    (level === 'error' ? console.error : console.log)(logMessage, data || '');
   }
 }
 
 async function init() {
+  const printJobId = new URL(location.href).searchParams.get('job');
+  const validJobId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(printJobId || '');
+  const printStorageKey = validJobId ? `printJob:${printJobId}` : null;
+  let processingRunId;
   // NOTE: setTimeout delays below (200ms, 300ms) are render/reflow waits.
   // They are NOT magic numbers to extract - contextually clear, used once.
   log('=== INIT START ===');
@@ -55,17 +62,20 @@ async function init() {
   
   try {
     // Get HTML from storage (checks both chrome.storage and IndexedDB)
-    const printHtml = await getLargeData('printHtml');
+    if (!printStorageKey) throw new Error('Invalid print job');
+    const printJob = await getLargeData(printStorageKey);
+    processingRunId = printJob?.processingRunId;
+    const printHtml = printJob?.html;
     
-    if (!printHtml) {
+    if (typeof printHtml !== 'string' || !printHtml) {
       throw new Error('No content in storage');
     }
     
     // Get metadata from chrome.storage
-    const result = await chrome.storage.local.get(['printTitle', 'pageMode']);
+    const result = printJob;
     
     // Use cleanTitleForFilename to remove invalid filename chars (print page title is used for PDF filename)
-    const title = cleanTitleForFilename(typeof result.printTitle === 'string' ? result.printTitle : undefined, 'Untitled');
+    const title = cleanTitleForFilename(typeof result.title === 'string' ? result.title : undefined, 'Untitled');
     const pageMode = (typeof result.pageMode === 'string' ? result.pageMode : undefined) || 'single';
     
     log(`Content loaded: ${printHtml.length} chars, pageMode=${pageMode}`);
@@ -128,10 +138,17 @@ async function init() {
     
     await Promise.all(Array.from(images).map(img => {
       return new Promise(resolve => {
-        if (img.complete) resolve();
+        const finish = () => {
+          if (img.naturalWidth === 0) {
+            const figure = img.closest('figure');
+            if (figure) figure.style.display = 'none';
+          }
+          resolve();
+        };
+        if (img.complete) finish();
         else {
-          img.onload = resolve;
-          img.onerror = resolve;
+          img.onload = finish;
+          img.onerror = finish;
         }
       });
     }));
@@ -217,6 +234,8 @@ async function init() {
     const response = await chrome.runtime.sendMessage({
       action: 'generatePdfDebugger',
       data: {
+        processingRunId: printJob.processingRunId,
+        sourceUrl: printJob.sourceUrl,
         title: title,
         pageMode: pageMode,
         contentWidth: contentWidth,
@@ -224,6 +243,12 @@ async function init() {
       }
     });
     
+    if (response?.ignored) {
+      await removeLargeData(printStorageKey);
+      const tab = await chrome.tabs.getCurrent();
+      if (tab?.id !== undefined) await chrome.tabs.remove(tab.id);
+      return;
+    }
     if (response && response.success) {
       log('PDF generation started');
       // Tab will be closed by background script after PDF is saved
@@ -235,7 +260,14 @@ async function init() {
     
   } catch (error) {
     // CRITICAL: Error logs MUST also go to service worker
-    log(`ERROR: ${error.message}`, { error: error.toString(), stack: error.stack });
+    log(`ERROR: ${error.message}`, { error: error.toString(), stack: error.stack }, 'error');
+    if (validJobId) {
+      try {
+        await chrome.runtime.sendMessage({ action: 'printJobFailed', data: { printJobId, processingRunId, error: error.message } });
+      } catch (reportError) {
+        log('Failed to report print error', { error: reportError.message }, 'error');
+      }
+    }
     // Load localized error messages
     try {
       const uiLang = await getUILanguage();
@@ -259,8 +291,7 @@ async function init() {
   } finally {
     // Always clean up storage, even if error occurred
     try {
-      await removeLargeData('printHtml');
-      await chrome.storage.local.remove(['printTitle', 'pageMode']);
+      if (printStorageKey) await removeLargeData(printStorageKey);
       log('Storage cleaned up');
     } catch (cleanupError) {
       log(`Failed to clean up storage: ${cleanupError.message}`);

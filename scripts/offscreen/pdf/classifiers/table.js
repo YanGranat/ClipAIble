@@ -3,7 +3,7 @@
 // Uses multiple algorithms: Grid Pattern Detection, Column Alignment, Row Structure
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { clusterObjects } from '../core/clustering.js';
 import { ELEMENT_DECISION, DEFAULT_METRICS, CLUSTERING, TABLE_DETECTION } from '../constants.js';
 

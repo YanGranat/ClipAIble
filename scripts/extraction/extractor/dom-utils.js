@@ -25,18 +25,17 @@ export function toAbsoluteUrl(url, baseUrl) {
 
 /**
  * Normalize image URL for deduplication
- * Strips query params and hash to compare actual image paths
+ * Preserve query parameters and fragments that can identify different images.
  * @param {string} url - Image URL to normalize
- * @returns {string} - Normalized URL (origin + pathname only)
+ * @returns {string} - Complete normalized URL
  */
 export function normalizeImageUrl(url) {
   if (!url) return '';
   try {
     const parsed = new URL(url);
-    return parsed.origin + parsed.pathname;
+    return parsed.href;
   } catch (e) {
-    // Fallback: split by query and hash manually
-    return url.split('?')[0].split('#')[0];
+    return url;
   }
 }
 

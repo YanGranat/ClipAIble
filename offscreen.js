@@ -327,6 +327,7 @@ try {
         dataKeys: message.data ? Object.keys(message.data) : []
       });
     }
+    }
     
     // Note: message.target and message.type already validated above (lines 212-238)
     
@@ -336,7 +337,12 @@ try {
     });
   
     // Handle CLEANUP_RESOURCES synchronously (before async block)
-    if (message.type === 'CLEANUP_RESOURCES') {
+    if (message.type === 'CLEANUP_RESOURCES' || message.type === 'CANCEL_TTS') {
+      if ((message.type === 'CANCEL_TTS' && !message.data?.processingRunId) ||
+          (message.data?.processingRunId && message.data.processingRunId !== state.getProcessingRunId())) {
+        sendResponse({ success: true, skipped: true, messageId });
+        return true;
+      }
       log(`[ClipAIble Offscreen] === CLEANUP_RESOURCES REQUEST ===`, {
         messageId,
         timestamp: Date.now()
@@ -361,7 +367,6 @@ try {
         });
       }
       return true; // Keep channel open for async response
-    }
     }
     
     // Handle async operations
@@ -414,6 +419,7 @@ try {
       switch (message.type) {
         // PIPER_TTS handler - refactored to scripts/offscreen/tts/handler.js
         case 'PIPER_TTS': {
+          state.setProcessingRunId(message.data?.processingRunId || null);
           const ttsContext = {
             initTTSWorker,
             initPiperTTS,
@@ -659,23 +665,3 @@ if (typeof window !== 'undefined') {
   };
   chrome.runtime.onMessage.addListener(fallbackMessageListenerRef);
 }
-
-// CRITICAL: Preload TTS module and WASM files AFTER listener is registered
-// This prevents Long Tasks when TTS is first used, but doesn't block listener registration
-log('[ClipAIble Offscreen] Starting TTS module preload...', {
-  timestamp: Date.now()
-});
-
-// Preload in background (don't block message listener registration)
-initPiperTTS().then(module => {
-  log('[ClipAIble Offscreen] TTS module preloaded successfully', {
-    timestamp: Date.now(),
-    hasModule: !!module
-  });
-}).catch(error => {
-  logWarn('[ClipAIble Offscreen] TTS module preload failed (non-critical)', {
-    error: error.message,
-    timestamp: Date.now()
-  });
-  // Don't throw - preload is optional, TTS will initialize on first use
-});

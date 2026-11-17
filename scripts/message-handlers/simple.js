@@ -5,6 +5,7 @@
 import { log, logError, logWarn } from '../utils/logging.js';
 import { getProcessingState } from '../state/processing.js';
 import { cancelProcessing } from '../state/processing.js';
+import { cancelOfflineTTSRun } from '../api/offline-tts-offscreen.js';
 
 /**
  * Handle log messages from popup
@@ -67,7 +68,14 @@ export function handleGetState(request, sender, sendResponse) {
  */
 export function handleCancelProcessing(request, sender, sendResponse, stopKeepAlive) {
   log('Cancel requested');
-  cancelProcessing(stopKeepAlive).then(result => sendResponse(result));
+  cancelProcessing(stopKeepAlive).then((result) => {
+    if (result.cancelledRunId) {
+      cancelOfflineTTSRun(result.cancelledRunId).catch((error) => {
+        logWarn('Offline TTS cancellation failed', { error: error?.message });
+      });
+    }
+    sendResponse(result);
+  }).catch((error) => sendResponse({ success: false, error: error?.message || 'Cancellation failed' }));
   return true;
 }
 

@@ -100,6 +100,7 @@ export function escapeHtml(text) {
 export function formatRelativeDate(date) {
   const now = new Date();
   const dateTime = date instanceof Date ? date.getTime() : (typeof date === 'number' ? date : Date.now());
+  if (!Number.isFinite(dateTime)) return '';
   const diffMs = now.getTime() - dateTime;
   const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
   const minutes = Math.floor(diffMs / 60000);

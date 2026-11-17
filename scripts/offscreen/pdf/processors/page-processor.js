@@ -16,7 +16,7 @@ import { DEFAULT_METRICS } from '../constants.js';
 /**
  * Process a single PDF page and extract elements
  * Supports multi-column layouts by detecting columns and processing each separately
- * @param {{getTextContent: function(): Promise<{items?: Array<any>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, cleanup: function(): void}} page - PDF.js page object
+ * @param {{getTextContent: function(): Promise<{items?: Array<any>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, cleanup: function(): void, commonObjs?: Object}} page - PDF.js page object
  * @param {number} pageNum - Page number
  * @param {{gapThreshold?: number, baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
  * @returns {Promise<Array<any>>} Array of extracted elements
@@ -109,7 +109,7 @@ export async function processPage(page, pageNum, metrics) {
   //   using X-coordinate sub-clustering and preliminary columns
   // - Apply font formatting including underline detection using graphics data
   log(`[PDF v3] processPage: Page ${pageNum} - calling processPageItemsToLines with ${textItems.length} items`);
-  const lines = processPageItemsToLines(textItems, viewport, pageNum, metrics, graphicsData, textContent);
+  const lines = processPageItemsToLines(textItems, viewport, pageNum, metrics, graphicsData, textContent, page.commonObjs);
   log(`[PDF v3] processPage: Page ${pageNum} - got ${lines.length} lines from processPageItemsToLines`);
   
   if (lines.length === 0) {

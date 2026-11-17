@@ -8,11 +8,13 @@ import { getProcessingState } from '../state/processing.js';
 import { tSync } from '../locales.js';
 import { 
   determineProviderAndModel, 
+  getProviderApiKey,
   getDecryptedProviderApiKey,
   getVoiceFromSettings,
   getAudioSpeedFromSettings
 } from '../utils/settings-helpers.js';
-import { CONFIG } from '../utils/config.js';
+import { CONFIG, STYLE_PRESETS } from '../utils/config.js';
+import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL } from '../api/tts-catalog.js';
 
 /**
  * Get all settings keys needed for quick save
@@ -20,13 +22,15 @@ import { CONFIG } from '../utils/config.js';
  */
 export function getQuickSaveSettingsKeys() {
   return [
-    'openai_api_key', 'claude_api_key', 'gemini_api_key', 'grok_api_key', 'openrouter_api_key',
-    'openai_model', 'api_provider', 'model_by_provider',
+    'openai_api_key', 'claude_api_key', 'gemini_api_key', 'grok_api_key', 'openrouter_api_key', 'deepseek_api_key',
+    'openai_model', 'api_provider', 'model_by_provider', 'custom_models',
     'extraction_mode', 'use_selector_cache', 'output_format', 'generate_toc', 'generate_abstract', 'page_mode', 'pdf_language',
     'pdf_style_preset', 'pdf_font_family', 'pdf_font_size', 'pdf_bg_color', 'pdf_text_color',
     'pdf_heading_color', 'pdf_link_color',
+    'pdf_custom_bg_color', 'pdf_custom_text_color', 'pdf_custom_heading_color', 'pdf_custom_link_color',
     'audio_provider', 'elevenlabs_api_key', 'qwen_api_key', 'respeecher_api_key',
     'audio_voice', 'audio_voice_map', 'audio_speed', 'elevenlabs_model', 'elevenlabs_format',
+    'qwen_model', 'qwen_workspace_id', 'qwen_region',
     'elevenlabs_stability', 'elevenlabs_similarity', 'elevenlabs_style', 'elevenlabs_speaker_boost',
     'openai_instructions', 'google_tts_api_key', 'google_tts_model', 'google_tts_voice', 'google_tts_prompt',
     'respeecher_temperature', 'respeecher_repetition_penalty', 'respeecher_top_p',
@@ -53,9 +57,11 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
   const { provider, model } = determineProviderAndModel(settingsObj);
   
   // Get and decrypt API key
-  let apiKey;
+  let apiKey = '';
   try {
-    apiKey = await getDecryptedProviderApiKey(provider, settingsObj);
+    if (getProviderApiKey(provider, settingsObj) || (settings.extraction_mode || 'selector') !== 'automatic') {
+      apiKey = await getDecryptedProviderApiKey(provider, settingsObj);
+    }
   } catch (error) {
     logError(`Failed to get API key for quick save`, error);
     throw error;
@@ -88,6 +94,15 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     willBePassedToStartArticleProcessing: true
   });
   
+  const stylePreset = settings.pdf_style_preset || 'dark';
+  const presetColors = STYLE_PRESETS[stylePreset];
+  const colors = presetColors || {
+    bgColor: settings.pdf_custom_bg_color || settings.pdf_bg_color || STYLE_PRESETS.dark.bgColor,
+    textColor: settings.pdf_custom_text_color || settings.pdf_text_color || STYLE_PRESETS.dark.textColor,
+    headingColor: settings.pdf_custom_heading_color || settings.pdf_heading_color || STYLE_PRESETS.dark.headingColor,
+    linkColor: settings.pdf_custom_link_color || settings.pdf_link_color || STYLE_PRESETS.dark.linkColor
+  };
+
   return {
     html,
     url,
@@ -104,13 +119,10 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     language: settings.pdf_language || 'auto',
     translateImages,
     googleApiKey,
-    stylePreset: settings.pdf_style_preset || 'dark',
+    stylePreset,
     fontFamily: settings.pdf_font_family || '',
     fontSize: settings.pdf_font_size || '31',
-    bgColor: settings.pdf_bg_color || '#303030',
-    textColor: settings.pdf_text_color || '#b9b9b9',
-    headingColor: settings.pdf_heading_color || '#cfcfcf',
-    linkColor: settings.pdf_link_color || '#6cacff',
+    ...colors,
     tabId,
     // Audio settings
     audioProvider,
@@ -129,7 +141,10 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     openaiInstructions: settings.openai_instructions || null,
     googleTtsApiKey: settings.google_tts_api_key || null,
     geminiApiKey: settings.gemini_api_key || null,
-    googleTtsModel: settings.google_tts_model || 'gemini-2.5-pro-preview-tts',
+    googleTtsModel: settings.google_tts_model || DEFAULT_GOOGLE_TTS_MODEL,
+    qwenModel: settings.qwen_model || DEFAULT_QWEN_TTS_MODEL,
+    qwenWorkspaceId: settings.qwen_workspace_id || '',
+    qwenRegion: settings.qwen_region || 'singapore',
     googleTtsVoice: settings.google_tts_voice || 'Callirrhoe',
     googleTtsPrompt: settings.google_tts_prompt || null,
     respeecherTemperature: settings.respeecher_temperature !== undefined ? settings.respeecher_temperature : 1.0,

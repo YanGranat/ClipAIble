@@ -3,8 +3,9 @@
 
 // @ts-check
 
+import { getDefaultTtsVoice } from '../../api/tts-catalog.js';
 import { CONFIG } from '../config.js';
-import { getProviderFromModel } from '../../api/index.js';
+import { resolveStoredModelSelection } from '../model-catalog.js';
 import { decryptApiKey } from '../security/encryption.js';
 import { VoiceValidator } from '../validation/voice-validator.js';
 import { log, logDebug, logWarn } from '../logging.js';
@@ -15,58 +16,7 @@ import { log, logDebug, logWarn } from '../logging.js';
  * @returns {{provider: string, model: string}} Provider and model
  */
 export function determineProviderAndModel(settings) {
-  // Determine provider: use api_provider from settings, fallback to getProviderFromModel
-  let provider = settings.api_provider || 'openai';
-  
-  // Determine model: use model_by_provider for selected provider, fallback to openai_model
-  let model = 'gpt-5.1'; // Default fallback
-  if (settings.model_by_provider && typeof settings.model_by_provider === 'object' && settings.model_by_provider[provider]) {
-    model = String(settings.model_by_provider[provider]);
-  } else if (settings.openai_model) {
-    model = String(settings.openai_model);
-  }
-  
-  // CRITICAL: For OpenRouter, model MUST be in format provider/model-name
-  // If provider is openrouter but model doesn't contain '/', it's invalid
-  if (provider === 'openrouter' && !model.includes('/')) {
-    logWarn('OpenRouter provider selected but model is not in provider/model-name format', {
-      provider,
-      model,
-      note: 'OpenRouter requires models in format: provider/model-name (e.g., openai/gpt-4o)'
-    });
-    // Try to determine provider from model name, but keep openrouter if model format is wrong
-    // This will cause an error later, which is better than silently using wrong provider
-  }
-  
-  // Verify provider matches model (but respect user's provider choice for OpenRouter)
-  const modelProvider = getProviderFromModel(model);
-  if (modelProvider !== provider) {
-    // Special case: If user selected openrouter and model contains '/', keep openrouter
-    if (provider === 'openrouter' && model.includes('/')) {
-      // Model is in correct format for OpenRouter, keep openrouter provider
-      return { provider, model };
-    }
-    
-    // Special case: If model contains '/' but provider is not openrouter, switch to openrouter
-    if (model.includes('/') && provider !== 'openrouter') {
-      logWarn('Model contains "/" but provider is not openrouter, switching to openrouter', {
-        originalProvider: provider,
-        model,
-        newProvider: 'openrouter'
-      });
-      return { provider: 'openrouter', model };
-    }
-    
-    // For other cases, use model's provider (model name takes precedence)
-    logWarn('Provider mismatch detected, using model\'s provider', {
-      selectedProvider: provider,
-      modelProvider,
-      model
-    });
-    provider = modelProvider;
-  }
-  
-  return { provider, model };
+  return resolveStoredModelSelection(settings);
 }
 
 /**
@@ -159,11 +109,13 @@ export function getVoiceFromSettings(audioProvider, settings) {
     }
   }
   
-  let selectedVoice = voiceMap[provider] || settings.audio_voice || CONFIG.DEFAULT_AUDIO_VOICE;
+  const defaultVoice = getDefaultTtsVoice(provider, settings.qwen_model);
+  const legacyVoice = !settings.audio_provider || settings.audio_provider === provider ? settings.audio_voice : null;
+  let selectedVoice = voiceMap[provider] || legacyVoice || defaultVoice;
   let finalVoice = String(selectedVoice);
   
   // Use VoiceValidator for validation
-  finalVoice = VoiceValidator.validate(provider, finalVoice, settings.google_tts_voice, CONFIG.DEFAULT_AUDIO_VOICE);
+  finalVoice = VoiceValidator.validate(provider, finalVoice, settings.google_tts_voice, defaultVoice);
   
   log('[ClipAIble Background] CRITICAL: Final voice selected from storage', {
     timestamp: Date.now(),

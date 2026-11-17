@@ -4,7 +4,7 @@
 // @ts-check
 
 import { log, logError, logWarn } from '../logging.js';
-import { updateState, setError, startProcessing, ERROR_CODES } from '../../state/processing.js';
+import { updateState, setError, startProcessing, isCancelled, ERROR_CODES } from '../../state/processing.js';
 import { tSync } from '../../locales.js';
 import { getUILanguageCached } from './pipeline-helpers.js';
 import { removeLargeData } from '../storage/storage.js';
@@ -41,12 +41,13 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
     timestamp: Date.now()
   });
   
-  if (!(await startProcessing(startKeepAlive))) {
+  if (!(await startProcessing(startKeepAlive, (runId) => { data.processingRunId = runId; }))) {
     logError('=== startArticleProcessing: startProcessing returned false ===', {
       timestamp: Date.now()
     });
     return false;
   }
+  if (isCancelled(data.processingRunId)) return false;
   
   log('=== startArticleProcessing: startProcessing returned true ===', {
     timestamp: Date.now()
@@ -60,7 +61,7 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
     await setError({
       message: tSync('errorValidation', uiLang) + `: Invalid output format '${data.outputFormat}'`,
       code: ERROR_CODES.VALIDATION_ERROR
-    }, stopKeepAlive);
+    }, stopKeepAlive, data.processingRunId);
     return false;
   }
   
@@ -68,7 +69,7 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
   // This is especially important for audio format which needs longer polling interval
   if (data.outputFormat) {
     // outputFormat is part of ProcessingState type (used for UI display and polling intervals)
-    updateState({ outputFormat: data.outputFormat });
+    updateState({ outputFormat: data.outputFormat }, data.processingRunId);
     log('=== startArticleProcessing: outputFormat saved to state ===', {
       outputFormat: data.outputFormat,
       timestamp: Date.now()
@@ -86,6 +87,7 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
   }
   
   // Pre-flight key checks for audio to avoid long work before failing
+  if (isCancelled(data.processingRunId)) return false;
   if (!(await validateAudioApiKeys(data, stopKeepAlive))) {
     return false;
   }
@@ -458,7 +460,7 @@ export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
     audio_voice_map_has_current: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map,
     audio_voice_map_current: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map ? settings.audio_voice_map.current : null,
     audio_voice_map_current_keys: settings.audio_voice_map && typeof settings.audio_voice_map === 'object' && 'current' in settings.audio_voice_map && typeof settings.audio_voice_map.current === 'object' ? Object.keys(settings.audio_voice_map.current) : [],
-    raw_audio_voice_map: JSON.stringify(settings.audio_voice_map).substring(0, 500)
+    raw_audio_voice_map: (JSON.stringify(settings.audio_voice_map) || '').substring(0, 500)
   });
   
   // Prepare processing data from settings

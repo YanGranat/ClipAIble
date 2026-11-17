@@ -3,6 +3,10 @@
 
 import { log, logError, criticalLog, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { assertCompleteAIResponse, isTerminalAIResponseError } from './response-validation.js';
+import { parseBase64Image } from './image-data.js';
 import { callWithRetry } from '../utils/retry.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
@@ -10,28 +14,31 @@ import { handleError } from '../utils/error-handler.js';
 
 /**
  * Parse model string to extract actual model name and reasoning settings
- * @param {string} model - Model string (e.g., "gpt-5.1-high", "gpt-5.2", "gpt-5.2-pro-2025-12-11")
+ * @param {string} model - API model ID or a managed reasoning preset
  * @returns {{modelName: string, reasoningEffort: string|null}} Parsed model configuration
  */
 export function parseModelConfig(model) {
-  const defaultModel = 'gpt-5.1';
-  if (!model) {
-    return { modelName: defaultModel, reasoningEffort: null };
+  const selected = typeof model === 'string' && model ? model : getDefaultModel('openai');
+  const metadata = getModelMetadata('openai', selected);
+  return { modelName: metadata?.apiModel || selected, reasoningEffort: metadata?.reasoningEffort || null };
+}
+
+/** Build model-specific Chat Completions parameters without changing custom IDs. */
+export function getOpenAIRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort } = {}) {
+  const selected = typeof model === 'string' && model ? model : getDefaultModel('openai');
+  const metadata = getModelMetadata('openai', selected);
+  const { modelName, reasoningEffort } = parseModelConfig(selected);
+  const supportsReasoning = Boolean(metadata?.reasoningEfforts || reasoningEffort);
+  const selectedEffort = requestedEffort && metadata?.reasoningEfforts?.includes(requestedEffort) ? requestedEffort : reasoningEffort;
+  const effort = shortResponse && metadata?.reasoningEfforts?.includes('none') ? 'none' : selectedEffort;
+  /** @type {Record<string, any>} */
+  const parameters = { model: modelName };
+  if (effort) parameters.reasoning_effort = effort;
+  if (maxTokens !== undefined && !(shortResponse && supportsReasoning && effort !== 'none')) {
+    parameters[supportsReasoning ? 'max_completion_tokens' : 'max_tokens'] = maxTokens;
   }
-  
-  // Check for high reasoning suffix (e.g., gpt-5.1-high)
-  if (model.endsWith('-high')) {
-    const modelName = model.replace(/-high$/, '');
-    return { modelName, reasoningEffort: 'high' };
-  }
-  
-  // GPT-5.2 models use medium reasoning by default
-  if (model === 'gpt-5.2' || model === 'gpt-5.2-pro-2025-12-11' || model.startsWith('gpt-5.2-pro')) {
-    return { modelName: model, reasoningEffort: 'medium' };
-  }
-  
-  // Default: no reasoning effort specified
-  return { modelName: model, reasoningEffort: null };
+  if (temperature !== undefined && (!supportsReasoning || effort === 'none')) parameters.temperature = temperature;
+  return parameters;
 }
 
 /**
@@ -53,7 +60,7 @@ export function parseModelConfig(model) {
  *   'You are a helpful assistant.',
  *   'Extract key points from this text.',
  *   'sk-...',
- *   'gpt-4o',
+ *   'gpt-6.1-sol',
  *   true
  * );
  * console.log('Extracted points:', response.content);
@@ -63,12 +70,12 @@ export function parseModelConfig(model) {
  *   'You are a translator.',
  *   'Translate: Hello world',
  *   'sk-...',
- *   'gpt-4o',
+ *   'gpt-6.1-sol',
  *   false
  * );
  * console.log('Translation:', text);
  */
-export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
+export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callOpenAI', { model, systemPromptLength: systemPrompt.length, userPromptLength: userPrompt.length });
   
   const { modelName, reasoningEffort } = parseModelConfig(model);
@@ -113,11 +120,9 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
     });
     
     // Use retry wrapper for fetch
-    // Create new AbortController for each retry attempt to avoid timeout conflict
+    // Each retry has an independent request deadline.
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
         // Log periodic updates for long-running requests
         let progressInterval = setInterval(() => {
@@ -132,15 +137,14 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
         }, 30000); // Log every 30 seconds
         
         try {
-          const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey}`
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, requestOptions);
         
           // If not ok and retryable, throw error for retry logic
           if (!fetchResponse.ok) {
@@ -174,9 +178,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
             clearInterval(progressInterval);
             progressInterval = null;
           }
-          if (timeout) {
-            clearTimeout(timeout);
-          }
+
         }
       },
       {
@@ -186,6 +188,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       }
     );
   } catch (fetchError) {
+    await requestOptions.checkCancelled?.();
     if (fetchError.name === 'AbortError') {
       // Normalize timeout error with context
       const normalized = await handleError(fetchError, {
@@ -221,7 +224,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       // Provide more helpful error messages for common errors
       let errorMessage = errorData?.error?.message || `API error: ${fetchError.status}`;
       if (fetchError.status === 404) {
-        errorMessage = `Model "${modelName}" not found. The model may not be available yet or the name may be incorrect. Please try a different model (e.g., gpt-5.1 or gpt-5.2).`;
+        errorMessage = `Model "${modelName}" is unavailable. Choose a model available to your API account or check the custom model ID.`;
       } else if (fetchError.status === 401) {
         errorMessage = 'OpenAI API key is invalid or missing. Please check your API key in settings.';
       } else if (fetchError.status === 403) {
@@ -290,6 +293,8 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
   let result;
   try {
     result = await response.json();
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(result, 'openai');
     const totalTime = Date.now() - requestStartTime;
     
     // CRITICAL: Log full response for debugging PDF processing issues
@@ -313,6 +318,8 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       totalTimeSeconds: Math.round(totalTime / 1000)
     });
   } catch (parseError) {
+    await requestOptions.checkCancelled?.();
+    if (isTerminalAIResponseError(parseError)) throw parseError;
     // Normalize error with context for better logging and error tracking
     const normalized = await handleError(parseError, {
       source: 'openai',
@@ -416,29 +423,12 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true) {
+export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callOpenAIWithImage', { model, imageSize: imageData.length });
   
   const { modelName, reasoningEffort } = parseModelConfig(model);
   
-  // Extract base64 data and detect MIME type from imageData
-  let base64Image;
-  let mimeType = 'image/png'; // Default to PNG
-  if (imageData.includes(',')) {
-    const parts = imageData.split(',');
-    base64Image = parts[1];
-    // Extract MIME type from data URL prefix (e.g., "data:image/jpeg;base64," or "data:image/png;base64,")
-    const prefix = parts[0];
-    if (prefix.includes('image/jpeg') || prefix.includes('image/jpg')) {
-      mimeType = 'image/jpeg';
-    } else if (prefix.includes('image/png')) {
-      mimeType = 'image/png';
-    } else if (prefix.includes('image/webp')) {
-      mimeType = 'image/webp';
-    }
-  } else {
-    base64Image = imageData;
-  }
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   const requestBody = {
     model: modelName,
@@ -483,49 +473,41 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              clearTimeout(timeout);
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
             error.status = fetchResponse.status;
-            clearTimeout(timeout);
+            error.response = fetchResponse;
+
             throw error;
           }
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
+          }
+          /** @type {Error & {status?: number}} */
+          const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
+          error.status = fetchResponse.status;
           
-          clearTimeout(timeout);
-          return fetchResponse;
-        } catch (e) {
-          clearTimeout(timeout);
-          throw e;
+          throw error;
         }
+
+        return fetchResponse;
+
       },
       {
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -535,6 +517,8 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
     );
     
     const data = await response.json();
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(data, 'openai');
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       // Normalize error with context for better logging and error tracking
@@ -592,6 +576,7 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
     
     return content;
   } catch (error) {
+    await requestOptions.checkCancelled?.();
     // Re-throw if already normalized, otherwise normalize
     if (error.code) {
       throw error;
@@ -612,29 +597,12 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<{result: Object|string, assistantMessage: string, userMessage: Object}>}
  */
-export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true) {
+export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true, requestOptions = {}) {
   log('callOpenAIWithImageAndHistory', { model, imageSize: imageData.length, historyLength: messageHistory.length });
   
   const { modelName, reasoningEffort } = parseModelConfig(model);
   
-  // Extract base64 data and detect MIME type from imageData
-  let base64Image;
-  let mimeType = 'image/png'; // Default to PNG
-  if (imageData.includes(',')) {
-    const parts = imageData.split(',');
-    base64Image = parts[1];
-    // Extract MIME type from data URL prefix (e.g., "data:image/jpeg;base64," or "data:image/png;base64,")
-    const prefix = parts[0];
-    if (prefix.includes('image/jpeg') || prefix.includes('image/jpg')) {
-      mimeType = 'image/jpeg';
-    } else if (prefix.includes('image/png')) {
-      mimeType = 'image/png';
-    } else if (prefix.includes('image/webp')) {
-      mimeType = 'image/webp';
-    }
-  } else {
-    base64Image = imageData;
-  }
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Calculate image hash for verification (first 100 chars of base64)
   const imageHashStart = base64Image.substring(0, 100);
@@ -746,49 +714,41 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              clearTimeout(timeout);
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
             error.status = fetchResponse.status;
-            clearTimeout(timeout);
+            error.response = fetchResponse;
+
             throw error;
           }
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
+          }
+          /** @type {Error & {status?: number}} */
+          const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
+          error.status = fetchResponse.status;
           
-          clearTimeout(timeout);
-          return fetchResponse;
-        } catch (e) {
-          clearTimeout(timeout);
-          throw e;
+          throw error;
         }
+
+        return fetchResponse;
+
       },
       {
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -798,6 +758,8 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     );
     
     const data = await response.json();
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(data, 'openai');
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       // Normalize error with context for better logging and error tracking
@@ -919,6 +881,7 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     
     return responseData;
   } catch (error) {
+    await requestOptions.checkCancelled?.();
     logError('OpenAI API call with image and history failed', error);
     throw error;
   }

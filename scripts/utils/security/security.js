@@ -47,17 +47,26 @@ export function isValidExternalUrl(url) {
       return false;
     }
     
-    // Block IPv6 link-local addresses (fe80::/10)
-    if (hostname.startsWith('[fe80:') || hostname.startsWith('fe80:')) {
-      logWarn('Blocked IPv6 link-local URL', { hostname });
-      return false;
-    }
+    if (hostname.startsWith('[') && hostname.endsWith(']')) {
+      const address = hostname.slice(1, -1);
+      const firstHextet = parseInt(address.split(':')[0], 16) || 0;
 
-    // Block IPv6 Unique Local Addresses (ULA) - RFC 4193 (fc00::/7, fd00::/8)
-    if (hostname.startsWith('[fc') || hostname.startsWith('fc') ||
-        hostname.startsWith('[fd') || hostname.startsWith('fd')) {
-      logWarn('Blocked IPv6 ULA URL', { hostname });
-      return false;
+      // IPv6 unspecified, link-local (fe80::/10), and unique local (fc00::/7).
+      if (address === '::' ||
+          (firstHextet & 0xffc0) === 0xfe80 ||
+          (firstHextet & 0xfe00) === 0xfc00) {
+        logWarn('Blocked internal IPv6 URL', { hostname });
+        return false;
+      }
+
+      // URL normalizes IPv4-mapped addresses to their hexadecimal form.
+      const mapped = address.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      if (mapped) {
+        const high = parseInt(mapped[1], 16);
+        const low = parseInt(mapped[2], 16);
+        const ipv4 = `${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`;
+        return isValidExternalUrl(`http://${ipv4}`);
+      }
     }
     
     // Block private network ranges
@@ -117,58 +126,6 @@ export function isValidMessageSize(data) {
 }
 
 /**
- * Sanitize text to prevent prompt injection attacks
- * Removes common injection patterns from user content that could override AI instructions
- * @param {string} text - Text to sanitize
- * @returns {string} Sanitized text with injection patterns removed
- */
-export function sanitizePromptInput(text) {
-  if (!text || typeof text !== 'string') {
-    return '';
-  }
-  
-  // Remove common injection patterns (case-insensitive)
-  let sanitized = text
-    // Direct instruction overrides (expanded patterns)
-    .replace(/ignore\s+previous\s+instructions/gi, '')
-    .replace(/ignore\s+all\s+previous\s+instructions/gi, '')
-    .replace(/ignore\s+previous/gi, '')
-    .replace(/forget\s+everything\s+above/gi, '')
-    .replace(/forget\s+all\s+previous/gi, '')
-    .replace(/forget\s+previous/gi, '')
-    .replace(/disregard\s+previous/gi, '')
-    .replace(/disregard\s+all\s+previous/gi, '')
-    .replace(/new\s+instructions?:/gi, '')
-    .replace(/override\s+instructions/gi, '')
-    .replace(/replace\s+instructions/gi, '')
-    .replace(/change\s+instructions/gi, '')
-    // System role attempts (expanded)
-    .replace(/system\s*:/gi, '')
-    .replace(/assistant\s*:/gi, '')
-    .replace(/user\s*:/gi, '')
-    .replace(/role\s*:\s*system/gi, '')
-    .replace(/role\s*:\s*assistant/gi, '')
-    .replace(/role\s*:\s*user/gi, '')
-    // JSON/structured data injection attempts (expanded)
-    .replace(/```json\s*\{[\s\S]*?"instructions"[\s\S]*?\}```/gi, '')
-    .replace(/```json\s*\{[\s\S]*?instructions[\s\S]*?\}```/gi, '')
-    .replace(/<instructions>[\s\S]*?<\/instructions>/gi, '')
-    .replace(/<instruction>[\s\S]*?<\/instruction>/gi, '')
-    .replace(/\{[\s\S]*?"instructions"[\s\S]*?\}/gi, '')
-    // Base64/encoded injection attempts (common pattern)
-    .replace(/base64[:\s]+[A-Za-z0-9+\/]{50,}/gi, '')
-    // Unicode/obfuscated variants (basic protection)
-    .replace(/ig\.nore\s+pr\.evious/gi, '')
-    .replace(/ig\s*\.\s*nore\s+pr\s*\.\s*evious/gi, '')
-    // Multiple newlines (could hide instructions)
-    .replace(/\n{10,}/g, '\n\n')
-    // Remove excessive whitespace that could hide patterns
-    .replace(/\s{20,}/g, ' ');
-  
-  return sanitized.trim();
-}
-
-/**
  * Safe JSON parse with error handling
  * Parses JSON string and returns default value if parsing fails
  * @param {string} str - JSON string to parse
@@ -211,9 +168,19 @@ function sanitizeStackTrace(stack) {
     // Remove absolute paths (keep only filename)
     .replace(/\/[^:]+:(\d+):(\d+)/g, '$1:$2')
     // Remove query parameters from URLs in stack traces
-    .replace(/[?&](key|api_key|apikey|token|access_token)=[^&\s]*/gi, '$1=***');
+    .replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s]*/gi, '$1***');
   
-  return sanitized;
+  return sanitizeLogText(sanitized);
+}
+
+/** Redact credentials embedded in diagnostic text without removing context. */
+export function sanitizeLogText(value) {
+  if (typeof value !== 'string') return value;
+  return value
+    .replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s]*/gi, '$1***')
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, '$1 ***')
+    .replace(/(?:sk-(?:proj-|svcacct-|ant-|or-v1-)[A-Za-z0-9_-]+|\bsk[-_][A-Za-z0-9]+(?![A-Za-z0-9_-])|\bAIza[A-Za-z0-9_-]+|\bxai-[A-Za-z0-9_-]+|\bgh[pousr]_[A-Za-z0-9_]+|\bgithub_pat_[A-Za-z0-9_]+)\b/g, '***')
+    .replace(/(\b(?:(?:[a-z][a-z0-9]*[_-])?api[_-]?key|access[_-]?token|token|password|secret|authorization)["']?\s*[:=]\s*)(?:(['"])[^'"\r\n]*\2|[^\s,;]+)/gi, '$1$2***$2');
 }
 
 /**
@@ -223,10 +190,33 @@ function sanitizeStackTrace(stack) {
  */
 export function sanitizeErrorForLogging(error) {
   if (!error || typeof error !== 'object') {
-    return error;
+    return sanitizeLogText(error);
   }
   
-  const sanitized = { ...error };
+  const seen = new WeakSet();
+  const sensitiveName = (name) => {
+    const normalized = String(name).toLowerCase().replace(/[_-]/g, '');
+    return normalized.endsWith('apikey') || ['token', 'accesstoken', 'password', 'secret', 'authorization', 'cookie', 'setcookie'].includes(normalized);
+  };
+  const copy = (value) => {
+    if (!value || typeof value !== 'object') {
+      return sanitizeLogText(value);
+    }
+    if (seen.has(value)) return '[Circular]';
+    seen.add(value);
+    if (Array.isArray(value)) return value.map(copy);
+    const result = {};
+    if (value instanceof Error) {
+      result.message = copy(value.message);
+      result.stack = sanitizeStackTrace(value.stack);
+      result.name = copy(value.name);
+    }
+    for (const [key, item] of Object.entries(value)) {
+      result[key] = sensitiveName(key) || (key === 'value' && sensitiveName(value.key)) ? '***' : copy(item);
+    }
+    return result;
+  };
+  const sanitized = copy(error);
   
   // Sanitize stack trace if present
   if (sanitized.stack && typeof sanitized.stack === 'string') {
@@ -235,7 +225,7 @@ export function sanitizeErrorForLogging(error) {
   
   // Remove API keys from URL
   if (sanitized.url && typeof sanitized.url === 'string') {
-    sanitized.url = sanitized.url.replace(/[?&](key|api_key|apikey|token|access_token)=[^&]*/gi, '$1=***');
+    sanitized.url = sanitized.url.replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&]*/gi, '$1***');
   }
   
   // Limit response size
@@ -245,14 +235,6 @@ export function sanitizeErrorForLogging(error) {
     } else if (typeof sanitized.response === 'object') {
       const responseStr = JSON.stringify(sanitized.response);
       sanitized.response = responseStr.substring(0, 200);
-    }
-  }
-  
-  // Remove sensitive fields
-  const sensitiveFields = ['apiKey', 'api_key', 'apikey', 'token', 'access_token', 'password', 'secret'];
-  for (const field of sensitiveFields) {
-    if (sanitized[field]) {
-      sanitized[field] = '***';
     }
   }
   

@@ -277,7 +277,6 @@ describe('cleanTitleForFilename', () => {
 
   it('should use default if cleaned is empty', () => {
     expect(cleanTitleForFilename('', 'default')).toBe('default');
-    // Note: The cleaning function may not remove all patterns in all cases
     // This test verifies that empty string uses default
     // For non-empty strings that don't match patterns, original is returned
     expect(cleanTitleForFilename('', 'default')).toBe('default');

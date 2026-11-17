@@ -3,7 +3,7 @@
 
 // @ts-check
 
-import { log, logWarn, logError } from './logging.js';
+import { log, logWarn, logError, logDebug } from './logging.js';
 import { CONFIG } from './config.js';
 import { tSync } from '../locales.js';
 

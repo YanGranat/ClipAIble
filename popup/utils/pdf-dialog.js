@@ -4,6 +4,7 @@
 import { logError } from '../../scripts/utils/logging.js';
 import { getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { ELEMENT_IDS } from '../constants.js';
+import { activateModalDialog } from './dom-helpers.js';
 
 /**
  * Show PDF file selection dialog and wait for user confirmation
@@ -33,9 +34,11 @@ export async function showPdfFileSelectionDialog() {
   if (okBtn) okBtn.textContent = locale.ok || UI_LOCALES.en.ok;
   
   return new Promise((resolve) => {
+    let releaseFocus = () => {};
     // Handle OK button
     const handleOk = () => {
       modal.classList.add('hidden');
+      releaseFocus();
       okBtn.removeEventListener('click', handleOk);
       closeBtn.removeEventListener('click', handleCancel);
       modal.removeEventListener('click', handleOverlayClick);
@@ -45,6 +48,7 @@ export async function showPdfFileSelectionDialog() {
     // Handle close button and overlay click
     const handleCancel = () => {
       modal.classList.add('hidden');
+      releaseFocus();
       okBtn.removeEventListener('click', handleOk);
       closeBtn.removeEventListener('click', handleCancel);
       modal.removeEventListener('click', handleOverlayClick);
@@ -64,6 +68,7 @@ export async function showPdfFileSelectionDialog() {
     
     // Show modal
     modal.classList.remove('hidden');
+    releaseFocus = activateModalDialog(modal, handleCancel, okBtn);
   });
 }
 

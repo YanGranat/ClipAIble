@@ -1,6 +1,8 @@
 // @ts-check
 // Configuration constants for ClipAIble extension
 
+import { DEFAULT_ELEVENLABS_TTS_MODEL } from '../api/tts-catalog.js';
+
 /**
  * @readonly
  * @const {import('../types.js').Config}
@@ -103,19 +105,19 @@ export const CONFIG = {
   DEFAULT_AUDIO_VOICE: 'nova',    // Default OpenAI TTS voice
   DEFAULT_AUDIO_SPEED: 1.0,       // Default audio playback speed
   DEFAULT_AUDIO_FORMAT: 'mp3',    // Default audio format
-  DEFAULT_ELEVENLABS_MODEL: 'eleven_v3', // Default ElevenLabs model
+  DEFAULT_ELEVENLABS_MODEL: DEFAULT_ELEVENLABS_TTS_MODEL,
   DEFAULT_RESPEECHER_VOICE: 'samantha',  // Default Respeecher English voice
   
   // Logging
-  LOG_LEVEL: 0,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR (default: ERROR for production)
-  VERBOSE_LOGGING: true,          // Enable verbose logging for detailed debugging (increases log volume significantly)
+  LOG_LEVEL: 2,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR
+  VERBOSE_LOGGING: false,         // Include detailed content diagnostics during development
   MAX_LOG_DATA_SIZE: 100000,       // Maximum size of data object to log (in characters after JSON.stringify), larger objects will be truncated
   LOG_COLLECTION_MAX_SIZE: 10000, // OPTIMIZED: Maximum number of logs in memory collection (reduced from 50k to 10k to save memory)
   
   // Extension version (synchronized with manifest.json)
   // This is used as fallback if chrome.runtime.getManifest() fails (extremely rare)
   // CRITICAL: Must be updated when version changes in manifest.json
-  EXTENSION_VERSION: '3.3.4'
+  EXTENSION_VERSION: '3.3.9'
 };
 
 /**
@@ -291,8 +293,34 @@ export const PDF_LOCALIZATION = {
  */
 export const NO_TRANSLATION_MARKER = '[NO_TRANSLATION_NEEDED]';
 
-// Note: STYLE_PRESETS are defined in popup/popup.js (UI layer)
-// They are not needed in config.js as PDF generation uses colors passed from popup
+// Style presets
+export const STYLE_PRESETS = {
+  dark: {
+    bgColor: '#303030',
+    textColor: '#b9b9b9',
+    headingColor: '#cfcfcf',
+    linkColor: '#6cacff'
+  },
+  light: {
+    bgColor: '#ffffff',
+    textColor: '#1f2937',
+    headingColor: '#111827',
+    linkColor: '#2563eb'
+  },
+  sepia: {
+    bgColor: '#f4ecd8',
+    textColor: '#5c4b37',
+    headingColor: '#8b4513',
+    linkColor: '#a0522d'
+  },
+  contrast: {
+    bgColor: '#000000',
+    textColor: '#ffffff',
+    headingColor: '#ffff00',
+    linkColor: '#00ffff'
+  }
+};
+
 
 /**
  * Get locale string from language code
@@ -450,7 +478,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
 /**
  * Get extension version from manifest
  * Falls back to CONFIG.EXTENSION_VERSION if manifest is unavailable (extremely rare)
- * @returns {string} Extension version (e.g., '3.3.4')
+ * @returns {string} Extension version
  */
 export function getExtensionVersion() {
   try {

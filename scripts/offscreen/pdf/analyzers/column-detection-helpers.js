@@ -3,7 +3,7 @@
 // Extracted from detectColumnsByXClustering to improve readability
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { calculateStatistics } from '../utils/statistics.js';
 import { calculateAverage } from '../utils/array-helpers.js';

@@ -3,6 +3,7 @@
 // Uses dependency injection pattern for better testability and modularity
 
 import { validateDeps } from '../utils/di-validation.js';
+import { getScopedUpdateState, isCancelled, isCurrentProcessingRun } from '../state/processing.js';
 
 /**
  * Initialize orchestration module with dependencies
@@ -59,6 +60,7 @@ export function initOrchestration(deps) {
   if (!(await validateAndInitializeProcessing(data, stopKeepAlive, startKeepAlive))) {
     return false;
   }
+  if (isCancelled(data.processingRunId)) return false;
   
   const processingStartTime = Date.now();
   
@@ -154,6 +156,7 @@ export function initOrchestration(deps) {
   } catch (e) {
     logWarn('Failed to get tab URL for PDF detection', e);
   }
+  if (isCancelled(data.processingRunId)) return false;
   
   const pdfInfo = detectPdfPage(data.url, tabUrl, data.html);
   if (pdfInfo && pdfInfo.isPdf) {
@@ -171,7 +174,7 @@ export function initOrchestration(deps) {
       await setError({
         message: tSync('errorPdfUrlNotFound', uiLang) || 'Could not determine PDF file URL',
         code: ERROR_CODES.VALIDATION_ERROR
-      }, stopKeepAlive);
+      }, stopKeepAlive, data.processingRunId);
       return false;
     }
     
@@ -219,6 +222,10 @@ export function initOrchestration(deps) {
    * @returns {Promise<void>}
    */
   async function continueProcessingPipeline(data, result, stopKeepAliveParam) {
+    const updateState = getScopedUpdateState(data.processingRunId, deps.updateState);
+    const setResult = (value) => {
+      if (isCurrentProcessingRun(data.processingRunId)) deps.setResult(value, data.processingRunId);
+    };
     const pipelineStartTime = Date.now();
     // Use parameter if provided, otherwise use injected dependency
     // Note: stopKeepAliveParam is kept for backward compatibility with existing callers
@@ -234,7 +241,7 @@ export function initOrchestration(deps) {
     });
     
     // Check if processing was cancelled
-  await checkCancellation('start of pipeline');
+  await checkCancellation('start of pipeline', data.processingRunId);
   
   // CRITICAL: Save original detectedLanguage BEFORE translation
   // If translation happens, the content will be in target language, but we need to preserve
@@ -258,6 +265,7 @@ export function initOrchestration(deps) {
     detectSourceLanguage,
     updateState
   );
+  await checkCancellation('translated result', data.processingRunId);
   
   // CRITICAL: Restore original detectedLanguage if it was set before translation
   // This ensures that if language is 'auto', abstract will be generated in source language,
@@ -294,6 +302,7 @@ export function initOrchestration(deps) {
     result,
     detectContentLanguage
   );
+  await checkCancellation('language detection', data.processingRunId);
   
   const languageDuration = Date.now() - languageStartTime;
   log(`✅ Language detection complete`, {
@@ -320,6 +329,7 @@ export function initOrchestration(deps) {
     generateAbstract,
     updateState
   );
+  await checkCancellation('abstract result', data.processingRunId);
   
   if (data.generateAbstract && data.outputFormat !== 'audio') {
     const abstractDuration = Date.now() - abstractStartTime;
@@ -332,7 +342,7 @@ export function initOrchestration(deps) {
   updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
   
   // Check if processing was cancelled before document generation
-  await checkCancellation('document generation');
+  await checkCancellation('document generation', data.processingRunId);
   
   const generationStartTime = Date.now();
   log(`📄 Starting document generation`, {

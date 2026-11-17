@@ -19,9 +19,24 @@ class OffscreenState {
     this.workerInactivityTimeout = null;
     this.useWorker = true; // Enabled: Using esbuild bundle
     this.activePredictCalls = 0; // Track active predict calls to prevent termination during processing
+    this.processingRunId = null;
+    this.workerRequests = new Set();
   }
 
   // TTS Module management
+  getProcessingRunId() {
+    return this.processingRunId;
+  }
+
+  setProcessingRunId(processingRunId) {
+    this.processingRunId = processingRunId;
+  }
+
+  registerWorkerRequest(onCancel) {
+    this.workerRequests.add(onCancel);
+    return () => this.workerRequests.delete(onCancel);
+  }
+
   getTTSModule() {
     return this.ttsModule;
   }
@@ -141,6 +156,16 @@ class OffscreenState {
       hasTtsWorker: this.hasTTSWorker(),
       hasWorkerTimeout: !!this.workerInactivityTimeout
     });
+    this.processingRunId = null;
+    const requests = [...this.workerRequests];
+    this.workerRequests.clear();
+    for (const cancel of requests) {
+      try {
+        cancel(new Error('TTS processing cancelled'));
+      } catch (error) {
+        logWarn('[ClipAIble Offscreen] Failed to cancel a worker request', { error: error.message });
+      }
+    }
     
     // Clear worker inactivity timeout
     this.clearWorkerInactivityTimeout();
@@ -196,6 +221,7 @@ class OffscreenState {
     this.voiceModelsPreloaded = false;
     this.lastUsedVoiceId = null;
     this.voiceSwitchRequested = false;
+    this.processingRunId = null;
     
     log('[ClipAIble Offscreen] === CLEANUP COMPLETE ===', {
       timestamp: Date.now()

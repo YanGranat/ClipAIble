@@ -25,6 +25,7 @@ const mockStopKeepAlive = vi.fn();
 describe('validateAudioApiKeys', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    chrome.storage.local.get.mockReset().mockResolvedValue({ openai_api_key: 'synthetic-openai-key' });
   });
 
   it('should return true for non-audio formats', async () => {
@@ -49,6 +50,7 @@ describe('validateAudioApiKeys', () => {
   });
 
   it('should return false and set error when OpenAI key is missing', async () => {
+    chrome.storage.local.get.mockResolvedValue({});
     const data = {
       outputFormat: 'audio',
       audioProvider: 'openai',
@@ -63,8 +65,15 @@ describe('validateAudioApiKeys', () => {
         message: expect.stringContaining('OpenAI API key is required'),
         code: ERROR_CODES.VALIDATION_ERROR
       }),
-      mockStopKeepAlive
+      mockStopKeepAlive,
+      undefined
     );
+  });
+
+  it('uses the OpenAI TTS storage key independently of the extraction provider', async () => {
+    const data = { outputFormat: 'audio', audioProvider: 'openai', provider: 'claude', apiKey: null };
+    expect(await validateAudioApiKeys(data, mockStopKeepAlive)).toBe(true);
+    expect(chrome.storage.local.get).toHaveBeenCalledWith(['openai_api_key']);
   });
 
   it('should return false and set error when ElevenLabs key is missing', async () => {
@@ -82,7 +91,8 @@ describe('validateAudioApiKeys', () => {
         message: expect.stringContaining('ElevenLabs API key is required'),
         code: ERROR_CODES.VALIDATION_ERROR
       }),
-      mockStopKeepAlive
+      mockStopKeepAlive,
+      undefined
     );
   });
 
@@ -101,7 +111,8 @@ describe('validateAudioApiKeys', () => {
         message: expect.stringContaining('Qwen API key is required'),
         code: ERROR_CODES.VALIDATION_ERROR
       }),
-      mockStopKeepAlive
+      mockStopKeepAlive,
+      undefined
     );
   });
 
@@ -120,7 +131,8 @@ describe('validateAudioApiKeys', () => {
         message: expect.stringContaining('Respeecher API key is required'),
         code: ERROR_CODES.VALIDATION_ERROR
       }),
-      mockStopKeepAlive
+      mockStopKeepAlive,
+      undefined
     );
   });
 
@@ -139,7 +151,8 @@ describe('validateAudioApiKeys', () => {
         message: expect.stringContaining('Google TTS API key is required'),
         code: ERROR_CODES.VALIDATION_ERROR
       }),
-      mockStopKeepAlive
+      mockStopKeepAlive,
+      undefined
     );
   });
 
@@ -158,7 +171,8 @@ describe('validateAudioApiKeys', () => {
         message: expect.stringContaining('Unknown audio provider'),
         code: ERROR_CODES.VALIDATION_ERROR
       }),
-      mockStopKeepAlive
+      mockStopKeepAlive,
+      undefined
     );
   });
 

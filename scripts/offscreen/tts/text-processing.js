@@ -106,7 +106,7 @@ function sanitizeNonEnglish(text, langCode) {
  */
 export function splitIntoSentences(text) {
   // Split by sentence endings
-  let sentences = text.match(/[^.!?…]+[.!?…]+/g) || [text];
+  let sentences = text.match(/[^.!?…]+[.!?…]*|[.!?…]+/g) || [];
   sentences = sentences.map(s => s.trim()).filter(s => s.length > 0);
   
   // Split long sentences
@@ -172,6 +172,22 @@ function splitByWords(text) {
   let current = '';
   
   for (const word of words) {
+    if (word.length > MAX_SENTENCE_LENGTH) {
+      if (current) {
+        result.push(current);
+        current = '';
+      }
+      let offset = 0;
+      while (offset < word.length) {
+        let end = Math.min(offset + MAX_SENTENCE_LENGTH, word.length);
+        if (end < word.length && /[\uD800-\uDBFF]/.test(word[end - 1]) && /[\uDC00-\uDFFF]/.test(word[end])) {
+          end--;
+        }
+        result.push(word.slice(offset, end));
+        offset = end;
+      }
+      continue;
+    }
     if ((current + ' ' + word).length <= MAX_SENTENCE_LENGTH) {
       current = current ? current + ' ' + word : word;
     } else {

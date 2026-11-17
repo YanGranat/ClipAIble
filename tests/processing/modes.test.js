@@ -61,7 +61,8 @@ vi.mock('../../scripts/extraction/prompts.js', () => ({
   buildChunkUserPrompt: vi.fn((chunk, url, title, index, total) => `Chunk user prompt ${index}/${total}`)
 }));
 
-vi.mock('../../scripts/extraction/html-utils.js', () => ({
+vi.mock('../../scripts/extraction/html-utils.js', async (importOriginal) => ({
+  ...await importOriginal(),
   splitHtmlIntoChunks: vi.fn((html, size, overlap) => [html]),
   deduplicateContent: vi.fn((content) => content),
   trimHtmlForAnalysis: vi.fn((html, maxSize) => html.substring(0, Math.min(html.length, maxSize)))
@@ -132,9 +133,15 @@ vi.mock('../../scripts/locales.js', () => ({
 }));
 
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
+  getAIRequestOptions: data => ({ provider: data.provider, checkCancelled: data.checkCancelled }),
   checkCancellation: vi.fn(async () => {}),
   getUILanguageCached: vi.fn(async () => 'en'),
-  updateProgress: vi.fn(async () => {})
+  updateProgress: vi.fn(async () => {}),
+  getProcessingCallbacks: () => ({
+    updateState: vi.fn(),
+    updateProgress: vi.fn(async () => {}),
+    checkCancellation: vi.fn(async () => {})
+  })
 }));
 
 vi.mock('../../scripts/cache/selectors.js', () => ({
@@ -146,6 +153,11 @@ vi.mock('../../scripts/cache/selectors.js', () => ({
 
 // Mock Chrome APIs
 global.chrome = {
+  storage: {
+    local: {
+      get: vi.fn(async () => ({}))
+    }
+  },
   scripting: {
     executeScript: vi.fn(() => Promise.resolve([]))
   },
@@ -197,7 +209,8 @@ describe('processing/modes', () => {
         expect.stringContaining('https://example.com'),
         'test-api-key',
         'gpt-4',
-        true
+        true,
+        expect.any(Object)
       );
     });
 
@@ -887,8 +900,7 @@ describe('processing/modes', () => {
       ).rejects.toThrow('Script returned empty results');
     });
 
-    it('should log warning if tab URL mismatch', async () => {
-      const { log } = await import('../../scripts/utils/logging.js');
+    it('rejects navigation before injecting selectors into another page', async () => {
       
       // First call for URL verification
       global.chrome.tabs.get.mockResolvedValueOnce({
@@ -896,29 +908,13 @@ describe('processing/modes', () => {
         id: 1
       });
 
-      const mockResult = {
-        title: 'Test Title',
-        content: [{ type: 'paragraph', text: 'Content' }]
-      };
-
-      global.chrome.scripting.executeScript.mockResolvedValueOnce([{
-        result: mockResult
-      }]);
-
-      await extractContentWithSelectors(
+      await expect(extractContentWithSelectors(
         1,
         { articleContainer: '.article' },
         'https://example.com',
         vi.fn()
-      );
-
-      expect(log).toHaveBeenCalledWith(
-        'Tab URL mismatch detected',
-        expect.objectContaining({
-          expectedUrl: 'https://example.com',
-          actualUrl: 'https://different.com'
-        })
-      );
+      )).rejects.toThrow('page changed');
+      expect(global.chrome.scripting.executeScript).not.toHaveBeenCalled();
     });
   });
 });

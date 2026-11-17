@@ -25,6 +25,7 @@ vi.mock('../../scripts/locales.js', () => ({
 }));
 
 vi.mock('../../scripts/api/index.js', () => ({
+  resolveAIProvider: vi.fn((model, provider) => provider === undefined ? (model.includes('claude') ? 'claude' : model.includes('gemini') ? 'gemini' : 'openai') : provider),
   getProviderFromModel: vi.fn((model) => {
     if (model.includes('gpt') || model.includes('o1')) return 'openai';
     if (model.includes('claude')) return 'claude';
@@ -45,16 +46,13 @@ describe('translation/index', () => {
 
   describe('translateText', () => {
     it('should translate text using OpenAI API', async () => {
-      const mockResponse = {
-        ok: true,
-        json: vi.fn(() => Promise.resolve({
+      const mockResponse = new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'Bonjour le monde'
             }
           }]
-        }))
-      };
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
       global.fetch.mockResolvedValue(mockResponse);
 
       const result = await translateText('Hello world', 'French', 'test-key', 'gpt-4');
@@ -73,11 +71,7 @@ describe('translation/index', () => {
     });
 
     it('should handle authentication errors', async () => {
-      const mockResponse = {
-        ok: false,
-        status: 401,
-        json: vi.fn(() => Promise.resolve({}))
-      };
+      const mockResponse = new Response(JSON.stringify({}), { status: 401, headers: { 'content-type': 'application/json' } });
       global.fetch.mockResolvedValue(mockResponse);
 
       await expect(
@@ -86,16 +80,13 @@ describe('translation/index', () => {
     });
 
     it('should return original text if already in target language (NO_TRANSLATION_MARKER)', async () => {
-      const mockResponse = {
-        ok: true,
-        json: vi.fn(() => Promise.resolve({
+      const mockResponse = new Response(JSON.stringify({
           choices: [{
             message: {
               content: '[NO_TRANSLATION_NEEDED]'
             }
           }]
-        }))
-      };
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
       global.fetch.mockResolvedValue(mockResponse);
 
       const result = await translateText('Bonjour', 'French', 'test-key', 'gpt-4');
@@ -113,16 +104,13 @@ describe('translation/index', () => {
 
   describe('translateBatch', () => {
     it('should translate single text using translateText', async () => {
-      const mockResponse = {
-        ok: true,
-        json: vi.fn(() => Promise.resolve({
+      const mockResponse = new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'Bonjour'
             }
           }]
-        }))
-      };
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
       global.fetch.mockResolvedValue(mockResponse);
 
       const result = await translateBatch(['Hello'], 'French', 'test-key', 'gpt-4');
@@ -131,9 +119,7 @@ describe('translation/index', () => {
     });
 
     it('should translate multiple texts using batch API', async () => {
-      const mockResponse = {
-        ok: true,
-        json: vi.fn(() => Promise.resolve({
+      const mockResponse = new Response(JSON.stringify({
           choices: [{
             message: {
               content: JSON.stringify({
@@ -141,8 +127,7 @@ describe('translation/index', () => {
               })
             }
           }]
-        }))
-      };
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
       global.fetch.mockResolvedValue(mockResponse);
 
       const result = await translateBatch(['Hello', 'Goodbye'], 'French', 'test-key', 'gpt-4');
@@ -158,9 +143,7 @@ describe('translation/index', () => {
           return Promise.reject(new Error('Network error'));
         }
         // For multiple texts, translateBatch uses batch API
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
+        return Promise.resolve(new Response(JSON.stringify({
             choices: [{
               message: {
                 content: JSON.stringify({
@@ -168,8 +151,7 @@ describe('translation/index', () => {
                 })
               }
             }]
-          })
-        });
+          }), { status: 200, headers: { 'content-type': 'application/json' } }));
       });
 
       // Mock setTimeout to avoid actual delays in tests
@@ -191,16 +173,13 @@ describe('translation/index', () => {
 
   describe('translateMetadata', () => {
     it('should translate metadata text', async () => {
-      const mockResponse = {
-        ok: true,
-        json: vi.fn(() => Promise.resolve({
+      const mockResponse = new Response(JSON.stringify({
           choices: [{
             message: {
               content: 'Jean Dupont'
             }
           }]
-        }))
-      };
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
       global.fetch.mockResolvedValue(mockResponse);
 
       const result = await translateMetadata('John Doe', 'French', 'test-key', 'gpt-4', 'author');

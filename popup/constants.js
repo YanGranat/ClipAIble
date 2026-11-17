@@ -11,6 +11,8 @@ export const ELEMENT_IDS = {
   API_SECTION: 'apiSection',
   API_PROVIDER_SELECT: 'apiProviderSelect',
   MODEL_SELECT: 'modelSelect',
+  MODEL_SELECT_TRIGGER: 'modelSelectTrigger',
+  MODEL_SELECT_VALUE: 'modelSelectValue',
   ADD_MODEL_BTN: 'addModelBtn',
   CUSTOM_MODEL_DROPDOWN: 'customModelDropdown',
   CUSTOM_MODEL_OPTIONS: 'customModelOptions',
@@ -157,6 +159,12 @@ export const ELEMENT_IDS = {
   ELEVENLABS_SPEAKER_BOOST: 'elevenlabsSpeakerBoost',
 
   // Qwen
+  QWEN_MODEL: 'qwenModel',
+  QWEN_MODEL_GROUP: 'qwenModelGroup',
+  QWEN_WORKSPACE_ID: 'qwenWorkspaceId',
+  QWEN_WORKSPACE_GROUP: 'qwenWorkspaceGroup',
+  QWEN_REGION: 'qwenRegion',
+  QWEN_REGION_GROUP: 'qwenRegionGroup',
   QWEN_API_KEY_GROUP: 'qwenApiKeyGroup',
   QWEN_API_KEY: 'qwenApiKey',
   TOGGLE_QWEN_API_KEY: 'toggleQwenApiKey',
@@ -275,6 +283,9 @@ export const STORAGE_KEYS = {
   ELEVENLABS_SPEAKER_BOOST: 'elevenlabs_speaker_boost',
   ELEVENLABS_FORMAT: 'elevenlabs_format',
   STORAGE_QWEN_API_KEY: 'qwen_api_key',
+  QWEN_MODEL: 'qwen_model',
+  QWEN_WORKSPACE_ID: 'qwen_workspace_id',
+  QWEN_REGION: 'qwen_region',
   STORAGE_RESPEECHER_API_KEY: 'respeecher_api_key',
   RESPEECHER_TEMPERATURE: 'respeecher_temperature',
   RESPEECHER_REPETITION_PENALTY: 'respeecher_repetition_penalty',
@@ -299,6 +310,7 @@ export const STORAGE_KEYS = {
 
 // Default styles
 export const DEFAULT_STYLES = {
+  fontFamily: '',
   fontSize: '31',
   bgColor: '#303030',
   textColor: '#b9b9b9',
@@ -306,42 +318,8 @@ export const DEFAULT_STYLES = {
   linkColor: '#6cacff'
 };
 
-// Style presets
-export const STYLE_PRESETS = {
-  dark: {
-    bgColor: '#303030',
-    textColor: '#b9b9b9',
-    headingColor: '#cfcfcf',
-    linkColor: '#6cacff'
-  },
-  light: {
-    bgColor: '#ffffff',
-    textColor: '#1f2937',
-    headingColor: '#111827',
-    linkColor: '#2563eb'
-  },
-  sepia: {
-    bgColor: '#f4ecd8',
-    textColor: '#5c4b37',
-    headingColor: '#8b4513',
-    linkColor: '#a0522d'
-  },
-  contrast: {
-    bgColor: '#000000',
-    textColor: '#ffffff',
-    headingColor: '#ffff00',
-    linkColor: '#00ffff'
-  }
-};
+export { STYLE_PRESETS } from '../scripts/utils/config.js';
 
-// Mode hints
-export const MODE_HINTS = {
-  automatic: 'AI finds article blocks, script extracts content',
-  selector: 'User selects content areas, script extracts from selections',
-  extract: 'Script attempts to extract readable content from any webpage'
-};
-
-// JSDoc для лучшей документации
 /**
  * @typedef {keyof typeof ELEMENT_IDS} ElementIdKey
  * @typedef {typeof ELEMENT_IDS[ElementIdKey]} ElementIdValue

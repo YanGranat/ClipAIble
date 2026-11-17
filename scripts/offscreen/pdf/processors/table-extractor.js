@@ -2,7 +2,7 @@
 // Table structure extractor - extracts rows and cells from table element
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS, ELEMENT_DECISION, TABLE_DETECTION } from '../constants.js';
 import { detectTableColumns, detectTableHeaders } from '../utils/table-helpers.js';
 

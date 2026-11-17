@@ -369,6 +369,7 @@ function splitHeadingFromList(block) {
           const lineListStart = findListStartPosition(lineText);
           if (lineListStart > 0) {
             // Split this line
+            headingLines.push(...block.lines.slice(0, i));
             const lineHeadingText = lineText.substring(0, lineListStart).trim();
             const lineListText = lineText.substring(lineListStart).trim();
             

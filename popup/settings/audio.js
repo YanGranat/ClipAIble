@@ -4,6 +4,16 @@
 
 import { logWarn } from '../../scripts/utils/logging.js';
 import { CONFIG } from '../../scripts/utils/config.js';
+import { ELEVENLABS_TTS_MODELS, ELEVENLABS_TTS_VOICES, GOOGLE_TTS_MODELS, QWEN_TTS_MODELS, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getElevenLabsCapabilities, isQwenAudioModel } from '../../scripts/api/tts-catalog.js';
+import { normalizePiperVoiceId } from '../../scripts/api/piper-voices-mapping.js';
+
+export function restoreTtsSelect(select, value) {
+  if (!select || !value) return;
+  if (![...select.options].some(option => option.value === value)) {
+    select.add(new Option(value, value));
+  }
+  select.value = value;
+}
 
 /**
  * Initialize audio module
@@ -19,6 +29,23 @@ export function initAudio(deps) {
     getElement,
     setElementGroupDisplay
   } = deps;
+
+  for (const [name, models] of [['elevenlabsModel', ELEVENLABS_TTS_MODELS], ['googleTtsModel', GOOGLE_TTS_MODELS], ['qwenModel', QWEN_TTS_MODELS]]) {
+    const select = elements[name];
+    if (select) select.replaceChildren(...models.map(model => new Option(model.name, model.id)));
+  }
+  let lastVoiceProvider = null;
+  let preferredSpeed = null;
+  const baseSpeedMin = elements.audioSpeed?.min;
+  const baseSpeedMax = elements.audioSpeed?.max;
+  elements.audioSpeed?.addEventListener('input', () => { preferredSpeed = elements.audioSpeed.value; });
+
+  function populateVoices(provider, voices, currentValue) {
+    for (const voice of voices) elements.audioVoice.add(new Option(voice.name, voice.id));
+    const selected = currentValue || getDefaultTtsVoice(provider, elements.qwenModel?.value);
+    restoreTtsSelect(elements.audioVoice, selected);
+    if (!currentValue) saveAudioVoice(provider, selected);
+  }
 
   // Save audio voice per provider with backward-compatible flat key
   function saveAudioVoice(provider, voice) {
@@ -54,6 +81,7 @@ export function initAudio(deps) {
     // Provider-specific API keys
     setElementGroupDisplay('elevenlabsApiKeyGroup', 'none');
     setElementGroupDisplay('qwenApiKeyGroup', 'none');
+    for (const group of ['qwenModelGroup', 'qwenWorkspaceGroup', 'qwenRegionGroup']) setElementGroupDisplay(group, 'none');
     setElementGroupDisplay('respeecherApiKeyGroup', 'none');
     setElementGroupDisplay('googleTtsApiKeyGroup', 'none');
     
@@ -81,7 +109,8 @@ export function initAudio(deps) {
       ? audioVoiceMap.current 
       : (audioVoiceMap || {});
     const savedProviderVoice = voiceMap[provider] || '';
-    let currentValue = savedProviderVoice || elements.audioVoice.value || '';
+    let currentValue = savedProviderVoice || (lastVoiceProvider === provider ? elements.audioVoice.value : '') || '';
+    lastVoiceProvider = provider;
     
     // CRITICAL: For offline provider, reject numeric values (indices) - they are invalid
     // Only voice IDs (strings with _ or -) are valid for offline
@@ -97,94 +126,10 @@ export function initAudio(deps) {
     elements.audioVoice.innerHTML = '';
     
     if (provider === 'elevenlabs') {
-      // ElevenLabs voices (popular voices)
-      const elevenlabsVoices = [
-        { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel (female, clear)' },
-        { id: 'AZnzlk1XvdvUeBnXmlld', name: 'Domi (female, strong)' },
-        { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella (female, warm)' },
-        { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni (male, deep)' },
-        { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli (female, young)' },
-        { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh (male, calm)' },
-        { id: 'VR6AewLTigWG4xSOukaG', name: 'Arnold (male, authoritative)' },
-        { id: 'pNInz6obpgDQGcFmaJgB', name: 'Adam (male, expressive)' },
-        { id: 'yoZ06aMxZJJ28mfd3POQ', name: 'Sam (male, friendly)' }
-      ];
-      
-      elevenlabsVoices.forEach(voice => {
-        const option = document.createElement('option');
-        option.value = voice.id;
-        option.textContent = voice.name;
-        elements.audioVoice.appendChild(option);
-      });
-      
-      // Set value: use saved value if valid, otherwise use default
-      if (currentValue && elevenlabsVoices.find(v => v.id === currentValue)) {
-        elements.audioVoice.value = currentValue;
-      } else if (currentValue) {
-        elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM'; // Rachel
-        saveAudioVoice(provider, '21m00Tcm4TlvDq8ikWAM');
-      } else {
-        elements.audioVoice.value = '21m00Tcm4TlvDq8ikWAM';
-      }
-      saveAudioVoice(provider, elements.audioVoice.value);
+      populateVoices(provider, ELEVENLABS_TTS_VOICES, currentValue);
     } else if (provider === 'qwen') {
-      // Qwen3-TTS-Flash-2025-11-27 voices (49 voices)
-      const qwenVoices = [
-        // Best for articles/education
-        { id: 'Elias', name: '📚 Elias (academic, storytelling)' },
-        { id: 'Neil', name: '📰 Neil (news anchor, professional)' },
-        { id: 'Katerina', name: '🎭 Katerina (mature, rhythmic)' },
-        { id: 'Ryan', name: '🎬 Ryan (dramatic, realistic)' },
-        
-        // Language-specific
-        { id: 'Alek', name: '🇷🇺 Alek (Russian voice)' },
-        { id: 'Jennifer', name: '🇺🇸 Jennifer (American English)' },
-        { id: 'Emilien', name: '🇫🇷 Emilien (French)' },
-        { id: 'Lenn', name: '🇩🇪 Lenn (German)' },
-        { id: 'Dolce', name: '🇮🇹 Dolce (Italian)' },
-        { id: 'Bodega', name: '🇪🇸 Bodega (Spanish)' },
-        { id: 'Sonrisa', name: '🌎 Sonrisa (Latin American Spanish)' },
-        { id: 'Andre', name: '🇵🇹 Andre (Portuguese European)' },
-        { id: 'Radio Gol', name: '🇧🇷 Radio Gol (Portuguese Brazilian)' },
-        { id: 'Sohee', name: '🇰🇷 Sohee (Korean)' },
-        { id: 'Ono Anna', name: '🇯🇵 Ono Anna (Japanese)' },
-        
-        // General purpose
-        { id: 'Cherry', name: 'Cherry (sunny, friendly)' },
-        { id: 'Ethan', name: 'Ethan (warm, energetic)' },
-        { id: 'Serena', name: 'Serena (gentle)' },
-        { id: 'Chelsie', name: 'Chelsie (anime style)' },
-        { id: 'Aiden', name: 'Aiden (American young man)' },
-        { id: 'Maia', name: 'Maia (intelligent, gentle)' },
-        { id: 'Kai', name: 'Kai (relaxing)' },
-        { id: 'Nofish', name: 'Nofish (designer)' },
-        
-        // Character voices
-        { id: 'Eldric Sage', name: '🧙 Eldric Sage (old wise man)' },
-        { id: 'Arthur', name: '📖 Arthur (old storyteller)' },
-        { id: 'Bellona', name: '⚔️ Bellona (powerful, epic)' },
-        { id: 'Vincent', name: '🦸 Vincent (raspy, heroic)' },
-        { id: 'Mia', name: 'Mia (gentle as snow)' },
-        { id: 'Seren', name: '😴 Seren (soothing, ASMR)' }
-      ];
-      
-      qwenVoices.forEach(voice => {
-        const option = document.createElement('option');
-        option.value = voice.id;
-        option.textContent = voice.name;
-        elements.audioVoice.appendChild(option);
-      });
-      
-      // Set value: use saved value if valid, otherwise use default
-      if (currentValue && qwenVoices.find(v => v.id === currentValue)) {
-        elements.audioVoice.value = currentValue;
-      } else if (currentValue) {
-        elements.audioVoice.value = 'Elias'; // Default - best for articles
-        saveAudioVoice(provider, 'Elias');
-      } else {
-        elements.audioVoice.value = 'Elias';
-      }
-      saveAudioVoice(provider, elements.audioVoice.value);
+      const voices = isQwenAudioModel(elements.qwenModel?.value) ? QWEN_AUDIO_VOICES : QWEN_LEGACY_VOICES;
+      populateVoices(provider, voices, currentValue);
     } else if (provider === 'respeecher') {
       // Respeecher voices
       // Note: volodymyr is available on en-rt endpoint only, not on ua-rt
@@ -280,7 +225,7 @@ export function initAudio(deps) {
         { id: 'de_DE-thorsten-high', name: 'de_DE-thorsten-high' },
         { id: 'de_DE-thorsten_emotional-medium', name: 'de_DE-thorsten_emotional-medium' },
         // French
-        { id: 'fr_FR-mls_fr-medium', name: 'fr_FR-mls_fr-medium' },
+        { id: 'fr_FR-mls-medium', name: 'fr_FR-mls-medium' },
         { id: 'fr_FR-siwis-medium', name: 'fr_FR-siwis-medium' },
         { id: 'fr_FR-tom-medium', name: 'fr_FR-tom-medium' },
         { id: 'fr_FR-upmc-medium', name: 'fr_FR-upmc-medium' },
@@ -307,23 +252,9 @@ export function initAudio(deps) {
         elements.audioVoice.appendChild(option);
       });
       
-      // Set value: use saved value if valid, otherwise use default
-      // CRITICAL: Only save if value actually changed - don't overwrite saved voice unnecessarily
-      // Note: currentValue is already validated at function start (numeric values rejected for offline)
-      if (currentValue && offlineVoices.find(v => v.id === currentValue)) {
-        // Valid saved voice found - use it, don't save again
-        elements.audioVoice.value = currentValue;
-      } else if (currentValue) {
-        // Saved voice exists but not in list - use fallback for UI only, don't overwrite saved voice
-        // This preserves user's saved voice even if it's temporarily unavailable
-        elements.audioVoice.value = 'en_US-lessac-medium'; // Default for UI
-        // Don't save - preserve user's saved voice
-      } else {
-        // No saved voice - use default and save it
-        elements.audioVoice.value = 'en_US-lessac-medium';
-        saveAudioVoice(provider, 'en_US-lessac-medium');
-      }
-      // CRITICAL: Don't save here - only save if value actually changed or was missing
+      const normalizedVoice = normalizePiperVoiceId(currentValue);
+      restoreTtsSelect(elements.audioVoice, normalizedVoice || getDefaultTtsVoice(provider));
+      if (!currentValue || normalizedVoice !== currentValue) saveAudioVoice(provider, elements.audioVoice.value);
     } else {
       // OpenAI voices
       const openaiVoices = [
@@ -337,7 +268,9 @@ export function initAudio(deps) {
         { value: 'sage', name: 'Sage (neutral, calm)' },
         { value: 'ash', name: 'Ash (male, authoritative)' },
         { value: 'ballad', name: 'Ballad (expressive, dramatic)' },
-        { value: 'verse', name: 'Verse (rhythmic)' }
+        { value: 'verse', name: 'Verse (rhythmic)' },
+        { value: 'marin', name: 'Marin' },
+        { value: 'cedar', name: 'Cedar' }
       ];
       
       openaiVoices.forEach(voice => {
@@ -399,7 +332,8 @@ export function initAudio(deps) {
     const isQwen = provider === 'qwen';
     const isRespeecher = provider === 'respeecher';
     // Speed is not supported by Qwen, Respeecher, and Google TTS (Google uses prompt for speed control)
-    const supportsSpeed = !(isQwen || isRespeecher || isGoogle);
+    const capabilities = getElevenLabsCapabilities(elements.elevenlabsModel?.value);
+    const supportsSpeed = isElevenLabs ? capabilities.speed : (isQwen ? isQwenAudioModel(elements.qwenModel?.value) : !(isRespeecher || isGoogle));
     
     // Show/hide ElevenLabs-specific fields
     setElementGroupDisplay('elevenlabsApiKeyGroup', isElevenLabs ? 'flex' : 'none');
@@ -416,6 +350,13 @@ export function initAudio(deps) {
     
     // Show/hide Qwen-specific fields
     setElementGroupDisplay('qwenApiKeyGroup', isQwen ? 'flex' : 'none');
+    setElementGroupDisplay('qwenModelGroup', isQwen ? 'flex' : 'none');
+    const workspaceRequired = isQwen && isQwenAudioModel(elements.qwenModel?.value);
+    for (const group of ['qwenWorkspaceGroup', 'qwenRegionGroup']) setElementGroupDisplay(group, workspaceRequired ? 'flex' : 'none');
+    for (const [name, supported] of [['elevenlabsSimilarity', capabilities.similarity], ['elevenlabsStyle', capabilities.style], ['elevenlabsSpeakerBoost', capabilities.speakerBoost]]) {
+      const row = elements[name]?.closest('.setting-item');
+      if (row) row.style.display = supported ? '' : 'none';
+    }
     
     // Show/hide Respeecher-specific fields
     setElementGroupDisplay('respeecherApiKeyGroup', isRespeecher ? 'flex' : 'none');
@@ -435,14 +376,13 @@ export function initAudio(deps) {
     
     const audioSpeed = getElement('audioSpeed');
     if (audioSpeed) {
+      if (preferredSpeed === null) preferredSpeed = audioSpeed.value;
       audioSpeed.disabled = !supportsSpeed;
-      if (!supportsSpeed) {
-        audioSpeed.value = '1.0';
-        const audioSpeedValue = getElement('audioSpeedValue');
-        if (audioSpeedValue) {
-          audioSpeedValue.textContent = '1.0x';
-        }
-      }
+      audioSpeed.min = isElevenLabs && capabilities.speed ? '0.7' : (isQwen && supportsSpeed ? '0.5' : baseSpeedMin);
+      audioSpeed.max = isElevenLabs && capabilities.speed ? '1.2' : (isQwen && supportsSpeed ? '2.0' : baseSpeedMax);
+      audioSpeed.value = preferredSpeed;
+      const audioSpeedValue = getElement('audioSpeedValue');
+      if (audioSpeedValue) audioSpeedValue.textContent = `${Number(audioSpeed.value).toFixed(1)}x`;
     }
     
     const audioSpeedNote = getElement('audioSpeedNote');

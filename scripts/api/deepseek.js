@@ -1,3 +1,6 @@
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { parseBase64Image } from './image-data.js';
+import { assertCompleteAIResponse } from './response-validation.js';
 // @ts-check
 // DeepSeek API module for ClipAIble extension
 // DeepSeek API is compatible with OpenAI API format
@@ -8,36 +11,63 @@ import { callWithRetry } from '../utils/retry.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
+import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
+
+/** Resolve UI variants and legacy aliases before sending the vendor request. */
+export function getDeepSeekRequestConfig(model) {
+  const selectedModel = model || getDefaultModel('deepseek');
+  const metadata = getModelMetadata('deepseek', selectedModel);
+  const config = { model: metadata?.apiModel || selectedModel };
+  if (typeof metadata?.reasoningEnabled === 'boolean') {
+    config.thinking = { type: metadata.reasoningEnabled ? 'enabled' : 'disabled' };
+  }
+  if (metadata?.reasoningEffort && metadata.reasoningEnabled !== false) {
+    config.reasoning_effort = metadata.reasoningEffort;
+  }
+  return config;
+}
+
+/** Reject known text-only selections before any image request is sent. */
+export function assertDeepSeekVisionModel(model) {
+  const metadata = getModelMetadata('deepseek', model || getDefaultModel('deepseek'));
+  if (metadata && !metadata.inputModalities.includes('image')) {
+    const error = new Error('The selected DeepSeek model does not support image input. Select a vision-capable model.');
+    error.code = 'AI_MODEL_UNSUPPORTED_IMAGE';
+    throw error;
+  }
+}
 
 /**
  * Call DeepSeek API
  * @param {string} systemPrompt - System prompt
  * @param {string} userPrompt - User prompt
  * @param {string} apiKey - DeepSeek API key
- * @param {string} model - Model name (e.g., 'deepseek-chat', 'deepseek-reasoner')
+ * @param {string} model - Model name or catalog variant
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
+export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true, options = {}) {
+  options.checkCancelled?.();
   const functionStartTime = Date.now();
   log('=== callDeepSeekAPI: FUNCTION ENTRY ===', {
     timestamp: functionStartTime,
-    model: model || 'deepseek-chat',
+    model: getDeepSeekRequestConfig(model).model,
     jsonResponse: jsonResponse,
     systemPromptLength: systemPrompt.length,
     userPromptLength: userPrompt.length,
     totalPromptLength: systemPrompt.length + userPrompt.length,
     hasApiKey: !!apiKey,
-    apiKeyLength: apiKey ? apiKey.length : 0,
-    apiKeyPreview: apiKey ? (apiKey.substring(0, 10) + '...' + apiKey.substring(apiKey.length - 4)) : null
+    apiKeyLength: apiKey ? apiKey.length : 0
   });
   
-  // Default to deepseek-chat if model not specified
-  const modelName = model || 'deepseek-chat';
+  const modelConfig = getDeepSeekRequestConfig(model);
+  const modelName = modelConfig.model;
   log('callDeepSeekAPI: Model determined', { modelName, originalModel: model, isDefault: !model });
   
   // Internal function to make the actual API call
-  async function makeRequest(withResponseFormat) {
+  async function makeRequest(withResponseFormat, stream = true) {
+    options.checkCancelled?.();
+    const performFetch = stream ? fetch : (url, init) => fetchBufferedResponse(url, init, CONFIG.API_TIMEOUT_MS, options);
     const makeRequestStartTime = Date.now();
     log('=== makeRequest: FUNCTION ENTRY ===', {
       timestamp: makeRequestStartTime,
@@ -48,14 +78,14 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     });
     
     const requestBody = {
-      model: modelName,
+      ...modelConfig,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt }
       ],
       // CRITICAL: Use streaming to avoid Chrome's 30-second timeout on large Brotli responses
       // Streaming allows response to be decoded incrementally, avoiding the timeout
-      stream: true
+      stream
     };
     
     if (withResponseFormat) {
@@ -115,7 +145,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     });
     
     try {
-      const fetchResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+      const fetchResponse = await performFetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -128,6 +158,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
         signal: controller.signal
       });
       
+      options.checkCancelled?.();
       const fetchTime = Date.now() - fetchStartTime;
       log('makeRequest: Fetch completed', {
         status: fetchResponse.status,
@@ -207,6 +238,8 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       
       return fetchResponse;
     } catch (e) {
+      try { options.checkCancelled?.(); }
+      catch (cancelError) { controller.abort(); throw cancelError; }
       throw e;
     } finally {
       if (timeout) {
@@ -297,6 +330,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       }
     }
   } catch (fetchError) {
+    await options.checkCancelled?.();
     if (fetchError.name === 'AbortError') {
       // Normalize timeout error with context
       const normalized = await handleError(fetchError, {
@@ -332,7 +366,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       // Provide more helpful error messages for common errors
       let errorMessage = errorData?.error?.message || `API error: ${fetchError.status}`;
       if (fetchError.status === 404) {
-        errorMessage = `Model "${modelName}" not found. The model may not be available yet or the name may be incorrect. Please try a different model (e.g., deepseek-chat or deepseek-reasoner).`;
+        errorMessage = `Model "${modelName}" not found. The model may not be available yet or the name may be incorrect. Please select an available DeepSeek model.`;
       } else if (fetchError.status === 401) {
         errorMessage = 'DeepSeek API key is invalid or missing. Please check your API key in settings.';
       } else if (fetchError.status === 403) {
@@ -489,8 +523,8 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
   try {
     // CRITICAL: Use streaming (SSE) to avoid Chrome's 30-second timeout on large Brotli responses
     // Streaming allows response to be decoded incrementally as chunks arrive, avoiding the timeout
-    // deepseek-reasoner can generate very large responses with reasoning tokens - needs longer timeout
-    const readTimeout = modelName.includes('reasoner') ? 600000 : 180000; // 10 minutes for reasoner, 3 minutes for others
+    // Thinking responses use the existing extended stream budget.
+    const readTimeout = modelConfig.thinking?.type === 'enabled' || (!modelConfig.thinking && modelName.includes('reasoner')) ? 600000 : 180000;
     let readTimeoutId = null;
     let readCompleted = false;
     
@@ -527,8 +561,11 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     }, progressLogInterval);
     
     // Read SSE stream and accumulate content from delta chunks
+    let activeReader;
     const readPromise = (async () => {
       const reader = response.body.getReader();
+      activeReader = reader;
+      let readerFinished = false;
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       let fullContent = '';
@@ -536,12 +573,17 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       let totalBytesRead = 0;
       let responseId = null;
       let responseModel = null;
+      let finishReason = null;
+      let streamDone = false;
       let usageTokens = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
       
       try {
-        while (true) {
+        while (!streamDone) {
+          options.checkCancelled?.();
           const { done, value } = await reader.read();
+          options.checkCancelled?.();
           if (done) {
+            readerFinished = true;
             break;
           }
           
@@ -555,7 +597,11 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
           
           for (const line of lines) {
             const trimmedLine = line.trim();
-            if (!trimmedLine || trimmedLine === 'data: [DONE]') {
+            if (trimmedLine === 'data: [DONE]') {
+              streamDone = true;
+              break;
+            }
+            if (!trimmedLine) {
               continue;
             }
             
@@ -576,6 +622,9 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
                 if (chunk.choices?.[0]?.delta?.content) {
                   fullContent += chunk.choices[0].delta.content;
                 }
+                if (chunk.choices?.[0]?.finish_reason != null) {
+                  finishReason = chunk.choices[0].finish_reason;
+                }
                 
                 // Accumulate usage tokens if available
                 if (chunk.usage) {
@@ -584,11 +633,11 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
                   usageTokens.total_tokens = chunk.usage.total_tokens || usageTokens.total_tokens;
                 }
               } catch (parseError) {
-                // Skip invalid JSON chunks
                 logDebug('callDeepSeekAPI: Failed to parse SSE chunk', {
                   chunk: jsonStr.substring(0, 200),
                   error: parseError.message
                 });
+                throw parseError;
               }
             }
           }
@@ -616,15 +665,18 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
               if (chunk.choices?.[0]?.delta?.content) {
                 fullContent += chunk.choices[0].delta.content;
               }
+              if (chunk.choices?.[0]?.finish_reason != null) {
+                finishReason = chunk.choices[0].finish_reason;
+              }
             } catch (parseError) {
-              // Skip invalid JSON
+              throw parseError;
             }
           }
         }
         
-        // Decode any remaining buffered data
-        if (buffer) {
-          fullContent += decoder.decode();
+        if (buffer.trim() === 'data: [DONE]') streamDone = true;
+        if (!streamDone && finishReason == null) {
+          throw new Error('The AI response stream ended before completion.');
         }
         
         readCompleted = true;
@@ -659,7 +711,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
               role: 'assistant',
               content: fullContent
             },
-            finish_reason: 'stop'
+            finish_reason: finishReason
           }],
           usage: usageTokens
         };
@@ -668,71 +720,10 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       } catch (streamError) {
         if (progressInterval) clearInterval(progressInterval);
         
-        // If network error occurred but we have partial content, try to use it
-        if (streamError.name === 'TypeError' && streamError.message === 'network error' && fullContent && fullContent.length > 0) {
-          logWarn('DeepSeek SSE stream network error - attempting to use partial content', {
-            partialContentLength: fullContent.length,
-            partialContentLengthKB: (fullContent.length / 1024).toFixed(2),
-            chunkCount: chunkCount,
-            totalBytesRead: totalBytesRead,
-            totalBytesReadKB: (totalBytesRead / 1024).toFixed(2),
-            elapsedMs: Date.now() - jsonStartTime,
-            model: modelName,
-            note: 'Network connection lost during SSE stream reading, but partial content available - attempting to use it'
-          });
-          
-          // Process any remaining buffer before using partial content
-          if (buffer.trim()) {
-            const trimmedLine = buffer.trim();
-            if (trimmedLine.startsWith('data: ') && trimmedLine !== 'data: [DONE]') {
-              const jsonStr = trimmedLine.substring(6);
-              try {
-                const chunk = JSON.parse(jsonStr);
-                if (chunk.choices?.[0]?.delta?.content) {
-                  fullContent += chunk.choices[0].delta.content;
-                }
-              } catch (parseError) {
-                // Skip invalid JSON
-              }
-            }
-          }
-          
-          // Decode any remaining buffered data
-          if (buffer) {
-            try {
-              fullContent += decoder.decode();
-            } catch (decodeError) {
-              // Ignore decode errors for remaining buffer
-            }
-          }
-          
-          // If we have meaningful content, construct partial result
-          if (fullContent.length > 100) { // At least 100 characters
-            const partialResult = {
-              id: responseId || 'stream-partial',
-              model: responseModel || modelName,
-              choices: [{
-                message: {
-                  role: 'assistant',
-                  content: fullContent
-                },
-                finish_reason: 'length' // Indicates partial/incomplete response
-              }],
-              usage: usageTokens
-            };
-            
-            log('DeepSeek SSE stream: Using partial content after network error', {
-              partialContentLength: fullContent.length,
-              partialContentLengthKB: (fullContent.length / 1024).toFixed(2),
-              chunkCount: chunkCount,
-              note: 'Returning partial response due to network error - content may be incomplete'
-            });
-            
-            return { result: partialResult, responseText: fullContent };
-          }
-        }
-        
         throw streamError;
+      } finally {
+        if (!readerFinished) void reader.cancel().catch(() => {});
+        reader.releaseLock();
       }
     })().then(({ result: streamResult, responseText: streamText }) => {
       result = streamResult;
@@ -757,6 +748,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
             note: `Response body reading exceeded ${Math.round(readTimeout / 60000)} minute timeout - may be very large response with reasoning tokens`
           });
           reject(new Error(`Response body read timeout after ${Math.round(readTimeout / 60000)} minutes`));
+          void activeReader?.cancel().catch(() => {});
         }
       }, readTimeout);
     });
@@ -839,6 +831,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       note: 'Full response size and content information'
     });
   } catch (parseError) {
+    await options.checkCancelled?.();
     // Log the response text we tried to parse if available
     if (responseText) {
       logError('DeepSeek response parse failed - response text', {
@@ -951,6 +944,8 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     responseText = JSON.stringify(result);
   }
 
+  options.checkCancelled?.();
+  assertCompleteAIResponse(result, 'deepseek');
   log('=== callDeepSeekAPI: Extracting content from result ===', {
     timestamp: Date.now(),
     hasResult: !!result,
@@ -1321,7 +1316,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       try {
         // Retry the request without response_format
         const retryResponse = await callWithRetry(
-          async () => makeRequest(false),
+          async () => makeRequest(false, false),
           {
             onRetry: (attempt, delay) => {
               log(`DeepSeek API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -1330,6 +1325,8 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
         );
         
         const retryResult = await retryResponse.json();
+        options.checkCancelled?.();
+        assertCompleteAIResponse(retryResult, 'deepseek');
         const retryContent = retryResult.choices?.[0]?.message?.content;
         
         if (retryContent) {
@@ -1464,16 +1461,19 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true) {
+export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true, options = {}) {
+  options.checkCancelled?.();
+  assertDeepSeekVisionModel(model);
   log('callDeepSeekAPIWithImage', { model, imageSize: imageData.length });
   
-  const modelName = model || 'deepseek-chat';
+  const modelConfig = getDeepSeekRequestConfig(model);
+  const modelName = modelConfig.model;
   
   // Extract base64 data (remove data:image/png;base64, prefix)
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   const requestBody = {
-    model: modelName,
+    ...modelConfig,
     messages: [
       { role: 'system', content: systemPrompt },
       {
@@ -1486,7 +1486,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
           {
             type: 'image_url',
             image_url: {
-              url: `data:image/png;base64,${base64Image}`
+              url: `data:${mimeType};base64,${base64Image}`
             }
           }
         ]
@@ -1511,19 +1511,17 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+
         
         try {
-          const fetchResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+          const fetchResponse = await fetchBufferedResponse('https://api.deepseek.com/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey}`
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, options);
           
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
@@ -1532,7 +1530,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
               error.response = fetchResponse;
-              clearTimeout(timeout);
+
               throw error;
             }
             let errorData;
@@ -1544,14 +1542,14 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
             /** @type {Error & {status?: number}} */
             const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
             error.status = fetchResponse.status;
-            clearTimeout(timeout);
+
             throw error;
           }
           
-          clearTimeout(timeout);
+
           return fetchResponse;
         } catch (e) {
-          clearTimeout(timeout);
+
           throw e;
         }
       },
@@ -1563,6 +1561,8 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
     );
     
     const data = await response.json();
+    await options.checkCancelled?.();
+    assertCompleteAIResponse(data, 'deepseek');
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       logError('DeepSeek API response missing content', { data });
@@ -1652,6 +1652,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
     
     return content;
   } catch (error) {
+    await options.checkCancelled?.();
     logError('DeepSeek API call with image failed', error);
     throw error;
   }
@@ -1668,11 +1669,14 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<{result: Object|string, assistantMessage: string, userMessage: Object}>}
  */
-export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true) {
+export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true, options = {}) {
+  options.checkCancelled?.();
+  assertDeepSeekVisionModel(model);
   log('callDeepSeekAPIWithImageAndHistory', { model, imageSize: imageData.length, historyLength: messageHistory.length });
   
-  const modelName = model || 'deepseek-chat';
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const modelConfig = getDeepSeekRequestConfig(model);
+  const modelName = modelConfig.model;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Calculate image hash for verification (first 100 chars of base64)
   const imageHashStart = base64Image.substring(0, 100);
@@ -1685,7 +1689,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
       { type: 'text', text: userPrompt },
       {
         type: 'image_url',
-        image_url: { url: `data:image/png;base64,${base64Image}` }
+        image_url: { url: `data:${mimeType};base64,${base64Image}` }
       }
     ]
   };
@@ -1734,7 +1738,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
   });
   
   const requestBody = {
-    model: modelName,
+    ...modelConfig,
     messages: messages
   };
   
@@ -1754,19 +1758,17 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+
         
         try {
-          const fetchResponse = await fetch('https://api.deepseek.com/v1/chat/completions', {
+          const fetchResponse = await fetchBufferedResponse('https://api.deepseek.com/v1/chat/completions', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${apiKey}`
             },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+            body: JSON.stringify(requestBody)
+          }, CONFIG.API_TIMEOUT_MS, options);
           
           if (!fetchResponse.ok) {
             const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
@@ -1775,7 +1777,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
               const error = new Error(`HTTP ${fetchResponse.status}`);
               error.status = fetchResponse.status;
               error.response = fetchResponse;
-              clearTimeout(timeout);
+
               throw error;
             }
             let errorData;
@@ -1787,14 +1789,14 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
             /** @type {Error & {status?: number}} */
             const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
             error.status = fetchResponse.status;
-            clearTimeout(timeout);
+
             throw error;
           }
           
-          clearTimeout(timeout);
+
           return fetchResponse;
         } catch (e) {
-          clearTimeout(timeout);
+
           throw e;
         }
       },
@@ -1806,6 +1808,8 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
     );
     
     const data = await response.json();
+    await options.checkCancelled?.();
+    assertCompleteAIResponse(data, 'deepseek');
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       logError('DeepSeek API response missing content', { data });
@@ -1924,6 +1928,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
     
     return responseData;
   } catch (error) {
+    await options.checkCancelled?.();
     logError('DeepSeek API call with image and history failed', error);
     throw error;
   }

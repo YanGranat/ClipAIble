@@ -3,7 +3,7 @@
 // Centralizes item transformation logic to avoid duplication
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn, logToServiceWorker } from '../../../../utils/logging.js';
+import { log, logWarn, logToServiceWorker } from '../../../utils/logging.js';
 import { transformCoordinates } from './coordinate-transform.js';
 import { buildFontFormatMap, detectUnderlinedText } from './font-detection.js';
 import { iterItemsToLines } from '../core/line-grouping.js';
@@ -277,16 +277,17 @@ export function calculateTolerances(transformedItems) {
  * @param {{baseFontSize?: number, [key: string]: any}} [metrics] - PDF metrics (optional, for baseFontSize)
  * @param {{lines?: Array<{x: number, y: number, width: number, [key: string]: any}>, allLines?: Array<any>, [key: string]: any}|null} [graphicsData] - Optional graphics data for underline detection
  * @param {{items?: Array<any>, styles?: Record<string, {fontFamily?: string, fontWeight?: string, fontStyle?: string, [key: string]: any}>, [key: string]: any}|null} [textContent] - Optional textContent object for font name mapping (from page.getTextContent())
+ * @param {{has?: function(string): boolean, get: function(string): any}|null} [fontObjects] - Resolved PDF.js common font objects
  * @returns {Array} Array of line objects
  */
-export function processPageItemsToLines(textItems, viewport, pageNum, metrics = {}, graphicsData = null, textContent = null) {
+export function processPageItemsToLines(textItems, viewport, pageNum, metrics = {}, graphicsData = null, textContent = null, fontObjects = null) {
   // Transform items
   const transformedItems = transformTextItems(textItems, viewport, pageNum);
   
   // Extract font name mapping from textContent if available
   let fontNameMap = null;
   if (textContent) {
-    fontNameMap = extractFontNameMapping(textContent, pageNum);
+    fontNameMap = extractFontNameMapping(textContent, pageNum, fontObjects);
   }
   
   // Build font format map BEFORE applying formatting (needed for detectContextualFormatting)

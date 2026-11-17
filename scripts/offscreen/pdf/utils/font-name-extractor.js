@@ -4,7 +4,7 @@
 // Also extracts fontWeight and fontStyle if available
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, criticalLog } from '../../../../utils/logging.js';
+import { log, criticalLog } from '../../../utils/logging.js';
 
 /**
  * Font information extracted from textContent.styles
@@ -20,9 +20,10 @@ import { log, criticalLog } from '../../../../utils/logging.js';
  * 
  * @param {{styles?: Record<string, {fontFamily?: string, fontWeight?: string, fontStyle?: string, [key: string]: any}>}} textContent - PDF.js textContent object with styles property
  * @param {number} pageNum - Page number (for logging)
+ * @param {{has?: function(string): boolean, get: function(string): any}|null} [fontObjects] - Resolved PDF.js common font objects
  * @returns {Map<string, FontInfo>} Map from internal font name to FontInfo object
  */
-export function extractFontNameMapping(textContent, pageNum) {
+export function extractFontNameMapping(textContent, pageNum, fontObjects = null) {
   const fontNameMap = new Map();
   
   try {
@@ -62,19 +63,33 @@ export function extractFontNameMapping(textContent, pageNum) {
       // textContent.styles is a map from internal font name to font object
       for (const [internalFontName, fontObj] of Object.entries(textContent.styles)) {
         if (fontObj) {
+          let resolvedFont = null;
+          try {
+            if (fontObjects && (!fontObjects.has || fontObjects.has(internalFontName))) {
+              resolvedFont = fontObjects.get(internalFontName);
+            }
+          } catch {
+            // Font objects may not have loaded during an earlier text-only pass.
+          }
           // Try multiple properties that might contain the real font name
-          const realFontName = fontObj.fontFamily || 
-                              fontObj.name || 
+          const realFontName = resolvedFont?.name ||
+                              fontObj.name ||
+                              fontObj.font?.name ||
+                              fontObj.fontFamily ||
                               fontObj.loadedName ||
                               (fontObj.font ? fontObj.font.name : null);
           
           // Extract fontWeight if available
-          let fontWeight = fontObj.fontWeight || 
+          let fontWeight = resolvedFont?.fontWeight ||
+                          (resolvedFont?.bold || resolvedFont?.black ? 'bold' : null) ||
+                          fontObj.fontWeight ||
                           fontObj.weight ||
                           (fontObj.font ? fontObj.font.fontWeight : null);
           
           // Extract fontStyle if available
-          let fontStyle = fontObj.fontStyle || 
+          let fontStyle = resolvedFont?.fontStyle ||
+                         (resolvedFont?.italic ? 'italic' : null) ||
+                         fontObj.fontStyle ||
                          fontObj.style ||
                          (fontObj.font ? fontObj.font.fontStyle : null);
           

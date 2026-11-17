@@ -4,6 +4,20 @@
 import { log, logDebug, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 
+/** Read one request's fallback payload in the page's MAIN world. */
+function readPendingYouTubeSubtitlesInlined(requestId, removeOnly = false) {
+  const element = document.getElementById(`ClipAIblePendingSubtitles-${requestId}`);
+  if (!element) return null;
+  try {
+    const data = JSON.parse(element.getAttribute('data-subtitles') || 'null');
+    if (data?.requestId !== requestId) return null;
+    element.remove();
+    return removeOnly ? null : data;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Extract subtitles from YouTube page
  * @param {number} tabId - Tab ID
@@ -12,6 +26,8 @@ import { CONFIG } from '../utils/config.js';
  * @returns {Promise<Object>} {subtitles: Array, metadata: Object}
  */
 export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', detectedVideoLanguage = 'en') {
+  const requestId = crypto.randomUUID();
+  const storageKey = `pendingSubtitles-${requestId}`;
   log('[YouTube subtitles] START', { tabId, targetLanguage, detectedVideoLanguage });
   logDebug('[YouTube subtitles] CONFIG', {
     VIDEO_SUBTITLES_TIMEOUT: CONFIG.VIDEO_SUBTITLES_TIMEOUT,
@@ -39,10 +55,17 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
       } catch (e) {
         // Ignore errors when removing listener (may already be removed)
       }
+      chrome.storage.local.remove(storageKey).catch(() => {});
+      chrome.tabs.sendMessage(tabId, { action: 'clearSubtitleRequest', requestId }).catch(() => {});
+      chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN',
+        func: readPendingYouTubeSubtitlesInlined, args: [requestId, true]
+      }).catch(() => {});
     };
     
     // Set up one-time message listener
     const messageListener = (message, sender, sendResponse) => {
+      if (!message || sender?.tab?.id !== tabId || message.requestId !== requestId ||
+          (message.result && message.result.requestId !== requestId)) return false;
       // Check both action and type to catch messages in different formats
       // CRITICAL: Check all possible message formats
       const isYouTubeSubtitlesResult = 
@@ -132,7 +155,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
     (async () => {
       let contentScriptAvailable = false;
       try {
-        const pingResult = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+        const pingResult = await chrome.tabs.sendMessage(tabId, { action: 'ping', subtitleRequestId: requestId });
         if (pingResult && pingResult.success) {
           contentScriptAvailable = true;
           log('Content script is available and responding', { timestamp: pingResult.timestamp });
@@ -146,7 +169,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
           });
           log('Content script injected programmatically, waiting for listeners to register');
           await new Promise(r => setTimeout(r, 450));
-          const retryPing = await chrome.tabs.sendMessage(tabId, { action: 'ping' }).catch(() => null);
+          const retryPing = await chrome.tabs.sendMessage(tabId, { action: 'ping', subtitleRequestId: requestId }).catch(() => null);
           if (retryPing?.success) {
             contentScriptAvailable = true;
             log('Content script responding after programmatic injection');
@@ -160,6 +183,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
       }
       
       // Inject and execute script in page context
+      if (resolved) return;
       log('Executing subtitle extraction script in page context', { 
         tabId, 
         contentScriptAvailable,
@@ -189,7 +213,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
           CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_1,
           CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2,
           targetLanguage,
-          detectedVideoLanguage
+          detectedVideoLanguage,
+          requestId
         ]
       }).then(results => {
       log('[YouTube subtitles] executeScript resolved', {
@@ -201,7 +226,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
         hasError: !!(results?.[0] && 'error' in results[0] && results[0].error)
       });
 
-      if (results?.[0]?.result?.subtitles?.length > 0 && !resolved) {
+      if (results?.[0]?.result?.requestId === requestId && results[0].result.subtitles?.length > 0 && !resolved) {
         resolved = true;
         cleanup();
         log('[YouTube subtitles] SUCCESS from executeScript return value');
@@ -221,32 +246,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
               const domResult = await chrome.scripting.executeScript({
                 target: { tabId },
                 world: 'MAIN',
-                func: () => {
-                  const element = document.getElementById('ClipAIblePendingSubtitles');
-                  if (element && element.getAttribute('data-subtitles')) {
-                    try {
-                      // SECURITY: Safe JSON parse to prevent crashes on malformed data
-                      const subtitleAttr = element.getAttribute('data-subtitles');
-                      if (!subtitleAttr) {
-                        return null;
-                      }
-                      let data;
-                      try {
-                        data = JSON.parse(subtitleAttr);
-                      } catch (e) {
-                        // CRITICAL: This runs in MAIN world where modules are not available
-                        // console.error is acceptable here as logging module cannot be imported
-                        console.error('[ClipAIble:Video] Failed to parse subtitle data', e);
-                        return null;
-                      }
-                      element.remove();
-                      return data;
-                    } catch (e) {
-                      return null;
-                    }
-                  }
-                  return null;
-                }
+                func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
               });
               
               if (domResult?.[0]?.result && !resolved) {
@@ -291,32 +292,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
               const domResult = await chrome.scripting.executeScript({
                 target: { tabId },
                 world: 'MAIN',
-                func: () => {
-                  const element = document.getElementById('ClipAIblePendingSubtitles');
-                  if (element && element.getAttribute('data-subtitles')) {
-                    try {
-                      // SECURITY: Safe JSON parse to prevent crashes on malformed data
-                      const subtitleAttr = element.getAttribute('data-subtitles');
-                      if (!subtitleAttr) {
-                        return null;
-                      }
-                      let data;
-                      try {
-                        data = JSON.parse(subtitleAttr);
-                      } catch (e) {
-                        // CRITICAL: This runs in MAIN world where modules are not available
-                        // console.error is acceptable here as logging module cannot be imported
-                        console.error('[ClipAIble:Video] Failed to parse subtitle data', e);
-                        return null;
-                      }
-                      element.remove();
-                      return data;
-                    } catch (e) {
-                      return null;
-                    }
-                  }
-                  return null;
-                }
+                func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
               });
               
               if (domResult?.[0]?.result && !resolved) {
@@ -365,19 +342,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
             const domResult = await chrome.scripting.executeScript({
               target: { tabId },
               world: 'MAIN',
-              func: () => {
-                const element = document.getElementById('ClipAIblePendingSubtitles');
-                if (element && element.getAttribute('data-subtitles')) {
-                  try {
-                    const data = JSON.parse(element.getAttribute('data-subtitles'));
-                    element.remove();
-                    return data;
-                  } catch (e) {
-                    return null;
-                  }
-                }
-                return null;
-              }
+              func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
             });
             
             if (domResult?.[0]?.result && !resolved) {
@@ -422,20 +388,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
           const domResult = await chrome.scripting.executeScript({
             target: { tabId },
             world: 'MAIN',
-            func: () => {
-              const element = document.getElementById('ClipAIblePendingSubtitles');
-              if (element && element.getAttribute('data-subtitles')) {
-                try {
-                  const data = JSON.parse(element.getAttribute('data-subtitles'));
-                  // Remove element after reading
-                  element.remove();
-                  return data;
-                } catch (e) {
-                  return null;
-                }
-              }
-              return null;
-            }
+            func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
           });
           
           if (domResult && domResult[0] && domResult[0].result && !resolved) {
@@ -469,19 +423,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
           const domResult = await chrome.scripting.executeScript({
             target: { tabId },
             world: 'MAIN',
-            func: () => {
-              const element = document.getElementById('ClipAIblePendingSubtitles');
-              if (element && element.getAttribute('data-subtitles')) {
-                try {
-                  const data = JSON.parse(element.getAttribute('data-subtitles'));
-                  element.remove(); // Clear after reading
-                  return data;
-                } catch (e) {
-                  return null;
-                }
-              }
-              return null;
-            }
+            func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
           });
           
           if (domResult?.[0]?.result && !resolved) {
@@ -523,15 +466,16 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
     // Therefore need to check storage more frequently and faster
     // storageCheckInterval already declared at start of Promise (line 18)
     const checkStorage = async () => {
+      if (resolved) return;
       try {
-        const storage = await chrome.storage.local.get(['pendingSubtitles']);
-        if (storage.pendingSubtitles && !resolved) {
+        const storage = await chrome.storage.local.get([storageKey]);
+        if (storage[storageKey]?.requestId === requestId && !resolved) {
           logDebug('[YouTube subtitles] Found pendingSubtitles in storage', {
-            age: Date.now() - (storage.pendingSubtitles.timestamp || 0),
-            subtitleCount: storage.pendingSubtitles.subtitles?.length ?? 0
+            age: Date.now() - (storage[storageKey].timestamp || 0),
+            subtitleCount: storage[storageKey].subtitles?.length ?? 0
           });
           /** @type {any} */
-          const pendingData = storage.pendingSubtitles;
+          const pendingData = storage[storageKey];
           // Check if this is recent (within last 60 seconds - same as timeout)
           const age = Date.now() - (pendingData.timestamp || 0);
           if (age < 60000) {
@@ -543,7 +487,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
             cleanup();
             
             // Clear pendingSubtitles
-            chrome.storage.local.remove('pendingSubtitles').catch(() => {});
+            chrome.storage.local.remove(storageKey).catch(() => {});
             
             if (pendingData.subtitles && pendingData.subtitles.length > 0) {
               resolve({
@@ -564,20 +508,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
           const domResult = await chrome.scripting.executeScript({
             target: { tabId },
             world: 'MAIN',
-            func: () => {
-              const element = document.getElementById('ClipAIblePendingSubtitles');
-              if (element && element.getAttribute('data-subtitles')) {
-                try {
-                  const data = JSON.parse(element.getAttribute('data-subtitles'));
-                  // Remove element after reading
-                  element.remove();
-                  return data;
-                } catch (e) {
-                  return null;
-                }
-              }
-              return null;
-            }
+            func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
           });
           
           if (domResult && domResult[0] && domResult[0].result && !resolved) {
@@ -629,20 +561,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
             const domResult = await chrome.scripting.executeScript({
               target: { tabId },
               world: 'MAIN',
-              func: () => {
-                const element = document.getElementById('ClipAIblePendingSubtitles');
-                if (element && element.getAttribute('data-subtitles')) {
-                  try {
-                    const data = JSON.parse(element.getAttribute('data-subtitles'));
-                    element.remove(); // Clear after reading
-                    return data;
-                  } catch (e) {
-                    logError(' ❌ Failed to parse DOM data:', e);
-                    return null;
-                  }
-                }
-                return null;
-              }
+              func: readPendingYouTubeSubtitlesInlined,
+                args: [requestId]
             });
             
             if (domResult?.[0]?.result && !resolved) {
@@ -694,7 +614,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
  * @param {string} targetLanguage - Target language ('auto' or language code like 'en', 'ru')
  * @param {string} detectedVideoLanguage - Detected video language from AI (e.g., 'en', 'ru')
  */
-function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, retryDelay1, retryDelay2, targetLanguage, detectedVideoLanguage) {
+function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, retryDelay1, retryDelay2, targetLanguage, detectedVideoLanguage, requestId) {
   // CRITICAL: executeScript waits for Promise if function returns Promise
   // Therefore return Promise so executeScript waits for result
   return (async () => {
@@ -1276,6 +1196,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
               if (subtitles.length > 0) {
                 // Send result immediately
                 const result = {
+                  requestId,
                   subtitles: subtitles,
                   metadata: metadata
                 };
@@ -1285,13 +1206,14 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
                   detail: {
                     type: 'ClipAIbleYouTubeSubtitles',
                     action: 'youtubeSubtitlesResult',
+                    requestId,
                     result: result
                   },
                   bubbles: true,
                   cancelable: true
                 }));
                 
-                return; // Exit from function
+                return result;
               }
             }
           }
@@ -1397,11 +1319,13 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       
       // Send result
       const result = {
+        requestId,
         subtitles: subtitles,
         metadata: metadata
       };
       
       const messageData = {
+        requestId,
         type: 'ClipAIbleYouTubeSubtitles',
         action: 'youtubeSubtitlesResult',
         result: result,
@@ -1499,6 +1423,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       // (though it usually doesn't work between MAIN and ISOLATED, but let's try)
       try {
         window.postMessage({
+          requestId,
           type: 'ClipAIbleYouTubeSubtitles',
           action: 'youtubeSubtitlesResult',
           result: messageData.result
@@ -1520,6 +1445,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
     } catch (error) {
       try { console.error('[ClipAIble] Subtitle extraction error:', error?.message || error); } catch (_) {}
       const errorMessageData = {
+        requestId,
         type: 'ClipAIbleYouTubeSubtitles',
         action: 'youtubeSubtitlesResult',
         error: error.message || String(error),
@@ -1618,11 +1544,11 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', dete
  * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
  */
 function extractVimeoSubtitlesInlined(retryDelay2) {
+  const logError = console.error.bind(console, '[ClipAIble]');
   return (async () => {
     try {
       // CRITICAL: This runs in MAIN world where modules are not available
       // console.error is acceptable here as logging module cannot be imported
-      const logError = console.error.bind(console, '[ClipAIble]');
       const subtitles = [];
       let metadata = {
         title: document.title.replace(' on Vimeo', ''),
@@ -1654,56 +1580,25 @@ function extractVimeoSubtitlesInlined(retryDelay2) {
       // Helper function to parse WebVTT format
       const parseWebVTT = (vtt) => {
         const subtitles = [];
-            const lines = vtt.split('\n');
-            let currentTime = null;
-            let currentText = [];
-            
-            for (const line of lines) {
-          // Time cue: 00:00:00.000 --> 00:00:03.500 or 00:00:00.000 --> 00:00:03.500 align:start
-              const timeMatch = line.match(/(\d{2}):(\d{2}):(\d{2})\.(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})/);
-              if (timeMatch) {
-                // Save previous subtitle if exists
-                if (currentTime !== null && currentText.length > 0) {
-                  subtitles.push({
-                    start: currentTime.start,
-                    duration: currentTime.end - currentTime.start,
-                    text: currentText.join(' ').trim()
-                  });
-                }
-                
-                // Parse time
-                const startHours = parseInt(timeMatch[1]);
-                const startMinutes = parseInt(timeMatch[2]);
-                const startSeconds = parseInt(timeMatch[3]);
-                const startMs = parseInt(timeMatch[4]);
-                const start = startHours * 3600 + startMinutes * 60 + startSeconds + startMs / 1000;
-                
-                const endHours = parseInt(timeMatch[5]);
-                const endMinutes = parseInt(timeMatch[6]);
-                const endSeconds = parseInt(timeMatch[7]);
-                const endMs = parseInt(timeMatch[8]);
-                const end = endHours * 3600 + endMinutes * 60 + endSeconds + endMs / 1000;
-                
-                currentTime = { start, end };
-                currentText = [];
-          } else if (line.trim() && !line.startsWith('WEBVTT') && !line.startsWith('NOTE') && !line.startsWith('STYLE') && currentTime !== null) {
-            // Text line (remove HTML tags and WebVTT formatting)
-            const cleanText = line.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
-                if (cleanText) {
-                  currentText.push(cleanText);
-                }
-              }
-            }
-            
-            // Add last subtitle
-            if (currentTime !== null && currentText.length > 0) {
-              subtitles.push({
-                start: currentTime.start,
-                duration: currentTime.end - currentTime.start,
-                text: currentText.join(' ').trim()
-              });
-            }
-            
+        const timestamp = value => {
+          const match = value.match(/^(?:(\d{2,}):)?(\d{2}):(\d{2})\.(\d{3})$/);
+          if (!match || Number(match[2]) > 59 || Number(match[3]) > 59) return NaN;
+          return Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(match[4]) / 1000;
+        };
+        const blocks = vtt.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split(/\n[\t ]*\n+/);
+        for (const block of blocks) {
+          const lines = block.split('\n');
+          const timingIndex = lines[0]?.includes('-->') ? 0 : 1;
+          const timing = lines[timingIndex]?.match(/^(\S+)[\t ]+-->[\t ]+(\S+)(?:[\t ].*)?$/);
+          if (!timing) continue;
+          const start = timestamp(timing[1]);
+          const end = timestamp(timing[2]);
+          if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+          const text = lines.slice(timingIndex + 1).map(line =>
+            line.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()
+          ).filter(Boolean).join(' ');
+          if (text) subtitles.push({ start, duration: end - start, text });
+        }
         return subtitles;
       };
       

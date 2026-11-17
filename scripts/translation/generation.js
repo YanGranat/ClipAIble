@@ -24,7 +24,8 @@ import { handleError } from '../utils/error-handler.js';
  * @param {function(Partial<import('../types.js').ProcessingState>): void} [updateState] - State update function
  * @returns {Promise<string>} Generated abstract
  */
-export async function generateAbstract(content, title, apiKey, model, language = 'auto', updateState) {
+export async function generateAbstract(content, title, apiKey, model, language = 'auto', updateState, options = {}) {
+  options.checkCancelled?.();
   log('=== ABSTRACT GENERATION START ===', { title, contentItems: content?.length, language });
   
   if (!content || content.length === 0) {
@@ -166,7 +167,7 @@ Generate the TL;DR:`;
       timestamp: Date.now()
     });
     
-    const abstractResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
+    const abstractResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false, options); // false = text response, not JSON
     
     // Extract string from response (callAI returns string when jsonResponse=false, but TypeScript sees AIResponse|string)
     let abstract = typeof abstractResponse === 'string' ? abstractResponse : (abstractResponse?.content || '');
@@ -187,6 +188,7 @@ Generate the TL;DR:`;
     log('=== ABSTRACT GENERATION END ===', { abstractLength: 0 });
     return '';
   } catch (error) {
+    options.checkCancelled?.();
     logError('generateAbstract failed', error);
     // Don't throw - abstract generation is optional
     return '';
@@ -204,6 +206,8 @@ Generate the TL;DR:`;
  */
 export async function generateSummary(data) {
   const { contentItems, apiKey, model, url, language } = data;
+  const options = { provider: data.provider, checkCancelled: data.checkCancelled };
+  options.checkCancelled?.();
   
   log('=== SUMMARY GENERATION START ===', { 
     url, 
@@ -454,7 +458,7 @@ Generate a summary in Markdown format in ${langName} language:`;
       timestamp: Date.now()
     });
     
-    const summaryResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false); // false = text response, not JSON
+    const summaryResponse = await callAI(systemPrompt, userPrompt, apiKey, model, false, options); // false = text response, not JSON
     
     // Extract string from response (callAI returns string when jsonResponse=false, but TypeScript sees AIResponse|string)
     const summary = typeof summaryResponse === 'string' ? summaryResponse : (summaryResponse?.content || '');
@@ -483,6 +487,7 @@ Generate a summary in Markdown format in ${langName} language:`;
     const uiLang = await getUILanguage();
     throw new Error(tSync('errorEmptySummary', uiLang));
   } catch (error) {
+    options.checkCancelled?.();
     logError('=== generateSummary FUNCTION ERROR ===', {
       error: error.message,
       stack: error.stack,
@@ -501,6 +506,8 @@ Generate a summary in Markdown format in ${langName} language:`;
  */
 export async function generateKeyTheses(data) {
   const { contentItems, apiKey, model, url, language } = data;
+  const options = { provider: data.provider, checkCancelled: data.checkCancelled };
+  options.checkCancelled?.();
 
   log('=== KEY THESES GENERATION START ===', {
     url,
@@ -673,7 +680,7 @@ Output the key theses as JSON only (theses array with short and expanded for eac
   try {
     log('Calling AI for key theses generation', { articleTextLength: articleText.length, timestamp: Date.now() });
 
-    const rawResponse = await callAI(systemPrompt, userPrompt, apiKey, model, true);
+    const rawResponse = await callAI(systemPrompt, userPrompt, apiKey, model, true, options);
     const content = typeof rawResponse === 'object' && rawResponse !== null && 'content' in rawResponse
       ? rawResponse.content
       : (typeof rawResponse === 'string' ? rawResponse : rawResponse);
@@ -710,6 +717,7 @@ Output the key theses as JSON only (theses array with short and expanded for eac
     log('=== KEY THESES GENERATION END ===', { thesesCount: theses.length, timestamp: Date.now() });
     return { keyTheses: markdown };
   } catch (error) {
+    options.checkCancelled?.();
     logError('=== generateKeyTheses ERROR ===', { error: error?.message, timestamp: Date.now() });
     throw error;
   }

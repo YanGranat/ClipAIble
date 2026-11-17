@@ -3,7 +3,7 @@
 
 // @ts-check
 
-import { isCancelled } from '../../state/processing.js';
+import { isCancelled, isCurrentProcessingRun, getScopedUpdateState } from '../../state/processing.js';
 import { getUILanguage, tSync } from '../../locales.js';
 import { updateState, getProcessingState } from '../../state/processing.js';
 import { PROCESSING_STAGES } from '../../state/processing.js';
@@ -15,6 +15,7 @@ import { detectContentLanguage, generateSummary, generateAbstract } from '../../
 import { CONFIG } from '../config.js';
 import { isPopupOpen } from '../../background/popup-connection.js';
 import { createNotification } from '../../background/notifications.js';
+import { isTerminalAIResponseError } from '../../api/response-validation.js';
 
 // Cache for UI language to avoid repeated async calls
 let cachedUILang = null;
@@ -38,13 +39,35 @@ export function clearUILanguageCache() {
   cachedUILang = null;
 }
 
+export function getProcessingCallbacks(data) {
+  if (data.extractionOnly) {
+    return { updateState: () => {}, updateProgress: async () => {}, checkCancellation: data.checkCancelled || (() => {}) };
+  }
+  return {
+    updateState: getScopedUpdateState(data.processingRunId),
+    updateProgress: (stage, statusKey, progress, options = {}) => updateProgress(stage, statusKey, progress, { ...options, processingRunId: data.processingRunId }),
+    checkCancellation: (context) => checkCancellation(context, data.processingRunId)
+  };
+}
+
+export function getAIRequestOptions(data) {
+  const { provider, processingRunId, extractionOnly, checkCancelled } = data;
+  return {
+    provider,
+    checkCancelled: () => {
+      checkCancelled?.();
+      if (!extractionOnly && isCancelled(processingRunId)) throw new Error('Processing cancelled');
+    }
+  };
+}
+
 /**
  * Check if processing was cancelled and throw error if so
  * @param {string} [context] - Context description (e.g., 'before translation')
  * @throws {Error} Cancellation error with localized message
  */
-export async function checkCancellation(context = '') {
-  if (isCancelled()) {
+export async function checkCancellation(context = '', runId) {
+  if (isCancelled(runId)) {
     log(`Processing cancelled${context ? ` before ${context}` : ''}`);
     const uiLang = await getUILanguageCached();
     throw new Error(tSync('statusCancelled', uiLang));
@@ -60,6 +83,7 @@ export async function checkCancellation(context = '') {
  * @returns {Promise<void>}
  */
 export async function updateProgress(stage, statusKey, progress, options = {}) {
+  if (!isCurrentProcessingRun(options.processingRunId)) return;
   const uiLang = await getUILanguageCached();
   let status = tSync(statusKey, uiLang);
   
@@ -76,7 +100,7 @@ export async function updateProgress(stage, statusKey, progress, options = {}) {
     status, 
     progress,
     ...options.extra
-  });
+  }, options.processingRunId);
 }
 
 /**
@@ -87,6 +111,7 @@ export async function updateProgress(stage, statusKey, progress, options = {}) {
  * @returns {Promise<void>}
  */
 export async function finalizeProcessing(data, stopKeepAlive, processingStartTimeRef) {
+  if (isCancelled(data.processingRunId)) return;
   log('🎉 Processing complete - file ready for download');
   
   // Record stats (non-blocking - errors are handled inside recordSave)
@@ -108,17 +133,19 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     logError('Failed to record stats (non-critical)', error);
     // Continue even if stats recording fails
   }
+  if (isCancelled(data.processingRunId)) return;
   
   // Store format in state for success message
   const state = getProcessingState();
   const savedFormat = data.outputFormat || 'pdf';
   // outputFormat is part of ProcessingState type (used for UI display and polling intervals)
-  updateState({ outputFormat: savedFormat });
+  updateState({ outputFormat: savedFormat }, data.processingRunId);
   
   if (processingStartTimeRef && processingStartTimeRef.current !== null) {
     processingStartTimeRef.current = null;
   }
-  await completeProcessing(stopKeepAlive);
+  await completeProcessing(stopKeepAlive, data.processingRunId);
+  if (isCancelled(data.processingRunId)) return;
 
   // Show completion notification only if popup is closed.
   // This is useful for long operations when user switches to other tasks.
@@ -148,6 +175,7 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
       outputFormat: savedFormat,
       message
     });
+    if (isCancelled(data.processingRunId)) return;
     await createNotification(message);
   } catch (notifError) {
     logWarn('Failed to show completion notification (non-critical)', {
@@ -166,6 +194,7 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
  * @returns {Promise<void>}
  */
 export async function handleProcessingResult(data, result, stopKeepAlive, processingStartTimeRef, continuePipeline) {
+  if (isCancelled(data.processingRunId)) return;
   log(`✅ Content extraction complete: ${result.content?.length || 0} items`, { 
     title: result.title,
     outputFormat: data.outputFormat
@@ -197,7 +226,9 @@ export async function handleProcessingResult(data, result, stopKeepAlive, proces
     timestamp: Date.now()
   });
   
-  await continuePipeline(data, result, stopKeepAlive);
+  const generationResult = await continuePipeline(data, result, stopKeepAlive);
+  if (isCancelled(data.processingRunId)) return;
+  if ((data.outputFormat || 'pdf') === 'pdf' && generationResult?.deferred === true) return;
   
   // After generation, finalize processing
   await finalizeProcessing(data, stopKeepAlive, processingStartTimeRef);
@@ -213,6 +244,7 @@ export async function handleProcessingResult(data, result, stopKeepAlive, proces
  * @throws {Error} If error handling fails
  */
 export async function handleProcessingError(error, data, stopKeepAlive, errorContext = {}) {
+  if (isCancelled(data.processingRunId)) return;
   logError('Processing failed', {
     error: error?.message || String(error),
     errorStack: error?.stack,
@@ -222,7 +254,7 @@ export async function handleProcessingError(error, data, stopKeepAlive, errorCon
   });
   
   // Check if processing was cancelled - don't set error if cancelled
-  if (isCancelled()) {
+  if (isCancelled(data.processingRunId)) {
     log('Processing was cancelled, not setting error');
     return;
   }
@@ -244,7 +276,7 @@ export async function handleProcessingError(error, data, stopKeepAlive, errorCon
   await setError({
     message: normalized.userMessage || normalized.message || 'Processing failed',
     code: normalized.userCode || normalized.code
-  }, stopKeepAlive);
+  }, stopKeepAlive, data.processingRunId);
 }
 
 /**
@@ -265,6 +297,8 @@ export async function handleTranslation(
   detectSourceLanguage,
   updateState
 ) {
+  await checkCancellation('translation', data.processingRunId);
+  updateState = getScopedUpdateState(data.processingRunId, updateState);
   const language = data.language || 'auto';
   const hasImageTranslation = data.translateImages && data.googleApiKey;
   
@@ -280,15 +314,16 @@ export async function handleTranslation(
   await updateProgress(
     PROCESSING_STAGES.TRANSLATING, 
     'statusTranslatingContent', 
-    hasImageTranslation ? 40 : 42
+    hasImageTranslation ? 40 : 42,
+    { processingRunId: data.processingRunId }
   );
   
   // Translate images first if enabled
   if (hasImageTranslation) {
-    await checkCancellation('image translation');
+    await checkCancellation('image translation', data.processingRunId);
     
     log('Starting image translation', { targetLanguage: language });
-    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusAnalyzingImages', 40);
+    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusAnalyzingImages', 40, { processingRunId: data.processingRunId });
     
     // Use detected language from automatic extraction if available, otherwise detect from content
     let sourceLang;
@@ -313,13 +348,13 @@ export async function handleTranslation(
     }
     result.content = await translateImages(
       result.content, sourceLang, language, 
-      data.apiKey, data.googleApiKey, data.model, updateState
+      data.apiKey, data.googleApiKey, data.model, updateState, getAIRequestOptions(data)
     );
     log('✅ Image translation complete');
   }
   
   // Check if processing was cancelled before text translation
-  await checkCancellation('text translation');
+  await checkCancellation('text translation', data.processingRunId);
   
   log('Starting text translation', { targetLanguage: language });
   
@@ -338,11 +373,13 @@ export async function handleTranslation(
     contentItems: result.content?.length || 0
   });
   
-  await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusTranslatingText', 45);
+  await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusTranslatingText', 45, { processingRunId: data.processingRunId });
   try {
-    result = await translateContent(result, language, data.apiKey, data.model, updateState);
+    result = await translateContent(result, language, data.apiKey, data.model, updateState, getAIRequestOptions(data));
     log(`✅ Translation complete: content translated to ${language}`, { title: result.title });
   } catch (error) {
+    getAIRequestOptions(data).checkCancelled();
+    if (isTerminalAIResponseError(error)) throw error;
     // Use constant pattern matching instead of string includes
     const isAuthError = ['authentication', '401', '403', 'unauthorized', 'forbidden']
       .some(pattern => (error.message || '').toLowerCase().includes(pattern));
@@ -360,7 +397,7 @@ export async function handleTranslation(
     }
     // For other errors, log but continue without translation
     logError('Translation failed, continuing without translation', error);
-    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'errorTranslationFailed', 60);
+    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'errorTranslationFailed', 60, { processingRunId: data.processingRunId });
   }
   
   return result;
@@ -380,8 +417,9 @@ export async function handleAbstractGeneration(
   generateAbstract,
   updateState
 ) {
+  updateState = getScopedUpdateState(data.processingRunId, updateState);
   // Check if processing was cancelled before abstract generation
-  await checkCancellation('abstract generation');
+  await checkCancellation('abstract generation', data.processingRunId);
   
   // Generate abstract if enabled (but skip for audio format)
   const shouldGenerateAbstract = data.generateAbstract && 
@@ -445,7 +483,7 @@ export async function handleAbstractGeneration(
   const isPdfResult = result.markdown && typeof result.markdown === 'string' && result.markdown.length > 0;
   
   try {
-    await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62);
+    await updateProgress(PROCESSING_STAGES.GENERATING, 'stageGeneratingAbstract', 62, { processingRunId: data.processingRunId });
     
     if (isPdfResult) {
       // For PDF: use generateAbstract (TLDR 2-4 sentences) for PDF abstract/TLDR
@@ -476,7 +514,8 @@ export async function handleAbstractGeneration(
         data.apiKey,
         data.model,
         abstractLang,
-        updateState
+        updateState,
+        getAIRequestOptions(data)
       );
       
       if (abstract) {
@@ -510,7 +549,8 @@ export async function handleAbstractGeneration(
         data.apiKey,
         data.model,
         abstractLang,
-        updateState
+        updateState,
+        getAIRequestOptions(data)
       );
       if (abstract) {
         log('✅ Abstract generated successfully', { length: abstract.length });
@@ -577,7 +617,7 @@ export async function detectEffectiveLanguage(
           method: 'AI detection via detectContentLanguage'
         });
         try {
-          const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model);
+          const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model, getAIRequestOptions(data));
           log('🌍 LANGUAGE DETECTION: AI detection result received', {
             detectedLanguage: detectedLang,
             method: 'AI detection',

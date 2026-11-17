@@ -3,7 +3,7 @@
 // Universal language-agnostic heuristics
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { 
   CONTINUATION_SCORES, 
   FONT_SIZE_THRESHOLDS, 

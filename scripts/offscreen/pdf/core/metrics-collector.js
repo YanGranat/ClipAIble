@@ -2,7 +2,7 @@
 // Metrics collector - collects sample items for metrics analysis
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { LIMITS, DEFAULT_METRICS } from '../constants.js';
 import { transformCoordinates } from '../utils/coordinate-transform.js';
 

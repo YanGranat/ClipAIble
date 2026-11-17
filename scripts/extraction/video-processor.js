@@ -121,18 +121,23 @@ Remember:
  * @param {Array} subtitles - Array of subtitle entries
  * @param {string} apiKey - API key
  * @param {string} model - Model name
+ * @param {string} [processingRunId] - Processing run owner
+ * @param {{provider?: string, checkCancelled?: function(): void}} [requestOptions] - Provider and cancellation checks
  * @returns {Promise<Array>} Processed content items
  */
-async function processSubtitlesSingleChunk(subtitles, apiKey, model) {
+async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingRunId, requestOptions) {
   const userPrompt = buildSubtitleUserPrompt(subtitles);
+  await checkCancellation('subtitle request', processingRunId);
   
   const parsed = await callAI(
     SUBTITLE_PROCESSOR_SYSTEM_PROMPT,
     userPrompt,
     apiKey,
     model,
-    true // jsonResponse
+    true, // jsonResponse
+    requestOptions
   );
+  await checkCancellation('subtitle response', processingRunId);
   
   if (!parsed) {
     throw new Error('AI returned empty response');
@@ -159,9 +164,11 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model) {
  * @param {Array} previousContent - Previously processed content items
  * @param {string} apiKey - API key
  * @param {string} model - Model name
+ * @param {string} [processingRunId] - Processing run owner
+ * @param {{provider?: string, checkCancelled?: function(): void}} [requestOptions] - Provider and cancellation checks
  * @returns {Promise<Array>} Processed content items (only new chunk, not previous)
  */
-async function processSubtitlesWithContext(subtitles, previousContent, apiKey, model) {
+async function processSubtitlesWithContext(subtitles, previousContent, apiKey, model, processingRunId, requestOptions) {
   // Build context from previous content (can be large, that's OK)
   const previousText = previousContent
     .map(item => {
@@ -196,13 +203,16 @@ Remember:
 - Preserve ALL content - do not summarize
 - DO NOT repeat previous content`;
 
+  await checkCancellation('subtitle context request', processingRunId);
   const parsed = await callAI(
     SUBTITLE_PROCESSOR_CONTEXT_SYSTEM_PROMPT,
     userPrompt,
     apiKey,
     model,
-    true // jsonResponse
+    true, // jsonResponse
+    requestOptions
   );
+  await checkCancellation('subtitle context response', processingRunId);
   
   if (!parsed) {
     throw new Error('AI returned empty response');
@@ -229,12 +239,15 @@ Remember:
  * @param {string} apiKey - API key
  * @param {string} model - Model name
  * @param {import('../types.js').ProgressCallbackFunction} [progressCallback] - Optional callback for progress updates (current, total)
+ * @param {string} [processingRunId] - Processing run owner
+ * @param {{provider?: string, checkCancelled?: function(): void}} [requestOptions] - Provider and cancellation checks
  * @returns {Promise<Array>} Processed content items
  */
-export async function processSubtitlesWithAI(subtitles, apiKey, model, progressCallback = null) {
+export async function processSubtitlesWithAI(subtitles, apiKey, model, progressCallback = null, processingRunId, requestOptions) {
   if (!subtitles || subtitles.length === 0) {
     throw new Error('No subtitles provided');
   }
+  await checkCancellation('subtitle processing', processingRunId);
   
   // Split subtitles into chunks based on input size only
   // No output size restrictions - let AI generate as much as needed
@@ -248,7 +261,7 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
   if (!needsChunking) {
     // Single chunk processing
     if (progressCallback) progressCallback(0, 1);
-    const result = await processSubtitlesSingleChunk(subtitles, apiKey, model);
+    const result = await processSubtitlesSingleChunk(subtitles, apiKey, model, processingRunId, requestOptions);
     if (progressCallback) progressCallback(1, 1);
     return result;
   }
@@ -279,7 +292,7 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
   
   for (let i = 0; i < chunks.length; i++) {
     // Check if processing was cancelled before processing each chunk
-    await checkCancellation(`subtitle processing chunk ${i + 1}/${chunks.length}`);
+    await checkCancellation(`subtitle processing chunk ${i + 1}/${chunks.length}`, processingRunId);
     
     const chunk = chunks[i];
     log(`Processing subtitle chunk ${i + 1}/${chunks.length}`, { 
@@ -296,16 +309,19 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
     try {
       chunkContent = await callWithRetry(
         async () => {
+          await checkCancellation('subtitle retry', processingRunId);
           if (i === 0) {
             // First chunk: normal processing
-            return await processSubtitlesSingleChunk(chunk, apiKey, model);
+            return await processSubtitlesSingleChunk(chunk, apiKey, model, processingRunId, requestOptions);
           } else {
             // Subsequent chunks: process with context
             return await processSubtitlesWithContext(
               chunk, 
               previousContent, 
               apiKey, 
-              model
+              model,
+              processingRunId,
+              requestOptions
             );
           }
         },
@@ -318,6 +334,7 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
           }
         }
       );
+      await checkCancellation('subtitle chunk result', processingRunId);
     } catch (error) {
       // All retries exhausted - throw error
       throw new Error(`Failed to process subtitle chunk ${i + 1}/${chunks.length} after ${CONFIG.RETRY_MAX_ATTEMPTS + 1} attempts: ${error.message}`);

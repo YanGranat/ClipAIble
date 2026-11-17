@@ -31,6 +31,8 @@ vi.mock('../../scripts/state/processing.js', () => {
   
   return {
     isCancelled: () => mockIsCancelled(),
+    isCurrentProcessingRun: () => !mockIsCancelled(),
+    getScopedUpdateState: (_runId, updater = mockUpdateState) => updater,
     updateState: mockUpdateState,
     getProcessingState: mockGetProcessingState,
     completeProcessing: mockCompleteProcessing,
@@ -131,7 +133,8 @@ describe('utils/pipeline-helpers', () => {
         expect.objectContaining({
           stage: 'generating',
           progress: 65
-        })
+        }),
+        undefined
       );
     });
 
@@ -160,7 +163,7 @@ describe('utils/pipeline-helpers', () => {
       );
       
       expect(recordSave).toHaveBeenCalled();
-      expect(mocks.mockCompleteProcessing).toHaveBeenCalledWith(stopKeepAlive);
+      expect(mocks.mockCompleteProcessing).toHaveBeenCalledWith(stopKeepAlive, undefined);
       expect(processingStartTimeRef.current).toBeNull();
     });
 
@@ -235,6 +238,14 @@ describe('utils/pipeline-helpers', () => {
   });
 
   describe('handleTranslation', () => {
+    it('propagates a provider output-limit error before document generation', async () => {
+      const error = Object.assign(new Error('Response truncated'), { code: 'AI_RESPONSE_TRUNCATED' });
+      await expect(handleTranslation(
+        { language: 'ru', apiKey: 'key', model: 'gpt-example' },
+        { content: [{ type: 'paragraph', text: 'Original text' }] },
+        vi.fn().mockRejectedValue(error), vi.fn(), () => 'en', mocks.mockUpdateState
+      )).rejects.toBe(error);
+    });
     it('should skip translation if language is auto', async () => {
       const { PROCESSING_STAGES } = await import('../../scripts/state/processing.js');
       

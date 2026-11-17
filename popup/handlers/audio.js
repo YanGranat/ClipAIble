@@ -240,10 +240,18 @@ export function setupAudioHandlers(deps) {
     });
   }
   
+  for (const [name, key] of [['qwenModel', STORAGE_KEYS.QWEN_MODEL], ['qwenWorkspaceId', STORAGE_KEYS.QWEN_WORKSPACE_ID], ['qwenRegion', STORAGE_KEYS.QWEN_REGION]]) {
+    elements[name]?.addEventListener('change', () => {
+      debouncedSaveSettings(key, elements[name].value.trim());
+      if (name === 'qwenModel') settingsModule?.updateAudioProviderUI();
+    });
+  }
+
   // ElevenLabs settings
   if (elements.elevenlabsModel) {
     elements.elevenlabsModel.addEventListener('change', () => {
       debouncedSaveSettings(STORAGE_KEYS.ELEVENLABS_MODEL, elements.elevenlabsModel.value);
+      settingsModule?.updateAudioProviderUI();
     });
   }
   

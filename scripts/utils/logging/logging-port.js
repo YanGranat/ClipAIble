@@ -104,6 +104,7 @@ function flushLogPortQueue() {
           message: logEntry.message,
           marker: logEntry.marker,
           data: logEntry.data,
+          level: logEntry.level,
           timestamp: logEntry.timestamp
         })),
         batchSize: batch.length,
@@ -155,7 +156,7 @@ function flushLogPortQueue() {
  * @param {*} data - Optional data
  * @throws {Error} If port cannot be initialized and queue is full
  */
-export function logViaPort(message, marker = '', data = null) {
+export function logViaPort(message, marker = '', data = null, level = 'debug') {
   const timestamp = Date.now();
   
   // Initialize port if not already done
@@ -210,6 +211,7 @@ export function logViaPort(message, marker = '', data = null) {
     message: message.length > 5000 ? message.substring(0, 5000) + '... [truncated]' : message,
     marker,
     data: processedData,
+    level,
     timestamp,
     retryCount: 0
   });

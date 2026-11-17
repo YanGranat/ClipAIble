@@ -4,7 +4,7 @@
 // Distinguishes column gaps from paragraph gaps within columns
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { calculateAverage } from '../utils/array-helpers.js';
 
@@ -81,7 +81,7 @@ export function analyzeVisualStructure(lines, viewport, metrics = {}) {
     const lineRight = lineX + lineWidth;
     
     // Find which buckets this line covers
-    const startBucket = Math.floor(lineX / bucketWidth);
+    const startBucket = Math.max(0, Math.floor(lineX / bucketWidth));
     const endBucket = Math.ceil(lineRight / bucketWidth);
     
     for (let bucketIdx = startBucket; bucketIdx < endBucket && bucketIdx < numBuckets; bucketIdx++) {

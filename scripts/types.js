@@ -31,6 +31,10 @@
 
 /**
  * @typedef {Object} ProcessingState
+ * @property {string|null} [processingRunId] - Document operation identity
+ * @property {number} [pdfPrintTabId] - Owned print tab
+ * @property {string} [pdfPrintJobId] - Owned print payload identity
+ * @property {boolean} [pdfDebuggerStarted] - Print export has been admitted
  * @property {boolean} isProcessing - Whether processing is active
  * @property {boolean} isCancelled - Whether processing was cancelled
  * @property {number} progress - Progress percentage (0-100)
@@ -403,6 +407,7 @@
 
 /**
  * @typedef {Object} CloseOffscreenForVoiceSwitchData
+ * @property {string} [processingRunId] - Optional owner for operation-scoped cleanup
  * @property {string} previousVoice - Previous voice ID
  * @property {string} newVoice - New voice ID
  * @property {string} [messageId] - Message ID
@@ -410,6 +415,7 @@
 
 /**
  * @typedef {Object} TTSProgressData
+ * @property {string} [processingRunId] - Document operation identity
  * @property {number} progress - Progress percentage (0-100)
  * @property {string} [status] - Status message
  * @property {number} [current] - Current chunk number
@@ -558,6 +564,7 @@
 
 /**
  * @typedef {Object} TTSOptions
+ * @property {string} [processingRunId] - Processing run identity
  * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
  * @property {string} [voice] - Voice to use
  * @property {number} [speed] - Speech speed 0.25-4.0 (default: 1.0, offline: 0.1-10.0)
@@ -575,6 +582,9 @@
  * @property {number} [elevenlabsStyle] - ElevenLabs style
  * @property {boolean} [elevenlabsSpeakerBoost] - ElevenLabs speaker boost
  * @property {string} [googleTtsModel] - Google TTS model
+ * @property {string} [qwenModel] - Qwen synthesis model
+ * @property {string} [qwenWorkspaceId] - Qwen workspace ID
+ * @property {string} [qwenRegion] - Qwen workspace region
  * @property {string} [googleTtsVoice] - Google TTS voice
  * @property {string} [googleTtsPrompt] - Google TTS prompt
  * @property {string} [prompt] - Alternative prompt property name (Google TTS)
@@ -635,6 +645,9 @@
  * @property {boolean} [elevenlabsSpeakerBoost] - ElevenLabs speaker boost
  * @property {string|null} [openaiInstructions] - OpenAI instructions
  * @property {string} [googleTtsModel] - Google TTS model
+ * @property {string} [qwenModel] - Qwen synthesis model
+ * @property {string} [qwenWorkspaceId] - Qwen workspace ID
+ * @property {string} [qwenRegion] - Qwen workspace region
  * @property {string} [googleTtsVoice] - Google TTS voice
  * @property {string|null} [googleTtsPrompt] - Google TTS prompt
  * @property {number} [respeecherTemperature] - Respeecher temperature
@@ -645,6 +658,11 @@
 
 /**
  * @typedef {Object} ProcessingData
+ * @property {string} [processingRunId] - Processing run identity
+ * @property {function(): void} [checkCancelled] - Synchronous owner check that throws after cancellation
+ * @property {AIRequestOptions} [aiRequestOptions] - Captured AI routing and cancellation
+ * @property {boolean} [extractionOnly] - Extract content independently of document generation
+ * @property {boolean} [autoGenerateKeyTheses] - Continue with key theses generation
  * @property {string} html - HTML content
  * @property {string} url - Page URL
  * @property {string} title - Page title
@@ -684,6 +702,9 @@
  * @property {string|null} [openaiInstructions] - OpenAI instructions
  * @property {string|null} [googleTtsApiKey] - Google TTS API key
  * @property {string} [googleTtsModel] - Google TTS model
+ * @property {string} [qwenModel] - Qwen synthesis model
+ * @property {string} [qwenWorkspaceId] - Qwen workspace ID
+ * @property {string} [qwenRegion] - Qwen workspace region
  * @property {string} [googleTtsVoice] - Google TTS voice
  * @property {string|null} [googleTtsPrompt] - Google TTS prompt
  * @property {number} [respeecherTemperature] - Respeecher temperature
@@ -693,6 +714,12 @@
  * @property {string} [apiProvider] - API provider (alias for provider)
  * @property {string|null} [geminiApiKey] - Gemini API key
  * @property {string} [effectiveLanguage] - Effective language after detection (computed property)
+ */
+
+/**
+ * @typedef {Object} AIRequestOptions
+ * @property {AIProvider} [provider] - Explicit selected AI provider
+ * @property {function(): void} [checkCancelled] - Synchronous owner check that throws after cancellation
  */
 
 /**

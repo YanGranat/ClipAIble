@@ -97,7 +97,7 @@ export async function loadPdfJs() {
         windowKeys: typeof window !== 'undefined' ? Object.keys(window).filter(k => k.includes('pdf') || k.includes('PDF')).slice(0, 10) : [],
         selfKeys: typeof self !== 'undefined' ? Object.keys(self).filter(k => k.includes('pdf') || k.includes('PDF')).slice(0, 10) : [],
         pdfReady: pdfReady || windowAny?.__PDF_READY__ || selfAny?.__PDF_READY__ || false
-      });
+      }, 'error');
       throw error;
     }
 
@@ -106,7 +106,7 @@ export async function loadPdfJs() {
       criticalLogFn('[PDF v2.6] ERROR: PDFJS.getDocument is missing', 'PDF_GETDOCUMENT_MISSING', {
         error: error.message,
         pdfjsKeys: Object.keys(PDFJS).slice(0, 20)
-      });
+      }, 'error');
       throw error;
     }
 

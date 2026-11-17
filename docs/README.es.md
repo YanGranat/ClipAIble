@@ -1,6 +1,6 @@
 # ClipAIble
 
-Extractor de artículos con IA. Funciona en cualquier sitio web.
+Extractor de artículos con IA.
 
 **Disponible en [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
 
@@ -16,7 +16,6 @@ ClipAIble extrae el contenido de artículos de páginas web y lo convierte a dif
 **Funciones especiales:**
 - **Soporte YouTube/Vimeo**: Extrae subtítulos de video y crea artículos a partir de ellos
 - **Procesamiento PDF**: Funciona con PDFs en línea y archivos PDF locales
-- **Traducción de contenido**: Traduce artículos a 11 idiomas
 - **Traducción de imágenes**: Traduce texto en imágenes usando IA
 - **Generación TLDR**: Crea resúmenes breves dentro de los documentos
 - **Panel summary**: Muestra resúmenes de artículos en el popup después del procesamiento
@@ -52,10 +51,6 @@ ClipAIble extrae el contenido de artículos de páginas web y lo convierte a dif
 - **FB2**: Crea libros electrónicos estructurados para PocketBook y otros lectores
 - **Markdown**: Preserva la estructura del artículo con títulos y listas
 - **Audio**: Convierte texto a voz usando 6 servicios TTS diferentes
-
-### Traducción
-
-El contenido se puede traducir a: inglés, ruso, ucraniano, alemán, francés, español, italiano, portugués, chino, japonés, coreano.
 
 ### Audio
 
@@ -98,7 +93,6 @@ Obtenga la clave en [space.respeecher.com](https://space.respeecher.com/)
 
 - **Estadísticas**: Rastree sus artículos guardados con historial y contadores mensuales
 - **Importación/exportación de configuración**: Copia de seguridad y restauración de sus preferencias
-- **Interfaz en 11 idiomas**: Cambie entre idiomas sin reiniciar
 - **Almacenamiento seguro**: Las claves API se cifran antes de guardar
 
 ## Permisos

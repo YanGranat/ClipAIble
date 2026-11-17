@@ -6,6 +6,23 @@ import { state } from '../state.js';
 import { ensureTTSWorker } from './init.js';
 import { resetWorkerInactivityTimer } from './lifecycle.js';
 
+/** Release a worker request on completion, worker failure, or owner cancellation. */
+function trackWorkerRequest(worker, handler, reject, timeout) {
+  const finish = () => {
+    clearTimeout(timeout);
+    worker.removeEventListener('message', handler);
+    worker.removeEventListener('error', onError);
+    unregister();
+  };
+  const onError = error => {
+    finish();
+    reject(error instanceof Error ? error : new Error(error?.message || 'TTS Worker request failed'));
+  };
+  const unregister = state.registerWorkerRequest(onError);
+  worker.addEventListener('error', onError);
+  return finish;
+}
+
 
 /**
  * Execute TTS predict using Web Worker
@@ -45,7 +62,9 @@ export async function predictWithWorker(text, voiceId) {
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
+    let unregister = () => {};
     let timeout = setTimeout(() => {
+      unregister();
       // CRITICAL: Decrement active predict calls on timeout
       state.decrementActivePredictCalls();
       
@@ -66,11 +85,13 @@ export async function predictWithWorker(text, voiceId) {
     
     const handler = (event) => {
       if (event.data.id === id) {
+        unregister();
         if (timeout) {
           clearTimeout(timeout);
           timeout = null;
         }
         worker.removeEventListener('message', handler);
+        worker.removeEventListener('error', errorHandler);
         
         const handlerTime = Date.now();
         const totalDuration = handlerTime - callStartTime;
@@ -131,6 +152,7 @@ export async function predictWithWorker(text, voiceId) {
 
     // Handle worker errors during predict
     const errorHandler = (error) => {
+      unregister();
       logError('[ClipAIble Offscreen] Worker error event received', {
         callId: id,
         error: error.message,
@@ -164,6 +186,7 @@ export async function predictWithWorker(text, voiceId) {
       reject(workerError);
     };
     worker.addEventListener('error', errorHandler);
+    unregister = state.registerWorkerRequest(errorHandler);
     
     log('[ClipAIble Offscreen] Sending PREDICT message to Worker', {
       callId: id,
@@ -203,20 +226,21 @@ export async function getVoicesWithWorker() {
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
+    let finish = () => {};
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker voices timeout (10s)');
       logError('[ClipAIble Offscreen] getVoicesWithWorker timeout', {
         callId: id,
         duration: Date.now() - requestStartTime
       });
-      worker.removeEventListener('message', handler);
+      finish();
       reject(timeoutError);
     }, 10000);
     
     const handler = (event) => {
       if (event.data.id === id) {
         clearTimeout(timeout);
-        worker.removeEventListener('message', handler);
+        finish();
         
         const handlerTime = Date.now();
         const totalDuration = handlerTime - callStartTime;
@@ -253,6 +277,7 @@ export async function getVoicesWithWorker() {
     };
     
     worker.addEventListener('message', handler);
+    finish = trackWorkerRequest(worker, handler, reject, timeout);
     
     log('[ClipAIble Offscreen] Sending VOICES message to Worker', {
       callId: id,
@@ -284,20 +309,21 @@ export async function getStoredWithWorker() {
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
+    let finish = () => {};
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker stored timeout (10s)');
       logError('[ClipAIble Offscreen] getStoredWithWorker timeout', {
         callId: id,
         duration: Date.now() - requestStartTime
       });
-      worker.removeEventListener('message', handler);
+      finish();
       reject(timeoutError);
     }, 10000);
     
     const handler = (event) => {
       if (event.data.id === id) {
         clearTimeout(timeout);
-        worker.removeEventListener('message', handler);
+        finish();
         
         const handlerTime = Date.now();
         const totalDuration = handlerTime - callStartTime;
@@ -331,6 +357,7 @@ export async function getStoredWithWorker() {
     };
     
     worker.addEventListener('message', handler);
+    finish = trackWorkerRequest(worker, handler, reject, timeout);
     
     log('[ClipAIble Offscreen] Sending STORED message to Worker', {
       callId: id,
@@ -366,6 +393,7 @@ export async function downloadWithWorker(voiceId, progressCallback) {
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
+    let finish = () => {};
     let lastProgressPercent = -1;
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker download timeout (300s)');
@@ -374,7 +402,7 @@ export async function downloadWithWorker(voiceId, progressCallback) {
         voiceId,
         duration: Date.now() - requestStartTime
       });
-      worker.removeEventListener('message', handler);
+      finish();
       reject(timeoutError);
     }, 300000); // 5 minutes timeout for large downloads
     
@@ -407,7 +435,7 @@ export async function downloadWithWorker(voiceId, progressCallback) {
         }
         
         clearTimeout(timeout);
-        worker.removeEventListener('message', handler);
+        finish();
         
         const handlerTime = Date.now();
         const totalDuration = handlerTime - callStartTime;
@@ -441,6 +469,7 @@ export async function downloadWithWorker(voiceId, progressCallback) {
     };
     
     worker.addEventListener('message', handler);
+    finish = trackWorkerRequest(worker, handler, reject, timeout);
     
     log('[ClipAIble Offscreen] Sending DOWNLOAD message to Worker', {
       callId: id,
@@ -479,6 +508,7 @@ export async function removeWithWorker(voiceId) {
   return new Promise((resolve, reject) => {
     const id = callId;
     const requestStartTime = Date.now();
+    let finish = () => {};
     const timeout = setTimeout(() => {
       const timeoutError = new Error('TTS Worker remove timeout (30s)');
       logError('[ClipAIble Offscreen] removeWithWorker timeout', {
@@ -486,14 +516,14 @@ export async function removeWithWorker(voiceId) {
         voiceId,
         duration: Date.now() - requestStartTime
       });
-      worker.removeEventListener('message', handler);
+      finish();
       reject(timeoutError);
     }, 30000);
     
     const handler = (event) => {
       if (event.data.id === id) {
         clearTimeout(timeout);
-        worker.removeEventListener('message', handler);
+        finish();
         
         const handlerTime = Date.now();
         const totalDuration = handlerTime - callStartTime;
@@ -527,6 +557,7 @@ export async function removeWithWorker(voiceId) {
     };
     
     worker.addEventListener('message', handler);
+    finish = trackWorkerRequest(worker, handler, reject, timeout);
     
     log('[ClipAIble Offscreen] Sending REMOVE message to Worker', {
       callId: id,

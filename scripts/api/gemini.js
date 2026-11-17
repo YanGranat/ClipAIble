@@ -3,11 +3,39 @@
 
 import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { fetchBufferedResponse } from './fetch-buffered-response.js';
+import { assertCompleteAIResponse } from './response-validation.js';
+import { parseBase64Image } from './image-data.js';
 import { callWithRetry } from '../utils/retry.js';
 import { decryptApiKey } from '../utils/encryption.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
+import { GEMINI_IMAGE_MODEL, getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
+
+export function getGeminiModelName(model) {
+  const selectedModel = model || getDefaultModel('gemini');
+  return getModelMetadata('gemini', selectedModel)?.apiModel || selectedModel;
+}
+
+/** Preserve JSON/output settings while applying the model's supported reasoning configuration. */
+export function getGeminiGenerationConfig(model, generationConfig = {}) {
+  const metadata = getModelMetadata('gemini', model || getDefaultModel('gemini'));
+  const config = { ...generationConfig };
+  if (metadata?.reasoningEffort) {
+    config.thinkingConfig = { ...config.thinkingConfig, thinkingLevel: metadata.reasoningEffort };
+    delete config.thinkingConfig.thinkingBudget;
+    delete config.temperature;
+    delete config.topP;
+    delete config.topK;
+  }
+  return config;
+}
+
+/** Concatenate answer parts and exclude optional thought summaries. */
+export function getGeminiResponseText(response) {
+  return (response?.candidates?.[0]?.content?.parts || []).filter(part => !part.thought && typeof part.text === 'string').map(part => part.text).join('');
+}
 
 /**
  * Call Gemini API
@@ -18,10 +46,10 @@ import { handleError } from '../utils/error-handler.js';
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true) {
+export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jsonResponse = true, requestOptions = {}) {
   logDebug('callGeminiAPI', { model, systemPromptLength: systemPrompt.length, userPromptLength: userPrompt.length });
   
-  const modelName = model || 'gemini-3-pro-preview';
+  const modelName = getGeminiModelName(model);
   
   // Combine system and user prompts for Gemini
   const combinedPrompt = systemPrompt ? `${systemPrompt}\n\n${userPrompt}` : userPrompt;
@@ -42,6 +70,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
       responseMimeType: 'application/json'
     };
   }
+  requestBody.generationConfig = getGeminiGenerationConfig(model, requestBody.generationConfig);
   
   let response;
   
@@ -49,55 +78,44 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
     logDebug('Sending request to Gemini API...');
     
     // Use retry wrapper for fetch
-    // Create new AbortController for each retry attempt to avoid timeout conflict
+    // Each retry has an independent request deadline.
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
         
-          // If not ok and retryable, throw error for retry logic
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              throw error;
-            }
-            // Non-retryable error - throw immediately
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorData.error?.message || `Gemini API error: ${fetchResponse.status}`);
+        // If not ok and retryable, throw error for retry logic
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
             error.status = fetchResponse.status;
+            error.response = fetchResponse;
             throw error;
           }
-          
-          return fetchResponse;
-        } catch (e) {
-          throw e;
-        } finally {
-          // CRITICAL: Always clear timeout in finally to prevent memory leaks
-          if (timeout) {
-            clearTimeout(timeout);
+          // Non-retryable error - throw immediately
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
           }
+          /** @type {Error & {status?: number}} */
+          const error = new Error(errorData.error?.message || `Gemini API error: ${fetchResponse.status}`);
+          error.status = fetchResponse.status;
+          throw error;
         }
+
+        return fetchResponse;
+
       },
       {
         onRetry: (attempt, delay) => {
@@ -106,6 +124,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
       }
     );
   } catch (fetchError) {
+    await requestOptions.checkCancelled?.();
     if (fetchError.name === 'AbortError') {
       // Normalize timeout error with context
       const normalized = await handleError(fetchError, {
@@ -205,9 +224,12 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
   log('Gemini response', { status: response.status, ok: response.ok });
 
   const result = await response.json();
+  await requestOptions.checkCancelled?.();
+  assertCompleteAIResponse(result, 'gemini');
   
   // Gemini returns candidates array with content
-  const textContent = result.candidates?.[0]?.content?.parts?.[0]?.text;
+  const textContent = getGeminiResponseText(result);
+  if (!textContent) throw new Error('No content in API response');
   log('Gemini response received', { contentLength: textContent?.length });
   
   if (jsonResponse && textContent) {
@@ -282,7 +304,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
  * @param {string} googleApiKey - Google API key
  * @returns {Promise<string|null>} Translated image base64 or null
  */
-export async function translateImageWithGemini(imageBase64, targetLang, googleApiKey) {
+export async function translateImageWithGemini(imageBase64, targetLang, googleApiKey, requestOptions = {}) {
   log('translateImageWithGemini', { targetLang, imageLength: imageBase64?.length });
   
   // Decrypt API key before use
@@ -313,8 +335,8 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     // Wrap fetch with retry mechanism for reliability (429/5xx errors)
     const response = await callWithRetry(
       async () => {
-        const fetchResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=${decryptedKey}`,
+        const fetchResponse = await fetchBufferedResponse(
+          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${decryptedKey}`,
           {
             method: 'POST',
             headers: {
@@ -333,9 +355,10 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
                     text: prompt
                   }
                 ]
-              }]
+              }],
+              generationConfig: { responseModalities: ['TEXT', 'IMAGE'] }
             })
-          }
+          }, CONFIG.API_TIMEOUT_MS, requestOptions
         );
 
         // If response is not ok and status is retryable, throw error
@@ -377,6 +400,8 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     // For retryable errors that failed after all retries, retry throws, so we won't reach here
     // So if we get here, response should be ok
     const data = await response.json();
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(data, 'gemini');
     
     // Log full response structure for debugging when image generation fails
     const hasCandidates = !!data.candidates;
@@ -405,7 +430,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     
     // Find the image part in response
     for (const part of parts) {
-      if (part.inlineData?.data) {
+      if (!part.thought && part.inlineData?.data) {
         const resultMimeType = part.inlineData.mimeType || 'image/png';
         const resultBase64 = `data:${resultMimeType};base64,${part.inlineData.data}`;
         log('translateImageWithGemini success', { resultLength: resultBase64.length });
@@ -424,6 +449,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     });
     return null;
   } catch (error) {
+    await requestOptions.checkCancelled?.();
     logError('translateImageWithGemini failed', {
       error: error.message,
       status: error.status,
@@ -445,25 +471,59 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
  * @param {boolean} jsonResponse - Whether to expect JSON response
  * @returns {Promise<Object|string>} Parsed JSON or text response
  */
-export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true) {
+export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse = true, requestOptions = {}, messageHistory = []) {
+  const response = await requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse, requestOptions, messageHistory);
+  return response.result;
+}
+
+/**
+ * Preserve the exact sent and received parts for signed multi-turn histories.
+ * @returns {Promise<{result: Object|string, assistantMessage: Array<Object>, userMessage: Object}>}
+ */
+export function callGeminiAPIWithImageAndHistory(systemPrompt, userPrompt, imageData, messageHistory, apiKey, model, jsonResponse = true, requestOptions = {}) {
+  return requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse, requestOptions, messageHistory);
+}
+
+async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, model, jsonResponse, requestOptions, messageHistory) {
   logDebug('callGeminiAPIWithImage', { model, imageSize: imageData.length });
   
-  const modelName = model || 'gemini-3-pro-preview';
+  const modelName = getGeminiModelName(model);
   
   // Extract base64 data (remove data:image/png;base64, prefix)
-  const base64Image = imageData.includes(',') ? imageData.split(',')[1] : imageData;
+  const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Combine system and user prompts for Gemini
   const combinedPrompt = systemPrompt ? `${systemPrompt}\n\n${userPrompt}` : userPrompt;
   
   const requestBody = {
     contents: [
+      ...messageHistory.map(message => {
+        const parts = message.parts || (Array.isArray(message.content) ? message.content : [{ text: message.content }]);
+        return {
+          role: ['assistant', 'model'].includes(message.role) ? 'model' : 'user',
+          parts: parts.map(part => {
+            if (!part.type && part.thoughtSignature) return { ...part };
+            if (typeof part.text === 'string') {
+              return part.type ? { text: part.text } : { ...part };
+            }
+            if (part.inline_data) return { inline_data: { ...part.inline_data } };
+            if (part.inlineData) return { ...part };
+            if (part.image_url?.url) {
+              const image = parseBase64Image(part.image_url.url);
+              return { inline_data: { mime_type: image.mimeType, data: image.base64Image } };
+            }
+            if (part.source?.type === 'base64') return { inline_data: { mime_type: part.source.media_type, data: part.source.data } };
+            throw new Error('Unsupported Gemini history content.');
+          })
+        };
+      }),
       {
+        role: 'user',
         parts: [
           { text: combinedPrompt },
           {
             inline_data: {
-              mime_type: 'image/png',
+              mime_type: mimeType,
               data: base64Image
             }
           }
@@ -478,6 +538,7 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
       responseMimeType: 'application/json'
     };
   }
+  requestBody.generationConfig = getGeminiGenerationConfig(model, requestBody.generationConfig);
   
   let response;
   
@@ -486,48 +547,40 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
     
     response = await callWithRetry(
       async () => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
         
-        try {
-          const fetchResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey
-            },
-            body: JSON.stringify(requestBody),
-            signal: controller.signal
-          });
+        const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body: JSON.stringify(requestBody)
+        }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              clearTimeout(timeout);
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            const uiLang = await getUILanguageCached();
-            const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
-            clearTimeout(timeout);
-            throw new Error(errorMessage);
+        if (!fetchResponse.ok) {
+          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
+          if (retryableCodes.includes(fetchResponse.status)) {
+            /** @type {Error & {status?: number, response?: Response}} */
+            const error = new Error(`HTTP ${fetchResponse.status}`);
+            error.status = fetchResponse.status;
+            error.response = fetchResponse;
+
+            throw error;
           }
+          let errorData;
+          try {
+            errorData = await fetchResponse.json();
+          } catch (e) {
+            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
+          }
+          const uiLang = await getUILanguageCached();
+          const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
           
-          clearTimeout(timeout);
-          return fetchResponse;
-        } catch (e) {
-          clearTimeout(timeout);
-          throw e;
+          throw new Error(errorMessage);
         }
+
+        return fetchResponse;
+
       },
       {
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
@@ -537,7 +590,9 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
     );
     
     const data = await response.json();
-    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    await requestOptions.checkCancelled?.();
+    assertCompleteAIResponse(data, 'gemini');
+    const content = getGeminiResponseText(data);
     if (!content) {
       // Normalize error with context for better logging and error tracking
       const noContentError = new Error('No content in API response');
@@ -548,7 +603,7 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
         createUserMessage: false, // Keep existing message format
         context: {
           operation: 'validateContent',
-          model: modelName || 'gemini-3-pro-preview',
+          model: modelName,
           hasData: !!data,
           hasCandidates: !!data?.candidates,
           candidatesCount: data?.candidates?.length || 0
@@ -565,7 +620,11 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
     
     if (jsonResponse) {
       try {
-        return JSON.parse(content);
+        return {
+          result: JSON.parse(content),
+          assistantMessage: data.candidates[0].content.parts,
+          userMessage: { role: 'user', content: requestBody.contents[requestBody.contents.length - 1].parts }
+        };
       } catch (parseError) {
         // Normalize error with context for better logging and error tracking
         const normalized = await handleError(parseError, {
@@ -575,7 +634,7 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
           createUserMessage: false, // Keep existing message format
           context: {
             operation: 'parseJsonResponse',
-            model: modelName || 'gemini-3-pro-preview',
+            model: modelName,
             contentLength: content.length,
             contentPreview: content.substring(0, 500)
           }
@@ -590,11 +649,15 @@ export async function callGeminiAPIWithImage(systemPrompt, userPrompt, imageData
       }
     }
     
-    return content;
+    return {
+      result: content,
+      assistantMessage: data.candidates[0].content.parts,
+      userMessage: { role: 'user', content: requestBody.contents[requestBody.contents.length - 1].parts }
+    };
   } catch (error) {
+    await requestOptions.checkCancelled?.();
     logError('Gemini API call with image failed', error);
     throw error;
   }
 }
-
 

@@ -2,7 +2,7 @@
 // Content extractor - extracts content from all pages
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log, logWarn } from '../../../../utils/logging.js';
+import { log, logWarn } from '../../../utils/logging.js';
 import { processPage } from '../processors/page-processor.js';
 import { CROSS_PAGE_BREAK_MARKER } from '../constants.js';
 

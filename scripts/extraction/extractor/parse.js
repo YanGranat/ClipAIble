@@ -311,6 +311,60 @@ export function sortElementsInDomOrder(elements) {
 }
 
 /**
+ * Partition selected containers around their selected blocks, preserving inline markup.
+ * @param {Element[]} elements - Selected elements in DOM order
+ * @returns {Array<{element: Element, container?: Element, owned?: Element[]}>} Ordered parse entries
+ */
+export function partitionCandidateElements(elements) {
+  const selected = new Set(elements);
+  const visited = new Set();
+  const entries = [];
+  function append(element) {
+    if (visited.has(element)) return;
+    visited.add(element);
+    const descendants = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div'));
+    const originalText = element.getAttribute('data-original-text');
+    if (element.tagName !== 'DIV' || descendants.length === 0 || originalText?.trim()) {
+      entries.push({ element });
+      for (const child of Array.from(element.querySelectorAll('*'))) {
+        if (selected.has(child)) append(child);
+      }
+      return;
+    }
+    const boundaries = new Set(descendants);
+    const children = descendants.filter(child => {
+      for (let parent = child.parentElement; parent && parent !== element; parent = parent.parentElement) {
+        if (boundaries.has(parent)) return false;
+      }
+      return true;
+    });
+    const range = element.ownerDocument.createRange();
+    range.setStart(element, 0);
+    function appendFragment() {
+      const fragment = range.cloneContents();
+      if (!(fragment.textContent || '').trim() && !fragment.querySelector('img,math')) return;
+      const wrapper = element.cloneNode(false);
+      wrapper.appendChild(fragment);
+      const owned = Array.from(element.querySelectorAll('code')).filter(child => range.intersectsNode(child));
+      entries.push({ element: /** @type {Element} */ (wrapper), container: element, owned });
+    }
+    for (const child of children) {
+      range.setEndBefore(child);
+      appendFragment();
+      if (selected.has(child)) append(child);
+      else for (const nested of Array.from(child.querySelectorAll('*'))) {
+        if (selected.has(nested)) append(nested);
+      }
+      range.setStartAfter(child);
+    }
+    range.setEnd(element, element.childNodes.length);
+    appendFragment();
+  }
+  for (const element of elements) append(element);
+  return entries;
+}
+
+/**
  * Parse elements into content items
  * @param {Window} win - Window object
  * @param {Element[]} elements - Elements to parse
@@ -324,8 +378,11 @@ export function parseElements(win, elements, state, constants, baseUrl) {
   let processedCount = 0;
   let skippedCount = 0;
   let stopProcessing = false;
+  const consumed = new Set();
+  const containerEligibility = new Map();
   
-  for (const element of elements) {
+  for (const { element, container, owned } of partitionCandidateElements(elements)) {
+    if (consumed.has(element) || (container && consumed.has(container))) continue;
     // Stop processing after reference sections (e.g., "See also", "References")
     if (stopProcessing) {
       skippedCount++;
@@ -335,10 +392,30 @@ export function parseElements(win, elements, state, constants, baseUrl) {
     const tagName = element.tagName.toLowerCase();
     
     // Strong exclusion check (ad/sponsor patterns)
-    if (shouldSkipStronglyExcluded(element)) {
+    if (shouldSkipStronglyExcluded(container || element)) {
       skippedCount++;
       continue;
     }
+
+    if (container) {
+      if (!containerEligibility.has(container)) {
+        const previewState = { ...state, addedParagraphs: new Set(state.addedParagraphs || []) };
+        containerEligibility.set(container, !!handleDiv(container, previewState, constants));
+      }
+      if (containerEligibility.get(container)) {
+        for (const translated of Array.from(element.querySelectorAll('[data-original-text]'))) {
+          const original = translated.getAttribute('data-original-text');
+          if (original?.trim()) translated.textContent = original.trim();
+        }
+        const html = sanitizeParagraphHtml(element);
+        content.push({ type: 'paragraph', text: html, html });
+        for (const child of owned || []) consumed.add(child);
+        incrementContentType(state.debugInfo, 'paragraph');
+        processedCount++;
+      }
+      continue;
+    }
+    const previousCount = content.length;
     
     // Handle by tag type
     if (tagName.match(/^h[1-6]$/)) {
@@ -437,6 +514,9 @@ export function parseElements(win, elements, state, constants, baseUrl) {
       } else {
         skippedCount++;
       }
+    }
+    if (content.length > previousCount) {
+      for (const child of Array.from(element.querySelectorAll('*'))) consumed.add(child);
     }
   }
   
@@ -840,6 +920,7 @@ export function handleList(element) {
   }
 
   const items = Array.from(element.querySelectorAll('li'))
+    .filter(li => li.closest('ul, ol') === element)
     .map(li => {
       // Clone and process math elements
       const clone = /** @type {Element} */ (li.cloneNode(true));

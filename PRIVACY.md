@@ -1,85 +1,42 @@
 # Privacy Policy for ClipAIble
 
-**Last updated:** January 2026
+Last updated: November 2026
 
-## Overview
+ClipAIble processes selected web pages, video subtitles, and PDFs in the browser and through the external services used by enabled features.
 
-ClipAIble is a browser extension that extracts articles from web pages and saves them in various formats. This privacy policy explains what data we collect and how we handle it.
+## Local data
 
-## Data Collection
+The extension uses Chrome extension storage, IndexedDB, and local model caches for:
 
-**ClipAIble does NOT collect any personal data.** All data is stored locally in your browser using Chrome's storage API.
+- API keys, settings, selected models, and voice preferences.
+- Processing state, extracted content, document preparation data, and recent processing results.
+- Generated summaries and key theses.
+- Optional usage statistics and saved-item history, including page titles and URLs.
+- Cached content selectors and downloaded Piper voice models.
 
-## What We Store Locally
+API keys are stored using AES-256-GCM encryption. The encryption key is derived from the extension identifier using PBKDF2. The extension decrypts API keys locally to authenticate requests to the corresponding service.
 
-The following data is stored **only on your device**:
+## External requests
 
-| Data | Purpose |
-|------|---------|
-| API keys | Encrypted with AES-256-GCM, used to call AI providers |
-| Settings | Your preferences (theme, fonts, colors, language) |
-| Statistics | Save counts and history (for your reference) |
-| Selector cache | Cached CSS selectors for faster repeat extractions |
+AI extraction, translation, summaries, and key theses send the required page content and metadata to the selected AI service. Depending on the extraction mode, this can include page HTML or extracted text.
 
-## What We DO NOT Do
+Image translation sends selected images to Google Gemini. Cloud speech synthesis sends the prepared text to the selected TTS service. AI and TTS providers can be configured separately.
 
-- ❌ We do NOT send any data to our servers (we don't have any)
-- ❌ We do NOT track your browsing history
-- ❌ We do NOT collect analytics or telemetry
-- ❌ We do NOT share any data with third parties
-- ❌ We do NOT store your article content
+Retrieving source images, online PDFs, and video subtitles makes requests to their source websites. Piper downloads voice lists and model files from Hugging Face; speech synthesis then runs locally using the downloaded model.
 
-## Third-Party Services
+The external services used by these features include OpenAI, Google, Anthropic, DeepSeek, xAI, OpenRouter, ElevenLabs, DashScope, Respeecher, and Hugging Face. Each service handles requests under its own terms and privacy policy.
 
-When you use ClipAIble, article content is sent **only** to the AI provider YOU configure:
+## Retention and controls
 
-| Provider | When Used | Their Privacy Policy |
-|----------|-----------|---------------------|
-| OpenAI | If you use GPT models or OpenAI TTS | [openai.com/privacy](https://openai.com/privacy) |
-| Google | If you use Gemini models or image translation (Gemini Vision) | [policies.google.com](https://policies.google.com/privacy) |
-| Anthropic | If you use Claude models | [anthropic.com/privacy](https://www.anthropic.com/privacy) |
-| DeepSeek | If you use DeepSeek models | [platform.deepseek.com/privacy](https://platform.deepseek.com/privacy) |
-| Grok (xAI) | If you use Grok models | [x.ai/legal/privacy-policy](https://x.ai/legal/privacy-policy) |
-| OpenRouter | If you use OpenRouter models | [openrouter.ai/privacy](https://openrouter.ai/privacy) |
-| ElevenLabs | If you use ElevenLabs TTS | [elevenlabs.io/privacy](https://elevenlabs.io/privacy) |
-| Qwen (DashScope) | If you use Qwen TTS | [dashscope.aliyun.com/](https://dashscope.aliyun.com/) |
-| Respeecher | If you use Respeecher TTS | [respeecher.com/privacy-policy](https://www.respeecher.com/privacy-policy) |
+Settings, summaries, key theses, recent processing results, statistics, selector cache, and voice models can remain in local extension storage until replaced, cleared, or removed with the extension's stored data. Document preparation data is used during processing and cleaned up by the corresponding processing flow.
 
-**You control which provider receives your data** by choosing which API key to use.
+The Stats panel clears statistics and selector cache. Closing a summary or key-theses panel clears its saved text. These controls clear the named data; they do not clear all extension storage.
 
-## API Key Security
+Settings exports exclude API keys. If you include statistics or selector cache, the exported file contains that data, including saved-item history where present.
 
-Your API keys are protected:
-
-- ✅ Encrypted using AES-256-GCM before storage
-- ✅ Encryption key derived using PBKDF2 (100,000 iterations)
-- ✅ Never included in settings exports
-- ✅ Never transmitted except to the AI provider you configured
-- ✅ Can only be decrypted within your browser instance
-
-## Data Retention
-
-- All data remains on your device until you clear it
-- Uninstalling the extension removes all stored data
-- You can clear statistics and cache anytime from the Stats panel
-
-## Children's Privacy
-
-ClipAIble is not directed at children under 13. We do not knowingly collect any information from children.
-
-## Changes to This Policy
-
-We may update this privacy policy occasionally. Changes will be reflected in the "Last updated" date.
-
-## Open Source
-
-ClipAIble is open source. You can review the code to verify our privacy practices in this repository.
+Chrome removes its local extension storage when the extension is uninstalled. Documents and audio already saved to your computer remain in your downloads.
 
 ## Contact
 
-For questions about this privacy policy, please open an issue on GitHub.
-
----
-
-**Summary:** ClipAIble stores everything locally, encrypts your API keys, and only sends article content to the AI provider you choose. We have no servers and collect no data.
+For privacy questions, open an issue in the [project repository](https://github.com/YanGranat/ClipAIble/issues).
 

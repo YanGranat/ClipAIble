@@ -4,7 +4,7 @@
 // and table elements (cells from multi-column tables)
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
-import { log } from '../../../../utils/logging.js';
+import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS, ELEMENT_DECISION, TABLE_DETECTION } from '../constants.js';
 import { normalizeYCoordinate } from '../utils/table-helpers.js';
 import { checkGraphicsInElementArea } from '../utils/graphics-extractor.js';

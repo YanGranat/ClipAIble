@@ -53,26 +53,18 @@
           </select>
         </div>
         <div class="api-key-group">
-          <label for="modelSelect" data-i18n="model">AI Model</label>
+          <label id="modelSelectLabel" for="modelSelectTrigger" data-i18n="model">AI Model</label>
           <div class="model-select-wrapper">
-            <select id="modelSelect">
-              <option value="gpt-5.2">gpt-5.2</option>
-              <option value="gpt-5.2-high">gpt-5.2-high</option>
-              <option value="gpt-5.1">gpt-5.1</option>
-              <option value="gpt-5.1-high">gpt-5.1-high</option>
-              <option value="claude-opus-4-5">claude-opus-4-5</option>
-              <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
-              <option value="claude-haiku-4-5">claude-haiku-4-5</option>
-              <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-              <option value="gemini-3-pro-preview">gemini-3-pro-preview</option>
-              <option value="grok-4-1-fast-reasoning">grok-4-1-fast-reasoning</option>
-            </select>
+            <select id="modelSelect" hidden tabindex="-1" aria-hidden="true"></select>
+            <button type="button" id="modelSelectTrigger" class="model-select-trigger" role="combobox" aria-haspopup="grid" aria-expanded="false" aria-controls="customModelOptions" aria-labelledby="modelSelectLabel">
+              <span id="modelSelectValue" class="model-select-value"></span>
+            </button>
             <button id="addModelBtn" class="btn-icon" data-i18n-title="addModel" title="Add Model">
               <span class="plus-icon">+</span>
             </button>
           </div>
           <div id="customModelDropdown" class="custom-model-dropdown hidden">
-            <div class="custom-model-options" id="customModelOptions"></div>
+            <div class="custom-model-options" id="customModelOptions" role="grid" aria-labelledby="modelSelectLabel"></div>
           </div>
         </div>
         <div class="api-key-group" id="apiKeyInputGroup">
@@ -97,7 +89,7 @@
       <section class="section status-section" id="statusSection">
         <div class="status-indicator" id="statusIndicator">
           <span class="status-dot"></span>
-          <span class="status-text" id="statusText" data-i18n="ready">Ready</span>
+          <span class="status-text" id="statusText" role="status" aria-live="polite" data-i18n="ready">Ready</span>
         </div>
         <div class="progress-container hidden" id="progressContainer">
           <div class="progress-bar" id="progressBar"></div>
@@ -298,8 +290,8 @@
             <option value="offline" data-i18n="offlineTts">Piper TTS (offline)</option>
             <option value="openai" data-i18n="openaiTts">OpenAI TTS (MP3)</option>
             <option value="elevenlabs" data-i18n="elevenlabs">ElevenLabs (MP3)</option>
-            <option value="google" data-i18n="googleTts">Google Gemini 2.5 TTS (WAV)</option>
-            <option value="qwen" data-i18n="qwenTts">Qwen3-TTS-Flash (WAV)</option>
+            <option value="google" data-i18n="googleTts">Google Gemini TTS (WAV)</option>
+            <option value="qwen" data-i18n="qwenTts">Qwen TTS (WAV)</option>
             <option value="respeecher" data-i18n="respeecher">Respeecher (EN/UA, WAV)</option>
           </select>
           <p class="setting-hint" data-i18n="ttsProviderHint">Choose text-to-speech provider</p>
@@ -338,13 +330,31 @@
           </div>
           <p class="setting-hint"><span data-i18n="getQwenKeyFrom">Get your API key from</span> <a href="https://modelstudio.console.alibabacloud.com/?tab=dashboard#/api-key" target="_blank" rel="noopener">modelstudio.console.alibabacloud.com</a></p>
         </div>
+        <div class="setting-item hidden" id="qwenModelGroup">
+          <label for="qwenModel" data-i18n="model">Model</label>
+          <select id="qwenModel"></select>
+        </div>
+        <div class="setting-item hidden" id="qwenRegionGroup">
+          <label for="qwenRegion">Qwen Region</label>
+          <select id="qwenRegion">
+            <option value="singapore">Singapore</option>
+            <option value="beijing">Beijing</option>
+          </select>
+        </div>
+        <div class="setting-item hidden" id="qwenWorkspaceGroup">
+          <label for="qwenWorkspaceId">Qwen Workspace ID</label>
+          <div class="input-group">
+            <input type="text" id="qwenWorkspaceId" autocomplete="off" spellcheck="false" placeholder="Workspace ID">
+          </div>
+          <p class="setting-hint">Use the workspace and API key from the selected region in <a href="https://modelstudio.console.alibabacloud.com/" target="_blank" rel="noopener">Model Studio</a>.</p>
+        </div>
         <div class="setting-item hidden" id="respeecherApiKeyGroup">
           <label for="respeecherApiKey" data-i18n="respeecherApiKey">Respeecher API Key</label>
           <div class="input-group">
             <input 
               type="password" 
               id="respeecherApiKey" 
-              data-i18n-placeholder="enterRespeecherApiKey"
+              data-i18n-placeholder="enterRespecherApiKey"
               placeholder="Enter Respeecher API key"
               autocomplete="off"
             >
@@ -405,11 +415,7 @@
         </div>
         <div class="setting-item hidden" id="elevenlabsModelGroup">
           <label for="elevenlabsModel" data-i18n="elevenlabsModel">ElevenLabs Model</label>
-          <select id="elevenlabsModel">
-            <option value="eleven_multilingual_v2" data-i18n="multilingualV2">Multilingual v2 (stable, natural)</option>
-            <option value="eleven_v3" selected data-i18n="v3">v3 (most expressive)</option>
-            <option value="eleven_turbo_v2_5" data-i18n="turboV25">Turbo v2.5 (fast)</option>
-          </select>
+          <select id="elevenlabsModel"></select>
         </div>
         <div class="setting-item hidden" id="elevenlabsFormatGroup">
           <label for="elevenlabsFormat" data-i18n="audioFormat">Audio Format</label>
@@ -469,11 +475,7 @@
         </div>
         <div class="setting-item hidden" id="googleTtsModelGroup">
           <label for="googleTtsModel" data-i18n="model">Model</label>
-          <select id="googleTtsModel">
-            <option value="gemini-2.5-pro-preview-tts" selected data-i18n="geminiProTts">Gemini 2.5 Pro Preview TTS (higher quality)</option>
-            <option value="gemini-2.5-flash-preview-tts" data-i18n="geminiFlashTts">Gemini 2.5 Flash Preview TTS (faster)</option>
-            <option value="gemini-2.5-flash-lite-preview-tts" data-i18n="geminiFlashLiteTts">Gemini 2.5 Flash Lite TTS (Preview, single-speaker only)</option>
-          </select>
+          <select id="googleTtsModel"></select>
         </div>
         <div class="setting-item hidden" id="googleTtsVoiceGroup">
           <label for="googleTtsVoice" data-i18n="voice">Voice</label>
@@ -704,7 +706,7 @@
       <div class="popup-footer-links">
         <a href="https://github.com/YanGranat/ClipAIble" target="_blank" rel="noopener" class="popup-footer-link" id="githubLink">GitHub</a>
         <span class="popup-footer-separator">•</span>
-        <span class="popup-footer-version" id="versionText">v3.3.4</span>
+        <span class="popup-footer-version" id="versionText">v3.3.9</span>
       </div>
     </footer>
 
