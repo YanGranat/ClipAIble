@@ -60,6 +60,25 @@ describe('TTS worker initialization', () => {
     expect(Worker).toHaveBeenCalledTimes(2);
   });
 
+  it('recreates a retired worker after its earlier initialization succeeded', async () => {
+    const first = initTTSWorker();
+    emit('WORKER_READY');
+    emit('INIT_SUCCESS');
+    await first;
+    worker.terminate();
+    state.setTTSWorker(null);
+    const replacement = { ...worker, terminate: vi.fn() };
+    Worker.mockImplementationOnce(function() { return replacement; });
+    const second = ensureTTSWorker();
+    const resolved = expect(second).resolves.toBe(replacement);
+    await Promise.resolve();
+    emit('WORKER_READY');
+    emit('INIT_SUCCESS');
+    await resolved;
+    expect(state.getTTSWorker()).toBe(replacement);
+    expect(Worker).toHaveBeenCalledTimes(2);
+  });
+
   it('clears failed initialization resources', async () => {
     const pending = initTTSWorker();
     const rejected = expect(pending).rejects.toThrow('Worker initialization failed');

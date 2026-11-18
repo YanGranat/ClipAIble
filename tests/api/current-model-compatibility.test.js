@@ -16,6 +16,21 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('current first-party model requests', () => {
   it.each([
+    ['text', () => callClaudeAPI('System', 'Article', key, 'claude-fable-5-2')],
+    ['image', () => callClaudeAPIWithImage('System', 'Article', image, key, 'claude-fable-5-2')],
+    ['history', () => callClaudeAPIWithImageAndHistory('System', 'Article', image, [], key, 'claude-fable-5-2')]
+  ])('sends Claude Fable adaptive thinking for %s', async (_name, request) => {
+    const fetchMock = vi.fn(async () => jsonResponse({ content: [{ type: 'text', text: '{"title":"Translated"}' }], stop_reason: 'end_turn' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await request();
+    expect(result.result || result).toEqual({ title: 'Translated' });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({ model: 'claude-fable-5-2', thinking: { type: 'adaptive' }, output_config: { effort: 'high' }, max_tokens: 50000 });
+    expect(body).not.toHaveProperty('temperature');
+    expect(getClaudeRequestConfig('claude-fable-5-2', { maxTokens: 100, shortResponse: true })).toMatchObject({ thinking: { type: 'adaptive' }, max_tokens: 50000 });
+  });
+
+  it.each([
     ['text', () => callClaudeAPI('System', 'Article', key)],
     ['image', () => callClaudeAPIWithImage('System', 'Article', image, key)],
     ['history', () => callClaudeAPIWithImageAndHistory('System', 'Article', image, [], key)]

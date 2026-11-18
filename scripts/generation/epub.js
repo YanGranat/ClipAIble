@@ -1,3 +1,6 @@
+import { imageDataError } from '../utils/html/image-bytes.js';
+import { downloadBlob } from '../api/blob-download.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
 // @ts-check
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
@@ -17,6 +20,7 @@ import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
+import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
 import { normalizeXmlCharacters, escapeXml, isNativePdfContent, protectXmlLiteralText, serializeXmlInline } from './xml.js';
 
 
@@ -82,7 +86,7 @@ export async function generateEpub(data, updateState) {
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 82 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = filterFigureParagraphs(content, sourceUrl);
+  const filteredContent = normalizeDocumentContent(content, title, sourceUrl);
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
@@ -95,13 +99,13 @@ export async function generateEpub(data, updateState) {
   
   // Generate unique identifier for the book
   const bookId = `urn:uuid:${generateUUID()}`;
-  const langCode = language === 'auto' ? 'en' : language;
+  const langCode = language || 'auto';
   const safeTitle = title || 'Article';
   // Only use author if it exists and is not empty/anonymous
   // Use centralized validator to check all language variants
   const safeAuthor = cleanAuthor(author);
   // Format ISO date to readable format using language code
-  const pubDate = formatDateForDisplay(publishDate, langCode) || new Date().toLocaleDateString(getLocaleFromLanguage(langCode), { year: 'numeric', month: 'long', day: 'numeric' });
+  const pubDate = formatDateForDisplay(publishDate, langCode) || publishDate || '';
   
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 85 });
   
@@ -119,7 +123,7 @@ export async function generateEpub(data, updateState) {
   const headings = [];
   filteredContent.forEach((item, index) => {
     if (item.type === 'heading' && item.level >= 1) {
-      const text = isNativePdfContent(item) ? item.text : stripHtml(item.text || '');
+      const text = documentPlainText(item, sourceUrl);
       if (text) {
         // Use original id from page (e.g. "TradRevi") or generate fallback
         const originalId = item.id || `heading-${index}`;
@@ -138,7 +142,7 @@ export async function generateEpub(data, updateState) {
     const loadingStatus = tSync('stageLoadingImages', uiLang);
     updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, ...formatStatusUpdate('stageLoadingImages', await getUILanguage()), progress: 87 });
   }
-  const imageManifest = await embedEpubImages(zip, filteredContent, updateState);
+  const imageManifest = await embedEpubImages(zip, filteredContent, updateState, { processingRunId: data.processingRunId });
   if (imageCount > 0) {
     log(`✅ Images embedded: ${imageManifest.length} images added to EPUB`);
   }
@@ -166,7 +170,7 @@ export async function generateEpub(data, updateState) {
   zip.file('OEBPS/style.css', generateEpubStyles());
   
   // 9. Generate content.opf (package file with image manifest)
-  let contentOpf = generateContentOpf(bookId, safeTitle, safeAuthor, langCode, pubDate, sourceUrl, generateToc);
+  let contentOpf = generateContentOpf(bookId, safeTitle, safeAuthor, langCode, publishDate, sourceUrl, generateToc);
   if (imageManifest.length > 0) {
     contentOpf = addImagesToOpf(contentOpf, imageManifest);
   }
@@ -242,32 +246,7 @@ export async function generateEpub(data, updateState) {
       urlApi.revokeObjectURL(objectUrl);
     }
   } else {
-    // Fallback: data URL via FileReader
-    logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
-      reason: 'URL.createObjectURL not available in MV3 service worker',
-      method: 'data URL via FileReader (fallback)',
-      impact: 'Slower download, higher memory usage',
-      size: `${(epubBlob.size / 1024 / 1024).toFixed(2)} MB`
-    });
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(epubBlob);
-    });
-
-    // Check again before actual download
-    if (isCancelled(data.processingRunId)) {
-      log('Processing cancelled, skipping EPUB download');
-      throw new Error(tSync('statusCancelled', await getUILanguage()));
-    }
-
-    await chrome.downloads.download({
-      url: dataUrl,
-      filename: filename,
-      saveAs: true
-    });
-    log('Downloading EPUB (data URL fallback)...', { filename, size: epubBlob.size });
+    await downloadBlob(epubBlob, filename, data.processingRunId);
   }
   
   log('=== EPUB GENERATION END ===');
@@ -320,7 +299,7 @@ function generateContentOpf(bookId, title, author, lang, pubDate, sourceUrl, gen
     <dc:title>${escapedTitle}</dc:title>
 ${author ? `    <dc:creator>${escapedAuthor}</dc:creator>` : ''}
     <dc:language>${escapeXml(getDocumentLanguageTag(lang))}</dc:language>
-    <dc:date>${escapeXml(pubDate)}</dc:date>
+${/^\d{4}(?:-\d{2})?(?:-\d{2})?(?:T.*)?$/.test(pubDate) && !isNaN(Date.parse(pubDate)) ? `    <dc:date>${escapeXml(pubDate)}</dc:date>` : ''}
     <dc:source>${escapedSource}</dc:source>
     <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')}</meta>
   </metadata>
@@ -353,89 +332,14 @@ function addImagesToOpf(opf, imageManifest) {
  */
 function generateNavXhtml(title, headings, generateToc, language = 'en') {
   const escapedTitle = escapeXml(title);
-  const langCode = language === 'auto' ? 'en' : language;
+  const langCode = language || 'auto';
   const l10n = getDocumentLocalization(langCode);
   const contentsLabel = l10n.contents || 'Contents';
   
   let tocHtml = '';
   if (generateToc && headings.length > 1) {
-    // Build nested TOC structure based on heading hierarchy (same logic as PDF)
-    const minLevel = Math.min(...headings.map(h => h.level));
-    
-    log('EPUB TOC: Starting nested structure generation', {
-      headingsCount: headings.length,
-      minLevel
-    });
-    
-    let tocListHtml = '      <ol>';
-    let prevLevel = null;
-    let hasOpenLi = false;
-    
-    headings.forEach((h, index) => {
-      const level = h.level;
-      const nextHeading = headings[index + 1];
-      const nextLevel = nextHeading ? nextHeading.level : minLevel - 1;
-      
-      if (prevLevel !== null) {
-        // Close previous <li> and nested lists if going up or staying at same level
-        if (level <= prevLevel) {
-          // First close the <li> of previous heading (if it's still open)
-          if (hasOpenLi) {
-            tocListHtml += '</li>';
-            hasOpenLi = false;
-          }
-          // Then close nested <ol> tags and their parent <li> tags
-          const levelsToClose = prevLevel - level;
-          if (levelsToClose > 0) {
-            for (let i = 0; i < levelsToClose; i++) {
-              tocListHtml += '</ol></li>';
-            }
-            hasOpenLi = false;
-          }
-        }
-        
-        // Open nested lists if going down (must be inside previous open <li>)
-        if (level > prevLevel) {
-          const listsToOpen = level - prevLevel;
-          for (let i = 0; i < listsToOpen; i++) {
-            tocListHtml += '<ol>';
-          }
-        }
-      }
-      
-      // Add list item
-      tocListHtml += `\n        <li><a href="content.xhtml#${escapeXml(h.id)}">${escapeXml(h.text)}</a>`;
-      hasOpenLi = true;
-      
-      // Determine if we should close <li> now
-      if (nextLevel <= level) {
-        // Next heading is same or higher level - close <li>
-        tocListHtml += '</li>';
-        hasOpenLi = false;
-      }
-      // If nextLevel > level, keep <li> open for nested list
-      
-      prevLevel = level;
-    });
-    
-    // Close remaining open <li> and lists
-    if (hasOpenLi) {
-      tocListHtml += '</li>';
-    }
-    // Close all open nested <ol> tags and their parent <li> tags
-    const finalPrevLevel = prevLevel;
-    if (finalPrevLevel !== null && finalPrevLevel > minLevel) {
-      for (let i = finalPrevLevel; i > minLevel; i--) {
-        tocListHtml += '</ol></li>';
-      }
-    }
-    tocListHtml += '\n      </ol>'; // Close root list
-    
-    log('EPUB TOC: Nested structure generated', {
-      htmlLength: tocListHtml.length,
-      preview: tocListHtml.substring(0, 300)
-    });
-    
+    const tocListHtml = renderTocAsHtml(buildTocStructure(headings).items, escapeXml, escapeXml,
+      'ol', '', (id, text) => `<a href="content.xhtml#${escapeXml(id)}">${escapeXml(text)}</a>`);
     tocHtml = `    <nav epub:type="toc" id="toc">
       <h2>${escapeXml(contentsLabel)}</h2>${tocListHtml}
     </nav>`;
@@ -506,7 +410,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   const escapedAuthor = escapeXml(author);
   
   // Get localized labels
-  const langCode = language === 'auto' ? 'en' : language;
+  const langCode = language || 'auto';
   const l10n = getDocumentLocalization(langCode);
   const sourceLabel = l10n.source || 'Source';
   const dateLabel = l10n.date || 'Date';
@@ -517,10 +421,10 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   for (let i = 0; i < content.length; i++) {
     if (content[i].type === 'subtitle') {
       const item = content[i];
-      const subtitleText = item.text || item.html || '';
+      const subtitleText = documentText(item, sourceUrl);
       if (subtitleText) {
         const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-        subtitleHtml = `\n    <p class="standfirst"${idAttr}>${sanitizeHtmlForXhtml(subtitleText, sourceUrl, isNativePdfContent(item))}</p>`;
+        subtitleHtml = `\n    <p class="standfirst"${idAttr}>${serializeXmlInline(subtitleText, 'xhtml')}</p>`;
         subtitleIndex = i;
         break;
       }
@@ -608,7 +512,7 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
       continue;
     }
     contentHtml += contentItemToXhtml(item, headings, headingIndex, sourceUrl);
-    if (item.type === 'heading' && item.level >= 2) {
+    if (item.type === 'heading' && item.level >= 1) {
       headingIndex++;
     }
   }
@@ -641,25 +545,25 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
   switch (item.type) {
     case 'heading': {
       const level = Math.min(Math.max(item.level || 2, 1), 6);
-      const text = item.text || '';
+      const text = documentText(item, sourceUrl);
       // Prefer original item.id, then headings array, then fallback
       const id = item.id || headings[headingIndex]?.id || `heading-${headingIndex}`;
-      return `    <h${level} id="${escapeXml(id)}">${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</h${level}>\n`;
+      return `    <h${level} id="${escapeXml(id)}">${serializeXmlInline(text, 'xhtml')}</h${level}>\n`;
     }
     
     case 'paragraph': {
-      const text = item.text || '';
+      const text = documentText(item, sourceUrl);
       if (!text.trim()) return '';
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-      return `    <p${idAttr}>${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</p>\n`;
+      return `    <p${idAttr}>${serializeXmlInline(text, 'xhtml')}</p>\n`;
     }
     
     case 'quote':
     case 'blockquote': {
-      const text = item.text || '';
+      const text = documentText(item, sourceUrl);
       if (!text.trim()) return '';
       const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-      return `    <blockquote${idAttr}><p>${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</p></blockquote>\n`;
+      return `    <blockquote${idAttr}><p>${serializeXmlInline(text, 'xhtml')}</p></blockquote>\n`;
     }
     
     case 'code': {
@@ -668,21 +572,13 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
     }
     
     case 'list': {
-      const items = item.items || [];
-      const tag = item.ordered ? 'ol' : 'ul';
-      const listIdAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
-      const listItems = items.map(li => {
-        const text = typeof li === 'string' ? li : (li.html || li.text || '');
-        const liId = (typeof li === 'object' && li.id) ? li.id : '';
-        const liIdAttr = liId ? ` id="${escapeXml(liId)}"` : '';
-        return `      <li${liIdAttr}>${sanitizeHtmlForXhtml(text, sourceUrl, isNativePdfContent(item))}</li>`;
-      }).join('\n');
-      return `    <${tag}${listIdAttr}>\n${listItems}\n    </${tag}>\n`;
+      return `    ${serializeXmlInline(listHtml(item, sourceUrl), 'xhtml', true)}\n`;
     }
     
     case 'image': {
       // Use embedded path if available, otherwise original src
-      const src = item._epubSrc || item.src || item.base64 || '';
+      const src = item._epubSrc || '';
+      if (!src) return item.src ? `    <p>${serializeXmlInline(sanitizeHtml(`<a href="${escapeXml(item.src)}">${escapeXml(item.alt || item.caption || item.src)}</a>`, sourceUrl), 'xhtml')}</p>\n` : '';
       const alt = escapeXml(item.alt || '');
       
       // Check if caption is generic (e.g., "image3", "image1", "photo2", etc.)
@@ -767,7 +663,7 @@ function tableToXhtml(item, sourceUrl = '') {
   if (hasHeaders) {
     html += '      <thead><tr>\n';
     rows[0].forEach(cell => {
-      html += `        <th>${sanitizeHtmlForXhtml(cell, sourceUrl, isNativePdfContent(item))}</th>\n`;
+      html += `        <th>${serializeXmlInline(tableCellHtml(item, cell, sourceUrl), 'xhtml')}</th>\n`;
     });
     html += '      </tr></thead>\n';
   }
@@ -779,7 +675,7 @@ function tableToXhtml(item, sourceUrl = '') {
     for (let i = startRow; i < rows.length; i++) {
       html += '      <tr>\n';
       rows[i].forEach(cell => {
-        html += `        <td>${sanitizeHtmlForXhtml(cell, sourceUrl, isNativePdfContent(item))}</td>\n`;
+        html += `        <td>${serializeXmlInline(tableCellHtml(item, cell, sourceUrl), 'xhtml')}</td>\n`;
       });
       html += '      </tr>\n';
     }
@@ -1031,7 +927,7 @@ nav a {
  * Uses parallel loading for better performance
  * @returns {Promise<Array>} Image manifest entries
  */
-async function embedEpubImages(zip, content, updateState) {
+async function embedEpubImages(zip, content, updateState, options) {
   const imageManifest = [];
   let imageIndex = 0;
   
@@ -1059,21 +955,16 @@ async function embedEpubImages(zip, content, updateState) {
         return { item, imageData: null, index };
       }
       
-      // If not base64, fetch and convert
-      if (!imageData.startsWith('data:')) {
-        log(`EPUB: Fetching image ${index + 1}`, { url: imageData.substring(0, 80) });
-        const base64 = await imageToBase64(imageData);
-        if (!base64) {
-          log(`EPUB: Failed to fetch image ${index + 1}, skipping`);
-          return { item, imageData: null, index };
-        }
-        imageData = base64;
-      }
+      imageData = await imageToBase64(imageData, options);
       
       return { item, imageData, index };
     }
   );
   
+  if (options?.processingRunId !== undefined && isCancelled(options.processingRunId)) throw new DOMException('Processing cancelled', 'AbortError');
+  const rejected = results.find(result => result.errorCode?.startsWith('IMAGE_') && result.errorCode !== 'IMAGE_FETCH_FAILED');
+  if (rejected) throw imageDataError(rejected.errorCode);
+
   // Process results and add to ZIP
   for (const { item, imageData, index } of results) {
     if (!imageData) continue;

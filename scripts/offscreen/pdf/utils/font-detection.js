@@ -1,6 +1,6 @@
 // @ts-check
 // Font detection utility - determines bold/italic from font metrics
-// Combines font metadata with width-to-height ratio comparisons.
+// Uses font metadata and explicit family names.
 
 // @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn, criticalLog } from '../../../utils/logging.js';
@@ -8,7 +8,7 @@ import { TEXT_FORMATTING } from '../constants.js';
 
 /**
  * Build font format mapping from items
- * Uses reliable methods: font name patterns, direct fontWeight/fontStyle, and careful widthHeightRatio heuristics
+ * Uses font name patterns and direct fontWeight/fontStyle metadata
  * 
  * @param {Array} items - Text items with widthHeightRatio property
  * @param {Map<string, string|Object>} [fontNameMap] - Optional map from internal font name to real font name or FontInfo object
@@ -39,28 +39,6 @@ export function buildFontFormatMap(items, fontNameMap = null) {
     return fontToFormats;
   }
   
-    // Calculate average widthHeightRatio for each font group
-    const groupAvgRatios = new Map();
-    fontGroups.forEach((groupItems, fontName) => {
-      const validRatios = groupItems
-        .map(item => item.widthHeightRatio)
-        .filter(ratio => ratio && ratio > 0 && isFinite(ratio));
-      if (validRatios.length > 0) {
-        const avgRatio = validRatios.reduce((sum, r) => sum + r, 0) / validRatios.length;
-        groupAvgRatios.set(fontName, avgRatio);
-      }
-    });
-    
-    // Calculate median and min ratios for comparison
-    const avgRatiosArray = Array.from(groupAvgRatios.values()).sort((a, b) => a - b);
-    const medianRatio = avgRatiosArray.length > 0 
-      ? avgRatiosArray[Math.floor(avgRatiosArray.length / 2)] 
-      : 0;
-    const minRatio = avgRatiosArray.length > 0 ? avgRatiosArray[0] : 0;
-    
-    // Calculate total items count for percentage checks
-    const totalItems = items.length;
-    
   fontGroups.forEach((groupItems, fontName) => {
       // Get real font name from fontNameMap if available
       let realFontName = fontName;
@@ -81,9 +59,6 @@ export function buildFontFormatMap(items, fontNameMap = null) {
         }
       }
       
-      const groupSize = groupItems.length;
-      const groupPercentage = (groupSize / totalItems) * 100;
-      const avgRatio = groupAvgRatios.get(fontName) || 0;
       
       // Font analysis logging removed - was useful for debugging but too verbose
       
@@ -95,61 +70,16 @@ export function buildFontFormatMap(items, fontNameMap = null) {
       const isBoldByDirect = directFontWeight === 'bold';
       const isItalicByDirect = directFontStyle === 'italic' || directFontStyle === 'oblique';
       
-      // RELIABLE METHOD 3: Careful widthHeightRatio heuristics (only if not base font)
-      // CRITICAL: If font is used for >50% of items, it's the base font - don't mark as bold/italic
-      const isBaseFont = groupPercentage > TEXT_FORMATTING.BASE_FONT_PERCENTAGE;
-      
-      let isBoldByRatio = false;
-      let isItalicByRatio = false;
-      
-      if (!isBaseFont && avgRatio > 0 && medianRatio > 0 && minRatio > 0) {
-        // Only use ratio heuristics if font is NOT the base font
-        // Bold: significantly wider than median (1.2x) or minimum (1.5x)
-        const medianThreshold = medianRatio * TEXT_FORMATTING.MEDIAN_COMPARISON_MULTIPLIER;
-        const minThreshold = minRatio * TEXT_FORMATTING.MIN_COMPARISON_MULTIPLIER;
-        const absoluteThreshold = TEXT_FORMATTING.ABSOLUTE_BOLD_THRESHOLD;
-        
-        // Bold if ratio is significantly higher than median/min, but not if it's the base font
-        isBoldByRatio = (avgRatio > medianThreshold || avgRatio > minThreshold || avgRatio > absoluteThreshold) && !isBaseFont;
-        
-        // Heuristic 4: Check individual items for very high ratios
-        // If only a small percentage of items in this group have high ratios,
-        // those specific items are bold, not the whole group
-        // This helps detect bold words within paragraphs
-        let hasHighRatioItems = false;
-        let highRatioCount = 0;
-    groupItems.forEach(item => {
-          const ratio = item.widthHeightRatio || 0;
-          // If item has ratio > 25, it's likely bold
-          if (ratio > TEXT_FORMATTING.HIGH_RATIO_THRESHOLD) {
-            hasHighRatioItems = true;
-            highRatioCount++;
-          }
-        });
-        
-        // If less than 50% of items in this group have high ratios,
-        // those specific items are bold, not the whole group
-        const highRatioPercentage = (highRatioCount / groupSize) * 100;
-        const isBoldByHighRatioItems = hasHighRatioItems && highRatioPercentage < TEXT_FORMATTING.HIGH_RATIO_PERCENTAGE && !isBaseFont;
-        
-        // Combine ratio heuristics
-        isBoldByRatio = isBoldByRatio || isBoldByHighRatioItems;
-        
-        // Italic detection from ratio is less reliable, so we don't use it here
-        // Italic is determined only from font name and direct fontStyle
-      }
-      
-      // Combine all methods
-      const isBold = isBoldByRegex || isBoldByDirect || (directFontWeight !== 'normal' && isBoldByRatio);
+      const isBold = isBoldByRegex || isBoldByDirect;
       const isItalic = isItalicByRegex || isItalicByDirect;
     
     if (isBold && isItalic) {
         fontToFormats.set(fontName, TEXT_FORMATTING.FORMAT_BOLD_ITALIC);
-        log(`[PDF v3] buildFontFormatMap: Font "${fontName}" (real="${realFontName}") - marked as BOLD+ITALIC (regex=${isBoldByRegex}, direct=${isBoldByDirect}, ratio=${isBoldByRatio}, baseFont=${isBaseFont})`);
+        log(`[PDF v3] buildFontFormatMap: Font "${fontName}" (real="${realFontName}") - marked as BOLD+ITALIC (regex=${isBoldByRegex}, direct=${isBoldByDirect}, explicit=true)`);
         // Format decision logging removed - was useful for debugging but too verbose
     } else if (isBold) {
         fontToFormats.set(fontName, TEXT_FORMATTING.FORMAT_BOLD);
-        log(`[PDF v3] buildFontFormatMap: Font "${fontName}" (real="${realFontName}") - marked as BOLD (regex=${isBoldByRegex}, direct=${isBoldByDirect}, ratio=${isBoldByRatio}, baseFont=${isBaseFont}, avgRatio=${avgRatio.toFixed(2)}, median=${medianRatio.toFixed(2)})`);
+        log(`[PDF v3] buildFontFormatMap: Font "${fontName}" (real="${realFontName}") - marked as BOLD (regex=${isBoldByRegex}, direct=${isBoldByDirect}, explicit=true)`);
         // Format decision logging removed - was useful for debugging but too verbose
     } else if (isItalic) {
         fontToFormats.set(fontName, TEXT_FORMATTING.FORMAT_ITALIC);

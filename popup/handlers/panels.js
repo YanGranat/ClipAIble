@@ -37,7 +37,13 @@ export function setupPanelHandlers(deps) {
   for (const [button, panel] of [[elements.toggleSettings, elements.settingsPanel], [elements.toggleStats, elements.statsPanel]]) {
     if (!button || !panel) continue;
     button.setAttribute('aria-controls', panel.id);
-    const sync = () => button.setAttribute('aria-expanded', String(panel.classList.contains('open')));
+    const sync = () => {
+      const open = panel.classList.contains('open');
+      if (!open && panel.contains(document.activeElement)) button.focus();
+      panel.inert = !open;
+      panel.setAttribute('aria-hidden', String(!open));
+      button.setAttribute('aria-expanded', String(open));
+    };
     new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
     sync();
   }

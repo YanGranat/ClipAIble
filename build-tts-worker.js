@@ -65,7 +65,7 @@ async function build() {
       
       // Banner to add at top of bundle
       banner: {
-        js: '// TTS Worker Bundle - Built with esbuild\n// This bundle includes piper-tts-web\n// ONNX Runtime (ort.all.min.js) is loaded separately via importScripts() to avoid blob URL issues\n'
+        js: '// TTS Worker Bundle\n// This bundle includes piper-tts-web\n// ONNX Runtime WASM (ort.wasm.min.js) is loaded separately via importScripts()\n'
       },
       
       // CRITICAL: Custom patching plugins

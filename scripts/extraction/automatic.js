@@ -14,14 +14,7 @@
  * @param {boolean} enableDebugInfo - Whether to collect debug information (default: false)
  * @returns {Promise<Object>} Extraction result with content, title, author, publishDate, debugInfo
  */
-export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
-  // Log extraction start
-  try {
-    console.log('[ClipAIble] extractAutomaticallyInlined: START', { baseUrl, enableDebugInfo, timestamp: Date.now() });
-  } catch (e) {
-    // Console might not be available
-  }
-  
+export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false, selectors = null) {
 
 
     // ============================================
@@ -909,7 +902,7 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     ];
     
     // Candidate element selector (used by parse.js)
-    const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table, div';
+    const CANDIDATE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,img,figure,figcaption,blockquote,pre,code,ul,ol,table,div,hr";
     
     // CONSTANTS object (used by runExtraction)
     const CONSTANTS = {
@@ -1131,19 +1124,6 @@ function isRealHeading(element, win) {
     }
   } catch (e) {
     reason = `style check failed: ${e.message}`;
-  }
-  if (typeof console !== "undefined" && console.log) {
-    console.log("[isRealHeading]", {
-      tagName,
-      text: cleanedText.substring(0, 50),
-      textLength: cleanedText.length,
-      fontStyle,
-      fontSize,
-      fontWeight,
-      isItalic,
-      result,
-      reason: reason || "passed all checks"
-    });
   }
   return result;
 }
@@ -1632,7 +1612,7 @@ function isExcluded(win, element, constants) {
       return true;
     }
   } else {
-    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+    if (style.display === "none" || style.visibility === "hidden") {
       return true;
     }
   }
@@ -1695,10 +1675,6 @@ function isExcluded(win, element, constants) {
       if (textTrimmed.length < 200 && matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
-    } else {
-      if (matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
-        return true;
-      }
     }
   }
   if (!isSemanticContainer && (textLower.includes("sign up to our newsletter") || textLower.includes("newsletter") && textLower.includes("subscribe"))) {
@@ -1722,6 +1698,11 @@ function isExcluded(win, element, constants) {
       const parentClass = String(parent.className || "").toLowerCase();
       const parentId = (parent.id || "").toLowerCase();
       const parentTag = parent.tagName.toLowerCase();
+      if (parentTag === "nav" || parentTag === "footer" || parent.getAttribute("role") === "navigation") return true;
+      if (EXCLUDED_CLASSES2.some((excluded) => {
+        const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`);
+      })) return true;
       const clearAdIndicators = [/\bad\b/, /\badvertisement\b/, /\bsponsor\b/];
       const isClearAd = clearAdIndicators.some(
         (indicator) => indicator.test(parentClass) || indicator.test(parentId)
@@ -1756,7 +1737,7 @@ function isIcon(element) {
   if (tagName === "svg") return true;
   const className = String(element.className || "").toLowerCase();
   const id = (element.id || "").toLowerCase();
-  if (className.includes("icon-") || className.includes("icon") || id.includes("icon")) {
+  if (/(?:^|[\s_-])(?:icon|fa|fas|far|fab)(?:$|[\s_-])/.test(className) || /(?:^|[\s_-])icon(?:$|[\s_-])/.test(id)) {
     return true;
   }
   if (tagName === "span" || tagName === "i" || tagName === "em" || tagName === "sup") {
@@ -2246,7 +2227,7 @@ function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
     } catch (e) {
     }
   }
-  const article = doc.querySelector("article");
+  const article = Array.from(doc.querySelectorAll("article")).filter((element) => (element.textContent || "").trim().length > 500 && !element.closest("aside, .related, .related-stories, .sidebar, .comments, nav, footer") && safeGetComputedStyle(win, element)?.display !== "none").sort((a, b) => calculateContentScore(win, b) - calculateContentScore(win, a))[0];
   if (article) {
     const articleText = (article.textContent || "").trim();
     if (articleText.length > 500) {
@@ -2355,7 +2336,6 @@ function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
     const candidateText = (candidate.textContent || "").trim();
     if (candidateText.length < 100) continue;
     const score = calculateContentScore(win, candidate);
-    if (score > 100) return candidate;
     if (score > maxScore) {
       maxScore = score;
       bestCandidate = candidate;
@@ -2661,6 +2641,11 @@ function parseDateToISO(dateStr) {
 function extractBestImageUrl(imgElement) {
   if (!imgElement) return null;
   let src = null;
+  for (const attr of ["data-full-src", "data-high-res", "data-original-src", "data-srcset", "data-src", "data-lazy-src", "data-original", "data-lazy"]) {
+    const value = imgElement.getAttribute(attr);
+    const candidate = attr === "data-srcset" ? getBestSrcsetUrl(value) : value;
+    if (candidate && !isPlaceholderUrl(candidate)) return candidate;
+  }
   if (imgElement.currentSrc && imgElement.currentSrc.length > 0 && !isPlaceholderUrl(imgElement.currentSrc)) {
     src = imgElement.currentSrc;
   }
@@ -2741,8 +2726,7 @@ function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
         const content = element.tagName === "META" ? element.getAttribute("content") : element instanceof HTMLImageElement ? element.src : element.getAttribute("src");
         if (content) {
           const absoluteUrl = toAbsoluteUrl(content, baseUrl);
-          const urlLower = absoluteUrl.toLowerCase();
-          if (!logoPatterns.some((pattern) => urlLower.includes(pattern.toLowerCase()))) {
+          if (!isDecorativeImageUrl(absoluteUrl, logoPatterns)) {
             return { src: absoluteUrl, alt: "", caption: "" };
           }
         }
@@ -2874,13 +2858,13 @@ function isDecorativeImage(win, img, logoPatterns) {
       return true;
     }
   }
-  if (logoPatterns.some((pattern) => src.includes(pattern.toLowerCase()))) {
+  if (isDecorativeImageUrl(src, logoPatterns)) {
     return true;
   }
-  if (alt && (alt.includes("logo") || alt.includes("icon") || alt.includes("brand") || alt.includes("social"))) {
+  if (/^(?:(?:site|company|brand|social)\s+)?(?:logo|icon)$/i.test(alt)) {
     return true;
   }
-  if (className.includes("logo") || className.includes("icon") || className.includes("brand") || className.includes("social") || className.includes("share")) {
+  if (/(?:^|[\s_-])(?:logo|icon|avatar|social-icon|share-icon|share-button)(?:$|[\s_-])/.test(className)) {
     return true;
   }
   if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
@@ -2891,16 +2875,41 @@ function isDecorativeImage(win, img, logoPatterns) {
   return false;
 }
 
+function isDecorativeImageUrl(url, patterns) {
+  try {
+    const basename = decodeURIComponent(new URL(url, "https://example.invalid/").pathname.split("/").pop() || "").toLowerCase();
+    const roles = /* @__PURE__ */ new Set(["logo", "favicon", "icon", "avatar", "sprite", "spacer", "social-icon", "share-icon", "share-button"]);
+    return (patterns || []).some((pattern) => roles.has(pattern.toLowerCase()) && new RegExp(`(?:^|[_.-])${pattern}(?:$|[_.-])`, "i").test(basename));
+  } catch (_) {
+    return false;
+  }
+}
+
 function isPlaceholderUrl(url) {
   if (!url) return true;
-  if (url.startsWith("data:image")) {
-    if (url.includes("1x1") || url.includes("transparent") || url.length < 100) {
-      return true;
+  if (/^data:image\/(?:png|gif);base64,/i.test(url)) {
+    try {
+      const bytes = atob(url.slice(url.indexOf(",") + 1));
+      if (bytes.startsWith("GIF8") && bytes.length >= 10) {
+        const width = bytes.charCodeAt(6) | bytes.charCodeAt(7) << 8;
+        const height = bytes.charCodeAt(8) | bytes.charCodeAt(9) << 8;
+        return width > 0 && height > 0 && width <= 3 && height <= 3;
+      }
+      if (bytes.startsWith("\x89PNG\r\n\n") && bytes.length >= 24) {
+        const read32 = (offset) => bytes.charCodeAt(offset) * 16777216 + (bytes.charCodeAt(offset + 1) << 16) + (bytes.charCodeAt(offset + 2) << 8) + bytes.charCodeAt(offset + 3);
+        const width = read32(16), height = read32(20);
+        return width > 0 && height > 0 && width <= 3 && height <= 3;
+      }
+    } catch (_) {
     }
+    return false;
   }
-  const placeholderPatterns = ["placeholder", "spacer", "blank", "1x1", "pixel.gif"];
-  const urlLower = url.toLowerCase();
-  return placeholderPatterns.some((pattern) => urlLower.includes(pattern));
+  try {
+    const basename = decodeURIComponent(new URL(url, "https://example.invalid/").pathname.split("/").pop() || "");
+    return /^(?:placeholder|spacer|blank|transparent|1x1|pixel)\.(?:gif|png|svg|webp)$/i.test(basename);
+  } catch (_) {
+    return false;
+  }
 }
 
 function isTrackingPixel(win, img) {
@@ -2920,9 +2929,12 @@ function isTrackingPixel(win, img) {
   if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 3 && naturalHeight <= 3) {
     return true;
   }
-  const src = (img.src || "").toLowerCase();
-  const trackingPatterns = ["pixel", "tracking", "beacon", "analytics", "facebook.com/tr", "doubleclick", "googleads"];
-  return trackingPatterns.some((pattern) => src.includes(pattern));
+  try {
+    const url = new URL(img.src || "", img.ownerDocument.baseURI);
+    return /(?:^|\.)doubleclick\.net$/i.test(url.hostname) || /(?:^|\.)googleadservices\.com$/i.test(url.hostname) || /(?:^|\.)facebook\.com$/i.test(url.hostname) && /^\/tr\/?$/i.test(url.pathname);
+  } catch (_) {
+    return false;
+  }
 }
 
 // --- Standfirst ---
@@ -2961,27 +2973,6 @@ function extractStandfirst(mainContent) {
     } catch (e) {
     }
   }
-  const paragraphs = mainContent.querySelectorAll("p");
-  for (const p of paragraphs) {
-    if (isNewsletterCandidate(p)) continue;
-    const text = (cloneWithoutLinkAnnouncements(p).textContent || "").trim();
-    if (text.length >= 50 && text.length <= 200) {
-      const hasLinks = p.querySelectorAll("a").length > 0;
-      if (!hasLinks && !looksLikeArticleStarter(text)) {
-        const allParagraphs2 = Array.from(paragraphs);
-        const index = allParagraphs2.indexOf(p);
-        if (index <= 2) {
-          const firstWord = text.split(/\s+/)[0].toLowerCase();
-          const commonStarters = ["the", "a", "an", "in", "on", "when", "where", "why", "how"];
-          if (!commonStarters.includes(firstWord)) {
-            return { text, element: p };
-          }
-        }
-      }
-    }
-    const allParagraphs = Array.from(paragraphs);
-    if (allParagraphs.indexOf(p) > 3) break;
-  }
   return { text: null, element: null };
 }
 
@@ -3000,11 +2991,6 @@ function isStandfirstText(text, standfirstText) {
 // --- Parse ---
 function collectCandidateElements(mainContent, win) {
   const hostname = win?.location?.hostname || "";
-  console.log("[ClipAIble Extraction] collectCandidateElements called", {
-    hostname,
-    mainContentTag: mainContent?.tagName,
-    mainContentClass: mainContent?.className?.substring?.(0, 50)
-  });
   if (hostname.includes("habr.com")) {
     const articleBody = mainContent.querySelector(".article-formatted-body");
     if (articleBody) {
@@ -3017,20 +3003,11 @@ function collectCandidateElements(mainContent, win) {
   }
   if (hostname.includes("nature.com") || hostname.includes("springer.com") || hostname.includes("biomedcentral.com") || hostname.includes("springernature.com")) {
     const cArticleBody = mainContent.querySelector(".c-article-body");
-    console.log("[ClipAIble Extraction] Nature/Springer detected", {
-      hasCArticleBody: !!cArticleBody,
-      textLength: cArticleBody?.textContent?.length || 0,
-      paragraphs: cArticleBody?.querySelectorAll("p")?.length || 0
-    });
     if (cArticleBody) {
       const text = cArticleBody.textContent?.trim() || "";
       const paragraphs = cArticleBody.querySelectorAll("p").length;
       if (text.length > 1e3 && paragraphs > 5) {
         const elements = Array.from(cArticleBody.querySelectorAll(CANDIDATE_SELECTOR));
-        console.log("[ClipAIble Extraction] Using c-article-body", {
-          elementsCount: elements.length,
-          figures: elements.filter((e) => e.tagName === "FIGURE").length
-        });
         return elements;
       }
     }
@@ -3185,15 +3162,43 @@ function collectCandidateElements(mainContent, win) {
   return Array.from(mainContent.querySelectorAll(CANDIDATE_SELECTOR));
 }
 
-function deduplicateHeadings(content) {
-  const seenHeadings = /* @__PURE__ */ new Set();
-  return content.filter((item) => {
-    if (item.type !== "heading") return true;
-    const normalized = normalizeHeadingForDedup(item.text || "");
-    if (seenHeadings.has(normalized)) return false;
-    seenHeadings.add(normalized);
-    return true;
-  });
+function createHeadingItem(element) {
+  return {
+    type: "heading",
+    level: parseInt(element.tagName.charAt(1)),
+    text: cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || ""),
+    format: "text",
+    id: element.id || void 0
+  };
+}
+
+function createImageItem(win, element, state, constants, baseUrl) {
+  const img = (
+    /** @type {HTMLImageElement} */
+    element
+  );
+  const src = extractBestImageUrl(img);
+  if (!src) return null;
+  if (isTrackingPixel(win, img)) return null;
+  if (isDecorativeImage(win, img, constants.LOGO_PATTERNS || [])) return null;
+  const absoluteSrc = toAbsoluteUrl(src, baseUrl);
+  const normalizedSrc = normalizeImageUrl(absoluteSrc);
+  if (state.processedImages.has(normalizedSrc)) return null;
+  if (state.processedImages.size < 1e3) {
+    state.processedImages.add(normalizedSrc);
+  }
+  return {
+    type: "image",
+    src: absoluteSrc,
+    alt: img.alt || "",
+    caption: ""
+  };
+}
+
+function encodeOriginalText(element, text) {
+  const node = element.ownerDocument.createElement("span");
+  node.textContent = text;
+  return node.innerHTML;
 }
 
 function filterCandidateElements(win, allElements, constants, debugInfo) {
@@ -3205,26 +3210,6 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
     if (isExcluded(win, el, constants)) {
       if (isImageOrFigure) {
         excludedImageCount++;
-        console.log("[ClipAIble Extraction] Excluded image/figure", {
-          tag: tagName,
-          className: el.className?.substring?.(0, 40) || "",
-          parentClass: el.parentElement?.className?.substring?.(0, 40) || "",
-          src: (() => {
-            if (tagName === "img") {
-              const imgSrc = (
-                /** @type {any} */
-                el.src
-              );
-              return imgSrc ? imgSrc.substring(0, 50) : "";
-            }
-            const img = el.querySelector?.("img");
-            return img && /** @type {any} */
-            img.src ? (
-              /** @type {any} */
-              img.src.substring(0, 50)
-            ) : "";
-          })()
-        });
       } else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
       return false;
     }
@@ -3236,15 +3221,13 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
   return filteredElements;
 }
 
-function handleBlockquote(element) {
-  const text = (
-    /** @type {HTMLElement} */
-    (cloneWithoutLinkAnnouncements(element).innerHTML || "").trim()
-  );
+function handleBlockquote(element, excludedSelectors = []) {
+  const text = sanitizeParagraphHtml(element, excludedSelectors);
   if (!text) return null;
   return {
     type: "quote",
-    text
+    text,
+    html: text
   };
 }
 
@@ -3271,29 +3254,27 @@ function handleCode(element) {
   return {
     type: "code",
     language,
-    text
+    text,
+    format: "text"
   };
 }
 
 function handleDiv(element, state, constants) {
   if (element.closest("blockquote")) return null;
-  if (element.closest("figure") && element.tagName.toLowerCase() !== "figcaption") {
-    return null;
-  }
   if (element.closest("table")) return null;
   const text = (element.textContent || "").trim();
   if (isStandfirstText(text, state.standfirstText)) return null;
   if (text.length < 10) return null;
   const className = String(element.className || "").toLowerCase();
   const id = (element.id || "").toLowerCase();
-  if (className.includes("nav") || className.includes("button") || className.includes("icon") || className.includes("menu") || className.includes("sidebar") || className.includes("widget") || className.includes("modal") || className.includes("popup") || className.includes("tooltip") || id.includes("nav") || id.includes("menu") || id.includes("sidebar")) {
+  if (/(?:^|[\s_-])(?:nav|button|icon|menu|sidebar|widget|modal|popup|tooltip)(?:$|[\s_-])/.test(`${className} ${id}`)) {
     return null;
   }
   if (className.includes("jw-") || className.includes("video-player") || className.includes("player") || className.includes("shortcuts") || id.includes("video") || id.includes("player")) {
     return null;
   }
   const lowerText = text.toLowerCase();
-  if (lowerText.includes("volume") || lowerText.includes("shortcut") || lowerText.includes("caption") || lowerText.includes("fullscreen") || lowerText.includes("mute") || lowerText.includes("unmute") || lowerText.includes("play") || lowerText.includes("pause") || /^\d+\s+of\s+\d+\s+(minute|second|hour)/i.test(text) || /^[←→↑↓↗↘◀▶▲▼↩]/.test(text) || /^[a-z]\s*$/i.test(text)) {
+  if (/^(?:volume|shortcut|caption|fullscreen|mute|unmute|play|pause)$/i.test(text) || /^\d+\s+of\s+\d+\s+(?:minute|second|hour)s?$/i.test(text)) {
     return null;
   }
   if (element.querySelector('button, a[role="button"], input, select, textarea')) {
@@ -3331,50 +3312,13 @@ function handleDiv(element, state, constants) {
     return null;
   }
   const originalText = getOriginalTextIfTranslated(element);
-  const finalText = originalText || sanitizeParagraphHtml(element);
+  const finalText = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(element, state.selectionExclusions);
   if (!state.addedParagraphs) state.addedParagraphs = /* @__PURE__ */ new Set();
   state.addedParagraphs.add(normalizedText);
   return {
     type: "paragraph",
     text: finalText,
     html: finalText
-  };
-}
-
-function handleFigure(win, element, state, constants, baseUrl) {
-  const img = element.querySelector("img");
-  if (!img) return null;
-  const src = extractBestImageUrl(
-    /** @type {HTMLImageElement} */
-    img
-  );
-  if (!src) return null;
-  if (isTrackingPixel(
-    win,
-    /** @type {HTMLImageElement} */
-    img
-  )) return null;
-  if (isDecorativeImage(
-    win,
-    /** @type {HTMLImageElement} */
-    img,
-    constants.LOGO_PATTERNS || []
-  )) return null;
-  const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-  const normalizedSrc = normalizeImageUrl(absoluteSrc);
-  if (state.processedImages.has(normalizedSrc)) return null;
-  if (state.processedImages.size < 1e3) {
-    state.processedImages.add(normalizedSrc);
-  }
-  const caption = getImageCaption(
-    /** @type {HTMLImageElement} */
-    img
-  );
-  return {
-    type: "image",
-    src: absoluteSrc,
-    alt: img.alt || "",
-    caption
   };
 }
 
@@ -3385,9 +3329,6 @@ function handleHeading(element, state, constants) {
   if (isStandfirstText(cleanedText, state.standfirstText)) return null;
   if (isNumericHeading(cleanedText)) return null;
   if (cleanedText.length < 3) return null;
-  const normalizedHeading = normalizeHeadingForDedup(cleanedText);
-  if (normalizedHeading === state.mainTitleText) return null;
-  if (state.addedHeadings.has(normalizedHeading)) return null;
   const lowerText = cleanedText.toLowerCase();
   if (lowerText.includes("subscribe") || lowerText.includes("sign up") || lowerText.includes("newsletter") || lowerText.includes("promotional") || lowerText.includes("create an account") || lowerText.includes("member-only") || lowerText.includes("sign in") || lowerText.includes("already have an account")) {
     return null;
@@ -3403,43 +3344,24 @@ function handleHeading(element, state, constants) {
       return null;
     }
   }
-  state.addedHeadings.add(normalizedHeading);
   const level = parseInt(element.tagName.charAt(1));
   return {
     type: "heading",
     level,
     text: cleanedText,
+    format: "text",
     id: element.id || void 0
   };
 }
 
 function handleImg(win, element, state, constants, baseUrl) {
-  if (element.closest("figure")) return null;
-  const img = (
-    /** @type {HTMLImageElement} */
-    element
-  );
-  const src = extractBestImageUrl(img);
-  if (!src) return null;
-  if (isTrackingPixel(win, img)) return null;
-  if (isDecorativeImage(win, img, constants.LOGO_PATTERNS || [])) return null;
-  const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-  const normalizedSrc = normalizeImageUrl(absoluteSrc);
-  if (state.processedImages.has(normalizedSrc)) return null;
-  if (state.processedImages.size < 1e3) {
-    state.processedImages.add(normalizedSrc);
-  }
-  return {
-    type: "image",
-    src: absoluteSrc,
-    alt: img.alt || "",
-    caption: getImageCaption(img)
-  };
+  const item = createImageItem(win, element, state, constants, baseUrl);
+  if (item && !element.closest("figure")) item.caption = getImageCaption(element);
+  return item;
 }
 
-function handleList(element) {
+function handleList(element, excludedSelectors = []) {
   if (element.closest("blockquote")) return null;
-  if (element.closest("figure")) return null;
   if (element.closest("table")) return null;
   if (element.closest(".navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .sidebar, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc")) {
     return null;
@@ -3450,8 +3372,8 @@ function handleList(element) {
       cloneWithoutLinkAnnouncements(li)
     );
     processMathElements(clone);
-    return (clone.textContent || "").trim();
-  }).filter((text) => text.length > 0);
+    return { html: sanitizeParagraphHtml(clone, excludedSelectors) };
+  }).filter((item) => item.html.length > 0);
   if (items.length === 0) return null;
   return {
     type: "list",
@@ -3462,7 +3384,6 @@ function handleList(element) {
 
 function handleParagraph(win, element, state, constants) {
   if (element.closest("blockquote")) return null;
-  if (element.closest("figure")) return null;
   if (element.closest("table")) return null;
   if (state.standfirstElement && element === state.standfirstElement) return null;
   const text = (element.textContent || "").trim();
@@ -3492,7 +3413,7 @@ function handleParagraph(win, element, state, constants) {
     return null;
   }
   const originalText = getOriginalTextIfTranslated(element);
-  const finalText = originalText || sanitizeParagraphHtml(element);
+  const finalText = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(element, state.selectionExclusions);
   return {
     type: "paragraph",
     text: finalText,
@@ -3500,53 +3421,37 @@ function handleParagraph(win, element, state, constants) {
   };
 }
 
-function handleTable(element) {
+function handleTable(element, excludedSelectors = []) {
   if (element.closest("blockquote")) return null;
   const className = String(element.className || "").toLowerCase();
   if (className.includes("navbox") || className.includes("authority-control")) {
     return null;
   }
-  const tableText = (element.textContent || "").trim();
-  if (tableText.length < 50) return null;
-  const clone = cloneWithoutLinkAnnouncements(element);
-  const allElements = (
-    /** @type {HTMLElement} */
-    clone.querySelectorAll("*")
-  );
-  for (const el of Array.from(allElements)) {
-    el.removeAttribute("style");
-    for (const attr of Array.from(el.attributes)) {
-      if (attr.name.startsWith("on")) {
-        el.removeAttribute(attr.name);
-      }
-    }
+  const ownedRows = Array.from(element.querySelectorAll("tr")).filter((row) => row.closest("table") === element);
+  const cells = ownedRows.map((row) => Array.from(row.children).filter((cell) => cell.tagName === "TD" || cell.tagName === "TH"));
+  if (!cells.some((row) => row.length)) return null;
+  const hasHeaders = cells[0]?.length > 0 && cells[0].every((cell) => cell.tagName === "TH");
+  const rows = cells.map((row) => row.map((cell) => sanitizeParagraphHtml(cell, excludedSelectors)));
+  return { type: "table", cellFormat: "html", hasHeaders, ...hasHeaders ? { headers: rows[0] } : {}, rows: hasHeaders ? rows.slice(1) : rows };
+}
+
+function omitInitialArticleTitle(content, state) {
+  const firstBodyIndex = content.findIndex((item) => item.type !== "subtitle" && item.type !== "separator" && !item.isStandfirst && !(item.type === "image" && item.isFeatured));
+  const firstBody = content[firstBodyIndex];
+  if (firstBody?.type === "heading" && firstBody.level === 1 && state.mainTitleText && normalizeHeadingForDedup(firstBody.text) === state.mainTitleText) {
+    return content.filter((_item, index) => index !== firstBodyIndex);
   }
-  return {
-    type: "paragraph",
-    text: (
-      /** @type {HTMLElement} */
-      clone.outerHTML
-    ),
-    html: (
-      /** @type {HTMLElement} */
-      clone.outerHTML
-    )
-  };
+  return content;
 }
 
 function parseElements(win, elements, state, constants, baseUrl) {
   const content = [];
   let processedCount = 0;
   let skippedCount = 0;
-  let stopProcessing = false;
   const consumed = /* @__PURE__ */ new Set();
   const containerEligibility = /* @__PURE__ */ new Map();
   for (const { element, container, owned } of partitionCandidateElements(elements)) {
     if (consumed.has(element) || container && consumed.has(container)) continue;
-    if (stopProcessing) {
-      skippedCount++;
-      continue;
-    }
     const tagName = element.tagName.toLowerCase();
     if (shouldSkipStronglyExcluded(container || element)) {
       skippedCount++;
@@ -3555,14 +3460,14 @@ function parseElements(win, elements, state, constants, baseUrl) {
     if (container) {
       if (!containerEligibility.has(container)) {
         const previewState = { ...state, addedParagraphs: new Set(state.addedParagraphs || []) };
-        containerEligibility.set(container, !!handleDiv(container, previewState, constants));
+        containerEligibility.set(container, !!(container.tagName === "P" ? handleParagraph(win, container, previewState, constants) : handleDiv(container, previewState, constants)));
       }
       if (containerEligibility.get(container)) {
         for (const translated of Array.from(element.querySelectorAll("[data-original-text]"))) {
           const original = translated.getAttribute("data-original-text");
           if (original?.trim()) translated.textContent = original.trim();
         }
-        const html = sanitizeParagraphHtml(element);
+        const html = sanitizeParagraphHtml(element, state.selectionExclusions);
         content.push({ type: "paragraph", text: html, html });
         for (const child of owned || []) consumed.add(child);
         incrementContentType(state.debugInfo, "paragraph");
@@ -3571,13 +3476,10 @@ function parseElements(win, elements, state, constants, baseUrl) {
       continue;
     }
     const previousCount = content.length;
-    if (tagName.match(/^h[1-6]$/)) {
-      const headingText = (element.textContent || "").trim();
-      if (isEndOfContentSection(headingText)) {
-        stopProcessing = true;
-        pushDebugLog(state.debugInfo, `Stopping extraction at section: "${headingText}"`);
-        continue;
-      }
+    if (tagName === "hr") {
+      content.push({ type: "separator" });
+      processedCount++;
+    } else if (tagName.match(/^h[1-6]$/)) {
       const isReal = isRealHeading(element, win);
       if (!isReal) {
         skippedCount++;
@@ -3591,7 +3493,7 @@ function parseElements(win, elements, state, constants, baseUrl) {
       } else {
         skippedCount++;
       }
-    } else if (tagName === "p") {
+    } else if (tagName === "p" || tagName === "figcaption") {
       const item = handleParagraph(win, element, state, constants);
       if (item) {
         content.push(item);
@@ -3601,14 +3503,19 @@ function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     } else if (tagName === "figure") {
-      const item = handleFigure(win, element, state, constants, baseUrl);
-      if (item) {
-        content.push(item);
-        incrementContentType(state.debugInfo, "image");
-        processedCount++;
-      } else {
-        skippedCount++;
+      const mixedContent = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr")).some((child) => !child.closest("figcaption"));
+      if (mixedContent) continue;
+      const images = [];
+      for (const image of Array.from(element.querySelectorAll("img"))) {
+        const item = createImageItem(win, image, state, constants, baseUrl);
+        if (item) images.push(item);
       }
+      if (images.length) {
+        images[images.length - 1].caption = getImageCaption(element.querySelector("img"));
+        content.push(...images);
+        for (const _image of images) incrementContentType(state.debugInfo, "image");
+        processedCount += images.length;
+      } else skippedCount++;
     } else if (tagName === "img") {
       const item = handleImg(win, element, state, constants, baseUrl);
       if (item) {
@@ -3619,7 +3526,7 @@ function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     } else if (tagName === "blockquote") {
-      const item = handleBlockquote(element);
+      const item = handleBlockquote(element, state.selectionExclusions);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, "quote");
@@ -3637,14 +3544,14 @@ function parseElements(win, elements, state, constants, baseUrl) {
         processedCount++;
       }
     } else if (tagName === "ul" || tagName === "ol") {
-      const item = handleList(element);
+      const item = handleList(element, state.selectionExclusions);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, "list");
         processedCount++;
       }
     } else if (tagName === "table") {
-      const item = handleTable(element);
+      const item = handleTable(element, state.selectionExclusions);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, "table");
@@ -3668,19 +3575,21 @@ function parseElements(win, elements, state, constants, baseUrl) {
     state.debugInfo.processedCount = processedCount;
     state.debugInfo.skippedCount = skippedCount;
   }
-  return content;
+  return omitInitialArticleTitle(content, state);
 }
 
 function partitionCandidateElements(elements) {
   const selected = new Set(elements);
   const visited = /* @__PURE__ */ new Set();
   const entries = [];
+  const blockSelector = CANDIDATE_SELECTOR.split(",").filter((tag) => tag !== "code").concat(["aside", "nav", "footer"]).join(",");
   function append(element) {
     if (visited.has(element)) return;
     visited.add(element);
-    const descendants = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div,aside,nav,footer"));
+    const descendants = Array.from(element.querySelectorAll(blockSelector));
     const originalText = element.getAttribute("data-original-text");
-    if (element.tagName !== "DIV" || descendants.length === 0 || originalText?.trim()) {
+    const inlineImages = element.tagName === "P" && descendants.some((child) => child.tagName === "IMG");
+    if (element.tagName !== "DIV" && !inlineImages || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
       for (const child of Array.from(element.querySelectorAll("*"))) {
         if (selected.has(child)) append(child);
@@ -3746,19 +3655,42 @@ function processMathElements(container) {
       const textNode = document.createTextNode(` $${cleanedLatex}$ `);
       mathEl.replaceWith(textNode);
     } else {
-      mathEl.remove();
+      mathEl.replaceWith(document.createTextNode(mathEl.textContent || ""));
     }
   }
 }
 
-function sanitizeParagraphHtml(p) {
+function sanitizeParagraphHtml(p, excludedSelectors = []) {
   const clone = (
     /** @type {Element} */
     cloneWithoutLinkAnnouncements(p)
   );
+  for (const selector of excludedSelectors || []) {
+    for (const element of Array.from(clone.querySelectorAll(selector))) {
+      if (!element.matches("blockquote.twitter-tweet")) element.remove();
+    }
+  }
   processMathElements(clone);
   const allElements = clone.querySelectorAll("*");
   for (const el of Array.from(allElements)) {
+    if (el.tagName === "SPAN") {
+      const style = (
+        /** @type {HTMLElement} */
+        el.style
+      );
+      const bold = style?.fontWeight === "bold" || Number(style?.fontWeight) >= 600;
+      const italic = style?.fontStyle === "italic";
+      if (bold || italic) {
+        const wrapper = clone.ownerDocument.createElement(bold ? "strong" : "em");
+        wrapper.append(...el.childNodes);
+        el.replaceWith(wrapper);
+        if (bold && italic) {
+          const emphasis = clone.ownerDocument.createElement("em");
+          emphasis.append(...wrapper.childNodes);
+          wrapper.append(emphasis);
+        }
+      }
+    }
     for (const attr of Array.from(el.attributes)) {
       if (attr.name.startsWith("on")) {
         el.removeAttribute(attr.name);
@@ -3769,6 +3701,18 @@ function sanitizeParagraphHtml(p) {
     }
     if (el.tagName.toLowerCase() === "style" || el.tagName.toLowerCase() === "script") {
       el.remove();
+    }
+    if (el.tagName === "A") {
+      const href = el.getAttribute("href");
+      if (href && !href.startsWith("#")) {
+        try {
+          const absolute = new URL(href, p.ownerDocument.baseURI);
+          if (["http:", "https:", "mailto:"].includes(absolute.protocol)) el.setAttribute("href", absolute.href);
+          else el.removeAttribute("href");
+        } catch (_) {
+          el.removeAttribute("href");
+        }
+      }
     }
   }
   const emptyElements = clone.querySelectorAll("span:empty, div:empty");
@@ -3783,6 +3727,59 @@ function sanitizeParagraphHtml(p) {
 
 function sortElementsInDomOrder(elements) {
   return [...elements].sort(compareDomOrder);
+}
+
+// --- Selectors ---
+function isSelectedContentExcluded(element, exclusions) {
+  return exclusions.some((node) => {
+    if (!node.contains(element)) return false;
+    if (node === element && node.matches("blockquote.twitter-tweet") && node.textContent?.trim()) return false;
+    return true;
+  });
+}
+
+function readSelectedText(doc, value) {
+  for (const selector of selectorValues(value)) {
+    const node = doc.querySelector(selector);
+    if (node?.textContent?.trim()) return node.textContent.trim();
+  }
+  return "";
+}
+
+function resolveContentSelection(doc, selectors) {
+  try {
+    for (const name of ["articleContainer", "content", "title", "subtitle", "heroImage", "toc", "exclude"]) {
+      for (const selector of selectorValues(selectors[name])) doc.querySelector(selector);
+    }
+  } catch (error) {
+    if (error?.name === "SyntaxError") return { matched: false, roots: [], elements: [], exclusions: [] };
+    throw error;
+  }
+  const containers = selectorValues(selectors.articleContainer).flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
+  if (selectorValues(selectors.articleContainer).length && !containers.length) {
+    return { matched: false, roots: [], elements: [], exclusions: [] };
+  }
+  const scopes = containers.length ? containers : [doc];
+  const queries = selectorValues(selectors.content);
+  const roots = /* @__PURE__ */ new Set();
+  for (const scope of scopes) {
+    if (!queries.length && scope.nodeType === 1) roots.add(scope);
+    for (const selector of queries) {
+      if (scope.nodeType === 1 && scope.matches(selector)) roots.add(scope);
+      for (const node of Array.from(scope.querySelectorAll(selector))) roots.add(node);
+    }
+  }
+  const exclusions = selectorValues(selectors.exclude).flatMap((selector) => Array.from(doc.querySelectorAll(selector))).filter((node) => !containers.some((container) => node.contains(container)));
+  const elements = /* @__PURE__ */ new Set();
+  for (const root of roots) {
+    if (root.matches(CANDIDATE_SELECTOR)) elements.add(root);
+    for (const node of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) elements.add(node);
+  }
+  return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions };
+}
+
+function selectorValues(value) {
+  return (Array.isArray(value) ? value : [value]).filter((item) => typeof item === "string" && item.trim());
 }
 
 // --- Fallbacks ---
@@ -3802,15 +3799,14 @@ function extractEmergencyFallback(win, doc, state, constants, mainContent) {
         const originalText = getOriginalTextIfTranslated(element);
         content.push({ type: "paragraph", text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
-        const cleanedText = cleanHeadingText(text);
-        const normalized = normalizeHeadingForDedup(cleanedText);
-        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
-          state.addedHeadings.add(normalized);
-          content.push({ type: "heading", level: parseInt(tagName.charAt(1)), text: cleanedText });
-        }
+        content.push(createHeadingItem(element));
       }
     }
-    if (content.length > 0) return content;
+    if (content.length > 0) {
+      const result = omitInitialArticleTitle(content, state);
+      if (result.length > 0) return result;
+      content.length = 0;
+    }
   }
   const containers = doc.querySelectorAll('article, main, [role="main"]');
   for (const container of containers) {
@@ -3824,17 +3820,16 @@ function extractEmergencyFallback(win, doc, state, constants, mainContent) {
         const originalText = getOriginalTextIfTranslated(element);
         content.push({ type: "paragraph", text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
-        const cleanedText = cleanHeadingText(text);
-        const normalized = normalizeHeadingForDedup(cleanedText);
-        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
-          state.addedHeadings.add(normalized);
-          content.push({ type: "heading", level: parseInt(tagName.charAt(1)), text: cleanedText });
-        }
+        content.push(createHeadingItem(element));
       }
     }
-    if (content.length > 0) return content;
+    if (content.length > 0) {
+      const result = omitInitialArticleTitle(content, state);
+      if (result.length > 0) return result;
+      content.length = 0;
+    }
   }
-  return content.length > 0 ? content : null;
+  return null;
 }
 
 function extractLastResortContainerSearch(win, doc, state, constants, baseUrl) {
@@ -3870,16 +3865,11 @@ function extractLastResortContainerSearch(win, doc, state, constants, baseUrl) {
       const finalText = originalText || cleanedElement.innerHTML;
       content.push({ type: "paragraph", text: finalText, html: finalText });
     } else if (tagName.match(/^h[1-6]$/)) {
-      const cleanedText = cleanHeadingText(text);
-      const normalized = normalizeHeadingForDedup(cleanedText);
-      if (normalized === state.mainTitleText) continue;
-      if (state.addedHeadings.has(normalized)) continue;
-      state.addedHeadings.add(normalized);
-      const level = parseInt(tagName.charAt(1));
-      content.push({ type: "heading", level, text: cleanedText });
+      content.push(createHeadingItem(element));
     }
   }
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
@@ -3890,13 +3880,7 @@ function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
   for (const heading of allHeadings) {
     if (headingCount >= 50) break;
     if (isWidget(win, heading)) continue;
-    const text = cleanHeadingText(cloneWithoutLinkAnnouncements(heading).textContent || "");
-    const normalized = normalizeHeadingForDedup(text);
-    if (normalized === state.mainTitleText) continue;
-    if (state.addedHeadings.has(normalized)) continue;
-    state.addedHeadings.add(normalized);
-    const level = parseInt(heading.tagName.charAt(1));
-    const item = { type: "heading", level, text };
+    const item = createHeadingItem(heading);
     content.push(item);
     sourceElements.set(item, heading);
     headingCount++;
@@ -3921,7 +3905,8 @@ function extractUltimateFallbackAllParagraphs(win, doc, state, constants) {
     paragraphCount++;
   }
   content.sort((a, b) => compareDomOrder(sourceElements.get(a), sourceElements.get(b)));
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
@@ -3936,13 +3921,7 @@ function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
   for (const element of elements) {
     const tagName = element.tagName.toLowerCase();
     if (tagName.match(/^h[1-6]$/)) {
-      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || "");
-      const normalized = normalizeHeadingForDedup(text);
-      if (normalized === state.mainTitleText) continue;
-      if (state.addedHeadings.has(normalized)) continue;
-      state.addedHeadings.add(normalized);
-      const level = parseInt(tagName.charAt(1));
-      content.push({ type: "heading", level, text });
+      content.push(createHeadingItem(element));
     } else if (tagName === "p") {
       const cleanedElement = cloneWithoutLinkAnnouncements(element);
       const text = (cleanedElement.textContent || "").trim();
@@ -3986,7 +3965,8 @@ function extractWhenMainContentMissing(win, doc, state, constants, baseUrl) {
       });
     }
   }
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 function findTwitterContainer(doc, mainContent) {
@@ -4019,13 +3999,15 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   pushDebugLog(state.debugInfo, "TWITTER_X_CONTAINER", { source });
   const content = [];
   const addedImageUrls = /* @__PURE__ */ new Set();
+  const headingElements = /* @__PURE__ */ new Set();
   const allBlocks = container.querySelectorAll("div[data-offset-key]");
   const uniqueBlocks = /* @__PURE__ */ new Map();
   for (const block of allBlocks) {
     const text = (block.textContent || "").trim();
     if (!text) continue;
-    if (!uniqueBlocks.has(text) || block.children.length > (uniqueBlocks.get(text)?.children.length || 0)) {
-      uniqueBlocks.set(text, block);
+    const key = block.querySelector("h1, h2, h3") || text;
+    if (!uniqueBlocks.has(key) || block.children.length > (uniqueBlocks.get(key)?.children.length || 0)) {
+      uniqueBlocks.set(key, block);
     }
   }
   const contentBlocks = Array.from(uniqueBlocks.values());
@@ -4046,13 +4028,9 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   for (const element of allElements) {
     const tagName = element.tagName.toLowerCase();
     if (tagName.match(/^h[1-3]$/)) {
-      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || "");
-      const normalized = normalizeHeadingForDedup(text);
-      if (normalized === state.mainTitleText) continue;
-      if (state.addedHeadings.has(normalized)) continue;
-      state.addedHeadings.add(normalized);
-      const level = element.classList.contains("longform-header-one") ? 1 : element.classList.contains("longform-header-two") ? 2 : 3;
-      content.push({ type: "heading", level, text, id: element.id || void 0 });
+      if (headingElements.has(element)) continue;
+      headingElements.add(element);
+      content.push(createHeadingItem(element));
     } else if (tagName === "img") {
       if (element.closest("figure")) continue;
       const img = (
@@ -4076,11 +4054,9 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       if (!text) continue;
       const innerHeading = element.querySelector("h1, h2, h3");
       if (innerHeading) {
-        const headingText = cleanHeadingText(cloneWithoutLinkAnnouncements(innerHeading).textContent || "");
-        const normalized = normalizeHeadingForDedup(headingText);
-        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
-          state.addedHeadings.add(normalized);
-          content.push({ type: "heading", level: 2, text: headingText });
+        if (!headingElements.has(innerHeading)) {
+          headingElements.add(innerHeading);
+          content.push(createHeadingItem(innerHeading));
         }
         continue;
       }
@@ -4092,7 +4068,8 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     }
   }
   pushDebugLog(state.debugInfo, "TWITTER_X_EXTRACTED", { itemCount: content.length });
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 
@@ -4101,6 +4078,10 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   // Main extraction logic (inlined from runExtraction)
   const win = window;
   const doc = document;
+  const requestedUrl = new URL(baseUrl || win.location.href);
+  const currentUrl = new URL(win.location.href);
+  requestedUrl.hash = currentUrl.hash = "";
+  if (requestedUrl.href !== currentUrl.href) throw new Error("The page changed before extraction started.");
   const debugInfo = enableDebugInfo ? createDebugInfo(win, doc, baseUrl) : null;
   if (enableDebugInfo) {
     logExtractionStart(baseUrl, enableDebugInfo);
@@ -4108,7 +4089,7 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   }
   try {
     try {
-      await waitForContentLoad(doc);
+      if (!selectors) await waitForContentLoad(doc);
     } catch (e) {
       pushDebugLog(debugInfo, "WAIT_FOR_CONTENT_SKIPPED", { error: String(e) });
     }
@@ -4129,6 +4110,13 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       LOGO_PATTERNS: CONSTANTS.LOGO_PATTERNS
     };
     const metadata = extractMetadata(doc, baseUrl);
+    const selection = selectors ? resolveContentSelection(doc, selectors) : null;
+    if (selectors) {
+      if (!selection.matched) return { ...metadata, content: [], selectorMatched: false, debugInfo };
+      metadata.title = readSelectedText(doc, selectors.title) || metadata.title;
+    }
+    const language = (doc.documentElement.lang || "").trim().toLowerCase().split(/[-_]/)[0];
+    const detectedLanguage = /^[a-z]{2,3}$/.test(language) ? language === "ua" ? "uk" : language : void 0;
     const mainTitleText = normalizeHeadingForDedup(metadata.title);
     pushDebugLog(debugInfo, "METADATA_EXTRACTED", metadata);
     const state = {
@@ -4138,30 +4126,30 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       standfirstElement: null,
       standfirstText: null,
       content: [],
+      selectionExclusions: selectors ? selectorValues(selectors.exclude) : [],
       debugInfo
     };
-    if (mainTitleText) {
-      state.addedHeadings.add(mainTitleText);
-    }
-    const twitterContent = tryExtractTwitterX(win, doc, state, constants, baseUrl);
+    const twitterContent = selectors ? null : tryExtractTwitterX(win, doc, state, constants, baseUrl);
     if (twitterContent && twitterContent.length > 0) {
       return {
         title: metadata.title,
         author: metadata.author,
         publishDate: metadata.publishDate,
-        content: deduplicateHeadings(twitterContent),
+        content: twitterContent,
         debugInfo
       };
     }
-    const mainContent = findMainContent(win, doc, (el) => isExcluded(win, el, constants));
+    const mainContent = selection?.roots[0] || findMainContent(win, doc, (el) => isExcluded(win, el, constants));
     pushDebugLog(debugInfo, "MAIN_CONTENT_FOUND", {
       found: !!mainContent,
       tagName: mainContent?.tagName,
       className: mainContent?.className,
       textLength: mainContent?.textContent?.length || 0
     });
-    const featuredImage = extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || []);
-    const standfirstResult = extractStandfirst(mainContent);
+    const selectedHero = selectors?.heroImage ? selectorValues(selectors.heroImage).flatMap((selector) => Array.from(doc.querySelectorAll(selector))).find((node) => node.tagName === "IMG" && !isSelectedContentExcluded(node, selection.exclusions)) : null;
+    const featuredImage = selection ? selectedHero ? createImageItem(win, selectedHero, state, constants, baseUrl) : null : extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || []);
+    const selectedSubtitle = selectors?.subtitle ? selectorValues(selectors.subtitle).map((selector) => doc.querySelector(selector)).find(Boolean) : null;
+    const standfirstResult = selection ? { text: selectedSubtitle?.textContent?.trim() || null, element: selectedSubtitle } : extractStandfirst(mainContent);
     state.standfirstElement = standfirstResult.element;
     state.standfirstText = standfirstResult.text;
     let content = [];
@@ -4182,11 +4170,12 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       content.push({
         type: "subtitle",
         text: state.standfirstText,
+        format: "text",
         isStandfirst: true
       });
     }
     if (mainContent) {
-      const allElements = collectCandidateElements(mainContent, win);
+      const allElements = selection ? selection.elements.filter((element) => !isSelectedContentExcluded(element, selection.exclusions)) : collectCandidateElements(mainContent, win);
       if (debugInfo) {
         debugInfo.foundElements = allElements.length;
       }
@@ -4204,28 +4193,27 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
         content.push(...fallbackContent);
       }
     }
-    if (content.length === 0 || content.length === 1 && content[0].type === "image") {
+    if (!selection && (content.length === 0 || content.length === 1 && content[0].type === "image")) {
       pushDebugLog(debugInfo, "LAST_RESORT_FALLBACK", {});
       const lastResortContent = extractLastResortContainerSearch(win, doc, state, constants, baseUrl);
       if (lastResortContent) {
         content.push(...lastResortContent);
       }
     }
-    if (content.length === 0 || content.length === 1 && content[0].type === "image") {
+    if (!selection && (content.length === 0 || content.length === 1 && content[0].type === "image")) {
       pushDebugLog(debugInfo, "ULTIMATE_FALLBACK", {});
       const ultimateContent = extractUltimateFallbackAllParagraphs(win, doc, state, constants);
       if (ultimateContent) {
         content.push(...ultimateContent);
       }
     }
-    if (content.length === 0) {
+    if (!selection && content.length === 0) {
       pushDebugLog(debugInfo, "EMERGENCY_FALLBACK", {});
       const emergencyContent = extractEmergencyFallback(win, doc, state, constants, mainContent);
       if (emergencyContent) {
         content.push(...emergencyContent);
       }
     }
-    content = deduplicateHeadings(content);
     if (debugInfo) {
       const contentTypes = {};
       for (const item of content) {
@@ -4238,6 +4226,8 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       title: metadata.title,
       author: metadata.author,
       publishDate: metadata.publishDate,
+      detectedLanguage,
+      ...selection ? { selectorMatched: true } : {},
       content,
       debugInfo
     };

@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const library = vi.hoisted(() => ({ getDocument: vi.fn(), ready: null, stored: vi.fn() }));
 vi.mock('../../scripts/api/pdf-storage.js', () => ({ getPdfData: library.stored }));
+vi.mock('../../scripts/api/pdf-operation-storage.js', () => ({ putPdfOperationBlob: vi.fn(async (id, _run, page) => `${id}:${page}`) }));
 vi.mock('../../scripts/offscreen/pdf/utils/pdf-loader.js', () => ({ loadPdfJs: () => library.ready || Promise.resolve(library) }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), criticalLog: vi.fn() }));
 vi.mock('../../scripts/utils/config.js', () => ({ CONFIG: { PDF_PARSE_TIMEOUT_MS: 500, PDF_FIRST_PAGE_RENDER_TIMEOUT_MS: 500, PDF_RENDER_TIMEOUT_MS: 500 } }));
 
-import { handleGetPdfMetadata, handleRenderPdfPageImage, handleRenderAllPdfPages, handleCancelPdfRender } from '../../scripts/offscreen/message-handlers.js';
+import { handleGetPdfMetadata, handleRenderAllPdfPages, handleCancelPdfRender } from '../../scripts/offscreen/message-handlers.js';
 import { startPdfRender, cancelPdfRender } from '../../scripts/offscreen/pdf/render-operations.js';
 const data = operationId => ({ operationId, pdfData: btoa('%PDF-1.7\n'), pdfUrl: 'file:///document.pdf', pageNum: 1, totalPages: 1, scale: 1 });
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
@@ -19,7 +20,8 @@ function documentTask() {
 
 beforeEach(() => {
   vi.useFakeTimers(); vi.clearAllMocks(); library.getDocument.mockReset(); library.stored.mockReset(); library.ready = null;
-  vi.stubGlobal('document', { fonts: {}, createElement: vi.fn(() => ({ width: 0, height: 0, getContext: () => ({}), toDataURL: () => 'data:image/jpeg;base64,AQ==' })) });
+  chrome.runtime.sendMessage.mockResolvedValue({});
+  vi.stubGlobal('document', { fonts: {}, createElement: vi.fn(() => ({ width: 0, height: 0, getContext: () => ({}), toDataURL: () => 'data:image/jpeg;base64,AQ==', toBlob: callback => callback(new Blob([new Uint8Array([1])], { type: 'image/jpeg' })) })) });
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
@@ -34,7 +36,7 @@ describe('PDF rendering ownership', () => {
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ success: true, numPages: 1 }));
     expect(fetch).not.toHaveBeenCalled();
   });
-  it.each([handleRenderPdfPageImage, handleRenderAllPdfPages])('allocates a bounded complete-page canvas for oversized geometry', async handler => {
+  it.each([handleRenderAllPdfPages])('allocates a bounded complete-page canvas for oversized geometry', async handler => {
     const { page, task } = documentTask();
     page.getViewport = ({ scale }) => ({ width: 40000 * scale, height: 200 * scale, scale });
     library.getDocument.mockReturnValue(task);
@@ -51,13 +53,13 @@ describe('PDF rendering ownership', () => {
     if (stored instanceof Error) library.stored.mockRejectedValue(stored);
     else library.stored.mockResolvedValue(stored);
     vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Unexpected source fetch'); }));
-    for (const handler of [handleRenderPdfPageImage, handleRenderAllPdfPages]) {
+    for (const handler of [handleRenderAllPdfPages]) {
       const reply = vi.fn(); await handler('render', { ...data(crypto.randomUUID()), pdfData: undefined, pdfDataRef: 'pdf-render:missing' }, reply);
       expect(reply).toHaveBeenCalledWith(expect.objectContaining({ success: false, translationKey: 'errorPdfDataUnavailable' }));
     }
     expect(fetch).not.toHaveBeenCalled(); expect(library.getDocument).not.toHaveBeenCalled();
   });
-  it.each([handleRenderPdfPageImage, handleRenderAllPdfPages])('releases its document and canvas before replying', async handler => {
+  it.each([handleRenderAllPdfPages])('releases its document and canvas before replying', async handler => {
     const { page, task } = documentTask(); library.getDocument.mockReturnValue(task);
     const reply = vi.fn(() => {
       expect(task.destroy).toHaveBeenCalledOnce();
@@ -71,7 +73,7 @@ describe('PDF rendering ownership', () => {
   it('consumes cancellation arriving before admission without loading PDF.js', async () => {
     const id = crypto.randomUUID();
     handleCancelPdfRender('cancel', { operationId: id }, vi.fn());
-    const reply = vi.fn(); await handleRenderPdfPageImage('render', data(id), reply);
+    const reply = vi.fn(); await handleRenderAllPdfPages('render', data(id), reply);
     expect(reply).toHaveBeenCalledWith(expect.objectContaining({ success: false, translationKey: 'statusCancelled' }));
     expect(library.getDocument).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
   });
@@ -79,7 +81,7 @@ describe('PDF rendering ownership', () => {
   it('aborts a stalled library wait without admitting a late loading task', async () => {
     const ready = deferred(); library.ready = ready.promise;
     const id = crypto.randomUUID(), reply = vi.fn();
-    const pending = handleRenderPdfPageImage('render', data(id), reply); await tick();
+    const pending = handleRenderAllPdfPages('render', data(id), reply); await tick();
     cancelPdfRender(id); await pending;
     ready.resolve(library); await tick();
     expect(library.getDocument).not.toHaveBeenCalled();
@@ -94,17 +96,17 @@ describe('PDF rendering ownership', () => {
     if (stage === 'outline') a.pdf.getOutline.mockReturnValue(stalled.promise);
     library.getDocument.mockReturnValueOnce(a.task).mockReturnValueOnce(b.task);
     const id = crypto.randomUUID(), oldReply = vi.fn();
-    const old = handleRenderPdfPageImage('old', data(id), oldReply); await tick();
+    const old = handleRenderAllPdfPages('old', data(id), oldReply); await tick();
     cancelPdfRender(id); await old;
     expect(a.task.destroy).toHaveBeenCalledOnce();
     expect(oldReply).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'statusCancelled' }));
-    const nextReply = vi.fn(); await handleRenderPdfPageImage('new', data(crypto.randomUUID()), nextReply);
-    expect(nextReply).toHaveBeenCalledWith(expect.objectContaining({ success: true, width: 600, height: 800 }));
+    const nextReply = vi.fn(); await handleRenderAllPdfPages('new', data(crypto.randomUUID()), nextReply);
+    expect(nextReply).toHaveBeenCalledWith(expect.objectContaining({ success: true, images: [expect.objectContaining({ width: 600, height: 800 })] }));
     expect(b.page.render).toHaveBeenCalledOnce(); expect(b.task.destroy).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each([handleRenderPdfPageImage, handleRenderAllPdfPages])('cancels only its active render task and cleans its canvas', async handler => {
+  it.each([handleRenderAllPdfPages])('cancels only its active render task and cleans its canvas', async handler => {
     const a = documentTask(), b = documentTask(), rendering = deferred();
     const renderTask = { promise: rendering.promise, cancel: vi.fn(() => rendering.reject(Object.assign(new Error('Cancelled'), { name: 'RenderingCancelledException' }))) };
     a.page.render.mockReturnValue(renderTask);

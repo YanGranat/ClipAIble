@@ -3,20 +3,7 @@
 // These types define the shape of extraction results and internal data structures
 
 /**
- * @typedef {Object} ContentItem
- * @property {'paragraph'|'heading'|'image'|'quote'|'code'|'list'|'subtitle'} type - Content type
- * @property {string} [text] - Text content
- * @property {string} [html] - HTML content for paragraphs
- * @property {number} [level] - Heading level (1-6)
- * @property {string} [id] - Element ID
- * @property {string} [src] - Image source URL
- * @property {string} [alt] - Image alt text
- * @property {string} [caption] - Image caption
- * @property {boolean} [isFeatured] - Whether image is featured
- * @property {boolean} [isStandfirst] - Whether subtitle is standfirst
- * @property {string} [language] - Code language
- * @property {boolean} [ordered] - Whether list is ordered
- * @property {string[]} [items] - List items
+ * @typedef {import('../../types.js').ContentItem} ContentItem
  */
 
 /**
@@ -25,6 +12,8 @@
  * @property {string} author - Article author
  * @property {string} publishDate - Publication date (ISO format)
  * @property {ContentItem[]} content - Extracted content items
+ * @property {string} [detectedLanguage] - Current document language
+ * @property {boolean} [selectorMatched] - Whether the supplied selectors matched content
  * @property {DebugInfo|null} debugInfo - Debug information (if enabled)
  * @property {string} [error] - Error message (if extraction failed)
  * @property {string} [errorStack] - Error stack trace (if extraction failed)
@@ -131,6 +120,7 @@
  * @property {string} mainTitleText - Main title text (normalized)
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing
+ * @property {string[]} [selectionExclusions] - Excluded subtrees for the current selector extraction
  * @property {ContentItem[]} content - Content items array being built
  * @property {DebugInfo|null} debugInfo - Debug info object
  */

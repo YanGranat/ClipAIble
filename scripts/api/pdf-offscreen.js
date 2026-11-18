@@ -2,46 +2,20 @@
 // PDF extraction using Offscreen Document API
 // This is the proper way to use PDF.js in Manifest V3 service worker
 
-import { log, logError, logWarn, criticalLog } from '../utils/logging.js';
+import { log, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { savePdfData, removePdfData, validatePdfData } from './pdf-storage.js';
 import { isCancelled } from '../state/processing.js';
 import { fetchPdfFile } from '../offscreen/pdf/utils/pdf-fetcher.js';
-import { withOffscreenDocumentLock } from './offscreen-document.js';
+import { withOffscreenDocumentLock, setupOffscreenDocumentUnlocked } from './offscreen-document.js';
 import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
+import { beginPdfOperation, takePdfOperationBlob, removePdfOperation } from './pdf-operation-storage.js';
+import { isTrustedExtensionSender } from '../utils/security/message-sender.js';
 
-function rejectPdfError(reject, error) {
-  localizePdfError(error).then(reject, reject);
-}
 function responseError(response) {
   return Object.assign(new Error(response?.error || ''), {
     translationKey: response?.translationKey, translationParams: response?.translationParams
   });
-}
-
-/**
- * Setup offscreen document for PDF extraction
- * Reuses existing offscreen document if available
- */
-async function setupOffscreenDocument() {
-  return withOffscreenDocumentLock(setupOffscreenDocumentUnlocked);
-}
-
-async function setupOffscreenDocumentUnlocked() {
-  if (!chrome.offscreen) throw createPdfError('Offscreen API not available', 'errorPdfJsLoadFailed');
-  const offscreenUrl = chrome.runtime.getURL('offscreen.html');
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT'],
-    documentUrls: [offscreenUrl]
-  });
-  if (contexts.length > 0) return;
-
-  await chrome.offscreen.createDocument({
-    url: offscreenUrl,
-    reasons: ['BLOBS', 'DOM_SCRAPING'],
-    justification: 'PDF extraction and TTS require DOM and WASM support.'
-  });
-  await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_SETUP_DELAY || 500));
 }
 
 function sendOffscreenMessage(message, callback, admission) {
@@ -64,7 +38,7 @@ function sendOffscreenMessage(message, callback, admission) {
  */
 export async function extractPdfViaOffscreen(pdfUrl, pdfData = null, cancellationOptions) {
   const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData, {}, cancellationOptions,
-    Math.min(2147483647, CONFIG.MAX_OPERATION_TIMEOUT_MS || 2147483647), true);
+    CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS, true);
   return response.result;
 }
 
@@ -78,57 +52,7 @@ export async function extractPdfViaOffscreen(pdfUrl, pdfData = null, cancellatio
  * @throws {Error} If message send fails
  * @throws {Error} If no response from offscreen document
  */
-export async function extractPdfPageText(pdfUrl, pageNum) {
-  log('[ClipAIble PDF Offscreen] Extracting text from page', { pdfUrl, pageNum });
-  
-  try {
-    await setupOffscreenDocument();
-    
-    return new Promise((resolve, reject) => {
-      const messageId = `EXTRACT_PDF_PAGE_TEXT_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      sendOffscreenMessage(
-        {
-          target: 'offscreen',
-          type: 'EXTRACT_PDF_PAGE_TEXT',
-          data: { pdfUrl, pageNum }
-        },
-        (response) => {
-          if (chrome.runtime.lastError) {
-            logError('[ClipAIble PDF Offscreen] Message send failed', chrome.runtime.lastError);
-            rejectPdfError(reject, createPdfError(chrome.runtime.lastError.message, 'errorPdfJsLoadFailed'));
-            return;
-          }
-          
-          if (!response) {
-            logError('[ClipAIble PDF Offscreen] No response from offscreen');
-            rejectPdfError(reject, createPdfError('No response from offscreen document', 'errorPdfJsLoadFailed'));
-            return;
-          }
-          
-          if (response.success) {
-            log('[ClipAIble PDF Offscreen] Page text extracted', {
-              messageId,
-              pageNum,
-              textLength: response.text?.length || 0
-            });
-            resolve(response.text || '');
-          } else {
-            logError('[ClipAIble PDF Offscreen] Page text extraction failed', {
-              messageId,
-              pageNum,
-              error: response.error
-            });
-            rejectPdfError(reject, responseError(response));
-          }
-        }
-      ).catch(reject);
-    });
-  } catch (error) {
-    logError('[ClipAIble PDF Offscreen] Page text extraction via offscreen failed', error);
-    throw error;
-  }
-}
+
 
 /**
  * Get PDF metadata (number of pages) via offscreen
@@ -158,165 +82,7 @@ export async function getPdfMetadata(pdfUrl, pdfData = null, cancellationOptions
  * @throws {Error} If message send fails
  * @throws {Error} If no response from offscreen document
  */
-export async function getPdfPageDimensions(pdfUrl, pageNum = 1, pdfData = null) {
-  log('[ClipAIble PDF Offscreen] Getting PDF page dimensions', { pdfUrl, pageNum });
-  
-  try {
-    await setupOffscreenDocument();
-    
-    // CRITICAL: Wait for offscreen to be ready to receive messages
-    // Send ping to ensure message handler is registered
-    await new Promise((resolve, reject) => {
-      const pingId = `PING_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const timeout = setTimeout(() => {
-        logWarn('[ClipAIble PDF Offscreen] Ping timeout - offscreen may not be ready, but continuing anyway');
-        resolve(); // Continue anyway - might work
-      }, 1000); // Reduced from 2000ms to 1000ms - ping should respond quickly
-      
-      sendOffscreenMessage(
-        {
-          target: 'offscreen',
-          type: 'PING',
-          data: { pingId }
-        },
-        (response) => {
-          clearTimeout(timeout);
-          if (chrome.runtime.lastError) {
-            logWarn('[ClipAIble PDF Offscreen] Ping failed, but continuing anyway', chrome.runtime.lastError);
-            resolve(); // Continue anyway
-            return;
-          }
-          log('[ClipAIble PDF Offscreen] Ping successful - offscreen is ready');
-          // CRITICAL: Add small delay after ping to ensure offscreen is fully ready
-          setTimeout(() => {
-            resolve();
-          }, 50); // Reduced from 100ms to 50ms - minimal delay for readiness
-        }
-      ).catch(reject);
-    });
-    
-    // CRITICAL: For local files, PDF data should already be in IndexedDB
-    // (saved in pdf.js before calling getPdfPageDimensions)
-    // Use pdfDataRef (URL) instead of sending base64 to avoid message size limits
-    // Offscreen document can load PDF data directly from IndexedDB using the URL
-    // NOTE: We don't try to save here because:
-    // 1. Dynamic import() is not allowed in service worker
-    // 2. PDF data is already saved in pdf.js before this function is called
-    let pdfDataRef = null;
-    if (pdfData instanceof ArrayBuffer) {
-      // PDF data is provided - it should already be in IndexedDB from pdf.js
-      // Just use the URL as reference for offscreen document
-      pdfDataRef = pdfUrl;
-      log('[ClipAIble PDF Offscreen] Using PDF data reference (should already be in IndexedDB)', {
-        pdfUrl,
-        size: pdfData.byteLength,
-        note: 'PDF data was saved to IndexedDB in pdf.js before calling this function'
-      });
-    }
-    
-    return new Promise((resolve, reject) => {
-      const messageId = `GET_PDF_PAGE_DIMENSIONS_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      const messageToSend = {
-        target: 'offscreen',
-        type: 'GET_PDF_PAGE_DIMENSIONS',
-        data: { 
-          pdfUrl, 
-          pageNum,
-          pdfDataRef // Will be null if pdfData is not provided or save failed
-        }
-      };
-      
-      log('[ClipAIble PDF Offscreen] Sending GET_PDF_PAGE_DIMENSIONS message', {
-        messageId,
-        pdfUrl,
-        pageNum,
-        hasPdfData: !!pdfData,
-        hasPdfDataRef: !!messageToSend.data.pdfDataRef,
-        pdfDataRef: messageToSend.data.pdfDataRef,
-        messageType: messageToSend.type,
-        messageTarget: messageToSend.target,
-        messageKeys: Object.keys(messageToSend)
-      });
-      
-      // CRITICAL: Don't use JSON.stringify for logging - it may truncate large base64 strings
-      // Just log metadata, not the actual data (only in DEBUG mode)
-      if (CONFIG.LOG_LEVEL === 0) {
-        console.log('[PDF_OFFSCREEN] About to send message:', {
-          target: messageToSend.target,
-          type: messageToSend.type,
-          pdfUrl: messageToSend.data.pdfUrl,
-          pageNum: messageToSend.data.pageNum,
-          hasPdfData: !!messageToSend.data.pdfData,
-          pdfDataLength: messageToSend.data.pdfData?.length || 0,
-          pdfDataPreview: messageToSend.data.pdfData?.substring(0, 50) || 'null'
-        });
-      }
-      
-      sendOffscreenMessage(
-        messageToSend,
-        (response) => {
-          // CRITICAL: Log response immediately (only in DEBUG mode)
-          if (CONFIG.LOG_LEVEL === 0) {
-            console.log('[PDF_OFFSCREEN] Response received:', {
-              hasResponse: !!response,
-              response: response,
-              lastError: chrome.runtime.lastError?.message,
-              responseSuccess: response?.success,
-              responseError: response?.error
-            });
-          }
-          
-          if (chrome.runtime.lastError) {
-            logError('[ClipAIble PDF Offscreen] Message send failed', {
-              error: chrome.runtime.lastError.message,
-              messageId,
-              messageType: messageToSend.type,
-              messageTarget: messageToSend.target
-            });
-            rejectPdfError(reject, createPdfError(chrome.runtime.lastError.message, 'errorPdfJsLoadFailed'));
-            return;
-          }
-          
-          if (!response) {
-            logError('[ClipAIble PDF Offscreen] No response from offscreen', {
-              messageId,
-              messageType: messageToSend.type,
-              messageTarget: messageToSend.target,
-              note: 'Message may not have reached offscreen handler'
-            });
-            rejectPdfError(reject, createPdfError('No response from offscreen document', 'errorPdfJsLoadFailed'));
-            return;
-          }
-          
-          if (response.success) {
-            log('[ClipAIble PDF Offscreen] PDF page dimensions retrieved', {
-              messageId,
-              pageNum,
-              width: response.width,
-              height: response.height
-            });
-            resolve({
-              width: response.width,
-              height: response.height,
-              mediaBox: response.mediaBox,
-              cropBox: response.cropBox
-            });
-          } else {
-            logError('[ClipAIble PDF Offscreen] PDF page dimensions retrieval failed', {
-              messageId,
-              error: response.error
-            });
-            rejectPdfError(reject, responseError(response));
-          }
-        }
-      ).catch(reject);
-    });
-  } catch (error) {
-    logError('[ClipAIble PDF Offscreen] PDF page dimensions retrieval via offscreen failed', error);
-    throw error;
-  }
-}
+
 
 /** Render request-owned PDF bytes without touching browser tabs. */
 async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOptions = {}, timeoutMs, allowUrl = false) {
@@ -337,6 +103,7 @@ async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOp
   const operationId = crypto.randomUUID();
   const pdfDataRef = hasData ? `pdf-render:${operationId}` : undefined;
   let saved = false;
+  let resultCreated = false;
   let cleanup;
   const cleanupOwnedData = () => {
     if (!saved) return cleanup || Promise.resolve();
@@ -374,17 +141,43 @@ async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOp
   const pages = fields.totalPages || 1;
   const deadline = timeoutMs ?? Math.min(2147483647, CONFIG.PDF_PARSE_TIMEOUT_MS + CONFIG.PDF_FIRST_PAGE_RENDER_TIMEOUT_MS +
     Math.max(0, pages - 1) * CONFIG.PDF_RENDER_TIMEOUT_MS);
-  const deadlineTimer = setTimeout(() => cancel(createPdfError('PDF rendering timed out', 'errorTimeout')), deadline);
+  let deadlineTimer;
+  const refreshDeadline = () => {
+    clearTimeout(deadlineTimer);
+    deadlineTimer = setTimeout(() => cancel(createPdfError('PDF processing timed out', 'errorTimeout')),
+      Math.min(deadline, CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS || 600000));
+  };
+  refreshDeadline();
+  let lastProgress = 0;
+  const receiveProgress = (message, sender) => {
+    const progress = message?.data;
+    if (settled || message?.target !== 'pdf-progress' || message.type !== 'PDF_PROGRESS' ||
+        !isTrustedExtensionSender(sender) || sender.url !== chrome.runtime.getURL('offscreen.html') ||
+        progress?.operationId !== operationId || !Number.isInteger(progress.current) ||
+        !Number.isInteger(progress.total) || progress.total < 1 || progress.current <= lastProgress ||
+        progress.current > progress.total) return;
+    lastProgress = progress.current;
+    void checkAdmission().then(() => {
+      if (settled) return;
+      refreshDeadline();
+      cancellationOptions.onProgress?.(progress.current, progress.total);
+    }).catch(cancel);
+  };
+  chrome.runtime.onMessage.addListener(receiveProgress);
   const work = (async () => {
     let workFailure;
     try {
+      if (type === 'RENDER_ALL_PDF_PAGES') {
+        await beginPdfOperation(operationId, cancellationOptions.processingRunId ?? null);
+        resultCreated = true;
+      }
       if (hasData) {
-        await savePdfData(pdfDataRef, pdfData);
+        await savePdfData(pdfDataRef, pdfData, cancellationOptions.processingRunId ?? null);
         saved = true;
       }
       await checkAdmission();
       return await new Promise((resolve, reject) => {
-        sendOffscreenMessage({ target: 'offscreen', type, data: { ...fields, pdfUrl, pdfDataRef, operationId } }, response => {
+        sendOffscreenMessage({ target: 'offscreen', type, data: { ...fields, pdfUrl, pdfDataRef, operationId, processingRunId: cancellationOptions.processingRunId } }, response => {
           sent = false;
           if (chrome.runtime.lastError) reject(createPdfError(chrome.runtime.lastError.message, 'errorPdfJsLoadFailed'));
           else if (!response) reject(createPdfError('No response from PDF renderer', 'errorPdfRenderFailed'));
@@ -397,6 +190,7 @@ async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOp
       });
     } catch (error) {
       workFailure = error;
+      if (resultCreated) await removePdfOperation(operationId).catch(cleanupError => logWarn('PDF result cleanup failed', { error: cleanupError.message }));
       throw error;
     } finally {
       try { await cleanupOwnedData(); }
@@ -419,8 +213,10 @@ async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOp
     settled = true;
     clearTimeout(pollTimer);
     clearTimeout(deadlineTimer);
+    chrome.runtime.onMessage.removeListener(receiveProgress);
   }
   if (failed) {
+    if (resultCreated) await removePdfOperation(operationId).catch(cleanupError => logWarn('PDF result cleanup failed', { error: cleanupError.message }));
     if (failure === cancellationError) {
       try { await cleanupOwnedData(); }
       catch (error) { logWarn('[PDF] Failed to remove cancelled render data', { error: error.message }); }
@@ -428,16 +224,11 @@ async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOp
     }
     throw await localizePdfError(failure, 'errorPdfRenderFailed');
   }
-  return result;
+  return { ...result, operationId };
 }
 
 /** Render one complete PDF page from its supplied bytes. */
-export async function renderPdfPageImage(pdfUrl, pageNum, scale = 2, pdfData = null, cancellationOptions) {
-  const response = await requestPdfOperation('RENDER_PDF_PAGE_IMAGE', pdfUrl, pdfData, { pageNum, scale }, cancellationOptions);
-  if (typeof response.imageData !== 'string' || !response.imageData.startsWith('data:image/') ||
-    !(response.width > 0) || !(response.height > 0)) throw createPdfError('Invalid PDF render response', 'errorPdfRenderFailed');
-  return { imageData: response.imageData, width: response.width, height: response.height };
-}
+
 
 /** Render complete pages in document order from one request-owned document. */
 export async function renderAllPdfPages(pdfUrl, totalPages, scale = 2, pdfData = null, cancellationOptions) {
@@ -447,11 +238,28 @@ export async function renderAllPdfPages(pdfUrl, totalPages, scale = 2, pdfData =
   if (!Array.isArray(images) || images.length !== totalPages ||
     new Set(images.map(image => image.pageNum)).size !== totalPages ||
     images.some(image => !Number.isInteger(image.pageNum) || image.pageNum < 1 || image.pageNum > totalPages)) {
+    await removePdfOperation(response.operationId);
     throw createPdfError('Incomplete PDF render response', 'errorPdfRenderFailed');
   }
-  return [...images].sort((a, b) => a.pageNum - b.pageNum).map(image => {
-    if (image.error) return { ...image };
-    if (!image.base64 || !(image.width > 0) || !(image.height > 0)) throw createPdfError('Invalid PDF page image', 'errorPdfRenderFailed');
-    return { ...image, imageData: `data:image/jpeg;base64,${image.base64}` };
-  });
+  const failedPages = images.filter(image => image.error).map(image => image.pageNum);
+  if (failedPages.length) {
+    await removePdfOperation(response.operationId);
+    throw createPdfError('PDF page rendering incomplete', 'errorPdfIncomplete', { pages: failedPages.join(', ') });
+  }
+  if (images.some(image => image.ref !== `${response.operationId}:${image.pageNum}` || !(image.width > 0) || !(image.height > 0))) {
+    await removePdfOperation(response.operationId);
+    throw createPdfError('Incomplete PDF page images', 'errorPdfRenderFailed');
+  }
+  return { operationId: response.operationId, pages: [...images].sort((a, b) => a.pageNum - b.pageNum) };
+}
+
+export async function readRenderedPdfPage(ref, processingRunId) {
+  if (processingRunId !== undefined && isCancelled(processingRunId)) throw createPdfError('PDF processing cancelled', 'statusCancelled');
+  const blob = await takePdfOperationBlob(ref, processingRunId ?? null);
+  if (!(blob instanceof Blob)) throw createPdfError('PDF page result unavailable', 'errorPdfRenderFailed');
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (processingRunId !== undefined && isCancelled(processingRunId)) throw createPdfError('PDF processing cancelled', 'statusCancelled');
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  return `data:${blob.type};base64,${btoa(binary)}`;
 }

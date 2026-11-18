@@ -154,6 +154,44 @@
     }
   }
   
+  const extensionId = chrome.runtime.id;
+  function trustedRuntimeSender(sender) {
+    if (!extensionId || sender?.id !== extensionId) return false;
+    if (!sender.url) return !sender.tab;
+    try {
+      const url = new URL(sender.url);
+      return url.protocol === 'chrome-extension:' && url.hostname === extensionId;
+    } catch { return false; }
+  }
+
+  function normalizeSubtitleMessage(input) {
+    if (!input || input.type !== 'ClipAIbleYouTubeSubtitles' || !hasSubtitleRequest(input.requestId)) return null;
+    if (input.result && input.result.requestId !== input.requestId) return null;
+    let size;
+    try { size = JSON.stringify(input).length; } catch { return null; }
+    if (size > 10 * 1024 * 1024) return null;
+    const output = { type: 'ClipAIbleYouTubeSubtitles', action: 'youtubeSubtitlesResult', requestId: input.requestId };
+    if (typeof input.error === 'string') output.error = input.error.slice(0, 4000);
+    if (input.result) {
+      if (!Array.isArray(input.result.subtitles) || input.result.subtitles.length > 100000) return null;
+      const subtitles = [];
+      for (const row of input.result.subtitles) {
+        if (!row || typeof row.text !== 'string' || row.text.length > 100000 || typeof row.start !== 'number' || !Number.isFinite(row.start) || row.start < 0 || typeof row.duration !== 'number' || !Number.isFinite(row.duration) || row.duration < 0) return null;
+        subtitles.push({ start: row.start, duration: row.duration, text: row.text });
+      }
+      const metadata = {};
+      for (const key of ['title', 'author', 'publishDate', 'description', 'language', 'videoId', 'url', 'duration']) {
+        const value = input.result.metadata?.[key];
+        if (typeof value === 'string') metadata[key] = value.slice(0, 100000);
+        else if (typeof value === 'number' && Number.isFinite(value)) metadata[key] = value;
+      }
+      output.result = { requestId: input.requestId, subtitles, metadata };
+    }
+    if (!output.result && !output.error) return null;
+    if (Array.isArray(input.pageLogs)) output.pageLogs = input.pageLogs.filter(line => typeof line === 'string').slice(0, 500).map(line => line.slice(0, 2000));
+    return output;
+  }
+
   // Store listener references for cleanup
   let messageListener = null;
   let runtimeMessageListener = null;
@@ -161,15 +199,16 @@
   
   const handlePostMessage = function handlePostMessage(event) {
     
-    // CRITICAL: Do NOT block messages by source!
-    // Handle two types of messages: subtitles and fetch requests
-    if (!event.data) {
+    if (event.source !== window || event.origin !== window.location.origin) return;
+    const messageData = normalizeSubtitleMessage(event.data);
+    if (!messageData) return;
+    if (!messageData) {
       return;
     }
     
     // SECURITY: Validate message size to prevent DoS
     try {
-      const messageSize = JSON.stringify(event.data).length;
+      const messageSize = JSON.stringify(messageData).length;
       const MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB
       if (messageSize > MAX_MESSAGE_SIZE) {
         sendErrorToBackground('Message too large', null, {
@@ -186,139 +225,22 @@
       return;
     }
     
-    // Handle fetch requests for subtitles
-    if (event.data.type === 'ClipAIbleSubtitleFetchRequest') {
-      // SECURITY: Validate URL to prevent SSRF attacks
-      const url = event.data.url;
-      if (!url || typeof url !== 'string') {
-        sendErrorToBackground('Invalid URL in fetch request', null, {
-          action: 'validateSubtitleUrl',
-          url: url
-        });
-        return;
-      }
-      
-      // Validate URL is external and safe
-      try {
-        const urlObj = new URL(url);
-        // Block non-HTTP(S) protocols
-        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-          sendErrorToBackground('Invalid URL protocol', null, {
-            action: 'validateSubtitleUrl',
-            protocol: urlObj.protocol,
-            url: url
-          });
-          return;
-        }
-        // Block internal addresses
-        const hostname = urlObj.hostname.toLowerCase();
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
-            hostname.startsWith('192.168.') || hostname.startsWith('10.') ||
-            hostname.startsWith('172.16.') || hostname.startsWith('172.17.') ||
-            hostname.startsWith('172.18.') || hostname.startsWith('172.19.') ||
-            hostname.startsWith('172.20.') || hostname.startsWith('172.21.') ||
-            hostname.startsWith('172.22.') || hostname.startsWith('172.23.') ||
-            hostname.startsWith('172.24.') || hostname.startsWith('172.25.') ||
-            hostname.startsWith('172.26.') || hostname.startsWith('172.27.') ||
-            hostname.startsWith('172.28.') || hostname.startsWith('172.29.') ||
-            hostname.startsWith('172.30.') || hostname.startsWith('172.31.') ||
-            hostname.startsWith('169.254.')) {
-          sendErrorToBackground('Blocked internal URL', null, {
-            action: 'validateSubtitleUrl',
-            hostname: hostname,
-            url: url
-          });
-          return;
-        }
-      } catch (e) {
-        sendErrorToBackground('Invalid URL format', e, {
-          action: 'validateSubtitleUrl',
-          url: url ? url.substring(0, 100) : null
-        });
-        return;
-      }
-      
-      fetch(url, {
-        method: 'GET',
-        credentials: 'include',
-        mode: 'cors',
-        cache: 'no-cache',
-        headers: {
-          'Accept': 'application/json, text/xml, application/xml, */*',
-          'Accept-Language': navigator.language || 'en',
-          'Referer': window.location.href,
-          'Origin': window.location.origin
-        }
-      })
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        return response.text();
-      })
-      .then(responseText => {
-        const responseEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
-          detail: {
-            type: 'ClipAIbleSubtitleFetchResponse',
-            requestId: event.data.requestId,
-            responseText: responseText
-          },
-          bubbles: true,
-          cancelable: true
-        });
-        document.dispatchEvent(responseEvent);
-        
-        // SECURITY: Use specific origin instead of '*' to prevent XSS
-        window.postMessage({
-          type: 'ClipAIbleSubtitleFetchResponse',
-          requestId: event.data.requestId,
-          responseText: responseText
-        }, window.location.origin);
-      })
-      .catch(error => {
-        sendErrorToBackground('Subtitle fetch failed', error, {
-          action: 'fetchSubtitles',
-          url: url
-        });
-        
-        const errorEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
-          detail: {
-            type: 'ClipAIbleSubtitleFetchResponse',
-            requestId: event.data.requestId,
-            error: error.message || String(error)
-          },
-          bubbles: true,
-          cancelable: true
-        });
-        document.dispatchEvent(errorEvent);
-        
-        // SECURITY: Use specific origin instead of '*' to prevent XSS
-        window.postMessage({
-          type: 'ClipAIbleSubtitleFetchResponse',
-          requestId: event.data.requestId,
-          error: error.message || String(error)
-        }, window.location.origin);
-      });
-      return;
-    }
-    
-    
     // Handle subtitle extraction results
-    if (event.data.type !== 'ClipAIbleYouTubeSubtitles') {
+    if (messageData.type !== 'ClipAIbleYouTubeSubtitles') {
       return;
     }
     
-    if (event.data && event.data.type === 'ClipAIbleYouTubeSubtitles') {
-      if (!hasSubtitleRequest(event.data.requestId) ||
-          (event.data.result && event.data.result.requestId !== event.data.requestId)) return;
+    if (messageData && messageData.type === 'ClipAIbleYouTubeSubtitles') {
+      if (!hasSubtitleRequest(messageData.requestId) ||
+          (messageData.result && messageData.result.requestId !== messageData.requestId)) return;
       try {
         // CRITICAL: Check context BEFORE sending message
         if (!isExtensionContextValid()) {
-          if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
+          if (messageData.result && messageData.result.subtitles && messageData.result.subtitles.length > 0) {
             const subtitleData = {
-              requestId: event.data.requestId,
-              subtitles: event.data.result.subtitles,
-              metadata: event.data.result.metadata || {}
+              requestId: messageData.requestId,
+              subtitles: messageData.result.subtitles,
+              metadata: messageData.result.metadata || {}
             };
             saveToDOMFallback(subtitleData);
           }
@@ -327,11 +249,11 @@
         
         let backgroundResponded = false;
         let subtitleData = null;
-        if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
+        if (messageData.result && messageData.result.subtitles && messageData.result.subtitles.length > 0) {
           subtitleData = {
-            requestId: event.data.requestId,
-            subtitles: event.data.result.subtitles,
-            metadata: event.data.result.metadata || {}
+            requestId: messageData.requestId,
+            subtitles: messageData.result.subtitles,
+            metadata: messageData.result.metadata || {}
           };
         }
         
@@ -363,7 +285,7 @@
           }
         }, 3000);
         
-        chrome.runtime.sendMessage(event.data, (response) => {
+        chrome.runtime.sendMessage(messageData, (response) => {
           backgroundResponded = true;
           clearTimeout(fallbackTimeout);
           
@@ -399,15 +321,15 @@
       } catch (e) {
         sendErrorToBackground('Exception while forwarding postMessage', e, {
           action: 'forwardPostMessage',
-          eventData: event.data ? { type: event.data.type, action: event.data.action } : null
+          eventData: messageData ? { type: messageData.type, action: messageData.action } : null
         });
         
         // Try to save to storage if we have subtitle data
-        if (event.data.result && event.data.result.subtitles && event.data.result.subtitles.length > 0) {
+        if (messageData.result && messageData.result.subtitles && messageData.result.subtitles.length > 0) {
           const subtitleData = {
-            requestId: event.data.requestId,
-            subtitles: event.data.result.subtitles,
-            metadata: event.data.result.metadata || {}
+            requestId: messageData.requestId,
+            subtitles: messageData.result.subtitles,
+            metadata: messageData.result.metadata || {}
           };
           
           // Check error type
@@ -528,6 +450,7 @@
 
   // Listen for extraction requests
   runtimeMessageListener = (request, sender, sendResponse) => {
+    if (!trustedRuntimeSender(sender)) return false;
     if (request.action === 'extractContent') {
       const content = extractPageContent();
       sendResponse(content);
@@ -562,19 +485,21 @@
   
   // Register listener IMMEDIATELY (before any async operations)
   const handleCustomEvent = function(event) {
-    if (!event.detail || event.detail.type !== 'ClipAIbleYouTubeSubtitles') {
+    const messageData = normalizeSubtitleMessage(event.detail);
+    if (!messageData) return;
+    if (!messageData || messageData.type !== 'ClipAIbleYouTubeSubtitles') {
       return;
     }
-    if (!hasSubtitleRequest(event.detail.requestId) ||
-        (event.detail.result && event.detail.result.requestId !== event.detail.requestId)) return;
+    if (!hasSubtitleRequest(messageData.requestId) ||
+        (messageData.result && messageData.result.requestId !== messageData.requestId)) return;
     
     // Save subtitle data for storage fallback if needed
     let subtitleData = null;
-    if (event.detail.result && event.detail.result.subtitles && event.detail.result.subtitles.length > 0) {
+    if (messageData.result && messageData.result.subtitles && messageData.result.subtitles.length > 0) {
       subtitleData = {
-        requestId: event.detail.requestId,
-        subtitles: event.detail.result.subtitles,
-        metadata: event.detail.result.metadata || {}
+        requestId: messageData.requestId,
+        subtitles: messageData.result.subtitles,
+        metadata: messageData.result.metadata || {}
       };
     }
     
@@ -646,7 +571,7 @@
       
       // Try to send message to background
       try {
-        chrome.runtime.sendMessage(event.detail, (response) => {
+        chrome.runtime.sendMessage(messageData, (response) => {
           backgroundResponded = true;
           clearTimeout(fallbackTimeout);
           
@@ -787,134 +712,6 @@
   document.addEventListener('ClipAIbleSubtitleMessage', handleCustomEvent, false);
   customEventListeners.push({ element: document, event: 'ClipAIbleSubtitleMessage', handler: handleCustomEvent, capture: false });
   
-
-  // Also listen for CustomEvent from MAIN world (for subtitle fetch requests)
-  const handleFetchRequest = (event) => {
-    const customEvent = /** @type {CustomEvent} */ (event);
-    if (customEvent.detail && customEvent.detail.type === 'ClipAIbleSubtitleFetchRequest') {
-      // SECURITY: Validate URL to prevent SSRF attacks
-      const url = customEvent.detail.url;
-      if (!url || typeof url !== 'string') {
-        sendErrorToBackground('Invalid URL in CustomEvent fetch request', null, {
-          action: 'validateSubtitleUrl',
-          context: 'customEvent',
-          url: url
-        });
-        return;
-      }
-      
-      // Validate URL is external and safe
-      try {
-        const urlObj = new URL(url);
-        // Block non-HTTP(S) protocols
-        if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-          sendErrorToBackground('Invalid URL protocol (CustomEvent)', null, {
-            action: 'validateSubtitleUrl',
-            context: 'customEvent',
-            protocol: urlObj.protocol,
-            url: url
-          });
-          return;
-        }
-        // Block internal addresses
-        const hostname = urlObj.hostname.toLowerCase();
-        if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' ||
-            hostname.startsWith('192.168.') || hostname.startsWith('10.') ||
-            hostname.startsWith('172.16.') || hostname.startsWith('172.17.') ||
-            hostname.startsWith('172.18.') || hostname.startsWith('172.19.') ||
-            hostname.startsWith('172.20.') || hostname.startsWith('172.21.') ||
-            hostname.startsWith('172.22.') || hostname.startsWith('172.23.') ||
-            hostname.startsWith('172.24.') || hostname.startsWith('172.25.') ||
-            hostname.startsWith('172.26.') || hostname.startsWith('172.27.') ||
-            hostname.startsWith('172.28.') || hostname.startsWith('172.29.') ||
-            hostname.startsWith('172.30.') || hostname.startsWith('172.31.') ||
-            hostname.startsWith('169.254.')) {
-          sendErrorToBackground('Blocked internal URL (CustomEvent)', null, {
-            action: 'validateSubtitleUrl',
-            context: 'customEvent',
-            hostname: hostname,
-            url: url
-          });
-          return;
-        }
-      } catch (e) {
-        sendErrorToBackground('Invalid URL format (CustomEvent)', e, {
-          action: 'validateSubtitleUrl',
-          context: 'customEvent',
-          url: url ? url.substring(0, 100) : null
-        });
-        return;
-      }
-      
-      // Fetch subtitle URL from content script
-      fetch(url, {
-        method: 'GET',
-        credentials: 'include',
-        mode: 'cors',
-        cache: 'no-cache',
-        headers: {
-          'Accept': 'application/json, text/xml, application/xml, */*',
-          'Accept-Language': navigator.language || 'en',
-          'Referer': window.location.href,
-          'Origin': window.location.origin
-        }
-      })
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        return response.text();
-      })
-      .then(responseText => {
-        // Send response back to MAIN world
-        const responseEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
-          detail: {
-            type: 'ClipAIbleSubtitleFetchResponse',
-            requestId: customEvent.detail.requestId,
-            responseText: responseText
-          },
-          bubbles: true,
-          cancelable: true
-        });
-        document.dispatchEvent(responseEvent);
-        
-        // SECURITY: Use specific origin instead of '*' to prevent XSS
-        window.postMessage({
-          type: 'ClipAIbleSubtitleFetchResponse',
-          requestId: customEvent.detail.requestId,
-          responseText: responseText
-        }, window.location.origin);
-      })
-      .catch(error => {
-        sendErrorToBackground('Subtitle fetch failed via CustomEvent', error, {
-          action: 'fetchSubtitles',
-          context: 'customEvent',
-          url: url
-        });
-        
-        const errorEvent = new CustomEvent('ClipAIbleSubtitleFetchResponse', {
-          detail: {
-            type: 'ClipAIbleSubtitleFetchResponse',
-            requestId: customEvent.detail.requestId,
-            error: error.message || String(error)
-          },
-          bubbles: true,
-          cancelable: true
-        });
-        document.dispatchEvent(errorEvent);
-        
-        // SECURITY: Use specific origin instead of '*' to prevent XSS
-        window.postMessage({
-          type: 'ClipAIbleSubtitleFetchResponse',
-          requestId: customEvent.detail.requestId,
-          error: error.message || String(error)
-        }, window.location.origin);
-      });
-    }
-  };
-  
-  document.addEventListener('ClipAIbleSubtitleFetchRequest', handleFetchRequest);
-  customEventListeners.push({ element: document, event: 'ClipAIbleSubtitleFetchRequest', handler: handleFetchRequest, capture: false });
 
   // Make function available for direct injection
   // @ts-ignore - External library may use this

@@ -1,7 +1,7 @@
 // @ts-check
 // TTS Worker Entry Point for esbuild bundle
 // This file will be bundled by esbuild to create a self-contained worker
-// that includes piper-tts-web, but NOT onnxruntime-web (loaded via importScripts)
+// that includes piper-tts-web and loads the packaged WASM runtime via importScripts
 
 // CRITICAL: Import piper-tts-web statically so esbuild bundles it
 import * as piperTTSModule from '@mintplex-labs/piper-tts-web';
@@ -78,190 +78,21 @@ workerLog('Worker entry point loaded', {
 });
 
 // CRITICAL: Load ONNX Runtime 1.19.0 on top level using importScripts()
-// Version 1.19.0 fixes blob URL issues and supports multithreading in Chrome Extensions
-// Using ort.all.min.js which may include WASM inline and avoid blob URL issues
-// Calculate ortUrl from self.location.href (Worker script location)
+// The packaged WASM-only runtime is the single inference backend.
 const workerUrl = new URL(self.location.href);
-// Worker is at: chrome-extension://<EXT_ID>/dist/tts-worker-bundle.js
 const origin = workerUrl.origin;
-
-// CRITICAL: Support both development (node_modules) and production (lib) paths
-// Try node_modules first (for development), fallback to lib (for production archive)
-const ortUrlDev = origin + '/node_modules/onnxruntime-web/dist/ort.all.min.js';
-const ortUrlProd = origin + '/lib/ort.all.min.js';
-
-workerLog('Worker location:', { href: workerUrl.href });
-workerLog('Will try to load ONNX Runtime 1.19.0 from:', {
-  devPath: ortUrlDev,
-  prodPath: ortUrlProd
-});
-
-// Load ONNX Runtime synchronously on top level
-// importScripts() works with chrome-extension:// URLs if file is in web_accessible_resources
-// Using ort.all.min.js which includes all backends and may avoid blob URL issues
-let loadedFromProd = false; // Track which path was successful
-
-workerLog('========== ONNX RUNTIME LOADING START ==========', {
-  ortUrlDev,
-  ortUrlProd,
-  timestamp: Date.now()
-});
-
+const ortUrl = origin + '/lib/ort.wasm.min.js';
 try {
-  // Try development path first (node_modules)
-  try {
-    workerLog('ATTEMPT 1: Trying to load ONNX Runtime from development path (node_modules)...', {
-      url: ortUrlDev,
-      timestamp: Date.now()
-    });
-    importScripts(ortUrlDev);
-    workerLog('✅ ATTEMPT 1 SUCCESS: Loaded ONNX Runtime from development path', {
-      loadedFromProd: false,
-      timestamp: Date.now()
-    });
-    loadedFromProd = false;
-  } catch (devError) {
-    // If dev path fails, try production path (lib)
-    workerLog('❌ ATTEMPT 1 FAILED: Dev path error', {
-      error: devError.message,
-      stack: devError.stack,
-      name: devError.name,
-      attemptedUrl: ortUrlDev,
-      timestamp: Date.now()
-    });
-
-    workerLog('ATTEMPT 2: Trying to load ONNX Runtime from production path (lib)...', {
-      url: ortUrlProd,
-      timestamp: Date.now()
-    });
-
-    try {
-      importScripts(ortUrlProd);
-      workerLog('✅ ATTEMPT 2 SUCCESS: Loaded ONNX Runtime from production path', {
-        loadedFromProd: true,
-        timestamp: Date.now()
-      });
-      loadedFromProd = true;
-    } catch (prodError) {
-      workerLogError('❌ ATTEMPT 2 FAILED: Production path error', {
-        error: prodError.message,
-        stack: prodError.stack,
-        name: prodError.name,
-        attemptedUrl: ortUrlProd,
-        timestamp: Date.now(),
-        '== BOTH PATHS FAILED ==': 'This is a critical error - cannot load ONNX Runtime'
-      });
-      throw prodError;
-    }
-  }
-
-  // CRITICAL: Check that ONNX Runtime loaded correctly
-  if (!self.ort || !self.ort.env) {
-    throw new Error('ONNX Runtime not loaded - ort or ort.env is undefined');
-  }
-
-  // Make it available globally for piper-tts-web
+  importScripts(ortUrl);
+  if (!self.ort?.env || !self.ort.InferenceSession) throw new Error('ONNX Runtime unavailable');
   self.onnxruntime = self.ort;
-
-  // CRITICAL: Configure WASM paths IMMEDIATELY after loading ONNX Runtime
-  // Version 1.19.0 supports wasmPaths configuration and multithreading
-  // This must be done BEFORE any InferenceSession is created
-  // Use the same path where ONNX Runtime was successfully loaded
-  workerLog('========== CONFIGURING WASM PATHS ==========', {
-    loadedFromProd,
-    origin,
-    timestamp: Date.now()
-  });
-
-  const wasmBasePath = loadedFromProd
-    ? origin + '/lib/'
-    : origin + '/node_modules/onnxruntime-web/dist/';
-
-  workerLog('WASM paths calculated', {
-    loadedFromProd,
-    wasmBasePath,
-    isLibPath: wasmBasePath.includes('/lib/'),
-    isNodeModulesPath: wasmBasePath.includes('/node_modules/'),
-    timestamp: Date.now()
-  });
-  
-  // Initialize wasm config if not exists
-  self.ort.env.wasm = self.ort.env.wasm || {};
-  
-  // CRITICAL: Set wasmPaths as STRING (works in 1.19.0)
-  // This tells ONNX Runtime where to find WASM files
-  // CRITICAL: wasmPaths works ONLY with numThreads=1
-  // numThreads > 1 forces ONNX Runtime to create blob URLs for WebWorker threads
-  // This violates Chrome Extension CSP which doesn't allow blob: in extension_pages
-  self.ort.env.wasm.wasmPaths = wasmBasePath;
-  
-  // Also set in env directly (some versions use this)
-  if (self.ort.env) {
-    self.ort.env.wasmPaths = wasmBasePath;
-  }
-  
-  // CRITICAL: numThreads=1 avoids blob URL creation in Chrome Extension
-  // numThreads > 1 requires blob URLs for WebWorker threads, which CSP blocks
-  // Worker context already isolates WASM from main thread, so numThreads=1 is sufficient
-  // Performance: Slightly slower than numThreads=2, but works without blob URL issues
+  self.ort.env.wasm.wasmPaths = origin + '/lib/';
   self.ort.env.wasm.numThreads = 1;
-  
-  // CRITICAL: Explicitly disable JSEP (JavaScript Execution Provider) to prevent threaded WASM
-  // JSEP is used for multithreading and requires blob URLs, which CSP blocks
-  // Setting numThreads=1 should disable JSEP, but we explicitly disable it to be sure
-  if (self.ort.env.wasm.setNumThreads) {
-    self.ort.env.wasm.setNumThreads(1);
-  }
-  
-  // Enable SIMD for better performance (works with numThreads=1)
   self.ort.env.wasm.simd = true;
-  
-  // Disable proxy (not needed in Worker)
   self.ort.env.wasm.proxy = false;
-  
-  // CRITICAL: Explicitly set executionProviders to only use WASM (not JSEP)
-  // This prevents ONNX Runtime from trying to use multithreading
-  if (self.ort.env && typeof self.ort.env.setExecutionProviders === 'function') {
-    try {
-      self.ort.env.setExecutionProviders(['wasm']);
-  workerLog('Execution providers set to WASM only', {
-    executionProviders: self.ort.env.executionProviders || ['wasm']
-  });
-    } catch (e) {
-      console.warn(LOG_PREFIX, 'Could not set execution providers', {
-        error: e.message
-      });
-    }
-  }
-  
-  workerLog('ONNX Runtime 1.19.0 configured for Chrome Extension', {
-    wasmPaths: self.ort.env.wasm.wasmPaths,
-    numThreads: self.ort.env.wasm.numThreads, // Must be 1 to avoid blob URL
-    simd: self.ort.env.wasm.simd,
-    proxy: self.ort.env.wasm.proxy,
-    hasInferenceSession: !!self.ort.InferenceSession,
-    version: self.ort.version || 'unknown',
-    note: 'numThreads=1 avoids blob URL creation (required for Chrome Extension CSP)'
-  });
-
-  workerLog('ONNX Runtime 1.19.0 loaded successfully', {
-    hasOrt: typeof self.ort !== 'undefined',
-    hasEnv: !!self.ort.env,
-    hasWasm: !!self.ort.env.wasm,
-    timestamp: Date.now()
-  });
 } catch (error) {
-  workerLogError('Failed to load ONNX Runtime 1.19.0', {
-    error: error.message,
-    stack: error.stack,
-    triedPaths: {
-      dev: ortUrlDev,
-      prod: ortUrlProd
-    },
-    timestamp: Date.now()
-  });
-  // Re-throw - Worker cannot work without ONNX Runtime
-  throw new Error(`Failed to load ONNX Runtime 1.19.0: ${error.message}`);
+  workerLogError('Failed to load the packaged inference runtime', { error: error.message });
+  throw error;
 }
 
   // CRITICAL: Intercept fetch to block CDN requests from piper-tts-web
@@ -641,7 +472,7 @@ self.addEventListener('message', async (event) => {
       }
       
       case 'PREDICT': {
-        const { text, voiceId } = data || {};
+        const { text, voiceId, speed = 1 } = data || {};
         if (!text || !voiceId) {
           throw new Error('Text and voiceId are required for PREDICT');
         }
@@ -753,7 +584,8 @@ self.addEventListener('message', async (event) => {
         const predictStart = Date.now();
         const result = await piperTTS.predict({
           text,
-          voiceId
+          voiceId,
+          speed
         });
         const predictDuration = Date.now() - predictStart;
         

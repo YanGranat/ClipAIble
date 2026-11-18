@@ -6,7 +6,7 @@ import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_QWEN_TT
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
-import { resolveProviderApiKey } from '../utils/settings-helpers.js';
+import { resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helpers.js';
 
 /**
  * Initialize processing module
@@ -29,6 +29,7 @@ import { resolveProviderApiKey } from '../utils/settings-helpers.js';
  * @returns {Object} Processing functions (handleSavePdf, handleCancel, handleGenerateSummary, etc.)
  */
 export function initProcessing(deps) {
+  let latestSaveAttempt = 0;
   const {
     elements,
     t,
@@ -249,6 +250,10 @@ export function initProcessing(deps) {
 
   // Handle Save PDF button click
   async function handleSavePdf() {
+    const attempt = ++latestSaveAttempt;
+    let preparing = false;
+    let admitted = false;
+    let failed = false;
     log('=== handleSavePdf: ENTRY ===', {
       timestamp: Date.now()
     });
@@ -266,7 +271,7 @@ export function initProcessing(deps) {
     
     // Get the appropriate API key based on selected provider
     try {
-      const currentProvider = () => !elements.apiProviderSelect || elements.apiProviderSelect.value === provider;
+      const currentProvider = () => attempt === latestSaveAttempt && (!elements.apiProviderSelect || elements.apiProviderSelect.value === provider);
       const apiKey = await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t);
       if (!currentProvider()) return;
       // Check API key only if not using automatic mode
@@ -310,7 +315,10 @@ export function initProcessing(deps) {
         timestamp: Date.now()
       });
       
-      setStatus('processing', await t('extractingPageContent', undefined), undefined, { key: 'extractingPageContent' });
+      const extractingText = await t('extractingPageContent', undefined);
+      if (!currentProvider()) return;
+      preparing = true;
+      setStatus('processing', extractingText, undefined, { key: 'extractingPageContent' });
       setProgress(0, false);
       if (elements.savePdfBtn) {
         /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = true;
@@ -325,25 +333,38 @@ export function initProcessing(deps) {
       
       // Try to get HTML via content script message first (faster and more reliable)
       let pageData = null;
+      let localPdfUrl = null;
       try {
-        log('=== handleSavePdf: Trying to get HTML via content script message ===', {
-          tabId: tab.id,
-          timestamp: Date.now()
-        });
-        
-        const contentResponse = await chrome.tabs.sendMessage(tab.id, { action: 'extractContent' });
-        if (contentResponse && contentResponse.html) {
-          log('=== handleSavePdf: Got HTML via content script ===', {
-            htmlLength: contentResponse.html?.length || 0,
+        const source = new URL(tab.url);
+        if (source.protocol === 'file:' && /\.pdf$/i.test(source.pathname)) localPdfUrl = tab.url;
+      } catch { /* Other pages use the existing content acquisition path. */ }
+      if (localPdfUrl) {
+        const currentTab = await chrome.tabs.get(tab.id);
+        if (currentTab.url !== localPdfUrl) throw new Error('The page changed before processing started.');
+        // PDF processing acquires its own bytes, including file selection when needed.
+        pageData = { html: '<!doctype html><html><body></body></html>', images: [], url: localPdfUrl, title: tab.title || '' };
+      }
+      if (!pageData) {
+        try {
+          log('=== handleSavePdf: Trying to get HTML via content script message ===', {
+            tabId: tab.id,
             timestamp: Date.now()
           });
-          pageData = contentResponse;
+
+          const contentResponse = await chrome.tabs.sendMessage(tab.id, { action: 'extractContent' });
+          if (contentResponse && contentResponse.html) {
+            log('=== handleSavePdf: Got HTML via content script ===', {
+              htmlLength: contentResponse.html?.length || 0,
+              timestamp: Date.now()
+            });
+            pageData = contentResponse;
+          }
+        } catch (contentError) {
+          log('=== handleSavePdf: Content script not available, will use executeScript ===', {
+            error: contentError?.message,
+            timestamp: Date.now()
+          });
         }
-      } catch (contentError) {
-        log('=== handleSavePdf: Content script not available, will use executeScript ===', {
-          error: contentError?.message,
-          timestamp: Date.now()
-        });
       }
 
       // If content script didn't work, use executeScript
@@ -683,7 +704,7 @@ export function initProcessing(deps) {
           })(),
           audioSpeed: parseFloat(elements.audioSpeed ? /** @type {HTMLInputElement} */ (elements.audioSpeed).value : '1.0'),
           audioFormat: 'mp3',
-          elevenlabsApiKey: elements.elevenlabsApiKey?.dataset.encrypted || null,
+          elevenlabsApiKey: readApiKeyDraft(elements.elevenlabsApiKey),
           elevenlabsModel: elements.elevenlabsModel ? /** @type {HTMLSelectElement} */ (elements.elevenlabsModel).value : DEFAULT_ELEVENLABS_TTS_MODEL,
           elevenlabsFormat: elements.elevenlabsFormat ? /** @type {HTMLSelectElement} */ (elements.elevenlabsFormat).value : 'mp3_44100_192',
           elevenlabsStability: elements.elevenlabsStability ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStability).value) : 0.5,
@@ -697,13 +718,13 @@ export function initProcessing(deps) {
           respeecherTemperature: elements.respeecherTemperature ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTemperature).value) : 1.0,
           respeecherRepetitionPenalty: elements.respeecherRepetitionPenalty ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherRepetitionPenalty).value) : 1.0,
           respeecherTopP: elements.respeecherTopP ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTopP).value) : 1.0,
-          googleTtsApiKey: elements.googleTtsApiKey?.dataset.encrypted || null,
+          googleTtsApiKey: readApiKeyDraft(elements.googleTtsApiKey),
           geminiApiKey: elements.geminiApiKey?.dataset.encrypted || null,
-          qwenApiKey: elements.qwenApiKey?.dataset.encrypted || null,
+          qwenApiKey: readApiKeyDraft(elements.qwenApiKey),
           qwenModel: elements.qwenModel?.value || DEFAULT_QWEN_TTS_MODEL,
           qwenWorkspaceId: elements.qwenWorkspaceId?.value.trim() || '',
           qwenRegion: elements.qwenRegion?.value || 'singapore',
-          respeecherApiKey: elements.respeecherApiKey?.dataset.encrypted || null
+          respeecherApiKey: readApiKeyDraft(elements.respeecherApiKey)
         }
       });
       
@@ -732,17 +753,10 @@ export function initProcessing(deps) {
         throw Object.assign(new Error(friendly.message), friendly);
       }
 
-      // CRITICAL: Handle case when response is undefined or null (async response not received)
-      // This can happen when sendResponse is called asynchronously and channel is already closed
-      if (!response) {
-        logWarn('=== handleSavePdf: No response received (async response may be delayed) ===', {
-          timestamp: Date.now()
-        });
-        // For async handlers, assume processing started successfully if no error
-        // The actual status will be checked via state polling
-        log('=== handleSavePdf: Assuming processing started (will verify via state polling) ===', {
-          timestamp: Date.now()
-        });
+      if (response?.started !== true || response.success === false || (response.error && typeof response.error !== 'string')) {
+        const translationKey = response?.translationKey || 'errorProcessingNotStarted';
+        const translationParams = response?.translationParams || {};
+        throw Object.assign(new Error(response?.error && typeof response.error === 'string' ? response.error : await t(translationKey, translationParams)), { translationKey, translationParams });
       } else if (response.error && typeof response.error === 'string') {
         if (response.translationKey) {
           throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
@@ -761,15 +775,9 @@ export function initProcessing(deps) {
           error: { message: response.error }
         });
         throw Object.assign(new Error(friendly.message), friendly);
-      } else if (response.error) {
-        // Error exists but is not a string - log warning but don't throw
-        logWarn('=== handleSavePdf: Response has error property but it is not a string ===', {
-          error: response.error,
-          errorType: typeof response.error,
-          timestamp: Date.now()
-        });
-        // Continue processing - assume it's a false positive
       }
+      admitted = true;
+      if (attempt !== latestSaveAttempt) return;
       
       log('=== handleSavePdf: Processing started successfully ===', {
         timestamp: Date.now()
@@ -801,6 +809,8 @@ export function initProcessing(deps) {
       }
 
     } catch (error) {
+      failed = true;
+      if (attempt !== latestSaveAttempt || (elements.apiProviderSelect && elements.apiProviderSelect.value !== provider)) return;
       const errMsg = error?.message ?? String(error);
       const errStack = error?.stack ?? '';
       const errName = error?.name ?? 'Error';
@@ -822,6 +832,7 @@ export function initProcessing(deps) {
         const userFriendlyMessage = await getUserFriendlyError(errorType, {
           error: error
         });
+        if (attempt !== latestSaveAttempt) return;
         
         const translation = getUserFriendlyErrorDescriptor(errorType, { error });
         setStatus('error', userFriendlyMessage, undefined, translation);
@@ -830,12 +841,21 @@ export function initProcessing(deps) {
         // Fallback to original error message if user-friendly message generation fails
         logError('Failed to generate user-friendly error message', errorHandlingError);
         const fallbackMessage = error?.message || await t('errorUnknown', undefined);
+        if (attempt !== latestSaveAttempt) return;
         setStatus('error', fallbackMessage, undefined);
         showToast(fallbackMessage, 'error');
       }
       
-      if (elements.savePdfBtn) {
-        /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
+    } finally {
+      if (!admitted && attempt === latestSaveAttempt) {
+        if (elements.savePdfBtn) /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
+        if (preparing && !failed) {
+          const readyText = await t('ready');
+          if (attempt === latestSaveAttempt) {
+            setStatus('ready', readyText, undefined, { key: 'ready' });
+            setProgress(0, false);
+          }
+        }
       }
     }
   }

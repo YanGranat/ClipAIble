@@ -183,9 +183,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
       hasPrompt: !!prompt,
       promptLength: prompt ? prompt.length : 0,
       requestBodyKeys: Object.keys(requestBody),
-      requestBodyPreview: JSON.stringify(requestBody).substring(0, 500),
-      contentsTextPreview: contentsText.substring(0, 200),
-      contentsTextEnd: contentsText.length > 200 ? '...' + contentsText.substring(contentsText.length - 100) : ''
+      contentsTextLength: contentsText.length
     });
     
     try {
@@ -224,7 +222,6 @@ export async function textToSpeech(text, apiKey, options = {}) {
                     statusText: fetchResponse.statusText,
                     errorBody: errorBody,
                     errorJson: errorJson,
-                    requestBody: JSON.stringify(requestBody, null, 2),
                     requestBodyKeys: Object.keys(requestBody),
                     hasPrompt: !!prompt
                   });

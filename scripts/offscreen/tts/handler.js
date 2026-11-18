@@ -39,6 +39,11 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
   const requestStart = Date.now();
   const { text, options = {} } = data;
   let { language = 'en', voice = null } = options;
+  const assertCurrent = () => {
+    if (data.processingRunId && context.state.getProcessingRunId() !== data.processingRunId) {
+      throw new Error('TTS processing cancelled');
+    }
+  };
 
   log('[ClipAIble TTS] === handlePiperTTS STARTED ===', 'TTS_HANDLER_START', {
     timestamp: requestStart,
@@ -62,54 +67,15 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
   
   try {
     // 1. Initialize TTS Worker
+    assertCurrent();
     await initializeTTS(messageId, context);
+    assertCurrent();
 
-    // 2. Check if we need to restart worker (after large chunk processing)
-    // Large chunks (>5000 chars) can corrupt the worker state
-    const textLength = data.text?.length || 0;
-    if (textLength > 5000) {
-      log(`[ClipAIble TTS] Large text detected (${textLength} chars), checking worker health`, {
-        messageId,
-        textLength
-      });
-
-      // Simple health check - if worker exists, assume it's healthy for large texts
-      // The real issue is that worker gets corrupted AFTER processing, not before
-      // So we check health and restart if needed before processing large texts
-      if (context.state.getTTSWorker()) {
-        try {
-          // Quick test with minimal text
-          const testResult = await context.predictWithWorker('test', 'en_US-lessac-medium');
-          if (testResult) {
-            log(`[ClipAIble TTS] Worker health check passed for large text`, {
-              messageId,
-              textLength
-            });
-          }
-        } catch (healthError) {
-          logWarn(`[ClipAIble TTS] Worker health check failed, restarting worker`, {
-            messageId,
-            textLength,
-            error: healthError.message
-          });
-
-          // Restart worker
-          if (context.state.getTTSWorker()) {
-            context.state.getTTSWorker().terminate();
-            context.state.setTTSWorker(null);
-            context.state.setUseWorker(true);
-          }
-
-          // Re-initialize
-          await initializeTTS(messageId, context);
-        }
-      }
-    }
-    
     // 2. Initialize TTS Module (for stored/download operations)
     let tts = context.state.getTTSModule();
     if (!tts) {
       tts = await context.initPiperTTS();
+      assertCurrent();
     }
 
     // 3. Detect/normalize language
@@ -130,6 +96,19 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       state: context.state
     });
 
+    assertCurrent();
+
+    // 6. Handle voice switching (clear caches if voice changed)
+    const switchResult = await handleVoiceSwitching({
+      newVoiceId: voiceId,
+      messageId,
+      state: context.state,
+      tts,
+      initTTSWorker: context.initTTSWorker
+    });
+    assertCurrent();
+    tts = switchResult.tts;
+
     // 5. Ensure voice is downloaded
     const downloadedVoiceId = await ensureVoiceDownloaded({
       voiceId,
@@ -143,15 +122,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       state: context.state
     });
 
-    // 6. Handle voice switching (clear caches if voice changed)
-    const switchResult = await handleVoiceSwitching({
-      newVoiceId: downloadedVoiceId,
-      messageId,
-      state: context.state,
-      tts,
-      initPiperTTS: context.initPiperTTS
-    });
-    tts = switchResult.tts;
+    assertCurrent();
 
     // 7. Sanitize text
     const sanitizedText = sanitizeText(text, langCode, messageId);
@@ -162,6 +133,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
     // 8. Synthesize
     const wavBlob = await synthesizeText({
       text: sanitizedText,
+      speed: options.speed ?? 1,
       processingRunId: data.processingRunId,
       voiceId: downloadedVoiceId,
       langCode,
@@ -174,6 +146,8 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
       state: context.state
     });
     
+    assertCurrent();
+
     // 9. Send response
     await sendTTSResponse({
       wavBlob,

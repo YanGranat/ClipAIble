@@ -1,3 +1,4 @@
+import { createApiError, isApiBoundaryError } from './http-errors.js';
 // @ts-check
 // OpenAI API module for ClipAIble extension
 
@@ -122,7 +123,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
         // Log periodic updates for long-running requests
         let progressInterval = setInterval(() => {
@@ -137,7 +138,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
         }, 30000); // Log every 30 seconds
         
         try {
-          const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
+          const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', { signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -147,30 +148,11 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
           }, CONFIG.API_TIMEOUT_MS, requestOptions);
         
           // If not ok and retryable, throw error for retry logic
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-              throw error;
-            }
-            // Non-retryable error - throw immediately
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            throw error;
-          }
+          if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'openai');
           
           return fetchResponse;
         } catch (e) {
+    if (isApiBoundaryError(e)) throw e;
           throw e;
         } finally {
           // CRITICAL: Always clear timers in finally to prevent memory leaks
@@ -188,98 +170,9 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       }
     );
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await requestOptions.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      // Normalize timeout error with context
-      const normalized = await handleError(fetchError, {
-        source: 'openai',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: false, // Keep existing localized message
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code; // Will be TIMEOUT
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      // Error from retry logic - already has status
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      // Provide more helpful error messages for common errors
-      let errorMessage = errorData?.error?.message || `API error: ${fetchError.status}`;
-      if (fetchError.status === 404) {
-        errorMessage = `Model "${modelName}" is unavailable. Choose a model available to your API account or check the custom model ID.`;
-      } else if (fetchError.status === 401) {
-        errorMessage = 'OpenAI API key is invalid or missing. Please check your API key in settings.';
-      } else if (fetchError.status === 403) {
-        errorMessage = 'OpenAI API access forbidden. Please check your API key permissions.';
-      } else if (fetchError.status === 429) {
-        errorMessage = 'OpenAI API rate limit exceeded. Please try again later.';
-      }
-      
-      // Normalize HTTP error with context
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(errorMessage);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'openai',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: false, // Keep existing user message
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(errorMessage);
-      error.code = normalized.code; // Will be AUTH_ERROR, RATE_LIMIT, or PROVIDER_ERROR
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    // Network error (no status, not AbortError)
-    const normalized = await handleError(fetchError, {
-      source: 'openai',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: false, // Keep existing localized message
-      context: {
-        operation: 'fetchRequest',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code; // Will be NETWORK_ERROR
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
 
   const responseTime = Date.now() - requestStartTime;
@@ -318,6 +211,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
       totalTimeSeconds: Math.round(totalTime / 1000)
     });
   } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
     await requestOptions.checkCancelled?.();
     if (isTerminalAIResponseError(parseError)) throw parseError;
     // Normalize error with context for better logging and error tracking
@@ -385,6 +279,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
   try {
     parsed = JSON.parse(content);
   } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
     // Normalize error with context for better logging and error tracking
     const normalized = await handleError(jsonError, {
       source: 'openai',
@@ -472,9 +367,9 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
     });
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
+        const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -483,28 +378,7 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
           body: JSON.stringify(requestBody)
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-
-            throw error;
-          }
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-          /** @type {Error & {status?: number}} */
-          const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'openai');
 
         return fetchResponse;
 
@@ -551,6 +425,7 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
       try {
         return JSON.parse(content);
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // Normalize error with context for better logging and error tracking
         const normalized = await handleError(parseError, {
           source: 'openai',
@@ -576,6 +451,7 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
     
     return content;
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     await requestOptions.checkCancelled?.();
     // Re-throw if already normalized, otherwise normalize
     if (error.code) {
@@ -678,8 +554,7 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     requestBody.reasoning_effort = reasoningEffort;
   }
   
-  // CRITICAL: Log full request body to see what we're sending
-  log('[ClipAIble OpenAI] === REQUEST BODY (BEFORE SENDING) ===', {
+  logDebug('OpenAI image request prepared', {
     model: modelName,
     messagesCount: messages.length,
     hasSystemMessage: messages.some(m => m.role === 'system'),
@@ -696,7 +571,6 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
       }
       return 0;
     })(),
-    requestBodyPreview: JSON.stringify(requestBody).substring(0, 500) + (JSON.stringify(requestBody).length > 500 ? '...' : ''), // Truncated preview only
     jsonResponse,
     hasResponseFormat: !!requestBody.response_format,
     hasReasoningEffort: !!requestBody.reasoning_effort
@@ -713,9 +587,9 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     });
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', {
+        const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -724,28 +598,7 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
           body: JSON.stringify(requestBody)
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-
-            throw error;
-          }
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-          /** @type {Error & {status?: number}} */
-          const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'openai');
 
         return fetchResponse;
 
@@ -794,6 +647,7 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
       try {
         result = JSON.parse(content);
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // Normalize error with context for better logging and error tracking
         const normalized = await handleError(parseError, {
           source: 'openai',
@@ -881,6 +735,7 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     
     return responseData;
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     await requestOptions.checkCancelled?.();
     logError('OpenAI API call with image and history failed', error);
     throw error;

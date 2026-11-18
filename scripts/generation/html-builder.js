@@ -1,3 +1,5 @@
+import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
 // @ts-check
 // HTML builder for PDF generation
 
@@ -56,7 +58,9 @@ function getLocalization(language) {
  * @param {string} abstract - Abstract text
  * @returns {string} HTML document
  */
-export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', publishDate = '', language = 'auto', generateToc = false, headings = [], generateAbstract = false, abstract = '') {
+export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', publishDate = '', language = 'auto', generateToc = false, generateAbstract = false, abstract = '') {
+  content = normalizeDocumentContent(content, title, sourceUrl);
+  const headings = content.filter(item => item.type === 'heading').map(item => ({ text: documentPlainText(item, sourceUrl), level: item.level || 2, id: item.id }));
   const h2InContent = content.filter(item => item.type === 'heading' && item.level === 2);
   log('buildHtmlForPdf', { 
     contentItems: content.length, 
@@ -73,15 +77,6 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   // Clean title from soft hyphens and special characters
   const cleanedTitle = cleanTitle(title || '');
   
-  // Check if first content item is a heading that matches the title
-  // If so, we'll skip it since title is already in header
-  const firstItem = content[0];
-  const firstItemIsTitle = firstItem && 
-    firstItem.type === 'heading' && 
-    firstItem.level === 1 &&
-    cleanedTitle && 
-    (firstItem.text || '').replace(/<[^>]+>/g, '').trim() === cleanedTitle;
-  
   // Extract subtitle from content to place it in header (after title, before meta)
   let subtitleHtml = '';
   let subtitleIndex = -1;
@@ -90,7 +85,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
       const item = content[i];
       const idAttr = item.id ? ` id="${escapeAttr(item.id)}"` : '';
       const subtitleText = typeof item.text === 'string' ? item.text : (typeof item.text === 'object' && item.text?.text ? item.text.text : String(item.text || ''));
-      subtitleHtml = `<p class="standfirst"${idAttr}>${sanitizeHtml(subtitleText, sourceUrl, { allowFileProtocol: true })}</p>`;
+      subtitleHtml = `<p class="standfirst"${idAttr}>${documentText(item, sourceUrl)}</p>`;
       subtitleIndex = i;
       break;
     }
@@ -121,11 +116,6 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
   const failedItems = [];
   
   const contentHtml = content.map((item, index) => {
-    // Skip first heading if it matches the title (title is already in header)
-    if (index === 0 && firstItemIsTitle && item.type === 'heading' && item.level === 1) {
-      return '';
-    }
-    
     // Skip subtitle - it will be in header
     if (item.type === 'subtitle') {
       return '';
@@ -164,41 +154,15 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
         case 'heading':
           const level = Math.min(Math.max(item.level || 2, 1), 6);
           
-          // CRITICAL: Check if itemText already contains HTML (from extraction)
-          // If it contains HTML tags, use it directly; otherwise convert markdown to HTML
-          const headingHasHtmlTags = /<[a-z][\s\S]*>/i.test(itemText);
-          
-          let headingText = itemText.trim();
-          
-          // Remove any leading # characters and spaces (in case markdown syntax leaked in)
-          headingText = headingText.replace(/^#+\s*/, '').trim();
-          headingText = cleanTildaArtifactsFromText(headingText) || headingText;
-          
-          let headingHtml;
-          if (headingHasHtmlTags) {
-            // Already HTML - sanitizeHtml will remove SVG and decorative elements but preserve text content
-            // It will also remove HTML comments like <!--[--> and <!--]--> that we added earlier
-            headingHtml = headingText;
-          } else {
-            // Markdown - convert first, then sanitize
-            headingHtml = markdownToHtml(headingText);
-          }
-          
-          const sanitizedHeadingHtml = sanitizeHtml(headingHtml, sourceUrl, { allowFileProtocol: true });
-          
+          const sanitizedHeadingHtml = documentText(item, sourceUrl);
           return `${anchorTag}<h${level}${idAttr}>${sanitizedHeadingHtml}</h${level}>`;
         
         case 'paragraph':
-          // CRITICAL: Check if itemText already contains HTML (from extraction)
-          // If it contains HTML tags, use it directly; otherwise convert markdown to HTML
-          const hasHtmlTags = /<[a-z][\s\S]*>/i.test(itemText);
-          const paragraphHtml = hasHtmlTags ? itemText : markdownToHtml(itemText);
-          const sanitizedParagraphHtml = sanitizeHtml(paragraphHtml, sourceUrl, { allowFileProtocol: true });
-          
+          const sanitizedParagraphHtml = documentText(item, sourceUrl);
           return `${anchorTag}<p${idAttr} translate="no" class="notranslate" data-translate="no">${sanitizedParagraphHtml}</p>`;
         
         case 'image':
-          if (!item.src || item.src.startsWith('data:image/svg') || item.src.includes('placeholder')) {
+          if (!item.src || item.src.includes('placeholder')) {
             return '';
           }
           const altLower = (item.alt || '').toLowerCase();
@@ -301,45 +265,19 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
         
         case 'quote':
         case 'blockquote':
-          // CRITICAL: Convert markdown to HTML before sanitizing
-          const quoteText = typeof item.text === 'string' ? item.text : (typeof item.text === 'object' && item.text?.text ? item.text.text : String(item.text || ''));
-          const quoteHtml = markdownToHtml(quoteText);
-          return `${anchorTag}<blockquote${idAttr}>${sanitizeHtml(quoteHtml, sourceUrl, { allowFileProtocol: true })}</blockquote>`;
-        
+          return `${anchorTag}<blockquote${idAttr}>${documentText(item, sourceUrl)}</blockquote>`;
         case 'list':
-          const tag = item.ordered ? 'ol' : 'ul';
-          const items = (item.items || []).map(i => {
-            if (typeof i === 'string') {
-              // CRITICAL: Convert markdown to HTML before sanitizing
-              const listItemHtml = markdownToHtml(i);
-              return `<li>${sanitizeHtml(listItemHtml, sourceUrl, { allowFileProtocol: true })}</li>`;
-            }
-            const liId = i.id ? ` id="${escapeAttr(i.id)}"` : '';
-            const liAnchor = i.id ? `<a name="${escapeAttr(i.id)}"></a>` : '';
-            // CRITICAL: Convert markdown to HTML before sanitizing
-            const listItemHtml = markdownToHtml(i.html || i.text || '');
-            return `<li${liId}>${liAnchor}${sanitizeHtml(listItemHtml, sourceUrl, { allowFileProtocol: true })}</li>`;
-          }).join('');
-          return `${anchorTag}<${tag}${idAttr}>${items}</${tag}>`;
-        
+          return `${anchorTag}${listHtml(item, sourceUrl)}`;
         case 'code':
           const codeText = typeof item.text === 'string' ? item.text : (typeof item.text === 'object' && item.text?.text ? item.text.text : String(item.text || ''));
           return `${anchorTag}<pre${idAttr}><code class="language-${escapeAttr(item.language || 'text')}">${escapeHtml(codeText)}</code></pre>`;
         
         case 'table':
-          // CRITICAL: Convert markdown to HTML before sanitizing
-          const headers = (item.headers || []).map(h => {
-            const headerHtml = markdownToHtml(h || '');
-            return `<th>${sanitizeHtml(headerHtml, sourceUrl, { allowFileProtocol: true })}</th>`;
-          }).join('');
-          const rows = (item.rows || []).map(row => 
-            `<tr>${(row || []).map(cell => {
-              const cellHtml = markdownToHtml(cell || '');
-              return `<td>${sanitizeHtml(cellHtml, sourceUrl, { allowFileProtocol: true })}</td>`;
-            }).join('')}</tr>`
-          ).join('');
-          return `${anchorTag}<table${idAttr}><thead><tr>${headers}</tr></thead><tbody>${rows}</tbody></table>`;
-        
+          const headers = (item.headers || []).map(cell => `<th>${tableCellHtml(item, cell, sourceUrl)}</th>`).join('');
+          const rows = (item.rows || []).map(row => `<tr>${row.map(cell => `<td>${tableCellHtml(item, cell, sourceUrl)}</td>`).join('')}</tr>`).join('');
+          return `${anchorTag}<table${idAttr}>${headers ? `<thead><tr>${headers}</tr></thead>` : ''}<tbody>${rows}</tbody></table>`;
+        case 'hr':
+        case 'divider':
         case 'separator':
           return `<hr${idAttr}>`;
         
@@ -495,167 +433,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     // TOC generation logged in pdf.js
     const tocTitle = l10n.contents || 'Contents';
     
-    // Build nested TOC structure based on heading hierarchy
-    // Find minimum level to normalize (usually 2, but could be 1)
-    const minLevel = Math.min(...headings.map(h => h.level));
-    
-    log('=== TOC GENERATION START ===', {
-      headingsCount: headings.length,
-      minLevel,
-      headings: headings.map((h, idx) => ({
-        index: idx,
-        level: h.level,
-        text: h.text?.substring(0, 50) || '',
-        id: h.id || ''
-      }))
-    });
-    
-    // Build nested structure using proper HTML nesting
-    // Track previous level and properly manage <ul> and <li> tags
-    let tocListHtml = '<ul class="toc-list">';
-    let prevLevel = null; // Track previous heading level (null for first item)
-    let hasOpenLi = false; // Track if there's an open <li> tag
-    const stepLogs = []; // Log each step for debugging
-    
-    headings.forEach((h, index) => {
-      const level = h.level;
-      const nextHeading = headings[index + 1];
-      const nextLevel = nextHeading ? nextHeading.level : minLevel - 1;
-      const stepLog = {
-        index,
-        heading: h.text?.substring(0, 50) || '',
-        level,
-        prevLevel,
-        nextLevel,
-        hasOpenLiBefore: hasOpenLi,
-        htmlBefore: tocListHtml.substring(Math.max(0, tocListHtml.length - 200))
-      };
-      
-      if (prevLevel !== null) {
-        // Close previous <li> and nested lists if going up or staying at same level
-        if (level <= prevLevel) {
-          stepLog.action = 'going_up_or_same';
-          // First close the <li> of previous heading (if it's still open)
-          // NOTE: Previous <li> might already be closed if nextLevel <= prevLevel was true in previous iteration
-          if (hasOpenLi) {
-            tocListHtml += '</li>';
-            hasOpenLi = false;
-            stepLog.closedLi = true;
-          }
-          // Then close nested <ul> tags (one for each level we're going up)
-          const levelsToClose = prevLevel - level;
-          stepLog.levelsToClose = levelsToClose;
-          if (levelsToClose > 0) {
-            // Close nested lists and their parent <li> tags
-            // Example: going from H2 to H1: close </ul></li> (close nested list and parent H1's <li>)
-            // For each level we go up, we close: </ul></li>
-            for (let i = 0; i < levelsToClose; i++) {
-              tocListHtml += '</ul></li>';
-              stepLog.closedUlCount = (stepLog.closedUlCount || 0) + 1;
-              stepLog.closedLiCount = (stepLog.closedLiCount || 0) + 1;
-            }
-            // After closing nested lists, hasOpenLi should be false (all parent <li> are closed)
-            hasOpenLi = false;
-          }
-          // NOTE: For same level (level === prevLevel), previous <li> is already closed above
-          // (if hasOpenLi was true) or was closed in previous iteration (if nextLevel <= prevLevel)
-          // So we don't need to close it again here
-        }
-        
-        // Open nested lists if going down (must be inside previous open <li>)
-        if (level > prevLevel) {
-          stepLog.action = 'going_down';
-          // Open nested lists for each level between previous and current
-          // Number of lists to open = level - prevLevel
-          // These must be opened inside the previous open <li>
-          const listsToOpen = level - prevLevel;
-          stepLog.listsToOpen = listsToOpen;
-          for (let i = 0; i < listsToOpen; i++) {
-            tocListHtml += '<ul class="toc-list">';
-          }
-        }
-      } else {
-        stepLog.action = 'first_item';
-      }
-      
-      // Add list item (clean Tilda block IDs from heading text)
-      const tocTitle = cleanTildaArtifactsFromText(h.text || '') || (h.text || '');
-      tocListHtml += `<li><a href="#${escapeAttr(h.id)}">${escapeHtml(tocTitle)}</a>`;
-      hasOpenLi = true;
-      stepLog.addedLi = true;
-      
-      // Determine if we should close <li> now
-      if (nextLevel <= level) {
-        // Next heading is same or higher level - close <li>
-        tocListHtml += '</li>';
-        hasOpenLi = false;
-        stepLog.closedLiAfter = true;
-      } else {
-        stepLog.keptLiOpen = true;
-      }
-      // If nextLevel > level, keep <li> open for nested list
-      
-      stepLog.htmlAfter = tocListHtml.substring(Math.max(0, tocListHtml.length - 200));
-      stepLog.hasOpenLiAfter = hasOpenLi;
-      stepLogs.push(stepLog);
-      
-      prevLevel = level;
-    });
-    
-    // Close remaining open <li> and lists
-    // CRITICAL: Close in reverse order - first close open <li>, then close nested lists with their parent <li> tags
-    if (hasOpenLi) {
-      tocListHtml += '</li>';
-      hasOpenLi = false;
-      log('TOC: Closing remaining open <li>');
-    }
-    // Close all open nested <ul> tags and their parent <li> tags
-    // Example: if finalPrevLevel=3, minLevel=1, we need to close:
-    // - </ul></li> for level 3 (nested list + parent H2's <li>)
-    // - </ul></li> for level 2 (nested list + parent H1's <li>)
-    const finalPrevLevel = prevLevel;
-    if (finalPrevLevel !== null && finalPrevLevel > minLevel) {
-      const remainingLevels = finalPrevLevel - minLevel;
-      log('TOC: Closing remaining nested lists', { remainingLevels, prevLevel: finalPrevLevel, minLevel });
-      for (let i = finalPrevLevel; i > minLevel; i--) {
-        tocListHtml += '</ul></li>';
-      }
-    }
-    tocListHtml += '</ul>'; // Close root list
-    
-    log('=== TOC GENERATION COMPLETE ===', {
-      finalHtmlLength: tocListHtml.length,
-      finalHtmlPreview: tocListHtml.substring(0, 500),
-      finalHtmlEnd: tocListHtml.substring(Math.max(0, tocListHtml.length - 500)),
-      stepLogs: stepLogs.slice(0, 10) // First 10 steps for brevity
-    });
-    
-    // Log full HTML structure for debugging
-    const ulOpenCount = (tocListHtml.match(/<ul[^>]*>/g) || []).length;
-    const ulCloseCount = (tocListHtml.match(/<\/ul>/g) || []).length;
-    const liOpenCount = (tocListHtml.match(/<li[^>]*>/g) || []).length;
-    const liCloseCount = (tocListHtml.match(/<\/li>/g) || []).length;
-    
-    log('=== TOC FULL HTML STRUCTURE ===', {
-      fullHtml: tocListHtml,
-      htmlLength: tocListHtml.length,
-      ulOpenCount,
-      ulCloseCount,
-      liOpenCount,
-      liCloseCount,
-      ulBalanced: ulOpenCount === ulCloseCount,
-      liBalanced: liOpenCount === liCloseCount,
-      structureCheck: {
-        hasNestedLists: tocListHtml.includes('</ul><ul'),
-        hasProperNesting: tocListHtml.match(/<ul[^>]*>.*<ul[^>]*>/g) !== null
-      }
-    });
-    
-    // Also log as debug for detailed inspection
-    logDebug('=== TOC FULL HTML (DEBUG) ===', {
-      fullHtml: tocListHtml
-    });
-    
+    const tocListHtml = renderTocAsHtml(buildTocStructure(headings).items, escapeHtml, escapeAttr, 'ul', 'toc-list');
     tocHtml = `
     <nav class="table-of-contents">
       <h2 class="toc-title">${tocTitle}</h2>
@@ -806,21 +584,10 @@ export function applyCustomStyles(styles, pageMode, customColors) {
     throw new Error('Unsupported document font family.');
   }
   
-  // Apply page mode styles
   if (pageMode === 'multi') {
-    styles = styles.replace(
-      /@page\s*\{\s*margin:\s*0;\s*size:\s*210mm\s+9999mm;\s*\}/,
-      '@page { margin: 0; size: A4; }'
-    );
-    styles = styles.replace(
-      /\/\*\s*Page break rules[\s\S]*?page-break-inside: avoid;\s*\}\s*\*\//,
-      `h1, h2, h3, h4, h5, h6 { page-break-after: avoid; }
-  img, figure, .article-image { page-break-inside: avoid; }
-  p { orphans: 3; widows: 3; }
-  blockquote, pre { page-break-inside: avoid; }`
-    );
+    styles += '\n@media print { @page { margin: 5mm 5mm 0 5mm; } body { padding: 0 !important; } }';
   }
-  
+
   // Parse font size
   const oldToNew = { 'small': 24, 'medium': 31, 'large': 38, 'xlarge': 45 };
   const baseFontSize = oldToNew[fontSize] || parseInt(fontSize) || 31;

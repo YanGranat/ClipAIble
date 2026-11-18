@@ -1,3 +1,4 @@
+import { joinPdfText } from '../utils/text-join.js';
 // @ts-check
 // Element grouper - groups lines into elements (paragraphs, headings, lists)
 // Strategy: First group lines into blocks by gaps, then classify grouped blocks
@@ -106,8 +107,7 @@ function convertTextBlocksToGroupedBlocks(blocks) {
     const combinedText = blockLines.reduce((acc, l) => {
       const trimmed = (l.text || '').trim();
       if (trimmed) {
-        if (acc) acc += ' ';
-        acc += trimmed;
+        acc = joinPdfText(acc, trimmed);
       }
       return acc;
     }, '');
@@ -222,7 +222,7 @@ function createElementFromBlock(block, elementType, classificationResults, eleme
     
     const element = {
       ...baseElement,
-      type: 'table',
+      type: 'table', cellFormat: 'text',
       rows: tableStructure.rows || [],
       hasHeaders: tableStructure.hasHeaders || false,
       columnCount: tableStructure.columnCount || 0,

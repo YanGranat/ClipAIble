@@ -8,10 +8,12 @@
  * @property {string} [text] - Text content (for heading, subtitle, text, code)
  * @property {string} [code] - Code content (for code blocks) - alias for text
  * @property {string} [html] - HTML content (for text blocks)
+ * @property {'text'|'markdown'} [format] - Explicit plain text or Markdown representation
  * @property {string} [url] - Image URL (for images) - alias for src
  * @property {string} [alt] - Image alt text (for images)
  * @property {string} [src] - Image source URL (for images) - alias for url
  * @property {string} [caption] - Image caption text (for images)
+ * @property {boolean} [isFeatured] - Whether the image precedes article content
  * @property {boolean} [translated] - Whether image text was translated (for images)
  * @property {number} [level] - Heading level 1-6 (for headings)
  * @property {string} [language] - Code language (for code blocks)
@@ -19,6 +21,7 @@
  * @property {boolean} [ordered] - Whether list is ordered (for lists)
  * @property {Array<string>} [headers] - Table headers (for tables)
  * @property {Array<Array<string>>} [rows] - Table rows (for tables)
+ * @property {'html'|'text'|'markdown'} [cellFormat] - Table cell representation; legacy AI cells use Markdown
  * @property {boolean} [hasHeaders] - Whether table has headers (for tables)
  * @property {string} [id] - Element ID (for headings with anchors)
  * @property {boolean} [isStandfirst] - Whether text is standfirst (for text blocks)
@@ -43,8 +46,8 @@
  * @property {Object|null} [statusTranslationParams] - Status interpolation values
  * @property {string|null} [errorTranslationKey] - Error translation key
  * @property {Object|null} [errorTranslationParams] - Error interpolation values
- * @property {Error|Object|null} error - Error object if processing failed
- * @property {Object|null} result - Processing result
+ * @property {string|null} error - Display message if processing failed
+ * @property {number|null} [inactivityDeadlineAt] - Deadline for the current operation's next progress update
  * @property {number|null} startTime - Processing start timestamp
  * @property {string|null} currentStage - Current processing stage ID
  * @property {Array<string>} completedStages - List of completed stage IDs
@@ -272,6 +275,7 @@
 
 /**
  * @typedef {Object} HistoryItem
+ * @property {string} [id] - Stable save identity
  * @property {string} title - Item title
  * @property {string} url - Item URL
  * @property {string} format - Export format
@@ -387,7 +391,7 @@
 
 /**
  * @typedef {Object} DeleteHistoryItemData
- * @property {number} index - History item index
+ * @property {HistoryItem} item - Captured history entry
  */
 
 /**
@@ -406,19 +410,6 @@
  * @property {Array<{text: string, start: number, duration: number}>} [subtitles] - Subtitles array
  * @property {Object} [metadata] - Video metadata
  * @property {Error|Object} [error] - Error if extraction failed
- */
-
-/**
- * @typedef {Object} LogModelDropdownData
- * @property {string} model - Selected model name
- */
-
-/**
- * @typedef {Object} CloseOffscreenForVoiceSwitchData
- * @property {string} [processingRunId] - Optional owner for operation-scoped cleanup
- * @property {string} previousVoice - Previous voice ID
- * @property {string} newVoice - New voice ID
- * @property {string} [messageId] - Message ID
  */
 
 /**
@@ -448,8 +439,6 @@
  *   | { action: 'deleteDomainFromCache', data: DeleteDomainFromCacheData, target?: string, type?: string }
  *   | { action: 'extractYouTubeSubtitlesForSummary', data: ExtractYouTubeSubtitlesData, target?: string, type?: string }
  *   | { action: 'youtubeSubtitlesResult', data: YouTubeSubtitlesResultData, target?: string, type?: string }
- *   | { action: 'logModelDropdown', data: LogModelDropdownData, target?: string, type?: string }
- *   | { action: 'closeOffscreenForVoiceSwitch', data: CloseOffscreenForVoiceSwitchData, target?: string, type?: string }
  *   | { action: 'TTS_PROGRESS', data: TTSProgressData, target?: string, type?: string }
  *   | { action: 'ping', data?: undefined, target?: string, type?: string }
  *   | { action: 'getState', data?: undefined, target?: string, type?: string }
@@ -458,7 +447,6 @@
  *   | { action: 'clearStats', data?: undefined, target?: string, type?: string }
  *   | { action: 'getCacheStats', data?: undefined, target?: string, type?: string }
  *   | { action: 'clearSelectorCache', data?: undefined, target?: string, type?: string }
- *   | { action: 'exportLogs', data?: undefined, target?: string, type?: string }
  *   | { action: string, data?: Object, target?: string, type?: string } // Fallback for unknown actions
  * )} MessageRequest
  */
@@ -526,7 +514,6 @@
  * @property {boolean} [summary_generating] - Summary generation flag
  * @property {number} [summary_generating_start_time] - Summary generation start time
  * @property {Object} [lastSummaryGenerationData] - Last summary generation data
- * @property {Object} [lastSubtitles] - Last extracted subtitles
  * @property {string} [api_provider] - Selected API provider
  * @property {string} [openai_api_key] - OpenAI API key (encrypted)
  * @property {string} [claude_api_key] - Claude API key (encrypted)
@@ -776,138 +763,138 @@
  */
 
 /**
- * @typedef {function(import('./types.js').SelectorResult, string): Promise<import('./types.js').InjectionResult>} ExtractFromPageFunction
+ * @typedef {(baseUrl: string, enableDebugInfo?: boolean, selectors?: SelectorResult | null) => Promise<ExtractionResult>} ExtractFromPageFunction
  * Function to extract content from a page using selectors
  */
 
 /**
- * @typedef {function(): void} StartKeepAliveFunction
+ * @typedef {() => void} StartKeepAliveFunction
  * Function to start keep-alive mechanism
  */
 
 /**
- * @typedef {function(): Promise<void>} StopKeepAliveFunction
+ * @typedef {() => Promise<void>} StopKeepAliveFunction
  * Function to stop keep-alive mechanism
  */
 
 /**
- * @typedef {function(import('./types.js').MessageResponse): void} SendResponseFunction
+ * @typedef {(response: MessageResponse) => void} SendResponseFunction
  * Function to send a response to a message
  */
 
 /**
- * @typedef {function(): Promise<Worker>} InitTTSWorkerFunction
+ * @typedef {() => Promise<Worker>} InitTTSWorkerFunction
  * Function to initialize TTS worker
  */
 
 /**
- * @typedef {function(Worker): Promise<Array<any>>} GetVoicesWithWorkerFunction
+ * @typedef {(worker: Worker) => Promise<Array<any>>} GetVoicesWithWorkerFunction
  * Function to get voices from TTS worker
  */
 
 /**
- * @typedef {function(Worker): Promise<Array<any>>} GetStoredWithWorkerFunction
+ * @typedef {(worker: Worker) => Promise<Array<any>>} GetStoredWithWorkerFunction
  * Function to get stored voices from TTS worker
  */
 
 /**
- * @typedef {function(string): boolean} IsPlaceholderUrlFunction
+ * @typedef {(url: string) => boolean} IsPlaceholderUrlFunction
  * Function to check if URL is a placeholder
  */
 
 /**
- * @typedef {function(string, import('./types.js').IsPlaceholderUrlFunction): string|null} GetBestSrcsetUrlFunction
+ * @typedef {(srcset: string, isPlaceholder: IsPlaceholderUrlFunction) => string | null} GetBestSrcsetUrlFunction
  * Function to extract best URL from srcset attribute
  */
 
 /**
- * @typedef {function(Element): boolean} IsExcludedFunction
+ * @typedef {(element: Element) => boolean} IsExcludedFunction
  * Function to check if element is excluded
  */
 
 /**
- * @typedef {function(Element): boolean} IsLikelyContentContainerFunction
+ * @typedef {(element: Element) => boolean} IsLikelyContentContainerFunction
  * Function to check if element is likely content container
  */
 
 /**
- * @typedef {function(Element, import('./types.js').IsLikelyContentContainerFunction): number} CalculateContentScoreFunction
+ * @typedef {(element: Element, isContent: IsLikelyContentContainerFunction) => number} CalculateContentScoreFunction
  * Function to calculate content score for element
  */
 
 /**
- * @typedef {function(): void|Promise<void>} CompleteProcessingFunction
+ * @typedef {() => void | Promise<void>} CompleteProcessingFunction
  * Function to complete processing
  */
 
 /**
- * @typedef {function(Error|Object): void|Promise<void>} SetErrorFunction
+ * @typedef {(error: Error | Object) => void | Promise<void>} SetErrorFunction
  * Function to set error
  */
 
 /**
- * @typedef {function((Partial<import('./types.js').ProcessingState> & {stage?: string})|string): void} UpdateStateFunction
+ * @typedef {(updates: (Partial<ProcessingState> & {stage?: string}) | string) => void} UpdateStateFunction
  * Function to update processing state
  * @param {(Partial<ProcessingState> & {stage?: string})|string} updates - State updates or status string
  */
 
 /**
- * @typedef {function(any, number): Promise<any>} ProcessImageFunction
+ * @typedef {(image: any, index: number) => Promise<any>} ProcessImageFunction
  * Function to process each image (img, index) => Promise<result>
  */
 
 /**
- * @typedef {function(string): string} EscapeAttrFunction
+ * @typedef {(text: string) => string} EscapeAttrFunction
  * Function to escape HTML attribute value
  */
 
 /**
- * @typedef {function(Element): boolean} IsFootnoteLinkFunction
+ * @typedef {(element: Element) => boolean} IsFootnoteLinkFunction
  * Function to check if link is footnote
  */
 
 /**
- * @typedef {function(Element): boolean} IsIconFunction
+ * @typedef {(element: Element) => boolean} IsIconFunction
  * Function to check if element is icon
  */
 
 /**
- * @typedef {function(Array<any>, {baseFontSize?: number, [key: string]: any}): Array<any>} ProcessLinesFunction
+ * @typedef {(lines: Array<any>, options: {baseFontSize?: number, [key: string]: any}) => Array<any>} ProcessLinesFunction
  * Function to process lines and return elements
  */
 
 /**
- * @typedef {function(): string} FunctionToStringFunction
+ * @typedef {() => string} FunctionToStringFunction
  * Function to convert function to string (generic function type)
  */
 
 /**
- * @typedef {function(any): number} KeyExtractorFunction
+ * @typedef {(item: any) => number} KeyExtractorFunction
  * Function to extract key value from object (e.g., item => item.y)
  */
 
 /**
- * @typedef {function(any): any} KeyFunction
+ * @typedef {(item: any) => any} KeyFunction
  * Function to extract key from item for counting/grouping
  */
 
 /**
- * @typedef {function(): Promise<any>} AsyncFunction
+ * @typedef {() => Promise<any>} AsyncFunction
  * Generic async function that returns a Promise
  */
 
 /**
- * @typedef {function(number, number?): void} ProgressCallbackFunction
+ * @typedef {(current: number, total?: number) => void} ProgressCallbackFunction
  * Function to report progress (current, total?)
  */
 
 /**
- * @typedef {function(string): number} GetMonthNumberFunction
+ * @typedef {(month: string) => number} GetMonthNumberFunction
  * Function to get month number from month name
  */
 
 /**
- * @typedef {function(string): Promise<void>} CreateNotificationFunction
+ * @typedef {(message: string) => Promise<void>} CreateNotificationFunction
  * Function to create/show notification
  */
 
@@ -1117,7 +1104,6 @@
  * @property {import('./types.js').Config} CONFIG - Configuration object
  * @property {function(): import('./types.js').ProcessingState} getProcessingState - Get processing state function
  * @property {function(Error|Object, function(): Promise<void>): Promise<void>} setError - Set error function
- * @property {function(import('./types.js').ExtractionResult): void} setResult - Set result function
  * @property {import('./types.js').UpdateStateFunction} updateState - Update state function
  * @property {any} ERROR_CODES - Error codes object
  * @property {any} PROCESSING_STAGES - Processing stages object
@@ -1184,14 +1170,14 @@
 
 /**
  * @typedef {Object} MessageHandlerDeps
- * @property {function(import('./types.js').ProcessingData): Promise<import('./types.js').ExtractionResult>} startArticleProcessing - Start article processing function
+ * @property {function(import('./types.js').ProcessingData): Promise<boolean>} startArticleProcessing - Start article processing function
  * @property {function(import('./types.js').ProcessingData): Promise<import('./types.js').ExtractionResult>} processWithSelectorMode - Process with selector mode function
  * @property {function(import('./types.js').ProcessingData): Promise<import('./types.js').ExtractionResult>} processWithExtractMode - Process with extract mode function
  * @property {function(import('./types.js').ProcessingData): Promise<import('./types.js').ExtractionResult>} processWithoutAI - Process without AI function
  * @property {function(): Promise<void>} stopKeepAlive - Stop keep-alive function
  * @property {function(): void} startKeepAlive - Start keep-alive function
  * @property {function(string, any?): void} addLogToCollection - Add log to collection function
- * @property {function(): Promise<void>} exportAllLogsToFile - Export all logs to file function
+ * @property {function(boolean=): Promise<void>} [ensureInitialization] - Await current startup attempt or explicitly retry a failed attempt
  */
 
 /**
@@ -1212,6 +1198,7 @@
  * @property {function(): void} clearDecryptedKeyCache - Clear decrypted key cache function
  * @property {function(): import('./types.js').ProcessingState|null} getProcessingState - Get processing state function
  * @property {function(): Promise<void>} restoreStateFromStorage - Restore state from storage function
+ * @property {function(): Promise<void>} cleanupPdfJobsAfterRestore - Clean up orphaned PDF jobs after state recovery
  * @property {function(): Promise<void>} runInitialization - Run initialization tasks function
  * @property {function(): void} startKeepAlive - Start keep-alive function
  */

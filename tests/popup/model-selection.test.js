@@ -28,7 +28,8 @@ afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
 describe('model selection persistence', () => {
   it('starts with the current catalog and offers managed reasoning variants', async () => {
     await models.updateModelList();
-    expect(elements.modelSelect.value).toBe('gpt-6.1-sol');
+    expect(elements.modelSelect.value).toBe('gpt-6.2-sol');
+    expect([...elements.modelSelect.options].map(option => option.value)).toContain('gpt-6.2-sol-high');
     expect([...elements.modelSelect.options].map(option => option.value)).toContain('gpt-6.1-sol-high');
     expect([...elements.modelSelect.options].map(option => option.value)).toContain('gpt-6.1-terra-none');
     expect(stored.model_by_provider.openai).toBe(stored.openai_model);
@@ -51,9 +52,9 @@ describe('model selection persistence', () => {
     stored.openai_model = 'gpt-5.2-high';
     stored.model_by_provider = { openai: 'gpt-5.2-high' };
     await models.updateModelList();
-    expect(elements.modelSelect.value).toBe('gpt-6.1-sol-high');
-    expect(stored.openai_model).toBe('gpt-6.1-sol-high');
-    expect(stored.model_by_provider.openai).toBe('gpt-6.1-sol-high');
+    expect(elements.modelSelect.value).toBe('gpt-6.2-sol-high');
+    expect(stored.openai_model).toBe('gpt-6.2-sol-high');
+    expect(stored.model_by_provider.openai).toBe('gpt-6.2-sol-high');
   });
 
   it('preserves an explicit custom ID even when it matches a replaced built-in', async () => {
@@ -90,7 +91,7 @@ describe('model selection persistence', () => {
     stored.openai_model = 'gpt-5.2';
     stored.model_by_provider = { openai: 'gpt-5.2' };
     await models.updateModelList();
-    expect([...elements.modelSelect.options].map(option => option.value)).not.toContain('gpt-6.1-sol');
+    expect([...elements.modelSelect.options].map(option => option.value)).not.toContain('gpt-6.2-sol');
     expect(elements.modelSelect.value).not.toBe('gpt-5.2');
   });
 

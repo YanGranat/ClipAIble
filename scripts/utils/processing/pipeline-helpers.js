@@ -3,7 +3,7 @@
 
 // @ts-check
 
-import { isCancelled, isCurrentProcessingRun, getScopedUpdateState } from '../../state/processing.js';
+import { isCancelled, isCurrentProcessingRun, getScopedUpdateState, getProcessingSignal, markProcessingRequestStarted } from '../../state/processing.js';
 import { getUILanguage, tSync } from '../../locales.js';
 import { updateState, getProcessingState } from '../../state/processing.js';
 import { PROCESSING_STAGES } from '../../state/processing.js';
@@ -63,9 +63,19 @@ export function getAIRequestOptions(data) {
   const { provider, processingRunId, extractionOnly, checkCancelled } = data;
   return {
     provider,
+    signal: data.signal || (!extractionOnly && processingRunId !== undefined ? getProcessingSignal(processingRunId) : undefined),
+    onRequestStart: () => { if (!extractionOnly && processingRunId !== undefined) markProcessingRequestStarted(processingRunId); },
     checkCancelled: () => {
-      checkCancelled?.();
-      if (!extractionOnly && isCancelled(processingRunId)) throw new Error('Processing cancelled');
+      const checkOwner = () => {
+        if (!extractionOnly && isCancelled(processingRunId)) {
+          const signal = getProcessingSignal(processingRunId);
+          throw signal.reason instanceof Error ? signal.reason : new DOMException('Processing cancelled', 'AbortError');
+        }
+      };
+      checkOwner();
+      const pending = checkCancelled?.();
+      if (pending?.then) return pending.then(checkOwner);
+      checkOwner();
     }
   };
 }
@@ -78,8 +88,9 @@ export function getAIRequestOptions(data) {
 export async function checkCancellation(context = '', runId) {
   if (isCancelled(runId)) {
     log(`Processing cancelled${context ? ` before ${context}` : ''}`);
-    const uiLang = await getUILanguageCached();
-    throw Object.assign(new Error(tSync('statusCancelled', uiLang)), { translationKey: 'statusCancelled', translationParams: {} });
+    const signal = getProcessingSignal(runId);
+    if (signal.reason instanceof Error) throw signal.reason;
+    throw Object.assign(new DOMException('Processing cancelled', 'AbortError'), { translationKey: 'statusCancelled', translationParams: {}, retryable: false });
   }
 }
 
@@ -390,31 +401,9 @@ export async function handleTranslation(
   });
   
   await updateProgress(PROCESSING_STAGES.TRANSLATING, 'statusTranslatingText', 45, { processingRunId: data.processingRunId });
-  try {
-    result = await translateContent(result, language, data.apiKey, data.model, updateState, getAIRequestOptions(data));
-    log(`✅ Translation complete: content translated to ${language}`, { title: result.title });
-  } catch (error) {
-    getAIRequestOptions(data).checkCancelled();
-    if (isTerminalAIResponseError(error)) throw error;
-    // Use constant pattern matching instead of string includes
-    const isAuthError = ['authentication', '401', '403', 'unauthorized', 'forbidden']
-      .some(pattern => (error.message || '').toLowerCase().includes(pattern));
-    if (isAuthError) {
-      logError('Translation failed: authentication error', error);
-      const uiLang = await getUILanguageCached();
-      const errorMsg = tSync('errorAuthFailed', uiLang);
-      updateState({ 
-        currentStage: PROCESSING_STAGES.TRANSLATING.id,
-        status: errorMsg, 
-        progress: 0,
-        error: 'AUTH_ERROR'
-      });
-      throw new Error(errorMsg);
-    }
-    // For other errors, log but continue without translation
-    logError('Translation failed, continuing without translation', error);
-    await updateProgress(PROCESSING_STAGES.TRANSLATING, 'errorTranslationFailed', 60, { processingRunId: data.processingRunId });
-  }
+  result = await translateContent(result, language, data.apiKey, data.model, updateState, getAIRequestOptions(data));
+  await getAIRequestOptions(data).checkCancelled();
+  log(`✅ Translation complete: content translated to ${language}`, { title: result.title });
   
   return result;
 }

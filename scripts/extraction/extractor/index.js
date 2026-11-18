@@ -10,7 +10,8 @@ import { findMainContent } from './discover.js';
 import { extractFeaturedImage } from './images.js';
 import { normalizeImageUrl } from './dom-utils.js';
 import { extractStandfirst } from './standfirst.js';
-import { collectCandidateElements, filterCandidateElements, sortElementsInDomOrder, parseElements, deduplicateHeadings } from './parse.js';
+import { collectCandidateElements, filterCandidateElements, sortElementsInDomOrder, parseElements, createImageItem } from './parse.js';
+import { resolveContentSelection, isSelectedContentExcluded, readSelectedText, selectorValues } from './selectors.js';
 import { isExcluded } from './filters.js';
 import { normalizeHeadingForDedup } from './text-utils.js';
 import { tryExtractTwitterX, extractWhenMainContentMissing, extractLastResortContainerSearch, extractUltimateFallbackAllParagraphs, extractEmergencyFallback } from './fallbacks.js';
@@ -29,10 +30,14 @@ import { CONSTANTS, getInlinedConstantsCode } from './constants.js';
  * @param {boolean} enableDebugInfo - Whether to collect debug information
  * @returns {Promise<ExtractionResult>} - Extraction result
  */
-export async function runExtraction(baseUrl, enableDebugInfo = false) {
+export async function runExtraction(baseUrl, enableDebugInfo = false, selectors = null) {
   // Get window and document
   const win = window;
   const doc = document;
+  const requestedUrl = new URL(baseUrl || win.location.href);
+  const currentUrl = new URL(win.location.href);
+  requestedUrl.hash = currentUrl.hash = '';
+  if (requestedUrl.href !== currentUrl.href) throw new Error('The page changed before extraction started.');
   
   // Initialize debug info
   const debugInfo = enableDebugInfo ? createDebugInfo(win, doc, baseUrl) : null;
@@ -46,7 +51,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
   try {
     // Wait for SPA content to load
     try {
-      await waitForContentLoad(doc);
+      if (!selectors) await waitForContentLoad(doc);
     } catch (e) {
       // Continue even if waiting fails
       pushDebugLog(debugInfo, 'WAIT_FOR_CONTENT_SKIPPED', { error: String(e) });
@@ -75,6 +80,13 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     
     // Extract metadata (title, author, date)
     const metadata = extractMetadata(doc, baseUrl);
+    const selection = selectors ? resolveContentSelection(doc, selectors) : null;
+    if (selectors) {
+      if (!selection.matched) return { ...metadata, content: [], selectorMatched: false, debugInfo };
+      metadata.title = readSelectedText(doc, selectors.title) || metadata.title;
+    }
+    const language = (doc.documentElement.lang || '').trim().toLowerCase().split(/[-_]/)[0];
+    const detectedLanguage = /^[a-z]{2,3}$/.test(language) ? (language === 'ua' ? 'uk' : language) : undefined;
     const mainTitleText = normalizeHeadingForDedup(metadata.title);
     
     pushDebugLog(debugInfo, 'METADATA_EXTRACTED', metadata);
@@ -88,28 +100,24 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
       standfirstElement: null,
       standfirstText: null,
       content: [],
+      selectionExclusions: selectors ? selectorValues(selectors.exclude) : [],
       debugInfo
     };
     
-    // Add main title to seen headings
-    if (mainTitleText) {
-      state.addedHeadings.add(mainTitleText);
-    }
-    
     // Try Twitter/X extraction first
-    const twitterContent = tryExtractTwitterX(win, doc, state, constants, baseUrl);
+    const twitterContent = selectors ? null : tryExtractTwitterX(win, doc, state, constants, baseUrl);
     if (twitterContent && twitterContent.length > 0) {
       return {
         title: metadata.title,
         author: metadata.author,
         publishDate: metadata.publishDate,
-        content: deduplicateHeadings(twitterContent),
+        content: twitterContent,
         debugInfo
       };
     }
     
     // Find main content container
-    const mainContent = findMainContent(win, doc, (el) => isExcluded(win, el, constants));
+    const mainContent = selection?.roots[0] || findMainContent(win, doc, (el) => isExcluded(win, el, constants));
     
     pushDebugLog(debugInfo, 'MAIN_CONTENT_FOUND', {
       found: !!mainContent,
@@ -119,10 +127,18 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     });
     
     // Extract featured image
-    const featuredImage = extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || []);
+    const selectedHero = selectors?.heroImage ? selectorValues(selectors.heroImage)
+      .flatMap(selector => Array.from(doc.querySelectorAll(selector)))
+      .find(node => node.tagName === 'IMG' && !isSelectedContentExcluded(node, selection.exclusions)) : null;
+    const featuredImage = selection
+      ? (selectedHero ? createImageItem(win, selectedHero, state, constants, baseUrl) : null)
+      : extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || []);
     
     // Extract standfirst
-    const standfirstResult = extractStandfirst(mainContent);
+    const selectedSubtitle = selectors?.subtitle ? selectorValues(selectors.subtitle).map(selector => doc.querySelector(selector)).find(Boolean) : null;
+    const standfirstResult = selection
+      ? { text: selectedSubtitle?.textContent?.trim() || null, element: selectedSubtitle }
+      : extractStandfirst(mainContent);
     state.standfirstElement = standfirstResult.element;
     state.standfirstText = standfirstResult.text;
     
@@ -152,6 +168,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
       content.push({
         type: 'subtitle',
         text: state.standfirstText,
+        format: 'text',
         isStandfirst: true
       });
     }
@@ -159,7 +176,9 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     // Main extraction path
     if (mainContent) {
       // Collect candidate elements
-      const allElements = collectCandidateElements(mainContent, win);
+      const allElements = selection
+        ? selection.elements.filter(element => !isSelectedContentExcluded(element, selection.exclusions))
+        : collectCandidateElements(mainContent, win);
       
       if (debugInfo) {
         debugInfo.foundElements = allElements.length;
@@ -189,7 +208,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     }
     
     // If content is still empty, try additional fallbacks
-    if (content.length === 0 || (content.length === 1 && content[0].type === 'image')) {
+    if (!selection && (content.length === 0 || (content.length === 1 && content[0].type === 'image'))) {
       pushDebugLog(debugInfo, 'LAST_RESORT_FALLBACK', {});
       
       // Last resort: search for best container
@@ -200,7 +219,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     }
     
     // Ultimate fallback: all paragraphs
-    if (content.length === 0 || (content.length === 1 && content[0].type === 'image')) {
+    if (!selection && (content.length === 0 || (content.length === 1 && content[0].type === 'image'))) {
       pushDebugLog(debugInfo, 'ULTIMATE_FALLBACK', {});
       
       const ultimateContent = extractUltimateFallbackAllParagraphs(win, doc, state, constants);
@@ -210,7 +229,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
     }
     
     // Emergency fallback
-    if (content.length === 0) {
+    if (!selection && content.length === 0) {
       pushDebugLog(debugInfo, 'EMERGENCY_FALLBACK', {});
       
       const emergencyContent = extractEmergencyFallback(win, doc, state, constants, mainContent);
@@ -218,9 +237,6 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
         content.push(...emergencyContent);
       }
     }
-    
-    // Deduplicate headings
-    content = deduplicateHeadings(content);
     
     // Final content types count
     if (debugInfo) {
@@ -237,6 +253,8 @@ export async function runExtraction(baseUrl, enableDebugInfo = false) {
       title: metadata.title,
       author: metadata.author,
       publishDate: metadata.publishDate,
+      detectedLanguage,
+      ...(selection ? { selectorMatched: true } : {}),
       content,
       debugInfo
     };

@@ -7,6 +7,7 @@ import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { getProcessingState, setError, updateState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
 import { finalizeProcessing } from '../utils/pipeline-helpers.js';
 import { generatePdfWithDebugger } from '../generation/pdf.js';
+import { tSync } from '../locales.js';
 
 /**
  * Handle processArticle request
@@ -149,7 +150,10 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
       }
       
       try {
-        sendResponse({ started: result === true });
+        sendResponse(result === true ? { started: true } : {
+          started: false, success: false, error: tSync('errorProcessingNotStarted', 'en'),
+          translationKey: 'errorProcessingNotStarted', translationParams: {}
+        });
         log('=== handleProcessArticle: Response sent ===', {
           timestamp: Date.now()
         });

@@ -8,15 +8,15 @@ import { checkCancellation, updateProgress, getUILanguageCached, getProcessingCa
 import { PROCESSING_STAGES, updateState } from '../state/processing.js';
 import { extractPdfContent } from '../extraction/pdf.js';
 import { callAIWithImageAndHistory } from '../api/index.js';
-import { callWithRetry } from '../utils/retry.js';
 import { CONFIG } from '../utils/config.js';
 import { PDF_TO_MARKDOWN_SYSTEM_PROMPT, buildPdfPageUserPrompt } from '../extraction/prompts.js';
-import { extractPdfViaOffscreen, getPdfMetadata, renderPdfPageImage, renderAllPdfPages } from '../api/pdf-offscreen.js';
+import { extractPdfViaOffscreen, getPdfMetadata, renderAllPdfPages, readRenderedPdfPage } from '../api/pdf-offscreen.js';
+import { removePdfOperation } from '../api/pdf-operation-storage.js';
 import { extractPdfDataFromTab } from '../api/pdf-data-extractor.js';
-import { getPdfData, savePdfData, removePdfData, validatePdfData } from '../api/pdf-storage.js';
+import { validatePdfData } from '../api/pdf-storage.js';
+import { requestPdfFileSelectionViaMessage } from '../api/pdf-selection.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { fetchPdfFile } from '../offscreen/pdf/utils/pdf-fetcher.js';
-import { isTerminalAIResponseError } from '../api/response-validation.js';
 import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
 
 /**
@@ -29,274 +29,41 @@ import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
  */
 async function getPdfDataWithFallback(pdfUrl, tabId = null, requestOptions = {}) {
   await requestOptions.checkCancelled?.();
-  const isLocalFile = pdfUrl.startsWith('file://');
-  
-  // PRIORITY 1: Try IndexedDB (fastest if previously saved)
-  let pdfData = await getPdfData(pdfUrl);
+  let bytes = null;
+  if (pdfUrl.startsWith('file://')) {
+    let fileAccessAllowed = false;
+    try { fileAccessAllowed = await chrome.extension?.isAllowedFileSchemeAccess?.() === true; }
+    catch { /* The file picker remains available when the permission cannot be read. */ }
+    await requestOptions.checkCancelled?.();
+    if (fileAccessAllowed) {
+      try { bytes = await fetchPdfFile(pdfUrl, null, requestOptions); }
+      catch (error) {
+        await requestOptions.checkCancelled?.();
+        if (requestOptions.signal?.aborted) throw requestOptions.signal.reason;
+        if (['errorPdfTooLarge', 'errorTimeout', 'statusCancelled'].includes(error.translationKey)) throw error;
+        logWarn('Local PDF bytes unavailable; trying file selection', { error: error.message });
+      }
+    }
+    if (!bytes && tabId != null) {
+      try { bytes = await extractPdfDataFromTab(pdfUrl, tabId); }
+      catch (error) {
+        await requestOptions.checkCancelled?.();
+        logWarn('PDF tab bytes unavailable; requesting file selection', { error: error.message });
+      }
+    }
+    await requestOptions.checkCancelled?.();
+    if (!bytes) bytes = await requestPdfFileSelectionViaMessage(pdfUrl, requestOptions);
+    await requestOptions.checkCancelled?.();
+    if (!bytes) throw createPdfError('PDF file selection cancelled', 'errorPdfDataUnavailable');
+  } else if (/^https?:\/\//i.test(pdfUrl)) {
+    bytes = await fetchPdfFile(pdfUrl, null, requestOptions);
+  } else {
+    throw createPdfError('PDF URL unavailable', 'errorPdfDataUnavailable');
+  }
   await requestOptions.checkCancelled?.();
-  if (pdfData) {
-    log('[ClipAIble PDF Processing] ✅ PDF data loaded from IndexedDB', {
-      size: pdfData.byteLength,
-      sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-      method: 'indexeddb'
-    });
-    return fetchPdfFile(pdfUrl, pdfData, requestOptions);
-  }
-  
-  if (isLocalFile && tabId) {
-    // PRIORITY 2: Try extracting from open tab (works only for PDF.js extension, not Chrome built-in viewer)
-    try {
-      log('⚠️ FALLBACK: PDF data not in IndexedDB - trying to extract from open tab', {
-        reason: 'PDF data not found in IndexedDB cache',
-        method: 'tab extraction (fallback)',
-        note: 'Works only for PDF.js extension, not Chrome built-in viewer',
-        tabId
-      });
-      pdfData = await extractPdfDataFromTab(pdfUrl, tabId);
-      await requestOptions.checkCancelled?.();
-      
-      // Save to IndexedDB for future use
-      if (pdfData) {
-        log('[ClipAIble PDF Processing] ✅ PDF data extracted from open tab, saving to IndexedDB', { 
-          size: pdfData.byteLength,
-          sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-          method: 'tab_extraction'
-        });
-        savePdfData(pdfUrl, pdfData).catch(err => {
-          logWarn('[ClipAIble PDF Processing] Failed to save PDF data to IndexedDB', { error: err.message });
-        });
-        return fetchPdfFile(pdfUrl, pdfData, requestOptions);
-      } else {
-        logWarn('[ClipAIble PDF Processing] extractPdfDataFromTab returned null/undefined', { tabId });
-      }
-    } catch (extractError) {
-      await requestOptions.checkCancelled?.();
-      // This is expected for Chrome built-in PDFium viewer - preserve error context for diagnostics
-      const errorContext = {
-        error: extractError.message,
-        errorName: extractError.name,
-        errorStack: extractError.stack,
-        tabId,
-        pdfUrl,
-        expected: true, // This is expected behavior for PDFium
-        note: 'This is expected for Chrome built-in PDFium viewer - will request file selection'
-      };
-      
-      logWarn('[ClipAIble PDF Processing] ❌ Failed to extract PDF data from open tab', errorContext);
-      // Continue to file picker - this is expected behavior
-    }
-    
-    // PRIORITY 3: If PDF data still not available, request user to select file
-    logWarn('⚠️ FALLBACK: PDF data not available - requesting user to select file manually', {
-      reason: 'PDF data not found in IndexedDB and tab extraction failed',
-      method: 'user file selection (last resort fallback)',
-      impact: 'User interaction required - manual file selection',
-      pdfUrl
-    });
-    
-    try {
-      // Use message-based approach (dynamic import() is not allowed in service worker)
-      pdfData = await requestPdfFileSelectionViaMessage(pdfUrl);
-      await requestOptions.checkCancelled?.();
-      
-      if (pdfData) {
-        log('[ClipAIble PDF Processing] ✅ PDF file selected by user, saving to IndexedDB', { 
-          size: pdfData.byteLength,
-          sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-          method: 'user_file_selection',
-          pdfUrl
-        });
-        
-        try {
-          // CRITICAL: Save to IndexedDB first, then reload from IndexedDB
-          // This ensures data is properly stored and can be accessed by offscreen document
-          await savePdfData(pdfUrl, pdfData);
-          await requestOptions.checkCancelled?.();
-          log('[ClipAIble PDF Processing] ✅ PDF data saved to IndexedDB successfully', {
-            pdfUrl,
-            size: pdfData.byteLength
-          });
-        } catch (saveError) {
-          logError('[ClipAIble PDF Processing] ❌ Failed to save PDF data to IndexedDB', {
-            error: saveError.message,
-            errorStack: saveError.stack,
-            pdfUrl,
-            size: pdfData.byteLength
-          });
-          throw saveError;
-        }
-        
-        try {
-          // Reload from IndexedDB to ensure consistency
-          // This matches the successful case where data comes from IndexedDB
-          pdfData = await getPdfData(pdfUrl);
-          await requestOptions.checkCancelled?.();
-          if (!pdfData) {
-            logError('[ClipAIble PDF Processing] ❌ Failed to retrieve PDF data from IndexedDB after saving', {
-              pdfUrl,
-              note: 'Data was saved but cannot be retrieved'
-            });
-            throw new Error('Failed to retrieve PDF data from IndexedDB after saving');
-          }
-          
-          log('[ClipAIble PDF Processing] ✅ PDF data reloaded from IndexedDB after user selection', {
-            size: pdfData.byteLength,
-            sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-            method: 'indexeddb_after_user_selection',
-            pdfUrl
-          });
-          return fetchPdfFile(pdfUrl, pdfData, requestOptions);
-        } catch (retrieveError) {
-          logError('[ClipAIble PDF Processing] ❌ Failed to retrieve PDF data from IndexedDB', {
-            error: retrieveError.message,
-            errorStack: retrieveError.stack,
-            pdfUrl
-          });
-          throw retrieveError;
-        }
-      } else {
-        throw new Error('User cancelled PDF file selection');
-      }
-    } catch (fileSelectionError) {
-      await requestOptions.checkCancelled?.();
-      // Preserve original error context for diagnostics
-      const errorContext = {
-        error: fileSelectionError.message,
-        errorName: fileSelectionError.name,
-        errorStack: fileSelectionError.stack,
-        pdfUrl,
-        tabId
-      };
-      
-      logWarn('[ClipAIble PDF Processing] ❌ Failed to get PDF file from user selection', errorContext);
-      
-      // Create new error with user-friendly message, but preserve original error as cause
-      const userError = createPdfError('PDF data not available. Please select the PDF file when prompted, or ensure PDF is open in a browser tab.', 'errorPdfDataUnavailable');
-      if (fileSelectionError.cause) {
-        userError.cause = fileSelectionError.cause;
-      } else {
-        userError.cause = fileSelectionError;
-      }
-      throw userError;
-    }
-  } else if (pdfUrl.startsWith('http')) {
-    // PRIORITY 2: Fetch from web
-    try {
-      log('[ClipAIble PDF Processing] PDF data not in IndexedDB, fetching from web', { pdfUrl });
-      pdfData = await fetchPdfFile(pdfUrl, null, requestOptions);
-      await requestOptions.checkCancelled?.();
-      
-      // Save to IndexedDB for next time (async, non-blocking)
-      savePdfData(pdfUrl, pdfData).catch(() => {});
-      
-      log('[ClipAIble PDF Processing] ✅ PDF data fetched from web', {
-        size: pdfData.byteLength,
-        sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-        method: 'web_fetch'
-      });
-      return pdfData;
-    } catch (fetchError) {
-      await requestOptions.checkCancelled?.();
-      logError('[ClipAIble PDF Processing] Failed to fetch PDF from web', {
-        error: fetchError.message,
-        pdfUrl
-      });
-      throw fetchError;
-    }
-  }
-  
-  throw createPdfError('PDF data not available. Please ensure PDF is open in a browser tab or provide a valid URL.', 'errorPdfDataUnavailable');
-}
-
-/**
- * Request PDF file selection via message to popup (fallback when dynamic import fails)
- * @param {string} expectedPdfUrl - Expected PDF URL
- * @returns {Promise<ArrayBuffer|null>} PDF file data as ArrayBuffer, or null if user cancelled
- */
-async function requestPdfFileSelectionViaMessage(expectedPdfUrl) {
-  log('[ClipAIble PDF Processing] Requesting PDF file selection via message to popup', { expectedPdfUrl });
-  
-  return new Promise((resolve, reject) => {
-    // Send message to popup to show file picker
-    chrome.runtime.sendMessage({
-      action: 'selectPdfFile',
-      expectedPdfUrl: expectedPdfUrl
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        logError('[ClipAIble PDF Processing] Failed to send message to popup', chrome.runtime.lastError);
-        reject(createPdfError(chrome.runtime.lastError.message, 'errorPdfDataUnavailable'));
-        return;
-      }
-      
-      if (!response) {
-        log('[ClipAIble PDF Processing] No response from popup - popup may be closed');
-        reject(createPdfError('No response from popup. Please keep the extension popup open and try again.', 'errorPdfDataUnavailable'));
-        return;
-      }
-      
-      if (response.cancelled) {
-        log('[ClipAIble PDF Processing] User cancelled file selection in popup');
-        resolve(null);
-        return;
-      }
-      
-      if (response.success) {
-        if (response.pdfData) {
-          try {
-            // Convert base64 to ArrayBuffer
-            log('[ClipAIble PDF Processing] Converting base64 to ArrayBuffer', {
-              base64Length: response.pdfData.length,
-              expectedSize: response.size
-            });
-            
-            const binaryString = atob(response.pdfData);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            const arrayBuffer = bytes.buffer;
-            
-            // Validate ArrayBuffer
-            if (!(arrayBuffer instanceof ArrayBuffer)) {
-              throw new Error('Failed to convert base64 to ArrayBuffer');
-            }
-            
-            if (arrayBuffer.byteLength === 0) {
-              throw new Error('ArrayBuffer is empty after conversion');
-            }
-            
-            if (response.size && arrayBuffer.byteLength !== response.size) {
-              logWarn('[ClipAIble PDF Processing] Size mismatch after base64 conversion', {
-                expected: response.size,
-                actual: arrayBuffer.byteLength,
-                difference: arrayBuffer.byteLength - response.size
-              });
-            }
-            
-            log('[ClipAIble PDF Processing] PDF file selected and received from popup', {
-              size: arrayBuffer.byteLength,
-              sizeMB: (arrayBuffer.byteLength / 1024 / 1024).toFixed(2),
-              isValidArrayBuffer: arrayBuffer instanceof ArrayBuffer
-            });
-            
-            resolve(arrayBuffer);
-          } catch (conversionError) {
-            logError('[ClipAIble PDF Processing] Failed to convert base64 to ArrayBuffer', {
-              error: conversionError.message,
-              errorStack: conversionError.stack,
-              base64Length: response.pdfData?.length
-            });
-            reject(conversionError);
-          }
-        } else {
-          log('[ClipAIble PDF Processing] No PDF data in response');
-          resolve(null);
-        }
-      } else {
-        reject(createPdfError(response.error || 'Failed to select PDF file', response.translationKey || 'errorPdfDataUnavailable', response.translationParams || {}));
-      }
-    });
-  });
+  try { validatePdfData(bytes, 'PDF acquisition'); }
+  catch (error) { throw createPdfError(error.message, 'errorPdfInvalid'); }
+  return fetchPdfFile(pdfUrl, bytes, requestOptions);
 }
 
 /**
@@ -310,12 +77,6 @@ function cleanMarkdownText(markdown) {
   // Remove legacy METADATA: prefix if present
   if (cleaned.startsWith('METADATA:')) {
     cleaned = cleaned.replace(/^METADATA:.*?\n\s*\n/s, '').trim();
-  }
-  
-  // Remove markdown code blocks if LLM wrapped it
-  if (cleaned.startsWith('```markdown') || cleaned.startsWith('```')) {
-    cleaned = cleaned.replace(/^```(?:markdown)?\s*\n?/i, '');
-    cleaned = cleaned.replace(/\n?```\s*$/i, '');
   }
   
   return cleaned.trim();
@@ -477,15 +238,9 @@ export async function processPdfPage(data, pdfUrl) {
       }
     };
     
-    let pdfData = null;
-    try { pdfData = await getPdfData(pdfUrl); }
-    catch (error) { logWarn('[PDF] Cached data unavailable', { error: error.message }); }
-    const requestOptions = getAIRequestOptions(data);
-    if (pdfData instanceof ArrayBuffer) {
-      validatePdfData(pdfData, 'PDF extraction');
-      await fetchPdfFile(pdfUrl, pdfData, requestOptions);
-    }
-    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, processingRunId: data.processingRunId });
+    const requestOptions = { ...getAIRequestOptions(data), processingRunId: data.processingRunId };
+    const pdfData = await getPdfDataWithFallback(pdfUrl.split('#')[0], tabId, requestOptions);
+    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, processingRunId: data.processingRunId, onProgress: progressCallback });
     await checkCancellation('PDF extraction');
     
     log(`✅ PDF content extracted: ${result.content?.length || 0} content items`, { 
@@ -522,7 +277,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const startTime = Date.now();
   const { url, tabId, apiKey, model } = data;
-  const requestOptions = getAIRequestOptions(data);
+  const requestOptions = { ...getAIRequestOptions(data), processingRunId: data.processingRunId };
   const captureOptions = { ...requestOptions, processingRunId: data.processingRunId };
   
   log('[ClipAIble PDF Processing] === FUNCTION ENTRY ===', {
@@ -561,55 +316,8 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     log('Removed URL fragment from PDF URL', { original: pdfUrl, cleaned: cleanPdfUrl });
   }
   
-  const isLocalFile = cleanPdfUrl.startsWith('file://');
-  const isWebUrl = cleanPdfUrl.startsWith('http');
-  
-  // CRITICAL: Get PDF data FIRST (before dimensions) for both local and web URLs
-  // - Local: offscreen cannot fetch file:// URLs (CORS/origin). We must pass data via IndexedDB.
-  // - Web: offscreen fetch to third-party URLs fails with CORS. Background can fetch; we save to IndexedDB and pass ref.
-  let pdfData = null;
-  if (isLocalFile && tabId) {
-    log('[ClipAIble PDF Processing] Local file detected - getting PDF data first (before dimensions)', { pdfUrl: cleanPdfUrl, tabId });
-    
-    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId, requestOptions);
-    
-    try {
-      validatePdfData(pdfData, 'processPdfPageWithAI');
-    } catch (validationError) {
-      throw createPdfError(`PDF data validation failed: ${validationError.message}`, 'errorPdfInvalid');
-    }
-    
-    const headerBytes = new Uint8Array(pdfData).slice(0, 4);
-    const headerText = String.fromCharCode(...headerBytes);
-    
-    log('[ClipAIble PDF Processing] ✅ PDF data ready for processing', {
-      size: pdfData.byteLength,
-      sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-      header: headerText,
-      source: 'indexeddb'
-    });
-  } else if (isWebUrl) {
-    log('[ClipAIble PDF Processing] Web PDF URL - getting PDF data in background (before dimensions)', { pdfUrl: cleanPdfUrl });
-    
-    pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId, requestOptions);
-    
-    try {
-      validatePdfData(pdfData, 'processPdfPageWithAI');
-    } catch (validationError) {
-      throw createPdfError(`PDF data validation failed: ${validationError.message}`, 'errorPdfInvalid');
-    }
-    
-    const headerBytes = new Uint8Array(pdfData).slice(0, 4);
-    const headerText = String.fromCharCode(...headerBytes);
-    
-    log('[ClipAIble PDF Processing] ✅ PDF data ready for processing (web)', {
-      size: pdfData.byteLength,
-      sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-      header: headerText,
-      source: 'web_fetch_then_indexeddb'
-    });
-  }
-  
+  const pdfData = await getPdfDataWithFallback(cleanPdfUrl, tabId, requestOptions);
+
   // Stage 1: Get PDF metadata (MINIMAL - just get page count, nothing else)
   // CRITICAL: Do this as fast as possible, no unnecessary operations
   let pdfMetadata;
@@ -631,19 +339,11 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   log(`PDF has ${numPages} pages - starting parallel extraction`);
   
   // Stage 2: Process each page with AI (10-40%)
-  // Maintain conversation history across pages for consistent heading hierarchy
-  // LLM converts PDF pages to Markdown, we collect both markdown text and structured elements
-  // CRITICAL: This works like a chat - system prompt + history + new image = response
-  // Each page is sent as a new message with image, LLM sees all previous pages in history
-  const allMarkdownParts = []; // Collect markdown from each page with page numbers
-  const messageHistory = []; // Conversation history: [{role: 'user'|'assistant', content: string|array}]
-  // History structure:
-  // - user messages: {role: 'user', content: [{type: 'text', text: '...'}, {type: 'image_url', ...}]}
-  // - assistant messages: {role: 'assistant', content: 'markdown text'}
-  // Each page adds: userMessage (with image) + assistantMessage (markdown response)
+  // Keep only the immediately preceding text turn and its signed assistant blocks.
+  const allMarkdownParts = [];
+  const messageHistory = [];
   const processedPages = []; // Track successfully processed pages
   const failedPages = []; // Track failed pages
-  const pageErrors = new Map(); // Track detailed error information for failed pages: Map<pageNum, {error, stack, timestamp}>
   
   log('[ClipAIble PDF Processing] === CHAT HISTORY INITIALIZED ===', {
     numPages,
@@ -683,987 +383,53 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   log(`Starting AI processing of ${numPages} pages`, { numPages });
 
-  // pdfData was obtained above for both local and web URLs (saved to IndexedDB; offscreen uses pdfDataRef)
-  if (pdfData) {
-    log('[ClipAIble PDF Processing] PDF data available for rendering', {
-      size: pdfData.byteLength,
-      sizeMB: (pdfData.byteLength / 1024 / 1024).toFixed(2),
-      method: 'offscreen_render'
-    });
-  }
-  
-  const pageImages = []; // Store all rendered page images
-  
-  // CRITICAL: Render ALL pages at once (loads PDF ONCE - much faster)
-  // Render pages together to avoid repeatedly loading the document.
-  log('[ClipAIble PDF Processing] Rendering all PDF pages at once (loads PDF once)', {
-    numPages,
-    pdfDataSize: pdfData ? pdfData.byteLength : null,
-    hasPdfData: !!pdfData,
-    method: 'renderAllPdfPages'
-  });
-  
   updatePdfStatus('statusRenderingPdfPages', { pages: numPages, count: numPages }, 10);
-  
+  let rendered;
   try {
-    const renderedPages = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, captureOptions);
-    
-    // Convert rendered pages to pageImages array
-    for (const renderedPage of renderedPages) {
-      if (renderedPage.error) {
-        logError(`[ClipAIble PDF Processing] Page ${renderedPage.pageNum} render failed`, {
-          pageNum: renderedPage.pageNum,
-          error: renderedPage.error
-        });
-        pageImages[renderedPage.pageNum - 1] = null;
-        failedPages.push(renderedPage.pageNum);
-      } else {
-        // CRITICAL: Use imageData (full data URL) instead of base64 (without prefix)
-        // imageData contains full data URL like "data:image/png;base64,..."
-        // base64 contains only the base64 string without prefix
-        const finalImageData = renderedPage.imageData || (renderedPage.base64 ? `data:image/png;base64,${renderedPage.base64}` : null);
-        
-        if (!finalImageData) {
-          logError(`[ClipAIble PDF Processing] Page ${renderedPage.pageNum}: No imageData or base64 available`, {
-            pageNum: renderedPage.pageNum,
-            hasImageData: !!renderedPage.imageData,
-            hasBase64: !!renderedPage.base64,
-            renderedPageKeys: Object.keys(renderedPage)
-          });
-          pageImages[renderedPage.pageNum - 1] = null;
-          failedPages.push(renderedPage.pageNum);
-          continue;
-        }
-        
-        // CRITICAL: Check if this slot is already occupied (should not happen, but protect against overwrites)
-        const arrayIndex = renderedPage.pageNum - 1;
-        if (pageImages[arrayIndex] !== undefined && pageImages[arrayIndex] !== null) {
-          logWarn(`[ClipAIble PDF Processing] Page ${renderedPage.pageNum} slot already occupied, overwriting`, {
-            pageNum: renderedPage.pageNum,
-            existingSize: pageImages[arrayIndex].imageData ? pageImages[arrayIndex].imageData.length : 0,
-            newSize: finalImageData.length
-          });
-        }
-        
-        pageImages[arrayIndex] = {
-          imageData: finalImageData,
-          width: renderedPage.width,
-          height: renderedPage.height
-        };
-        
-        log(`[ClipAIble PDF Processing] Page ${renderedPage.pageNum} rendered successfully`, {
-          pageNum: renderedPage.pageNum,
-          width: renderedPage.width,
-          height: renderedPage.height,
-          imageSize: finalImageData.length
-        });
-      }
-    }
-    
-    log(`[ClipAIble PDF Processing] All pages rendered: ${pageImages.filter(img => img !== null).length}/${numPages} successful`);
-    
-  } catch (error) {
-    await checkCancellation('PDF rendering');
-    logError('[ClipAIble PDF Processing] Failed to render all PDF pages', {
-      error: error.message,
-      numPages
+    rendered = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, {
+      ...captureOptions,
+      onProgress: (current, total) => updatePdfStatus('statusRenderingPdfPages', { pages: total, count: total }, 10 + Math.floor(current / total * 10))
     });
-    // Fallback: try rendering pages one by one (old method)
-    logWarn('[ClipAIble PDF Processing] Falling back to sequential page rendering');
-    
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      try {
-        const renderedImage = await renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData, captureOptions);
-        
-        // CRITICAL: Use full imageData (with prefix) instead of extracting base64
-        // imageData already has full data URL like "data:image/png;base64,..."
-        const finalImageData = renderedImage.imageData || (renderedImage.base64 ? `data:image/png;base64,${renderedImage.base64}` : null);
-        
-        if (!finalImageData) {
-          pageImages[pageNum - 1] = null;
-          failedPages.push(pageNum);
-          continue;
-        }
-        
-        pageImages[pageNum - 1] = {
-          imageData: finalImageData, // Use full data URL, not just base64
-          width: renderedImage.width,
-          height: renderedImage.height
-        };
-      } catch (pageError) {
-        logError(`[ClipAIble PDF Processing] Failed to render page ${pageNum} (fallback)`, {
-          pageNum,
-          error: pageError.message
-        });
-        pageImages[pageNum - 1] = null;
-        failedPages.push(pageNum);
-      }
-    }
-  }
-  
-  // Now process pages with LLM sequentially
-  if (isLocalFile && tabId) {
-    // Process pages sequentially: LLM → LLM → ...
-    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    for (const page of rendered.pages) {
+      const pageNum = page.pageNum;
       await checkCancellation(`PDF AI processing page ${pageNum}`);
-      
-      const captureProgress = 10 + (pageNum / numPages) * 20; // 10-30%
-      updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, Math.round(captureProgress));
-      
-      // Check if we still need to search for metadata
+      if (page.error) throw createPdfError(`PDF extraction is incomplete. Failed pages: ${pageNum}.`, 'errorPdfIncomplete', { pages: String(pageNum) });
+      updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, 20 + Math.floor((pageNum - 1) / numPages * 20));
+      const imageData = await readRenderedPdfPage(page.ref, data.processingRunId);
+      await checkCancellation('PDF page image');
       const shouldExtractMetadata = needsMetadata(pageNum);
-      
-      // Only log page start if verbose (reduces log volume for multi-page PDFs)
-      if (CONFIG?.VERBOSE_LOGGING) {
-        log(`[ClipAIble PDF Processing] Processing page ${pageNum}/${numPages}`, {
-          pageNum,
-          totalPages: numPages,
-          shouldExtractMetadata
-        });
+      const userPrompt = buildPdfPageUserPrompt(imageData, pageNum, numPages, pageNum === 1, shouldExtractMetadata);
+      const { result: pageResponse, assistantMessage } = await callAIWithImageAndHistory(
+        PDF_TO_MARKDOWN_SYSTEM_PROMPT, userPrompt, imageData, messageHistory,
+        apiKey, model, true, requestOptions
+      );
+      await checkCancellation('PDF page response');
+      const pageData = parseLLMResponse(pageResponse, pageNum);
+      const pageMarkdown = cleanMarkdownText(pageData.text);
+      if (shouldExtractMetadata) {
+        const changes = extractMetadataFromPage(pageData.metadata, pageNum,
+          { title: documentTitle, author: documentAuthor, date: documentPublishDate }, data);
+        if (changes.title) { documentTitle = changes.title; hasDocumentTitle = true; }
+        if (changes.author) documentAuthor = changes.author;
+        if (changes.date) documentPublishDate = changes.date;
+        consecutiveEmptyMetadataPages = changes.allEmpty ? consecutiveEmptyMetadataPages + 1 : 0;
       }
-      
-      const pageImage = pageImages[pageNum - 1];
-      
-      if (pageImage === null || pageImage === undefined) {
-        logWarn(`Page ${pageNum}: No captured image available, skipping`, { pageNum });
-        failedPages.push(pageNum); // Add to failedPages for consistency
-        continue; // Skip LLM processing for this page
+      if (pageMarkdown.trim()) {
+        // Retain one preceding page for continuity, without replaying its image.
+        // Provider-signed assistant blocks remain opaque and intact.
+        messageHistory.splice(0, messageHistory.length,
+          { role: 'user', content: userPrompt },
+          { role: 'assistant', content: Array.isArray(assistantMessage) ? assistantMessage : pageMarkdown });
       }
-      
-      // IMMEDIATELY process this page with LLM (like old working version)
-      // Yield between pages to keep background work responsive.
-      if (pageImage) {
-        await checkCancellation(`PDF AI processing page ${pageNum}`);
-        
-        // Retry logic for AI page processing
-        const MAX_AI_PAGE_RETRIES = 4;
-        const AI_PAGE_RETRY_DELAYS = [2000, 5000, 10000, 20000]; // 2s, 5s, 10s, 20s
-        let pageProcessed = false;
-        let lastPageError = null;
-        
-        for (let retryAttempt = 0; retryAttempt <= MAX_AI_PAGE_RETRIES && !pageProcessed; retryAttempt++) {
-          if (retryAttempt > 0) {
-            logWarn(`[ClipAIble PDF Processing] Retrying AI processing for page`, {
-              pageNum,
-              retryAttempt,
-              maxRetries: MAX_AI_PAGE_RETRIES,
-              lastError: lastPageError?.message,
-              delay: AI_PAGE_RETRY_DELAYS[retryAttempt - 1],
-              timestamp: Date.now()
-            });
-            await new Promise(resolve => setTimeout(resolve, AI_PAGE_RETRY_DELAYS[retryAttempt - 1]));
-            await checkCancellation(`PDF AI processing page ${pageNum} (retry ${retryAttempt})`);
-          }
-        
-        // Update progress (30-40% for LLM processing)
-        const pageProgress = 30 + (pageNum / numPages) * 10; // 30-40%
-        updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, Math.round(pageProgress));
-        
-        try {
-          // CRITICAL: Verify imageData has prefix before using it
-          let imageDataToUse = pageImage.imageData;
-          if (!imageDataToUse) {
-            logError(`Page ${pageNum}: imageData is null or undefined`, { pageNum, pageImageKeys: Object.keys(pageImage || {}) });
-            failedPages.push(pageNum);
-            continue;
-          }
-          
-          // If imageData doesn't have prefix, add it (should not happen, but safety check)
-          if (!imageDataToUse.startsWith('data:image/')) {
-            logWarn(`Page ${pageNum}: imageData missing prefix, adding it`, {
-              pageNum,
-              imageDataLength: imageDataToUse.length,
-              imageDataStart: imageDataToUse.substring(0, 50),
-              note: 'This should not happen - imageData should have prefix from renderAllPdfPages'
-            });
-            imageDataToUse = `data:image/png;base64,${imageDataToUse}`;
-          }
-          
-          // Send to LLM with image (same logic as main loop)
-          const isFirstPage = pageNum === 1;
-          const userPrompt = buildPdfPageUserPrompt(imageDataToUse, pageNum, numPages, isFirstPage, shouldExtractMetadata);
-          
-          // CRITICAL: Log image hash and URL to verify correct page is being sent
-          const base64Image = imageDataToUse.includes(',') 
-            ? imageDataToUse.split(',')[1] 
-            : imageDataToUse;
-          const imageHashStart = base64Image.substring(0, 100);
-          const imageHashEnd = base64Image.substring(Math.max(0, base64Image.length - 100));
-          
-          log(`[ClipAIble PDF Processing] === CALLING LLM ===`, {
-            function: 'callAIWithImageAndHistory',
-            input: {
-              pageNum,
-              imageSize: imageDataToUse.length,
-              originalImageSize: pageImage.imageData.length,
-              imageDataPreview: imageDataToUse.substring(0, 50) + '...',
-              imageHashStart: imageHashStart,
-              imageHashEnd: imageHashEnd,
-              width: pageImage.width,
-              height: pageImage.height,
-              hasPrefix: imageDataToUse.startsWith('data:image/'),
-              historyMessages: messageHistory.length,
-              historyDetails: messageHistory.map((msg, idx) => ({
-                index: idx,
-                role: msg.role,
-                hasImage: Array.isArray(msg.content) && msg.content.some(c => c.type === 'image_url' || c.image_url || c.inline_data),
-                contentLength: typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length
-              })),
-              shouldExtractMetadata,
-              isFirstPage,
-              model,
-              promptLength: userPrompt.length,
-              promptPreview: userPrompt.substring(0, 200) + '...',
-              // CRITICAL: Log target URL to verify we're capturing the right page
-              expectedPageUrl: `#page=${pageNum}`
-            },
-            timestamp: Date.now()
-          });
-          
-          log(`Sending page ${pageNum} image to LLM with history`, {
-            model,
-            imageSize: imageDataToUse.length,
-            originalImageSize: pageImage.imageData.length,
-            width: pageImage.width,
-            height: pageImage.height,
-            historyMessages: messageHistory.length,
-            shouldExtractMetadata,
-            isFirstPage,
-            hasPrefix: imageDataToUse.startsWith('data:image/')
-          });
-          
-          const llmCallStartTime = Date.now();
-          // Send image to selected LLM with conversation history
-          // CRITICAL: Use jsonResponse = true to get JSON with text and mergeWithPrevious
-          const { result: pageResponse, assistantMessage, userMessage } = await callWithRetry(
-            async () => {
-              await checkCancellation('PDF page request');
-              return callAIWithImageAndHistory(
-              PDF_TO_MARKDOWN_SYSTEM_PROMPT,
-              userPrompt,
-              imageDataToUse, // Use corrected imageData with prefix
-              messageHistory,
-              apiKey,
-              model,
-              true, // jsonResponse = true - expect JSON with text and mergeWithPrevious
-              requestOptions
-              );
-            },
-            {
-              maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-              delays: CONFIG.RETRY_DELAYS,
-              retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-            }
-          );
-          
-          // Parse JSON response using shared function
-          const pageData = parseLLMResponse(pageResponse, pageNum);
-          
-          let pageMarkdown = pageData.text;
-          const mergeInstruction = pageData.mergeWithPrevious;
-          const pageMetadata = pageData.metadata || { title: '', author: '', date: '' };
-          
-          // pageMarkdown is already the text from pageData.text - use it as-is
-          // No need to check if it's JSON - if it starts with '{', it's just text content (e.g., code examples)
-          
-          const llmCallDuration = Date.now() - llmCallStartTime;
-          log(`[ClipAIble PDF Processing] === LLM RESPONSE RECEIVED ===`, {
-            function: 'callAIWithImageAndHistory',
-            input: { pageNum },
-            output: {
-              markdownLength: pageMarkdown?.length || 0,
-              markdownPreview: pageMarkdown?.substring(0, 200) + '...' || 'null',
-              hasAssistantMessage: !!assistantMessage,
-              hasUserMessage: !!userMessage,
-              assistantMessageLength: assistantMessage?.length || 0,
-              mergeWithPrevious: mergeInstruction
-            },
-            duration: llmCallDuration,
-            timestamp: Date.now()
-          });
-          
-          // Preserve provider-signed content blocks for the next page.
-          const historyBefore = messageHistory.length;
-          if (pageMarkdown.trim()) messageHistory.push(userMessage, {
-            role: 'assistant', content: Array.isArray(assistantMessage) ? assistantMessage : pageMarkdown
-          });
-          const historyAfter = messageHistory.length;
-          
-          log(`[ClipAIble PDF Processing] === HISTORY UPDATED ===`, {
-            pageNum,
-            historyBefore,
-            historyAfter,
-            addedMessages: 2,
-            totalHistoryMessages: historyAfter,
-            userMessageHasImage: Array.isArray(userMessage.content) && userMessage.content.some(c => c.type === 'image_url' || c.image_url),
-            assistantMessageLength: pageMarkdown.length
-          });
-          
-          // Process markdown (extract metadata, clean, etc.) - same logic as main loop
-          let cleanMarkdown = String(pageMarkdown).trim();
-          
-          // Extract document information from page if present and we're still looking for it
-          // Format: Now in JSON metadata field (same as main loop)
-          let metadataFound = false;
-          if (shouldExtractMetadata && pageMetadata) {
-            const currentMetadata = { title: documentTitle, author: documentAuthor, date: documentPublishDate };
-            const metadataUpdates = extractMetadataFromPage(pageMetadata, pageNum, currentMetadata, data);
-            
-            // Apply updates to document metadata
-            if (metadataUpdates.title) {
-              documentTitle = metadataUpdates.title;
-              hasDocumentTitle = true;
-            }
-            if (metadataUpdates.author) {
-              documentAuthor = metadataUpdates.author;
-            }
-            if (metadataUpdates.date) {
-              documentPublishDate = metadataUpdates.date;
-            }
-            
-            // Track consecutive pages with empty information
-            if (metadataUpdates.allEmpty) {
-              consecutiveEmptyMetadataPages++;
-              log(`Page ${pageNum} returned empty document information, consecutive empty pages: ${consecutiveEmptyMetadataPages}`, {
-                pageNum,
-                consecutiveEmptyMetadataPages,
-                maxEmpty: MAX_EMPTY_METADATA_PAGES
-              });
-            } else {
-              consecutiveEmptyMetadataPages = 0;
-            }
-            
-            log(`Document information extraction status after page ${pageNum}`, {
-              pageNum,
-              title: documentTitle,
-              author: documentAuthor,
-              date: documentPublishDate,
-              foundAnyMetadata: metadataUpdates.foundAny,
-              consecutiveEmptyMetadataPages,
-              stillNeedsMetadata: needsMetadata(pageNum + 1)
-            });
-            metadataFound = true;
-          }
-          
-          // Legacy: Extract metadata if needed (old format METADATA: - for backward compatibility)
-          if (shouldExtractMetadata && !metadataFound && cleanMarkdown.startsWith('METADATA:')) {
-            try {
-              const metadataMatch = cleanMarkdown.match(/^METADATA:({[^}]+})\s*\n\s*\n/s);
-              if (metadataMatch && metadataMatch[1]) {
-                try {
-                  const extractedMetadata = JSON.parse(metadataMatch[1]);
-                  
-                  // Use extractMetadataFromPage for legacy format too
-                  const currentMetadata = { title: documentTitle, author: documentAuthor, date: documentPublishDate };
-                  const metadataUpdates = extractMetadataFromPage(extractedMetadata, pageNum, currentMetadata, data);
-                  
-                  // Apply updates to document metadata
-                  if (metadataUpdates.title) {
-                    documentTitle = metadataUpdates.title;
-              hasDocumentTitle = true;
-                  }
-                  if (metadataUpdates.author) {
-                    documentAuthor = metadataUpdates.author;
-                  }
-                  if (metadataUpdates.date) {
-                    documentPublishDate = metadataUpdates.date;
-                  }
-                  
-                  // Track consecutive pages with empty information
-                  if (metadataUpdates.allEmpty) {
-                    consecutiveEmptyMetadataPages++;
-                    log(`Page ${pageNum} returned empty document information, consecutive empty pages: ${consecutiveEmptyMetadataPages}`, {
-                      pageNum,
-                      consecutiveEmptyMetadataPages,
-                      maxEmpty: MAX_EMPTY_METADATA_PAGES
-                    });
-                  } else {
-                    consecutiveEmptyMetadataPages = 0;
-                  }
-                  
-                  log(`Document information extraction status after page ${pageNum} (legacy format)`, {
-                    pageNum,
-                    title: documentTitle,
-                    author: documentAuthor,
-                    date: documentPublishDate,
-                    foundAnyMetadata: metadataUpdates.foundAny,
-                    consecutiveEmptyMetadataPages,
-                    stillNeedsMetadata: needsMetadata(pageNum + 1)
-                  });
-                  metadataFound = true;
-                } catch (parseError) {
-                  logWarn(`Failed to parse document information JSON from page ${pageNum}`, { error: parseError.message, pageNum });
-                  consecutiveEmptyMetadataPages++;
-                }
-              } else {
-                // METADATA: prefix found but format is incorrect
-                logWarn(`Page ${pageNum}: METADATA prefix found but format is incorrect`, { pageNum });
-                consecutiveEmptyMetadataPages++;
-              }
-            } catch (e) {
-              logWarn(`Failed to extract document information from page ${pageNum}`, { error: e.message, pageNum });
-              consecutiveEmptyMetadataPages++;
-            }
-          }
-          
-          if (shouldExtractMetadata && !metadataFound) {
-            // LLM was asked to provide document information but didn't return it
-            consecutiveEmptyMetadataPages++;
-          }
-          
-          // Clean markdown using shared function
-          cleanMarkdown = cleanMarkdownText(cleanMarkdown);
-          
-          // cleanMarkdown is already the text from pageData.text - use it as-is
-          // No need to check if it's JSON - if it starts with '{', it's just text content (e.g., code examples)
-          
-          // Collect markdown with merge instruction
-          allMarkdownParts.push({
-            pageNum: pageNum,
-            markdown: cleanMarkdown.trim(),
-            length: cleanMarkdown.trim().length,
-            mergeWithPrevious: mergeInstruction // Store merge instruction for later use
-          });
-          processedPages.push(pageNum);
-          
-          // Mark page as processed successfully
-          pageProcessed = true;
-          
-          log(`[ClipAIble PDF Processing] === PAGE PROCESSING COMPLETE ===`, {
-            retryAttempt,
-            retries: retryAttempt,
-            pageNum,
-            input: {
-              imageSize: imageDataToUse.length,
-              originalImageSize: pageImage.imageData.length,
-              width: pageImage.width,
-              height: pageImage.height
-            },
-            output: {
-              markdownLength: cleanMarkdown.trim().length,
-              markdownPreview: cleanMarkdown.substring(0, 200) + '...',
-              extractedMetadata: isFirstPage ? { title: documentTitle, author: documentAuthor, date: documentPublishDate } : undefined
-            },
-            metadata: {
-              title: documentTitle,
-              author: documentAuthor,
-              date: documentPublishDate
-            },
-            totalProcessed: processedPages.length,
-            timestamp: Date.now()
-          });
-          
-          log(`Page ${pageNum} processed successfully (capture+LLM)`, {
-            markdownLength: cleanMarkdown.trim().length,
-            totalProcessed: processedPages.length,
-            extractedMetadata: isFirstPage ? { title: documentTitle, author: documentAuthor, date: documentPublishDate } : undefined
-          });
-          
-        } catch (error) {
-          if ((isTerminalAIResponseError(error) && error.code !== 'AI_RESPONSE_INCOMPLETE') || error.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
-          // Store error for retry logic
-          lastPageError = error;
-          
-          logError(`Failed to process page ${pageNum} with LLM`, {
-            pageNum,
-            retryAttempt,
-            maxRetries: MAX_AI_PAGE_RETRIES,
-            willRetry: retryAttempt < MAX_AI_PAGE_RETRIES,
-            error: error.message,
-            errorName: error.name,
-            stack: error.stack
-          });
-          
-          // If this was the last retry attempt, add to errors
-          if (retryAttempt >= MAX_AI_PAGE_RETRIES) {
-            const errorInfo = {
-              pageNum,
-              error: error.message,
-              errorName: error.name,
-              stack: error.stack,
-              retries: retryAttempt,
-              timestamp: Date.now()
-            };
-            pageErrors.set(pageNum, errorInfo);
-            failedPages.push(pageNum);
-          }
-          // Otherwise, continue to next retry
-        }
-      } // End of retry loop
-      } // End of if (pageImage)
+      allMarkdownParts.push({ pageNum, markdown: pageMarkdown, length: pageMarkdown.length,
+        mergeWithPrevious: pageData.mergeWithPrevious });
+      processedPages.push(pageNum);
+      updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, 20 + Math.floor(pageNum / numPages * 20));
     }
-    
-    // Mark that we've already processed all pages - skip main LLM processing loop
-  } else {
-    // For remote PDFs: Check if pages were already rendered successfully
-    const alreadyRenderedCount = pageImages.filter(img => img !== null && img !== undefined).length;
-    const allPagesRendered = alreadyRenderedCount === numPages;
-    
-    if (!allPagesRendered) {
-      for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        if (pageImages[pageNum - 1]) continue;
-        await checkCancellation(`PDF rendering page ${pageNum}`);
-        try {
-          const pageImage = await renderPdfPageImage(cleanPdfUrl, pageNum, 2.0, pdfData, captureOptions);
-          pageImages[pageNum - 1] = pageImage;
-        } catch (error) {
-          await checkCancellation(`PDF rendering page ${pageNum}`);
-          pageImages[pageNum - 1] = null;
-          logWarn('[PDF] Page render retry failed', { pageNum, error: error.message });
-        }
-      }
-    }
+  } finally {
+    if (rendered) await removePdfOperation(rendered.operationId);
+  }
 
-      // Process complete page images in document order.
-      const renderedCount = pageImages.filter(img => img !== null).length;
-      log(`Page rendering complete: ${renderedCount}/${numPages} pages ready for LLM processing`);
-      
-      // Check if we already processed all pages in fallback (sequential capture+process mode)
-      const alreadyProcessedAll = processedPages.length > 0 && processedPages.length + failedPages.length === numPages;
-      
-      if (alreadyProcessedAll) {
-        log(`All pages already processed in sequential mode, skipping main LLM loop`, {
-          processed: processedPages.length,
-          failed: failedPages.length,
-          total: numPages
-        });
-      } else {
-        // Process the rendered pages with the selected AI provider.
-        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-        await checkCancellation(`PDF AI processing page ${pageNum}`);
-
-        // Check if we still need to search for metadata
-        const shouldExtractMetadata = needsMetadata(pageNum);
-
-        log(`Processing page ${pageNum}/${numPages} with AI (from captured image)`, {
-          historyLength: messageHistory.length,
-          processedCount: processedPages.length,
-          failedCount: failedPages.length,
-          shouldExtractMetadata,
-          currentMetadata: { title: documentTitle, author: documentAuthor, date: documentPublishDate },
-          hasCapturedImage: pageImages[pageNum - 1] !== null
-        });
-
-        // Get the rendered page image.
-        const pageImage = pageImages[pageNum - 1];
-        
-        if (pageImage === null || pageImage === undefined) {
-          failedPages.push(pageNum);
-          logWarn(`Page ${pageNum}: No captured image available, skipping`, { pageNum });
-          continue;
-        }
-
-        // Retry logic for AI page processing
-        const MAX_AI_PAGE_RETRIES = 4;
-        const AI_PAGE_RETRY_DELAYS = [2000, 5000, 10000, 20000]; // 2s, 5s, 10s, 20s
-        let pageProcessed = false;
-        let lastPageError = null;
-        
-        for (let retryAttempt = 0; retryAttempt <= MAX_AI_PAGE_RETRIES && !pageProcessed; retryAttempt++) {
-          if (retryAttempt > 0) {
-            logWarn(`[ClipAIble PDF Processing] Retrying AI processing for page`, {
-              pageNum,
-              retryAttempt,
-              maxRetries: MAX_AI_PAGE_RETRIES,
-              lastError: lastPageError?.message,
-              delay: AI_PAGE_RETRY_DELAYS[retryAttempt - 1],
-              timestamp: Date.now()
-            });
-            await new Promise(resolve => setTimeout(resolve, AI_PAGE_RETRY_DELAYS[retryAttempt - 1]));
-            await checkCancellation(`PDF AI processing page ${pageNum} (retry ${retryAttempt})`);
-          }
-
-        // Update progress (30-40% for LLM processing)
-        const pageProgress = 30 + (pageNum / numPages) * 10; // 30-40%
-        updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, Math.round(pageProgress));
-
-        try {
-          // CRITICAL: Verify imageData has prefix before using it
-          let imageDataToUse = pageImage.imageData;
-          if (!imageDataToUse) {
-            logError(`Page ${pageNum}: imageData is null or undefined`, { pageNum, pageImageKeys: Object.keys(pageImage || {}) });
-            failedPages.push(pageNum);
-            continue;
-          }
-          
-          // If imageData doesn't have prefix, add it (should not happen, but safety check)
-          if (!imageDataToUse.startsWith('data:image/')) {
-            logWarn(`Page ${pageNum}: imageData missing prefix, adding it`, {
-              pageNum,
-              imageDataLength: imageDataToUse.length,
-              imageDataStart: imageDataToUse.substring(0, 50),
-              note: 'This should not happen - imageData should have prefix from renderAllPdfPages'
-            });
-            imageDataToUse = `data:image/png;base64,${imageDataToUse}`;
-          }
-          
-          log(`PDF page ${pageNum} using pre-captured image`, {
-            pageNum,
-            imageSize: imageDataToUse.length,
-            width: pageImage.width,
-            height: pageImage.height
-          });
-          
-          // Send to LLM with image
-          const isFirstPage = pageNum === 1;
-          const userPrompt = buildPdfPageUserPrompt(imageDataToUse, pageNum, numPages, isFirstPage, shouldExtractMetadata);
-          
-          // CRITICAL: Log full prompts before sending to AI - FULL TEXT
-          log(`=== PAGE ${pageNum}: FULL PROMPTS BEFORE SENDING TO AI ===`, {
-            pageNum,
-            model,
-            systemPromptFull: PDF_TO_MARKDOWN_SYSTEM_PROMPT,
-            systemPromptLength: PDF_TO_MARKDOWN_SYSTEM_PROMPT.length,
-            userPromptFull: userPrompt,
-            userPromptLength: userPrompt.length,
-            imageSize: imageDataToUse.length,
-            originalImageSize: pageImage.imageData.length,
-            width: pageImage.width,
-            height: pageImage.height,
-            historyMessages: messageHistory.length,
-            shouldExtractMetadata,
-            isFirstPage,
-            hasPrefix: imageDataToUse.startsWith('data:image/')
-          });
-          
-          log(`Sending page ${pageNum} image to LLM with history`, {
-            model,
-            imageSize: imageDataToUse.length,
-            originalImageSize: pageImage.imageData.length,
-            width: pageImage.width,
-            height: pageImage.height,
-            historyMessages: messageHistory.length,
-            shouldExtractMetadata,
-            isFirstPage,
-            hasPrefix: imageDataToUse.startsWith('data:image/')
-          });
-          
-          // Send image to selected LLM with conversation history
-          // This maintains context across pages for consistent heading hierarchy
-          // LLM will see: system prompt → page 1 (image + prompt) → response → page 2 (image + prompt) → response → ...
-          // LLM returns JSON with text and merge instruction
-          const { result: pageResponse, assistantMessage, userMessage } = await callWithRetry(
-            async () => {
-              await checkCancellation('PDF page request');
-              return callAIWithImageAndHistory(
-              PDF_TO_MARKDOWN_SYSTEM_PROMPT,
-              userPrompt,
-              imageDataToUse, // Use corrected imageData with prefix
-              messageHistory,
-              apiKey,
-              model,
-              true, // jsonResponse = true - expect JSON with text and mergeWithPrevious
-              requestOptions
-              );
-            },
-            {
-              maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-              delays: CONFIG.RETRY_DELAYS,
-              retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-            }
-          );
-          
-          // When jsonResponse=true, callAIWithImageAndHistory returns parsed JSON object, not AIResponse
-          // The object can have structure { text: string, mergeWithPrevious: boolean, ... }
-          /** @type {any} */ const pageResponseAny = pageResponse;
-          
-          // CRITICAL: Log raw response immediately after receiving it - FULL TEXT
-          log(`=== PAGE ${pageNum}: RAW LLM RESPONSE (FULL) ===`, {
-            pageNum,
-            responseType: typeof pageResponseAny,
-            isString: typeof pageResponseAny === 'string',
-            isObject: typeof pageResponseAny === 'object' && pageResponseAny !== null,
-            isNull: pageResponseAny === null,
-            isUndefined: pageResponseAny === undefined,
-            responseKeys: typeof pageResponseAny === 'object' && pageResponseAny !== null ? Object.keys(pageResponseAny) : null,
-            hasText: typeof pageResponseAny === 'object' && pageResponseAny !== null ? 'text' in pageResponseAny : false,
-            textExists: typeof pageResponseAny === 'object' && pageResponseAny !== null ? 'text' in pageResponseAny : false,
-            // FULL TEXT - NO TRUNCATION
-            responseFull: typeof pageResponseAny === 'string' 
-              ? pageResponseAny
-              : (typeof pageResponseAny === 'object' && pageResponseAny !== null 
-                  ? JSON.stringify(pageResponseAny, null, 2)
-                  : String(pageResponseAny)),
-            textValueFull: typeof pageResponseAny === 'object' && pageResponseAny !== null && 'text' in pageResponseAny
-              ? (typeof pageResponseAny.text === 'string' 
-                  ? pageResponseAny.text
-                  : JSON.stringify(pageResponseAny.text))
-              : null,
-            textType: typeof pageResponseAny === 'object' && pageResponseAny !== null && 'text' in pageResponseAny
-              ? typeof pageResponseAny.text
-              : null,
-            textIsEmptyString: typeof pageResponseAny === 'object' && pageResponseAny !== null && 'text' in pageResponseAny && typeof pageResponseAny.text === 'string'
-              ? pageResponseAny.text === ''
-              : null,
-            textLength: typeof pageResponseAny === 'object' && pageResponseAny !== null && 'text' in pageResponseAny && typeof pageResponseAny.text === 'string'
-              ? pageResponseAny.text.length
-              : null,
-            textIsJson: typeof pageResponseAny === 'object' && pageResponseAny !== null && typeof pageResponseAny.text === 'string' 
-              ? (pageResponseAny.text.trim().startsWith('{') && pageResponseAny.text.includes('"text"'))
-              : false
-          });
-          
-          // Parse JSON response using shared function
-          // Log raw response for debugging before parsing
-          log(`Page ${pageNum}: Parsing LLM response`, {
-            pageNum,
-            responseType: typeof pageResponseAny,
-            isString: typeof pageResponseAny === 'string',
-            isObject: typeof pageResponseAny === 'object' && pageResponseAny !== null,
-            responsePreview: typeof pageResponseAny === 'string' 
-              ? pageResponseAny.substring(0, 500) 
-              : String(JSON.stringify(pageResponseAny)).substring(0, 500)
-          });
-          
-          const pageData = parseLLMResponse(pageResponseAny, pageNum);
-          
-          // CRITICAL: Log parsed result for debugging - FULL TEXT
-          log(`=== PAGE ${pageNum}: PARSED LLM RESPONSE (FULL) ===`, {
-            pageNum,
-            hasText: !!pageData.text,
-            textType: typeof pageData.text,
-            textLength: pageData.text?.length,
-            // FULL TEXT - NO TRUNCATION
-            textFull: typeof pageData.text === 'string' ? pageData.text : JSON.stringify(pageData.text),
-            textFirstChars: typeof pageData.text === 'string' ? pageData.text.substring(0, 200) : null,
-            textLastChars: typeof pageData.text === 'string' && pageData.text.length > 200 ? pageData.text.substring(pageData.text.length - 200) : null,
-            isEmpty: typeof pageData.text === 'string' ? pageData.text.trim().length === 0 : true,
-            hasMergeWithPrevious: !!pageData.mergeWithPrevious,
-            mergeWithPrevious: pageData.mergeWithPrevious,
-            hasMetadata: !!pageData.metadata,
-            metadataFull: pageData.metadata || null
-          });
-          
-          let pageMarkdown = pageData.text;
-          
-          // CRITICAL: Log pageMarkdown immediately after assignment - FULL TEXT
-          log(`=== PAGE ${pageNum}: PAGEMARKDOWN ASSIGNED (FULL) ===`, {
-            pageNum,
-            pageMarkdownType: typeof pageMarkdown,
-            pageMarkdownLength: typeof pageMarkdown === 'string' ? pageMarkdown.length : null,
-            // FULL TEXT - NO TRUNCATION
-            pageMarkdownFull: typeof pageMarkdown === 'string' ? pageMarkdown : JSON.stringify(pageMarkdown),
-            pageMarkdownFirstChars: typeof pageMarkdown === 'string' ? pageMarkdown.substring(0, 200) : null,
-            pageMarkdownLastChars: typeof pageMarkdown === 'string' && pageMarkdown.length > 200 ? pageMarkdown.substring(pageMarkdown.length - 200) : null,
-            isObject: typeof pageMarkdown === 'object' && pageMarkdown !== null,
-            isString: typeof pageMarkdown === 'string'
-          });
-          const mergeInstruction = pageData.mergeWithPrevious;
-          const pageMetadata = pageData.metadata || { title: '', author: '', date: '' };
-          
-          // pageMarkdown is already the text from pageData.text - use it as-is
-          // No need to check if it's JSON - if it starts with '{', it's just text content (e.g., code examples)
-          
-          // Log the parsed response for debugging
-          const responsePreview = String(pageMarkdown).substring(0, 500).replace(/\n/g, '\\n') + (pageMarkdown.length > 500 ? '...' : '');
-          const responseFirstLines = String(pageMarkdown).split('\n').slice(0, 20).join('\\n');
-          const fullResponse = String(pageMarkdown);
-          const isUnclearOnly = fullResponse.trim() === '[unclear]' || fullResponse.trim() === '[illegible]';
-          const isStillJson = fullResponse.trim().startsWith('{') && fullResponse.includes('"text"');
-          
-          log(`Parsed LLM response for page ${pageNum}`, { 
-            pageNum,
-            responsePreview,
-            responseFirstLines,
-            responseLength: pageMarkdown.length,
-            isStillJson,
-            mergeWithPrevious: mergeInstruction,
-            hasMetadata: shouldExtractMetadata && (pageMetadata.title || pageMetadata.author || pageMetadata.date),
-            metadata: pageMetadata,
-            firstHeading: pageMarkdown.match(/^#+\s+(.+?)(?:\n|$)/m)?.[1],
-            headings: [...pageMarkdown.matchAll(/^#+\s+(.+?)(?:\n|$)/gm)].map(m => ({ level: m[0].match(/^#+/)[0].length, text: m[1].trim() })),
-            isUnclearOnly
-          });
-          
-          // Note: isStillJson is only for logging/diagnostics - we don't modify pageMarkdown
-          // If text starts with '{', it's just text content (e.g., code examples), not JSON to extract
-          
-          // CRITICAL LOG for pages that return only [unclear] - need to debug why
-          if (isUnclearOnly) {
-            criticalLog(`PDF PAGE ${pageNum} RETURNED ONLY [unclear] - DEBUGGING`, `PDF_PAGE_${pageNum}_UNCLEAR_ONLY`, {
-              pageNum,
-              totalPages: numPages,
-              imageSize: imageDataToUse.length,
-              originalImageSize: pageImage.imageData.length,
-              imageWidth: pageImage.width,
-              imageHeight: pageImage.height,
-              imageDataStart: imageDataToUse.substring(0, 100),
-              imageDataEnd: imageDataToUse.substring(imageDataToUse.length - 100),
-              isPng: imageDataToUse.startsWith('data:image/png'),
-              hasPrefix: imageDataToUse.startsWith('data:image/'),
-              fullLLMResponsePreview: fullResponse.substring(0, 500) + (fullResponse.length > 500 ? '...' : ''),
-              historyLength: messageHistory.length,
-              model,
-              shouldExtractMetadata,
-              userPromptPreview: userPrompt.substring(0, 500)
-            });
-          }
-          
-          // Log response summary (truncated to avoid huge logs)
-          criticalLog(`PDF PAGE ${pageNum} LLM RESPONSE SUMMARY`, `PDF_PAGE_${pageNum}_RESPONSE_SUMMARY`, {
-            pageNum,
-            totalPages: numPages,
-            responseLength: fullResponse.length,
-            responsePreview: fullResponse.substring(0, 500) + (fullResponse.length > 500 ? '...' : ''),
-            imageSize: imageDataToUse.length,
-            originalImageSize: pageImage.imageData.length,
-            imageWidth: pageImage.width,
-            imageHeight: pageImage.height,
-            hasPrefix: imageDataToUse.startsWith('data:image/')
-          });
-          
-          // Add user message (with image) and assistant response to history for next page
-          // This way LLM sees the full conversation: previous pages with images + responses
-          // Signed provider blocks must remain intact; plain-text providers use extracted text.
-          if (pageMarkdown.trim()) messageHistory.push(
-            userMessage, // Full user message with image
-            { role: 'assistant', content: Array.isArray(assistantMessage) ? assistantMessage : pageMarkdown }
-          );
-          
-          // Collect markdown text from this page
-          // Result is parsed from JSON with text and merge instruction
-          if (typeof pageMarkdown === 'string') {
-        let cleanMarkdown = pageMarkdown.trim();
-        
-        // Extract document information from page if present and we're still looking for it
-        // Format: Now in JSON metadata field
-        if (shouldExtractMetadata && pageMetadata) {
-          const currentMetadata = { title: documentTitle, author: documentAuthor, date: documentPublishDate };
-          const metadataUpdates = extractMetadataFromPage(pageMetadata, pageNum, currentMetadata, data);
-          
-          // Apply updates to document metadata
-          if (metadataUpdates.title) {
-            documentTitle = metadataUpdates.title;
-              hasDocumentTitle = true;
-          }
-          if (metadataUpdates.author) {
-            documentAuthor = metadataUpdates.author;
-          }
-          if (metadataUpdates.date) {
-            documentPublishDate = metadataUpdates.date;
-          }
-          
-          // Track consecutive pages with empty information
-          if (metadataUpdates.allEmpty) {
-            consecutiveEmptyMetadataPages++;
-            log(`Page ${pageNum} returned empty document information, consecutive empty pages: ${consecutiveEmptyMetadataPages}`, {
-              pageNum,
-              consecutiveEmptyMetadataPages,
-              maxEmpty: MAX_EMPTY_METADATA_PAGES
-            });
-          } else {
-            consecutiveEmptyMetadataPages = 0;
-          }
-          
-          log(`Document information extraction status after page ${pageNum}`, {
-            pageNum,
-            title: documentTitle,
-            author: documentAuthor,
-            date: documentPublishDate,
-            foundAnyMetadata: metadataUpdates.foundAny,
-            consecutiveEmptyMetadataPages,
-            stillNeedsMetadata: needsMetadata(pageNum + 1)
-          });
-        }
-        
-        // Clean markdown using shared function
-        cleanMarkdown = cleanMarkdownText(cleanMarkdown);
-        
-        // cleanMarkdown is already the text from pageData.text - use it as-is
-        // No need to check if it's JSON - if it starts with '{', it's just text content (e.g., code examples)
-        
-        // Extract key information from markdown for debugging structure issues
-        const headings = [...cleanMarkdown.matchAll(/^#+\s+(.+?)(?:\n|$)/gm)].map(m => ({
-          level: m[0].match(/^#+/)[0].length,
-          text: m[1].trim().substring(0, 150) // First 150 chars of heading
-        }));
-        const firstParagraph = cleanMarkdown.split('\n\n').find(p => {
-          const trimmed = p.trim();
-          return trimmed && 
-                 !trimmed.startsWith('#') && 
-                 !trimmed.startsWith('METADATA:') && 
-                 !trimmed.startsWith('**') &&
-                 !trimmed.startsWith('*') &&
-                 trimmed.length > 50;
-        });
-        const firstParagraphPreview = firstParagraph ? firstParagraph.trim().substring(0, 300) : 'no paragraph found';
-        
-        allMarkdownParts.push({
-          pageNum: pageNum,
-          markdown: cleanMarkdown.trim(),
-          length: cleanMarkdown.trim().length,
-          mergeWithPrevious: mergeInstruction // Store merge instruction for later use
-        });
-        processedPages.push(pageNum);
-        
-        // Mark page as processed successfully
-        pageProcessed = true;
-        
-        log(`Page ${pageNum} processed successfully`, {
-          retryAttempt,
-          retries: retryAttempt,
-          markdownLength: cleanMarkdown.trim().length,
-          totalProcessed: processedPages.length,
-          headingsCount: headings.length,
-          headings: headings,
-          firstParagraphPreview: firstParagraphPreview,
-          extractedMetadata: isFirstPage ? { title: documentTitle, author: documentAuthor, date: documentPublishDate } : undefined
-        });
-      } else {
-        // Invalid result - treat as error and retry
-        lastPageError = new Error(`AI returned invalid or empty result: ${typeof pageMarkdown}, length: ${pageMarkdown?.length}`);
-        logWarn(`Page ${pageNum}: AI returned invalid or empty result`, { 
-          retryAttempt,
-          maxRetries: MAX_AI_PAGE_RETRIES,
-          willRetry: retryAttempt < MAX_AI_PAGE_RETRIES,
-          type: typeof pageMarkdown,
-          length: pageMarkdown?.length,
-          failedPages: failedPages.length
-        });
-        
-        // If this was the last retry attempt, add to errors
-        if (retryAttempt >= MAX_AI_PAGE_RETRIES) {
-          failedPages.push(pageNum);
-        }
-        // Otherwise, continue to next retry
-      }
-      
-    } catch (error) {
-      if ((isTerminalAIResponseError(error) && error.code !== 'AI_RESPONSE_INCOMPLETE') || error.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
-      // Store detailed error information for analysis
-      lastPageError = error;
-      
-      logError(`Failed to process page ${pageNum} with AI`, {
-        pageNum,
-        retryAttempt,
-        maxRetries: MAX_AI_PAGE_RETRIES,
-        willRetry: retryAttempt < MAX_AI_PAGE_RETRIES,
-        error: error.message,
-        errorName: error.name,
-        stack: error.stack,
-        failedPages: failedPages.length
-      });
-      
-      // If this was the last retry attempt, add to errors
-      if (retryAttempt >= MAX_AI_PAGE_RETRIES) {
-        const errorInfo = {
-          pageNum,
-          error: error.message,
-          errorName: error.name,
-          stack: error.stack,
-          retries: retryAttempt,
-          timestamp: Date.now()
-        };
-        pageErrors.set(pageNum, errorInfo);
-        failedPages.push(pageNum);
-      }
-      // Otherwise, continue to next retry
-    } // End of retry loop
-    } // End of for pageNum loop
-      } // End of else (alreadyProcessedAll check)
-      } // End of if (alreadyProcessedAll)
-  } // End of else (isLocalFile check)
-  
   await checkCancellation('PDF processing completion');
   const processedSet = new Set(processedPages);
   const missingPages = Array.from({ length: numPages }, (_, index) => index + 1).filter(page => !processedSet.has(page));
@@ -1672,55 +438,6 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   }
   failedPages.length = 0;
 
-  // Log processing summary with detailed error information
-  const errorSummary = {
-    total: failedPages.length,
-    byType: {},
-    details: []
-  };
-  
-  // Aggregate errors by type for better diagnostics
-  failedPages.forEach(pageNum => {
-    const errorInfo = pageErrors.get(pageNum);
-    if (errorInfo) {
-      const errorType = errorInfo.error.split(':')[0] || 'Unknown';
-      errorSummary.byType[errorType] = (errorSummary.byType[errorType] || 0) + 1;
-      errorSummary.details.push({
-        pageNum,
-        error: errorInfo.error,
-        errorName: errorInfo.errorName
-      });
-    }
-  });
-  
-  log('PDF pages processing summary', {
-    totalPages: numPages,
-    processed: processedPages.length,
-    failed: failedPages.length,
-    processedPages: processedPages,
-    failedPages: failedPages.length > 0 ? failedPages : undefined,
-    errorSummary: failedPages.length > 0 ? errorSummary : undefined
-  });
-  
-  if (processedPages.length === 0) {
-    const uiLang = await getUILanguageCached();
-    const errorDetails = errorSummary.details.length > 0 
-      ? ` Errors: ${errorSummary.details.map(e => `Page ${e.pageNum}: ${e.error}`).join('; ')}`
-      : '';
-    throw createPdfError(tSync('errorPdfNoContent', uiLang) + errorDetails, 'errorPdfNoContent');
-  }
-  
-  if (failedPages.length > 0) {
-    const successRate = ((processedPages.length / numPages) * 100).toFixed(1);
-    logWarn(`Some pages failed to process`, {
-      failedPages: failedPages,
-      totalFailed: failedPages.length,
-      totalPages: numPages,
-      successRate: `${successRate}%`,
-      errorSummary
-    });
-  }
-  
   // Combine all markdown parts into single markdown text
   // Sort by page number to ensure correct order
   allMarkdownParts.sort((a, b) => a.pageNum - b.pageNum);
@@ -2024,18 +741,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
     timestamp: Date.now()
   });
   
-  // NOTE: PDF data is kept in IndexedDB for potential reuse
-  // This allows faster processing if user processes the same PDF again
-  // Old PDF data will be cleaned up automatically by clearOldPdfData() if needed
-  // (can be called periodically or when storage limit is reached)
-  // For immediate cleanup, use: await removePdfData(cleanPdfUrl);
-  if (cleanPdfUrl && isLocalFile) {
-    log('[ClipAIble PDF Processing] PDF data kept in IndexedDB for potential reuse', {
-      pdfUrl: cleanPdfUrl,
-      note: 'Use clearOldPdfData() for periodic cleanup if needed'
-    });
-  }
-  
+
   return finalResult;
 }
 
@@ -2058,6 +764,20 @@ function parseMarkdownToElements(markdown) {
     const line = lines[i];
     const trimmed = line.trim();
     
+    const fence = trimmed.match(/^(`{3,}|~{3,})([^`~]*)$/);
+    if (fence) {
+      if (currentParagraph.trim()) elements.push({ type: 'paragraph', text: currentParagraph.trim() });
+      if (currentList) elements.push(currentList);
+      currentParagraph = ''; currentList = null;
+      const code = [];
+      let j = i + 1;
+      const end = new RegExp('^' + fence[1][0] + '{' + fence[1].length + ',}\\s*$');
+      for (; j < lines.length && !end.test(lines[j].trim()); j++) code.push(lines[j]);
+      elements.push({ type: 'code', format: 'text', text: code.join('\n'), language: fence[2].trim().split(/\s+/)[0] });
+      i = j;
+      continue;
+    }
+
     // Empty line - flush current paragraph/list
     if (!trimmed) {
       if (currentParagraph.trim()) {
@@ -2101,7 +821,9 @@ function parseMarkdownToElements(markdown) {
     }
     
     // Table
-    if (trimmed.includes('|') && trimmed.split('|').length >= 3) {
+    const splitCells = value => value.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|'));
+    const separator = lines[i + 1]?.trim();
+    if (trimmed.includes('|') && separator && splitCells(separator).length === splitCells(trimmed).length && splitCells(separator).every(cell => /^:?-{3,}:?$/.test(cell))) {
       // Flush current paragraph/list
       if (currentParagraph.trim()) {
         elements.push({
@@ -2127,7 +849,7 @@ function parseMarkdownToElements(markdown) {
           let cleanLine = rowLine;
           if (cleanLine.startsWith('|')) cleanLine = cleanLine.substring(1);
           if (cleanLine.endsWith('|')) cleanLine = cleanLine.substring(0, cleanLine.length - 1);
-          const cells = cleanLine.split('|').map(c => c.trim());
+          const cells = splitCells(cleanLine);
           // Keep row even if some cells are empty (tables can have empty cells)
           if (cells.length > 0) {
             tableRows.push(cells); // Store as array directly, not as object with cells property

@@ -10,6 +10,20 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('PDF file picker feedback', () => {
+  it.each(['Different.pdf', 'sample.txt'])('rejects a mismatching selected file: %s', async name => {
+    const file = { name, type: 'application/pdf', size: 10, arrayBuffer: vi.fn() };
+    vi.stubGlobal('window', { showOpenFilePicker: async () => [{ getFile: async () => file }] });
+    await expect(requestPdfFileSelection('file:///Sample.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfDataUnavailable' });
+    expect(file.arrayBuffer).not.toHaveBeenCalled();
+  });
+  it('accepts decoded Unicode and case-equivalent local filenames, but validates their bytes', async () => {
+    const bytes = new TextEncoder().encode('%PDF-1.7\nExample').buffer;
+    const file = { name: 'Résumé.PDF', type: 'application/pdf', size: bytes.byteLength, arrayBuffer: async () => bytes };
+    vi.stubGlobal('window', { showOpenFilePicker: async () => [{ getFile: async () => file }] });
+    await expect(requestPdfFileSelection('file:///Re%CC%81sume%CC%81.pdf')).resolves.toBe(bytes);
+    file.arrayBuffer = async () => new TextEncoder().encode('not a PDF').buffer;
+    await expect(requestPdfFileSelection()).rejects.toMatchObject({ translationKey: 'errorPdfInvalid' });
+  });
   it('opens with the current document language before any asynchronous language read', async () => {
     chrome.storage.local.get.mockImplementation(() => new Promise(() => {}));
     const picker = vi.fn(async () => []);

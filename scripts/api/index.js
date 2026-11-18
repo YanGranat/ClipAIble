@@ -90,19 +90,13 @@ function validateApiKey(apiKey, provider, model, checkModelProviderMatch = false
 }
 
 /**
- * Safely decrypt API key with fallback to original key
+ * Decrypt a provider key before admitting a request.
  * @param {string} apiKey - API key (encrypted or plain)
  * @param {import('../types.js').AIProvider} provider - Provider code
- * @returns {Promise<string>} Decrypted key or original key if decryption fails
+ * @returns {Promise<string>} Decrypted key
  */
 async function getDecryptedKeySafe(apiKey, provider) {
-  try {
-    return await getDecryptedKeyCached(apiKey, provider);
-  } catch (error) {
-    log('Failed to decrypt/cache API key, using as-is (may be plain text)', error);
-    // Continue with original key (for backward compatibility)
-    return apiKey;
-  }
+  return getDecryptedKeyCached(apiKey, provider);
 }
 
 /**
@@ -207,15 +201,13 @@ export async function callAI(systemPrompt, userPrompt, apiKey, model, jsonRespon
   }
   
   const aiCallDuration = Date.now() - aiCallStartTime;
-  const responseSize = result && typeof result === 'object' 
-    ? JSON.stringify(result).length 
-    : (result?.length || 0);
   
   log('✅ AI call complete', {
     provider,
     model,
     duration: `${aiCallDuration}ms (${(aiCallDuration / 1000).toFixed(1)}s)`,
-    responseSize: `${(responseSize / 1024).toFixed(1)} KB`,
+    responseCharacters: typeof result === 'string' ? result.length : undefined,
+    contentItems: Array.isArray(result?.content) ? result.content.length : undefined,
     tokensPerSecond: estimatedTokens > 0 ? `${(estimatedTokens / (aiCallDuration / 1000)).toFixed(1)} tokens/sec (estimated)` : 'N/A'
   });
   

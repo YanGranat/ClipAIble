@@ -1,3 +1,4 @@
+import { createApiError, isApiBoundaryError } from './http-errors.js';
 // @ts-check
 // Gemini API module for ClipAIble extension
 
@@ -80,9 +81,9 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
+        const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -92,27 +93,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
         
         // If not ok and retryable, throw error for retry logic
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
-          }
-          // Non-retryable error - throw immediately
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-          /** @type {Error & {status?: number}} */
-          const error = new Error(errorData.error?.message || `Gemini API error: ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'gemini');
 
         return fetchResponse;
 
@@ -124,101 +105,9 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
       }
     );
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await requestOptions.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      // Normalize timeout error with context
-      const normalized = await handleError(fetchError, {
-        source: 'gemini',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: false, // Keep existing localized message
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = normalized.userMessage || tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code; // Will be TIMEOUT
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      // Error from retry logic - already has status
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      // Normalize HTTP error with context (createUserMessage will handle status-specific messages)
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(`HTTP ${fetchError.status}`);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'gemini',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message with status handling
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      // Use centralized user message with fallback
-      const uiLang = await getUILanguageCached();
-      let errorMessage = normalized.userMessage;
-      if (!errorMessage) {
-        // Fallback to manual messages if createUserMessage failed
-        errorMessage = errorData?.error?.message || `Gemini API error: ${fetchError.status}`;
-        if (fetchError.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchError.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchError.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        }
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(errorMessage);
-      error.code = normalized.code; // Will be AUTH_ERROR, RATE_LIMIT, or PROVIDER_ERROR
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    // Network error (no status, not AbortError)
-    const normalized = await handleError(fetchError, {
-      source: 'gemini',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: true, // Use centralized user-friendly message
-      context: {
-        operation: 'fetchRequest',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = normalized.userMessage || tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code; // Will be NETWORK_ERROR
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
   
   log('Gemini response', { status: response.status, ok: response.ok });
@@ -236,12 +125,14 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
     try {
       return JSON.parse(textContent);
     } catch (e) {
+    if (isApiBoundaryError(e)) throw e;
       // Try to extract JSON from markdown code block
       const jsonMatch = textContent.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         try {
           return JSON.parse(jsonMatch[1].trim());
         } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
           // Normalize error with context for better logging and error tracking
           const normalized = await handleError(extractError, {
             source: 'gemini',
@@ -312,6 +203,7 @@ export async function translateImageWithGemini(imageBase64, targetLang, googleAp
   try {
     decryptedKey = await decryptApiKey(googleApiKey);
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     log('Failed to decrypt Google API key, using as-is (may be plain text)', error);
   }
   
@@ -334,13 +226,14 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
   try {
     // Wrap fetch with retry mechanism for reliability (429/5xx errors)
     const response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         const fetchResponse = await fetchBufferedResponse(
-          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${decryptedKey}`,
-          {
+          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+          { signal,
             method: 'POST',
             headers: {
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              'x-goog-api-key': decryptedKey
             },
             body: JSON.stringify({
               contents: [{
@@ -362,29 +255,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
         );
 
         // If response is not ok and status is retryable, throw error
-        if (!fetchResponse.ok) {
-          const retryableCodes = [429, 500, 502, 503, 504];
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
-          }
-          // Non-retryable error (e.g., 401, 403) - throw immediately
-          let errorText = 'Unknown error';
-          try {
-            errorText = await fetchResponse.text();
-          } catch (e) {
-            // If text extraction fails, use default message
-            errorText = 'Unknown error';
-          }
-          logWarn('Gemini API error', { status: fetchResponse.status, error: errorText });
-          /** @type {Error & {status?: number}} */
-          const error = new Error(`HTTP ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'gemini');
         
         return fetchResponse;
       },
@@ -546,9 +417,9 @@ async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, m
     logDebug('Sending request to Gemini API with image...');
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, {
+        const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -557,27 +428,7 @@ async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, m
           body: JSON.stringify(requestBody)
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-
-            throw error;
-          }
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-          const uiLang = await getUILanguageCached();
-          const errorMessage = errorData.error?.message || `API error: ${fetchResponse.status}`;
-          
-          throw new Error(errorMessage);
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'gemini');
 
         return fetchResponse;
 
@@ -626,6 +477,7 @@ async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, m
           userMessage: { role: 'user', content: requestBody.contents[requestBody.contents.length - 1].parts }
         };
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // Normalize error with context for better logging and error tracking
         const normalized = await handleError(parseError, {
           source: 'gemini',
@@ -655,6 +507,7 @@ async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, m
       userMessage: { role: 'user', content: requestBody.contents[requestBody.contents.length - 1].parts }
     };
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     await requestOptions.checkCancelled?.();
     logError('Gemini API call with image failed', error);
     throw error;

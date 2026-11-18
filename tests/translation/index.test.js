@@ -76,7 +76,7 @@ describe('translation/index', () => {
 
       await expect(
         translateText('Hello', 'French', 'invalid-key', 'gpt-4')
-      ).rejects.toThrow('API authentication error');
+      ).rejects.toMatchObject({ status: 401, code: 'auth_error', translationKey: 'errorApiKeyInvalid' });
     });
 
     it('should return original text if already in target language (NO_TRANSLATION_MARKER)', async () => {
@@ -93,12 +93,14 @@ describe('translation/index', () => {
       expect(result).toBe('Bonjour'); // Should return original
     });
 
-    it('should handle network errors gracefully', async () => {
-      global.fetch.mockRejectedValue(new Error('Network error'));
-
-      const result = await translateText('Hello', 'French', 'test-key', 'gpt-4');
-      // Should return original text on error (unless auth error)
-      expect(result).toBe('Hello');
+    it('rejects a failed translation instead of returning the source', async () => {
+      vi.useFakeTimers();
+      const failure = new TypeError('Failed to fetch');
+      global.fetch.mockRejectedValue(failure);
+      const result = expect(translateText('Hello', 'French', 'test-key', 'gpt-4')).rejects.toBe(failure);
+      await vi.runAllTimersAsync();
+      await result;
+      vi.useRealTimers();
     });
   });
 
@@ -140,7 +142,7 @@ describe('translation/index', () => {
       global.fetch.mockImplementation(() => {
         callCount++;
         if (callCount === 1) {
-          return Promise.reject(new Error('Network error'));
+          return Promise.reject(new TypeError('Failed to fetch'));
         }
         // For multiple texts, translateBatch uses batch API
         return Promise.resolve(new Response(JSON.stringify({

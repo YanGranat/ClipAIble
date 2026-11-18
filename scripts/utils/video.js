@@ -7,50 +7,26 @@
  * @returns {Object|null} {platform: 'youtube'|'vimeo', videoId: string} or null
  */
 export function detectVideoPlatform(url) {
-  if (!url) return null;
-  
-  // YouTube patterns
-  const youtubePatterns = [
-    /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\/.+/,
-    /youtube\.com\/watch\?v=([^&]+)/,
-    /youtu\.be\/([^?]+)/
-  ];
-
-  // Vimeo patterns
-  const vimeoPatterns = [
-    /^https?:\/\/(www\.)?vimeo\.com\/\d+/
-  ];
-
-  // Check YouTube
-  for (const pattern of youtubePatterns) {
-    const match = url.match(pattern);
-    if (match) {
-      let videoId;
-      if (url.includes('youtu.be/')) {
-        videoId = url.split('youtu.be/')[1]?.split('?')[0]?.split('/')[0];
-      } else if (url.includes('watch?v=')) {
-        videoId = url.split('v=')[1]?.split('&')[0];
-      } else {
-        videoId = url.split('/').pop()?.split('?')[0];
-      }
-      if (videoId) {
-        return { platform: 'youtube', videoId };
-      }
+  if (typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url);
+    if (!['https:', 'http:'].includes(parsed.protocol)) return null;
+    const host = parsed.hostname;
+    let videoId = null;
+    if (host === 'youtu.be') {
+      videoId = parsed.pathname.match(/^\/([^/]+)\/?$/)?.[1];
+    } else if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      videoId = parsed.pathname === '/watch'
+        ? parsed.searchParams.get('v')
+        : parsed.pathname.match(/^\/(?:shorts|embed|live)\/([^/]+)\/?$/)?.[1];
+    } else if (host === 'vimeo.com' || host === 'www.vimeo.com') {
+      videoId = parsed.pathname.match(/^\/(\d+)(?:\/|$)/)?.[1];
+      return videoId ? { platform: 'vimeo', videoId } : null;
     }
+    return videoId && /^[\w-]+$/.test(videoId) ? { platform: 'youtube', videoId } : null;
+  } catch {
+    return null;
   }
-
-  // Check Vimeo
-  for (const pattern of vimeoPatterns) {
-    const match = url.match(pattern);
-    if (match) {
-      const videoIdMatch = url.match(/\/(\d+)/);
-      if (videoIdMatch && videoIdMatch[1]) {
-        return { platform: 'vimeo', videoId: videoIdMatch[1] };
-      }
-    }
-  }
-
-  return null;
 }
 
 /**

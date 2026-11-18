@@ -1,3 +1,4 @@
+import { joinPdfText } from '../utils/text-join.js';
 // @ts-check
 // Cross-page processor - handles merging elements across pages
 // Uses unified continuation detection logic with type-specific handling
@@ -37,24 +38,12 @@ export function shouldMergeParagraphs(prevPara, currentPara, metrics = {}) {
   
   if (!prevText || !currentText) return false;
   
-  // CRITICAL: Never merge paragraphs from different columns
-  // Paragraphs from different columns are separate content streams
-  if (prevPara.columnIndex !== undefined && currentPara.columnIndex !== undefined) {
-    if (prevPara.columnIndex !== currentPara.columnIndex) {
-      log(`[PDF v3] shouldMergeParagraphs: Paragraphs from different columns - NOT merging - prevColumnIndex=${prevPara.columnIndex}, currentColumnIndex=${currentPara.columnIndex}`);
-      return false;
-    }
-  }
-  
-  // Check if on different pages
-  const differentPages = prevPara.pageNum && currentPara.pageNum && prevPara.pageNum !== currentPara.pageNum;
-  
-  // Only merge if on different pages (cross-page merging)
-  // Paragraphs on the same page should remain separate
-  if (!differentPages) {
-    return false;
-  }
-  
+  const prevPage = prevPara.endPageNum || prevPara.pageNum;
+  const prevColumn = prevPara.endColumnIndex ?? prevPara.columnIndex;
+  const differentPages = prevPage && currentPara.pageNum && prevPage !== currentPara.pageNum;
+  const columnFlow = prevPara.gapAfter === CROSS_PAGE_BREAK_MARKER && prevColumn !== currentPara.columnIndex;
+  if (prevColumn !== undefined && currentPara.columnIndex !== undefined && prevColumn !== currentPara.columnIndex && !columnFlow) return false;
+  if (!differentPages && !columnFlow) return false;
   // CRITICAL: Check gap information if available
   // Gap information is the PRIMARY visual indicator for paragraph boundaries
   // If there was a large gap before the next paragraph, it's a paragraph boundary
@@ -230,22 +219,10 @@ function shouldMergeElements(prevElement, currentElement, metrics = {}) {
     return false;
   }
   
-  // CRITICAL: Never merge elements from different columns
-  // Elements from different columns are separate content streams
-  // and should never be merged, even if they appear on different pages
-  if (prevElement.columnIndex !== undefined && currentElement.columnIndex !== undefined) {
-    if (prevElement.columnIndex !== currentElement.columnIndex) {
-      log(`[PDF v3] shouldMergeElements: Elements from different columns - NOT merging - prevColumnIndex=${prevElement.columnIndex}, currentColumnIndex=${currentElement.columnIndex}, prevType=${prevElement.type}, currentType=${currentElement.type}`);
-      return false;
-    }
-  }
-  
-  // Check if on different pages
-  const differentPages = prevElement.pageNum && currentElement.pageNum && prevElement.pageNum !== currentElement.pageNum;
-  if (!differentPages) {
-    return false; // Only merge across pages
-  }
-  
+  if (prevElement.type === 'paragraph') return shouldMergeParagraphs(prevElement, currentElement, metrics);
+  if (prevElement.columnIndex !== undefined && currentElement.columnIndex !== undefined && prevElement.columnIndex !== currentElement.columnIndex) return false;
+  if (!prevElement.pageNum || !currentElement.pageNum || prevElement.pageNum === currentElement.pageNum) return false;
+
   const prevText = (prevElement.text || '').trim();
   const currentText = (currentElement.text || '').trim();
   
@@ -462,7 +439,8 @@ function mergeParagraphElements(prev, current) {
     }
     const mergedPara = {
       ...prev,
-      text: (prev.text || '') + ' ' + (continuationPart.text || ''),
+      text: joinPdfText(prev.text, continuationPart.text),
+      endPageNum: current.pageNum, endColumnIndex: current.columnIndex, gapAfter: current.gapAfter,
       lines: mergedLines.length > 0 ? mergedLines : prev.lines
     };
     
@@ -487,7 +465,8 @@ function mergeParagraphElements(prev, current) {
     }
     const mergedPara = {
       ...prev,
-      text: (prev.text || '') + ' ' + (current.text || ''),
+      text: joinPdfText(prev.text, current.text),
+      endPageNum: current.pageNum, endColumnIndex: current.columnIndex, gapAfter: current.gapAfter,
       lines: mergedLines.length > 0 ? mergedLines : prev.lines
     };
     
@@ -519,7 +498,8 @@ function mergeHeadingElements(prev, current) {
   }
   const mergedHeading = {
     ...prev,
-    text: (prev.text || '') + ' ' + (current.text || ''),
+    text: joinPdfText(prev.text, current.text),
+      endPageNum: current.pageNum, endColumnIndex: current.columnIndex, gapAfter: current.gapAfter,
     lines: mergedLines.length > 0 ? mergedLines : prev.lines
   };
   
@@ -576,7 +556,8 @@ function mergeListElements(prev, current) {
   }
   const mergedList = {
     ...prev,
-    text: (prev.text || '') + ' ' + (current.text || ''),
+    text: joinPdfText(prev.text, current.text),
+      endPageNum: current.pageNum, endColumnIndex: current.columnIndex, gapAfter: current.gapAfter,
     lines: mergedLines.length > 0 ? mergedLines : prev.lines
   };
   

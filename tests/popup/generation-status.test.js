@@ -9,6 +9,7 @@ function element() {
   const classes = new Set();
   return {
     value: '', dataset: {}, style: {}, disabled: false, textContent: '', innerHTML: '',
+    setAttribute(name, value) { this[name] = value; },
     removeAttribute(name) { if (name === 'data-i18n') delete this.dataset.i18n; },
     classList: {
       add: value => classes.add(value),

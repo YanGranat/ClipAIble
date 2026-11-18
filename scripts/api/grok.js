@@ -1,3 +1,4 @@
+import { createApiError, isApiBoundaryError } from './http-errors.js';
 // @ts-check
 // Grok (xAI) API module for ClipAIble extension
 
@@ -63,9 +64,9 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', {
+        const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -75,39 +76,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
         
         // If not ok and retryable, throw error for retry logic
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
-          }
-          // Non-retryable error - throw immediately
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-          
-          // Provide more helpful error messages for common errors
-          const uiLang = await getUILanguageCached();
-          let errorMessage = errorData.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-          if (fetchResponse.status === 401) {
-            errorMessage = tSync('errorApiKeyInvalid', uiLang);
-          } else if (fetchResponse.status === 403) {
-            errorMessage = tSync('errorApiAccessForbidden', uiLang);
-          } else if (fetchResponse.status === 429) {
-            errorMessage = tSync('errorRateLimit', uiLang);
-          }
-
-          /** @type {Error & {status?: number}} */
-          const error = new Error(errorMessage);
-          error.status = fetchResponse.status;
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'grok');
 
         return fetchResponse;
 
@@ -119,101 +88,9 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
       }
     );
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await requestOptions.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      // Normalize timeout error with context
-      const normalized = await handleError(fetchError, {
-        source: 'grok',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = normalized.userMessage || tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code; // Will be TIMEOUT
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      // Error from retry logic - already has status
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      // Normalize HTTP error with context (createUserMessage will handle status-specific messages)
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(`HTTP ${fetchError.status}`);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'grok',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message with status handling
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      // Use centralized user message with fallback
-      const uiLang = await getUILanguageCached();
-      let errorMessage = normalized.userMessage;
-      if (!errorMessage) {
-        // Fallback to manual messages if createUserMessage failed
-        errorMessage = errorData?.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchError.status));
-        if (fetchError.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchError.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchError.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        }
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(errorMessage);
-      error.code = normalized.code; // Will be AUTH_ERROR, RATE_LIMIT, or PROVIDER_ERROR
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    // Network error (no status, not AbortError)
-    const normalized = await handleError(fetchError, {
-      source: 'grok',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: true, // Use centralized user-friendly message
-      context: {
-        operation: 'fetchRequest',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = normalized.userMessage || tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code; // Will be NETWORK_ERROR
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
 
   log('Grok response', { status: response.status, ok: response.ok });
@@ -228,6 +105,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
       usage: result.usage 
     });
   } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
     if (parseError.code === 'AI_RESPONSE_TRUNCATED') throw parseError;
     // Normalize error with context for better logging and error tracking
     const normalized = await handleError(parseError, {
@@ -311,6 +189,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
   try {
     parsed = JSON.parse(jsonContent);
   } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
     logDebug('Initial JSON parse failed, attempting extraction', {
       model: modelName,
       contentLength: jsonContent.length,
@@ -381,6 +260,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
           });
           parsed = JSON.parse(extractedJson);
         } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
           // Fall through to original error
         }
       }
@@ -461,9 +341,9 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
     logDebug('Sending request to Grok API with image...');
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', {
+        const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -472,38 +352,7 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
           body: JSON.stringify(requestBody)
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
-          }
-          
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-
-          const uiLang = await getUILanguageCached();
-          let errorMessage = errorData.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-          if (fetchResponse.status === 401) {
-            errorMessage = tSync('errorApiKeyInvalid', uiLang);
-          } else if (fetchResponse.status === 403) {
-            errorMessage = tSync('errorApiAccessForbidden', uiLang);
-          } else if (fetchResponse.status === 429) {
-            errorMessage = tSync('errorRateLimit', uiLang);
-          }
-
-          /** @type {Error & {status?: number}} */
-          const error = new Error(errorMessage);
-          error.status = fetchResponse.status;
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'grok');
 
         return fetchResponse;
 
@@ -515,95 +364,9 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
       }
     );
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await requestOptions.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      const normalized = await handleError(fetchError, {
-        source: 'grok',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: true,
-        context: {
-          operation: 'fetchRequestWithImage',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = normalized.userMessage || tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(`HTTP ${fetchError.status}`);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'grok',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: true,
-        context: {
-          operation: 'fetchRequestWithImage',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      let errorMessage = normalized.userMessage;
-      if (!errorMessage) {
-        errorMessage = errorData?.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchError.status));
-        if (fetchError.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchError.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchError.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        }
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(errorMessage);
-      error.code = normalized.code;
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    const normalized = await handleError(fetchError, {
-      source: 'grok',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: true,
-      context: {
-        operation: 'fetchRequestWithImage',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = normalized.userMessage || tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code;
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
 
   let result;
@@ -611,6 +374,7 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
     result = await response.json();
     assertCompleteAIResponse(result, 'grok');
   } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
     if (parseError.code === 'AI_RESPONSE_TRUNCATED') throw parseError;
     const normalized = await handleError(parseError, {
       source: 'grok',
@@ -683,6 +447,7 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
   try {
     parsed = JSON.parse(jsonContent);
   } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
     // Try to extract JSON from beginning if parsing fails
     if (jsonContent.startsWith('{') || jsonContent.startsWith('[')) {
       let jsonEnd = -1;
@@ -737,6 +502,7 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
         try {
           parsed = JSON.parse(jsonContent.substring(0, jsonEnd));
         } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
           // Fall through to original error
         }
       }
@@ -825,9 +591,9 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
     logDebug('Sending request to Grok API with image and history...');
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
         
-        const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', {
+        const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', { signal,
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -836,38 +602,7 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
           body: JSON.stringify(requestBody)
         }, CONFIG.API_TIMEOUT_MS, requestOptions);
           
-        if (!fetchResponse.ok) {
-          const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-          if (retryableCodes.includes(fetchResponse.status)) {
-            /** @type {Error & {status?: number, response?: Response}} */
-            const error = new Error(`HTTP ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-            error.response = fetchResponse;
-            throw error;
-          }
-          
-          let errorData;
-          try {
-            errorData = await fetchResponse.json();
-          } catch (e) {
-            errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-          }
-
-          const uiLang = await getUILanguageCached();
-          let errorMessage = errorData.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-          if (fetchResponse.status === 401) {
-            errorMessage = tSync('errorApiKeyInvalid', uiLang);
-          } else if (fetchResponse.status === 403) {
-            errorMessage = tSync('errorApiAccessForbidden', uiLang);
-          } else if (fetchResponse.status === 429) {
-            errorMessage = tSync('errorRateLimit', uiLang);
-          }
-
-          /** @type {Error & {status?: number}} */
-          const error = new Error(errorMessage);
-          error.status = fetchResponse.status;
-          throw error;
-        }
+        if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'grok');
 
         return fetchResponse;
 
@@ -879,95 +614,9 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
       }
     );
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await requestOptions.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      const normalized = await handleError(fetchError, {
-        source: 'grok',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: true,
-        context: {
-          operation: 'fetchRequestWithImage',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = normalized.userMessage || tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(`HTTP ${fetchError.status}`);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'grok',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: true,
-        context: {
-          operation: 'fetchRequestWithImage',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      let errorMessage = normalized.userMessage;
-      if (!errorMessage) {
-        errorMessage = errorData?.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchError.status));
-        if (fetchError.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchError.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchError.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        }
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(errorMessage);
-      error.code = normalized.code;
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    const normalized = await handleError(fetchError, {
-      source: 'grok',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: true,
-      context: {
-        operation: 'fetchRequestWithImage',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = normalized.userMessage || tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code;
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
 
   let result;
@@ -975,6 +624,7 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
     result = await response.json();
     assertCompleteAIResponse(result, 'grok');
   } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
     if (parseError.code === 'AI_RESPONSE_TRUNCATED') throw parseError;
     const normalized = await handleError(parseError, {
       source: 'grok',
@@ -1046,6 +696,7 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
   try {
     parsed = JSON.parse(jsonContent);
   } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
     // Try to extract JSON from beginning if parsing fails
     if (jsonContent.startsWith('{') || jsonContent.startsWith('[')) {
       let jsonEnd = -1;
@@ -1100,6 +751,7 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
         try {
           parsed = JSON.parse(jsonContent.substring(0, jsonEnd));
         } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
           // Fall through to original error
         }
       }

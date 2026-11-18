@@ -4,6 +4,10 @@
 import { log, logWarn, logError } from '../logging.js';
 import { getUILanguage, formatStatusUpdate } from '../../locales.js';
 import { isValidExternalUrl } from '../security.js';
+import { MAX_IMAGE_BYTES, detectImageMime, imageDataError, imageDataUrlBytes, readImageBytes } from './image-bytes.js';
+import { normalizeImageBlob } from '../../api/image-rasterization.js';
+import { getProcessingSignal } from '../../state/processing.js';
+import { CONFIG } from '../config.js';
 
 /**
  * Get localized loading images status
@@ -26,123 +30,83 @@ async function getLocalizedLoadingStatus(processed, total) {
  * @param {string} url - Image URL
  * @returns {Promise<string|null>} Base64 data URL or null if failed
  */
-export async function imageToBase64(url) {
-  log('imageToBase64', { url: url.substring(0, 100) });
-  
-  // SECURITY: Validate URL to prevent SSRF attacks
-  if (!url || typeof url !== 'string') {
-    logError('Invalid image URL', { url: url?.substring(0, 100) });
-    return null;
+async function fetchImageResponse(url, signal) {
+  let current = url;
+  for (let redirects = 0; redirects <= 20; redirects++) {
+    if (!isValidExternalUrl(current)) throw imageDataError('IMAGE_UNSAFE_URL');
+    const response = await fetch(current, { mode: 'cors', credentials: 'omit', redirect: 'manual', signal, headers: { Accept: 'image/*' } });
+    if (response.type === 'opaqueredirect') throw imageDataError('IMAGE_UNSAFE_REDIRECT');
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      const location = response.headers.get('location');
+      await response.body?.cancel().catch(() => {});
+      if (!location) throw imageDataError('IMAGE_UNSAFE_REDIRECT');
+      current = new URL(location, current).href;
+      continue;
+    }
+    if (response.url && !isValidExternalUrl(response.url)) throw imageDataError('IMAGE_UNSAFE_URL');
+    if (!response.ok) throw imageDataError('IMAGE_FETCH_FAILED');
+    return response;
   }
-  
-  // Skip validation for data URLs (already base64 encoded images)
-  if (url.startsWith('data:')) {
-    log('Image is already base64 data URL, skipping fetch');
-    return url;
-  }
-  
-  // Clean up URL - some sites use special characters that need encoding
-  let cleanUrl = url;
+  throw imageDataError('IMAGE_UNSAFE_REDIRECT');
+}
+
+export async function imageToBase64(url, options = {}) {
+  if (!url || typeof url !== 'string') return null;
+  const controller = new AbortController();
+  const signals = [options.signal, options.processingRunId ? getProcessingSignal(options.processingRunId) : null].filter(Boolean);
+  const abort = () => controller.abort(signals.find(signal => signal.aborted)?.reason);
+  for (const signal of signals) signal.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(imageDataError('IMAGE_TIMEOUT')), CONFIG.API_TIMEOUT_MS);
   try {
-    // For Substack CDN URLs, extract the actual S3 image URL for best quality
-    if (url.includes('substackcdn.com/image/fetch')) {
-      const s3Match = url.match(/https%3A%2F%2Fsubstack-post-media\.s3\.amazonaws\.com[^,\s]+/);
-      if (s3Match) {
-        cleanUrl = decodeURIComponent(s3Match[0]);
-        log('Extracted S3 URL from Substack CDN', { cleanUrl: cleanUrl.substring(0, 100) });
-      } else {
-        const match = url.match(/https%3A%2F%2F[^,\s]+/);
-        if (match) {
-          cleanUrl = decodeURIComponent(match[0]);
-          log('Extracted inner URL from Substack CDN', { cleanUrl: cleanUrl.substring(0, 100) });
+    if (signals.some(signal => signal.aborted)) abort();
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const requestOptions = { ...options, signal: controller.signal };
+    let bytes;
+    if (/^data:/i.test(url)) bytes = imageDataUrlBytes(url);
+    else {
+      if (!isValidExternalUrl(url)) throw imageDataError('IMAGE_UNSAFE_URL');
+      let cleanUrl = url;
+      if (url.includes('substackcdn.com/image/fetch')) {
+        const inner = url.match(/https%3A%2F%2F[^,\s]+/);
+        if (inner) {
+          try { cleanUrl = decodeURIComponent(inner[0]); } catch { cleanUrl = url; }
         }
       }
-    } else if (url.includes('substack-post-media.s3.amazonaws.com')) {
-      cleanUrl = url;
-      log('Using direct S3 URL', { cleanUrl: cleanUrl.substring(0, 100) });
-    }
-  } catch (e) {
-    log('URL cleanup failed, using original', { error: e.message });
-  }
-  
-  // SECURITY: Validate cleaned URL is safe
-  if (!isValidExternalUrl(cleanUrl)) {
-    logError('Blocked unsafe image URL', { url: cleanUrl.substring(0, 100) });
-    return null;
-  }
-  
-  try {
-    const response = await fetch(cleanUrl, { 
-      mode: 'cors', 
-      credentials: 'omit',
-      headers: {
-        'Accept': 'image/*'
+      if (!isValidExternalUrl(cleanUrl)) throw imageDataError('IMAGE_UNSAFE_URL');
+      let response;
+      try { response = await fetchImageResponse(cleanUrl, controller.signal); }
+      catch (error) {
+        if (controller.signal.aborted || cleanUrl === url || error.code === 'IMAGE_UNSAFE_URL' || error.code === 'IMAGE_UNSAFE_REDIRECT') throw error;
+        response = await fetchImageResponse(url, controller.signal);
       }
-    });
-    
-    if (!response.ok) {
-      logWarn('Image fetch failed', { url: cleanUrl, status: response.status });
-      
-      // Try original URL if cleaned URL failed
-      if (cleanUrl !== url) {
-        log('Retrying with original URL');
-        const retryResponse = await fetch(url, { mode: 'cors', credentials: 'omit' });
-        if (retryResponse.ok) {
-          const blob = await retryResponse.blob();
-          return blobToBase64(blob);
-        }
-      }
-      return null;
+      bytes = await readImageBytes(response);
     }
-    
-    const blob = await response.blob();
-    log('Image blob received', { size: blob.size, type: blob.type });
-    
-    return blobToBase64(blob);
-  } catch (e) {
-    logWarn('imageToBase64 failed', { url: cleanUrl, error: e.message });
-    
-    // Try original URL if cleaned URL failed
-    if (cleanUrl !== url) {
-      try {
-        log('Retrying with original URL after error');
-        const retryResponse = await fetch(url, { mode: 'cors', credentials: 'omit' });
-        if (retryResponse.ok) {
-          const blob = await retryResponse.blob();
-          return blobToBase64(blob);
-        }
-      } catch (e2) {
-        logWarn('Retry also failed', { error: e2.message });
-      }
+    if (controller.signal.aborted) throw controller.signal.reason;
+    const mime = detectImageMime(bytes);
+    let blob;
+    try { blob = await normalizeImageBlob(new Blob([bytes], { type: mime }), requestOptions); }
+    catch (error) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      if (typeof error?.code === 'string' && error.code.startsWith('IMAGE_')) throw error;
+      throw Object.assign(imageDataError('IMAGE_RASTERIZATION_FAILED'), { cause: error });
     }
-    return null;
+    const result = await blobToBase64(blob);
+    if (controller.signal.aborted) throw controller.signal.reason;
+    return result;
+  } finally {
+    clearTimeout(timeout);
+    for (const signal of signals) signal.removeEventListener('abort', abort);
   }
 }
 
-/**
- * Convert blob to base64 data URL
- * @param {Blob} blob - Image blob
- * @returns {Promise<string>} Base64 data URL
- */
-export function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      /** @type {import('../../types.js').FileReaderResult} */
-      const result = reader.result;
-      if (result && typeof result === 'string') {
-        log('Image converted to base64', { length: result.length });
-        resolve(result);
-      } else {
-        reject(new Error('Failed to convert image to base64'));
-      }
-    };
-    reader.onerror = (e) => {
-      logError('FileReader error', e);
-      reject(e);
-    };
-    reader.readAsDataURL(blob);
-  });
+export async function blobToBase64(blob) {
+  if (!blob || !Number.isFinite(blob.size) || blob.size > MAX_IMAGE_BYTES) throw imageDataError('IMAGE_TOO_LARGE');
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const mime = detectImageMime(bytes);
+  if (mime === 'image/svg+xml') throw imageDataError('IMAGE_REQUIRES_RASTERIZATION');
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 32768) binary += String.fromCharCode(...bytes.subarray(index, index + 32768));
+  return `data:${mime};base64,${btoa(binary)}`;
 }
 
 /**
@@ -204,7 +168,7 @@ export async function processImagesInBatches(images, concurrency, updateState, p
             progress: 82 + Math.floor((processed / total) * 13) 
           });
         }
-        return { img, base64: null, index: globalIndex, error: e.message };
+        return { img, base64: null, index: globalIndex, error: e.message, errorCode: e.code };
       }
     });
     
@@ -246,16 +210,10 @@ export async function processImagesInBatches(images, concurrency, updateState, p
  * @param {import('../../types.js').UpdateStateFunction} updateState - State update function
  * @returns {Promise<Array>} Array of {img, base64, index} results
  */
-async function processImagesInBatchesForEmbed(images, concurrency, updateState) {
+async function processImagesInBatchesForEmbed(images, concurrency, updateState, options) {
   return processImagesInBatches(images, concurrency, updateState, async (img, globalIndex) => {
-    // Skip if already base64
-    if (img.src.startsWith('data:')) {
-      log(`Image ${globalIndex + 1} already base64, skipping fetch`);
-      return { img, base64: img.src, index: globalIndex };
-    }
-    
-    log(`Fetching image ${globalIndex + 1}`, { src: img.src.substring(0, 100) });
-    const base64 = await imageToBase64(img.src);
+    log(`Loading image ${globalIndex + 1}`, { src: String(img.src || '').substring(0, 100) });
+    const base64 = await imageToBase64(img.src, options);
     return { img, base64, index: globalIndex };
   });
 }
@@ -269,7 +227,7 @@ async function processImagesInBatchesForEmbed(images, concurrency, updateState) 
  * @param {import('../../types.js').EscapeAttrFunction} escapeAttr - Attribute escape function
  * @returns {Promise<string>} HTML with embedded images
  */
-export async function embedImages(html, content, updateState, escapeAttr) {
+export async function embedImages(html, content, updateState, escapeAttr, options = {}) {
   log('embedImages called', { 
     contentLength: content?.length || 0,
     contentTypes: content ? content.map(item => item?.type).filter(Boolean) : []
@@ -300,7 +258,13 @@ export async function embedImages(html, content, updateState, escapeAttr) {
   }
   
   // Process all images in parallel batches
-  const results = await processImagesInBatchesForEmbed(images, CONCURRENCY, updateState);
+  const results = await processImagesInBatchesForEmbed(images, CONCURRENCY, updateState, options);
+  if (options.signal?.aborted) throw options.signal.reason;
+  if (options.processingRunId && getProcessingSignal(options.processingRunId).aborted) {
+    throw getProcessingSignal(options.processingRunId).reason;
+  }
+  const rejected = results.find(result => typeof result.errorCode === 'string' && result.errorCode.startsWith('IMAGE_') && result.errorCode !== 'IMAGE_FETCH_FAILED');
+  if (rejected) throw imageDataError(rejected.errorCode);
   
   // Replace URLs in HTML
   let result = html;
@@ -325,7 +289,7 @@ export async function embedImages(html, content, updateState, escapeAttr) {
         // Found by data-original-src - replace the src attribute while keeping data-original-src
         result = result.replace(
           new RegExp(`(src="[^"]*")([^>]*data-original-src="${regexSafe}")`, 'g'),
-          `src="${base64}"$2`
+          (match, src, rest) => `src="${escapeAttr(base64)}"${rest}`
         );
         embedded++;
         log(`Image ${index + 1} embedded via data-original-src`);
@@ -333,7 +297,7 @@ export async function embedImages(html, content, updateState, escapeAttr) {
         // Fallback: try to find by src attribute (may have escaped characters)
         const regex = new RegExp(`src="${regexSafe}"`, 'g');
         const beforeLength = result.length;
-        result = result.replace(regex, `src="${base64}"`);
+        result = result.replace(regex, () => `src="${escapeAttr(base64)}"`);
         
         if (result.length !== beforeLength) {
           embedded++;

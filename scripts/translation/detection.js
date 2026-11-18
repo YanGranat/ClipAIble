@@ -5,6 +5,7 @@ import { assertCompleteAIResponse } from '../api/response-validation.js';
 // @ts-check
 
 import { fetchBufferedResponse } from '../api/fetch-buffered-response.js';
+import { createApiError } from '../api/http-errors.js';
 import { log, logWarn } from '../utils/logging.js';
 import { resolveAIProvider, parseModelConfig } from '../api/index.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
@@ -113,7 +114,7 @@ export function detectLanguageByCharacters(text) {
   const sample = text.substring(0, 10000);
   
   // Count character types
-  const cyrillicMatch = text.match(/[а-яёА-ЯЁ]/g) || [];
+  const cyrillicMatch = text.match(/[\u0400-\u04ff]/g) || [];
   const ukrainianMatch = text.match(/[іїєґІЇЄҐ]/g) || [];
   const latinMatch = text.match(/[a-zA-Z]/g) || [];
   const chineseMatch = text.match(/[\u4e00-\u9fff]/g) || [];
@@ -124,8 +125,8 @@ export function detectLanguageByCharacters(text) {
   // For short texts, use simple script detection (more reliable than thresholds).
   // This improves detection for titles/headings/metadata.
   if (text.length < 50) {
-    if (chineseMatch.length > 0) return 'zh';
     if (japaneseMatch.length > 0) return 'ja';
+    if (chineseMatch.length > 0) return 'zh';
     if (koreanMatch.length > 0) return 'ko';
     if (arabicMatch.length > 0) return 'ar';
     if (ukrainianMatch.length > 0) return 'ua';
@@ -158,6 +159,7 @@ export function detectLanguageByCharacters(text) {
   }
   
   // Check for specific scripts (CJK, Arabic) - these have unique character sets
+  if (japaneseMatch.length > 0 && chineseMatch.length + japaneseMatch.length > totalLetters * 0.3) return 'ja';
   if (chineseMatch.length > totalLetters * 0.3) {
     log('🌍 LANGUAGE DETECTION: Chinese script detected', { 
       detectedLanguage: 'zh', 
@@ -196,7 +198,7 @@ export function detectLanguageByCharacters(text) {
   
   if (cyrillicRatio > 0.5) {
     // Cyrillic text - check for Ukrainian specific letters
-    if (ukrainianMatch.length > 3) {
+    if (ukrainianMatch.length > 0) {
       log('🌍 LANGUAGE DETECTION: Ukrainian detected (Cyrillic with Ukrainian markers)', { 
         detectedLanguage: 'ua', 
         reason: 'cyrillic with Ukrainian markers', 
@@ -340,13 +342,7 @@ export async function detectContentLanguage(content, apiKey, model, options = {}
   const provider = resolveAIProvider(model, options.provider);
   
   // Decrypt API key if needed (with automatic encryption for unencrypted keys)
-  let decryptedApiKey = apiKey;
-  try {
-    decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
-  } catch (error) {
-    options.checkCancelled?.();
-    log('API key decryption failed for detectContentLanguage, using as-is', error);
-  }
+  const decryptedApiKey = await getDecryptedKeyCached(apiKey, provider);
   
   const systemPrompt = `You are a language detection agent. Your task is to identify the language of the provided text.
 
@@ -457,12 +453,7 @@ Example outputs: ru, en, ua, de`;
           });
         }
       } else {
-        const errorText = await response.text();
-        log('OpenAI API error', {
-          status: response.status,
-          statusText: response.statusText,
-          errorBodyFull: errorText // FULL ERROR - NO TRUNCATION
-        });
+        throw await createApiError(response, provider);
       }
     } else if (provider === 'claude') {
       const requestBody = {
@@ -523,12 +514,7 @@ Example outputs: ru, en, ua, de`;
           });
         }
       } else {
-        const errorText = await response.text();
-        log('Claude API error', {
-          status: response.status,
-          statusText: response.statusText,
-          errorBodyFull: errorText // FULL ERROR - NO TRUNCATION
-        });
+        throw await createApiError(response, provider);
       }
     } else if (provider === 'gemini') {
       const requestBody = {
@@ -538,9 +524,9 @@ Example outputs: ru, en, ua, de`;
       
       log('Sending request to Gemini', { model: modelName });
       
-      const response = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${getGeminiModelName(model)}:generateContent?key=${decryptedApiKey}`, {
+      const response = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${getGeminiModelName(model)}:generateContent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': decryptedApiKey },
         body: JSON.stringify(requestBody)
       }, undefined, options);
       
@@ -583,12 +569,7 @@ Example outputs: ru, en, ua, de`;
           });
         }
       } else {
-        const errorText = await response.text();
-        log('Gemini API error', {
-          status: response.status,
-          statusText: response.statusText,
-          errorBodyFull: errorText // FULL ERROR - NO TRUNCATION
-        });
+        throw await createApiError(response, provider);
       }
     }
     
@@ -600,9 +581,7 @@ Example outputs: ru, en, ua, de`;
       isUndefined: langCode === undefined,
       isEmpty: langCode === '',
       isValidFormat: langCode ? /^[a-z]{2}$/.test(langCode) : false,
-      validationRegex: '/^[a-z]{2}$/',
-      rawResponseFull: rawResponse || null, // FULL RESPONSE - NO TRUNCATION
-      parsedResultFull: parsedResult ? JSON.stringify(parsedResult) : null // FULL RESULT - NO TRUNCATION
+      validationRegex: '/^[a-z]{2}$/'
     });
     
     if (langCode && /^[a-z]{2}$/.test(langCode)) {
@@ -613,9 +592,7 @@ Example outputs: ru, en, ua, de`;
     // AI returned invalid format, fallback to character analysis
     log('=== detectContentLanguage: AI RETURNED INVALID FORMAT, USING FALLBACK ===', { 
       aiResponse: langCode,
-      aiResponseType: typeof langCode,
-      rawResponseFull: rawResponse || null, // FULL RESPONSE - NO TRUNCATION
-      parsedResultFull: parsedResult ? JSON.stringify(parsedResult) : null // FULL RESULT - NO TRUNCATION
+      aiResponseType: typeof langCode
     });
     log('🔍 LANGUAGE DETECTION: AI returned invalid format, falling back to character-based detection', {
       textLength: sampleText.length
@@ -627,7 +604,8 @@ Example outputs: ru, en, ua, de`;
     });
     return fallbackLang;
   } catch (error) {
-    options.checkCancelled?.();
+    await options.checkCancelled?.();
+    if (options.signal?.aborted || ['AbortError', 'TimeoutError'].includes(error.name)) throw error;
     // Normalize error with context for better logging and error tracking
     await handleError(error, {
       source: 'languageDetection',

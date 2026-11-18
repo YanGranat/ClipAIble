@@ -1,3 +1,4 @@
+import { createApiError, isApiBoundaryError } from './http-errors.js';
 // @ts-check
 // OpenRouter API module for ClipAIble extension
 
@@ -51,7 +52,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
   let useResponseFormat = jsonResponse;
   
   // Internal function to make the actual API call
-  async function makeRequest(withResponseFormat) {
+  async function makeRequest(withResponseFormat, signal) {
     const requestBody = {
       ...requestConfig,
       messages: [
@@ -69,93 +70,19 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       };
     }
     
-    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
+    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', { signal,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://github.com/clipaiable',
+        'HTTP-Referer': 'https://github.com/YanGranat/ClipAIble',
         'X-Title': 'ClipAIble'
       },
       body: JSON.stringify(requestBody)
     }, CONFIG.API_TIMEOUT_MS, requestOptions);
     
     // If not ok and retryable, throw error for retry logic
-    if (!fetchResponse.ok) {
-      const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-      if (retryableCodes.includes(fetchResponse.status)) {
-        /** @type {Error & {status?: number, response?: Response}} */
-        const error = new Error(`HTTP ${fetchResponse.status}`);
-        error.status = fetchResponse.status;
-        error.response = fetchResponse;
-        throw error;
-      }
-      // Non-retryable error - get error details
-      let errorData;
-      try {
-        errorData = await fetchResponse.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-      }
-
-      // Log full error details
-      logError('OpenRouter API error response', {
-        status: fetchResponse.status,
-        errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
-        model: modelName,
-        hasResponseFormat: withResponseFormat,
-        note: 'OpenRouter is an aggregator - errors may come from underlying provider'
-      });
-    
-      // For 400 errors with response_format, mark for retry without it
-      // OpenRouter is an aggregator - even openai/* models may not support response_format
-      if (fetchResponse.status === 400 && withResponseFormat) {
-        const errorText = JSON.stringify(errorData).toLowerCase();
-        // Check if error might be related to response_format
-        // We'll be conservative and retry without it for any 400 when using response_format
-        // This is safer than trying to parse specific error messages
-        const mightBeResponseFormatIssue = errorText.includes('response_format') ||
-          errorText.includes('response format') ||
-          errorText.includes('unsupported') ||
-          errorText.includes('invalid parameter') ||
-          errorText.includes('bad request') ||
-          !errorText.includes('api key') && !errorText.includes('unauthorized') &&
-          !errorText.includes('forbidden') && !errorText.includes('rate limit');
-
-        if (mightBeResponseFormatIssue) {
-          // Return special marker to retry without response_format
-          /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
-          const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
-          error.status = 400;
-          error.retryWithoutResponseFormat = true;
-          error.errorData = errorData;
-          logWarn('OpenRouter 400 error with response_format - will retry without it', {
-            model: modelName,
-            errorPreview: JSON.stringify(errorData).substring(0, 200),
-            note: 'OpenRouter aggregator may not support response_format for this model'
-          });
-          throw error;
-        }
-      }
-      
-      // Provide more helpful error messages for common errors
-      const uiLang = await getUILanguageCached();
-      const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
-      let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-
-      if (fetchResponse.status === 401) {
-        errorMessage = tSync('errorApiKeyInvalid', uiLang);
-      } else if (fetchResponse.status === 403) {
-        errorMessage = tSync('errorApiAccessForbidden', uiLang);
-      } else if (fetchResponse.status === 429) {
-        errorMessage = tSync('errorRateLimit', uiLang);
-      }
-
-      /** @type {Error & {status?: number}} */
-      const error = new Error(errorMessage);
-      error.status = fetchResponse.status;
-      throw error;
-    }
+    if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'openrouter');
 
     return fetchResponse;
 
@@ -170,7 +97,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
     if (useResponseFormat) {
       try {
         response = await callWithRetry(
-          () => makeRequest(true),
+          ({ signal } = {}) => makeRequest(true, signal),
           {
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -188,7 +115,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
           useResponseFormat = false;
           // Retry without response_format
           response = await callWithRetry(
-            () => makeRequest(false),
+            ({ signal } = {}) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -202,7 +129,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
     } else {
       // No response_format from start
       response = await callWithRetry(
-        () => makeRequest(false),
+        ({ signal } = {}) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -211,101 +138,9 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       );
     }
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await requestOptions.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      // Normalize timeout error with context
-      const normalized = await handleError(fetchError, {
-        source: 'openrouter',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: false, // Keep existing localized message
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code; // Will be TIMEOUT
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      // Error from retry logic - already has status
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      // Normalize HTTP error with context (createUserMessage will handle status-specific messages)
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(`HTTP ${fetchError.status}`);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'openrouter',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message with status handling
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      // Use centralized user message with fallback
-      const uiLang = await getUILanguageCached();
-      let errorMessage = normalized.userMessage;
-      if (!errorMessage) {
-        // Fallback to manual messages if createUserMessage failed
-        errorMessage = errorData?.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchError.status));
-        if (fetchError.status === 401) {
-          errorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchError.status === 403) {
-          errorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchError.status === 429) {
-          errorMessage = tSync('errorRateLimit', uiLang);
-        }
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(errorMessage);
-      error.code = normalized.code; // Will be AUTH_ERROR, RATE_LIMIT, or PROVIDER_ERROR
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    // Network error (no status, not AbortError)
-    const normalized = await handleError(fetchError, {
-      source: 'openrouter',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: true, // Use centralized user-friendly message
-      context: {
-        operation: 'fetchRequest',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = normalized.userMessage || tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code; // Will be NETWORK_ERROR
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
 
   log('OpenRouter response', { status: response.status, ok: response.ok });
@@ -320,6 +155,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       usage: result.usage 
     });
   } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
     if (parseError.code === 'AI_RESPONSE_TRUNCATED') throw parseError;
     // Normalize error with context for better logging and error tracking
     const normalized = await handleError(parseError, {
@@ -408,6 +244,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
   try {
     parsed = JSON.parse(jsonContent);
   } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
     // If we used response_format but got non-JSON, retry without it
     // This handles cases where model ignores response_format but returns 200
     if (useResponseFormat && !isLikelyJSON) {
@@ -420,7 +257,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       // Retry entire request without response_format
       useResponseFormat = false;
       const retryResponse = await callWithRetry(
-        () => makeRequest(false),
+        ({ signal } = {}) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -472,6 +309,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       try {
         return JSON.parse(retryJsonContent);
       } catch (retryJsonError) {
+    if (isApiBoundaryError(retryJsonError)) throw retryJsonError;
         // Still not JSON - throw original error with context from both attempts
         const normalized = await handleError(jsonError, {
           source: 'openrouter',
@@ -549,7 +387,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
   const { base64Image, mimeType } = parseBase64Image(imageData);
   
   // Internal function to make the actual API call
-  async function makeRequest(withResponseFormat) {
+  async function makeRequest(withResponseFormat, signal) {
     const requestBody = {
       ...requestConfig,
       messages: [
@@ -581,108 +419,19 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
       };
     }
     
-    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
+    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', { signal,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://github.com/clipaiable',
+        'HTTP-Referer': 'https://github.com/YanGranat/ClipAIble',
         'X-Title': 'ClipAIble'
       },
       body: JSON.stringify(requestBody)
     }, CONFIG.API_TIMEOUT_MS, requestOptions);
     
     // If not ok and retryable, throw error for retry logic
-    if (!fetchResponse.ok) {
-      const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-      if (retryableCodes.includes(fetchResponse.status)) {
-        /** @type {Error & {status?: number, response?: Response}} */
-        const error = new Error(`HTTP ${fetchResponse.status}`);
-        error.status = fetchResponse.status;
-        error.response = fetchResponse;
-
-        throw error;
-      }
-      // Non-retryable error - get error details
-      let errorData;
-      try {
-        errorData = await fetchResponse.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-      }
-
-      // Log full error details
-      logError('OpenRouter API error response', {
-        status: fetchResponse.status,
-        errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
-        model: modelName,
-        hasResponseFormat: withResponseFormat,
-        note: 'OpenRouter is an aggregator - errors may come from underlying provider'
-      });
-    
-      // For 400 errors with response_format, mark for retry without it
-      // OpenRouter is an aggregator - even openai/* models may not support response_format
-      if (fetchResponse.status === 400 && withResponseFormat) {
-        const errorText = JSON.stringify(errorData).toLowerCase();
-        // Check if error might be related to response_format
-        // We'll be conservative and retry without it for any 400 when using response_format
-        const mightBeResponseFormatIssue = errorText.includes('response_format') ||
-          errorText.includes('response format') ||
-          errorText.includes('unsupported') ||
-          errorText.includes('invalid parameter') ||
-          errorText.includes('bad request') ||
-          (!errorText.includes('api key') && !errorText.includes('unauthorized') &&
-          !errorText.includes('forbidden') && !errorText.includes('rate limit'));
-
-        if (mightBeResponseFormatIssue) {
-          // Return special marker to retry without response_format
-          /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
-          const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
-          error.status = 400;
-          error.retryWithoutResponseFormat = true;
-          error.errorData = errorData;
-          logWarn('OpenRouter 400 error with response_format - will retry without it', {
-            model: modelName,
-            errorPreview: JSON.stringify(errorData).substring(0, 200),
-            note: 'OpenRouter aggregator may not support response_format for this model'
-          });
-
-          throw error;
-        }
-      }
-      
-      // Provide more helpful error messages for common errors
-      const uiLang = await getUILanguageCached();
-      const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
-      let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-
-      if (fetchResponse.status === 401) {
-        errorMessage = tSync('errorApiKeyInvalid', uiLang);
-      } else if (fetchResponse.status === 403) {
-        errorMessage = tSync('errorApiAccessForbidden', uiLang);
-      } else if (fetchResponse.status === 429) {
-        errorMessage = tSync('errorRateLimit', uiLang);
-      } else if (fetchResponse.status === 404) {
-        // Check if this is a "model doesn't support images" error
-        const errorText = errorMessageFromAPI?.toLowerCase() || '';
-        if (errorText.includes('no endpoints found that support image input') ||
-            errorText.includes('does not support image') ||
-            errorText.includes('image input not supported')) {
-          errorMessage = `Model "${modelName}" does not support images. Choose a model with vision support.`;
-          logWarn('Model does not support image input', {
-            model: modelName,
-            error: errorMessageFromAPI,
-            suggestion: 'User should select a vision-capable model'
-          });
-        }
-      }
-
-      /** @type {Error & {status?: number}} */
-      const error = new Error(errorMessage);
-      error.status = fetchResponse.status;
-
-      throw error;
-    }
+    if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'openrouter');
 
     return fetchResponse;
 
@@ -697,7 +446,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
     if (useResponseFormat) {
       try {
         response = await callWithRetry(
-          () => makeRequest(true),
+          ({ signal } = {}) => makeRequest(true, signal),
           {
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -715,7 +464,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           useResponseFormat = false;
           // Retry without response_format
           response = await callWithRetry(
-            () => makeRequest(false),
+            ({ signal } = {}) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -729,7 +478,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
     } else {
       // No response_format from start
       response = await callWithRetry(
-        () => makeRequest(false),
+        ({ signal } = {}) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -771,6 +520,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
       try {
         return JSON.parse(jsonContent);
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // If we used response_format but got non-JSON, retry without it
         if (useResponseFormat && !isLikelyJSON) {
           logWarn('OpenRouter model returned non-JSON despite response_format - retrying without it', {
@@ -782,7 +532,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           // Retry entire request without response_format
           useResponseFormat = false;
           const retryResponse = await callWithRetry(
-            () => makeRequest(false),
+            ({ signal } = {}) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -813,6 +563,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           try {
             return JSON.parse(retryJsonContent);
           } catch (retryParseError) {
+    if (isApiBoundaryError(retryParseError)) throw retryParseError;
             logError('Failed to parse OpenRouter response as JSON after retry', { content: retryContent, parseError: retryParseError });
             throw new Error(`Invalid JSON response from OpenRouter: ${retryParseError.message}`);
           }
@@ -825,6 +576,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
     
     return content;
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     logError('OpenRouter API call with image failed', error);
     throw error;
   }
@@ -872,7 +624,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
   ];
   
   // Internal function to make the actual API call
-  async function makeRequest(withResponseFormat) {
+  async function makeRequest(withResponseFormat, signal) {
     const requestBody = {
       ...requestConfig,
       messages: messages
@@ -887,108 +639,19 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       };
     }
     
-    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
+    const fetchResponse = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', { signal,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
-        'HTTP-Referer': 'https://github.com/clipaiable',
+        'HTTP-Referer': 'https://github.com/YanGranat/ClipAIble',
         'X-Title': 'ClipAIble'
       },
       body: JSON.stringify(requestBody)
     }, CONFIG.API_TIMEOUT_MS, requestOptions);
     
     // If not ok and retryable, throw error for retry logic
-    if (!fetchResponse.ok) {
-      const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-      if (retryableCodes.includes(fetchResponse.status)) {
-        /** @type {Error & {status?: number, response?: Response}} */
-        const error = new Error(`HTTP ${fetchResponse.status}`);
-        error.status = fetchResponse.status;
-        error.response = fetchResponse;
-
-        throw error;
-      }
-      // Non-retryable error - get error details
-      let errorData;
-      try {
-        errorData = await fetchResponse.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-      }
-
-      // Log full error details
-      logError('OpenRouter API error response', {
-        status: fetchResponse.status,
-        errorData: JSON.stringify(errorData).substring(0, 500), // Truncate to avoid huge logs
-        model: modelName,
-        hasResponseFormat: withResponseFormat,
-        note: 'OpenRouter is an aggregator - errors may come from underlying provider'
-      });
-    
-      // For 400 errors with response_format, mark for retry without it
-      // OpenRouter is an aggregator - even openai/* models may not support response_format
-      if (fetchResponse.status === 400 && withResponseFormat) {
-        const errorText = JSON.stringify(errorData).toLowerCase();
-        // Check if error might be related to response_format
-        // We'll be conservative and retry without it for any 400 when using response_format
-        const mightBeResponseFormatIssue = errorText.includes('response_format') ||
-          errorText.includes('response format') ||
-          errorText.includes('unsupported') ||
-          errorText.includes('invalid parameter') ||
-          errorText.includes('bad request') ||
-          (!errorText.includes('api key') && !errorText.includes('unauthorized') &&
-          !errorText.includes('forbidden') && !errorText.includes('rate limit'));
-
-        if (mightBeResponseFormatIssue) {
-          // Return special marker to retry without response_format
-          /** @type {Error & {status?: number, retryWithoutResponseFormat?: boolean, errorData?: any}} */
-          const error = new Error('RETRY_WITHOUT_RESPONSE_FORMAT');
-          error.status = 400;
-          error.retryWithoutResponseFormat = true;
-          error.errorData = errorData;
-          logWarn('OpenRouter 400 error with response_format - will retry without it', {
-            model: modelName,
-            errorPreview: JSON.stringify(errorData).substring(0, 200),
-            note: 'OpenRouter aggregator may not support response_format for this model'
-          });
-
-          throw error;
-        }
-      }
-      
-      // Provide more helpful error messages for common errors
-      const uiLang = await getUILanguageCached();
-      const errorMessageFromAPI = errorData.error?.message || errorData.message || errorData.error?.error?.message;
-      let errorMessage = errorMessageFromAPI || tSync('errorApiError', uiLang).replace('{status}', String(fetchResponse.status));
-
-      if (fetchResponse.status === 401) {
-        errorMessage = tSync('errorApiKeyInvalid', uiLang);
-      } else if (fetchResponse.status === 403) {
-        errorMessage = tSync('errorApiAccessForbidden', uiLang);
-      } else if (fetchResponse.status === 429) {
-        errorMessage = tSync('errorRateLimit', uiLang);
-      } else if (fetchResponse.status === 404) {
-        // Check if this is a "model doesn't support images" error
-        const errorText = errorMessageFromAPI?.toLowerCase() || '';
-        if (errorText.includes('no endpoints found that support image input') ||
-            errorText.includes('does not support image') ||
-            errorText.includes('image input not supported')) {
-          errorMessage = `Model "${modelName}" does not support images. Choose a model with vision support.`;
-          logWarn('Model does not support image input', {
-            model: modelName,
-            error: errorMessageFromAPI,
-            suggestion: 'User should select a vision-capable model'
-          });
-        }
-      }
-
-      /** @type {Error & {status?: number}} */
-      const error = new Error(errorMessage);
-      error.status = fetchResponse.status;
-
-      throw error;
-    }
+    if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'openrouter');
 
     return fetchResponse;
 
@@ -1003,7 +666,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
     if (useResponseFormat) {
       try {
         response = await callWithRetry(
-          () => makeRequest(true),
+          ({ signal } = {}) => makeRequest(true, signal),
           {
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -1021,7 +684,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
           useResponseFormat = false;
           // Retry without response_format
           response = await callWithRetry(
-            () => makeRequest(false),
+            ({ signal } = {}) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -1035,7 +698,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
     } else {
       // No response_format from start
       response = await callWithRetry(
-        () => makeRequest(false),
+        ({ signal } = {}) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -1078,6 +741,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       try {
         result = JSON.parse(jsonContent);
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // If we used response_format but got non-JSON, retry without it
         if (useResponseFormat && !isLikelyJSON) {
           logWarn('OpenRouter model returned non-JSON despite response_format - retrying without it', {
@@ -1089,7 +753,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
           // Retry entire request without response_format
           useResponseFormat = false;
           const retryResponse = await callWithRetry(
-            () => makeRequest(false),
+            ({ signal } = {}) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -1122,6 +786,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
             // Update content for assistantMessage
             content = retryContent;
           } catch (retryParseError) {
+    if (isApiBoundaryError(retryParseError)) throw retryParseError;
             logError('Failed to parse OpenRouter response as JSON after retry', { content: retryContent, parseError: retryParseError });
             throw new Error(`Invalid JSON response from OpenRouter: ${retryParseError.message}`);
           }
@@ -1140,6 +805,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       userMessage: currentUserMessage // Store full user message with image for history
     };
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     logError('OpenRouter API call with image and history failed', error);
     throw error;
   }

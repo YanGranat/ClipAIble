@@ -181,6 +181,13 @@ function detectLanguage(text) {
   return 'en';
 }
 
+export function resolveRespeecherLanguage(text, language) {
+  const base = String(language || 'auto').toLowerCase().split(/[-_]/)[0];
+  if (base === 'uk' || base === 'ua') return 'ua';
+  if (base !== 'auto') return base;
+  return detectLanguage(text);
+}
+
 /**
  * Get the appropriate API URL based on voice
  * According to https://space.respeecher.com/docs/models-and-languages:
@@ -263,7 +270,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   
   // Detect text language if not provided or if 'auto'
   // Convert 'auto' to null so detectLanguage can work
-  const detectedLang = (language && language !== 'auto') ? language : detectLanguage(text);
+  const detectedLang = resolveRespeecherLanguage(text, language);
   
   // IMPORTANT: volodymyr is available on en-rt endpoint only, not on ua-rt
   // Ukrainian voices are available on ua-rt endpoint only

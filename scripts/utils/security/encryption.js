@@ -8,6 +8,7 @@
 
 import { log, logError, logWarn } from '../logging.js';
 import { getProcessingState } from '../../state/processing.js';
+import { getInstallationKey } from './key-store.js';
 
 // Cache for encryption key to avoid regenerating
 let cachedEncryptionKey = null;
@@ -44,11 +45,10 @@ export function removeApiKeyIfUnchanged(storageKey, expectedValue) {
 }
 
 /**
- * Get or generate encryption key based on extension ID
- * Uses PBKDF2 to derive a key from extension runtime ID
+ * Recreate the key needed to read legacy stored values.
  * @returns {Promise<CryptoKey>} Encryption key
  */
-async function getEncryptionKey() {
+async function getLegacyEncryptionKey() {
   if (cachedEncryptionKey) {
     return cachedEncryptionKey;
   }
@@ -92,6 +92,7 @@ async function getEncryptionKey() {
  * @const {string}
  */
 const ENCRYPTION_PREFIX = 'ENC:';
+const CURRENT_ENCRYPTION_PREFIX = 'ENC:v2:';
 
 /**
  * Check if string is encrypted (base64 format with specific pattern)
@@ -104,7 +105,7 @@ export function isEncrypted(value) {
   
   // New format: check for ENC: prefix
   if (value.startsWith(ENCRYPTION_PREFIX)) {
-    const base64Part = value.substring(ENCRYPTION_PREFIX.length);
+    const base64Part = value.substring(value.startsWith(CURRENT_ENCRYPTION_PREFIX) ? CURRENT_ENCRYPTION_PREFIX.length : ENCRYPTION_PREFIX.length);
     return /^[A-Za-z0-9+/=]{40,}$/.test(base64Part);
   }
   
@@ -123,25 +124,26 @@ export async function encryptApiKey(plaintext) {
     throw new Error('Invalid plaintext for encryption');
   }
 
-  // Prefixed values are already stored in the current format.
-  if (plaintext.startsWith(ENCRYPTION_PREFIX) && isEncrypted(plaintext)) {
-    log('API key already encrypted, skipping');
+  if (plaintext.startsWith(CURRENT_ENCRYPTION_PREFIX)) {
+    await decryptStoredValue(plaintext);
     return plaintext;
+  }
+  if (plaintext.startsWith(ENCRYPTION_PREFIX)) {
+    plaintext = await decryptStoredValue(plaintext);
   }
 
   // A legacy ciphertext has no marker. Authenticate it before treating a
   // base64-shaped API key as encrypted.
   if (isEncrypted(plaintext)) {
     try {
-      await decryptStoredValue(plaintext);
-      return plaintext;
+      plaintext = await decryptStoredValue(plaintext);
     } catch {
       // Unmarked values that cannot be authenticated are plaintext keys.
     }
   }
 
   try {
-    const key = await getEncryptionKey();
+    const key = await getInstallationKey(true);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const encoded = new TextEncoder().encode(plaintext);
 
@@ -159,7 +161,7 @@ export async function encryptApiKey(plaintext) {
     // Convert to base64 for storage
     const base64 = btoa(String.fromCharCode(...combined));
     // Add prefix marker for better validation
-    return ENCRYPTION_PREFIX + base64;
+    return CURRENT_ENCRYPTION_PREFIX + base64;
   } catch (error) {
     logError('Encryption failed', error);
     throw new Error(`Failed to encrypt API key: ${error.message}`);
@@ -172,10 +174,10 @@ export async function encryptApiKey(plaintext) {
  * @returns {Promise<string>} Plaintext
  */
 async function decryptStoredValue(value) {
-  const key = await getEncryptionKey();
-  const base64Data = value.startsWith(ENCRYPTION_PREFIX)
-    ? value.substring(ENCRYPTION_PREFIX.length)
-    : value;
+  const current = value.startsWith(CURRENT_ENCRYPTION_PREFIX);
+  const key = current ? await getInstallationKey(false) : await getLegacyEncryptionKey();
+  const base64Data = current ? value.substring(CURRENT_ENCRYPTION_PREFIX.length)
+    : value.startsWith(ENCRYPTION_PREFIX) ? value.substring(ENCRYPTION_PREFIX.length) : value;
   const combined = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
   const decrypted = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: combined.slice(0, 12) },
@@ -196,7 +198,7 @@ export async function decryptApiKey(encryptedBase64) {
   }
 
   // If not encrypted (plain text), return as is (for backward compatibility)
-  if (!isEncrypted(encryptedBase64)) {
+  if (!encryptedBase64.startsWith(ENCRYPTION_PREFIX) && !isEncrypted(encryptedBase64)) {
     logWarn('API key appears to be plain text, returning as is');
     return encryptedBase64;
   }
@@ -205,9 +207,9 @@ export async function decryptApiKey(encryptedBase64) {
     return await decryptStoredValue(encryptedBase64);
   } catch (error) {
     logError('Decryption failed', error);
-    // If decryption fails, try returning as plain text (for migration)
-    logWarn('Decryption failed, returning as plain text (may be unencrypted key)');
-    return encryptedBase64;
+    // Unmarked legacy keys may also be genuine base64-shaped provider keys.
+    if (!encryptedBase64.startsWith(ENCRYPTION_PREFIX)) return encryptedBase64;
+    throw new Error('Stored API key could not be decrypted');
   }
 }
 
@@ -233,15 +235,6 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
   let decrypted;
   try {
     decrypted = await decryptApiKey(encryptedKey);
-    
-    // SECURITY: If decryption failed and returned the same encrypted value as fallback,
-    // this indicates a real decryption error - don't cache it and clear any existing cache entry
-    if (isEncrypted(encryptedKey) && decrypted === encryptedKey) {
-      logWarn('Decryption failed for encrypted key, clearing cache entry', { provider });
-      decryptedKeyCache.delete(cacheKey);
-      // Return the value anyway (fallback behavior) but don't cache it
-      return decrypted;
-    }
     
     // Valid decryption - cache the result
     decryptedKeyCache.set(cacheKey, decrypted);

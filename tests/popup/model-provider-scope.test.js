@@ -29,7 +29,7 @@ describe('provider ownership of model actions', () => {
     const blockedList = new Promise(resolve => { releaseList = resolve; });
     chrome.storage.local.get.mockImplementation(async keys => {
       const result = Object.fromEntries(keys.map(key => [key, structuredClone(stored[key])]));
-      if (keys.length === 1 && keys[0] === STORAGE_KEYS.CUSTOM_MODELS) { dialogWaiting = true; await blockedDialog; }
+      if (keys.length === 2 && keys.includes(STORAGE_KEYS.CUSTOM_MODELS) && keys.includes(STORAGE_KEYS.HIDDEN_MODELS)) { dialogWaiting = true; await blockedDialog; }
       else if (elements.apiProviderSelect.value === 'claude' && keys.includes(STORAGE_KEYS.MODEL_BY_PROVIDER) && keys.includes(STORAGE_KEYS.CUSTOM_MODELS)) { listWaiting = true; await blockedList; }
       return result;
     });
@@ -54,7 +54,7 @@ describe('provider ownership of model actions', () => {
     const blocked = new Promise(resolve => { release = resolve; });
     chrome.storage.local.get.mockImplementation(async keys => {
       const result = Object.fromEntries(keys.map(key => [key, structuredClone(stored[key])]));
-      if (keys.length === 1 && keys[0] === STORAGE_KEYS.CUSTOM_MODELS) { waiting = true; await blocked; }
+      if (keys.length === 2 && keys.includes(STORAGE_KEYS.CUSTOM_MODELS) && keys.includes(STORAGE_KEYS.HIDDEN_MODELS)) { waiting = true; await blocked; }
       return result;
     });
     const pending = models.showAddModelDialog();

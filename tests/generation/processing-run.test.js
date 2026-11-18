@@ -4,15 +4,16 @@ import { generatePdf, generatePdfWithDebugger } from '../../scripts/generation/p
 import { startProcessing, cancelProcessing, resetState, getProcessingRunId, getProcessingState, updateState, getScopedUpdateState } from '../../scripts/state/processing.js';
 import { translateMetadata } from '../../scripts/translation/index.js';
 import { processImagesInBatches } from '../../scripts/utils/images.js';
-import { saveLargeData, removeLargeData } from '../../scripts/utils/storage.js';
+import { putPrintJob, removePrintJob } from '../../scripts/api/print-storage.js';
 import { chunksToSpeech } from '../../scripts/api/tts.js';
+import { getUILanguage } from '../../scripts/locales.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ clearDecryptedKeyCache: vi.fn() }));
 vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () => null), processImagesInBatches: vi.fn(async () => []), embedImages: vi.fn(async html => html) }));
 vi.mock('../../scripts/locales.js', async importOriginal => ({ ...await importOriginal(), getUILanguage: vi.fn(async () => 'en'), tSync: vi.fn(key => key) }));
 vi.mock('../../scripts/translation/index.js', () => ({ translateMetadata: vi.fn(async text => text) }));
-vi.mock('../../scripts/utils/storage.js', () => ({ saveLargeData: vi.fn(async () => {}), removeLargeData: vi.fn(async () => {}) }));
+vi.mock('../../scripts/api/print-storage.js', () => ({ putPrintJob: vi.fn(async () => {}), removePrintJob: vi.fn(async () => {}), prunePrintJobs: vi.fn(async () => 0) }));
 vi.mock('../../scripts/api/tts.js', () => ({ chunksToSpeech: vi.fn(async () => new ArrayBuffer(16)), getAudioExtension: vi.fn(() => 'wav') }));
 
 function deferred() {
@@ -43,7 +44,7 @@ beforeEach(async () => {
   global.chrome.tabs.remove = vi.fn(async () => {});
   global.chrome.debugger = { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(async () => ({ data: 'JVBERi0xLjQ=' })) };
   global.fetch = vi.fn(async () => ({ ok: true, text: async () => 'body { color: #111; }' }));
-  saveLargeData.mockImplementation(async () => {});
+  putPrintJob.mockImplementation(async () => {});
   processImagesInBatches.mockImplementation(async () => []);
   translateMetadata.mockImplementation(async text => text);
   chunksToSpeech.mockImplementation(async () => new ArrayBuffer(16));
@@ -55,20 +56,29 @@ beforeEach(async () => {
 afterEach(async () => { await cancelProcessing(vi.fn()); createObjectURL?.mockRestore(); revokeObjectURL?.mockRestore(); });
 
 describe('document processing ownership', () => {
-  it('carries the processing identity into Markdown and ignores a late metadata response', async () => {
+  it('carries the processing identity into Markdown across a delayed locale read', async () => {
     const pending = deferred();
-    translateMetadata.mockReturnValueOnce(pending.promise);
     const oldRun = await beginRun();
+    const reading = vi.fn(() => pending.promise);
+    getUILanguage.mockImplementationOnce(reading);
     const generation = DocumentGeneratorFactory.generate('markdown', { processingRunId: oldRun, url: 'https://example.org/article', effectiveLanguage: 'fr', apiKey: 'sample-key' }, { ...result, publishDate: '2032-06-19' }, getScopedUpdateState(oldRun));
     const outcome = expect(generation).rejects.toThrow();
-    await vi.waitFor(() => expect(translateMetadata).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(reading).toHaveBeenCalledOnce());
     const newRun = await replaceRun();
-    pending.resolve('Example date');
+    pending.resolve('en');
     await outcome;
     expect(global.chrome.downloads.download).not.toHaveBeenCalled();
     expect(getProcessingRunId()).toBe(newRun);
     expect(getProcessingState().status).toBe('Current operation');
     expect(getProcessingState().progress).toBe(37);
+  });
+
+  it.each(['markdown', 'pdf'])('does not request metadata generation when exporting %s', async format => {
+    const run = await beginRun(format);
+    await DocumentGeneratorFactory.generate(format, { processingRunId: run, effectiveLanguage: 'fr', apiKey: 'synthetic-key' },
+      { ...result, author: 'Sample Author', publishDate: '2032-06-19' }, getScopedUpdateState(run));
+    expect(translateMetadata).not.toHaveBeenCalled();
+    if (format === 'pdf') expect(putPrintJob.mock.calls[0][1].html).toContain('Sample Author');
   });
 
   it.each(['epub', 'fb2'])('rejects a late %s image response before initiating a download', async format => {
@@ -104,23 +114,23 @@ describe('document processing ownership', () => {
 
   it('keeps PDF preparation and cleanup isolated between overlapping operations', async () => {
     const pending = deferred();
-    saveLargeData.mockReturnValueOnce(pending.promise);
+    putPrintJob.mockReturnValueOnce(pending.promise);
     const oldRun = await beginRun('pdf');
     const oldGeneration = generatePdf({ ...result, processingRunId: oldRun }, getScopedUpdateState(oldRun));
     const outcome = expect(oldGeneration).rejects.toThrow();
-    await vi.waitFor(() => expect(saveLargeData).toHaveBeenCalledOnce());
-    const oldKey = saveLargeData.mock.calls[0][0];
+    await vi.waitFor(() => expect(putPrintJob).toHaveBeenCalledOnce());
+    const oldKey = putPrintJob.mock.calls[0][0];
     const newRun = await replaceRun();
     await expect(generatePdf({ ...result, processingRunId: newRun }, getScopedUpdateState(newRun))).resolves.toEqual({ success: true, deferred: true });
-    const newKey = saveLargeData.mock.calls[1][0];
+    const newKey = putPrintJob.mock.calls[1][0];
     expect(newKey).not.toBe(oldKey);
-    expect(saveLargeData.mock.calls[1][1]).toMatchObject({ processingRunId: newRun, title: result.title });
+    expect(putPrintJob.mock.calls[1][1]).toMatchObject({ processingRunId: newRun, title: result.title });
     pending.resolve();
     await outcome;
-    expect(removeLargeData).toHaveBeenCalledWith(oldKey);
-    expect(removeLargeData).not.toHaveBeenCalledWith(newKey);
+    expect(removePrintJob).toHaveBeenCalledWith(oldKey);
+    expect(removePrintJob).not.toHaveBeenCalledWith(newKey);
     expect(global.chrome.tabs.create).toHaveBeenCalledOnce();
-    expect(global.chrome.tabs.create.mock.calls[0][0].url).toContain(`job=${newKey.slice('printJob:'.length)}`);
+    expect(global.chrome.tabs.create.mock.calls[0][0].url).toContain(`job=${newKey}`);
   });
 
   it('detaches an owned PDF debugger and rejects a stale print result', async () => {
@@ -144,5 +154,30 @@ describe('document processing ownership', () => {
     global.chrome.debugger.attach.mockRejectedValueOnce(new Error('Debugger already attached'));
     await expect(generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, vi.fn(), vi.fn())).rejects.toThrow('Debugger already attached');
     expect(global.chrome.debugger.detach).not.toHaveBeenCalled();
+  });
+
+  it('closes only the captured print job after debugger failure', async () => {
+    const job = crypto.randomUUID();
+    chrome.tabs.get.mockResolvedValue({ id: 12, url: `${chrome.runtime.getURL('print/print.html')}?job=${job}` });
+    chrome.debugger.sendCommand.mockImplementation(async (_target, method) => {
+      if (method === 'Page.printToPDF') throw new Error('Print failed');
+      return {};
+    });
+    const run = await beginRun('pdf');
+    await expect(generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, vi.fn(), vi.fn(), run)).rejects.toThrow('Print failed');
+    expect(chrome.debugger.detach).toHaveBeenCalledOnce();
+    expect(chrome.tabs.remove).toHaveBeenCalledWith(12);
+  });
+
+  it('downloads the debugger base64 directly when object URLs are unavailable', async () => {
+    const create = URL.createObjectURL;
+    URL.createObjectURL = undefined;
+    const decode = vi.spyOn(globalThis, 'atob');
+    try {
+      const run = await beginRun('pdf');
+      await generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, vi.fn(), vi.fn(), run);
+      expect(chrome.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: 'data:application/pdf;base64,JVBERi0xLjQ=' }));
+      expect(decode).not.toHaveBeenCalled();
+    } finally { URL.createObjectURL = create; decode.mockRestore(); }
   });
 });

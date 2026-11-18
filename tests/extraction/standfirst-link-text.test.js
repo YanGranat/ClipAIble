@@ -49,8 +49,8 @@ const link = '<a href="/methods"><em>Measurement methods</em><span class="screen
 for (const [tag, wrap, parse] of [
   ['paragraph', value => `<p>Consult ${value} for the complete observation protocol.</p>`, element => sanitizeParagraphHtml(element)],
   ['quote', value => `<blockquote>Consult ${value} for the complete observation protocol.</blockquote>`, element => handleBlockquote(element).text],
-  ['list', value => `<ul><li>Consult ${value} for the complete observation protocol.</li></ul>`, element => handleList(element).items.join(' ')],
-  ['table', value => `<table><tr><td>Consult ${value} for the complete observation protocol and the full measurement results.</td></tr></table>`, element => handleTable(element).html],
+  ['list', value => `<ul><li>Consult ${value} for the complete observation protocol.</li></ul>`, element => handleList(element).items.map(item => item.html).join(' ')],
+  ['table', value => `<table><tr><td>Consult ${value} for the complete observation protocol and the full measurement results.</td></tr></table>`, element => handleTable(element).rows.flat().join(' ')],
   ['heading', value => `<h2>${value}</h2>`, element => handleHeading(element, { addedHeadings: new Set(), mainTitleText: '' }, CONSTANTS).text]
 ]) {
   it(`removes only an assistive link announcement from a ${tag}`, () => {
@@ -59,7 +59,7 @@ for (const [tag, wrap, parse] of [
     expect(output).not.toContain('opens a new tab');
     expect(output).toContain('Measurement methods');
     expect(article.innerHTML).toBe(before);
-    if (tag === 'paragraph' || tag === 'quote' || tag === 'table') expect(output).toContain('<a href="/methods"><em>Measurement methods</em></a>');
+    if (tag !== 'heading') expect(output).toContain('<a href="https://example.test/methods"><em>Measurement methods</em></a>');
   });
 }
 

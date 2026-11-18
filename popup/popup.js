@@ -43,17 +43,17 @@
 log('[ClipAIble Popup] Starting imports', { timestamp: Date.now() });
 
 import { encryptApiKey, decryptApiKey, maskApiKey, isEncrypted, isMaskedKey } from '../scripts/utils/encryption.js';
-import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES, formatMessage, getLocaleTag } from '../scripts/locales.js';
+import { t, tSync, getUILanguage, setUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logWarn, logDebug } from '../scripts/utils/logging.js';
 import { enhancedLogError, initGlobalErrorHandlers } from './utils/error-handling.js';
 import { initPdfFileSelectionHandler } from './utils/pdf-dialog.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { getProviderFromModel } from '../scripts/api/index.js';
 import { detectVideoPlatform } from '../scripts/utils/video.js';
-import { sanitizeMarkdownHtml, escapeHtml as escapeHtmlUtil } from '../scripts/utils/html.js';
+import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
 import { initUI } from './ui.js';
 import { initCustomSelect } from './utils/custom-select.js';
-import { initStats, getSafeHistoryUrl } from './stats.js';
+import { initStats } from './stats.js';
 import { initSettings } from './settings.js';
 import { initCore } from './core.js';
 import { initHandlers } from './handlers.js';
@@ -61,7 +61,7 @@ import { initializeDOMElements, initializeModules, finalizeInitialization } from
 import { groupDependencies } from './utils/dependencies.js';
 import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS, ELEMENT_IDS } from './constants.js';
 import { getElement, setElementDisplay, setElementGroupDisplay, setDisplayForIds } from './utils/dom-helpers.js';
-import { markdownToHtml, formatTime, escapeHtml, formatRelativeDate } from './utils/format-helpers.js';
+import { markdownToHtml, formatTime, escapeHtml } from './utils/format-helpers.js';
 import { debouncedSaveSettings, saveAudioVoice } from './utils/settings-helpers.js';
 
 import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils/timer-helpers.js';
@@ -309,185 +309,12 @@ function saveAudioVoiceLocal(provider, voice) {
   return saveAudioVoice(provider, voice, audioVoiceMap);
 }
 
-// Apply UI localization (kept for backward compatibility, now uses uiModule)
-async function applyLocalization() {
-  if (uiModuleRef) {
-    return uiModuleRef.applyLocalization();
-  }
-  const langCode = await getUILanguage();
-  const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-  const params = element => {
-    try { return JSON.parse(element.getAttribute('data-i18n-params') || '{}'); } catch { return {}; }
-  };
-  
-  // Apply translations to elements with data-i18n attribute
-  document.querySelectorAll('[data-i18n]').forEach(element => {
-    if (!(element instanceof HTMLElement)) return;
-    const key = element.getAttribute('data-i18n');
-    const translation = formatMessage(key, langCode, params(element));
-    
-    if (element instanceof HTMLInputElement && (element.type === 'text' || element.type === 'password')) {
-      // For inputs, check if they have a separate placeholder key
-      if (element.hasAttribute('data-i18n-placeholder')) {
-        const placeholderKey = element.getAttribute('data-i18n-placeholder');
-        element.placeholder = formatMessage(placeholderKey, langCode, params(element));
-      } else {
-        element.placeholder = translation;
-      }
-    } else if (element instanceof HTMLOptionElement) {
-      // Options are handled separately
-    } else {
-      element.textContent = translation;
-    }
-  });
-  
-  // Handle elements with only data-i18n-placeholder (no data-i18n)
-  document.querySelectorAll('[data-i18n-placeholder]').forEach(element => {
-    if (!(element instanceof HTMLInputElement)) return;
-    if (!element.hasAttribute('data-i18n')) {
-      const placeholderKey = element.getAttribute('data-i18n-placeholder');
-      element.placeholder = formatMessage(placeholderKey, langCode, params(element));
-    }
-  });
-  
-  // Handle select options with data-i18n
-  document.querySelectorAll('select option[data-i18n]').forEach(option => {
-    const key = option.getAttribute('data-i18n');
-    const translation = formatMessage(key, langCode, params(option));
-    option.textContent = translation;
-  });
-  
-  // Update custom select options after localization
-  document.querySelectorAll('.custom-select').forEach(container => {
-    const select = container.querySelector('select');
-    if (!select) return;
-    
-    const optionsDiv = container.querySelector('.custom-select-options');
-    const valueSpan = container.querySelector('.custom-select-value');
-    if (!optionsDiv || !valueSpan) return;
-    
-    // Update custom options from native select
-    const customOptions = optionsDiv.querySelectorAll('.custom-select-option');
-    Array.from(select.options).forEach((nativeOption, index) => {
-      const customOption = customOptions[index];
-      if (customOption) {
-        customOption.textContent = nativeOption.textContent;
-        if (nativeOption.selected || select.value === nativeOption.value) {
-          customOption.classList.add('selected');
-          valueSpan.textContent = nativeOption.textContent;
-        } else {
-          customOption.classList.remove('selected');
-        }
-      }
-    });
-  });
-  
-  // Special handling for fontFamily (uses hidden input, not select)
-  if (elements.fontFamily && elements.fontFamilyOptions && elements.fontFamilyValue) {
-    const currentValue = elements.fontFamily.value || '';
-    const options = elements.fontFamilyOptions.querySelectorAll('.custom-select-option');
-    options.forEach(opt => {
-      // Update text from data-i18n if present
-      if (opt.hasAttribute('data-i18n')) {
-        const key = opt.getAttribute('data-i18n');
-        const translation = formatMessage(key, langCode, params(opt));
-        opt.textContent = translation;
-      }
-      // Update selected state and displayed value
-      const optValue = opt.dataset.value || '';
-      if (optValue === currentValue) {
-        opt.classList.add('selected');
-        elements.fontFamilyValue.textContent = opt.textContent;
-        // Apply font family style
-        if (opt.classList.contains('font-segoe-ui')) {
-          elements.fontFamilyValue.style.fontFamily = 'Segoe UI, sans-serif';
-        } else if (opt.classList.contains('font-arial')) {
-          elements.fontFamilyValue.style.fontFamily = 'Arial, sans-serif';
-        } else if (opt.classList.contains('font-georgia')) {
-          elements.fontFamilyValue.style.fontFamily = 'Georgia, serif';
-        } else if (opt.classList.contains('font-times-new-roman')) {
-          elements.fontFamilyValue.style.fontFamily = 'Times New Roman, serif';
-        } else if (opt.classList.contains('font-verdana')) {
-          elements.fontFamilyValue.style.fontFamily = 'Verdana, sans-serif';
-        } else if (opt.classList.contains('font-tahoma')) {
-          elements.fontFamilyValue.style.fontFamily = 'Tahoma, sans-serif';
-        } else if (opt.classList.contains('font-trebuchet-ms')) {
-          elements.fontFamilyValue.style.fontFamily = 'Trebuchet MS, sans-serif';
-        } else {
-          elements.fontFamilyValue.style.fontFamily = opt.style.fontFamily || '';
-        }
-      } else {
-        opt.classList.remove('selected');
-      }
-    });
-  }
-  
-  // Update select options for language selector (header version - short codes)
-  if (elements.uiLanguageSelect) {
-    // Keep short codes (EN, RU, etc.) for header selector
-    // Only update selected value if needed
-    const currentValue = elements.uiLanguageSelect.value;
-    if (currentValue !== langCode) {
-      elements.uiLanguageSelect.value = langCode;
-    }
-  }
-  
-  // Update title attributes
-  document.querySelectorAll('[data-i18n-title]').forEach(element => {
-    if (!(element instanceof HTMLElement)) return;
-    const key = element.getAttribute('data-i18n-title');
-    element.title = formatMessage(key, langCode, params(element));
-  });
-  
-  // Update aria-label attributes
-  document.querySelectorAll('[data-i18n-aria-label]').forEach(element => {
-    const key = element.getAttribute('data-i18n-aria-label');
-    element.setAttribute('aria-label', formatMessage(key, langCode, params(element)));
-  });
-  
-  // Update specific dynamic elements
-  if (elements.modeHint) {
-    const mode = elements.modeSelect?.value || 'selector';
-    elements.modeHint.textContent = mode === 'automatic'
-      ? (locale.extractionModeHintAutomatic || UI_LOCALES.en.extractionModeHintAutomatic)
-      : mode === 'selector'
-        ? (locale.extractionModeHint || UI_LOCALES.en.extractionModeHint)
-        : (locale.extractionModeHintExtract || UI_LOCALES.en.extractionModeHintExtract);
-  }
-  
-  // Update output format button text
-  if (elements.saveText) {
-    // Button text is always "Save" now, format is selected in dropdown
-    elements.saveText.textContent = locale.save || UI_LOCALES.en.save || 'Save';
-  }
-  
-  // Update document language
-  document.documentElement.lang = getLocaleTag(langCode);
+function applyLocalization() {
+  return uiModuleRef.applyLocalization();
 }
 
-/**
- * Apply theme to popup
- * @deprecated Use uiModule.applyTheme() instead. This is a temporary stub for backward compatibility during initialization.
- * @returns {void}
- */
 function applyTheme() {
-  // This function is a stub - actual implementation is in uiModule
-  // It's only used during module initialization, after which uiModule.applyTheme() is used
-  if (uiModuleRef && uiModuleRef.applyTheme) {
-    return uiModuleRef.applyTheme();
-  }
-  // Fallback: basic theme application if uiModule not yet available
-  if (!elements.themeSelect) {
-    return;
-  }
-  const theme = elements.themeSelect.value;
-  let actualTheme = theme;
-  if (theme === 'auto') {
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    actualTheme = prefersDark ? 'dark' : 'light';
-  }
-  document.body.setAttribute('data-theme', actualTheme);
-  document.documentElement.setAttribute('data-theme', actualTheme);
+  return uiModuleRef.applyTheme();
 }
 
 // Initialize popup
@@ -552,13 +379,11 @@ async function init() {
     // Initialize all modules with grouped dependencies
     const modules = /** @type {any} */ (initializeModules)(groupedDeps);
     
-    // Finalize initialization: load settings, apply localization, setup event listeners
-    await finalizeInitialization(modules, initAllCustomSelects, setCustomSelectValue);
-    
-    // Store module references for functions that need them (replaces window.*Module pattern)
+    // Publish delegates before loading settings or installing their consumers.
     uiModuleRef = modules.uiModule;
     statsModuleRef = modules.statsModule;
     settingsModuleRef = modules.settingsModule;
+    await finalizeInitialization(modules, initAllCustomSelects, setCustomSelectValue);
     
     log('popup.js: init() completed successfully');
   } catch (error) {
@@ -766,74 +591,17 @@ function initAllCustomSelects() {
 }
 
 
-// Set status indicator (kept for backward compatibility, now uses uiModule)
 function setStatus(type, text, startTime = null, translation = null) {
-  if (uiModuleRef) {
-    return uiModuleRef.setStatus(type, text, startTime, translation);
-  }
-  elements.statusText.removeAttribute('data-i18n');
-  elements.statusText.removeAttribute('data-i18n-params');
-  elements.statusDot.className = 'status-dot';
-  if (type === 'processing') {
-    elements.statusDot.classList.add('processing');
-    // Add timer display for processing status (use startTime from background or currentStartTime)
-    const effectiveStartTime = startTime || currentStartTimeRef.current;
-    const elapsed = effectiveStartTime ? Math.floor((Date.now() - effectiveStartTime) / 1000) : 0;
-    // SECURITY: Escape status text to prevent XSS attacks
-    const escapedText = escapeHtmlUtil(text);
-    elements.statusText.innerHTML = `${escapedText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
-    // Ensure timer is running if we have a startTime
-    if (effectiveStartTime && !timerIntervalRef.current) {
-      startTimerDisplayLocal(effectiveStartTime);
-    }
-  } else if (type === 'error') {
-    elements.statusDot.classList.add('error');
-    elements.statusText.textContent = text;
-  } else {
-    elements.statusText.textContent = text;
-  }
+  return uiModuleRef.setStatus(type, text, startTime, translation);
 }
 
-// Set progress bar (kept for backward compatibility, now uses uiModule)
 function setProgress(percent, show = true) {
-  if (uiModuleRef) {
-    return uiModuleRef.setProgress(percent, show);
-  }
-  if (show) {
-    elements.progressContainer.classList.remove('hidden');
-    elements.progressContainer.style.display = 'block';
-  } else {
-    elements.progressContainer.classList.add('hidden');
-    elements.progressContainer.style.display = 'none';
-  }
-  elements.progressBar.style.width = `${percent}%`;
-  elements.progressText.textContent = `${Math.round(percent)}%`;
+  return uiModuleRef.setProgress(percent, show);
 }
 
-// Show toast notification (kept for backward compatibility, now uses uiModule)
 function showToast(message, type = 'success', translation = null) {
-  if (uiModuleRef) {
-    return uiModuleRef.showToast(message, type, translation);
-  }
-  const existingToast = document.querySelector('.toast');
-  if (existingToast) {
-    existingToast.remove();
-  }
-
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  if (translation?.key) {
-    toast.dataset.i18n = translation.key;
-    toast.dataset.i18nParams = JSON.stringify(translation.params || {});
-  }
-  toast.textContent = message;
-  document.body.appendChild(toast);
-
-  setTimeout(() => {
-    toast.remove();
-  }, 3000);
+  return uiModuleRef.showToast(message, type, translation);
 }
-
 
 // Best-effort: explicitly disconnect popup port on close.
 window.addEventListener('beforeunload', () => {
@@ -858,143 +626,8 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
-// ========================================
-// STATISTICS
-// ========================================
-
-async function loadAndDisplayStats() {
-  if (statsModuleRef) {
-    return statsModuleRef.loadAndDisplayStats();
-  }
-  // Fallback to original implementation if module not initialized
-  try {
-    const [statsResponse, cacheResponse] = await Promise.all([
-      chrome.runtime.sendMessage({ action: 'getStats' }),
-      chrome.runtime.sendMessage({ action: 'getCacheStats' })
-    ]);
-    
-    if (statsResponse && statsResponse.stats) {
-      await displayStats(statsResponse.stats);
-    }
-    
-    if (cacheResponse && cacheResponse.stats) {
-      displayCacheStats(cacheResponse.stats);
-    }
-  } catch (error) {
-    logError('Failed to load stats', error);
-  }
-}
-
-async function displayStats(stats) {
-  // Update main counters
-  document.getElementById(ELEMENT_IDS.STAT_TOTAL).textContent = stats.totalSaved || 0;
-  document.getElementById(ELEMENT_IDS.STAT_MONTH).textContent = stats.thisMonth || 0;
-
-  // Update format counts
-  document.getElementById(ELEMENT_IDS.FORMAT_PDF).textContent = stats.byFormat?.pdf || 0;
-  document.getElementById(ELEMENT_IDS.FORMAT_EPUB).textContent = stats.byFormat?.epub || 0;
-  document.getElementById(ELEMENT_IDS.FORMAT_FB2).textContent = stats.byFormat?.fb2 || 0;
-  document.getElementById(ELEMENT_IDS.FORMAT_MARKDOWN).textContent = stats.byFormat?.markdown || 0;
-  document.getElementById(ELEMENT_IDS.FORMAT_AUDIO).textContent = stats.byFormat?.audio || 0;
-  
-  // Update history
-  const historyContainer = document.getElementById(ELEMENT_IDS.STATS_HISTORY);
-  if (Array.isArray(stats.history) && stats.history.length > 0) {
-    const langCode = await getUILanguage();
-    const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-    const openOriginalArticleText = locale.openOriginalArticle || UI_LOCALES.en.openOriginalArticle;
-    historyContainer.innerHTML = stats.history.map((item, index) => {
-      if (!item || typeof item !== 'object') return '';
-      const date = new Date(item.date);
-      const dateStr = formatRelativeDate(date);
-      const timeStr = item.processingTime > 0 ? `${Math.round(item.processingTime / 1000)}s` : '';
-      return `
-        <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
-          <a href="${escapeHtml(getSafeHistoryUrl(item.url))}" class="history-link" target="_blank" rel="noopener" title="${escapeHtml(openOriginalArticleText)}">
-            <div class="history-title">${escapeHtml(item.title)}</div>
-            <div class="history-meta">
-              <span class="history-format">${escapeHtml(item.format)}</span>
-              <span class="history-domain">${escapeHtml(item.domain)}</span>
-              ${timeStr ? `<span class="history-time">${timeStr}</span>` : ''}
-              <span class="history-date">${dateStr}</span>
-            </div>
-          </a>
-          <button class="history-delete" data-index="${index}" data-i18n-title="deleteFromHistory" title="Delete from history">✕</button>
-        </div>
-      `;
-    }).join('');
-    
-    // Add delete handlers
-    historyContainer.querySelectorAll('.history-delete').forEach(btn => {
-      if (!(btn instanceof HTMLElement)) return;
-      btn.addEventListener('click', async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const indexStr = btn.dataset.index;
-        const index = indexStr ? parseInt(indexStr, 10) : NaN;
-        await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', index });
-        await loadAndDisplayStats();
-      });
-    });
-  } else {
-    const noDataText = await t('noDataYet');
-    historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
-  }
-  
-  // Footer removed - replaced with statistics collection checkbox
-}
-
-// DEPRECATED: Use escapeHtmlUtil from scripts/utils/html.js instead
-// Kept for backward compatibility with existing code
-
-async function displayCacheStats(stats) {
-  const domainsEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS);
-  if (domainsEl) {
-    domainsEl.textContent = stats.validDomains || 0;
-  }
-  
-  // Display cached domains list
-  const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
-  if (domainsListEl && Array.isArray(stats.domains)) {
-    if (stats.domains.length === 0) {
-      const noCachedDomainsText = await t('noCachedDomains');
-      domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
-    } else {
-      domainsListEl.innerHTML = stats.domains.map(item => {
-        if (!item || typeof item !== 'object') return '';
-        if (item.invalidated) return ''; // Skip invalidated domains
-        
-        return `
-          <div class="cache-domain-item">
-            <span class="cache-domain-name" title="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</span>
-            <div class="cache-domain-meta">
-              <span>${escapeHtml(item.age)}</span>
-            </div>
-            <button class="cache-domain-delete" data-domain="${escapeHtml(item.domain)}" data-i18n-title="deleteFromCache">✕</button>
-          </div>
-        `;
-      }).filter(html => html).join('');
-      
-      // Add delete handlers
-      domainsListEl.querySelectorAll('.cache-domain-delete').forEach(btn => {
-        if (!(btn instanceof HTMLElement)) return;
-        btn.addEventListener('click', async (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const domain = btn.dataset.domain;
-          const langCode = await getUILanguage();
-          const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-          const deleteConfirm = (locale.deleteDomainFromCache || UI_LOCALES.en.deleteDomainFromCache).replace('{domain}', domain);
-          if (confirm(deleteConfirm)) {
-            await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
-            await loadAndDisplayStats();
-            const domainRemovedText = await t('domainRemovedFromCache');
-            showToast(domainRemovedText, 'success', { key: 'domainRemovedFromCache' });
-          }
-        });
-      });
-    }
-  }
+function loadAndDisplayStats() {
+  return statsModuleRef.loadAndDisplayStats();
 }
 
 // Initialize when DOM is ready

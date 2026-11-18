@@ -4,6 +4,7 @@
 
 import { tSync } from '../../scripts/locales.js';
 import { resolveProviderApiKey } from '../utils/settings-helpers.js';
+import { createGenerationErrorPresenter } from '../utils/generation-status.js';
 
 /**
  * Initialize summary module
@@ -43,7 +44,7 @@ export function initSummary(deps) {
   } = deps;
 
   let isPreparing = false;
-  let shownGenerationError = null;
+  const presentGenerationError = createGenerationErrorPresenter('summary', showToast, logWarn);
 
   // Toggle summary expand/collapse
   function toggleSummary() {
@@ -156,7 +157,9 @@ export function initSummary(deps) {
         'summary_generating_start_time',
         'summary_saved_timestamp',
         'summary_error',
-        'summary_error_translation'
+        'summary_error_translation',
+        'summary_generation_id',
+        'summary_error_seen'
       ]);
       
       const summaryTextFromStorage = storageResult[STORAGE_KEYS.SUMMARY_TEXT];
@@ -171,11 +174,15 @@ export function initSummary(deps) {
       });
       
       const isSummaryGenerating = storageResult[STORAGE_KEYS.SUMMARY_GENERATING];
-      if (isSummaryGenerating) shownGenerationError = null;
-      else if (storageResult.summary_error && storageResult.summary_error !== shownGenerationError) {
-        shownGenerationError = storageResult.summary_error;
-        if (storageResult.summary_error_translation) showToast(shownGenerationError, 'error', storageResult.summary_error_translation);
-        else showToast(shownGenerationError, 'error');
+      const failed = await presentGenerationError(storageResult);
+      if (failed === null) return;
+      if (failed && elements.summaryContainer) {
+        elements.summaryContainer.classList.add('hidden');
+        elements.summaryContainer.style.display = 'none';
+        if (elements.summaryText) {
+          elements.summaryText.innerHTML = '';
+          elements.summaryText.dataset.originalMarkdown = '';
+        }
       }
       
       // CRITICAL: Check if summary is generating (only from flag, not processingState)
@@ -186,7 +193,7 @@ export function initSummary(deps) {
         elements.generateSummaryBtn.dataset.i18n = 'generatingSummary';
         elements.generateSummaryBtn.disabled = true;
         log('checkSummaryStatus: Generation in progress - button disabled', { text: generatingText });
-      } else if (storageResult[STORAGE_KEYS.SUMMARY_TEXT] && !isSummaryGenerating && elements.summaryText && elements.summaryContainer) {
+      } else if (storageResult[STORAGE_KEYS.SUMMARY_TEXT] && !failed && !isSummaryGenerating && elements.summaryText && elements.summaryContainer) {
         // Summary exists and generation is not in progress - display it
         // CRITICAL: Double-check that generation is not in progress (race condition protection)
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);

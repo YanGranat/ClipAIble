@@ -11,7 +11,21 @@
 import { log, logWarn, logError } from '../utils/logging.js';
 
 const STORAGE_KEY = 'selector_cache';
-const MIN_SUCCESS_FOR_TRUST = 2; // Need at least 2 successes before fully trusting cache
+
+/** Keep reusable DOM selectors separate from document metadata. */
+export function normalizeCachedSelectors(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const normalized = {};
+  for (const name of ['articleContainer', 'content', 'title', 'subtitle', 'heroImage', 'toc']) {
+    if (value[name] !== undefined && (typeof value[name] !== 'string' || value[name].length > 4096)) return null;
+    if (typeof value[name] === 'string') normalized[name] = value[name].trim();
+  }
+  if (!normalized.articleContainer && !normalized.content) return null;
+  if (value.exclude !== undefined && (!Array.isArray(value.exclude) || value.exclude.length > 64 ||
+    value.exclude.some(selector => typeof selector !== 'string' || selector.length > 4096))) return null;
+  normalized.exclude = (value.exclude || []).map(selector => selector.trim()).filter(Boolean);
+  return normalized;
+}
 
 // NOTE: Cache has NO TTL (time-to-live) - this is intentional!
 // Selectors invalidate on extraction failure via invalidateCache().
@@ -135,7 +149,8 @@ export async function getCachedSelectors(url) {
   const cache = await loadCache();
   const entry = cache[domain];
   
-  if (!entry || !entry.selectors) {
+  const selectors = normalizeCachedSelectors(entry?.selectors);
+  if (!entry || !selectors) {
     const cacheDuration = Date.now() - cacheStartTime;
     log('📊 Cache MISS: no entry found', { 
       domain,
@@ -157,13 +172,14 @@ export async function getCachedSelectors(url) {
   }
   
   // Update last used timestamp
+  entry.selectors = selectors;
   entry.lastUsed = Date.now();
 
   // Only save if it's been more than 5 seconds since last save to reduce I/O
   const now = Date.now();
   if (!entry.lastSaved || (now - entry.lastSaved) > 5000) {
     entry.lastSaved = now;
-    await saveCache(cache);
+    try { await saveCache(cache); } catch (error) { logWarn('Failed to record selector cache access', error); }
   }
   
   const cacheDuration = Date.now() - cacheStartTime;
@@ -178,7 +194,7 @@ export async function getCachedSelectors(url) {
   });
   
   return {
-    selectors: entry.selectors,
+    selectors,
     timestamp: entry.created || Date.now(),
     successCount: entry.successCount
   };
@@ -191,6 +207,7 @@ export async function getCachedSelectors(url) {
  * @returns {Promise<void>}
  */
 export async function cacheSelectors(url, selectors) {
+  selectors = normalizeCachedSelectors(selectors);
   const cacheStartTime = Date.now();
   try {
     // Check if caching is enabled
@@ -369,22 +386,3 @@ export async function getCacheStats() {
     throw error;
   }
 }
-
-/**
- * Check if we should trust cached selectors
- * (have enough successful extractions)
- * @param {string} url 
- * @returns {Promise<boolean>}
- */
-export async function shouldTrustCache(url) {
-  const domain = extractDomain(url);
-  if (!domain) return false;
-  
-  const cache = await loadCache();
-  const entry = cache[domain];
-  
-  if (!entry || entry.invalidated) return false;
-  
-  return entry.successCount >= MIN_SUCCESS_FOR_TRUST;
-}
-

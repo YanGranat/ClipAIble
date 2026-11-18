@@ -1,7 +1,7 @@
 // @ts-check
 // Print page script - prepares content and signals background for PDF generation
 
-import { getLargeData, removeLargeData } from '../scripts/utils/storage.js';
+import { takePrintJob, removePrintJob } from '../scripts/api/print-storage.js';
 import { cleanTitleForFilename, escapeHtml } from '../scripts/utils/html.js';
 import { getUILanguage, tSync, getLocaleTag } from '../scripts/locales.js';
 import { CONFIG } from '../scripts/utils/config.js';
@@ -43,7 +43,6 @@ function log(message, data = null, level = 'debug') {
 async function init() {
   const printJobId = new URL(location.href).searchParams.get('job');
   const validJobId = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(printJobId || '');
-  const printStorageKey = validJobId ? `printJob:${printJobId}` : null;
   let processingRunId;
   // NOTE: setTimeout delays below (200ms, 300ms) are render/reflow waits.
   // They are NOT magic numbers to extract - contextually clear, used once.
@@ -63,9 +62,9 @@ async function init() {
   }
   
   try {
-    // Get HTML from storage (checks both chrome.storage and IndexedDB)
-    if (!printStorageKey) throw Object.assign(new Error('Invalid print job'), { translationKey: 'errorPrintContentUnavailable' });
-    const printJob = await getLargeData(printStorageKey);
+    // Consume extension-origin data before replacing the document.
+    if (!validJobId) throw Object.assign(new Error('Invalid print job'), { translationKey: 'errorPrintContentUnavailable' });
+    const printJob = await takePrintJob(printJobId);
     processingRunId = printJob?.processingRunId;
     const printHtml = printJob?.html;
     
@@ -246,7 +245,7 @@ async function init() {
     });
     
     if (response?.ignored) {
-      await removeLargeData(printStorageKey);
+      await removePrintJob(printJobId);
       const tab = await chrome.tabs.getCurrent();
       if (tab?.id !== undefined) await chrome.tabs.remove(tab.id);
       return;
@@ -294,7 +293,7 @@ async function init() {
   } finally {
     // Always clean up storage, even if error occurred
     try {
-      if (printStorageKey) await removeLargeData(printStorageKey);
+      if (validJobId) await removePrintJob(printJobId);
       log('Storage cleaned up');
     } catch (cleanupError) {
       log(`Failed to clean up storage: ${cleanupError.message}`);

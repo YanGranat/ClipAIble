@@ -12,6 +12,12 @@ import { getUILanguage, tSync } from '../locales.js';
 import { stripHtml } from '../utils/html.js';
 
 const STORAGE_KEY = 'extension_stats';
+let mutations = Promise.resolve();
+function mutateStats(operation) {
+  const result = mutations.then(operation);
+  mutations = result.catch(() => {});
+  return result;
+}
 
 /**
  * Get default stats structure
@@ -119,7 +125,11 @@ function getCurrentMonthKey() {
  * Record a successful save
  * @param {{title: string, url: string, format: ExportFormat, processingTime: number}} data - Save data
  */
-export async function recordSave(data) {
+export function recordSave(data) {
+  return mutateStats(() => recordSaveUnlocked(data));
+}
+
+async function recordSaveUnlocked(data) {
   try {
     const { title, url, format, processingTime } = data;
     
@@ -168,6 +178,7 @@ export async function recordSave(data) {
     // SECURITY: Sanitize title to remove any HTML before saving to storage
     const sanitizedTitle = title ? stripHtml(title).substring(0, 100).trim() : 'Untitled';
     stats.history.unshift({
+      id: crypto.randomUUID(),
       title: sanitizedTitle || 'Untitled', // Note: This is for stats, not user-facing, so English is acceptable
       url,
       domain,
@@ -253,23 +264,26 @@ export async function getFormattedStats() {
  */
 export async function clearStats() {
   log('Clearing all stats');
-  await saveStats(getDefaultStats());
+  await mutateStats(() => saveStats(getDefaultStats()));
 }
 
 /**
- * Delete a specific history item by index
- * @param {number} index - Index of item to delete
+ * Delete the captured entry even if newer saves have reordered the list.
+ * @param {HistoryItem} item - Captured entry, including its ID when available
  */
-export async function deleteHistoryItem(index) {
-  const stats = await loadStats();
-  
-  if (index >= 0 && index < stats.history.length) {
-    // Keep cumulative counters; only remove from history list.
+export function deleteHistoryItem(item) {
+  return mutateStats(async () => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+    const stats = await loadStats();
+    const fields = ['title', 'url', 'format', 'date', 'domain', 'processingTime'];
+    const index = stats.history.findIndex(current => typeof item.id === 'string' && item.id
+      ? current.id === item.id
+      : !current.id && fields.every(field => (current[field] ?? null) === (item[field] ?? null)));
+    if (index < 0) return;
+    // Keep cumulative counters; only remove the selected history entry.
     stats.history.splice(index, 1);
-    
     await saveStats(stats);
-    log('Deleted history item', { index });
-  }
+  });
 }
 
 /**

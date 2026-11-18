@@ -1,3 +1,4 @@
+import { prunePdfData } from '../api/pdf-storage.js';
 // @ts-check
 // Processing state management for ClipAIble extension
 
@@ -8,7 +9,6 @@
  * @property {number} progress
  * @property {string} status
  * @property {any} error
- * @property {any} result
  * @property {number|null} startTime
  * @property {string|null} currentStage
  * @property {string[]} completedStages
@@ -18,6 +18,11 @@ import { log, logWarn, logError } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { clearDecryptedKeyCache } from '../utils/encryption.js';
 import { getUILanguage, tSync } from '../locales.js';
+import { createNotification } from '../background/notifications.js';
+import { isPopupOpen } from '../background/popup-connection.js';
+import { removePrintJob, prunePrintJobs } from '../api/print-storage.js';
+import { closeOwnedPrintTab } from '../api/print-lifecycle.js';
+import { prunePdfOperations } from '../api/pdf-operation-storage.js';
 
 /**
  * Standard error codes for consistent error handling
@@ -59,7 +64,6 @@ let processingState = {
   progress: 0,
   status: 'idle',
   error: null,
-  result: null,
   startTime: null,
   currentStage: null,
   completedStages: []
@@ -69,6 +73,70 @@ let processingRunId = crypto.randomUUID();
 let startingRunId = null;
 let stateCleanupTimeout = null;
 let storageOperationQueue = Promise.resolve();
+let processingController = new AbortController();
+let inactivityTimer = null;
+let deadlineStopKeepAlive;
+let notifiedRunId;
+const obsoleteController = new AbortController();
+obsoleteController.abort(new DOMException('Processing cancelled', 'AbortError'));
+
+async function notifyTerminal(error, runId) {
+  if (isPopupOpen() || notifiedRunId === runId) return;
+  notifiedRunId = runId;
+  try {
+    const language = await getUILanguage();
+    if (runId !== processingRunId || isPopupOpen()) return;
+    await createNotification(tSync(error?.translationKey || 'statusError', language, error?.translationParams || {}));
+  } catch (failure) { logWarn('Failed to notify processing result', failure); }
+}
+
+export function getProcessingSignal(runId) {
+  return runId === undefined || runId === processingRunId ? processingController.signal : obsoleteController.signal;
+}
+
+export function markProcessingRequestStarted(runId) {
+  if (runId === processingRunId && processingState.isProcessing && !processingController.signal.aborted) {
+    scheduleProcessingDeadline(runId);
+  }
+}
+
+function clearProcessingDeadline() {
+  if (inactivityTimer !== null) clearTimeout(inactivityTimer);
+  inactivityTimer = null;
+}
+
+function stopOwnedRequests(reason = new DOMException('Processing cancelled', 'AbortError')) {
+  clearProcessingDeadline();
+  processingController.abort(reason);
+}
+
+function scheduleProcessingDeadline(runId, deadline = Date.now() + CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS) {
+  clearProcessingDeadline();
+  processingState.inactivityDeadlineAt = deadline;
+  inactivityTimer = setTimeout(() => {
+    inactivityTimer = null;
+    if (runId !== processingRunId || (!processingState.isProcessing && startingRunId === null)) return;
+    const error = Object.assign(new Error('Processing timed out'), {
+      name: 'TimeoutError',
+      code: ERROR_CODES.TIMEOUT, retryable: false, translationKey: 'errorTimeout', translationParams: {}
+    });
+    processingController.abort(error);
+    startingRunId = null;
+    processingState = { ...processingState, isProcessing: false, error: error.message,
+      errorCode: error.code, errorTranslationKey: error.translationKey, errorTranslationParams: {},
+      status: 'Error', statusTranslationKey: 'statusError', statusTranslationParams: {}, inactivityDeadlineAt: null };
+    if (storageSaveTimeout) clearTimeout(storageSaveTimeout);
+    storageSaveTimeout = null;
+    pendingStorageUpdate = null;
+    void saveToStorageWithRetry({ processingState: { ...processingState, lastUpdate: Date.now() } }, 3, runId).catch(() => {});
+    void hasIndependentGeneration().then(independent => {
+      if (!independent && runId === processingRunId && !processingState.isProcessing) return deadlineStopKeepAlive?.();
+    }).catch(error => logWarn('Failed to stop expired processing', error));
+    clearDecryptedKeyCache();
+    void notifyTerminal(error, runId);
+  }, Math.max(0, deadline - Date.now()));
+  inactivityTimer.unref?.();
+}
 
 function enqueueStorageOperation(operation) {
   const result = storageOperationQueue.then(operation, operation);
@@ -101,13 +169,37 @@ export function getScopedUpdateState(runId, updater = updateState) {
 }
 
 export function initPrintTabLifecycle(stopKeepAlive) {
+  deadlineStopKeepAlive = stopKeepAlive;
   chrome.tabs.onRemoved.addListener((tabId) => {
     if (!processingState.isProcessing || processingState.outputFormat !== 'pdf' ||
         processingState.pdfPrintTabId !== tabId) return;
     const ownerRunId = processingRunId;
+    const jobId = processingState.pdfPrintJobId;
+    if (jobId) void removePrintJob(jobId).catch(error => logWarn('Failed to release closed print job', error));
     void setError('PDF generation was interrupted because the print tab was closed.', stopKeepAlive, ownerRunId)
       .catch((error) => logWarn('Failed to save interrupted PDF state', error));
   });
+}
+
+/** Called behind startup admission, after processing state has been restored. */
+export async function cleanupPdfJobsAfterRestore() {
+  const tabs = await chrome.tabs.query({});
+  const expected = new URL(chrome.runtime.getURL('print/print.html'));
+  const activeJobIds = [];
+  for (const tab of tabs) {
+    try {
+      const url = new URL(tab.url || '');
+      if (url.protocol === expected.protocol && url.host === expected.host && url.pathname === expected.pathname) {
+        const id = url.searchParams.get('job');
+        if (isValidProcessingRunId(id)) activeJobIds.push(id);
+      }
+    } catch { /* Other tabs do not own print jobs. */ }
+  }
+  const activeRunId = processingState.isProcessing ? processingRunId : null;
+  const [printJobs, renderJobs, inputJobs] = await Promise.all([
+    prunePrintJobs({ activeRunId, activeJobIds }), prunePdfOperations(activeRunId), prunePdfData(activeRunId)
+  ]);
+  return printJobs + renderJobs + inputJobs;
 }
 
 function clearStateCleanup() {
@@ -273,7 +365,8 @@ function isCriticalUpdate(updates) {
     hasSignificantProgress ||
     updates.stage !== undefined ||
     updates.error !== undefined ||
-    updates.isCancelled !== undefined
+    updates.isCancelled !== undefined ||
+    updates.pdfDebuggerStarted !== undefined || updates.pdfPrintJobId !== undefined || updates.pdfPrintTabId !== undefined
   );
 }
 
@@ -475,11 +568,14 @@ export function getProcessingState() {
  * @param {string} [updates.status] - Status message
  * @param {string} [updates.stage] - Optional stage ID to set
  * @param {Error|Object|null} [updates.error] - Error object
- * @param {Object|null} [updates.result] - Processing result
  * @param {string} [updates.outputFormat] - Output format (pdf, epub, fb2, markdown, audio)
  */
 export function updateState(updates, runId) {
   if (!isCurrentProcessingRun(runId)) return;
+  if (runId !== undefined && processingController.signal.aborted) return;
+  const advances = (typeof updates.progress === 'number' && updates.progress > processingState.progress) ||
+    (updates.stage && updates.stage !== processingState.currentStage);
+  if (processingState.isProcessing && advances) scheduleProcessingDeadline(processingRunId);
   if (updates.status !== undefined) {
     updates = { ...updates, statusTranslationKey: updates.statusTranslationKey || null, statusTranslationParams: updates.statusTranslationParams || null };
   }
@@ -512,6 +608,8 @@ export function updateState(updates, runId) {
  * Reset processing state to initial values
  */
 export function resetState() {
+  stopOwnedRequests();
+  processingController = new AbortController();
   processingRunId = crypto.randomUUID();
   startingRunId = null;
   clearStateCleanup();
@@ -531,7 +629,6 @@ export function resetState() {
     progress: 0,
     status: 'idle',
     error: null,
-    result: null,
     startTime: null,
     currentStage: null,
     completedStages: []
@@ -544,20 +641,11 @@ export function resetState() {
 }
 
 /**
- * Set processing result
- * @param {import('../types.js').ExtractionResult} result - Processing result
- */
-export function setResult(result, runId) {
-  if (!isCurrentProcessingRun(runId)) return;
-  processingState.result = result;
-}
-
-/**
  * Check if processing is cancelled
  * @returns {boolean}
  */
 export function isCancelled(runId) {
-  return processingState.isCancelled || (runId !== undefined && runId !== processingRunId);
+  return processingState.isCancelled || (runId !== undefined && (runId !== processingRunId || processingController.signal.aborted));
 }
 
 /**
@@ -567,7 +655,14 @@ export function isCancelled(runId) {
  */
 export async function cancelProcessing(stopKeepAlive) {
   if (processingState.isProcessing || startingRunId !== null) {
+    stopOwnedRequests();
     const cancelledRunId = processingRunId;
+    const cancelledPrintJobId = processingState.pdfPrintJobId;
+    const cancelledPrintTabId = processingState.pdfPrintTabId;
+    if (cancelledPrintJobId) {
+      void removePrintJob(cancelledPrintJobId).catch(error => logWarn('Failed to release cancelled print job', error));
+      void closeOwnedPrintTab(cancelledPrintTabId, cancelledPrintJobId);
+    }
     const cancellationId = crypto.randomUUID();
     processingRunId = cancellationId;
     startingRunId = null;
@@ -585,11 +680,11 @@ export async function cancelProcessing(stopKeepAlive) {
       progress: 0,
       status: 'idle',
       error: null,
-      result: null,
       startTime: null,
       currentStage: null,
       completedStages: []
     };
+    void notifyTerminal({ translationKey: 'statusCancelled', translationParams: {} }, cancellationId);
     clearDecryptedKeyCache();
     
     // CRITICAL: Check if summary generation is active before stopping keep-alive
@@ -622,11 +717,15 @@ export async function cancelProcessing(stopKeepAlive) {
 export async function completeProcessing(stopKeepAlive, runId) {
   const ownerRunId = runId ?? processingRunId;
   if (!isCurrentProcessingRun(ownerRunId)) return;
+  if (processingController.signal.aborted) return;
   // Force save any pending state before clearing
   await forceSaveState();
   if (!isCurrentProcessingRun(ownerRunId)) return;
+  if (processingController.signal.aborted) return;
+  clearProcessingDeadline();
   
   processingState.isProcessing = false;
+  processingState.inactivityDeadlineAt = null;
   processingState.progress = 100;
   const uiLang = await getUILanguage();
   if (!isCurrentProcessingRun(ownerRunId)) return;
@@ -670,6 +769,13 @@ export async function completeProcessing(stopKeepAlive, runId) {
 export async function setError(error, stopKeepAlive, runId) {
   const ownerRunId = runId ?? processingRunId;
   if (!isCurrentProcessingRun(ownerRunId)) return;
+  stopOwnedRequests(error instanceof Error ? error : new Error(typeof error === 'string' ? error : error.message));
+  processingState.isProcessing = false;
+  processingState.inactivityDeadlineAt = null;
+  processingState.error = typeof error === 'string' ? error : error.message || 'Unknown error';
+  processingState.errorTranslationKey = typeof error === 'object' ? error.translationKey || null : null;
+  processingState.errorTranslationParams = typeof error === 'object' ? error.translationParams || null : null;
+  void notifyTerminal(error, ownerRunId);
   // Force save any pending state before clearing
   await forceSaveState();
   if (!isCurrentProcessingRun(ownerRunId)) return;
@@ -733,22 +839,16 @@ export async function startProcessing(startKeepAlive, onStarted) {
     return false;
   }
   const ownerRunId = crypto.randomUUID();
+  stopOwnedRequests();
+  processingController = new AbortController();
   processingRunId = ownerRunId;
   startingRunId = ownerRunId;
   clearStateCleanup();
+  scheduleProcessingDeadline(ownerRunId);
   try {
   
-  // Save previous result to storage before clearing (for summary generation)
-  if (processingState.result) {
-    try {
-      await saveToStorageWithRetry({ lastProcessedResult: processingState.result });
-    } catch (error) {
-      logWarn('Failed to save last processed result', error);
-    }
-  }
-  
   const uiLang = await getUILanguage();
-  if (ownerRunId !== processingRunId) return false;
+  if (ownerRunId !== processingRunId || processingController.signal.aborted) return false;
   const startingStatus = tSync('stageStarting', uiLang);
   
   processingState = {
@@ -759,11 +859,11 @@ export async function startProcessing(startKeepAlive, onStarted) {
     statusTranslationKey: 'stageStarting',
     statusTranslationParams: {},
     error: null,
-    result: null,
     startTime: Date.now(),
     currentStage: PROCESSING_STAGES.STARTING.id,
     completedStages: []
   };
+  scheduleProcessingDeadline(ownerRunId);
   saveStateToStorage({ progress: 0 });
   if (onStarted) onStarted(ownerRunId);
   if (startKeepAlive) startKeepAlive();
@@ -788,6 +888,11 @@ export function restoreStateFromStorage() {
         // It uses only summary_generating flag to avoid interfering with document generation UI
         // Only restore processingState for document generation (PDF, EPUB, etc.)
         const restorationRunId = processingRunId;
+        try {
+          await chrome.storage.local.remove(['lastProcessedResult']);
+        } catch (error) {
+          logWarn('Unable to remove obsolete processing data', error);
+        }
         if (processingState.isProcessing || startingRunId !== null) return;
         await storageOperationQueue;
         if (restorationRunId !== processingRunId || processingState.isProcessing || startingRunId !== null) return;
@@ -820,8 +925,10 @@ export function restoreStateFromStorage() {
               const outputFormat = ['pdf', 'epub', 'fb2', 'markdown', 'audio'].includes(savedState.outputFormat)
                 ? savedState.outputFormat : undefined;
               let resumablePdf = false;
+              const savedDeadline = Number.isFinite(savedState.inactivityDeadlineAt)
+                ? savedState.inactivityDeadlineAt : (savedState.lastUpdate || 0) + CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS;
               if (!savedState.pdfDebuggerStarted && hasRunId && isValidProcessingRunId(savedState.pdfPrintJobId) && outputFormat === 'pdf' && Number.isInteger(savedState.pdfPrintTabId) &&
-                  savedState.pdfPrintTabId >= 0 && timeSinceUpdate < CONFIG.RESET_THRESHOLD_MS) {
+                  savedState.pdfPrintTabId >= 0 && timeSinceUpdate < CONFIG.RESET_THRESHOLD_MS && savedDeadline > Date.now()) {
                 try {
                   const tab = await chrome.tabs.get(savedState.pdfPrintTabId);
                   const tabUrl = new URL(tab.url || '');
@@ -842,15 +949,20 @@ export function restoreStateFromStorage() {
                 progress: savedState.progress || 0,
                 status: resumablePdf ? (savedState.status || tSync('statusProcessing', uiLang)) : interruptedMessage,
                 error: resumablePdf ? null : interruptedMessage,
-                result: savedState.result && typeof savedState.result === 'object' ? savedState.result : null,
                 startTime: savedState.startTime || null,
                 currentStage: savedState.currentStage || null,
                 completedStages: Array.isArray(savedState.completedStages) ? savedState.completedStages : [],
                 outputFormat,
                 ...(resumablePdf ? { pdfPrintTabId: savedState.pdfPrintTabId, pdfPrintJobId: savedState.pdfPrintJobId } : {})
               };
+              if (resumablePdf) {
+                processingController = new AbortController();
+                scheduleProcessingDeadline(processingRunId, savedDeadline);
+              }
               await saveToStorageWithRetry({ processingState: { ...processingState, lastUpdate: Date.now() } }, 3, processingRunId);
             }
+          } else {
+            await removeStoredProcessingState(restorationRunId);
           }
         }
       } catch (error) {

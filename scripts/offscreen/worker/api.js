@@ -31,7 +31,7 @@ function trackWorkerRequest(worker, handler, reject, timeout) {
  * @param {string} voiceId - Voice ID to use
  * @returns {Promise<Blob>} Audio blob (WAV format)
  */
-export async function predictWithWorker(text, voiceId) {
+export async function predictWithWorker(text, voiceId, speed = 1) {
   const callStartTime = Date.now();
   const callId = 'predict_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
@@ -200,8 +200,11 @@ export async function predictWithWorker(text, voiceId) {
     worker.postMessage({
       type: 'PREDICT',
       id,
-      data: { text, voiceId }
+      data: { text, voiceId, speed }
     });
+  }).catch(error => {
+    state.retireTTSWorker(worker, error);
+    throw error;
   });
 }
 

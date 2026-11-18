@@ -24,7 +24,7 @@ export function extractPaintedTables(lines, graphics, baseFontSize) {
     const rows = getBorderedGridRows(grouped, graphics, baseFontSize, tolerance);
     if (!rows) continue;
     for (const line of owned) used.add(line);
-    tables.push({ type: 'table', rows, rowCount: rows.length, columnCount: rows[0].length,
+    tables.push({ type: 'table', cellFormat: 'text', rows, rowCount: rows.length, columnCount: rows[0].length,
       hasHeaders: grouped[0].some(line => line.isBold), text: rows.map(row => row.join(' ')).join('\n'),
       lines: owned, pageNum: owned[0].pageNum, minY: Math.min(...owned.map(line => line.y)), maxY: Math.max(...owned.map(line => line.y)) });
   }
@@ -151,7 +151,7 @@ function extractHorizontalTables(lines, graphics, baseFontSize) {
     }
     if (invalid || rows.slice(1).some(row => row.filter(Boolean).length < 2)) continue;
     for (const line of owned) used.add(line);
-    tables.push({ type: 'table', rows, hasHeaders: true, rowCount: rows.length, columnCount: denseCount,
+    tables.push({ type: 'table', cellFormat: 'text', rows, hasHeaders: true, rowCount: rows.length, columnCount: denseCount,
       columns: cuts.slice(0, -1), text: rows.map(row => row.join(' ')).join('\n'), lines: owned,
       pageNum: owned[0].pageNum, minY: rules[0], maxY: rules.at(-1) });
   }

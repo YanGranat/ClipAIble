@@ -4,11 +4,26 @@ import {
   isEncrypted, encryptApiKey, decryptApiKey, getDecryptedKeyCached, clearDecryptedKeyCache,
   withApiKeyStorageLock, saveApiKeySettings, removeApiKeyIfUnchanged
 } from '../../scripts/utils/encryption.js';
+import { getInstallationKey } from '../../scripts/utils/security/key-store.js';
 import { migrateApiKeys, runInitialization } from '../../scripts/initialization/index.js';
+import { createChromeStorage } from '../helpers/chrome-storage.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({
   log: vi.fn(), logError: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn()
 }));
+
+vi.mock('../../scripts/utils/security/key-store.js', () => {
+  let key;
+  return { getInstallationKey: vi.fn(() => key ||= webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])) };
+});
+
+async function legacyCiphertext(value) {
+  const material = await webcrypto.subtle.importKey('raw', new TextEncoder().encode('test-extension-id'), { name: 'PBKDF2' }, false, ['deriveKey']);
+  const key = await webcrypto.subtle.deriveKey({ name: 'PBKDF2', salt: new TextEncoder().encode('clipaible-salt-v1'), iterations: 100000, hash: 'SHA-256' }, material, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const iv = webcrypto.getRandomValues(new Uint8Array(12));
+  const data = await webcrypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(value));
+  return Buffer.concat([iv, new Uint8Array(data)]).toString('base64');
+}
 
 const plaintext = 'sk-synthetic-key-for-encryption-tests-0123456789';
 let storage;
@@ -21,8 +36,10 @@ beforeEach(() => {
     queues.set(name, result);
     return result;
   }) } });
-  storage = { get: vi.fn().mockResolvedValue({}), set: vi.fn().mockResolvedValue(undefined) };
-  vi.stubGlobal('chrome', { runtime: { id: 'test-extension-id' }, storage: { local: storage } });
+  const runtime = { id: 'test-extension-id' };
+  const area = createChromeStorage(runtime);
+  storage = area.local;
+  vi.stubGlobal('chrome', { runtime, storage: { local: storage } });
   clearDecryptedKeyCache();
 });
 
@@ -65,21 +82,22 @@ describe('API key encryption', () => {
   });
 
   it('authenticates legacy ciphertext before preserving it', async () => {
-    const legacy = (await encryptApiKey(plaintext)).slice(4);
+    const legacy = await legacyCiphertext(plaintext);
     expect(await decryptApiKey(legacy)).toBe(plaintext);
-    expect(await encryptApiKey(legacy)).toBe(legacy);
+    expect(await decryptApiKey(await encryptApiKey(legacy))).toBe(plaintext);
   });
 
-  it('retains the compatibility fallback for a corrupted stored value', async () => {
+  it('rejects marked ciphertext authentication failures without caching a fallback', async () => {
     const encrypted = await encryptApiKey(plaintext);
-    const bytes = Buffer.from(encrypted.slice(4), 'base64');
+    const bytes = Buffer.from(encrypted.slice(7), 'base64');
     bytes[bytes.length - 1] ^= 1;
-    const corrupted = 'ENC:' + bytes.toString('base64');
-    expect(await decryptApiKey(corrupted)).toBe(corrupted);
+    const corrupted = 'ENC:v2:' + bytes.toString('base64');
+    await expect(decryptApiKey(corrupted)).rejects.toThrow('could not be decrypted');
     const decrypt = vi.spyOn(webcrypto.subtle, 'decrypt');
-    expect(await getDecryptedKeyCached(corrupted, 'openai')).toBe(corrupted);
-    expect(await getDecryptedKeyCached(corrupted, 'openai')).toBe(corrupted);
+    await expect(getDecryptedKeyCached(corrupted, 'openai')).rejects.toThrow();
+    await expect(getDecryptedKeyCached(corrupted, 'openai')).rejects.toThrow();
     expect(decrypt).toHaveBeenCalledTimes(2);
+    await expect(decryptApiKey('ENC:invalid')).rejects.toThrow();
   });
 
   it('rejects empty or non-string inputs and passes through plain values on read', async () => {
@@ -124,7 +142,7 @@ describe('decrypted key cache', () => {
   });
 
   it('keeps authenticated legacy ciphertext without rewriting it', async () => {
-    const legacy = (await encryptApiKey(plaintext)).slice(4);
+    const legacy = await legacyCiphertext(plaintext);
     expect(await getDecryptedKeyCached(legacy, 'openai')).toBe(plaintext);
     expect(storage.set).not.toHaveBeenCalled();
   });
@@ -226,7 +244,7 @@ describe('stored key migration', () => {
   });
 
   it('repairs long plaintext keys even when migration was previously marked complete', async () => {
-    const legacy = (await encryptApiKey(plaintext)).slice(4);
+    const legacy = await legacyCiphertext(plaintext);
     const current = await encryptApiKey(plaintext);
     const longKey = 'a1'.repeat(32);
     storage.get.mockResolvedValue({
@@ -236,7 +254,7 @@ describe('stored key migration', () => {
     await migrateApiKeys();
     expect(storage.get.mock.calls[0][0]).toContain('deepseek_api_key');
     const saved = storage.set.mock.calls[0][0];
-    expect(Object.keys(saved).sort()).toEqual(['api_keys_migrated', 'deepseek_api_key', 'openai_api_key']);
+    expect(Object.keys(saved).sort()).toEqual(['api_keys_migrated', 'claude_api_key', 'deepseek_api_key', 'openai_api_key']);
     expect(await decryptApiKey(saved.openai_api_key)).toBe(longKey);
     expect(await decryptApiKey(saved.deepseek_api_key)).toBe(longKey);
     expect(saved.openai_api_key).not.toBe(longKey);

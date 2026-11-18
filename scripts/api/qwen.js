@@ -63,27 +63,6 @@ export const QWEN_CONFIG = {
 };
 
 /**
- * Detect language from text (simple heuristic)
- * @param {string} text - Text to analyze
- * @returns {string} Language code
- */
-function detectLanguage(text) {
-  if (!text || text.length === 0) return 'en';
-  
-  const cyrillic = (text.match(/[А-Яа-яЁё]/g) || []).length;
-  const chinese = (text.match(/[\u4e00-\u9fff]/g) || []).length;
-  const japanese = (text.match(/[\u3040-\u309f\u30a0-\u30ff]/g) || []).length;
-  const korean = (text.match(/[\uac00-\ud7a3]/g) || []).length;
-  
-  if (cyrillic > text.length * 0.3) return 'ru';
-  if (chinese > text.length * 0.3) return 'zh';
-  if (japanese > text.length * 0.2) return 'ja';
-  if (korean > text.length * 0.2) return 'ko';
-  
-  return 'en';
-}
-
-/**
  * Convert text to speech using Qwen TTS API
  * @param {string} text - Text to convert (max 500 characters)
  * @param {string} apiKey - Alibaba Cloud DashScope API key
@@ -140,8 +119,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
   const validVoice = voice;
   
   // Detect or use provided language
-  const detectedLang = language || detectLanguage(text);
-  const languageType = QWEN_CONFIG.LANGUAGES[detectedLang] || 'English';
+  const detectedLang = String(language || 'auto').toLowerCase().split(/[-_]/)[0];
+  const languageType = Object.hasOwn(QWEN_CONFIG.LANGUAGES, detectedLang) ? QWEN_CONFIG.LANGUAGES[detectedLang] : 'Auto';
   
   // Each API generation uses its own synthesis parameters.
   const requestBody = {

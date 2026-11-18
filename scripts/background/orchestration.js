@@ -21,7 +21,6 @@ export function initOrchestration(deps) {
     CONFIG,
     getProcessingState,
     setError,
-    setResult,
     updateState,
     ERROR_CODES,
     PROCESSING_STAGES,
@@ -223,9 +222,6 @@ export function initOrchestration(deps) {
    */
   async function continueProcessingPipeline(data, result, stopKeepAliveParam) {
     const updateState = getScopedUpdateState(data.processingRunId, deps.updateState);
-    const setResult = (value) => {
-      if (isCurrentProcessingRun(data.processingRunId)) deps.setResult(value, data.processingRunId);
-    };
     const pipelineStartTime = Date.now();
     // Use parameter if provided, otherwise use injected dependency
     // Note: stopKeepAliveParam is kept for backward compatibility with existing callers
@@ -286,8 +282,6 @@ export function initOrchestration(deps) {
       targetLanguage: data.language
     });
   }
-  
-  setResult(result);
   
   const outputFormat = data.outputFormat || 'pdf';
   

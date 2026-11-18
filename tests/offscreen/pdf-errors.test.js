@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const library = vi.hoisted(() => ({ getDocument: vi.fn() }));
 vi.mock('../../scripts/offscreen/pdf/utils/pdf-loader.js', () => ({ loadPdfJs: async () => library }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), criticalLog: vi.fn() }));
+vi.mock('../../scripts/api/pdf-storage.js', async original => ({ ...(await original()),
+  savePdfData: vi.fn(async () => {}), removePdfData: vi.fn(async () => {}),
+  getPdfData: vi.fn(async () => new TextEncoder().encode('%PDF-1.7\n').buffer)
+}));
 
-import { handleGetPdfMetadata, handleExtractPdfPageText, handleRenderPdfPageImage } from '../../scripts/offscreen/message-handlers.js';
-import { getPdfMetadata, extractPdfPageText } from '../../scripts/api/pdf-offscreen.js';
+import { handleGetPdfMetadata, handleRenderAllPdfPages } from '../../scripts/offscreen/message-handlers.js';
+import { getPdfMetadata } from '../../scripts/api/pdf-offscreen.js';
 import { processPdfPage } from '../../scripts/processing/pdf.js';
 import { tSync } from '../../scripts/locales.js';
 import { LIMITS } from '../../scripts/offscreen/pdf/constants.js';
@@ -25,9 +29,9 @@ beforeEach(() => {
   task = { promise: Promise.resolve(pdf), destroy: vi.fn(async () => {}) };
   library.getDocument.mockReturnValue(task);
   chrome.runtime.sendMessage.mockImplementation((message, callback) => {
+    if (typeof callback !== 'function') return Promise.resolve({ success: true });
     const reply = payload => callback(JSON.parse(JSON.stringify(payload)));
     if (message.type === 'GET_PDF_METADATA') void handleGetPdfMetadata('metadata', message.data, reply);
-    else if (message.type === 'EXTRACT_PDF_PAGE_TEXT') void handleExtractPdfPageText('text', message.data, reply);
     else if (message.type === 'EXTRACT_PDF') void handleGetPdfMetadata('extract', message.data, reply);
     else callback?.({ success: true });
   });
@@ -46,19 +50,10 @@ describe('PDF error descriptions across contexts', () => {
     expect(task.destroy).toHaveBeenCalledOnce();
   });
 
-  it('preserves page bounds and their parameters through the text request', async () => {
-    await expect(extractPdfPageText('https://example.com/sample.pdf', 4)).rejects.toMatchObject({
-      translationKey: 'errorPdfPageUnavailable', translationParams: { page: 4, pages: 1 },
-      message: tSync('errorPdfPageUnavailable', language, { page: 4, pages: 1 })
-    });
-    expect(task.destroy).toHaveBeenCalledOnce();
-  });
-
   it('emits a typed render failure while releasing the request document', async () => {
     const reply = vi.fn();
-    await handleRenderPdfPageImage('render', { pdfUrl: 'https://example.com/sample.pdf', pageNum: 1 }, reply);
-    expect(reply).toHaveBeenCalledWith({ success: false, error: 'Canvas context is null - cannot render PDF page',
-      translationKey: 'errorPdfRenderFailed', translationParams: {} });
+    await handleRenderAllPdfPages('render', { operationId: crypto.randomUUID(), pdfUrl: 'https://example.com/sample.pdf', totalPages: 1, pdfData: new TextEncoder().encode('%PDF-1.7').buffer }, reply);
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({ images: [expect.objectContaining({ pageNum: 1, error: expect.any(String) })] }));
     expect(task.destroy).toHaveBeenCalledOnce();
   });
 

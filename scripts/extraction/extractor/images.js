@@ -11,14 +11,36 @@ import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle, cloneWithoutLin
  */
 export function isPlaceholderUrl(url) {
   if (!url) return true;
-  if (url.startsWith('data:image')) {
-    if (url.includes('1x1') || url.includes('transparent') || url.length < 100) {
-      return true;
-    }
+  if (/^data:image\/(?:png|gif);base64,/i.test(url)) {
+    try {
+      const bytes = atob(url.slice(url.indexOf(',') + 1));
+      if (bytes.startsWith('GIF8') && bytes.length >= 10) {
+        const width = bytes.charCodeAt(6) | (bytes.charCodeAt(7) << 8);
+        const height = bytes.charCodeAt(8) | (bytes.charCodeAt(9) << 8);
+        return width > 0 && height > 0 && width <= 3 && height <= 3;
+      }
+      if (bytes.startsWith('\x89PNG\r\n\x1a\n') && bytes.length >= 24) {
+        const read32 = offset => ((bytes.charCodeAt(offset) * 0x1000000) +
+          (bytes.charCodeAt(offset + 1) << 16) + (bytes.charCodeAt(offset + 2) << 8) + bytes.charCodeAt(offset + 3));
+        const width = read32(16), height = read32(20);
+        return width > 0 && height > 0 && width <= 3 && height <= 3;
+      }
+    } catch (_) { }
+    return false;
   }
-  const placeholderPatterns = ['placeholder', 'spacer', 'blank', '1x1', 'pixel.gif'];
-  const urlLower = url.toLowerCase();
-  return placeholderPatterns.some(pattern => urlLower.includes(pattern));
+  try {
+    const basename = decodeURIComponent(new URL(url, 'https://example.invalid/').pathname.split('/').pop() || '');
+    return /^(?:placeholder|spacer|blank|transparent|1x1|pixel)\.(?:gif|png|svg|webp)$/i.test(basename);
+  } catch (_) { return false; }
+}
+
+export function isDecorativeImageUrl(url, patterns) {
+  try {
+    const basename = decodeURIComponent(new URL(url, 'https://example.invalid/').pathname.split('/').pop() || '').toLowerCase();
+    const roles = new Set(['logo', 'favicon', 'icon', 'avatar', 'sprite', 'spacer', 'social-icon', 'share-icon', 'share-button']);
+    return (patterns || []).some(pattern => roles.has(pattern.toLowerCase()) &&
+      new RegExp(`(?:^|[_.-])${pattern}(?:$|[_.-])`, 'i').test(basename));
+  } catch (_) { return false; }
 }
 
 /**
@@ -70,6 +92,12 @@ export function extractBestImageUrl(imgElement) {
   if (!imgElement) return null;
   
   let src = null;
+
+  for (const attr of ['data-full-src', 'data-high-res', 'data-original-src', 'data-srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-lazy']) {
+    const value = imgElement.getAttribute(attr);
+    const candidate = attr === 'data-srcset' ? getBestSrcsetUrl(value) : value;
+    if (candidate && !isPlaceholderUrl(candidate)) return candidate;
+  }
   
   // Priority 1: currentSrc (browser's selected src from srcset)
   if (imgElement.currentSrc && imgElement.currentSrc.length > 0 && !isPlaceholderUrl(imgElement.currentSrc)) {
@@ -167,9 +195,12 @@ export function isTrackingPixel(win, img) {
   }
   
   // Check src for tracking patterns
-  const src = (img.src || '').toLowerCase();
-  const trackingPatterns = ['pixel', 'tracking', 'beacon', 'analytics', 'facebook.com/tr', 'doubleclick', 'googleads'];
-  return trackingPatterns.some(pattern => src.includes(pattern));
+  try {
+    const url = new URL(img.src || '', img.ownerDocument.baseURI);
+    return /(?:^|\.)doubleclick\.net$/i.test(url.hostname) ||
+      /(?:^|\.)googleadservices\.com$/i.test(url.hostname) ||
+      (/(?:^|\.)facebook\.com$/i.test(url.hostname) && /^\/tr\/?$/i.test(url.pathname));
+  } catch (_) { return false; }
 }
 
 /**
@@ -229,16 +260,15 @@ export function isDecorativeImage(win, img, logoPatterns) {
   }
   
   // Logo/brand patterns in URL
-  if (logoPatterns.some(pattern => src.includes(pattern.toLowerCase()))) {
+  if (isDecorativeImageUrl(src, logoPatterns)) {
     return true;
   }
   
   // Logo patterns in alt/class/id
-  if (alt && (alt.includes('logo') || alt.includes('icon') || alt.includes('brand') || alt.includes('social'))) {
+  if (/^(?:(?:site|company|brand|social)\s+)?(?:logo|icon)$/i.test(alt)) {
     return true;
   }
-  if (className.includes('logo') || className.includes('icon') || className.includes('brand') ||
-      className.includes('social') || className.includes('share')) {
+  if (/(?:^|[\s_-])(?:logo|icon|avatar|social-icon|share-icon|share-button)(?:$|[\s_-])/.test(className)) {
     return true;
   }
   
@@ -321,8 +351,7 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
         if (content) {
           const absoluteUrl = toAbsoluteUrl(content, baseUrl);
           // Skip if looks like logo/icon
-          const urlLower = absoluteUrl.toLowerCase();
-          if (!logoPatterns.some(pattern => urlLower.includes(pattern.toLowerCase()))) {
+          if (!isDecorativeImageUrl(absoluteUrl, logoPatterns)) {
             return { src: absoluteUrl, alt: '', caption: '' };
           }
         }

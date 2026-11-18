@@ -107,6 +107,12 @@ export function normalizeError(error, context = {}) {
   } else {
     message = 'Unknown error';
   }
+  const status = Number(error?.status || error?.statusCode || error?.response?.status);
+  if (status === 401 || status === 403) code = ERROR_CODES.AUTH_ERROR;
+  else if (status === 429) code = ERROR_CODES.RATE_LIMIT;
+  else if (status >= 500) code = ERROR_CODES.PROVIDER_ERROR;
+  else if (error?.name === 'TimeoutError') code = ERROR_CODES.TIMEOUT;
+  else if (error instanceof TypeError) code = ERROR_CODES.NETWORK_ERROR;
   
   // Auto-detect error code from message if not already set
   if (code === ERROR_CODES.UNKNOWN_ERROR) {

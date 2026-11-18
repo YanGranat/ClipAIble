@@ -33,7 +33,7 @@ describe('Piper synthesis', () => {
     vi.stubGlobal('performance', {});
     await synthesizeText(params('A short sentence. Last words', predict));
     expect(predict).toHaveBeenCalledOnce();
-    expect(predict).toHaveBeenCalledWith('A short sentence. Last words', 'en_US-lessac-medium');
+    expect(predict).toHaveBeenCalledWith('A short sentence. Last words', 'en_US-lessac-medium', 1);
   });
 
   it('rejects memory exhaustion instead of returning incomplete audio', async () => {
@@ -68,5 +68,18 @@ describe('Piper synthesis', () => {
     options.state.getProcessingRunId = () => owner;
     await expect(synthesizeText(options)).rejects.toThrow('TTS processing cancelled');
     expect(predict).toHaveBeenCalledOnce();
+  });
+
+  it('uses the actual fallback voice instead of the previous tracked voice', async () => {
+    vi.stubGlobal('performance', {});
+    const predict = vi.fn().mockRejectedValueOnce(new Error('indices element out of data bounds')).mockResolvedValue(new Blob(['audio']));
+    const options = params('Sample sentence.', predict);
+    options.state.getLastUsedVoiceId = () => 'en_US-lessac-medium';
+    options.state.setLastUsedVoiceId = vi.fn();
+    options.getStoredWithWorker = vi.fn(async () => ['en_US-hfc_female-medium']);
+    await synthesizeText({ ...options, speed: 1.4 });
+    expect(predict.mock.calls.map(([, voice]) => voice)).toEqual(['en_US-lessac-medium', 'en_US-hfc_female-medium']);
+    expect(predict.mock.calls.every(([, , speed]) => speed === 1.4)).toBe(true);
+    expect(options.state.setLastUsedVoiceId).toHaveBeenCalledWith('en_US-hfc_female-medium');
   });
 });

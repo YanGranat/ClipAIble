@@ -7,6 +7,14 @@
 import { log, logError, logWarn, logDebug } from './scripts/utils/logging.js';
 import { CONFIG } from './scripts/utils/config.js';
 import { initLogPort } from './scripts/utils/logging/logging-port.js';
+import { isTrustedExtensionSender } from './scripts/utils/security/message-sender.js';
+import { handleImageRasterMessage } from './scripts/offscreen/image-rasterization.js';
+import { pruneExpiredRasterJobs } from './scripts/api/image-raster-storage.js';
+import { handleDownloadMessage } from './scripts/offscreen/download.js';
+import { pruneExpiredDownloads } from './scripts/api/download-storage.js';
+
+void pruneExpiredRasterJobs().catch(error => logWarn('Image operation recovery failed', { error: error.message }));
+void pruneExpiredDownloads().catch(error => logWarn('Download recovery failed', { error: error.message }));
 
 // CRITICAL: Check for file caching issues immediately after imports
 // Using regular log() instead of log() to avoid bundling issues
@@ -76,24 +84,13 @@ log('[ClipAIble Offscreen] Message listener references initialized', { timestamp
 
 // CRITICAL: Import message handlers - needed for listener registration
 log('[ClipAIble Offscreen] Importing message handlers', { timestamp: Date.now() });
-import {
-  handleGetVoices,
-  handleGetStoredVoices,
-  handlePing,
-  handleExtractPdf,
-  handleExtractPdfPageText,
-  handleGetPdfMetadata,
-  handleGetPdfPageDimensions,
-  handleRenderPdfPageImage,
-  handleRenderAllPdfPages,
-  handleCancelPdfRender
-} from './scripts/offscreen/message-handlers.js';
+import { handleGetVoices, handleGetStoredVoices, handlePing, handleExtractPdf, handleGetPdfMetadata, handleRenderAllPdfPages, handleCancelPdfRender } from './scripts/offscreen/message-handlers.js';
 log('[ClipAIble Offscreen] Message handlers imported successfully', {
   timestamp: Date.now(),
   handlers: [
     'handleGetVoices', 'handleGetStoredVoices', 'handlePing',
-    'handleExtractPdf', 'handleExtractPdfPageText', 'handleGetPdfMetadata',
-    'handleGetPdfPageDimensions', 'handleRenderPdfPageImage', 'handleRenderAllPdfPages'
+    'handleExtractPdf', 'handleGetPdfMetadata',
+    'handleRenderAllPdfPages'
   ].map(name => ({ name, exists: typeof window[name] === 'function' }))
 });
 
@@ -251,6 +248,7 @@ try {
   });
 
     messageListenerRef = (message, sender, sendResponse) => {
+      if (!isTrustedExtensionSender(sender)) return false;
     const messageReceivedTime = Date.now();
     
     // CRITICAL: Filter messages EARLY (before creating messageId)
@@ -284,6 +282,15 @@ try {
       }
       return false;
     }
+
+    if (message.type === 'RASTERIZE_IMAGE' || message.type === 'CANCEL_IMAGE_RASTER') {
+      handleImageRasterMessage(message).then(sendResponse, () => sendResponse({ success: false, code: 'IMAGE_DECODE_FAILED' }));
+      return true;
+    }
+    if (message.type === 'CREATE_DOWNLOAD_URL' || message.type === 'RELEASE_DOWNLOAD_URL') {
+      handleDownloadMessage(message.type, message.data).then(sendResponse, () => sendResponse({ success: false }));
+      return true;
+    }
     
     // Now safe to create messageId - we know message.type exists and is a string
     const messageId = `${message.type}_${messageReceivedTime}_${Math.random().toString(36).substr(2, 9)}`;
@@ -311,24 +318,7 @@ try {
       timeSinceListenerRegistered: messageReceivedTime - listenerRegisteredTime
     });
     
-    // CRITICAL: Special logging for GET_PDF_PAGE_DIMENSIONS (only in DEBUG mode)
-    if (message.type === 'GET_PDF_PAGE_DIMENSIONS' || message.type?.includes('GET_PDF_PAGE_DIMENSIONS')) {
-      if (CONFIG.LOG_LEVEL === 0) {
-        log('[OFFSCREEN RAW] ✅ GET_PDF_PAGE_DIMENSIONS DETECTED IN LISTENER!', {
-          type: message.type,
-          target: message.target,
-          exactMatch: message.type === 'GET_PDF_PAGE_DIMENSIONS'
-      });
-      log(`[ClipAIble Offscreen] ✅ GET_PDF_PAGE_DIMENSIONS DETECTED IN LISTENER!`, 'OFFSCREEN_GET_PDF_PAGE_DIMENSIONS_DETECTED_IN_LISTENER', {
-        messageId,
-        type: message.type,
-        target: message.target,
-        exactMatch: message.type === 'GET_PDF_PAGE_DIMENSIONS',
-        hasData: !!message.data,
-        dataKeys: message.data ? Object.keys(message.data) : []
-      });
-    }
-    }
+
     
     // Note: message.target and message.type already validated above (lines 212-238)
     
@@ -383,39 +373,12 @@ try {
       });
       
       // CRITICAL: Log before switch to debug case matching
-      log(`[ClipAIble Offscreen] 🔍 DEBUG: Message type before switch`, 'OFFSCREEN_MESSAGE_TYPE_DEBUG', {
-        messageId,
-        type: message.type,
-        typeString: String(message.type),
-        typeLength: message.type ? message.type.length : 0,
-        typeCharCodes: message.type ? Array.from(message.type).map(c => c.charCodeAt(0)) : [],
-        exactMatch: message.type === 'GET_PDF_PAGE_DIMENSIONS',
-        includesMatch: message.type?.includes('GET_PDF_PAGE_DIMENSIONS'),
-        expectedType: 'GET_PDF_PAGE_DIMENSIONS',
-        expectedLength: 'GET_PDF_PAGE_DIMENSIONS'.length
-      });
+
       
       // CRITICAL DEBUG: Log message type directly to console
-      log('[OFFSCREEN DEBUG] Message type before switch:', {
-        messageType: message.type,
-        isExpectedType: message.type === 'GET_PDF_PAGE_DIMENSIONS',
-        charCodes: message.type ? Array.from(message.type).map(c => c.charCodeAt(0)) : []
-      });
       
-      // CRITICAL: If type is GET_PDF_PAGE_DIMENSIONS, handle it directly before switch
-      if (message.type === 'GET_PDF_PAGE_DIMENSIONS') {
-        log('[OFFSCREEN DEBUG] ✅ DIRECT IF CHECK MATCHED - GET_PDF_PAGE_DIMENSIONS!', { messageId });
-        log(`[ClipAIble Offscreen] ✅ DIRECT IF CHECK MATCHED - GET_PDF_PAGE_DIMENSIONS!`, 'OFFSCREEN_GET_PDF_PAGE_DIMENSIONS_DIRECT_IF', {
-          messageId,
-          type: message.type,
-          hasData: !!message.data,
-          dataKeys: message.data ? Object.keys(message.data) : [],
-          pdfUrl: message.data?.pdfUrl,
-          pageNum: message.data?.pageNum
-        });
-        await handleGetPdfPageDimensions(messageId, message.data, sendResponse);
-        return; // Exit early
-      }
+
+
       
       switch (message.type) {
         // PIPER_TTS handler - refactored to scripts/offscreen/tts/handler.js
@@ -450,89 +413,29 @@ try {
           break;
         }
 
-        case 'WORKER_LOG': {
-          // Forward worker logs to service worker logging system
-          const { message, data, timestamp } = message.data || {};
-          if (message) {
-            log('[WORKER]' + message, data);
-          }
-          break;
-        }
 
-        case 'WORKER_LOG_ERROR': {
-          // Forward worker error logs to service worker logging system
-          const { message, data, timestamp } = message.data || {};
-          if (message) {
-            logError('[WORKER]' + message, data);
-          }
-          break;
-        }
 
-        case 'WORKER_STARTUP_TEST': {
-          // Handle worker startup test messages
-          const { message, timestamp } = message.data || {};
-          log('[ClipAIble Offscreen] Worker startup test received', {
-            message,
-            timestamp,
-            workerTimestamp: timestamp,
-            offscreenTimestamp: Date.now(),
-            timeDiff: Date.now() - timestamp
-          });
-          break;
-        }
 
-        case 'ERROR': {
-          // Handle worker errors
-          const { error, stack, id } = message.data || {};
-          logError('[ClipAIble Offscreen] Worker ERROR received', {
-            id,
-            error,
-            stack,
-            timestamp: Date.now()
-          });
-          // Send error response back to background
-          sendResponse({
-            success: false,
-            error: error || 'Worker error'
-          });
-          break;
-        }
+
+
+
+
 
         case 'EXTRACT_PDF': {
           await handleExtractPdf(messageId, message.data, sendResponse);
           break;
         }
         
-        case 'EXTRACT_PDF_PAGE_TEXT': {
-          await handleExtractPdfPageText(messageId, message.data, sendResponse);
-          break;
-        }
+
         
         case 'GET_PDF_METADATA': {
           await handleGetPdfMetadata(messageId, message.data, sendResponse);
           break;
         }
         
-        case 'GET_PDF_PAGE_DIMENSIONS': {
-          if (CONFIG.LOG_LEVEL === 0) {
-            log('[OFFSCREEN DEBUG] ✅ GET_PDF_PAGE_DIMENSIONS CASE MATCHED!', { messageId, type: message.type });
-          }
-          log(`[ClipAIble Offscreen] ✅ GET_PDF_PAGE_DIMENSIONS CASE MATCHED!`, 'OFFSCREEN_GET_PDF_PAGE_DIMENSIONS_CASE_MATCHED', {
-            messageId,
-            type: message.type,
-            hasData: !!message.data,
-            dataKeys: message.data ? Object.keys(message.data) : [],
-            pdfUrl: message.data?.pdfUrl,
-            pageNum: message.data?.pageNum
-          });
-          await handleGetPdfPageDimensions(messageId, message.data, sendResponse);
-          break;
-        }
         
-        case 'RENDER_PDF_PAGE_IMAGE': {
-          await handleRenderPdfPageImage(messageId, message.data, sendResponse);
-          break;
-        }
+
+
         
         case 'RENDER_ALL_PDF_PAGES': {
           await handleRenderAllPdfPages(messageId, message.data, sendResponse);
@@ -546,36 +449,11 @@ try {
         
         default:
           if (CONFIG.LOG_LEVEL === 0) {
-            log('[OFFSCREEN DEBUG] ❌ DEFAULT CASE HIT - Unknown message type:', {
-              messageType: message.type,
-              messageCharCodes: message.type ? Array.from(message.type).map(c => c.charCodeAt(0)) : [],
-              expectedCharCodes: Array.from('GET_PDF_PAGE_DIMENSIONS').map(c => c.charCodeAt(0)),
-              exactMatch: message.type === 'GET_PDF_PAGE_DIMENSIONS'
-            });
+
           }
-          log(`[ClipAIble Offscreen] ❌ Unknown message type - DEFAULT CASE HIT`, 'OFFSCREEN_UNKNOWN_MESSAGE_TYPE', {
-            messageId,
-            type: message.type,
-            typeString: String(message.type),
-            typeLength: message.type ? message.type.length : 0,
-            typeCharCodes: message.type ? Array.from(message.type).map(c => c.charCodeAt(0)) : [],
-            expectedType: 'GET_PDF_PAGE_DIMENSIONS',
-            exactMatch: message.type === 'GET_PDF_PAGE_DIMENSIONS',
-            allCaseValues: ['GET_PDF_METADATA', 'GET_PDF_PAGE_DIMENSIONS', 'RENDER_PDF_PAGE_IMAGE', 'RENDER_ALL_PDF_PAGES'],
-            messageKeys: Object.keys(message),
-            messageFull: JSON.stringify(message, null, 2)
-          });
           
-          logError(`[ClipAIble Offscreen] Unknown message type for ${messageId}`, {
-            messageId,
-            type: message.type,
-            typeString: String(message.type),
-            typeLength: message.type ? message.type.length : 0,
-            typeCharCodes: message.type ? Array.from(message.type).map(c => c.charCodeAt(0)) : [],
-            expectedType: 'GET_PDF_PAGE_DIMENSIONS',
-            exactMatch: message.type === 'GET_PDF_PAGE_DIMENSIONS',
-            allCaseValues: ['GET_PDF_METADATA', 'GET_PDF_PAGE_DIMENSIONS', 'RENDER_PDF_PAGE_IMAGE', 'RENDER_ALL_PDF_PAGES']
-          });
+
+
           
           sendResponse({
             success: false,
@@ -663,6 +541,7 @@ if (typeof window !== 'undefined') {
   });
   // Still register listener even if there's an error, so we can see what's wrong
   fallbackMessageListenerRef = (message, sender, sendResponse) => {
+    if (!isTrustedExtensionSender(sender)) return false;
     logError('[ClipAIble Offscreen] Message received but initialization failed', {
       type: message.type,
       error: error.message

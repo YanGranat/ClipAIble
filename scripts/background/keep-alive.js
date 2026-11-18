@@ -138,7 +138,9 @@ export function initKeepAlive(deps) {
   try {
     // CRITICAL: Perform immediate keep-alive ping to prevent SW death right after start
     // This is essential when user switches tabs immediately after starting processing
-    performKeepAlivePing().catch(error => {
+    performKeepAlivePing().then(shouldContinue => {
+      if (!shouldContinue) return stopKeepAlive();
+    }).catch(error => {
       logWarn('Immediate keep-alive ping failed', error);
     });
     
@@ -155,6 +157,7 @@ export function initKeepAlive(deps) {
           clearInterval(activeKeepAliveInterval);
           activeKeepAliveInterval = null;
         }
+        await stopKeepAlive();
       }
     }, ACTIVE_PROCESSING_PING_INTERVAL_MS);
     activeKeepAliveInterval = intervalId;
@@ -226,7 +229,7 @@ export function initKeepAlive(deps) {
     chrome.alarms.onAlarm.addListener(async (alarm) => {
       if (alarm.name === KEEP_ALIVE_ALARM) {
         log('Keep-alive alarm ping');
-        await performKeepAlivePing();
+        if (!(await performKeepAlivePing())) await stopKeepAlive();
       }
     });
   } catch (error) {

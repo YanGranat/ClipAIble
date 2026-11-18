@@ -6,6 +6,10 @@ import { decryptApiKey } from '../../scripts/utils/encryption.js';
 
 vi.mock('../../scripts/locales.js', () => ({ t: async key => key, tSync: key => key, getUILanguage: async () => 'en', UI_LOCALES: { en: {} } }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
+vi.mock('../../scripts/utils/security/key-store.js', () => {
+  let key;
+  return { getInstallationKey: () => key ||= webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']) };
+});
 
 beforeEach(() => {
   vi.stubGlobal('crypto', webcrypto);

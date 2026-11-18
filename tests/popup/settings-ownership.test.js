@@ -21,6 +21,23 @@ beforeEach(() => {
 afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
 
 describe('settings load generation ownership', () => {
+  it.each(['ENC:v2:unavailable-ciphertext', '****stored-mask'])('retains unreadable speech key settings %s', async value => {
+    const fields = [['elevenlabs_api_key', 'elevenlabsApiKey'], ['qwen_api_key', 'qwenApiKey'], ['respeecher_api_key', 'respeecherApiKey']];
+    const stored = Object.fromEntries(fields.map(([key]) => [key, value]));
+    vi.stubGlobal('chrome', { storage: { local: { get: vi.fn(async () => ({ ...stored })), set: vi.fn(async values => Object.assign(stored, values)), remove: vi.fn() } } });
+    const elements = {}; initializeDOMElements(elements);
+    const settings = initSettings({ elements, STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS,
+      showToast: vi.fn(), setCustomSelectValue: vi.fn(), getElement: id => document.getElementById(id),
+      setElementDisplay: vi.fn(), setElementGroupDisplay: vi.fn(), setDisplayForIds: vi.fn(), applyTheme: vi.fn(),
+      markdownToHtml: value => value, audioVoiceMap: {}, t: async key => key, getUILanguage: async () => 'en' });
+    await settings.loadSettings();
+    for (const [key, field] of fields) {
+      expect(stored[key]).toBe(value);
+      expect(elements[field].dataset.encrypted).toBe(value);
+      expect(elements[field].value).toMatch(/^\*{4}/);
+    }
+    expect(chrome.storage.local.remove).not.toHaveBeenCalled();
+  });
   for (const startTime of [undefined, 'invalid', Date.now() - 60 * 60 * 1000]) {
     it(`keeps background generation ownership with timestamp ${String(startTime)}`, async () => {
       const stored = { summary_generating: true, summary_generation_id: 'new-job', summary_generating_start_time: startTime,

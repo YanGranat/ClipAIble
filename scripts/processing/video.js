@@ -131,11 +131,13 @@ export async function processVideoPage(data, videoInfo) {
   }
 
   await checkCancellation('subtitle extraction', data.processingRunId);
-  log('Extracting subtitles', { platform, tabId, targetLanguage: data.targetLanguage, detectedVideoLanguage });
+  const targetLanguage = data.language === 'ua' ? 'uk' : (data.language || 'auto');
+  const captionSourceLanguage = detectedVideoLanguage === 'ua' ? 'uk' : detectedVideoLanguage;
+  log('Extracting subtitles', { platform, tabId, targetLanguage, detectedVideoLanguage: captionSourceLanguage });
   try {
     const subtitlesData = platform === 'youtube'
-      ? await extractYouTubeSubtitles(tabId, data.targetLanguage, detectedVideoLanguage)
-      : await extractVimeoSubtitles(tabId, data.targetLanguage, detectedVideoLanguage);
+      ? await extractYouTubeSubtitles(tabId, targetLanguage, captionSourceLanguage)
+      : await extractVimeoSubtitles(tabId, targetLanguage, captionSourceLanguage);
 
     subtitles = subtitlesData.subtitles;
     metadata = subtitlesData.metadata;

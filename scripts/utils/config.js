@@ -15,8 +15,9 @@ export const CONFIG = {
   TRANSLATION_CHUNK_SIZE: 20000,  // Characters per translation batch
   
   // Timeouts
-  API_TIMEOUT_MS: 120 * 60 * 1000, // 120 minutes (2 hours) timeout for API requests (increased for very long articles, large PDFs, and slow networks)
-  TRANSLATION_API_TIMEOUT_MS: 7 * 24 * 60 * 60 * 1000, // 7 days (168 hours) - timeout for translation API requests (supports very large documents and slow networks)
+  API_TIMEOUT_MS: 10 * 60 * 1000,
+  TRANSLATION_API_TIMEOUT_MS: 10 * 60 * 1000,
+  PROCESSING_INACTIVITY_TIMEOUT_MS: 10 * 60 * 1000,
   STATE_EXPIRY_MS: 7 * 24 * 60 * 60 * 1000, // 7 days - stale state threshold (increased for very long operations like 1000-page PDFs)
   // NOTE: STATE_SAVE_INTERVAL removed - keep-alive now uses only alarms (every 1 minute)
   // Alarms can wake up terminated service workers, intervals cannot
@@ -66,8 +67,10 @@ export const CONFIG = {
   POLL_INTERVAL_PROCESSING: 300,  // ms - polling interval when processing
   
   // Retry configuration
-  RETRY_MAX_ATTEMPTS: 8,          // Maximum number of retry attempts (increased for maximum reliability)
-  RETRY_DELAYS: [2000, 5000, 10000, 20000, 30000, 60000, 120000, 300000], // Exponential backoff delays in ms (longer delays for network issues, up to 5 minutes)
+  RETRY_MAX_ATTEMPTS: 2,
+  RETRY_DELAYS: [2000, 5000],
+  RETRY_MAX_DELAY_MS: 60 * 1000,
+  RETRY_TIMEOUT_MS: 10 * 60 * 1000,
   RETRYABLE_STATUS_CODES: [429, 500, 502, 503, 504], // HTTP status codes that trigger retry
   RETRY_NETWORK_ERRORS: true,     // Retry on network errors (timeout, connection failed, etc.)
   

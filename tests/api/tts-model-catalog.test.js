@@ -5,11 +5,11 @@ import { textToSpeech as qwen } from '../../scripts/api/qwen.js';
 import { buildTTSOptions } from '../../scripts/generation/audio-helpers.js';
 import { normalizePiperVoiceId } from '../../scripts/api/piper-voices-mapping.js';
 import { getVoiceFromSettings } from '../../scripts/utils/storage/settings-helpers.js';
-import { textToSpeech } from '../../scripts/api/tts.js';
+import { textToSpeech, chunksToSpeech } from '../../scripts/api/tts.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
-vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ checkCancellation: async () => {} }));
+vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ checkCancellation: async () => {}, getUILanguageCached: async () => 'en' }));
 afterEach(() => vi.unstubAllGlobals());
 
 function wav() {
@@ -116,6 +116,11 @@ describe('ElevenLabs model capabilities', () => {
 });
 
 describe('Qwen workspace synthesis', () => {
+  it.each([[undefined, 'Auto'], ['auto', 'Auto'], ['pt-BR', 'Portuguese'], ['__proto__', 'Auto']])('preserves the legacy language intent %s', async (language, expected) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ output: { audio: { data: Buffer.from(wav()).toString('base64') } } }))));
+    await qwen('Sample text.', 'synthetic-key', { qwenModel: 'qwen3-tts-flash', voice: 'Elias', language });
+    expect(requestBody().input.language_type).toBe(expected);
+  });
   it('uses the selected legacy model voice default through the public wrapper', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ output: { audio: { data: Buffer.from(wav()).toString('base64') } } }))));
     await textToSpeech('Article.', 'synthetic-key', { provider: 'qwen', qwenModel: 'qwen3-tts-flash' });
@@ -146,6 +151,14 @@ describe('Qwen workspace synthesis', () => {
     expect(fetch.mock.calls[0][0]).toBe('https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation');
     expect(requestBody().input).toEqual({ text: 'Article.', voice: 'Elias', language_type: 'English' });
   });
+});
+
+it('keeps one Respeecher endpoint across short mixed-language chunks', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(wav(), { headers: { 'Content-Type': 'audio/wav' } })));
+  await chunksToSpeech([{ text: 'Цей приклад містить українські слова та пояснює роботу системи.', index: 0 },
+    { text: 'A short quotation.', index: 1 }], 'synthetic-key', { provider: 'respeecher', voice: 'olesia-media', language: 'auto' });
+  expect(fetch.mock.calls.filter(([, options]) => options.method === 'POST')).toHaveLength(2);
+  expect(fetch.mock.calls.every(([url]) => url.includes('/ua-rt/'))).toBe(true);
 });
 
 it('resolves provider defaults and the French Piper alias without replacing saved voices', () => {

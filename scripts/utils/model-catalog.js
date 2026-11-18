@@ -40,6 +40,8 @@ function openAIModel(apiModel, reasoningEfforts, reasoningEffort) {
 /** @type {Readonly<Record<string, ReadonlyArray<ModelMetadata>>>} */
 export const MODEL_CATALOG = Object.freeze({
   openai: Object.freeze([
+    ...openAIModel('gpt-6.2-sol', OPENAI_REASONING, 'medium'),
+    ...openAIModel('gpt-6.2-astra', OPENAI_REASONING),
     ...openAIModel('gpt-6.1-sol', OPENAI_REASONING, 'medium'),
     ...openAIModel('gpt-6.1-terra', OPENAI_OPTIONAL_REASONING),
     ...openAIModel('gpt-6-luna', OPENAI_OPTIONAL_REASONING),
@@ -48,6 +50,7 @@ export const MODEL_CATALOG = Object.freeze({
   claude: Object.freeze([
     model('claude', 'claude-sonnet-5-5', { reasoningEfforts: CLAUDE_REASONING }),
     model('claude', 'claude-opus-5-5', { reasoningEfforts: CLAUDE_REASONING }),
+    model('claude', 'claude-fable-5-2', { reasoningEffort: 'high', reasoningEfforts: CLAUDE_REASONING }),
     model('claude', 'claude-haiku-5-5', { reasoningEfforts: CLAUDE_REASONING })
   ]),
   gemini: Object.freeze([
@@ -65,12 +68,15 @@ export const MODEL_CATALOG = Object.freeze({
     model('deepseek', 'deepseek-v4-pro', { displayName: 'DeepSeek V4 Pro', inputModalities: Object.freeze(['text']), reasoningEnabled: true, reasoningEfforts: DEEPSEEK_REASONING })
   ]),
   openrouter: Object.freeze([
+    model('openrouter', 'openai/gpt-6.2-sol', { reasoningEffort: 'medium', reasoningEfforts: OPENAI_REASONING }),
+    model('openrouter', 'openai/gpt-6.2-astra', { reasoningEfforts: OPENAI_REASONING }),
     model('openrouter', 'openai/gpt-6.1-sol', { reasoningEffort: 'medium', reasoningEfforts: OPENAI_REASONING }),
     model('openrouter', 'openai/gpt-6.1-terra', { id: 'openai/gpt-6.1-terra-none', reasoningEffort: 'none', reasoningEfforts: OPENAI_OPTIONAL_REASONING }),
     model('openrouter', 'openai/gpt-6-luna', { reasoningEfforts: OPENAI_OPTIONAL_REASONING }),
     model('openrouter', 'google/gemini-4-hydrogen', { reasoningEfforts: Object.freeze([...GEMINI_REASONING, 'xhigh']) }),
     model('openrouter', 'google/gemini-4-carbon', { reasoningEfforts: GEMINI_REASONING }),
     model('openrouter', 'anthropic/claude-sonnet-5.5', { reasoningEfforts: CLAUDE_REASONING }),
+    model('openrouter', 'anthropic/claude-fable-5.2', { reasoningEffort: 'high', reasoningEfforts: CLAUDE_REASONING }),
     model('openrouter', 'x-ai/grok-4.7', { reasoningEfforts: Object.freeze(['low', 'medium', 'high', 'xhigh']) }),
     model('openrouter', 'deepseek/deepseek-v4.1-flash', { reasoningEfforts: Object.freeze([...DEEPSEEK_REASONING, 'none']) }),
     model('openrouter', 'deepseek/deepseek-v4.1-flash', { id: 'deepseek/deepseek-v4.1-flash-no-thinking', reasoningEnabled: false, reasoningEfforts: Object.freeze([...DEEPSEEK_REASONING, 'none']) }),
@@ -81,8 +87,8 @@ export const MODEL_CATALOG = Object.freeze({
 
 const REPLACED_MODELS = Object.freeze({
   openai: Object.freeze({
-    'gpt-5.2': 'gpt-6.1-sol', 'gpt-5.2-high': 'gpt-6.1-sol-high',
-    'gpt-5.1': 'gpt-6.1-terra-none', 'gpt-5.1-high': 'gpt-6.1-sol-high'
+    'gpt-5.2': 'gpt-6.2-sol', 'gpt-5.2-high': 'gpt-6.2-sol-high',
+    'gpt-5.1': 'gpt-6.1-terra-none', 'gpt-5.1-high': 'gpt-6.2-sol-high'
   }),
   claude: Object.freeze({
     'claude-sonnet-4-5': 'claude-sonnet-5-5', 'claude-sonnet-4-5-20250929': 'claude-sonnet-5-5',

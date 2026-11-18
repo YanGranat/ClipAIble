@@ -6,6 +6,9 @@ import { getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { ELEMENT_IDS } from '../constants.js';
 import { activateModalDialog } from './dom-helpers.js';
 import { localizePdfError, pdfFailurePayload } from '../../scripts/utils/pdf-errors.js';
+import { isTrustedExtensionSender } from '../../scripts/utils/security/message-sender.js';
+import { requestPdfFileSelection } from '../../scripts/api/pdf-file-picker.js';
+import { putPdfOperationBlob } from '../../scripts/api/pdf-operation-storage.js';
 
 /**
  * Show PDF file selection dialog and wait for user confirmation
@@ -77,6 +80,7 @@ export async function showPdfFileSelectionDialog() {
  */
 export function initPdfFileSelectionHandler() {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (!isTrustedExtensionSender(sender)) return false;
     if (request.action === 'selectPdfFile') {
       (async () => {
         try {
@@ -94,23 +98,15 @@ export function initPdfFileSelectionHandler() {
           }
           
           // User confirmed, proceed with file picker
-          const { requestPdfFileSelection } = await import('../../scripts/api/pdf-file-picker.js');
           const pdfData = await requestPdfFileSelection(request.expectedPdfUrl);
           
           if (pdfData) {
-            // Convert ArrayBuffer to base64 for transmission (chunked for large files)
-            const uint8Array = new Uint8Array(pdfData);
-            let binaryString = '';
-            const chunkSize = 8192; // Process in chunks to avoid stack overflow
-            for (let i = 0; i < uint8Array.length; i += chunkSize) {
-              const chunk = uint8Array.subarray(i, i + chunkSize);
-              binaryString += String.fromCharCode.apply(null, chunk);
-            }
-            const base64 = btoa(binaryString);
+            const ref = await putPdfOperationBlob(request.operationId, request.processingRunId ?? null,
+              0, new Blob([pdfData], { type: 'application/pdf' }), 'selection');
             
             sendResponse({ 
               success: true, 
-              pdfData: base64,
+              ref,
               size: pdfData.byteLength
             });
           } else {

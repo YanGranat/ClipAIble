@@ -12,6 +12,13 @@ import { STORAGE_KEYS } from '../constants.js';
 const callbackTimers = new Map();
 const revisions = new Map();
 
+/** Use an unsaved draft immediately and retain ciphertext for an unchanged mask. */
+export function readApiKeyDraft(input) {
+  if (!input) return null;
+  const value = input.value.trim();
+  return /^(?:\*{4}|••••)/.test(value) ? input.dataset.encrypted || null : value || null;
+}
+
 /** Resolve a provider-owned draft or the provider's saved key. */
 export async function resolveProviderApiKey(input, provider, decryptApiKey, translate) {
   const ownsInput = input?.dataset.provider === provider;

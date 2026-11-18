@@ -291,75 +291,7 @@ export function initContextMenu(deps) {
             });
         }
         
-        // Handle pending subtitles (fallback when Extension context invalidated)
-        if (changes.pendingSubtitles && changes.pendingSubtitles.newValue) {
-          /** @type {import('../types.js').SubtitleData} */
-          const pendingData = changes.pendingSubtitles.newValue;
-          log('🟢 Received pendingSubtitles from storage (Extension context invalidated fallback)', {
-            subtitleCount: pendingData.subtitles?.length || 0,
-            timestamp: pendingData.timestamp
-          });
-          
-          // Send message to extractYouTubeSubtitles listener if it's waiting
-          // This simulates the message that would have come via chrome.runtime.sendMessage
-          try {
-            chrome.runtime.sendMessage({
-              type: 'ClipAIbleYouTubeSubtitles',
-              action: 'youtubeSubtitlesResult',
-              result: {
-                subtitles: pendingData.subtitles,
-                metadata: pendingData.metadata
-              }
-            }, () => {
-              // CRITICAL: Check chrome.runtime.lastError to prevent "Unchecked runtime.lastError" spam
-              if (chrome.runtime.lastError) {
-                // Silently ignore - "Could not establish connection" is expected when receiver is closed
-                // May timeout if no listener (extractYouTubeSubtitles may have timed out)
-              }
-            });
-            
-            // Also save to lastSubtitles for popup
-            chrome.storage.local.set({
-              lastSubtitles: {
-                subtitles: pendingData.subtitles,
-                metadata: pendingData.metadata,
-                timestamp: pendingData.timestamp || Date.now()
-              }
-            })
-              .catch(async error => {
-                const normalized = await handleError(error, {
-                  source: 'messageHandler',
-                  errorType: 'storageSaveFailed',
-                  logError: true,
-                  createUserMessage: true, // Use centralized user-friendly message
-                  context: { operation: 'saveLastSubtitles' }
-                });
-                logError('Failed to save lastSubtitles', normalized);
-              });
-            
-            // Clear pendingSubtitles after processing
-            chrome.storage.local.remove('pendingSubtitles')
-              .catch(async error => {
-                const normalized = await handleError(error, {
-                  source: 'messageHandler',
-                  errorType: 'storageRemoveFailed',
-                  logError: false,
-                  createUserMessage: true, // Use centralized user-friendly message
-                  context: { operation: 'removePendingSubtitles' }
-                });
-                // Ignore errors when clearing pending subtitles
-              });
-          } catch (error) {
-            handleError(error, {
-              source: 'messageHandler',
-              errorType: 'pendingSubtitlesProcessingFailed',
-              logError: true,
-              createUserMessage: false
-            }).then(normalized => {
-              logError('Failed to process pendingSubtitles', normalized);
-            });
-          }
-        }
+
       }
     });
     } catch (error) {
@@ -429,29 +361,4 @@ export function initContextMenu(deps) {
     initContextMenuListeners
   };
 }
-
-// Backward compatibility: export functions directly for modules that haven't been refactored yet
-// Note: Can be removed after all modules migrate to dependency injection
-import { log, logError, logWarn, logDebug } from '../utils/logging.js';
-import { CONFIG } from '../utils/config.js';
-import { handleError } from '../utils/error-handler.js';
-import { getUILanguage } from '../locales.js';
-import { updateContextMenuWithLang } from '../utils/context-menu.js';
-import { handleQuickSave } from './quicksave.js';
-
-const contextMenuModule = initContextMenu({
-  log,
-  logError,
-  logWarn,
-  logDebug,
-  CONFIG,
-  handleError,
-  getUILanguage,
-  updateContextMenuWithLang,
-  handleQuickSave
-});
-
-export const updateContextMenu = contextMenuModule.updateContextMenu;
-export const cleanupStaleAudio = contextMenuModule.cleanupStaleAudio;
-export const initContextMenuListeners = contextMenuModule.initContextMenuListeners;
 

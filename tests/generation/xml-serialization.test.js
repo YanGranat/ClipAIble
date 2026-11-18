@@ -70,7 +70,7 @@ for (const [format, generate] of formats) {
 
   it(`${format} preserves rich markup, named entities, literal comparisons and quoted attributes`, async () => {
     const rich = 'p < q and r > s. <strong>Bold</strong> <em>Italic</em> x<sup>2</sup> <a href="https://example.test/ref?a=1&amp;b=2" title="x > y"><em>linked</em></a> &copy; &#x1F600; literal &amp;copy; invalid &#xF;';
-    const { document } = await output(generate, { title: 'Rich text study', language: 'en', content: [{ type: 'paragraph', text: rich, pageNum: 1 }] }, format);
+    const { document } = await output(generate, { title: 'Rich text study', language: 'en', content: [{ type: 'paragraph', html: rich, pageNum: 1 }] }, format);
     expect(document.documentElement.textContent).toContain('p < q and r > s. Bold Italic x2 linked © 😀 literal &copy; invalid �');
     expect(document.querySelector('strong')?.textContent).toBe('Bold');
     expect(document.querySelector(format === 'EPUB' ? 'em' : 'emphasis')?.textContent).toBe('Italic');
@@ -92,7 +92,7 @@ for (const [format, generate] of formats) {
   it(`${format} keeps encoded executable links inactive after XML serialization`, async () => {
     const links = ['javascript&#58;alert(1)', 'java&amp;#x73;cript:alert(1)', 'data&#58;text/html,example', 'vbscript&#58;example', 'about&#58;blank'];
     const text = links.map((href, index) => `<a href="${href}">Blocked ${index}</a>`).join(' ');
-    const { document } = await output(generate, { title: 'Link study', language: 'en', content: [{ type: 'paragraph', text }] }, format);
+    const { document } = await output(generate, { title: 'Link study', language: 'en', content: [{ type: 'paragraph', html: text }] }, format);
     const anchors = [...document.querySelectorAll('a')].filter(node => node.textContent.startsWith('Blocked '));
     expect(anchors).toHaveLength(links.length);
     for (const node of anchors) expect(node.getAttribute(format === 'EPUB' ? 'href' : 'l:href')).toBe('#');
@@ -100,7 +100,7 @@ for (const [format, generate] of formats) {
 
   it(`${format} closes unfinished inline formatting without losing its text`, async () => {
     const { document } = await output(generate, { title: 'Inline study', language: 'en', content: [
-      { type: 'paragraph', text: 'Before <strong>Bold <em>nested' }, { type: 'paragraph', text: 'Second <sup>raised' }
+      { type: 'paragraph', html: 'Before <strong>Bold <em>nested' }, { type: 'paragraph', html: 'Second <sup>raised' }
     ] }, format);
     expect(document.querySelector('strong')?.textContent).toBe('Bold nested');
     expect(document.querySelector(format === 'EPUB' ? 'em' : 'emphasis')?.textContent).toBe('nested');

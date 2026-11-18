@@ -2,7 +2,6 @@
 // Standfirst/subtitle extraction for extraction
 // Extracts article standfirst/deck/subtitle text
 
-import { looksLikeArticleStarter } from './text-utils.js';
 import { cloneWithoutLinkAnnouncements } from './dom-utils.js';
 import { STANDFIRST_SELECTORS } from '../constants/content-thresholds.js';
 import { isOutsideArticleBody } from './discover.js';
@@ -52,42 +51,6 @@ export function extractStandfirst(mainContent) {
         }
       }
     } catch (e) { }
-  }
-  
-  // Fallback: first paragraph that meets criteria
-  const paragraphs = mainContent.querySelectorAll('p');
-  for (const p of paragraphs) {
-    if (isNewsletterCandidate(p)) continue;
-    const text = (cloneWithoutLinkAnnouncements(p).textContent || '').trim();
-    
-    // Valid standfirst paragraph criteria:
-    // - Length between 50-200 characters
-    // - No links (standfirst usually doesn't have inline links)
-    // - Doesn't look like a typical article starter
-    if (text.length >= 50 && text.length <= 200) {
-      const hasLinks = p.querySelectorAll('a').length > 0;
-      if (!hasLinks && !looksLikeArticleStarter(text)) {
-        // Check if it's actually a standfirst by looking at position
-        // Standfirst is usually early in the content
-        const allParagraphs = Array.from(paragraphs);
-        const index = allParagraphs.indexOf(p);
-        
-        // Must be in first 3 paragraphs
-        if (index <= 2) {
-          // Check if it looks like a summary (often starts with capital, not common article starters)
-          const firstWord = text.split(/\s+/)[0].toLowerCase();
-          const commonStarters = ['the', 'a', 'an', 'in', 'on', 'when', 'where', 'why', 'how'];
-          
-          if (!commonStarters.includes(firstWord)) {
-            return { text, element: p };
-          }
-        }
-      }
-    }
-    
-    // Stop checking after first few paragraphs
-    const allParagraphs = Array.from(paragraphs);
-    if (allParagraphs.indexOf(p) > 3) break;
   }
   
   return { text: null, element: null };

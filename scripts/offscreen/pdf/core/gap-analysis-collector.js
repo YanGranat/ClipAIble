@@ -12,12 +12,13 @@ import { processPageItemsToLines } from '../utils/item-transformer.js';
  * @param {number} numPages - Total number of pages
  * @returns {Promise<Array>} Array of all lines from all pages
  */
-export async function collectAllLinesForGapAnalysis(pdf, numPages) {
+export async function collectAllLinesForGapAnalysis(pdf, numPages, requestOptions = {}) {
   log('[PDF v3] === FIRST PASS: Collecting all lines for global analysis ===');
   
   const allLines = [];
   
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    await requestOptions.checkCancelled?.();
     const page = await pdf.getPage(pageNum);
     const viewport = page.getViewport({ scale: 1.0 });
     
@@ -34,6 +35,8 @@ export async function collectAllLinesForGapAnalysis(pdf, numPages) {
       logWarn(`[PDF v3] Failed to extract lines from page ${pageNum} for global analysis`, error);
     }
     
+    await requestOptions.checkCancelled?.();
+    requestOptions.onProgress?.(pageNum, numPages * 2);
     // Cleanup page
     try {
       page.cleanup();

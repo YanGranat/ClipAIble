@@ -11,10 +11,10 @@ The extension uses Chrome extension storage, IndexedDB, and local model caches f
 - API keys, settings, selected models, and voice preferences.
 - Processing state, extracted content, document preparation data, and recent processing results.
 - Generated summaries and key theses.
-- Optional usage statistics and saved-item history, including page titles and URLs.
+- Usage statistics and saved-item history, including page titles and URLs. Collection is enabled by default and can be disabled in Settings.
 - Cached content selectors and downloaded Piper voice models.
 
-API keys are stored using AES-256-GCM encryption. The encryption key is derived from the extension identifier using PBKDF2. The extension decrypts API keys locally to authenticate requests to the corresponding service.
+API keys are stored using AES-256-GCM encryption with a non-extractable, installation-specific key kept in the extension's IndexedDB. Older encrypted settings are migrated locally. The extension decrypts API keys locally to authenticate requests to the corresponding service.
 
 ## External requests
 

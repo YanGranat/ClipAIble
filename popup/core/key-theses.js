@@ -3,6 +3,7 @@
 
 import { tSync } from '../../scripts/locales.js';
 import { resolveProviderApiKey } from '../utils/settings-helpers.js';
+import { createGenerationErrorPresenter } from '../utils/generation-status.js';
 
 /**
  * Initialize key theses module
@@ -27,7 +28,7 @@ export function initKeyTheses(deps) {
   } = deps;
 
   let isPreparing = false;
-  let shownGenerationError = null;
+  const presentGenerationError = createGenerationErrorPresenter('key_theses', showToast, logWarn);
   let currentAttempt = 0;
   let activeGenerationId = null;
 
@@ -42,9 +43,13 @@ export function initKeyTheses(deps) {
       elements.generateKeyThesesBtn.classList.add('key-theses-generating');
       elements.generateKeyThesesBtn.disabled = false;
       elements.generateKeyThesesBtn.removeAttribute('data-i18n');
-      elements.generateKeyThesesBtn.innerHTML = `<span class="key-theses-generating-text" data-i18n="generatingKeyTheses">${escapeHtml(generatingText)}</span><span class="key-theses-cancel" data-i18n-title="cancel" data-i18n-aria-label="cancel" role="button" tabindex="0" title="${escapeHtml(cancelTitle)}">✕</span>`;
+      elements.generateKeyThesesBtn.setAttribute('aria-label', cancelTitle);
+      elements.generateKeyThesesBtn.setAttribute('data-i18n-aria-label', 'cancel');
+      elements.generateKeyThesesBtn.innerHTML = `<span class="key-theses-generating-text" data-i18n="generatingKeyTheses">${escapeHtml(generatingText)}</span><span class="key-theses-cancel" data-i18n-title="cancel" title="${escapeHtml(cancelTitle)}" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>`;
     } else {
       elements.generateKeyThesesBtn.classList.remove('key-theses-generating');
+      elements.generateKeyThesesBtn.removeAttribute('aria-label');
+      elements.generateKeyThesesBtn.removeAttribute('data-i18n-aria-label');
       elements.generateKeyThesesBtn.disabled = false;
       const label = await t('generateKeyTheses') || 'Key theses';
       if (attempt !== undefined && attempt !== currentAttempt) return;
@@ -173,20 +178,25 @@ export function initKeyTheses(deps) {
         'key_theses_saved_timestamp',
         'key_theses_generation_id',
         'key_theses_error',
-        'key_theses_error_translation'
+        'key_theses_error_translation',
+        'key_theses_error_seen'
       ]);
       const isGenerating = storageResult[STORAGE_KEYS.KEY_THESES_GENERATING];
       activeGenerationId = isGenerating ? storageResult.key_theses_generation_id || null : null;
-      if (isGenerating) shownGenerationError = null;
-      else if (storageResult.key_theses_error && storageResult.key_theses_error !== shownGenerationError) {
-        shownGenerationError = storageResult.key_theses_error;
-        if (storageResult.key_theses_error_translation) showToast(shownGenerationError, 'error', storageResult.key_theses_error_translation);
-        else showToast(shownGenerationError, 'error');
+      const failed = await presentGenerationError(storageResult);
+      if (failed === null) return;
+      if (failed && elements.keyThesesContainer) {
+        elements.keyThesesContainer.classList.add('hidden');
+        elements.keyThesesContainer.style.display = 'none';
+        if (elements.keyThesesText) {
+          elements.keyThesesText.innerHTML = '';
+          elements.keyThesesText.dataset.originalMarkdown = '';
+        }
       }
 
       if (isGenerating && elements.generateKeyThesesBtn) {
         await setGeneratingView(true);
-      } else if (storageResult[STORAGE_KEYS.KEY_THESES_TEXT] && !isGenerating && elements.keyThesesText && elements.keyThesesContainer) {
+      } else if (storageResult[STORAGE_KEYS.KEY_THESES_TEXT] && !failed && !isGenerating && elements.keyThesesText && elements.keyThesesContainer) {
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
         if (doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) return;
 
@@ -219,9 +229,11 @@ export function initKeyTheses(deps) {
   }
 
   async function handleGenerateKeyTheses(ev) {
-    if (isPreparing && !ev?.target?.closest?.('.key-theses-cancel')) return;
+    const cancel = ev?.target?.closest?.('.key-theses-cancel') ||
+      (ev?.detail === 0 && elements.generateKeyThesesBtn?.classList.contains('key-theses-generating'));
+    if (isPreparing && !cancel) return;
     if (!elements.generateKeyThesesBtn || !elements.keyThesesContainer) return;
-    if (ev && ev.target && ev.target.closest && ev.target.closest('.key-theses-cancel')) {
+    if (cancel) {
       await cancelKeyTheses();
       return;
     }

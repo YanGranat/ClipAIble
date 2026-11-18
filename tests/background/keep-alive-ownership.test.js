@@ -15,6 +15,24 @@ function createKeepAlive(getState, save, isIndependentGenerationActive) {
 }
 
 describe('keep-alive ownership', () => {
+  it('removes both interval and alarm when the immediate ping finds no work', async () => {
+    const keepAlive = createKeepAlive(() => ({ isProcessing: false }), vi.fn(), () => false);
+    keepAlive.startKeepAlive();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(chrome.alarms.clear).toHaveBeenCalledWith('keepAlive');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('clears an orphaned alarm when its event finds no active work', async () => {
+    const keepAlive = createKeepAlive(() => ({ isProcessing: false }), vi.fn(), () => false);
+    keepAlive.initKeepAliveListener();
+    const handler = chrome.alarms.onAlarm.addListener.mock.calls.at(-1)[0];
+    const result = handler({ name: 'keepAlive' });
+    await vi.runAllTimersAsync();
+    await result;
+    expect(chrome.alarms.clear).toHaveBeenCalledWith('keepAlive');
+    expect(vi.getTimerCount()).toBe(0);
+  });
   it('does not persist stale state after cancellation during a ping', async () => {
     let state = { isProcessing: true };
     let releaseRead;

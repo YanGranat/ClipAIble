@@ -4,6 +4,7 @@
 
 import { validateDeps } from '../utils/di-validation.js';
 import { sanitizeLogData, shouldLogDiagnostic } from '../utils/logging.js';
+import { isTrustedExtensionSender } from '../utils/security/message-sender.js';
 
 /**
  * Initialize port connection listener for offscreen document logging
@@ -29,6 +30,10 @@ export function initPortListener(deps) {
   try {
     chrome.runtime.onConnect.addListener((port) => {
       if (port.name === 'clipaible_logs') {
+        if (!isTrustedExtensionSender(port.sender)) {
+          port.disconnect();
+          return;
+        }
         log('=== background.js: Log port connected from offscreen ===', {
           timestamp: Date.now(),
           senderUrl: port.sender?.url

@@ -6,6 +6,11 @@ import { DocumentGeneratorFactory } from '../../scripts/generation/factory.js';
 import { pcmToWav } from '../../scripts/api/audio-format.js';
 import { realtimeWebSocket } from '../helpers/realtime-websocket.js';
 
+vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: async (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  try { return await chrome.downloads.download({ url, filename, saveAs: true }); }
+  finally { URL.revokeObjectURL(url); }
+} }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', async importOriginal => ({ ...await importOriginal(), getUILanguageCached: async () => 'en', checkCancellation: async () => {} }));

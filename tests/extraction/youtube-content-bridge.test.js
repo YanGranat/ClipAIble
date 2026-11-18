@@ -14,8 +14,9 @@ describe('YouTube content bridge request ownership', () => {
   let chrome;
   let respond;
 
-  function register(requestId) { listener({ action: 'ping', subtitleRequestId: requestId }, {}, vi.fn()); }
-  function clear(requestId) { listener({ action: 'clearSubtitleRequest', requestId }, {}, vi.fn()); }
+  const trustedSender = { id: 'test-extension-id' };
+  function register(requestId) { listener({ action: 'ping', subtitleRequestId: requestId }, trustedSender, vi.fn()); }
+  function clear(requestId) { listener({ action: 'clearSubtitleRequest', requestId }, trustedSender, vi.fn()); }
   function dispatch(requestId) {
     dom.window.document.dispatchEvent(new dom.window.CustomEvent('ClipAIbleSubtitleMessage', { detail: {
       type: 'ClipAIbleYouTubeSubtitles', action: 'youtubeSubtitlesResult', requestId,
@@ -71,6 +72,51 @@ describe('YouTube content bridge request ownership', () => {
     dispatch(firstId);
     dispatch(secondId);
     expect(sent.map(message => message.requestId)).toEqual([firstId, secondId]);
+  });
+
+  it('forwards only the subtitle message shape even when a page supplies another action', () => {
+    register(firstId);
+    dom.window.document.dispatchEvent(new dom.window.CustomEvent('ClipAIbleSubtitleMessage', { detail: {
+      type: 'ClipAIbleYouTubeSubtitles', action: 'clearStats', data: { clear: true }, requestId: firstId,
+      result: { requestId: firstId, subtitles: [{ start: 0, duration: 2, text: 'A caption' }], metadata: { title: 'A video', privateField: 'unused' } }
+    } }));
+    expect(sent).toHaveLength(1);
+    expect(sent[0].action).toBe('youtubeSubtitlesResult');
+    expect(sent[0]).not.toHaveProperty('data');
+    expect(sent[0].result.metadata).toEqual({ title: 'A video' });
+  });
+
+  it('does not register requests from a web sender', () => {
+    listener({ action: 'ping', subtitleRequestId: firstId }, { id: 'test-extension-id', url: 'https://www.youtube.com/', tab: { id: 1 } }, vi.fn());
+    dispatch(firstId);
+    expect(sent).toEqual([]);
+  });
+
+  it('does not expose page-requested network access', () => {
+    dom.window.fetch = vi.fn();
+    const detail = { type: 'ClipAIbleSubtitleFetchRequest', requestId: firstId, url: 'https://example.org/resource' };
+    dom.window.document.dispatchEvent(new dom.window.CustomEvent('ClipAIbleSubtitleFetchRequest', { detail }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data: detail, source: dom.window, origin: dom.window.location.origin }));
+    expect(dom.window.fetch).not.toHaveBeenCalled();
+  });
+
+  it('ignores postMessages with a foreign source or origin', () => {
+    register(firstId);
+    const data = { type: 'ClipAIbleYouTubeSubtitles', requestId: firstId, result: { requestId: firstId, subtitles: [{ start: 0, duration: 1, text: 'Sample' }] } };
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data, source: dom.window, origin: 'https://example.org' }));
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', { data, source: null, origin: dom.window.location.origin }));
+    expect(sent).toEqual([]);
+  });
+
+  it('uses the owned DOM fallback when content storage is restricted', async () => {
+    respond = false;
+    chrome.storage.local.set.mockRejectedValue(new Error('Access denied'));
+    register(firstId);
+    dispatch(firstId);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(dom.window.document.getElementById(`ClipAIblePendingSubtitles-${firstId}`)).not.toBeNull();
+    clear(firstId);
+    expect(dom.window.document.querySelector('[data-subtitles]')).toBeNull();
   });
 
   it('stores independent fallback records and removes only the completed request', async () => {

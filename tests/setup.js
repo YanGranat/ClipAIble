@@ -1,8 +1,8 @@
 // Test setup and mocks for Chrome Extension APIs
 
-import { vi } from 'vitest';
-import { randomUUID } from 'node:crypto';
-import { URL as NodeURL } from 'node:url';
+import { beforeEach, vi } from 'vitest';
+import { webcrypto } from 'node:crypto';
+import { createChromeStorage } from './helpers/chrome-storage.js';
 
 // Mock chrome.runtime
 global.chrome = {
@@ -17,22 +17,7 @@ global.chrome = {
       removeListener: vi.fn()
     }
   },
-  storage: {
-    local: {
-      get: vi.fn((keys, callback) => {
-        if (callback) callback({});
-        return Promise.resolve({});
-      }),
-      set: vi.fn((data, callback) => {
-        if (callback) callback();
-        return Promise.resolve();
-      }),
-      remove: vi.fn((keys, callback) => {
-        if (callback) callback();
-        return Promise.resolve();
-      })
-    }
-  },
+  storage: {},
   downloads: {
     download: vi.fn((options, callback) => {
       if (callback) callback(1);
@@ -91,44 +76,8 @@ global.chrome = {
   }
 };
 
-// Mock Web Crypto API
-// Use vi.stubGlobal to properly mock crypto
-const mockCryptoSubtle = {
-  importKey: vi.fn(() => Promise.resolve({})),
-  deriveKey: vi.fn(() => Promise.resolve({})),
-  encrypt: vi.fn(() => Promise.resolve(new ArrayBuffer(16))),
-  decrypt: vi.fn(() => Promise.resolve(new TextEncoder().encode('decrypted')))
-};
-
-const mockGetRandomValues = vi.fn((arr) => {
-  for (let i = 0; i < arr.length; i++) {
-    arr[i] = Math.floor(Math.random() * 256);
-  }
-  return arr;
-});
-
-vi.stubGlobal('crypto', {
-  randomUUID,
-  subtle: mockCryptoSubtle,
-  getRandomValues: mockGetRandomValues
-});
-
-// Mock TextEncoder/TextDecoder
-global.TextEncoder = TextEncoder;
-global.TextDecoder = TextDecoder;
-
-// Mock btoa/atob
-global.btoa = (str) => Buffer.from(str, 'binary').toString('base64');
-global.atob = (str) => Buffer.from(str, 'base64').toString('binary');
-
-// Mock URL
-global.URL = NodeURL;
-
-// Suppress console logs in tests (optional)
-// global.console = {
-//   ...console,
-//   log: vi.fn(),
-//   warn: vi.fn(),
-//   error: vi.fn()
-// };
+const storage = createChromeStorage(global.chrome.runtime);
+global.chrome.storage = { local: storage.local, onChanged: storage.onChanged };
+beforeEach(() => storage.reset());
+vi.stubGlobal('crypto', webcrypto);
 

@@ -1,6 +1,8 @@
 // Tests for HTML builder module
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import { buildHtmlForPdf, applyCustomStyles } from '../../scripts/generation/html-builder.js';
 
 // Mock dependencies
@@ -132,7 +134,7 @@ describe('generation/html-builder', () => {
         'en'
       );
 
-      expect(html).toContain('<h2>Main Heading</h2>');
+      expect(html).toMatch(/<h2 id="[^"]+">Main Heading<\/h2>/);
       expect(html).toContain('<p');
       expect(html).toContain('<blockquote>');
       expect(html).toContain('<pre><code');
@@ -148,11 +150,6 @@ describe('generation/html-builder', () => {
         { type: 'heading', text: 'Conclusion', level: 2 }
       ];
 
-      const headings = [
-        { text: 'Introduction', level: 2, index: 0 },
-        { text: 'Conclusion', level: 2, index: 2 }
-      ];
-
       const html = buildHtmlForPdf(
         content,
         'Title',
@@ -161,8 +158,7 @@ describe('generation/html-builder', () => {
         '',
         '',
         'en',
-        true,
-        headings
+        true
       );
 
       expect(html).toContain('Contents');
@@ -180,7 +176,6 @@ describe('generation/html-builder', () => {
         '',
         'en',
         false,
-        [],
         true,
         'This is an abstract text'
       );
@@ -448,8 +443,7 @@ describe('generation/html-builder', () => {
     });
 
     it('should handle multi page mode', () => {
-      // Multi page mode replaces long page with A4
-      const baseStyles = '<style>@page { margin: 0; size: 210mm 9999mm; }</style>';
+      const baseStyles = readFileSync(new URL('../../config/pdf-styles.css', import.meta.url), 'utf8');
       const styles = applyCustomStyles(
         baseStyles,
         'multi',
@@ -461,8 +455,20 @@ describe('generation/html-builder', () => {
         }
       );
 
-      // Multi page mode should replace with A4
-      expect(styles).toContain('size: A4');
+      const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>');
+      const { document } = dom.window;
+      const sheet = document.createElement('style');
+      sheet.textContent = styles;
+      document.head.append(sheet);
+      const printRules = [...sheet.sheet.cssRules].filter(rule => rule.conditionText === 'print')
+        .flatMap(rule => [...rule.cssRules]);
+      const pages = printRules.filter(rule => rule.cssText.startsWith('@page'));
+      expect(['marginTop', 'marginRight', 'marginBottom', 'marginLeft'].map(name => pages.at(-1).style[name]))
+        .toEqual(['5mm', '5mm', '0px', '5mm']);
+      expect(styles).not.toContain('9999mm');
+      expect(printRules.filter(rule => rule.selectorText === 'body' && rule.style.padding).at(-1).style.padding).toBe('0px');
+      sheet.remove();
+      dom.window.close();
     });
   });
 });

@@ -167,7 +167,7 @@
       </section>
 
       <!-- Stats Panel (Hidden by default) -->
-      <section class="section stats-panel" id="statsPanel">
+      <section class="section stats-panel" id="statsPanel" inert aria-hidden="true">
         <div class="stats-content">
           <div class="stats-header">
           <h3 data-i18n="statistics">Statistics</h3>
@@ -257,7 +257,7 @@
       </section>
 
       <!-- Settings Panel (Hidden by default, uses CSS Grid animation) -->
-      <section class="section settings-panel" id="settingsPanel">
+      <section class="section settings-panel" id="settingsPanel" inert aria-hidden="true">
         <div class="settings-content">
           <div class="setting-item">
           <label for="modeSelect" data-i18n="extractionMode">Extraction Mode</label>
@@ -707,25 +707,6 @@
       </div>
     </footer>
 
-  </div>
-
-  <!-- Import/Export Dialog Modal -->
-  <div id="importExportModal" class="modal-overlay hidden">
-    <div class="modal-dialog">
-      <div class="modal-header">
-        <h3 id="importExportModalTitle" data-i18n="exportSettings">Export Settings</h3>
-        <button id="importExportModalClose" class="modal-close" data-i18n-aria-label="closeButton" aria-label="Close">×</button>
-      </div>
-      <div class="modal-body">
-        <div id="importExportModalContent">
-          <!-- Content will be populated by JS -->
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button id="importExportModalCancel" class="btn btn-secondary" data-i18n="cancel">Cancel</button>
-        <button id="importExportModalConfirm" class="btn btn-primary" data-i18n="confirm">Confirm</button>
-      </div>
-    </div>
   </div>
 
   <!-- PDF File Selection Dialog Modal -->

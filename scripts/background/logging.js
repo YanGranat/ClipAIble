@@ -168,18 +168,3 @@ export function initLogging(deps) {
   };
 }
 
-// Backward compatibility: export functions directly for modules that haven't been refactored yet
-// Note: Can be removed after all modules migrate to dependency injection
-import { log, logError } from '../utils/logging.js';
-import { CONFIG } from '../utils/config.js';
-
-const loggingModule = initLogging({
-  log,
-  logError,
-  CONFIG
-});
-
-export const addLogToCollection = loggingModule.addLogToCollection;
-export const exportAllLogsToFile = loggingModule.exportAllLogsToFile;
-export const initLogCollection = loggingModule.initLogCollection;
-

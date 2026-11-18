@@ -4,7 +4,6 @@
 
 export * from './security.js';
 export * from './encryption.js';
-export * from './safe-messaging.js';
 
 
 

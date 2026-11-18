@@ -70,13 +70,10 @@ export function initNotifications(deps) {
 import { log, logError, logWarn } from '../utils/logging.js';
 import { getUILanguage, tSync } from '../locales.js';
 
-const notificationsModule = initNotifications({
-  log,
-  logError,
-  logWarn,
-  getUILanguage,
-  tSync
-});
+let notificationsModule;
 
-export const createNotification = notificationsModule.createNotification;
+export function createNotification(message, title = null) {
+  notificationsModule ||= initNotifications({ log, logError, logWarn, getUILanguage, tSync });
+  return notificationsModule.createNotification(message, title);
+}
 

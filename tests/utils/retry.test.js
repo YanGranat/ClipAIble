@@ -57,24 +57,18 @@ describe('retry', () => {
       expect(fn).toHaveBeenCalledTimes(2);
     }, 10000);
 
-    it('should retry on network timeout error', async () => {
+    it('does not retry a cancelled request', async () => {
+      const error = new DOMException('Cancelled', 'AbortError');
       const fn = vi.fn()
-        .mockRejectedValueOnce({ name: 'AbortError', message: 'timeout' })
+        .mockRejectedValueOnce(error)
         .mockResolvedValueOnce('success');
-      
-      const promise = callWithRetry(fn);
-      
-      await vi.advanceTimersByTimeAsync(150);
-      
-      const result = await promise;
-      
-      expect(result).toBe('success');
-      expect(fn).toHaveBeenCalledTimes(2);
+      await expect(callWithRetry(fn)).rejects.toBe(error);
+      expect(fn).toHaveBeenCalledTimes(1);
     }, 10000);
 
     it('should retry on network error when RETRY_NETWORK_ERRORS is true', async () => {
       const fn = vi.fn()
-        .mockRejectedValueOnce({ message: 'Network error: failed to fetch' })
+        .mockRejectedValueOnce(new TypeError('Failed to fetch'))
         .mockResolvedValueOnce('success');
       
       const promise = callWithRetry(fn);
@@ -248,7 +242,7 @@ describe('retry', () => {
       const options = { method: 'POST', body: 'test' };
       await fetchWithRetry('https://example.com', options);
       
-      expect(global.fetch).toHaveBeenCalledWith('https://example.com', options);
+      expect(global.fetch).toHaveBeenCalledWith('https://example.com', expect.objectContaining({ ...options, signal: expect.any(AbortSignal) }));
     });
 
     it('should use custom retry options', async () => {

@@ -17,6 +17,13 @@
 export function setupApiKeyToggle(toggleButton, input, decryptApiKey, maskApiKey, logError, showToast = null, t = null, providerSelect = null) {
   if (!toggleButton || !input) return;
   let revision = 0;
+  const selectStoredMask = () => {
+    if (input.dataset.encrypted && /^(?:\*{4}|••••)/.test(input.value)) input.select();
+  };
+  input.addEventListener('paste', selectStoredMask);
+  input.addEventListener('beforeinput', event => {
+    if (event.inputType?.startsWith('insert')) selectStoredMask();
+  });
   providerSelect?.addEventListener('change', () => { revision++; });
   input.addEventListener('input', () => {
     revision++;

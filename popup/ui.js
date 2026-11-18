@@ -357,6 +357,9 @@ export function initUI(deps) {
 
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    toast.setAttribute('aria-atomic', 'true');
     if (translation?.parts) {
       toast.dataset.i18nParts = JSON.stringify(translation.parts);
       if (currentLanguage) message = renderParts(translation.parts, currentLanguage);

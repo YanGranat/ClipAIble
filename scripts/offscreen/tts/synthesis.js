@@ -24,6 +24,7 @@ import { DEFAULT_VOICES, FALLBACK_VOICES } from './voice-selection.js';
  */
 export async function synthesizeText({
   text,
+  speed = 1,
   processingRunId,
   voiceId,
   langCode,
@@ -65,6 +66,7 @@ export async function synthesizeText({
           sentences,
           processingRunId,
           voiceId: currentVoiceId,
+          speed,
           messageId,
           predictWithWorker,
           getStoredWithWorker,
@@ -75,6 +77,8 @@ export async function synthesizeText({
         wavBlob = await synthesizeSinglePass({
           text,
           voiceId: currentVoiceId,
+          speed,
+          processingRunId,
           messageId,
           predictWithWorker,
           getStoredWithWorker,
@@ -94,7 +98,7 @@ export async function synthesizeText({
       
       // Handle model corruption
       if (isModelCorruptionError(error) && retryCount < maxRetries) {
-        await handleModelCorruption({
+        currentVoiceId = await handleModelCorruption({
           voiceId: currentVoiceId,
           langCode,
           messageId,
@@ -133,6 +137,8 @@ export async function synthesizeText({
   }
   
   const duration = Date.now() - synthesisStart;
+  if (processingRunId && state.getProcessingRunId() !== processingRunId) throw new Error('TTS processing cancelled');
+  state.setLastUsedVoiceId?.(currentVoiceId);
   log(`[ClipAIble TTS] Synthesis complete`, {
     messageId,
     voiceId: currentVoiceId,
@@ -152,6 +158,7 @@ async function synthesizeStreaming({
   sentences,
   processingRunId,
   voiceId,
+  speed,
   messageId,
   predictWithWorker,
   getStoredWithWorker,
@@ -182,21 +189,13 @@ async function synthesizeStreaming({
       await initTTSWorker();
     }
     
-    // Verify voice matches expected
-    const expectedVoice = state.getLastUsedVoiceId() || voiceId;
-    let predictVoiceId = voiceId;
-    
-    if (state.getLastUsedVoiceId() && state.getLastUsedVoiceId() !== voiceId) {
-      predictVoiceId = state.getLastUsedVoiceId();
-    }
-    
     log(`[ClipAIble TTS] Processing sentence ${i + 1}/${sentences.length}`, {
       messageId,
-      voiceId: predictVoiceId,
+      voiceId,
       sentenceLength: sentence.length
     });
     
-    const blob = await predictWithWorker(sentence, predictVoiceId);
+    const blob = await predictWithWorker(sentence, voiceId, speed);
     if (processingRunId && state.getProcessingRunId() !== processingRunId) {
       throw new Error('TTS processing cancelled');
     }
@@ -237,6 +236,8 @@ async function synthesizeStreaming({
 async function synthesizeSinglePass({
   text,
   voiceId,
+  speed,
+  processingRunId,
   messageId,
   predictWithWorker,
   getStoredWithWorker,
@@ -256,13 +257,8 @@ async function synthesizeSinglePass({
     throw new Error('TTS Worker not available');
   }
   
-  // Use tracked voice if available
-  let predictVoiceId = voiceId;
-  if (state.getLastUsedVoiceId() && state.getLastUsedVoiceId() !== voiceId) {
-    predictVoiceId = state.getLastUsedVoiceId();
-  }
-  
-  return await predictWithWorker(text, predictVoiceId);
+  if (processingRunId && state.getProcessingRunId() !== processingRunId) throw new Error('TTS processing cancelled');
+  return await predictWithWorker(text, voiceId, speed);
 }
 
 /**
@@ -304,11 +300,13 @@ async function handleModelCorruption({
     }
     
     log(`[ClipAIble TTS] Model re-downloaded`, { messageId, voiceId });
+    return voiceId;
   } catch (error) {
     // Try fallback if re-download fails
     const fallback = DEFAULT_VOICES[langCode] || DEFAULT_VOICES['en'];
     if (fallback !== voiceId) {
       await downloadWithWorker(fallback);
+      return fallback;
     } else {
       throw error;
     }

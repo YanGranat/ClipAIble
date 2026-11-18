@@ -3,7 +3,7 @@
 // Handles Twitter/X articles and various fallback scenarios
 
 import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneWithoutLinkAnnouncements } from './dom-utils.js';
-import { cleanHeadingText, normalizeHeadingForDedup } from './text-utils.js';
+import { createHeadingItem, omitInitialArticleTitle } from './parse.js';
 import { isExcluded, isWidget, isNavigationParagraph } from './filters.js';
 import { extractBestImageUrl, isTrackingPixel, isDecorativeImage } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
@@ -77,6 +77,7 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   
   const content = [];
   const addedImageUrls = new Set();
+  const headingElements = new Set();
   
   // Collect Draft.js blocks
   const allBlocks = container.querySelectorAll('div[data-offset-key]');
@@ -87,9 +88,10 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     const text = (block.textContent || '').trim();
     if (!text) continue;
     
-    // Use text as key to dedupe
-    if (!uniqueBlocks.has(text) || block.children.length > (uniqueBlocks.get(text)?.children.length || 0)) {
-      uniqueBlocks.set(text, block);
+    // Heading identity preserves repeated headings at distinct source positions.
+    const key = block.querySelector('h1, h2, h3') || text;
+    if (!uniqueBlocks.has(key) || block.children.length > (uniqueBlocks.get(key)?.children.length || 0)) {
+      uniqueBlocks.set(key, block);
     }
   }
   
@@ -122,18 +124,9 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
     
     // Heading
     if (tagName.match(/^h[1-3]$/)) {
-      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || '');
-      const normalized = normalizeHeadingForDedup(text);
-      
-      if (normalized === state.mainTitleText) continue;
-      if (state.addedHeadings.has(normalized)) continue;
-      
-      state.addedHeadings.add(normalized);
-      
-      const level = element.classList.contains('longform-header-one') ? 1 :
-                   element.classList.contains('longform-header-two') ? 2 : 3;
-      
-      content.push({ type: 'heading', level, text, id: element.id || undefined });
+      if (headingElements.has(element)) continue;
+      headingElements.add(element);
+      content.push(createHeadingItem(element));
     }
     // Image
     else if (tagName === 'img') {
@@ -168,12 +161,9 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       // Check for heading inside
       const innerHeading = element.querySelector('h1, h2, h3');
       if (innerHeading) {
-        const headingText = cleanHeadingText(cloneWithoutLinkAnnouncements(innerHeading).textContent || '');
-        const normalized = normalizeHeadingForDedup(headingText);
-        
-        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
-          state.addedHeadings.add(normalized);
-          content.push({ type: 'heading', level: 2, text: headingText });
+        if (!headingElements.has(innerHeading)) {
+          headingElements.add(innerHeading);
+          content.push(createHeadingItem(innerHeading));
         }
         continue;
       }
@@ -192,7 +182,8 @@ export function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
   
   pushDebugLog(state.debugInfo, 'TWITTER_X_EXTRACTED', { itemCount: content.length });
   
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 /**
@@ -221,16 +212,7 @@ export function extractWhenMainContentMissing(win, doc, state, constants, baseUr
     const tagName = element.tagName.toLowerCase();
     
     if (tagName.match(/^h[1-6]$/)) {
-      const text = cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || '');
-      const normalized = normalizeHeadingForDedup(text);
-      
-      if (normalized === state.mainTitleText) continue;
-      if (state.addedHeadings.has(normalized)) continue;
-      
-      state.addedHeadings.add(normalized);
-      
-      const level = parseInt(tagName.charAt(1));
-      content.push({ type: 'heading', level, text });
+      content.push(createHeadingItem(element));
     }
     else if (tagName === 'p') {
       const cleanedElement = cloneWithoutLinkAnnouncements(element);
@@ -274,7 +256,8 @@ export function extractWhenMainContentMissing(win, doc, state, constants, baseUr
     }
   }
   
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 /**
@@ -330,20 +313,12 @@ export function extractLastResortContainerSearch(win, doc, state, constants, bas
       content.push({ type: 'paragraph', text: finalText, html: finalText });
     }
     else if (tagName.match(/^h[1-6]$/)) {
-      const cleanedText = cleanHeadingText(text);
-      const normalized = normalizeHeadingForDedup(cleanedText);
-      
-      if (normalized === state.mainTitleText) continue;
-      if (state.addedHeadings.has(normalized)) continue;
-      
-      state.addedHeadings.add(normalized);
-      
-      const level = parseInt(tagName.charAt(1));
-      content.push({ type: 'heading', level, text: cleanedText });
+      content.push(createHeadingItem(element));
     }
   }
   
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 /**
@@ -368,16 +343,7 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
     // Skip if in widget
     if (isWidget(win, heading)) continue;
     
-    const text = cleanHeadingText(cloneWithoutLinkAnnouncements(heading).textContent || '');
-    const normalized = normalizeHeadingForDedup(text);
-    
-    if (normalized === state.mainTitleText) continue;
-    if (state.addedHeadings.has(normalized)) continue;
-    
-    state.addedHeadings.add(normalized);
-    
-    const level = parseInt(heading.tagName.charAt(1));
-    const item = { type: 'heading', level, text };
+    const item = createHeadingItem(heading);
     content.push(item);
     sourceElements.set(item, heading);
     headingCount++;
@@ -411,7 +377,8 @@ export function extractUltimateFallbackAllParagraphs(win, doc, state, constants)
   }
   
   content.sort((a, b) => compareDomOrder(sourceElements.get(a), sourceElements.get(b)));
-  return content.length > 0 ? content : null;
+  const result = omitInitialArticleTitle(content, state);
+  return result.length > 0 ? result : null;
 }
 
 /**
@@ -443,17 +410,15 @@ export function extractEmergencyFallback(win, doc, state, constants, mainContent
         const originalText = getOriginalTextIfTranslated(element);
         content.push({ type: 'paragraph', text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
-        const cleanedText = cleanHeadingText(text);
-        const normalized = normalizeHeadingForDedup(cleanedText);
-        
-        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
-          state.addedHeadings.add(normalized);
-          content.push({ type: 'heading', level: parseInt(tagName.charAt(1)), text: cleanedText });
-        }
+        content.push(createHeadingItem(element));
       }
     }
     
-    if (content.length > 0) return content;
+    if (content.length > 0) {
+      const result = omitInitialArticleTitle(content, state);
+      if (result.length > 0) return result;
+      content.length = 0;
+    }
   }
   
   // Strategy 2: article/main/role containers
@@ -471,18 +436,16 @@ export function extractEmergencyFallback(win, doc, state, constants, mainContent
         const originalText = getOriginalTextIfTranslated(element);
         content.push({ type: 'paragraph', text: originalText || text, html: originalText || cleanedElement.innerHTML });
       } else if (tagName.match(/^h[1-6]$/)) {
-        const cleanedText = cleanHeadingText(text);
-        const normalized = normalizeHeadingForDedup(cleanedText);
-        
-        if (normalized !== state.mainTitleText && !state.addedHeadings.has(normalized)) {
-          state.addedHeadings.add(normalized);
-          content.push({ type: 'heading', level: parseInt(tagName.charAt(1)), text: cleanedText });
-        }
+        content.push(createHeadingItem(element));
       }
     }
     
-    if (content.length > 0) return content;
+    if (content.length > 0) {
+      const result = omitInitialArticleTitle(content, state);
+      if (result.length > 0) return result;
+      content.length = 0;
+    }
   }
   
-  return content.length > 0 ? content : null;
+  return null;
 }

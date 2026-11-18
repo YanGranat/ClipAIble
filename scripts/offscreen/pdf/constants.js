@@ -233,13 +233,11 @@ export const CONTINUATION_THRESHOLDS = {
  * @readonly
  * @const {{
  *   MAX_FILE_SIZE: number,
- *   MAX_PAGES_FOR_ANALYSIS: number,
  *   MAX_ELEMENTS_TO_LOG: number
  * }}
  */
 export const LIMITS = {
   MAX_FILE_SIZE: 500 * 1024 * 1024, // 500 MB (increased from 50 MB to support very large PDFs up to 1000 pages)
-  MAX_PAGES_FOR_ANALYSIS: 2,         // Pages to analyze for metrics
   MAX_ELEMENTS_TO_LOG: 10            // Max elements to log in detail
 };
 

@@ -60,7 +60,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
   // Get and decrypt API key
   let apiKey = '';
   try {
-    if (getProviderApiKey(provider, settingsObj) || (settings.extraction_mode || 'selector') !== 'automatic') {
+    if (getProviderApiKey(provider, settingsObj) || (settings.extraction_mode || 'automatic') !== 'automatic') {
       apiKey = await getDecryptedProviderApiKey(provider, settingsObj);
     }
   } catch (error) {
@@ -114,7 +114,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     apiKey,
     provider,
     model,
-    mode: settings.extraction_mode || 'selector',
+    mode: settings.extraction_mode || 'automatic',
     useCache: settings.use_selector_cache !== false, // Default: true
     outputFormat,
     generateToc: settings.generate_toc || false,

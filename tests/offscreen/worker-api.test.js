@@ -74,6 +74,8 @@ describe('TTS worker requests', () => {
     emit('message', { data: { id: request.id, type: 'ERROR', error: 'Synthesis failed' } });
     await rejected;
     expectReleased();
+    expect(dependencies.worker.terminate).toHaveBeenCalledOnce();
+    expect(state.getTTSWorker()).toBe(null);
   });
 
   it('releases both listeners after a worker error', async () => {

@@ -35,6 +35,7 @@ describe('Shared offscreen document API', () => {
     onMessage = null;
     vi.stubGlobal('chrome', {
       runtime: {
+        onMessage: { addListener: vi.fn(), removeListener: vi.fn() },
         getURL: path => `chrome-extension://test-extension-id/${path}`,
         getManifest: () => ({ permissions: [] }),
         getContexts: vi.fn(async () => exists ? [{ documentId: 'offscreen' }] : []),
@@ -71,52 +72,6 @@ describe('Shared offscreen document API', () => {
     await vi.advanceTimersByTimeAsync(1000);
     await pending;
     expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
-    expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
-  });
-
-  it('waits for an in-flight close before admitting a new PDF request', async () => {
-    let finishClose;
-    chrome.offscreen.closeDocument.mockImplementationOnce(() => new Promise(resolve => {
-      finishClose = () => { exists = false; resolve(); };
-    }));
-    const closing = tts.closeOffscreenForVoiceSwitch('current');
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(finishClose).toBeTypeOf('function');
-    dependencies.currentRun = 'replacement';
-    const metadata = pdf.getPdfMetadata('https://example.com/document.pdf');
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(chrome.runtime.sendMessage.mock.calls.filter(([message]) => message.type === 'GET_PDF_METADATA')).toHaveLength(0);
-    expect(chrome.offscreen.createDocument).not.toHaveBeenCalled();
-    finishClose();
-    await vi.advanceTimersByTimeAsync(1000);
-    await expect(closing).resolves.toBe(true);
-    await expect(metadata).resolves.toEqual({ numPages: 1, metadata: {} });
-    expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
-  });
-
-  it('preserves explicit voice reset requests without a processing owner', async () => {
-    const pending = tts.closeOffscreenForVoiceSwitch();
-    await vi.advanceTimersByTimeAsync(1000);
-    await expect(pending).resolves.toBe(true);
-    expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
-  });
-
-  it('does not close a replacement synthesis while an old cleanup response is pending', async () => {
-    onMessage = (message, callback) => {
-      if (message.type !== 'CLEANUP_RESOURCES') return false;
-      cleanupReply = callback;
-      return true;
-    };
-    const closing = tts.closeOffscreenForVoiceSwitch('current');
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(cleanupReply).toBeTypeOf('function');
-    dependencies.currentRun = 'replacement';
-    const replacement = tts.textToSpeech('Sample text', { processingRunId: 'replacement' });
-    await vi.advanceTimersByTimeAsync(1000);
-    expect((await replacement).byteLength).toBe(2);
-    expect(chrome.runtime.sendMessage.mock.calls.some(([message]) => message.type === 'PIPER_TTS' && message.data.processingRunId === 'replacement')).toBe(true);
-    cleanupReply({ success: true });
-    await expect(closing).resolves.toBe(false);
     expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
   });
 

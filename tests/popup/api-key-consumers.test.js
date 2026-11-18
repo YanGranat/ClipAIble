@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
+import { webcrypto } from 'node:crypto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { initSummary } from '../../popup/core/summary.js';
 import { initKeyTheses } from '../../popup/core/key-theses.js';
@@ -7,12 +8,18 @@ import { setupApiKeyToggle, setupAllApiKeyToggles } from '../../popup/handlers/a
 import { initApiKeys } from '../../popup/settings/api-keys.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 import { STORAGE_KEYS } from '../../popup/constants.js';
-import { resolveProviderApiKey } from '../../popup/utils/settings-helpers.js';
+import { resolveProviderApiKey, readApiKeyDraft } from '../../popup/utils/settings-helpers.js';
+
+vi.mock('../../scripts/utils/security/key-store.js', () => {
+  let key;
+  return { getInstallationKey: () => key ||= webcrypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']) };
+});
 
 let elements, deps, store;
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal('crypto', webcrypto);
   vi.stubGlobal('navigator', { locks: { request: (_name, operation) => operation() } });
   document.documentElement.innerHTML = readFileSync('popup/popup.html', 'utf8');
   elements = {}; initializeDOMElements(elements);
@@ -34,6 +41,24 @@ beforeEach(() => {
     log: noop, logWarn: noop, logError: noop, showToast: vi.fn(), decryptApiKey: vi.fn(async value => value),
     getProviderFromModel: () => 'openai', detectVideoPlatform: () => null,
     markdownToHtmlFn: text => text, sanitizeMarkdownHtml: text => text, CONFIG: {} };
+});
+
+it('selects a stored mask before insertion and uses the replacement draft for speech', () => {
+  elements.elevenlabsApiKey.value = '********old1234';
+  elements.elevenlabsApiKey.dataset.encrypted = 'ENC:v2:stored-marker';
+  setupAllApiKeyToggles(elements, deps.decryptApiKey, value => `****${value}`, vi.fn());
+  elements.elevenlabsApiKey.focus();
+  elements.elevenlabsApiKey.setSelectionRange(15, 15);
+  elements.elevenlabsApiKey.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: 'new' }));
+  expect(elements.elevenlabsApiKey.selectionStart).toBe(0);
+  expect(elements.elevenlabsApiKey.selectionEnd).toBe(elements.elevenlabsApiKey.value.length);
+  elements.elevenlabsApiKey.value = 'synthetic-speech-draft';
+  elements.elevenlabsApiKey.dispatchEvent(new Event('input'));
+  expect(readApiKeyDraft(elements.elevenlabsApiKey)).toBe('synthetic-speech-draft');
+  expect(elements.elevenlabsApiKey.dataset.encrypted).toBeUndefined();
+  elements.elevenlabsApiKey.value = '****saved';
+  elements.elevenlabsApiKey.dataset.encrypted = 'ENC:v2:saved-marker';
+  expect(readApiKeyDraft(elements.elevenlabsApiKey)).toBe('ENC:v2:saved-marker');
 });
 
 for (const [name, initialize, method] of [

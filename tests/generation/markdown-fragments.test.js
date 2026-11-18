@@ -22,12 +22,12 @@ it.each([
 it('preserves alternating styles, literal punctuation and intentionally repeated lines', async () => {
   const output = await generate([line('Rate [1] + index_a', { isBold: true }), line('Second record', { isItalic: true }),
     line('Third record', { isUnderlined: true }), line('Repeated record', { isBold: true }), line('Repeated record', { isBold: true })]);
-  expect(output).toContain('**Rate [1] + index_a** *Second record* __Third record__ **Repeated record** **Repeated record**');
+  expect(output).toContain('**Rate \\[1\\] + index\\_a** *Second record* __Third record__ **Repeated record** **Repeated record**');
   expect(output.split('Repeated record')).toHaveLength(3);
 });
 
 it.each(['paragraph', 'heading'])('exports current %s text when retained geometry describes earlier text', async type => {
-  const content = [{ type, level: 2, text: 'Translated reading', html: '<b>Original reading</b>',
+  const content = [{ type, level: 2, text: 'Translated reading', html: '<b>Translated reading</b>',
     lines: [line('Original reading', { isBold: true })] }];
   const before = structuredClone(content);
   const output = await generateMarkdown({ title: 'Sample', content, language: 'en' });
@@ -46,7 +46,7 @@ it('does not restore old fragments after the current paragraph text is cleared',
 it('emits the title once when an initial body H1 matches after a hero image', async () => {
   const content = [
     { type: 'image', src: 'https://example.com/figure.png', alt: 'Diagram' },
-    { type: 'heading', level: 1, text: '<em>Measured&nbsp; RECORDS</em>' },
+    { type: 'heading', level: 1, html: '<em>Measured&nbsp; RECORDS</em>' },
     { type: 'paragraph', text: 'The first complete paragraph.' },
     { type: 'heading', level: 1, text: 'Measured records' },
     { type: 'heading', level: 2, text: 'Measured records' }

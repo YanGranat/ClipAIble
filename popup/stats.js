@@ -125,9 +125,10 @@ export function initStats(deps) {
                 e.preventDefault();
                 e.stopPropagation();
                 const index = parseInt(/** @type {HTMLButtonElement} */ (btn).dataset.index || '0');
+                const item = stats.history[index];
                 // Defer async work
                 setTimeout(async () => {
-                  await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', index });
+                  await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', item });
                   await loadAndDisplayStats();
                 }, 0);
               });

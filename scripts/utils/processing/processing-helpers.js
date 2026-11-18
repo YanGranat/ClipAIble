@@ -487,7 +487,9 @@ export async function handleQuickSaveError(error, createNotification) {
   try {
     const uiLang = await getUILanguageCached();
     let errorMsg;
-    if (error.message && error.message.includes('decrypt')) {
+    if (typeof error.translationKey === 'string') {
+      errorMsg = tSync(error.translationKey, uiLang, error.translationParams || {});
+    } else if (error.message && error.message.includes('decrypt')) {
       errorMsg = tSync('errorQuickSaveDecryptFailed', uiLang);
     } else if (error.message && error.message.includes('No API key')) {
       errorMsg = tSync('errorQuickSaveNoKey', uiLang);

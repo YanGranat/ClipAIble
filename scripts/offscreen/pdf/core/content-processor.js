@@ -129,31 +129,11 @@ export function processContent(elements, metrics, metadata, url, outline = null)
   // Post-process
   const finalElements = postProcessElements(groupedTableElements);
   
-  const finalElementTypes = finalElements.map(el => el.type).join(',');
-  const finalElementsList = finalElements.map(el => {
-    const text = (el.text || '').substring(0, 50);
-    return `${el.type}:"${text}"${el.text && el.text.trim() ? 'T' : 'E'}`;
-  }).join(' | ');
   const headingsAfterPostProcess = finalElements.filter(el => el.type === 'heading');
   const finalElementTypeCounts = countBy(finalElements, el => el.type);
   log(`[PDF v3] After postProcess - totalElements=${finalElements.length}, types=${JSON.stringify(finalElementTypeCounts)}, headings=${headingsAfterPostProcess.length}`);
   
   // Extract title using centralized utility
-  const beforeExtractElementsList = finalElements.map((el, idx) => {
-    const text = el.text ? el.text.substring(0, 100) : 'NO TEXT';
-    return `[${idx}]${el.type}:"${text}"(${el.text ? el.text.length : 0})${el.level ? `L${el.level}` : ''}${el.fontSize ? `F${el.fontSize}` : ''}`;
-  }).join(' | ');
-  const beforeExtractHeadingsList = finalElements.reduce((acc, el) => {
-    if (el.type === 'heading') {
-      const text = el.text ? el.text.substring(0, 100) : 'NO TEXT';
-      const formatted = `"${text}"${el.level ? `L${el.level}` : ''}${el.fontSize ? `F${el.fontSize}` : ''}`;
-      if (acc) acc += ' | ';
-      acc += formatted;
-    }
-    return acc;
-  }, '');
-  log(`[PDF v3] Before extractTitle - elementsCount=${finalElements.length}, elements=[${beforeExtractElementsList}], headings=[${beforeExtractHeadingsList}]`);
-  
   const { title: extractedTitle, elements: titleAdjustedElements } = extractTitleUtil({
     metadataTitle: metadata.title,
     elements: finalElements,

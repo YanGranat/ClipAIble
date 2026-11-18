@@ -118,27 +118,3 @@ export function handleGenerateKeyTheses(request, sender, sendResponse, startKeep
   runGeneration(startKeyThesesGeneration, request.data || {}, startKeepAlive, stopKeepAlive, responseOnce(sendResponse));
   return true;
 }
-
-/**
- * Handle logModelDropdown request
- */
-export function handleLogModelDropdown(request, sender, sendResponse) {
-  // Log model dropdown events to service worker console
-  const { level, message, data } = request;
-  const logMessage = `[ModelDropdown] ${message}`;
-  if (data) {
-    log(logMessage, data);
-  } else {
-    log(logMessage);
-  }
-  try {
-    sendResponse({ logged: true });
-  } catch (sendError) {
-    logWarn('Failed to send response (channel may be closed)', { error: sendError?.message });
-  }
-  return true;
-}
-
-
-
-

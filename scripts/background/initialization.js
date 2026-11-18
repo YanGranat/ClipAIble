@@ -10,15 +10,14 @@ import { validateDeps } from '../utils/di-validation.js';
 export function initInitialization(deps) {
   validateDeps(deps, 'InitializationDeps', 'initialization');
   const { log, logWarn, CONFIG, handleError, clearDecryptedKeyCache,
-    getProcessingState, restoreStateFromStorage, runInitialization, startKeepAlive } = deps;
+    getProcessingState, restoreStateFromStorage, cleanupPdfJobsAfterRestore, runInitialization, startKeepAlive } = deps;
 
   return function initExtension() {
-    return new Promise((resolve, reject) => {
-      setTimeout(async () => {
-        let initializationStarted = false;
+    return (async () => {
         try {
           log('Extension loaded', { config: CONFIG });
           clearDecryptedKeyCache();
+          await runInitialization();
           const saved = await chrome.storage.local.get(['summary_generating', 'key_theses_generating']);
           if (saved.summary_generating || saved.key_theses_generating) {
             await chrome.storage.local.set({
@@ -30,18 +29,10 @@ export function initInitialization(deps) {
             });
           }
           await restoreStateFromStorage();
-          initializationStarted = true;
-          await runInitialization();
-          setTimeout(() => {
-            const state = getProcessingState();
-            if (state.isProcessing) {
-              Promise.resolve(startKeepAlive()).catch((error) => logWarn('Failed to restore keep-alive', error));
-            }
-          }, 100);
-          resolve();
+          await cleanupPdfJobsAfterRestore();
+          if (getProcessingState().isProcessing) await startKeepAlive();
         } catch (error) {
           try {
-            if (!initializationStarted) await runInitialization();
             const normalized = await handleError(error, {
               source: 'initialization', errorType: 'stateCheckFailed',
               logError: false, createUserMessage: false
@@ -50,9 +41,28 @@ export function initInitialization(deps) {
           } catch (reportError) {
             logWarn('Background initialization recovery failed', reportError);
           }
-          reject(error);
+          throw error;
         }
-      }, 0);
-    });
+    })();
+  };
+}
+
+/** Share an active attempt; retry a failed startup only for an explicit operation. */
+export function createInitializationGate(initialize) {
+  let pending, failure, ready = false;
+  return function ensureInitialization(retry = false) {
+    if (ready) return Promise.resolve();
+    if (pending) return pending;
+    if (failure && !retry) return Promise.reject(failure);
+    const attempt = Promise.resolve().then(initialize);
+    const current = attempt.then(() => {
+      ready = true;
+      failure = undefined;
+    }, error => {
+      failure = error;
+      throw error;
+    }).finally(() => { if (pending === current) pending = undefined; });
+    pending = current;
+    return current;
   };
 }

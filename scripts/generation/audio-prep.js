@@ -3,6 +3,10 @@
 // Handles text chunking and cleanup for TTS conversion
 
 import { log, logError, logWarn } from '../utils/logging.js';
+import { normalizeSpeechText } from '../utils/audio-text.js';
+import { documentPlainText, listHtml } from './document-content.js';
+import { stripHtml as stripRichHtml } from '../utils/html.js';
+import { isTerminalAIResponseError } from '../api/response-validation.js';
 import { callAI } from '../api/index.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { PROCESSING_STAGES, getProcessingState } from '../state/processing.js';
@@ -81,7 +85,7 @@ export function contentToPlainText(content) {
     switch (item.type) {
       case 'heading':
         // Add heading with newlines for natural pauses
-        const headingText = stripHtml(item.text || item.html || '');
+        const headingText = documentPlainText(item);
         if (headingText) {
           textParts.push(`\n\n${headingText}\n`);
           itemLog.extractedLength = headingText.length;
@@ -94,7 +98,7 @@ export function contentToPlainText(content) {
         break;
         
       case 'paragraph':
-        const paraText = stripHtml(item.text || item.html || '');
+        const paraText = documentPlainText(item);
         if (paraText) {
           textParts.push(paraText);
           itemLog.extractedLength = paraText.length;
@@ -108,7 +112,7 @@ export function contentToPlainText(content) {
         
       case 'quote':
       case 'blockquote':
-        const quoteText = stripHtml(item.text || item.html || '');
+        const quoteText = documentPlainText(item);
         if (quoteText) {
           textParts.push(`Quote: ${quoteText}`);
           itemLog.extractedLength = quoteText.length;
@@ -122,10 +126,7 @@ export function contentToPlainText(content) {
         
       case 'list':
         if (item.items && Array.isArray(item.items)) {
-          const listItems = item.items.map((li, index) => {
-            const text = stripHtml(typeof li === 'string' ? li : (li.html || li.text || ''));
-            return item.ordered ? `${index + 1}. ${text}` : `• ${text}`;
-          }).filter(t => t);
+          const listItems = [stripRichHtml(listHtml(item))];
           if (listItems.length > 0) {
             const listText = listItems.join('\n');
             textParts.push(listText);
@@ -529,7 +530,6 @@ RULES:
    - Footnote markers like [1], [2], etc.
    - Reference markers like ^1, ^2
    - File paths
-   - Version numbers in technical context
    - Markdown formatting symbols (*, _, #, etc.)
    - PDF page numbers and page references: "Page X", "Page X of Y", "see page X", "refer to page X"
    - Standalone page numbers (numbers that appear alone on a line or at the end of lines)
@@ -547,7 +547,8 @@ RULES:
    - Names of people, places, companies
 
 4. IMPROVE for listening:
-   - Add transition phrases if needed for flow
+   - Do not add transitions, explanations, facts or summaries
+   - Keep version numbers and all factual qualifications
    - Ensure sentences are complete and make sense when read aloud
    - ${languageInstruction}
 
@@ -576,7 +577,8 @@ ${chunkText}`;
     const aiCallDuration = Date.now() - beforeAICall;
     
     // Extract string from response (callAI returns string when jsonResponse=false)
-    const cleaned = typeof cleanedResponse === 'string' ? cleanedResponse : String(cleanedResponse);
+    if (typeof cleanedResponse !== 'string' || !cleanedResponse.trim()) throw new Error('Narration preparation returned no text');
+    const cleaned = cleanedResponse;
     
     log('=== prepareChunkForAudio: AI cleanup complete ===', {
       chunkIndex,
@@ -642,6 +644,9 @@ ${chunkText}`;
     
     return result;
   } catch (error) {
+    await requestOptions.checkCancelled?.();
+    if (requestOptions.signal?.aborted || error.name === 'AbortError' || error.retryable === false ||
+        [400, 401, 403, 429].includes(error.status) || isTerminalAIResponseError(error)) throw error;
     logError('Failed to prepare chunk for audio', { chunkIndex, error });
     // Fallback: basic cleanup without AI
     return basicCleanup(chunkText);
@@ -657,100 +662,7 @@ ${chunkText}`;
  * @returns {string} Sanitized text safe for Piper TTS
  */
 export function sanitizeForPiperTTS(text, language = 'auto') {
-  if (!text || typeof text !== 'string') return '';
-  
-  let langCode = language.split('-')[0].toLowerCase();
-  // Normalize Ukrainian language code: 'ua' -> 'uk' (Piper TTS uses 'uk')
-  if (langCode === 'ua') {
-    langCode = 'uk';
-  }
-  
-  let sanitized = text
-    // Remove zero-width characters
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    // Replace non-breaking spaces with regular spaces
-    .replace(/\u00A0/g, ' ')
-    // Normalize typographic quotes (smart quotes to regular quotes)
-    .replace(/[""]/g, '"')  // Left/right double quotes to regular quote
-    .replace(/['']/g, "'")  // Left/right single quotes to apostrophe
-    // Normalize typographic dashes
-    .replace(/—/g, ' - ')   // Em dash to hyphen with spaces
-    .replace(/–/g, '-')     // En dash to hyphen
-    // Remove control characters except newlines and tabs
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '')
-    // Remove other problematic Unicode characters that may cause phoneme errors
-    .replace(/[←→↑↓↔↕⇐⇒⇑⇓⇔⇕]/g, '')  // Arrows
-    .replace(/[•◦▪▫]/g, ' ')  // Bullets to space
-    .replace(/[©®™]/g, '')  // Copyright symbols
-    .replace(/[€£¥]/g, '')  // Currency symbols (keep $ as it's common)
-    .replace(/[°±×÷]/g, '')  // Math symbols
-    .replace(/[…]/g, '...')  // Ellipsis to three dots
-    // Normalize whitespace (but preserve paragraph breaks)
-    .replace(/[ \t]+/g, ' ')  // Multiple spaces/tabs to single space
-    .replace(/\n{3,}/g, '\n\n')  // Multiple newlines to double newline
-    .trim();
-  
-  // Additional aggressive sanitization for English text
-  // For English, be very strict - only allow ASCII printable + newlines
-  if (langCode === 'en') {
-    sanitized = sanitized
-      .split('')
-      .map(char => {
-        const code = char.charCodeAt(0);
-        // Allow: ASCII printable (32-126), newline (10), tab (9)
-        if ((code >= 32 && code <= 126) || code === 10 || code === 9) {
-          return char;
-        }
-        // Replace with space for other characters
-        return ' ';
-      })
-      .join('')
-      .replace(/[ \t]+/g, ' ')  // Normalize spaces again
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-  } else {
-    // For non-English, remove only clearly problematic characters
-    // Keep most Unicode letters and common punctuation
-    // Special handling for Ukrainian: preserve all Cyrillic letters including і, ї, є, ґ
-    const beforeFinalSanitization = sanitized;
-    sanitized = sanitized
-      .replace(/[^\p{L}\p{N}\p{P}\p{Z}\n\t]/gu, ' ')  // Keep letters, numbers, punctuation, whitespace
-      .replace(/[ \t]+/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-    
-    // Log detailed info for Ukrainian language to debug issues
-    if (langCode === 'uk') {
-      const ukrainianCharsBefore = (beforeFinalSanitization.match(/[іїєґІЇЄҐ]/g) || []).length;
-      const ukrainianCharsAfter = (sanitized.match(/[іїєґІЇЄҐ]/g) || []).length;
-      const ukrainianCharsLost = ukrainianCharsBefore - ukrainianCharsAfter;
-      const removedChars = beforeFinalSanitization.length - sanitized.length;
-      const ukrainianCharsSample = (beforeFinalSanitization.match(/[іїєґІЇЄҐ]/g) || []).slice(0, 10);
-      const ukrainianCharsAfterSample = (sanitized.match(/[іїєґІЇЄҐ]/g) || []).slice(0, 10);
-      
-      // Always log for Ukrainian text to help debug issues
-      log('=== sanitizeForPiperTTS: Ukrainian text sanitization ===', {
-        langCode,
-        originalLength: text.length,
-        beforeFinalSanitizationLength: beforeFinalSanitization.length,
-        afterSanitizationLength: sanitized.length,
-        ukrainianCharsBefore,
-        ukrainianCharsAfter,
-        ukrainianCharsLost,
-        removedChars,
-        ukrainianCharsSample,
-        ukrainianCharsAfterSample,
-        previewBefore: beforeFinalSanitization.substring(0, 200),
-        previewAfter: sanitized.substring(0, 200),
-        // Log first 50 chars with Unicode codes for debugging
-        firstCharsUnicode: Array.from(sanitized.substring(0, 50)).map(c => 
-          `${c} (U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')})`
-        )
-      });
-    }
-  }
-  
-  return sanitized;
+  return normalizeSpeechText(text);
 }
 
 /**

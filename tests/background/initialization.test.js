@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { initInitialization } from '../../scripts/background/initialization.js';
+import { initInitialization, createInitializationGate } from '../../scripts/background/initialization.js';
 import { initPortListener } from '../../scripts/background/port-listener.js';
 
 let deps;
@@ -14,12 +14,13 @@ beforeEach(() => {
     remove: vi.fn().mockResolvedValue(undefined)
   };
   onConnect = { addListener: vi.fn() };
-  vi.stubGlobal('chrome', { runtime: { onConnect }, storage: { local: storage } });
+  vi.stubGlobal('chrome', { runtime: { id: 'test-extension-id', onConnect }, storage: { local: storage } });
   deps = {
     log: vi.fn(), logWarn: vi.fn(), CONFIG: { RESET_THRESHOLD_MS: 60000 },
     handleError: vi.fn(async error => ({ message: error.message })),
     clearDecryptedKeyCache: vi.fn(), getProcessingState: vi.fn(() => ({ isProcessing: false })),
     restoreStateFromStorage: vi.fn().mockResolvedValue(undefined),
+    cleanupPdfJobsAfterRestore: vi.fn().mockResolvedValue(undefined),
     runInitialization: vi.fn().mockResolvedValue(undefined), startKeepAlive: vi.fn()
   };
 });
@@ -32,9 +33,8 @@ afterEach(() => {
 });
 
 describe('background initialization lifecycle', () => {
-  it('runs initialization through the actual scheduled entry point', async () => {
+  it('runs initialization through the actual entry point', async () => {
     const ready = initInitialization(deps)();
-    expect(deps.clearDecryptedKeyCache).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(0);
     await ready;
     expect(deps.clearDecryptedKeyCache).toHaveBeenCalledTimes(1);
@@ -65,8 +65,10 @@ describe('background initialization lifecycle', () => {
     expect(storage.get).toHaveBeenCalledWith(['summary_generating', 'key_theses_generating']);
     expect(storage.remove).not.toHaveBeenCalled();
     expect(deps.restoreStateFromStorage).toHaveBeenCalledTimes(1);
+    expect(deps.runInitialization.mock.invocationCallOrder[0])
+      .toBeLessThan(deps.restoreStateFromStorage.mock.invocationCallOrder[0]);
     expect(deps.restoreStateFromStorage.mock.invocationCallOrder[0])
-      .toBeLessThan(deps.runInitialization.mock.invocationCallOrder[0]);
+      .toBeLessThan(deps.cleanupPdfJobsAfterRestore.mock.invocationCallOrder[0]);
   });
 
   it('waits for recovery and persistence before opening the startup gate', async () => {
@@ -78,14 +80,27 @@ describe('background initialization lifecycle', () => {
     const ready = initInitialization(deps)().then(settled);
     await vi.advanceTimersByTimeAsync(0);
     expect(settled).not.toHaveBeenCalled();
-    expect(deps.runInitialization).not.toHaveBeenCalled();
-    finishRecovery();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(deps.runInitialization).toHaveBeenCalledTimes(1);
-    expect(settled).not.toHaveBeenCalled();
+    expect(deps.restoreStateFromStorage).not.toHaveBeenCalled();
     finishInitialization();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.restoreStateFromStorage).toHaveBeenCalledTimes(1);
+    expect(settled).not.toHaveBeenCalled();
+    finishRecovery();
     await ready;
     expect(settled).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for print cleanup after recovery before admitting work', async () => {
+    let releaseCleanup, finished = false;
+    deps.cleanupPdfJobsAfterRestore.mockImplementation(() => new Promise(resolve => { releaseCleanup = resolve; }));
+    const ready = initInitialization(deps)().then(() => { finished = true; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(deps.restoreStateFromStorage).toHaveBeenCalledOnce();
+    expect(finished).toBe(false);
+    expect(deps.startKeepAlive).not.toHaveBeenCalled();
+    releaseCleanup();
+    await ready;
+    expect(finished).toBe(true);
   });
 
   it('restores keep-alive for a recent active process', async () => {
@@ -137,7 +152,8 @@ describe('background port registration', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     initPortListener({ log: vi.fn(), logError: vi.fn(), addLogToCollection })();
     const port = {
-      name: 'clipaible_logs', sender: { url: 'chrome-extension://test-extension-id/offscreen.html' },
+      name: 'clipaible_logs', sender: { id: 'test-extension-id', url: 'chrome-extension://test-extension-id/offscreen.html' },
+      disconnect: vi.fn(),
       onMessage: { addListener: vi.fn() }, onDisconnect: { addListener: vi.fn() }
     };
     onConnect.addListener.mock.calls[0][0](port);
@@ -148,6 +164,14 @@ describe('background port registration', () => {
     expect(addLogToCollection).toHaveBeenCalledWith('[CRITICAL_LOG TEST] Worker failed', expect.objectContaining({
       timestamp: 123, source: 'offscreen-port', data: { count: 2 }
     }), 'error');
+  });
+
+  it('disconnects a web logging port before accepting any messages', () => {
+    initPortListener({ log: vi.fn(), logError: vi.fn(), addLogToCollection: vi.fn() })();
+    const port = { name: 'clipaible_logs', sender: { id: 'test-extension-id', url: 'https://example.org/', tab: { id: 1 } }, disconnect: vi.fn(), onMessage: { addListener: vi.fn() } };
+    onConnect.addListener.mock.calls[0][0](port);
+    expect(port.disconnect).toHaveBeenCalledOnce();
+    expect(port.onMessage.addListener).not.toHaveBeenCalled();
   });
 });
 

@@ -1,3 +1,7 @@
+import { imageDataError } from '../utils/html/image-bytes.js';
+import { fb2ListParagraphs } from './fb2-list.js';
+import { downloadBlob } from '../api/blob-download.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
 // @ts-check
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
@@ -6,7 +10,7 @@
 // @typedef {import('../types.js').GenerationData} GenerationData
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { stripHtml, markdownToHtml, cleanTildaArtifactsFromText, sanitizeHtml } from '../utils/html.js';
+import { stripHtml, htmlToMarkdown, markdownToHtml, cleanTildaArtifactsFromText, sanitizeHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { getDocumentLocalization, getDocumentLanguageTag, formatDateForDisplay, getLocaleFromLanguage, getExtensionVersion } from '../utils/config.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
@@ -15,7 +19,7 @@ import { sanitizeFilename } from '../utils/security.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
-import { normalizeXmlCharacters, escapeXml, isNativePdfContent, protectXmlLiteralText, serializeXmlInline } from './xml.js';
+import { normalizeXmlCharacters, escapeXml, xmlIdentifier, isNativePdfContent, protectXmlLiteralText, serializeXmlInline } from './xml.js';
 import { buildTocStructure, renderTocAsFb2 } from './toc-builder.js';
 
 
@@ -50,7 +54,7 @@ export async function generateFb2(data, updateState) {
   } = data;
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = filterFigureParagraphs(content, sourceUrl);
+  const filteredContent = normalizeDocumentContent(content, title, sourceUrl);
   if (filteredContent.length !== (content?.length || 0)) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content?.length || 0,
@@ -69,7 +73,7 @@ export async function generateFb2(data, updateState) {
   (filteredContent || []).forEach((item, index) => {
     // Log ALL heading items for debugging
     if (item.type === 'heading') {
-      let text = (isNativePdfContent(item) ? item.text : stripHtml(item.text || ''));
+      let text = documentPlainText(item, sourceUrl);
       text = cleanTildaArtifactsFromText(text) || text;
       allHeadings.push({
         index,
@@ -133,10 +137,10 @@ export async function generateFb2(data, updateState) {
   
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingFb2', await getUILanguage()), progress: 85 });
   
-  const langCode = language === 'auto' ? 'en' : language;
+  const langCode = language || 'auto';
   const safeTitle = title || 'Article';
   // Format ISO date to readable format using language code
-  const pubDate = formatDateForDisplay(publishDate, langCode) || new Date().toLocaleDateString(getLocaleFromLanguage(langCode), { year: 'numeric', month: 'long', day: 'numeric' });
+  const pubDate = formatDateForDisplay(publishDate, langCode) || publishDate || '';
   
   // Parse author name
   const authorParts = parseAuthorName(author);
@@ -154,7 +158,7 @@ export async function generateFb2(data, updateState) {
     const loadingStatus = tSync('stageLoadingImages', uiLang);
     updateState({ stage: PROCESSING_STAGES.LOADING_IMAGES.id, ...formatStatusUpdate('stageLoadingImages', await getUILanguage()), progress: 86 });
   }
-  const images = await collectFb2Images(filteredContent, updateState);
+  const images = await collectFb2Images(filteredContent, updateState, { processingRunId: data.processingRunId });
   
   log('Collected', { headings: headings.length, images: images.length });
   if (imageCount > 0) {
@@ -221,32 +225,7 @@ ${generateBinaries(images)}
       urlApi.revokeObjectURL(objectUrl);
     }
   } else {
-    // Fallback: data URL via FileReader
-    logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
-      reason: 'URL.createObjectURL not available in MV3 service worker',
-      method: 'data URL via FileReader (fallback)',
-      impact: 'Slower download, higher memory usage',
-      size: `${(fb2Size / 1024 / 1024).toFixed(2)} MB`
-    });
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-
-    // Check again before actual download
-    if (isCancelled(data.processingRunId)) {
-      log('Processing cancelled, skipping FB2 download');
-      throw new Error(tSync('statusCancelled', await getUILanguage()));
-    }
-
-    await chrome.downloads.download({
-      url: dataUrl,
-      filename: filename,
-      saveAs: true
-    });
-    log('Downloading FB2 (data URL fallback)...', { filename, length: fb2.length });
+    await downloadBlob(blob, filename, data.processingRunId);
   }
   
   log('=== FB2 GENERATION END ===');
@@ -299,7 +278,7 @@ function generateDocId() {
  * Collect and embed images for FB2
  * Uses parallel loading for better performance
  */
-async function collectFb2Images(content, updateState) {
+async function collectFb2Images(content, updateState, options) {
   const images = [];
   const imageItems = content.filter((item, index) => {
     if (item.type === 'image' && (item.src || item.base64)) {
@@ -331,21 +310,16 @@ async function collectFb2Images(content, updateState) {
         return { item, imageSource: null, index };
       }
       
-      // If not base64, fetch and convert
-      if (!imageSource.startsWith('data:')) {
-        log(`FB2: Fetching image ${index + 1}`, { url: imageSource.substring(0, 80) });
-        const base64 = await imageToBase64(imageSource);
-        if (!base64) {
-          log(`FB2: Failed to fetch image ${index + 1}, skipping`);
-          return { item, imageSource: null, index };
-        }
-        imageSource = base64;
-      }
+      imageSource = await imageToBase64(imageSource, options);
       
       return { item, imageSource, index };
     }
   );
   
+  if (options?.processingRunId !== undefined && isCancelled(options.processingRunId)) throw new DOMException('Processing cancelled', 'AbortError');
+  const rejected = results.find(result => result.errorCode?.startsWith('IMAGE_') && result.errorCode !== 'IMAGE_FETCH_FAILED');
+  if (rejected) throw imageDataError(rejected.errorCode);
+
   // Process results
   for (const { item, imageSource, index } of results) {
     if (!imageSource) continue;
@@ -391,7 +365,7 @@ function parseBase64Image(base64) {
 function generateDescription(title, author, lang, pubDate, sourceUrl, docId) {
   const escapedTitle = escapeXml(title);
   
-  let authorXml = '';
+  let authorXml = '      <author><nickname/></author>';
   // Only include author if it exists (not empty/anonymous)
   if (author.firstName || author.lastName) {
     authorXml = `      <author>
@@ -405,6 +379,7 @@ ${author.middleName ? `        <middle-name>${escapeXml(author.middleName)}</mid
   // to avoid duplicate display in some readers
   return `  <description>
     <title-info>
+      <genre>unrecognised</genre>
 ${authorXml}
       <book-title>${escapedTitle}</book-title>
       <lang>${escapeXml(getDocumentLanguageTag(lang))}</lang>
@@ -429,7 +404,7 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   const authorName = [author.firstName, author.middleName, author.lastName].filter(Boolean).join(' ');
   
   // Get localized labels
-  const langCode = language === 'auto' ? 'en' : language;
+  const langCode = language || 'auto';
   const l10n = getDocumentLocalization(langCode);
   const dateLabel = l10n.date || 'Date';
   const sourceLabel = l10n.source || 'Source';
@@ -440,7 +415,7 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   for (let i = 0; i < content.length; i++) {
     if (content[i].type === 'subtitle') {
       const item = content[i];
-      subtitleText = isNativePdfContent(item) ? item.text : stripHtml(item.text || item.html || '');
+      subtitleText = documentText(item, sourceUrl);
       if (subtitleText) {
         subtitleIndex = i;
         break;
@@ -458,9 +433,7 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   // Add subtitle after title if present (FB2 has native <subtitle> tag)
   if (subtitleText) {
     bodyContent += `
-      <subtitle>
-        <p>${escapeXml(subtitleText)}</p>
-      </subtitle>`;
+      <subtitle>${serializeXmlInline(subtitleText, 'fb2')}</subtitle>`;
   }
   
   bodyContent += `
@@ -589,7 +562,7 @@ ${tocXml}
   
   // Split content into sections by headings (excluding subtitle)
   const filteredContent = content.filter((item, index) => item.type !== 'subtitle');
-  const sections = splitIntoSections(filteredContent, headings);
+  const sections = splitIntoSections(filteredContent, headings, sourceUrl);
   
   for (const section of sections) {
     bodyContent += generateSection(section, sourceUrl);
@@ -606,7 +579,7 @@ ${tocXml}
  * CRITICAL: Creates nested sections for proper hierarchy in FB2 readers
  * H1 creates top-level sections, H2+ create nested sections within parent sections
  */
-function splitIntoSections(content, headings) {
+function splitIntoSections(content, headings, sourceUrl = '') {
   
   if (headings.length === 0) {
     // No headings - single section with all content
@@ -628,7 +601,7 @@ function splitIntoSections(content, headings) {
     
     if (item.type === 'heading') {
       const headingLevel = item.level || 1;
-      let headingText = (isNativePdfContent(item) ? item.text : stripHtml(item.text || ''));
+      let headingText = documentPlainText(item, sourceUrl);
       headingText = cleanTildaArtifactsFromText(headingText) || headingText;
       
       log('FB2 splitIntoSections: Processing heading', {
@@ -718,7 +691,7 @@ function generateSection(section, sourceUrl = '', indent = 0) {
   const indentStr = '  '.repeat(indent);
   
   // Add id attribute to section for internal link targets
-  const idAttr = section.id ? ` id="${escapeXml(section.id)}"` : '';
+  const idAttr = section.id ? ` id="${escapeXml(xmlIdentifier(section.id))}"` : '';
   let sectionXml = `\n${indentStr}<section${idAttr}>`;
   
   log('FB2 generateSection: Starting', {
@@ -738,10 +711,9 @@ ${indentStr}  <title><p>${escapeXml(section.title)}</p></title>`;
     });
   }
   
-  // Process items (paragraphs, images, etc.)
-  for (const item of section.items) {
-    sectionXml += contentItemToFb2(item, sourceUrl, indent + 1);
-  }
+  const ownItems = section.items.map(item => contentItemToFb2(item, sourceUrl, indent + 1)).join('');
+  sectionXml += ownItems && section.nestedSections?.length ? `\n${indentStr}  <section>${ownItems}\n${indentStr}  </section>` : ownItems;
+  if (!ownItems && !section.nestedSections?.length) sectionXml += `\n${indentStr}  <empty-line/>`;
   
   // Process nested sections recursively
   if (section.nestedSections && section.nestedSections.length > 0) {
@@ -771,7 +743,7 @@ ${indentStr}  <title><p>${escapeXml(section.title)}</p></title>`;
  */
 function createFb2Anchor(id) {
   if (!id) return '';
-  return `<a id="${escapeXml(id)}"/>`;
+  return ` id="${escapeXml(xmlIdentifier(id))}"`;
 }
 
 /**
@@ -794,7 +766,7 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
       // Log warning and skip it (shouldn't happen in normal flow)
       log('FB2 contentItemToFb2: WARNING - heading found as item, should have been section title', {
         level: item.level,
-        text: (isNativePdfContent(item) ? item.text : stripHtml(item.text || '')).substring(0, 50),
+        text: documentPlainText(item, sourceUrl).substring(0, 50),
         id: item.id || 'no-id'
       });
       // Return empty - heading should not be rendered as content item
@@ -802,16 +774,16 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
     }
     
     case 'paragraph': {
-      const text = item.text || '';
+      const text = documentText(item, sourceUrl);
       if (!text.trim()) return '';
-      return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl, isNativePdfContent(item))}</p>`;
+      return `\n${indentStr}  <p${anchor}>${serializeXmlInline(text, 'fb2')}</p>`;
     }
     
     case 'quote':
     case 'blockquote': {
-      const text = item.text || '';
+      const text = documentText(item, sourceUrl);
       if (!text.trim()) return '';
-      return `\n${indentStr}  <cite><p>${anchor}${convertInlineHtmlToFb2(text, sourceUrl, isNativePdfContent(item))}</p></cite>`;
+      return `\n${indentStr}  <cite><p${anchor}>${serializeXmlInline(text, 'fb2')}</p></cite>`;
     }
     
     case 'code': {
@@ -821,31 +793,29 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
       const firstLine = lines[0] || '';
       const restLines = lines.slice(1);
       // Add anchor to first line
-      let result = `\n${indentStr}  <p>${anchor}<code>${escapeXml(firstLine)}</code></p>`;
+      let result = `\n${indentStr}  <p${anchor}><code>${escapeXml(firstLine)}</code></p>`;
       result += restLines.map(line => `\n${indentStr}  <p><code>${escapeXml(line)}</code></p>`).join('');
       return result;
     }
     
     case 'list': {
-      const items = item.items || [];
-      return items.map((li, index) => {
-        const text = typeof li === 'string' ? li : (li.html || li.text || '');
-        const liId = (typeof li === 'object' && li.id) ? li.id : '';
-        const liAnchor = createFb2Anchor(liId);
-        const prefix = item.ordered ? `${index + 1}. ` : '• ';
-        return `\n${indentStr}  <p>${liAnchor}${prefix}${convertInlineHtmlToFb2(text, sourceUrl, isNativePdfContent(item))}</p>`;
-      }).join('');
+      return fb2ListParagraphs(listHtml(item, sourceUrl)).map(part =>
+        `\n${indentStr}  <p${createFb2Anchor(part.id)}>${escapeXml('\u00a0'.repeat(part.depth * 3) + part.prefix)}${serializeXmlInline(part.html, 'fb2')}</p>`).join('');
     }
     
     case 'image': {
-      if (!item._fb2Id) return '';
+      if (!item._fb2Id) {
+        const label = item.caption || item.alt || item.src || '';
+        const fallback = item.src ? convertInlineHtmlToFb2(`<a href="${escapeXml(item.src)}">${escapeXml(label)}</a>`, sourceUrl) : escapeXml(label);
+        return fallback ? `\n${indentStr}  <p${anchor}>${fallback}</p>` : '';
+      }
       const alt = escapeXml(item.alt || '');
       // CRITICAL: Use convertInlineHtmlToFb2 to preserve links in captions (like PDF)
       // This handles cases where caption contains HTML with links, e.g., <span>text</span><a href="...">(source)</a>
       const caption = item.caption ? convertInlineHtmlToFb2(item.caption, sourceUrl, isNativePdfContent(item)) : '';
       
       // Add anchor paragraph before image if id exists
-      let imageXml = anchor ? `\n${indentStr}  <p>${anchor}</p>` : '';
+      let imageXml = anchor ? `\n${indentStr}  <p${anchor}></p>` : '';
       imageXml += `\n${indentStr}  <image l:href="#${item._fb2Id}" alt="${alt}"/>`;
       if (caption) {
         imageXml += `\n${indentStr}  <p><emphasis>${caption}</emphasis></p>`;
@@ -870,7 +840,7 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
     
     default: {
       if (item.text) {
-        return `\n${indentStr}  <p>${anchor}${convertInlineHtmlToFb2(item.text, sourceUrl, isNativePdfContent(item))}</p>`;
+        return `\n${indentStr}  <p${anchor}>${convertInlineHtmlToFb2(item.text, sourceUrl, isNativePdfContent(item))}</p>`;
       }
       return '';
     }

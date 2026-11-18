@@ -3,7 +3,7 @@
 // Facade module that imports and combines all settings submodules
 // Handles settings loading, saving, API keys, models, UI updates, etc.
 
-import { decryptApiKey, maskApiKey, removeApiKeyIfUnchanged } from '../scripts/utils/encryption.js';
+import { decryptApiKey, maskApiKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
@@ -663,20 +663,20 @@ export function initSettings(deps) {
           
           // Check if decrypted value is a mask (corrupted data in storage)
           if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
-            logWarn('ElevenLabs API key in storage is corrupted (contains mask), clearing...');
-            elements.elevenlabsApiKey.value = '';
+            logWarn('ElevenLabs API key in storage is unavailable (stored mask)');
+            elements.elevenlabsApiKey.value = maskApiKey(String(result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]));
+            elements.elevenlabsApiKey.dataset.encrypted = String(result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]);
             elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
-            await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY, result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]);
           } else {
             elements.elevenlabsApiKey.value = maskApiKey(decrypted);
             elements.elevenlabsApiKey.dataset.encrypted = apiKey;
           }
         } catch (error) {
           logError('Failed to decrypt ElevenLabs API key', error);
-          // Clear corrupted key - user needs to re-enter
-          elements.elevenlabsApiKey.value = '';
+          // Retain stored ciphertext until explicitly replaced.
+          elements.elevenlabsApiKey.value = maskApiKey(String(result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]));
+            elements.elevenlabsApiKey.dataset.encrypted = String(result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]);
           elements.elevenlabsApiKey.placeholder = await t('keyCorrupted');
-          await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY, result[STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY]);
         }
       }
       
@@ -688,20 +688,20 @@ export function initSettings(deps) {
           
           // Check if decrypted value is a mask (corrupted data in storage)
           if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
-            logWarn('Qwen API key in storage is corrupted (contains mask), clearing...');
-            elements.qwenApiKey.value = '';
+            logWarn('Qwen API key in storage is unavailable (stored mask)');
+            elements.qwenApiKey.value = maskApiKey(String(result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]));
+            elements.qwenApiKey.dataset.encrypted = String(result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]);
             elements.qwenApiKey.placeholder = await t('keyCorrupted');
-            await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_QWEN_API_KEY, result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]);
           } else {
             elements.qwenApiKey.value = maskApiKey(decrypted);
             elements.qwenApiKey.dataset.encrypted = apiKey;
           }
         } catch (error) {
           logError('Failed to decrypt Qwen API key', error);
-          // Clear corrupted key - user needs to re-enter
-          elements.qwenApiKey.value = '';
+          // Retain stored ciphertext until explicitly replaced.
+          elements.qwenApiKey.value = maskApiKey(String(result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]));
+            elements.qwenApiKey.dataset.encrypted = String(result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]);
           elements.qwenApiKey.placeholder = await t('keyCorrupted');
-          await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_QWEN_API_KEY, result[STORAGE_KEYS.STORAGE_QWEN_API_KEY]);
         }
       }
       
@@ -717,20 +717,20 @@ export function initSettings(deps) {
           
           // Check if decrypted value is a mask (corrupted data in storage)
           if (decrypted.startsWith('****') || decrypted.startsWith('••••')) {
-            logWarn('Respeecher API key in storage is corrupted (contains mask), clearing...');
-            elements.respeecherApiKey.value = '';
+            logWarn('Respeecher API key in storage is unavailable (stored mask)');
+            elements.respeecherApiKey.value = maskApiKey(String(result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]));
+            elements.respeecherApiKey.dataset.encrypted = String(result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]);
             elements.respeecherApiKey.placeholder = await t('keyCorrupted');
-            await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY, result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]);
           } else {
             elements.respeecherApiKey.value = maskApiKey(decrypted);
             elements.respeecherApiKey.dataset.encrypted = apiKey;
           }
         } catch (error) {
           logError('Failed to decrypt Respeecher API key', error);
-          // Clear corrupted key - user needs to re-enter
-          elements.respeecherApiKey.value = '';
+          // Retain stored ciphertext until explicitly replaced.
+          elements.respeecherApiKey.value = maskApiKey(String(result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]));
+            elements.respeecherApiKey.dataset.encrypted = String(result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]);
           elements.respeecherApiKey.placeholder = await t('keyCorrupted');
-          await removeApiKeyIfUnchanged(STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY, result[STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY]);
         }
       }
       

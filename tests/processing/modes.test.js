@@ -68,7 +68,8 @@ vi.mock('../../scripts/extraction/html-utils.js', async (importOriginal) => ({
   trimHtmlForAnalysis: vi.fn((html, maxSize) => html.substring(0, Math.min(html.length, maxSize)))
 }));
 
-vi.mock('../../scripts/utils/html.js', () => ({
+vi.mock('../../scripts/utils/html.js', async original => ({
+  ...(await original()),
   cleanTitleFromServiceTokens: vi.fn((title, original) => title)
 }));
 
@@ -231,7 +232,7 @@ describe('processing/modes', () => {
       ).rejects.toThrow('API error');
     });
 
-    it('should use retry mechanism for API calls', async () => {
+    it('leaves transport retries to the provider client', async () => {
       const { callWithRetry } = await import('../../scripts/utils/retry.js');
       const { callAI } = await import('../../scripts/api/index.js');
       
@@ -240,7 +241,8 @@ describe('processing/modes', () => {
 
       await getSelectorsFromAI('<html>Content</html>', 'https://example.com', 'Title', 'key', 'gpt-4');
 
-      expect(callWithRetry).toHaveBeenCalled();
+      expect(callWithRetry).not.toHaveBeenCalled();
+      expect(callAI).toHaveBeenCalledOnce();
     });
   });
 
@@ -487,6 +489,20 @@ describe('processing/modes', () => {
   });
 
   describe('processWithExtractMode', () => {
+    it.each([1, 2])('preserves first-chunk metadata and common filtering with %s chunks', async count => {
+      const { callAI } = await import('../../scripts/api/index.js');
+      const { splitHtmlIntoChunks } = await import('../../scripts/extraction/html-utils.js');
+      splitHtmlIntoChunks.mockReturnValueOnce(Array.from({ length: count }, (_, index) => `<p>Part ${index}</p>`));
+      const paragraph = { type: 'paragraph', text: 'A complete reading remains in the exported article.' };
+      callAI.mockResolvedValueOnce({ title: 'Article', author: 'Sample Writer', detectedLanguage: 'fr', publishDate: '2025-03-04',
+        content: [{ type: 'heading', text: '2' }, paragraph] });
+      if (count === 2) callAI.mockResolvedValueOnce({ content: [{ type: 'paragraph', text: 'The second part remains ordered after the first.' }] });
+      const result = await processWithExtractMode({ html: '<article>Article</article>', url: 'https://example.org/article', apiKey: 'synthetic-key', model: 'gpt-sample' });
+      expect(result).toMatchObject({ author: 'Sample Writer', detectedLanguage: 'fr', publishDate: '2025-03-04' });
+      expect(result.content[0]).toEqual({ ...paragraph, html: paragraph.text });
+      expect(result.content).toHaveLength(count);
+      expect(callAI).toHaveBeenCalledTimes(count);
+    });
     it('should process content with extract mode (single chunk)', async () => {
       const { callAI } = await import('../../scripts/api/index.js');
       const { splitHtmlIntoChunks } = await import('../../scripts/extraction/html-utils.js');

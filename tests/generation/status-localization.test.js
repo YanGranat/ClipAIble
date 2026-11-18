@@ -10,6 +10,7 @@ import { clearUILanguageCache } from '../../scripts/utils/processing/pipeline-he
 import { formatMessage } from '../../scripts/locales.js';
 
 vi.mock('../../scripts/utils/storage.js', async original => ({ ...await original(), saveLargeData: vi.fn(async () => {}), removeLargeData: vi.fn(async () => {}) }));
+vi.mock('../../scripts/api/print-storage.js', () => ({ putPrintJob: vi.fn(async () => {}), removePrintJob: vi.fn(async () => {}), prunePrintJobs: vi.fn(async () => 0) }));
 beforeEach(() => {
   clearUILanguageCache();
   chrome.storage.local.get.mockResolvedValue({ ui_language: 'ru' });

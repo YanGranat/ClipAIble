@@ -8,7 +8,6 @@ import { createPdfError } from '../../utils/pdf-errors.js';
 
 // Core modules
 import { loadPdfDocument, destroyPdfDocument } from './core/pdf-loader.js';
-import { collectSampleItems } from './core/metrics-collector.js';
 import { collectAllLinesForGapAnalysis } from './core/gap-analysis-collector.js';
 import { extractContentFromPages } from './core/content-extractor.js';
 import { processContent } from './core/content-processor.js';
@@ -16,6 +15,7 @@ import { processContent } from './core/content-processor.js';
 // Analyzers
 import { analyzePdfMetrics } from './analyzers/metrics.js';
 import { analyzeGaps } from './analyzers/gap-analyzer.js';
+import { findRunningMargins } from './analyzers/running-margins.js';
 
 /**
  * Extract content from PDF file (v3)
@@ -57,15 +57,11 @@ export async function extractPdfContent(url, pdfData = null, requestOptions = {}
     check();
     const { numPages, metadata, outline } = loaded;
     
-    // Step 2: Collect sample items for metrics analysis
-    const sampleItems = await phase(collectSampleItems(pdf, numPages));
-    
-    // Step 3: Analyze PDF metrics
-    const metrics = analyzePdfMetrics(sampleItems, numPages);
-    
-    // Step 4: Collect all lines for global gap analysis
-    const allLines = await phase(collectAllLinesForGapAnalysis(pdf, numPages));
-    
+    // The existing document-wide text pass supplies both font and gap metrics.
+    const allLines = await phase(collectAllLinesForGapAnalysis(pdf, numPages, requestOptions));
+    const metrics = analyzePdfMetrics(allLines.flatMap(line => line.items || []), numPages);
+    metrics.runningMargins = findRunningMargins(allLines, numPages, metrics.baseFontSize);
+
     // Step 5: Perform global gap analysis
     // COMMENTED: log('[PDF v3] === Performing global gap analysis ===', { totalLines: allLines.length });
     const globalGapAnalysis = analyzeGaps(allLines);
@@ -78,7 +74,7 @@ export async function extractPdfContent(url, pdfData = null, requestOptions = {}
     // COMMENTED: console.warn('=== BEFORE_CALLING_EXTRACT_CONTENT ===', beforeCallMsg);
     // COMMENTED: console.log(beforeCallMsg);
     // COMMENTED: log('=== BEFORE_CALLING_EXTRACT_CONTENT === ' + beforeCallMsg, { numPages, hasMetrics: !!metrics, hasGapAnalysis: !!metrics.gapAnalysis });
-    const { elements: allElements } = await phase(extractContentFromPages(pdf, numPages, metrics));
+    const { elements: allElements } = await phase(extractContentFromPages(pdf, numPages, metrics, { ...requestOptions, onProgress: (page, total) => requestOptions.onProgress?.(page + total, total * 2) }));
     // COMMENTED: console.log(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
     // COMMENTED: console.error(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
     // COMMENTED: log(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });

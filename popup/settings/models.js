@@ -247,10 +247,10 @@ export function initModels(deps) {
     }
     
     // Check if model already exists
-    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS]);
+    const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
     const providerCustomModels = providerValues(storageResult[STORAGE_KEYS.CUSTOM_MODELS], provider);
     
-    if (providerCustomModels.includes(trimmedName)) {
+    if (providerCustomModels.includes(trimmedName) && !providerValues(storageResult[STORAGE_KEYS.HIDDEN_MODELS], provider).includes(trimmedName)) {
       const errorMsg = locale.addModelAlreadyExists || 'This model already exists';
       alert(errorMsg);
       return;
@@ -266,8 +266,11 @@ export function initModels(deps) {
       const saved = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
       const custom = isRecord(saved[STORAGE_KEYS.CUSTOM_MODELS]) ? saved[STORAGE_KEYS.CUSTOM_MODELS] : {};
       const hidden = isRecord(saved[STORAGE_KEYS.HIDDEN_MODELS]) ? saved[STORAGE_KEYS.HIDDEN_MODELS] : {};
+      const customIds = providerValues(custom, provider);
+      const restoringBuiltIn = providerValues(hidden, provider).includes(modelValue) &&
+        !customIds.includes(modelValue) && getModelCatalog(provider).some(entry => entry.id === modelValue);
       await chrome.storage.local.set({
-        [STORAGE_KEYS.CUSTOM_MODELS]: { ...custom, [provider]: [...new Set([...providerValues(custom, provider), modelValue])] },
+        [STORAGE_KEYS.CUSTOM_MODELS]: { ...custom, [provider]: restoringBuiltIn ? customIds : [...new Set([...customIds, modelValue])] },
         [STORAGE_KEYS.HIDDEN_MODELS]: { ...hidden, [provider]: providerValues(hidden, provider).filter(id => id !== modelValue) }
       });
     });

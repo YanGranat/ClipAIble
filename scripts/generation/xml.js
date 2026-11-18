@@ -18,6 +18,11 @@ export function escapeXml(value) {
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;').replace(/\r/g, '&#13;');
 }
 
+export function xmlIdentifier(value) {
+  const id = String(value || '');
+  return /^[\p{L}_][\p{L}\p{N}\p{M}_.-]*$/u.test(id) ? id : `id-${Array.from(id, character => character.codePointAt(0).toString(16)).join('-')}`;
+}
+
 /** Native PDF text contains glyph strings, not HTML or Markdown. */
 export function isNativePdfContent(item) {
   return Number.isInteger(item?.pageNum) && item.pageNum > 0 && !item.html &&
@@ -39,11 +44,12 @@ export function protectXmlLiteralText(value) {
 }
 
 /** Serialize sanitized inline HTML without requiring a browser DOM. */
-export function serializeXmlInline(value, format) {
+export function serializeXmlInline(value, format, block = false) {
   const source = normalizeXmlCharacters(value);
   const allowed = new Set(['a','strong','b','em','i','u','s','del','ins','code','br','sub','sup','mark','small','span','abbr','cite','q','time','dfn','kbd','var','samp']);
+  if (block && format === 'xhtml') for (const name of ['ul','ol','li','p','pre','blockquote','hr']) allowed.add(name);
   const fb2 = { a:'a',strong:'strong',b:'strong',em:'emphasis',i:'emphasis',s:'strikethrough',del:'strikethrough',code:'code',sup:'sup',sub:'sub' };
-  const attributes = { a:['href','title','id','name'],span:['class','id','style'],code:['class'],abbr:['title'],time:['datetime'],q:['cite'],sup:['id'],sub:['id'] };
+  const attributes = { a:['href','title','id','name'],span:['class','id','style'],code:['class'],abbr:['title'],time:['datetime'],q:['cite'],sup:['id'],sub:['id'],ol:['start'],li:['value','id'] };
   const text = value => escapeXml(decodeHtmlEntities(value, true));
   const attribute = value => text(value).replace(/\t/g, '&#9;').replace(/\n/g, '&#10;');
   const tags = /<\/?([a-z][a-z0-9]*)\b(?:[^<>"']|"[^"]*"|'[^']*')*>/gi;
@@ -54,7 +60,7 @@ export function serializeXmlInline(value, format) {
     cursor = match.index + match[0].length;
     const name = match[1].toLowerCase(), closing = match[0].startsWith('</');
     if (!allowed.has(name)) { output += text(match[0]); continue; }
-    if (name === 'br') { if (!closing) output += format === 'fb2' ? ' ' : '<br/>'; continue; }
+    if (name === 'br' || name === 'hr') { if (!closing) output += format === 'fb2' ? ' ' : `<${name}/>`; continue; }
     const mapped = format === 'fb2' ? fb2[name] : name;
     if (!mapped) continue;
     if (closing) {
@@ -64,11 +70,23 @@ export function serializeXmlInline(value, format) {
     }
     const values = {};
     for (const attr of match[0].matchAll(/\s+([a-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) values[attr[1].toLowerCase()] = attr[2] ?? attr[3];
+    if (values.href) {
+      let probe = values.href;
+      for (let layer = 0; layer < 5; layer++) {
+        const decoded = decodeHtmlEntities(probe, true);
+        if (decoded === probe) break;
+        probe = decoded;
+      }
+      probe = probe.replace(/[\u0000-\u0020\u007f]/g, '');
+      if (/^[a-z][a-z\d+.-]*:/i.test(probe) && !/^(?:https?:|mailto:|tel:)/i.test(probe)) values.href = '#';
+    }
     let attrs = '';
     if (format === 'fb2') {
       if (name === 'a') {
-        if (values.href) attrs += ` l:href="${attribute(values.href)}"`;
-        if (values.id || values.name) attrs += ` id="${attribute(values.id || values.name)}"`;
+        if (values.href) {
+          const href = decodeHtmlEntities(values.href, true);
+          attrs += ` l:href="${escapeXml(href.startsWith('#') && href.length > 1 ? '#' + xmlIdentifier(href.slice(1)) : href)}"`;
+        } else attrs += ' l:href="#"';
       }
     } else {
       for (const key of attributes[name] || []) if (values[key] !== undefined) attrs += ` ${key}="${attribute(values[key])}"`;

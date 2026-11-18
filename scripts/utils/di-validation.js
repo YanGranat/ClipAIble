@@ -132,8 +132,7 @@ function getDepsTypeDefinitions() {
       processWithoutAI: { expectedType: 'function', description: 'Process without AI function' },
       stopKeepAlive: { expectedType: 'function', description: 'Stop keep-alive function' },
       startKeepAlive: { expectedType: 'function', description: 'Start keep-alive function' },
-      addLogToCollection: { expectedType: 'function', description: 'Add log to collection function' },
-      exportAllLogsToFile: { expectedType: 'function', description: 'Export all logs to file function' }
+      addLogToCollection: { expectedType: 'function', description: 'Add log to collection function' }
     },
 
     NotificationsDeps: {
@@ -152,6 +151,7 @@ function getDepsTypeDefinitions() {
       clearDecryptedKeyCache: { expectedType: 'function', description: 'Clear decrypted key cache function' },
       getProcessingState: { expectedType: 'function', description: 'Get processing state function' },
       restoreStateFromStorage: { expectedType: 'function', description: 'Restore state from storage function' },
+      cleanupPdfJobsAfterRestore: { expectedType: 'function', description: 'Clean up orphaned PDF jobs after state recovery' },
       runInitialization: { expectedType: 'function', description: 'Run initialization tasks function' },
       startKeepAlive: { expectedType: 'function', description: 'Start keep-alive function' }
     },
@@ -162,7 +162,6 @@ function getDepsTypeDefinitions() {
       CONFIG: { expectedType: 'object', description: 'Configuration object' },
       getProcessingState: { expectedType: 'function', description: 'Get processing state function' },
       setError: { expectedType: 'function', description: 'Set error function' },
-      setResult: { expectedType: 'function', description: 'Set result function' },
       updateState: { expectedType: 'function', description: 'Update state function' },
       ERROR_CODES: { expectedType: 'object', description: 'Error codes object' },
       PROCESSING_STAGES: { expectedType: 'object', description: 'Processing stages object' },

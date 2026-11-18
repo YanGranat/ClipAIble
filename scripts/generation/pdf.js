@@ -8,8 +8,8 @@ import { log, logError, logWarn } from '../utils/logging.js';
 import { escapeAttr, cleanTitle } from '../utils/html.js';
 import { embedImages } from '../utils/images.js';
 import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
-import { translateMetadata } from '../translation/index.js';
-import { saveLargeData, removeLargeData } from '../utils/storage.js';
+import { putPrintJob, removePrintJob } from '../api/print-storage.js';
+import { closeOwnedPrintTab } from '../api/print-lifecycle.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
@@ -54,7 +54,7 @@ import { getDefaultModel } from '../utils/model-catalog.js';
 export async function generatePdf(data, updateState) {
   const processingRunId = data.processingRunId ?? getProcessingRunId();
   const printJobId = crypto.randomUUID();
-  const printStorageKey = `printJob:${printJobId}`;
+  let printTabId;
   const { 
     content, title, author = '', pageMode = 'single', sourceUrl = '', publishDate = '', 
     generateToc = false, generateAbstract = false, abstract = '', language = 'auto', apiKey = '',
@@ -91,7 +91,7 @@ export async function generatePdf(data, updateState) {
     throw error;
   }
   
-  // Translate metadata if language is set
+  // Preserve names and format dates without a separate generation request.
   let translatedAuthor = author;
   let formattedDate = publishDate || '';
   
@@ -116,30 +116,7 @@ export async function generatePdf(data, updateState) {
     log('Date pre-formatted from ISO', { original: publishDate, formatted: formattedDate });
   }
   
-  if (language !== 'auto' && apiKey) {
-    if (updateState) updateState({ ...formatStatusUpdate('statusTranslatingMetadata', await getUILanguage()), progress: 68 });
-    
-    // CRITICAL: Clean author BEFORE translation to avoid translating "anonymous" to anonymous variants
-    // If author is already anonymous, don't translate it
-    const cleanedAuthorBeforeTranslation = cleanAuthor(author);
-    const shouldTranslateAuthor = cleanedAuthorBeforeTranslation && author;
-    
-    const [newAuthor, newDate] = await Promise.all([
-      shouldTranslateAuthor ? translateMetadata(author, language, apiKey, model, 'author', data.aiRequestOptions) : Promise.resolve(''),
-      formattedDate ? translateMetadata(formattedDate, language, apiKey, model, 'date', data.aiRequestOptions) : Promise.resolve('')
-    ]);
-    
-    // CRITICAL: Clean translated author to remove any anonymous variants
-    // Translation might convert anonymous variants to other language variants
-    translatedAuthor = cleanAuthor(newAuthor || cleanedAuthorBeforeTranslation || '');
-    formattedDate = newDate || formattedDate;
-    log('Metadata translated and cleaned', { 
-      originalAuthor: author, 
-      translatedAuthor: newAuthor, 
-      cleanedAuthor: translatedAuthor,
-      date: formattedDate 
-    });
-  }
+  translatedAuthor = cleanAuthor(author);
   
   try {
     if (updateState) {
@@ -256,35 +233,9 @@ export async function generatePdf(data, updateState) {
       });
     }
     
-    // Collect headings and assign IDs for TOC
-    if (generateToc) {
-      log(`📑 Collecting headings for table of contents`);
-    }
-    const headings = [];
     const cleanedTitle = cleanTitle(title || '');
-    const contentWithIds = filteredContent.map((item, index) => {
-      if (item.type === 'heading') {
-        // Skip the first heading if it matches the title (title is already in header)
-        const firstItemIsTitle = index === 0 && 
-          item.level === 1 &&
-          cleanedTitle && 
-          (item.text || '').replace(/<[^>]*>/g, '').trim() === cleanedTitle;
-        
-        // Include all headings in TOC, except the title heading
-        if (!firstItemIsTitle) {
-          const text = item.text ? item.text.replace(/<[^>]*>/g, '').trim() : '';
-          if (text) {
-            const id = item.id || `toc-heading-${index}`;
-            headings.push({ text, level: item.level, id });
-            return { ...item, id };
-          }
-        }
-      }
-      return item;
-    });
-    
     const htmlContent = buildHtmlForPdf(
-      contentWithIds,
+      filteredContent,
       cleanedTitle,
       translatedAuthor,
       styles,
@@ -292,15 +243,11 @@ export async function generatePdf(data, updateState) {
       formattedDate,
       language,
       generateToc,
-      headings,
       generateAbstract,
       abstract
     );
-    log('HTML built', { length: htmlContent.length, tocEnabled: generateToc, headingsCount: headings.length });
-    if (generateToc && headings.length > 1) {
-      log(`✅ Table of contents generated: ${headings.length} headings`);
-    }
-    
+    log('HTML built', { length: htmlContent.length, tocEnabled: generateToc });
+
     // DETAILED LOGGING: Log FULL HTML content - NO TRUNCATION
     log('=== HTML CONTENT (FULL - NO TRUNCATION) ===', {
       htmlFull: htmlContent, // FULL HTML - NO TRUNCATION
@@ -344,7 +291,7 @@ export async function generatePdf(data, updateState) {
       imageItems: content.filter(item => item.type === 'image').length,
       imageSources: content.filter(item => item.type === 'image').map(img => img.src?.substring(0, 80) || 'no src')
     });
-    const htmlWithImages = await embedImages(htmlContent, content, updateState, escapeAttr);
+    const htmlWithImages = await embedImages(htmlContent, content, updateState, escapeAttr, { processingRunId });
     log('Images embedded', { finalLength: htmlWithImages.length });
     
     // Store HTML in chrome.storage and open print page
@@ -353,7 +300,7 @@ export async function generatePdf(data, updateState) {
     try {
       // Save large HTML with automatic fallback to IndexedDB if needed
       if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
-      await saveLargeData(printStorageKey, {
+      await putPrintJob(printJobId, {
         html: htmlWithImages,
         title,
         sourceUrl,
@@ -405,6 +352,7 @@ export async function generatePdf(data, updateState) {
         active: true,
         windowId: currentWindow.id
       });
+      printTabId = tab.id;
       if (isCancelled(processingRunId)) {
         await chrome.tabs.remove(tab.id);
         throw new Error('Processing cancelled');
@@ -447,7 +395,8 @@ export async function generatePdf(data, updateState) {
 
   } catch (error) {
     try {
-      await removeLargeData(printStorageKey);
+      await removePrintJob(printJobId);
+      await closeOwnedPrintTab(printTabId, printJobId);
     } catch (cleanupError) {
       logWarn('Failed to remove PDF preparation data', { error: cleanupError.message });
     }
@@ -472,8 +421,18 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
   
   const debuggee = { tabId };
   let attached = false;
+  let ownedJobId;
   
   try {
+    if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (tab?.url) {
+      try {
+        const actual = new URL(tab.url);
+        const expected = new URL(chrome.runtime.getURL('print/print.html'));
+        if (actual.protocol === expected.protocol && actual.host === expected.host && actual.pathname === expected.pathname) ownedJobId = actual.searchParams.get('job');
+      } catch {}
+    }
     if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
     // Attach debugger to the tab
     log('Attaching debugger...');
@@ -655,7 +614,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     attached = false;
     log('Debugger detached');
     
-    // Convert base64 to blob and download
+    // Keep the debugger's base64 in service-worker contexts without object URLs.
     const pdfData = typedPdfResult.data;
     const filename = sanitizeFilename(title || 'article') + '.pdf';
     
@@ -668,13 +627,13 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     log('Downloading PDF...', { filename });
     
     // Convert base64 to blob and use object URL when available; fallback to data URL in SW
-    const binary = Uint8Array.from(atob(pdfData), c => c.charCodeAt(0));
-    const blob = new Blob([binary], { type: 'application/pdf' });
     const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
       ? URL
       : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
 
     if (urlApi && urlApi.createObjectURL) {
+      const binary = Uint8Array.from(atob(pdfData), c => c.charCodeAt(0));
+      const blob = new Blob([binary], { type: 'application/pdf' });
       const objectUrl = urlApi.createObjectURL(blob);
       try {
         // Check again before actual download
@@ -702,19 +661,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
         urlApi.revokeObjectURL(objectUrl);
       }
     } else {
-      // Fallback for MV3 service worker without createObjectURL
-      logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
-        reason: 'URL.createObjectURL not available in MV3 service worker',
-        method: 'data URL via FileReader (fallback)',
-        impact: 'Slower download, higher memory usage',
-        size: `${(blob.size / 1024 / 1024).toFixed(2)} MB`
-      });
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
+      const dataUrl = `data:application/pdf;base64,${pdfData}`;
 
       // Check again before actual download
       if (isCancelled(processingRunId)) {
@@ -728,7 +675,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
         saveAs: true
       });
 
-      log('Download started (data URL fallback)', { downloadId, size: blob.size });
+      log('Download started (data URL fallback)', { downloadId });
     }
     
     if (!isCancelled(processingRunId) && completeProcessing) await completeProcessing();
@@ -736,7 +683,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     // Close the print tab after its processing state has completed.
     setTimeout(async () => {
       try {
-        await chrome.tabs.remove(tabId);
+        await closeOwnedPrintTab(tabId, ownedJobId);
         log('Print tab closed');
       } catch (e) {
         // Tab might already be closed
@@ -749,6 +696,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     
   } catch (error) {
     logError('Debugger PDF failed', error);
+    await closeOwnedPrintTab(tabId, ownedJobId);
     
     if (!isCancelled(processingRunId) && setError) await setError(error.message);
     throw error;

@@ -12,7 +12,7 @@ it('reads custom-model ownership before migrating a context-menu selection', () 
 });
 
 it.each([
-  ['openai', 'gpt-5.2-high', 'gpt-6.1-sol-high'],
+  ['openai', 'gpt-5.2-high', 'gpt-6.2-sol-high'],
   ['claude', 'claude-sonnet-4-5', 'claude-sonnet-5-5'],
   ['gemini', 'gemini-3-pro-preview', 'gemini-4-carbon'],
   ['deepseek', 'deepseek-chat', 'deepseek-flash-no-thinking']

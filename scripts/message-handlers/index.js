@@ -6,6 +6,8 @@ import { log, logWarn, logError, sanitizeLogData, shouldLogDiagnostic } from '..
 import { updateState, getProcessingState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { isValidMessageSize } from '../utils/security/security.js';
+import { isTrustedExtensionSender, isYouTubeContentSender } from '../utils/security/message-sender.js';
+import { tSync } from '../locales.js';
 
 // Simple handlers
 import {
@@ -44,23 +46,16 @@ import {
 } from './processing.js';
 
 // Video handlers
-import {
-  handleYoutubeSubtitlesResult,
-  handleExtractYouTubeSubtitlesForSummary
-} from './video.js';
+import { handleExtractYouTubeSubtitlesForSummary } from './video.js';
 
 // Complex handlers
 import {
   handleExtractContentOnly,
   handleGenerateSummary,
-  handleGenerateKeyTheses,
-  handleLogModelDropdown
+  handleGenerateKeyTheses
 } from './complex.js';
 
 import { requestCancelKeyThesesGeneration } from './key-theses.js';
-
-// Offscreen handlers
-import { closeOffscreenForVoiceSwitch } from '../api/offline-tts-offscreen.js';
 
 /**
  * Route message to appropriate handler
@@ -89,15 +84,11 @@ const VALID_ACTIONS = [
   // Processing handlers
   'processArticle', 'generatePdfDebugger', 'printJobFailed',
   // Video handlers
-  'youtubeSubtitlesResult', 'extractYouTubeSubtitlesForSummary',
+  'extractYouTubeSubtitlesForSummary',
   // Complex handlers
-  'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'cancelKeyThesesGeneration', 'logModelDropdown',
+  'extractContentOnly', 'generateSummary', 'generateKeyTheses', 'cancelKeyThesesGeneration',
   // TTS Progress
-  'TTS_PROGRESS',
-  // Log export
-  'exportLogs',
-  // Offscreen handlers
-  'closeOffscreenForVoiceSwitch'
+  'TTS_PROGRESS'
 ];
 
 /**
@@ -107,43 +98,8 @@ const VALID_ACTIONS = [
  * @returns {boolean} True if sender is trusted for this action
  */
 function validateMessageOrigin(request, sender) {
-  // Define privileged actions that require origin validation
-  const privilegedActions = [
-    'processArticle',
-    'generateSummary',
-    'generateKeyTheses',
-    'extractContentOnly',
-    'generatePdfDebugger',
-    'printJobFailed',
-    'exportSettings',
-    'importSettings'
-  ];
-
-  if (!privilegedActions.includes(request.action)) {
-    return true; // Not a privileged action, allow
-  }
-
-  // For privileged actions, only allow from this extension itself
-  if (!sender.id || sender.id !== chrome.runtime.id) {
-    logWarn('Rejected privileged action from external sender', {
-      action: request.action,
-      senderId: sender.id,
-      expectedId: chrome.runtime.id
-    });
-    return false;
-  }
-
-  // Additional check: sender URL should be from extension context
-  if (sender.url && !sender.url.startsWith(`chrome-extension://${chrome.runtime.id}`)) {
-    logWarn('Rejected privileged action from invalid sender URL', {
-      action: request.action,
-      senderUrl: sender.url,
-      extensionUrl: `chrome-extension://${chrome.runtime.id}`
-    });
-    return false;
-  }
-
-  return true;
+  if (isTrustedExtensionSender(sender)) return true;
+  return request.action === 'logError' && isYouTubeContentSender(sender);
 }
 
 /**
@@ -342,14 +298,8 @@ function validateMessageParams(request) {
 }
 
 export function routeMessage(request, sender, sendResponse, deps) {
-  if (request?.target === 'offscreen') return false;
-  if (deps.initializationReady) {
-    const { initializationReady, ...readyDeps } = deps;
-    Promise.resolve(initializationReady)
-      .then(() => routeMessage(request, sender, sendResponse, readyDeps))
-      .catch((error) => sendResponse({ success: false, error: error?.message || 'Background initialization failed', ...getErrorTranslation(error) }));
-    return true;
-  }
+  if (request?.target === 'offscreen' || request?.target === 'pdf-progress' ||
+      request?.action === 'youtubeSubtitlesResult' || request?.type === 'ClipAIbleYouTubeSubtitles') return false;
   const {
     startArticleProcessing,
     processWithSelectorMode,
@@ -421,7 +371,8 @@ export function routeMessage(request, sender, sendResponse, deps) {
       action: request.action,
       messageSize: JSON.stringify(request).length
     });
-    safeSendResponse({ success: false, error: 'Message too large' });
+    safeSendResponse({ success: false, error: tSync('errorMessageTooLarge', 'en'),
+      translationKey: 'errorMessageTooLarge', translationParams: {} });
     return true;
   }
   
@@ -441,6 +392,18 @@ export function routeMessage(request, sender, sendResponse, deps) {
   }
   
   // Skip verbose logging for frequent operations
+  if (deps.ensureInitialization) {
+    const { ensureInitialization, ...readyDeps } = deps;
+    const retry = ['processArticle', 'extractContentOnly', 'generateSummary', 'generateKeyTheses',
+      'cancelProcessing', 'cancelKeyThesesGeneration', 'importSettings', 'exportSettings',
+      'clearStats', 'deleteHistoryItem', 'clearSelectorCache', 'deleteDomainFromCache'].includes(request.action);
+    Promise.resolve().then(() => ensureInitialization(retry))
+      .then(() => routeMessage(request, sender, safeSendResponse, readyDeps))
+      .catch(error => safeSendResponse({ success: false, error: tSync('errorBackgroundInitializationFailed', 'en'),
+        translationKey: 'errorBackgroundInitializationFailed', translationParams: {}, ...getErrorTranslation(error) }));
+    return true;
+  }
+
   const frequentActions = ['getState', 'TTS_PROGRESS', 'logSetting'];
   const isFrequentAction = frequentActions.includes(request.action);
   
@@ -538,7 +501,6 @@ export function routeMessage(request, sender, sendResponse, deps) {
     'printJobFailed': () => handlePrintJobFailed(request, sender, sendResponse, stopKeepAlive),
     
     // Video handlers
-    'youtubeSubtitlesResult': () => handleYoutubeSubtitlesResult(request, sender, sendResponse),
     'extractYouTubeSubtitlesForSummary': () => handleExtractYouTubeSubtitlesForSummary(request, sender, sendResponse),
     
     // Complex handlers
@@ -559,7 +521,6 @@ export function routeMessage(request, sender, sendResponse, deps) {
       sendResponse({ ...result, cancelled: !result.ignored });
       return true;
     },
-    'logModelDropdown': () => handleLogModelDropdown(request, sender, sendResponse),
     
     // TTS Progress handler (from offscreen.js)
     'TTS_PROGRESS': () => {
@@ -627,62 +588,8 @@ export function routeMessage(request, sender, sendResponse, deps) {
       }
     },
     
-    // Log export handler
-    'exportLogs': async () => {
-      log('[ClipAIble] === exportLogs handler ===', {
-        timestamp: Date.now()
-      });
-      
-      try {
-        if (deps?.exportAllLogsToFile) {
-          await deps.exportAllLogsToFile();
-          sendResponse({ success: true });
-        } else {
-          sendResponse({ success: false, error: 'exportAllLogsToFile not available' });
-        }
-        return true;
-      } catch (error) {
-        logError('[ClipAIble] Failed to export logs', {
-          error: error.message,
-          timestamp: Date.now()
-        });
-        sendResponse({ success: false, error: error.message, ...getErrorTranslation(error) });
-        return true;
-      }
-    },
-    
-    // Offscreen handlers
-    'closeOffscreenForVoiceSwitch': async () => {
-      log('[ClipAIble] === closeOffscreenForVoiceSwitch handler ===', {
-        previousVoice: request.data?.previousVoice,
-        newVoice: request.data?.newVoice,
-        messageId: request.data?.messageId,
-        timestamp: Date.now()
-      });
-      
-      try {
-        const closed = await closeOffscreenForVoiceSwitch(request.data?.processingRunId);
-        sendResponse({ success: closed });
-        return true;
-      } catch (error) {
-        logError('[ClipAIble] Failed to close offscreen for voice switch', {
-          error: error.message,
-          timestamp: Date.now()
-        });
-        sendResponse({ success: false, error: error.message, ...getErrorTranslation(error) });
-        return true;
-      }
-    }
   };
-  
-  // Special case: youtubeSubtitlesResult can also come with type check
-  // @ts-ignore - request may have type property
-  if ((request.action === 'youtubeSubtitlesResult' || 
-       (request.type === 'ClipAIbleYouTubeSubtitles' && request.action === 'youtubeSubtitlesResult')) &&
-      handlers['youtubeSubtitlesResult']) {
-    return handlers['youtubeSubtitlesResult']();
-  }
-  
+
   // CRITICAL: Prevent concurrent processArticle requests
   // Check if processing is already in progress for processArticle action
   if (request.action === 'processArticle') {
@@ -693,7 +600,8 @@ export function routeMessage(request, sender, sendResponse, deps) {
         currentStatus: currentState.status,
         timestamp: Date.now()
       });
-      safeSendResponse({ error: 'Processing already in progress' });
+      safeSendResponse({ started: false, success: false, error: tSync('errorProcessingNotStarted', 'en'),
+        translationKey: 'errorProcessingNotStarted', translationParams: {} });
       return true;
     }
   }

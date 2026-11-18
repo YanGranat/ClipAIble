@@ -5,6 +5,8 @@
 import { CONTENT_THRESHOLDS, IMAGE_THRESHOLDS, SCORING_THRESHOLDS, CONTENT_SELECTORS, STANDFIRST_SELECTORS, AUTHOR_SELECTORS, DATE_SELECTORS, FEATURED_IMAGE_SELECTORS } from '../constants/content-thresholds.js';
 import { NAVIGATION_PATTERNS, PAYWALL_PATTERNS, RELATED_ARTICLES_PATTERNS, COURSE_AD_PATTERNS, EXCLUDED_CLASSES, PAYWALL_CLASSES, LOGO_PATTERNS, TRACKING_PATTERNS, PLACEHOLDER_PATTERNS } from '../patterns/exclusion-patterns.js';
 
+export const CANDIDATE_SELECTOR = 'h1,h2,h3,h4,h5,h6,p,img,figure,figcaption,blockquote,pre,code,ul,ol,table,div,hr';
+
 /**
  * Flatten paywall patterns from language-keyed object to array
  * @param {Record<string, string[]>} patterns - Patterns by language
@@ -156,7 +158,7 @@ export function getInlinedConstantsCode() {
     const STANDFIRST_SELECTORS = ${JSON.stringify(STANDFIRST_SELECTORS, null, 6).replace(/\n/g, '\n    ')};
     
     // Candidate element selector (used by parse.js)
-    const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table, div';
+    const CANDIDATE_SELECTOR = ${JSON.stringify(CANDIDATE_SELECTOR)};
     
     // CONSTANTS object (used by runExtraction)
     const CONSTANTS = {

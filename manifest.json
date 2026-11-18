@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClipAIble",
-  "version": "3.3.10",
+  "version": "3.3.11",
   "minimum_chrome_version": "116",
   "description": "Save web articles as PDF, EPUB, FB2, Markdown, or audio with automatic extraction, AI extraction, and translation.",
   "content_security_policy": {
@@ -47,33 +47,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "config/pdf-styles.css",
-        "print/print.html",
-        "lib/*",
-        "lib/pdfjs/*",
-        "lib/piper-wasm/*",
-        "scripts/api/offline-tts-offscreen.js",
-        "scripts/api/piper-voices-mapping.js",
-        "scripts/api/tts-queue.js",
-        "offscreen.html",
-        "offscreen.js",
-        "dist/offscreen-bundle.js",
-        "dist/offscreen-bundle.js.map",
-        "dist/tts-worker-bundle.js",
-        "scripts/utils/logging.js",
-        "scripts/utils/security.js",
-        "scripts/utils/config.js",
-        "node_modules/onnxruntime-web/dist/ort.all.min.js",
-        "node_modules/onnxruntime-web/dist/ort.min.js",
-        "node_modules/onnxruntime-web/dist/*.wasm",
-        "node_modules/onnxruntime-web/dist/*",
-        "lib/onnxruntime-web-wrapper.js"
-      ],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }

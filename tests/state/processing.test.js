@@ -5,7 +5,6 @@ import {
   getProcessingState,
   updateState,
   resetState,
-  setResult,
   isCancelled,
   startProcessing,
   setError,
@@ -172,21 +171,12 @@ describe('processing state', () => {
       expect(state.isProcessing).toBe(false);
       expect(state.isCancelled).toBe(false);
       expect(state.error).toBe(null);
-      expect(state.result).toBe(null);
+      expect(state).not.toHaveProperty('result');
     });
 
     it('should clear storage', async () => {
       await resetState();
       expect(mockStorage.local.remove).toHaveBeenCalledWith(['processingState']);
-    });
-  });
-
-  describe('setResult', () => {
-    it('should set processing result', () => {
-      const result = { url: 'test.pdf', size: 1024 };
-      setResult(result);
-      const state = getProcessingState();
-      expect(state.result).toEqual(result);
     });
   });
 

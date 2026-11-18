@@ -18,10 +18,6 @@ vi.mock('../../scripts/utils/logging.js', () => ({
   logDebug: vi.fn()
 }));
 
-vi.mock('../../scripts/utils/validation.js', () => ({
-  validateAudioApiKeys: vi.fn(async () => true)
-}));
-
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
   getUILanguageCached: vi.fn(async () => 'en'),
   updateProgress: vi.fn(async () => {})

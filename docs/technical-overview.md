@@ -51,7 +51,7 @@ Processing state is maintained through `scripts/state/processing.js` with the fo
 
 The extension integrates with 6 AI providers through unified API interfaces:
 
-- **OpenAI**: GPT models with streaming support
+- **OpenAI**: GPT models with text and image input
 - **Claude**: Anthropic models with image processing
 - **Gemini**: Google models with multimodal capabilities
 - **Grok**: xAI models
@@ -63,11 +63,11 @@ The extension integrates with 6 AI providers through unified API interfaces:
 Audio generation supports 6 TTS services:
 
 - **OpenAI TTS**: Realtime synthesis saved as WAV, with voice selection and speed control (0.25x-1.5x)
-- **ElevenLabs**: High-quality voices with advanced parameters and speed control (0.1x-2.0x)
+- **ElevenLabs**: Voice selection and model-specific parameters, including speed control (0.7x-1.2x) on supported models
 - **Google Gemini**: WAV generation with voice styles (no speed control)
-- **Qwen**: Chinese TTS service with language detection (no speed control)
+- **Qwen**: Speech synthesis with voice selection and speed control (0.5x-2.0x) on Qwen Audio models
 - **Respeecher**: Specialized voices for English and Ukrainian with emotional parameters (no speed control)
-- **Piper**: Offline WebAssembly-based TTS with speed control (0.5x-2.0x, supports 20+ languages)
+- **Piper**: Offline WebAssembly-based TTS with speed control (0.5x-2.0x)
 
 ## Content Processing
 
@@ -84,7 +84,7 @@ The system processes these content elements:
 - `heading`: Headings with level 1-6 hierarchy
 - `paragraph`: Text paragraphs with inline formatting
 - `image`: Images with captions and alt text
-- `code`: Code blocks with syntax highlighting
+- `code`: Code blocks with preserved whitespace and language labels
 - `list`: Ordered and unordered lists
 - `quote`: Blockquotes
 - `table`: Tabular data
@@ -162,7 +162,7 @@ Creates structured e-books with:
 Produces plain text with:
 - Heading hierarchy preservation
 - List formatting
-- Code block syntax highlighting
+- Fenced code blocks with language labels
 - Link preservation
 
 ### Audio Generation
@@ -170,7 +170,7 @@ Produces plain text with:
 Creates audio files using:
 - Multiple TTS providers with unified API
 - Voice selection and customization
-- Speed control (varies by provider: OpenAI/ElevenLabs/Piper support it, others don't)
+- Speed control where supported by the selected provider and model
 - Format support (MP3, WAV, depending on provider)
 - Text preprocessing for better TTS results
 - Chunked processing for long content

@@ -227,11 +227,10 @@ export async function initTTSWorker() {
   
   try {
     return await initPromise;
-  } catch (error) {
+  } finally {
     if (state.getTTSWorkerInitPromise() === initPromise) {
       state.clearTTSWorkerInitPromise();
     }
-    throw error;
   }
 }
 

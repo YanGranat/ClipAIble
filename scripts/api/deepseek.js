@@ -1,3 +1,4 @@
+import { createApiError, isApiBoundaryError } from './http-errors.js';
 import { fetchBufferedResponse } from './fetch-buffered-response.js';
 import { parseBase64Image } from './image-data.js';
 import { assertCompleteAIResponse } from './response-validation.js';
@@ -23,6 +24,9 @@ export function getDeepSeekRequestConfig(model) {
   }
   if (metadata?.reasoningEffort && metadata.reasoningEnabled !== false) {
     config.reasoning_effort = metadata.reasoningEffort;
+  }
+  if (metadata && ['deepseek-flash', 'deepseek-v4-pro'].includes(config.model)) {
+    config.max_tokens = metadata.reasoningEffort === 'max' && metadata.reasoningEnabled !== false ? 131072 : 65536;
   }
   return config;
 }
@@ -65,7 +69,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
   log('callDeepSeekAPI: Model determined', { modelName, originalModel: model, isDefault: !model });
   
   // Internal function to make the actual API call
-  async function makeRequest(withResponseFormat, stream = true) {
+  async function makeRequest(withResponseFormat, stream = true, retrySignal) {
     options.checkCancelled?.();
     const performFetch = stream ? fetch : (url, init) => fetchBufferedResponse(url, init, CONFIG.API_TIMEOUT_MS, options);
     const makeRequestStartTime = Date.now();
@@ -98,41 +102,25 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       note: 'Streaming mode avoids Chrome 30-second timeout on large Brotli-compressed responses by decoding incrementally'
     });
     
-    // Log system and user prompts separately before creating request body
-    log('makeRequest: System and user prompts (BEFORE request body creation)', {
-      timestamp: Date.now(),
-      systemPromptLength: systemPrompt.length,
-      systemPromptSizeKB: (systemPrompt.length / 1024).toFixed(2),
-      systemPromptSizeMB: (systemPrompt.length / (1024 * 1024)).toFixed(2),
-      systemPromptFull: systemPrompt, // Full system prompt for debugging
-      systemPromptPreview: systemPrompt.substring(0, 500),
-      userPromptLength: userPrompt.length,
-      userPromptSizeKB: (userPrompt.length / 1024).toFixed(2),
-      userPromptSizeMB: (userPrompt.length / (1024 * 1024)).toFixed(2),
-      userPromptFull: userPrompt, // Full user prompt (HTML page) for debugging
-      userPromptPreview: userPrompt.substring(0, 1000),
-      totalPromptLength: systemPrompt.length + userPrompt.length,
-      totalPromptSizeKB: ((systemPrompt.length + userPrompt.length) / 1024).toFixed(2),
-      totalPromptSizeMB: ((systemPrompt.length + userPrompt.length) / (1024 * 1024)).toFixed(2)
-    });
-    
-    const requestBodyJson = JSON.stringify(requestBody);
-    log('makeRequest: Request body prepared', {
+    logDebug('DeepSeek request prepared', {
       model: requestBody.model,
       messagesCount: requestBody.messages.length,
       hasResponseFormat: !!requestBody.response_format,
-      requestBodySize: requestBodyJson.length,
-      requestBodySizeKB: (requestBodyJson.length / 1024).toFixed(2),
-      requestBodySizeMB: (requestBodyJson.length / (1024 * 1024)).toFixed(2),
-      requestBodyPreview: requestBodyJson.substring(0, 500),
-      requestBodyFull: requestBodyJson, // Full request body for debugging
       systemPromptLength: systemPrompt.length,
-      userPromptLength: userPrompt.length,
-      note: 'System and user prompts logged separately above'
+      userPromptLength: userPrompt.length
     });
-    
+
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), CONFIG.API_TIMEOUT_MS);
+    const parentSignals = [...new Set([options.signal, retrySignal].filter(Boolean))];
+    const listeners = parentSignals.map(signal => {
+      const listener = () => controller.abort(signal.reason);
+      signal.addEventListener('abort', listener, { once: true });
+      if (signal.aborted) listener();
+      return { signal, listener };
+    });
+    const timeout = setTimeout(() => controller.abort(Object.assign(new DOMException('Request timed out', 'TimeoutError'), {
+      translationKey: 'errorTimeout', translationParams: {}, retryable: false
+    })), CONFIG.API_TIMEOUT_MS);
     const fetchStartTime = Date.now();
     
     log('makeRequest: Starting fetch', {
@@ -145,6 +133,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     });
     
     try {
+      options.onRequestStart?.();
       const fetchResponse = await performFetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -183,50 +172,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       });
       
       // If not ok and retryable, throw error for retry logic
-      if (!fetchResponse.ok) {
-        log('makeRequest: Response not OK', {
-          status: fetchResponse.status,
-          statusText: fetchResponse.statusText,
-          retryableCodes: CONFIG.RETRYABLE_STATUS_CODES
-        });
-        
-        const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-        if (retryableCodes.includes(fetchResponse.status)) {
-          log('makeRequest: Error is retryable, throwing for retry logic', {
-            status: fetchResponse.status
-          });
-          /** @type {Error & {status?: number, response?: Response}} */
-          const error = new Error(`HTTP ${fetchResponse.status}`);
-          error.status = fetchResponse.status;
-          error.response = fetchResponse;
-          throw error;
-        }
-        // Non-retryable error - get error details
-        log('makeRequest: Error is not retryable, getting error details', {
-          status: fetchResponse.status
-        });
-        let errorData;
-        try {
-          errorData = await fetchResponse.json();
-          log('makeRequest: Error data parsed', {
-            errorData: errorData,
-            errorMessage: errorData.error?.message
-          });
-        } catch (e) {
-          log('makeRequest: Failed to parse error data', {
-            parseError: e.message
-          });
-          errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-        }
-        /** @type {Error & {status?: number}} */
-        const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
-        error.status = fetchResponse.status;
-        log('makeRequest: Throwing non-retryable error', {
-          errorMessage: error.message,
-          status: error.status
-        });
-        throw error;
-      }
+      if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'deepseek');
       
       const makeRequestTime = Date.now() - makeRequestStartTime;
       log('=== makeRequest: FUNCTION EXIT (SUCCESS) ===', {
@@ -238,10 +184,11 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       
       return fetchResponse;
     } catch (e) {
-      try { options.checkCancelled?.(); }
-      catch (cancelError) { controller.abort(); throw cancelError; }
+      controller.abort(e);
+      await options.checkCancelled?.();
       throw e;
     } finally {
+      for (const { signal, listener } of listeners) signal.removeEventListener('abort', listener);
       if (timeout) {
         clearTimeout(timeout);
       }
@@ -291,12 +238,12 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       
       // Use retry wrapper for fetch
       response = await callWithRetry(
-        async () => {
+        async ({ signal } = {}) => {
           log('callWithRetry: Calling makeRequest', {
             timestamp: Date.now(),
             useResponseFormat: useResponseFormat
           });
-          const result = await makeRequest(useResponseFormat);
+          const result = await makeRequest(useResponseFormat, true, signal);
           log('callWithRetry: makeRequest completed', {
             timestamp: Date.now(),
             responseStatus: result.status,
@@ -330,121 +277,9 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       }
     }
   } catch (fetchError) {
+    if (fetchError instanceof TypeError) Object.assign(fetchError, { code: 'network_error', translationKey: 'errorNetwork', translationParams: {} });
     await options.checkCancelled?.();
-    if (fetchError.name === 'AbortError') {
-      // Normalize timeout error with context
-      const normalized = await handleError(fetchError, {
-        source: 'deepseek',
-        errorType: 'timeoutError',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          errorName: 'AbortError'
-        }
-      });
-      
-      const uiLang = await getUILanguageCached();
-      const userMessage = normalized.userMessage || tSync('errorTimeout', uiLang);
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(userMessage);
-      error.code = normalized.code; // Will be TIMEOUT
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    if (fetchError.status) {
-      // Error from retry logic - already has status
-      let errorData;
-      try {
-        errorData = await fetchError.response?.json();
-      } catch (e) {
-        errorData = { error: { message: `HTTP ${fetchError.status}` } };
-      }
-      
-      // Provide more helpful error messages for common errors
-      let errorMessage = errorData?.error?.message || `API error: ${fetchError.status}`;
-      if (fetchError.status === 404) {
-        errorMessage = `Model "${modelName}" not found. The model may not be available yet or the name may be incorrect. Please select an available DeepSeek model.`;
-      } else if (fetchError.status === 401) {
-        errorMessage = 'DeepSeek API key is invalid or missing. Please check your API key in settings.';
-      } else if (fetchError.status === 403) {
-        errorMessage = 'DeepSeek API access forbidden. Please check your API key permissions.';
-      } else if (fetchError.status === 429) {
-        errorMessage = 'DeepSeek API rate limit exceeded. Please try again later.';
-      } else if (fetchError.status === 400) {
-        // Check if it's a prompt length issue
-        const errorText = errorData?.error?.message || '';
-        if (errorText.toLowerCase().includes('length') || errorText.toLowerCase().includes('size') || errorText.toLowerCase().includes('token') || errorText.toLowerCase().includes('limit')) {
-          errorMessage = `DeepSeek API: Prompt too long (${(systemPrompt.length + userPrompt.length).toLocaleString()} chars). The page is too large for analysis. Try a smaller page or use extract mode instead of selector mode.`;
-        } else {
-          errorMessage = `DeepSeek API error: ${errorText || '400 Bad Request'}. The request may be too large or invalid.`;
-        }
-      }
-      
-      // Normalize HTTP error with context (createUserMessage will handle status-specific messages)
-      /** @type {import('../types.js').ExtendedError} */
-      const httpError = new Error(`HTTP ${fetchError.status}`);
-      httpError.status = fetchError.status;
-      const normalized = await handleError(httpError, {
-        source: 'deepseek',
-        errorType: 'httpError',
-        logError: true,
-        createUserMessage: true, // Use centralized user-friendly message with status handling
-        context: {
-          operation: 'fetchRequest',
-          model: modelName,
-          statusCode: fetchError.status,
-          errorData: errorData?.error
-        }
-      });
-      
-      // Use centralized user message with fallback
-      const uiLang = await getUILanguageCached();
-      let finalErrorMessage = normalized.userMessage;
-      if (!finalErrorMessage) {
-        // Fallback to manual messages if createUserMessage failed
-        finalErrorMessage = errorData?.error?.message || tSync('errorApiError', uiLang).replace('{status}', String(fetchError.status));
-        if (fetchError.status === 401) {
-          finalErrorMessage = tSync('errorApiKeyInvalid', uiLang);
-        } else if (fetchError.status === 403) {
-          finalErrorMessage = tSync('errorApiAccessForbidden', uiLang);
-        } else if (fetchError.status === 429) {
-          finalErrorMessage = tSync('errorRateLimit', uiLang);
-        }
-      }
-      
-      /** @type {import('../types.js').ExtendedError} */
-      const error = new Error(finalErrorMessage);
-      error.code = normalized.code; // Will be AUTH_ERROR, RATE_LIMIT, or PROVIDER_ERROR
-      error.status = fetchError.status;
-      error.originalError = normalized.originalError;
-      error.context = normalized.context;
-      throw error;
-    }
-    
-    // Network error (no status, not AbortError)
-    const normalized = await handleError(fetchError, {
-      source: 'deepseek',
-      errorType: 'networkError',
-      logError: true,
-      createUserMessage: true, // Use centralized user-friendly message
-      context: {
-        operation: 'fetchRequest',
-        model: modelName,
-        errorName: fetchError.name
-      }
-    });
-    
-    const uiLang = await getUILanguageCached();
-    const userMessage = normalized.userMessage || tSync('errorNetwork', uiLang);
-    /** @type {import('../types.js').ExtendedError} */
-    const error = new Error(userMessage);
-    error.code = normalized.code; // Will be NETWORK_ERROR
-    error.originalError = normalized.originalError;
-    error.context = normalized.context;
-    throw error;
+    throw fetchError;
   }
 
   const responseTime = Date.now() - requestStartTime;
@@ -524,7 +359,8 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     // CRITICAL: Use streaming (SSE) to avoid Chrome's 30-second timeout on large Brotli responses
     // Streaming allows response to be decoded incrementally as chunks arrive, avoiding the timeout
     // Thinking responses use the existing extended stream budget.
-    const readTimeout = modelConfig.thinking?.type === 'enabled' || (!modelConfig.thinking && modelName.includes('reasoner')) ? 600000 : 180000;
+      const streamBudget = modelConfig.thinking?.type === 'enabled' || (!modelConfig.thinking && modelName.includes('reasoner')) ? 600000 : 180000;
+      const readTimeout = Math.max(1, Math.min(streamBudget, CONFIG.API_TIMEOUT_MS - (Date.now() - functionStartTime)));
     let readTimeoutId = null;
     let readCompleted = false;
     
@@ -562,6 +398,22 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
     
     // Read SSE stream and accumulate content from delta chunks
     let activeReader;
+    let rejectCancelled;
+    const cancelled = new Promise((_, reject) => { rejectCancelled = reject; });
+    const cancelRead = error => {
+      rejectCancelled(error instanceof Error ? error : new DOMException('Request cancelled', 'AbortError'));
+      void activeReader?.cancel().catch(() => {});
+    };
+    const onAbort = () => cancelRead(options.signal.reason);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    let checkingOwner = false;
+    const ownerPoll = options.checkCancelled ? setInterval(async () => {
+      if (checkingOwner) return;
+      checkingOwner = true;
+      try { await options.checkCancelled(); } catch (error) { cancelRead(error); }
+      finally { checkingOwner = false; }
+    }, 50) : undefined;
+    if (options.signal?.aborted) onAbort();
     const readPromise = (async () => {
       const reader = response.body.getReader();
       activeReader = reader;
@@ -579,9 +431,9 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       
       try {
         while (!streamDone) {
-          options.checkCancelled?.();
+          await options.checkCancelled?.();
           const { done, value } = await reader.read();
-          options.checkCancelled?.();
+          await options.checkCancelled?.();
           if (done) {
             readerFinished = true;
             break;
@@ -633,6 +485,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
                   usageTokens.total_tokens = chunk.usage.total_tokens || usageTokens.total_tokens;
                 }
               } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
                 logDebug('callDeepSeekAPI: Failed to parse SSE chunk', {
                   chunk: jsonStr.substring(0, 200),
                   error: parseError.message
@@ -669,6 +522,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
                 finishReason = chunk.choices[0].finish_reason;
               }
             } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
               throw parseError;
             }
           }
@@ -718,6 +572,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
         
         return { result: finalResult, responseText: fullContent };
       } catch (streamError) {
+    if (isApiBoundaryError(streamError)) throw streamError;
         if (progressInterval) clearInterval(progressInterval);
         
         throw streamError;
@@ -747,14 +602,16 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
             contentEncoding: response?.headers?.get('content-encoding'),
             note: `Response body reading exceeded ${Math.round(readTimeout / 60000)} minute timeout - may be very large response with reasoning tokens`
           });
-          reject(new Error(`Response body read timeout after ${Math.round(readTimeout / 60000)} minutes`));
+          reject(Object.assign(new DOMException('Response body timed out', 'TimeoutError'), {
+            translationKey: 'errorTimeout', translationParams: {}, retryable: false
+          }));
           void activeReader?.cancel().catch(() => {});
         }
       }, readTimeout);
     });
     
     try {
-      result = await Promise.race([readPromise, timeoutPromise]);
+      result = await Promise.race([readPromise, timeoutPromise, cancelled]);
       
       const jsonEndTime = Date.now();
       const jsonParseTime = jsonEndTime - jsonStartTime;
@@ -786,6 +643,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
         note: 'Response read via SSE streaming (decoded incrementally) and content accumulated successfully'
       });
     } catch (readError) {
+    if (isApiBoundaryError(readError)) throw readError;
       if (readTimeoutId) clearTimeout(readTimeoutId);
       if (progressInterval) clearInterval(progressInterval);
       const readTime = Date.now() - readStartTime;
@@ -804,6 +662,11 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
         timestamp: Date.now()
       });
       throw readError;
+    } finally {
+      clearTimeout(readTimeoutId);
+      clearInterval(progressInterval);
+      clearInterval(ownerPoll);
+      options.signal?.removeEventListener('abort', onAbort);
     }
     
     // Result already parsed from response.json(), so we can skip JSON.parse
@@ -831,6 +694,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       note: 'Full response size and content information'
     });
   } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
     await options.checkCancelled?.();
     // Log the response text we tried to parse if available
     if (responseText) {
@@ -868,6 +732,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
           // Successfully parsed via json() fallback - continue processing
           responseText = JSON.stringify(result);
         } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
           logError('DeepSeek response.json() fallback also failed', {
             jsonError: jsonError.message,
             parseError: parseError.message,
@@ -1062,6 +927,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       parsedKeys: parsed && typeof parsed === 'object' ? Object.keys(parsed).slice(0, 10) : null
     });
   } catch (jsonError) {
+    if (isApiBoundaryError(jsonError)) throw jsonError;
     log('Initial JSON parse failed, attempting extraction', {
       model: modelName,
       contentLength: jsonContent.length,
@@ -1212,6 +1078,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
           // Successfully parsed - return it immediately
           return parsed;
         } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
           logDebug('Extracted JSON still invalid', {
             model: modelName,
             extractedLength: extractedJson.length,
@@ -1231,6 +1098,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
               });
               break;
             } catch (e) {
+    if (isApiBoundaryError(e)) throw e;
               // Continue trying
             }
           }
@@ -1297,6 +1165,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
               });
               return parsed;
             } catch (e) {
+    if (isApiBoundaryError(e)) throw e;
               // Failed to reconstruct
             }
           }
@@ -1396,10 +1265,12 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
               retryLength: retryJsonContent.length
             });
           } catch (retryJsonError) {
+    if (isApiBoundaryError(retryJsonError)) throw retryJsonError;
             // Still not JSON - fall through to original error
           }
         }
       } catch (retryError) {
+    if (isApiBoundaryError(retryError)) throw retryError;
         // Retry failed - fall through to original error
         logDebug('DeepSeek retry without response_format failed', {
           model: modelName,
@@ -1510,11 +1381,11 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
     });
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
 
         
         try {
-          const fetchResponse = await fetchBufferedResponse('https://api.deepseek.com/v1/chat/completions', {
+          const fetchResponse = await fetchBufferedResponse('https://api.deepseek.com/v1/chat/completions', { signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1523,32 +1394,12 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
             body: JSON.stringify(requestBody)
           }, CONFIG.API_TIMEOUT_MS, options);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-
-            throw error;
-          }
+          if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'deepseek');
           
 
           return fetchResponse;
         } catch (e) {
+    if (isApiBoundaryError(e)) throw e;
 
           throw e;
         }
@@ -1590,6 +1441,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
       try {
         return JSON.parse(jsonContent);
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // Try to extract JSON from beginning if response starts with JSON
         if (jsonContent.startsWith('{') || jsonContent.startsWith('[')) {
           let jsonEnd = -1;
@@ -1640,6 +1492,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
               });
               return JSON.parse(extractedJson);
             } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
               // Fall through to original error
             }
           }
@@ -1652,6 +1505,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
     
     return content;
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     await options.checkCancelled?.();
     logError('DeepSeek API call with image failed', error);
     throw error;
@@ -1757,11 +1611,11 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
     });
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal } = {}) => {
 
         
         try {
-          const fetchResponse = await fetchBufferedResponse('https://api.deepseek.com/v1/chat/completions', {
+          const fetchResponse = await fetchBufferedResponse('https://api.deepseek.com/v1/chat/completions', { signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1770,32 +1624,12 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
             body: JSON.stringify(requestBody)
           }, CONFIG.API_TIMEOUT_MS, options);
           
-          if (!fetchResponse.ok) {
-            const retryableCodes = CONFIG.RETRYABLE_STATUS_CODES;
-            if (retryableCodes.includes(fetchResponse.status)) {
-              /** @type {Error & {status?: number, response?: Response}} */
-              const error = new Error(`HTTP ${fetchResponse.status}`);
-              error.status = fetchResponse.status;
-              error.response = fetchResponse;
-
-              throw error;
-            }
-            let errorData;
-            try {
-              errorData = await fetchResponse.json();
-            } catch (e) {
-              errorData = { error: { message: `HTTP ${fetchResponse.status}` } };
-            }
-            /** @type {Error & {status?: number}} */
-            const error = new Error(errorData.error?.message || `API error: ${fetchResponse.status}`);
-            error.status = fetchResponse.status;
-
-            throw error;
-          }
+          if (!fetchResponse.ok) throw await createApiError(fetchResponse, 'deepseek');
           
 
           return fetchResponse;
         } catch (e) {
+    if (isApiBoundaryError(e)) throw e;
 
           throw e;
         }
@@ -1838,6 +1672,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
       try {
         result = JSON.parse(jsonContent);
       } catch (parseError) {
+    if (isApiBoundaryError(parseError)) throw parseError;
         // Try to extract JSON from beginning if response starts with JSON
         if (jsonContent.startsWith('{') || jsonContent.startsWith('[')) {
           let jsonEnd = -1;
@@ -1888,6 +1723,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
               });
               result = JSON.parse(extractedJson);
             } catch (extractError) {
+    if (isApiBoundaryError(extractError)) throw extractError;
               // Fall through to original error
               logError('Failed to parse DeepSeek response as JSON', { content, parseError });
               throw new Error(`Invalid JSON response from DeepSeek: ${parseError.message}`);
@@ -1928,6 +1764,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
     
     return responseData;
   } catch (error) {
+    if (isApiBoundaryError(error)) throw error;
     await options.checkCancelled?.();
     logError('DeepSeek API call with image and history failed', error);
     throw error;

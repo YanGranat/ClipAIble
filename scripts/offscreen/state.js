@@ -145,6 +145,28 @@ class OffscreenState {
     this.activePredictCalls = Math.max(0, (this.activePredictCalls || 0) - 1);
   }
 
+  /** Retire only the captured worker, retaining the active processing owner. */
+  retireTTSWorker(expectedWorker = this.ttsWorker, error = new Error('TTS Worker restarted')) {
+    if (expectedWorker !== this.ttsWorker) return false;
+    this.ttsWorker = null;
+    this.clearTTSWorkerInitPromise();
+    this.clearWorkerInactivityTimeout();
+    this.activePredictCalls = 0;
+    const requests = [...this.workerRequests];
+    this.workerRequests.clear();
+    for (const cancel of requests) {
+      try { cancel(error); } catch (failure) {
+        logWarn('[ClipAIble Offscreen] Failed to release a worker request', { error: failure.message });
+      }
+    }
+    if (expectedWorker) {
+      try { expectedWorker.terminate(); } catch (failure) {
+        logWarn('[ClipAIble Offscreen] Failed to retire a worker', { error: failure.message });
+      }
+    }
+    return true;
+  }
+
   /**
    * Cleanup all TTS resources to prevent memory leaks
    * Should be called when offscreen document is closing or when switching voices
@@ -157,33 +179,7 @@ class OffscreenState {
       hasWorkerTimeout: !!this.workerInactivityTimeout
     });
     this.processingRunId = null;
-    const requests = [...this.workerRequests];
-    this.workerRequests.clear();
-    for (const cancel of requests) {
-      try {
-        cancel(new Error('TTS processing cancelled'));
-      } catch (error) {
-        logWarn('[ClipAIble Offscreen] Failed to cancel a worker request', { error: error.message });
-      }
-    }
-    
-    // Clear worker inactivity timeout
-    this.clearWorkerInactivityTimeout();
-    
-    // Terminate TTS Worker if exists
-    if (this.ttsWorker) {
-      try {
-        log('[ClipAIble Offscreen] Terminating TTS Worker during cleanup', {
-          activePredictCalls: this.getActivePredictCalls()
-        });
-        this.ttsWorker.terminate();
-        this.ttsWorker = null;
-        this.clearTTSWorkerInitPromise();
-        this.activePredictCalls = 0; // Reset counter on cleanup
-      } catch (error) {
-        logError('[ClipAIble Offscreen] Failed to terminate TTS Worker', error);
-      }
-    }
+    this.retireTTSWorker(this.ttsWorker, new Error('TTS processing cancelled'));
     
     // Cleanup Piper TTS module - release ONNX Runtime sessions
     if (this.ttsModule) {

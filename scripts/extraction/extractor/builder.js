@@ -13,6 +13,7 @@ import * as metadata from './metadata.js';
 import * as images from './images.js';
 import * as standfirst from './standfirst.js';
 import * as parse from './parse.js';
+import * as selectors from './selectors.js';
 import * as fallbacks from './fallbacks.js';
 import { getInlinedConstantsCode, CONSTANTS } from './constants.js';
 
@@ -58,6 +59,7 @@ export function buildInlinedModules() {
     { name: 'Images', code: extractModuleFunctions(images) },
     { name: 'Standfirst', code: extractModuleFunctions(standfirst) },
     { name: 'Parse', code: extractModuleFunctions(parse) },
+    { name: 'Selectors', code: extractModuleFunctions(selectors) },
     { name: 'Fallbacks', code: extractModuleFunctions(fallbacks) }
   ];
   
@@ -127,14 +129,7 @@ export async function generateExtractAutomaticallyInlined() {
  * @param {boolean} enableDebugInfo - Whether to collect debug information (default: false)
  * @returns {Promise<Object>} Extraction result with content, title, author, publishDate, debugInfo
  */
-export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false) {
-  // Log extraction start
-  try {
-    console.log('[ClipAIble] extractAutomaticallyInlined: START', { baseUrl, enableDebugInfo, timestamp: Date.now() });
-  } catch (e) {
-    // Console might not be available
-  }
-  
+export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = false, selectors = null) {
 ${inlinedCode}
 
   // Main extraction logic (inlined from runExtraction)
@@ -149,7 +144,7 @@ ${inlinedCode}
  */
 export function getExtractorVersion() {
   return {
-    version: '3.3.10',
+    version: '3.3.11',
     modules: [
       'dom-utils',
       'text-utils',
@@ -162,6 +157,7 @@ export function getExtractorVersion() {
       'images',
       'standfirst',
       'parse',
+      'selectors',
       'fallbacks',
       'index'
     ]

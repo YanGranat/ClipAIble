@@ -150,7 +150,7 @@ describe('translation model request compatibility', () => {
     }
   });
 
-  it('preserves high translation effort on supported current OpenAI models', async () => {
+  it('preserves the selected translation effort on supported current OpenAI models', async () => {
     const requests = [];
     vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
       const body = JSON.parse(options.body);
@@ -161,7 +161,7 @@ describe('translation model request compatibility', () => {
     expect(await translateBatch(['First paragraph', 'Second paragraph'], 'French', key, 'gpt-6.1-sol-low')).toEqual(['First translated', 'Second translated']);
     for (const body of requests) {
       expect(body.model).toBe('gpt-6.1-sol');
-      expect(body.reasoning_effort).toBe('high');
+      expect(body.reasoning_effort).toBe('low');
     }
   });
 

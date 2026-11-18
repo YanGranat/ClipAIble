@@ -7,7 +7,6 @@ import { log, logError, logWarn, logDebug } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { callAI, getProviderFromModel } from '../api/index.js';
-import { callWithRetry } from '../utils/retry.js';
 import { 
   EXTRACT_SYSTEM_PROMPT,
   buildChunkSystemPrompt,
@@ -16,7 +15,7 @@ import {
   buildSelectorUserPrompt
 } from '../extraction/prompts.js';
 import { splitHtmlIntoChunks, deduplicateContent, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
-import { cleanTitleFromServiceTokens } from '../utils/html.js';
+import { cleanTitleFromServiceTokens, stripHtml } from '../utils/html.js';
 import { detectLanguageByCharacters } from '../translation/index.js';
 import { extractAutomaticallyInlined } from '../extraction/automatic.js';
 import { getUILanguage, tSync } from '../locales.js';
@@ -54,32 +53,20 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model, option
   
   logDebug('Sending request to AI...', { model, promptLength: userPrompt.length });
   
-  // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-  /** @type {import('../types.js').RetryOptions} */
-  const retryOptions = {
-    maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-    delays: CONFIG.RETRY_DELAYS,
-    retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-  };
-  const rawResponse = await callWithRetry(
-    async () => {
-      options.checkCancelled?.();
-      return callAI(systemPrompt, userPrompt, apiKey, model, true, options);
-    },
-    retryOptions
-  );
-  
-  // DETAILED LOGGING: Log full AI response
-  // Using logDebug for detailed logging (service worker context)
-  logDebug('=== FULL AI RESPONSE (SELECTORS) ===', {
-    url,
-    title,
-    model,
-    rawResponse: rawResponse, // FULL RESPONSE - NO TRUNCATION
-    rawResponseType: typeof rawResponse,
-    rawResponseLength: rawResponse ? JSON.stringify(rawResponse).length : 0,
-    timestamp: Date.now()
-  });
+  await options.checkCancelled?.();
+  const rawResponse = await callAI(systemPrompt, userPrompt, apiKey, model, true, options);
+
+  if (CONFIG.LOG_LEVEL === 0 && CONFIG.VERBOSE_LOGGING) {
+    logDebug('=== FULL AI RESPONSE (SELECTORS) ===', {
+      url,
+      title,
+      model,
+      rawResponse: rawResponse, // FULL RESPONSE - NO TRUNCATION
+      rawResponseType: typeof rawResponse,
+      rawResponseLength: rawResponse ? JSON.stringify(rawResponse).length : 0,
+      timestamp: Date.now()
+    });
+  }
   
   const parsed = rawResponse;
   log('Parsed selectors', parsed);
@@ -94,7 +81,7 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model, option
  */
 /**
  * Process content without AI (automatic mode)
- * Can use cached selectors if available and reliable (successCount >= 3)
+ * Reuses cached DOM selectors when they match the current page.
  * @param {import('../types.js').ProcessingData} data - Processing data
  * @param {(selectors: Object, baseUrl: string) => any} [extractFromPageInlined] - Optional extraction function for using cached selectors
  * @returns {Promise<Object>} {title, author, content, publishDate}
@@ -702,6 +689,32 @@ export async function processWithoutAI(data, extractFromPageInlined) {
   };
 }
 
+/** Normalize the HTML contract of article-extraction responses before deduplication. */
+function normalizeHtmlExtractionResponse(result) {
+  if (!Array.isArray(result?.content)) return result;
+  const richText = item => {
+    const copy = { ...item };
+    if (typeof copy.html === 'string') {
+      if (typeof copy.text !== 'string') copy.text = stripHtml(copy.html);
+    } else if (copy.html === undefined && typeof copy.text === 'string' &&
+        (copy.format === undefined || copy.format === 'html')) {
+      copy.html = copy.text;
+      copy.text = stripHtml(copy.text);
+    }
+    return copy;
+  };
+  return { ...result, content: result.content.map(item => {
+    if (!item || typeof item !== 'object') return item;
+    if (item.type === 'code') return { ...item, format: 'text' };
+    if (['paragraph', 'heading', 'quote', 'subtitle'].includes(item.type)) return richText(item);
+    if (item.type === 'list' && Array.isArray(item.items)) {
+      return { ...item, items: item.items.map(value => typeof value === 'string' ? { html: value } :
+        value && typeof value === 'object' && value.html === undefined ? richText(value) : value) };
+    }
+    return { ...item };
+  }) };
+}
+
 /**
  * Process content with extract mode (AI Extract)
  * @param {import('../types.js').ProcessingData} data - Processing data
@@ -764,6 +777,8 @@ export async function processWithExtractMode(data) {
   } else {
     result = await processMultipleChunks(chunks, url, title, apiKey, model, data);
   }
+  await checkCancellation('extracted content publication');
+  if (Array.isArray(result.content)) result.content = filterExtractionNoise(result.content);
   
   log(`✅ AI Extract mode complete: ${result.content?.length || 0} content items extracted`, { title: result.title });
 
@@ -806,20 +821,8 @@ ${html}`;
 
   await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 10);
   
-  // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-  /** @type {import('../types.js').RetryOptions} */
-  const retryOptions2 = {
-    maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-    delays: CONFIG.RETRY_DELAYS,
-    retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
-  };
-  const result = await callWithRetry(
-    async () => {
-      await checkCancellation('single chunk request');
-      return callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true, getAIRequestOptions(data));
-    },
-    retryOptions2
-  );
+  await checkCancellation('single chunk request');
+  const result = normalizeHtmlExtractionResponse(await callAI(EXTRACT_SYSTEM_PROMPT, userPrompt, apiKey, model, true, getAIRequestOptions(data)));
   
   // When jsonResponse=true, callAI returns parsed JSON object (AIResponse), not string
   /** @type {any} */ const resultAny = result;
@@ -863,6 +866,8 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
   const allContent = [];
   let articleTitle = title;
   let publishDate = '';
+  let articleAuthor = '';
+  let detectedLanguage;
   const chunkDurations = [];
 
   for (let i = 0; i < chunks.length; i++) {
@@ -921,20 +926,8 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
     });
 
     try {
-      // Wrap callAI with retry mechanism for reliability (429/5xx errors)
-      /** @type {import('../types.js').RetryOptions} */
-      const retryOptions4 = {
-        maxRetries: 3,
-        delays: [1000, 2000, 4000],
-        retryableStatusCodes: [429, 500, 502, 503, 504]
-      };
-      const result = await callWithRetry(
-        async () => {
-          await checkCancellation('chunk request');
-          return callAI(systemPrompt, userPrompt, apiKey, model, true, getAIRequestOptions(data));
-        },
-        retryOptions4
-      );
+      await checkCancellation('chunk request');
+      const result = normalizeHtmlExtractionResponse(await callAI(systemPrompt, userPrompt, apiKey, model, true, getAIRequestOptions(data)));
       
       // When jsonResponse=true, callAI returns parsed JSON object (AIResponse), not string
       /** @type {any} */ const resultAny = result;
@@ -959,6 +952,8 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
           articleTitle = cleanTitleFromServiceTokens(resultAny.title, resultAny.title);
         }
         if (resultAny.publishDate) publishDate = resultAny.publishDate;
+        articleAuthor = cleanAuthor(resultAny.author || '');
+        detectedLanguage = resultAny.detectedLanguage;
       }
       
       if (resultAny.content && Array.isArray(resultAny.content)) {
@@ -988,54 +983,56 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
   });
   
   const dedupStartTime = Date.now();
-  // FULL ALL CONTENT BEFORE DEDUPLICATION
-  log('=== FULL ALL CONTENT BEFORE DEDUPLICATION (MULTIPLE CHUNKS) ===', {
-    url,
-    title,
-    model,
-    totalChunks: chunks.length,
-    allContentItemsCount: allContent.length,
-    allContentFull: JSON.stringify(allContent, null, 2), // FULL CONTENT - NO TRUNCATION
-    allContentPreview: allContent.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
-      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
-    })),
-    allContentEnd: allContent.slice(-10).map((item, idx) => ({
-      index: allContent.length - 10 + idx,
-      type: item.type,
-      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
-      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
-    })),
-    timestamp: Date.now()
-  });
+  if (CONFIG.LOG_LEVEL === 0 && CONFIG.VERBOSE_LOGGING) {
+    logDebug('=== FULL ALL CONTENT BEFORE DEDUPLICATION (MULTIPLE CHUNKS) ===', {
+      url,
+      title,
+      model,
+      totalChunks: chunks.length,
+      allContentItemsCount: allContent.length,
+      allContentFull: JSON.stringify(allContent, null, 2), // FULL CONTENT - NO TRUNCATION
+      allContentPreview: allContent.slice(0, 10).map((item, idx) => ({
+        index: idx,
+        type: item.type,
+        text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+        textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+      })),
+      allContentEnd: allContent.slice(-10).map((item, idx) => ({
+        index: allContent.length - 10 + idx,
+        type: item.type,
+        text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+        textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+      })),
+      timestamp: Date.now()
+    });
+  }
   
   const deduplicated = deduplicateContent(allContent);
   
-  // FULL DEDUPLICATED CONTENT
-  log('=== FULL DEDUPLICATED CONTENT (MULTIPLE CHUNKS) ===', {
-    url,
-    title,
-    model,
-    totalChunks: chunks.length,
-    deduplicatedItemsCount: deduplicated.length,
-    removedItems: allContent.length - deduplicated.length,
-    deduplicatedContentFull: JSON.stringify(deduplicated, null, 2), // FULL CONTENT - NO TRUNCATION
-    deduplicatedContentPreview: deduplicated.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
-      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
-    })),
-    deduplicatedContentEnd: deduplicated.slice(-10).map((item, idx) => ({
-      index: deduplicated.length - 10 + idx,
-      type: item.type,
-      text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
-      textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
-    })),
-    timestamp: Date.now()
-  });
+  if (CONFIG.LOG_LEVEL === 0 && CONFIG.VERBOSE_LOGGING) {
+    logDebug('=== FULL DEDUPLICATED CONTENT (MULTIPLE CHUNKS) ===', {
+      url,
+      title,
+      model,
+      totalChunks: chunks.length,
+      deduplicatedItemsCount: deduplicated.length,
+      removedItems: allContent.length - deduplicated.length,
+      deduplicatedContentFull: JSON.stringify(deduplicated, null, 2), // FULL CONTENT - NO TRUNCATION
+      deduplicatedContentPreview: deduplicated.slice(0, 10).map((item, idx) => ({
+        index: idx,
+        type: item.type,
+        text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+        textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+      })),
+      deduplicatedContentEnd: deduplicated.slice(-10).map((item, idx) => ({
+        index: deduplicated.length - 10 + idx,
+        type: item.type,
+        text: item.text ? item.text.replace(/<[^>]+>/g, '').trim().substring(0, 300) : null,
+        textLength: item.text ? item.text.replace(/<[^>]+>/g, '').trim().length : 0
+      })),
+      timestamp: Date.now()
+    });
+  }
   const dedupDuration = Date.now() - dedupStartTime;
   const duplicatesRemoved = allContent.length - deduplicated.length;
   
@@ -1046,12 +1043,12 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
     duplicateRate: `${Math.round((duplicatesRemoved / allContent.length) * 100)}%`
   });
 
-  const filtered = filterExtractionNoise(deduplicated);
-
   return {
     title: articleTitle,
-    content: filtered,
-    publishDate: publishDate
+    author: articleAuthor,
+    content: deduplicated,
+    publishDate: publishDate,
+    ...(detectedLanguage ? { detectedLanguage } : {})
   };
 }
 
@@ -1111,7 +1108,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
       target: { tabId: tabId },
       world: 'MAIN',
       func: extractFromPageInlined,
-      args: [selectors, baseUrl]
+      args: [baseUrl, true, selectors]
     });
     log('Script executed', { 
       resultsLength: results?.length,
@@ -1239,6 +1236,11 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
   if (!injectionResult) {
     const uiLang = await getUILanguage();
     throw new Error(tSync('errorScriptNoResult', uiLang));
+  }
+  if (injectionResult.selectorMatched === false || !Array.isArray(injectionResult.content) || !injectionResult.content.length) {
+    throw Object.assign(new Error('The selectors did not match article content.'), {
+      code: 'SELECTOR_MISS', translationKey: 'errorNoContentExtracted', translationParams: {}, retryable: false
+    });
   }
 
   // Log detailed extraction result with full content preview
@@ -1470,8 +1472,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
       log('✅ Selectors received from AI', selectors);
     } catch (error) {
       logError('Failed to get selectors from AI', error);
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('errorSelectorAnalysisFailed', uiLang).replace('{error}', error.message || 'unknown'));
+      throw error;
     }
     
     if (!selectors) {
@@ -1506,10 +1507,13 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
         url
       });
       await invalidateCache(url);
+      if (error.code === 'SELECTOR_MISS') {
+        await checkCancellation('selector cache recovery');
+        return processWithSelectorMode({ ...data, useCache: false }, extractFromPageInlined);
+      }
     }
     logError('Failed to extract content with selectors', error);
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('errorContentExtractionFailed', uiLang).replace('{error}', error.message || 'unknown'));
+    throw error;
   }
   
   if (!extractedContent || !extractedContent.content) {
@@ -1542,9 +1546,9 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingComplete', 8);
   
-  const publishDate = selectors.publishDate || extractedContent.publishDate || '';
+  const publishDate = extractedContent.publishDate || (!fromCache && selectors.publishDate) || '';
   const finalTitle = extractedContent.title || title;
-  const rawAuthor = extractedContent.author || selectors.author || '';
+  const rawAuthor = extractedContent.author || (!fromCache && selectors.author) || '';
   
   // CRITICAL: Clean author to remove anonymous/invalid values
   const finalAuthor = cleanAuthor(rawAuthor);
@@ -1556,7 +1560,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   // This approach is site-agnostic and works for all languages (not just "from/by" patterns)
   
   // Extract detected language from selectors (if AI provided it)
-  const detectedLanguage = selectors.detectedLanguage || null;
+  const detectedLanguage = extractedContent.detectedLanguage || (!fromCache && selectors.detectedLanguage) || null;
   
   if (detectedLanguage) {
     log('🌍 LANGUAGE DETECTION: AI selector returned language', { 

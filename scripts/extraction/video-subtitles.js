@@ -3,6 +3,8 @@
 
 import { log, logDebug, logError, logWarn } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
+import { isYouTubeContentSender } from '../utils/security/message-sender.js';
+import { isValidMessageSize } from '../utils/security/security.js';
 
 /** Read one request's fallback payload in the page's MAIN world. */
 function readPendingYouTubeSubtitlesInlined(requestId, removeOnly = false) {
@@ -64,7 +66,8 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
     
     // Set up one-time message listener
     const messageListener = (message, sender, sendResponse) => {
-      if (!message || sender?.tab?.id !== tabId || message.requestId !== requestId ||
+      if (!message || !isYouTubeContentSender(sender) || !isValidMessageSize(message) ||
+          sender.tab.id !== tabId || message.requestId !== requestId ||
           (message.result && message.result.requestId !== requestId)) return false;
       // Check both action and type to catch messages in different formats
       // CRITICAL: Check all possible message formats
@@ -656,18 +659,15 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
         }
       }
       
-      // Extract video ID from URL (support watch, shorts, embed, live)
-      let videoId = null;
-      const url = new URL(window.location.href);
-      if (url.pathname === '/watch') {
-        videoId = url.searchParams.get('v');
-      } else if (url.pathname.startsWith('/shorts/')) {
-        videoId = url.pathname.split('/')[2];
-      } else if (url.pathname.startsWith('/embed/')) {
-        videoId = url.pathname.split('/')[2];
-      } else if (url.pathname.startsWith('/live/')) {
-        videoId = url.pathname.split('/')[2];
-      }
+      const currentVideoId = () => {
+        const url = new URL(window.location.href);
+        if (url.pathname === '/watch') return url.searchParams.get('v');
+        return url.pathname.match(/^\/(?:shorts|embed|live)\/([^/]+)/)?.[1] || null;
+      };
+      const videoId = currentVideoId();
+      const checkVideo = () => {
+        if (currentVideoId() !== videoId) throw new Error('Video changed during subtitle extraction');
+      };
       
       if (!videoId) {
         throw new Error('Could not extract video ID from URL');
@@ -685,7 +685,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       });
 
       // CRITICAL: Check that we are on correct YouTube page
-      if (!window.location.hostname.includes('youtube.com')) {
+      if (window.location.hostname !== 'youtube.com' && !window.location.hostname.endsWith('.youtube.com')) {
         throw new Error('Not on YouTube page');
       }
       
@@ -873,11 +873,14 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       // IMPORTANT: May return empty response due to expire parameter or POT token
       // ============================================
       if (!subtitleData) {
+        const currentPlayer = () => window.ytInitialPlayerResponse?.videoDetails?.videoId === videoId
+          ? window.ytInitialPlayerResponse : null;
         // Give YouTube time to set ytInitialPlayerResponse (often present after first paint)
-        for (let w = 0; w < 5 && !window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks; w++) {
+        for (let w = 0; w < 5 && !currentPlayer()?.captions?.playerCaptionsTracklistRenderer?.captionTracks; w++) {
           await new Promise(r => setTimeout(r, waitInterval));
+          checkVideo();
         }
-        if (!window.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+        if (!currentPlayer()?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
           pageLog('method2: ytInitialPlayerResponse has no captionTracks');
           debug.method2 = 'ytInitialPlayerResponse has no captionTracks';
         } else {
@@ -889,10 +892,10 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       
         while (!subtitleData && !method2Failed && attempts < maxAttempts) {
         attempts++;
-        /** @type {any} */
-        const win2 = window;
-        if (win2.ytInitialPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
-          const tracks = win2.ytInitialPlayerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
+        checkVideo();
+        const playerResponse = currentPlayer();
+        if (playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+          const tracks = playerResponse.captions.playerCaptionsTracklistRenderer.captionTracks;
           pageLog('method2: tracks count=' + (tracks?.length ?? 0));
 
           // Select track based on targetLanguage and detected video language
@@ -1194,6 +1197,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
               });
               
               if (subtitles.length > 0) {
+                checkVideo();
                 // Send result immediately
                 const result = {
                   requestId,
@@ -1317,6 +1321,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
         throw new Error('Subtitles data is empty or invalid');
       }
       
+      checkVideo();
       // Send result
       const result = {
         requestId,
@@ -1338,6 +1343,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       
       // Define sendViaCustomEvent function first
       const sendViaCustomEvent = () => {
+        if (currentVideoId() !== videoId) return;
         try {
           // Primary method: CustomEvent on document
         const customEvent = new CustomEvent('ClipAIbleSubtitleMessage', {
@@ -1480,7 +1486,7 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', dete
     target: { tabId },
     world: 'MAIN',
     func: extractVimeoSubtitlesInlined,
-    args: [CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2]
+    args: [CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2, targetLanguage]
   });
     log('Vimeo script executed', { 
       hasResults: !!results,
@@ -1542,8 +1548,9 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', dete
  * Runs in page context (MAIN world)
  * Returns Promise so executeScript can wait for result
  * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
+ * @param {string} targetLanguage - Preferred caption language, or auto
  */
-function extractVimeoSubtitlesInlined(retryDelay2) {
+function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
   const logError = console.error.bind(console, '[ClipAIble]');
   return (async () => {
     try {
@@ -1554,6 +1561,19 @@ function extractVimeoSubtitlesInlined(retryDelay2) {
         title: document.title.replace(' on Vimeo', ''),
         author: '',
         publishDate: ''
+      };
+      const languageCode = value => {
+        const normalized = String(value || '').toLowerCase().replace(/_/g, '-');
+        return normalized === 'ua' || normalized.startsWith('ua-') ? 'uk' + normalized.slice(2) : normalized;
+      };
+      const preferredTrack = tracks => {
+        const target = languageCode(targetLanguage);
+        if (!target || target === 'auto') return null;
+        const language = track => languageCode(track.language || track.lang || track.srclang);
+        const captions = tracks.filter(track => !track.kind || track.kind === 'captions' || track.kind === 'subtitles');
+        const exact = captions.filter(track => language(track) === target);
+        const matching = exact.length ? exact : captions.filter(track => language(track).split('-')[0] === target.split('-')[0]);
+        return matching.find(track => !track.auto) || matching[0] || null;
       };
       
   // Extract title
@@ -1613,7 +1633,7 @@ function extractVimeoSubtitlesInlined(retryDelay2) {
           if (config.video && config.video.textTracks) {
             const tracks = config.video.textTracks;
             // Find best track (prefer manual, then auto-generated)
-            const selectedTrack = tracks.find(t => t.kind === 'captions' && !t.auto) || 
+            const selectedTrack = preferredTrack(tracks) || tracks.find(t => t.kind === 'captions' && !t.auto) ||
                                 tracks.find(t => t.kind === 'captions') ||
                                 tracks[0];
             
@@ -1644,7 +1664,7 @@ function extractVimeoSubtitlesInlined(retryDelay2) {
           // Try to get text tracks from player
           if (player.textTracks && player.textTracks.length > 0) {
             const tracks = Array.from(player.textTracks);
-            const selectedTrack = tracks.find(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing') ||
+            const selectedTrack = preferredTrack(tracks) || tracks.find(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing') ||
                                 tracks.find(t => t.kind === 'captions' || t.kind === 'subtitles') ||
                                 tracks[0];
             
@@ -1672,12 +1692,12 @@ function extractVimeoSubtitlesInlined(retryDelay2) {
       if (videoElement && videoElement.textTracks && videoElement.textTracks.length > 0) {
         try {
           const tracks = Array.from(videoElement.textTracks);
-          let activeTrack = tracks.find(t => 
+          let activeTrack = preferredTrack(tracks) || tracks.find(t =>
             (t.kind === 'subtitles' || t.kind === 'captions') && t.mode === 'showing'
           );
           
-          if (!activeTrack) {
-            activeTrack = tracks.find(t => 
+          if (!activeTrack || (activeTrack.mode !== 'showing' && !activeTrack.cues?.length)) {
+            activeTrack ||= tracks.find(t =>
               t.kind === 'subtitles' || t.kind === 'captions'
             );
             
@@ -1757,7 +1777,7 @@ function extractVimeoSubtitlesInlined(retryDelay2) {
           
           if (videoData && videoData.textTracks) {
             const tracks = videoData.textTracks;
-            const selectedTrack = tracks.find(t => t.kind === 'captions' && !t.auto) || 
+            const selectedTrack = preferredTrack(tracks) || tracks.find(t => t.kind === 'captions' && !t.auto) ||
                                 tracks.find(t => t.kind === 'captions') ||
                                 tracks[0];
             

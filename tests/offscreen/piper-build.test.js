@@ -19,9 +19,10 @@ describe('packaged Piper SDK build adapter', () => {
       }
     }] });
     const config = { espeak: { voice: 'en-us' }, audio: { sample_rate: 22050 }, inference: { noise_scale: 0.667, length_scale: 1, noise_w: 0.8 }, speaker_id_map: {} };
-    const create = vi.fn(async () => ({ run: async () => ({ output: { data: new Float32Array([0, 0.5, -0.5]) } }) }));
+    const feeds = [];
+    const create = vi.fn(async () => ({ run: async value => { feeds.push(value); return { output: { data: new Float32Array([0, 0.5, -0.5]) } }; } }));
     const locations = [];
-    const runtime = { env: { wasm: {} }, InferenceSession: { create }, Tensor: class {} };
+    const runtime = { env: { wasm: {} }, InferenceSession: { create }, Tensor: class { constructor(type, data) { this.data = data; } } };
     const context = {
       Blob, ArrayBuffer, DataView, Float32Array, Uint8Array, console,
       navigator: { hardwareConcurrency: 8, storage: { getDirectory: async () => ({ getDirectoryHandle: async () => ({
@@ -45,6 +46,11 @@ describe('packaged Piper SDK build adapter', () => {
       'chrome-extension://test-extension-id/lib/piper-wasm/piper_phonemize.wasm'
     ]);
     expect(audio.size).toBeGreaterThan(44);
+    await session.predict('Sample text.', 2);
+    await context.Piper.predict({ text: 'Sample text.', voiceId: 'en_US-hfc_female-medium', speed: 1.25 });
+    expect(feeds.map(value => value.scales.data[1])).toEqual([1, 0.5, 0.8]);
+    expect(config.inference.length_scale).toBe(1);
+    await expect(session.predict('Sample text.', 0)).rejects.toThrow('Invalid speech speed');
   });
 
   it('fails the build when the supported SDK resource contract changes', async () => {

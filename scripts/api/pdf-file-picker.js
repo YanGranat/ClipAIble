@@ -3,9 +3,33 @@
 // Uses File API to read file content when PDF is not in IndexedDB
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { savePdfData } from './pdf-storage.js';
+import { validatePdfData } from './pdf-storage.js';
+import { LIMITS } from '../offscreen/pdf/constants.js';
 import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
 import { tSync } from '../locales.js';
+
+async function readSelectedPdf(file, expectedPdfUrl) {
+  if (!file || (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf'))) {
+    throw createPdfError('Selected file is not a PDF', 'errorPdfInvalid');
+  }
+  if (file.size > LIMITS.MAX_FILE_SIZE) throw createPdfError('PDF is too large', 'errorPdfTooLarge', {
+    size: (file.size / 1024 / 1024).toFixed(1), max: String(LIMITS.MAX_FILE_SIZE / 1024 / 1024)
+  });
+  if (typeof expectedPdfUrl === 'string' && expectedPdfUrl.startsWith('file://')) {
+    let name;
+    try {
+      const parsed = new URL(expectedPdfUrl);
+      name = decodeURIComponent(parsed.pathname.split('/').pop() || '');
+      if (/[\\/]/.test(name)) throw new Error('Invalid PDF file URL');
+    } catch { throw createPdfError('Invalid PDF file URL', 'errorPdfDataUnavailable'); }
+    if (name && name.normalize('NFC').toLowerCase() !== file.name.normalize('NFC').toLowerCase()) {
+      throw createPdfError('Select the requested PDF file', 'errorPdfDataUnavailable');
+    }
+  }
+  const bytes = await file.arrayBuffer();
+  try { return validatePdfData(bytes, 'Selected PDF'); }
+  catch (error) { throw createPdfError(error.message, 'errorPdfInvalid'); }
+}
 
 /**
  * Request user to select PDF file via File API
@@ -167,7 +191,7 @@ async function selectPdfFileViaFileSystemAccess(expectedPdfUrl) {
     });
     
     // Read file as ArrayBuffer
-    const arrayBuffer = await file.arrayBuffer();
+    const arrayBuffer = await readSelectedPdf(file, expectedPdfUrl);
     
     log('[PDF File Picker] File read successfully', { 
       size: arrayBuffer.byteLength,
@@ -214,45 +238,7 @@ async function selectPdfFileViaInput(expectedPdfUrl) {
           return;
         }
         
-        // Validate file type
-        if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-          reject(createPdfError('Selected file is not a PDF file', 'errorPdfInvalid'));
-          return;
-        }
-        
-        log('[PDF File Picker] File selected', { 
-          name: file.name, 
-          size: file.size,
-          type: file.type 
-        });
-        
-        // Read file as ArrayBuffer
-        const reader = new FileReader();
-        
-        reader.onload = () => {
-          try {
-            const arrayBuffer = reader.result;
-            if (!(arrayBuffer instanceof ArrayBuffer)) {
-              reject(createPdfError('Failed to read file as ArrayBuffer', 'errorPdfInvalid'));
-              return;
-            }
-            
-            log('[PDF File Picker] File read successfully', { 
-              size: arrayBuffer.byteLength,
-              sizeMB: (arrayBuffer.byteLength / 1024 / 1024).toFixed(2)
-            });
-            
-            resolve(arrayBuffer);
-          } catch (error) {
-            reject(error);
-          }
-        };
-        
-        reader.onerror = () => {
-          reject(createPdfError('Failed to read file: ' + reader.error?.message, 'errorPdfDataUnavailable'));
-        };
-        
-        reader.readAsArrayBuffer(file);
+        resolve(await readSelectedPdf(file, expectedPdfUrl));
       } catch (error) {
         reject(error);
       } finally {

@@ -31,6 +31,7 @@ vi.mock('../../scripts/state/processing.js', () => {
   
   return {
     isCancelled: () => mockIsCancelled(),
+    getProcessingSignal: () => ({ aborted: mockIsCancelled(), reason: mockIsCancelled() ? new DOMException('Cancelled', 'AbortError') : undefined }),
     isCurrentProcessingRun: () => !mockIsCancelled(),
     getScopedUpdateState: (_runId, updater = mockUpdateState) => updater,
     updateState: mockUpdateState,
@@ -327,22 +328,20 @@ describe('utils/pipeline-helpers', () => {
       expect(images).not.toHaveBeenCalled(); expect(text).toHaveBeenCalledOnce();
     });
 
-    it('should handle translation errors gracefully', async () => {
-      const translateContent = vi.fn().mockRejectedValue(new Error('Network error'));
+    it('propagates a failed translation before publishing an untranslated result', async () => {
+      const error = Object.assign(new Error('Unavailable'), { status: 503 });
+      const translateContent = vi.fn().mockRejectedValue(error);
       const translateImages = vi.fn();
       const detectSourceLanguage = vi.fn(() => 'en');
       
-      const result = await handleTranslation(
+      await expect(handleTranslation(
         { language: 'ru', apiKey: 'key', model: 'gpt-4' },
         { content: [{ type: 'paragraph', text: 'Text' }] },
         translateContent,
         translateImages,
         detectSourceLanguage,
         mocks.mockUpdateState
-      );
-      
-      // Should continue without translation on error
-      expect(result).toBeDefined();
+      )).rejects.toBe(error);
     });
   });
 

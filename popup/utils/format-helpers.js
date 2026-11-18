@@ -1,7 +1,7 @@
 // @ts-check
 // Format helper functions for popup
 
-import { escapeHtml as escapeHtmlUtil } from '../../scripts/utils/html.js';
+import { escapeHtml as escapeHtmlUtil } from '../../scripts/utils/html/html.js';
 import { getLocaleTag } from '../../scripts/locales.js';
 
 /**
@@ -9,68 +9,7 @@ import { getLocaleTag } from '../../scripts/locales.js';
  * @param {string} markdown - Markdown text
  * @returns {string} HTML string
  */
-export function markdownToHtml(markdown) {
-  if (!markdown) return '';
-  
-  let html = markdown;
-  
-  // Code blocks first (to avoid processing markdown inside code)
-  const codeBlocks = [];
-  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
-    const id = `CODE_BLOCK_${codeBlocks.length}`;
-    codeBlocks.push(`<pre><code>${code.trim()}</code></pre>`);
-    return id;
-  });
-  
-  // Inline code
-  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-  
-  // Headers (process from largest to smallest to avoid conflicts)
-  html = html.replace(/^#### (.*$)/gim, '<h4>$1</h4>');
-  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-  
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  
-  // Horizontal rules
-  html = html.replace(/^(\s*[-*]{3,}\s*)$/gm, '<hr>');
-  
-  // Bold
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
-  
-  // Italic
-  html = html.replace(/(?<!`)(?<!\*)\*(?!\*)([^*`]+?)(?<!\*)\*(?!\*)(?!`)/g, '<em>$1</em>');
-  html = html.replace(/(?<!`)(?<!_)_(?!_)([^_`]+?)(?<!_)_(?!_)(?!`)/g, '<em>$1</em>');
-  
-  // Restore code blocks
-  codeBlocks.forEach((codeBlock, index) => {
-    html = html.replace(`CODE_BLOCK_${index}`, codeBlock);
-  });
-  
-  // Convert newlines to <br>
-  const lines = html.split('\n');
-  const processedLines = lines.map(line => {
-    if (line.match(/^<(h[1-6])>.*<\/\1>$/)) {
-      return line;
-    }
-    if (line.trim() === '<hr>') {
-      return line;
-    }
-    return line + '<br>';
-  });
-  
-  html = processedLines.join('');
-  
-  // Clean up
-  html = html.replace(/<br><\/(h[1-6])>/g, '</$1>');
-  html = html.replace(/<br><hr>/g, '<hr>');
-  html = html.replace(/<hr><br>/g, '<hr>');
-  
-  return html;
-}
+export { markdownToHtml } from '../../scripts/utils/html/html.js';
 
 /**
  * Format seconds to MM:SS

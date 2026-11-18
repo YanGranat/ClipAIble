@@ -3,6 +3,7 @@
 // Tracks whether popup is currently open using a long-lived runtime Port.
 
 import { log, logError, logWarn } from '../utils/logging.js';
+import { isTrustedExtensionSender } from '../utils/security/message-sender.js';
 
 /**
  * Port name used by popup to indicate it is open.
@@ -34,6 +35,10 @@ export function initPopupConnectionListener() {
   try {
     chrome.runtime.onConnect.addListener((port) => {
       if (port.name !== POPUP_PORT_NAME) {
+        return;
+      }
+      if (!isTrustedExtensionSender(port.sender)) {
+        port.disconnect();
         return;
       }
 

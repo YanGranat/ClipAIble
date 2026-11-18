@@ -7,7 +7,6 @@ const dependencies = vi.hoisted(() => ({
 }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/offscreen/pdf/core/pdf-loader.js', () => dependencies);
-vi.mock('../../scripts/offscreen/pdf/core/metrics-collector.js', () => ({ collectSampleItems: async () => [] }));
 vi.mock('../../scripts/offscreen/pdf/core/gap-analysis-collector.js', () => ({ collectAllLinesForGapAnalysis: async () => [] }));
 vi.mock('../../scripts/offscreen/pdf/core/content-extractor.js', () => ({ extractContentFromPages: dependencies.extractContentFromPages }));
 vi.mock('../../scripts/offscreen/pdf/core/content-processor.js', () => ({ processContent: elements => ({ title: 'Sample document', elements }) }));

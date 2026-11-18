@@ -63,6 +63,13 @@ export function getUserFriendlyErrorDescriptor(errorType, context = {}) {
   if (typeof error?.translationKey === 'string' && error.translationKey) {
     return { key: error.translationKey, params: error.translationParams || {} };
   }
+  const status = Number(error?.status || error?.statusCode || error?.response?.status);
+  if (status === 401) return { key: 'errorApiKeyInvalid', params: {} };
+  if (status === 403) return { key: 'errorApiAccessForbidden', params: {} };
+  if (error?.code === 'auth_error') return { key: 'errorApiKeyInvalid', params: {} };
+  if (status === 429 || error?.code === 'rate_limit') return { key: 'errorRateLimit', params: {} };
+  if (error?.name === 'TimeoutError' || error?.code === 'timeout') return { key: 'errorTimeout', params: {} };
+  if (error?.code === 'network_error' || error instanceof TypeError) return { key: 'errorNetwork', params: {} };
   if (errorType === 'pageNotReady' && context.blockedPage) return { key: 'pageNotAccessible', params: {} };
   if (errorType === 'httpError' && context.statusCode) {
     const status = Number(context.statusCode);

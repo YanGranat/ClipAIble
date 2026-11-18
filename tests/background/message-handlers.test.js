@@ -52,25 +52,13 @@ vi.mock('../../scripts/message-handlers/processing.js', () => ({
 }));
 
 vi.mock('../../scripts/message-handlers/video.js', () => ({
-  handleYoutubeSubtitlesResult: vi.fn(() => true),
   handleExtractYouTubeSubtitlesForSummary: vi.fn(() => Promise.resolve(true))
 }));
 
 vi.mock('../../scripts/message-handlers/complex.js', () => ({
   handleExtractContentOnly: vi.fn(() => Promise.resolve(true)),
-  handleGenerateSummary: vi.fn(() => Promise.resolve(true)),
-  handleLogModelDropdown: vi.fn(() => true)
+  handleGenerateSummary: vi.fn(() => Promise.resolve(true))
 }));
-
-vi.mock('../../scripts/api/offline-tts-offscreen.js', () => ({
-  closeOffscreenForVoiceSwitch: vi.fn(() => Promise.resolve())
-}));
-
-// Mock chrome.runtime.id for privileged actions validation
-Object.defineProperty(global.chrome, 'runtime', {
-  ...global.chrome.runtime,
-  id: 'test-extension-id'
-});
 
 import { routeMessage } from '../../scripts/message-handlers/index.js';
 import * as simpleHandlers from '../../scripts/message-handlers/simple.js';
@@ -101,6 +89,14 @@ describe('background.js message handlers', () => {
   });
 
   describe('routeMessage', () => {
+    it.each(['clearStats', 'clearSelectorCache', 'cancelProcessing', 'getState', 'exportLogs'])('rejects %s from a content-script sender', action => {
+      const respond = vi.fn();
+      routeMessage({ action }, { id: 'test-extension-id', tab: { id: 1 }, url: 'https://www.youtube.com/watch?v=sample' }, respond, mockDeps);
+      expect(respond).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+      expect(simpleHandlers.handleCancelProcessing).not.toHaveBeenCalled();
+      expect(simpleHandlers.handleGetState).not.toHaveBeenCalled();
+    });
+
     it('keeps the response channel open until startup recovery finishes', async () => {
       let releaseStartup;
       const initializationReady = new Promise((resolve) => { releaseStartup = resolve; });
@@ -109,7 +105,7 @@ describe('background.js message handlers', () => {
         sendResponse({ pong: true });
         return true;
       });
-      expect(routeMessage({ action: 'ping' }, mockSender, respond, { ...mockDeps, initializationReady })).toBe(true);
+      expect(routeMessage({ action: 'ping' }, mockSender, respond, { ...mockDeps, ensureInitialization: () => initializationReady })).toBe(true);
       expect(simpleHandlers.handlePing).not.toHaveBeenCalled();
       expect(respond).not.toHaveBeenCalled();
       releaseStartup();
@@ -121,19 +117,48 @@ describe('background.js message handlers', () => {
     it('rejects commands when startup recovery fails', async () => {
       const respond = vi.fn();
       expect(routeMessage({ action: 'ping' }, mockSender, respond, {
-        ...mockDeps, initializationReady: Promise.reject(new Error('Storage unavailable'))
+        ...mockDeps, ensureInitialization: () => Promise.reject(new Error('Storage unavailable'))
       })).toBe(true);
       await vi.waitFor(() => expect(respond).toHaveBeenCalledOnce());
       expect(simpleHandlers.handlePing).not.toHaveBeenCalled();
-      expect(respond).toHaveBeenCalledWith({ success: false, error: 'Storage unavailable' });
+      expect(respond).toHaveBeenCalledWith(expect.objectContaining({ success: false, translationKey: 'errorBackgroundInitializationFailed', translationParams: {} }));
     });
 
     it('passes offscreen transport through while startup recovery is pending', () => {
       const respond = vi.fn();
       expect(routeMessage({ target: 'offscreen', type: 'PING' }, mockSender, respond, {
-        ...mockDeps, initializationReady: new Promise(() => {})
+        ...mockDeps, ensureInitialization: () => new Promise(() => {})
       })).toBe(false);
       expect(respond).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { target: 'pdf-progress', type: 'PDF_PROGRESS' },
+      { action: 'youtubeSubtitlesResult', requestId: 'sample-request', result: {} }
+    ])('leaves operation replies to their scoped listeners', request => {
+      const respond = vi.fn(), ensureInitialization = vi.fn();
+      expect(routeMessage(request, mockSender, respond, { ...mockDeps, ensureInitialization })).toBe(false);
+      expect(respond).not.toHaveBeenCalled();
+      expect(ensureInitialization).not.toHaveBeenCalled();
+    });
+
+    it.each(['logModelDropdown', 'exportLogs', 'closeOffscreenForVoiceSwitch'])('rejects retired action %s', action => {
+      const respond = vi.fn(), ensureInitialization = vi.fn();
+      routeMessage({ action }, mockSender, respond, { ...mockDeps, ensureInitialization });
+      expect(respond).toHaveBeenCalledWith({ success: false, error: 'Invalid message structure' });
+      expect(ensureInitialization).not.toHaveBeenCalled();
+    });
+
+    it.each([['getState', false], ['processArticle', true]])('uses the current startup gate for %s', async (action, retry) => {
+      const ensureInitialization = vi.fn(async () => {});
+      routeMessage({ action, data: {} }, mockSender, vi.fn(), { ...mockDeps, ensureInitialization });
+      await vi.waitFor(() => expect(ensureInitialization).toHaveBeenCalledWith(retry));
+    });
+
+    it('does not retry startup for an untrusted command', () => {
+      const ensureInitialization = vi.fn();
+      routeMessage({ action: 'processArticle', data: {} }, { id: 'other-extension', url: 'chrome-extension://other-extension/page.html' }, vi.fn(), { ...mockDeps, ensureInitialization });
+      expect(ensureInitialization).not.toHaveBeenCalled();
     });
 
     it('should pass through offscreen messages', () => {
@@ -191,44 +216,32 @@ describe('background.js message handlers', () => {
       expect(cacheHandlers.handleGetCacheStats).toHaveBeenCalled();
     });
 
-    it('should handle exportSettings message', async () => {
-      const request = { action: 'exportSettings' };
+    it.each([
+      ['exportSettings', settingsHandlers.handleExportSettings, []],
+      ['processArticle', processingHandlers.handleProcessArticle, ['startArticleProcessing', 'stopKeepAlive']],
+      ['extractContentOnly', complexHandlers.handleExtractContentOnly, ['processWithSelectorMode', 'processWithExtractMode', 'processWithoutAI', 'startKeepAlive', 'stopKeepAlive']],
+      ['generateSummary', complexHandlers.handleGenerateSummary, ['startKeepAlive', 'stopKeepAlive']]
+    ])('dispatches %s with the captured request, dependencies and one response', (action, handler, dependencyNames) => {
+      const request = { action, data: {} };
+      const response = { success: true, result: action };
       const sendResponse = vi.fn();
-      
-      // Should not throw and should return truthy value
-      const result = await routeMessage(request, mockSender, sendResponse, mockDeps);
-      
-      expect(typeof result === 'boolean' || typeof result === 'object').toBe(true);
+      handler.mockImplementationOnce((_request, _sender, respond) => { respond(response); return true; });
+      expect(routeMessage(request, mockSender, sendResponse, mockDeps)).toBe(true);
+      expect(handler).toHaveBeenCalledExactlyOnceWith(request, mockSender, expect.any(Function), ...dependencyNames.map(name => mockDeps[name]));
+      expect(sendResponse).toHaveBeenCalledExactlyOnceWith(response);
     });
 
-    it('should handle processArticle message', async () => {
-      const request = { action: 'processArticle', data: {} };
-      const sendResponse = vi.fn();
-      
-      // Should not throw and should return truthy value
-      const result = await routeMessage(request, mockSender, sendResponse, mockDeps);
-      
-      expect(typeof result === 'boolean' || typeof result === 'object').toBe(true);
-    });
-
-    it('should handle extractContentOnly message', async () => {
-      const request = { action: 'extractContentOnly', data: {} };
-      const sendResponse = vi.fn();
-      
-      // Should not throw and should return truthy value
-      const result = await routeMessage(request, mockSender, sendResponse, mockDeps);
-      
-      expect(typeof result === 'boolean' || typeof result === 'object').toBe(true);
-    });
-
-    it('should handle generateSummary message', async () => {
-      const request = { action: 'generateSummary', data: {} };
-      const sendResponse = vi.fn();
-      
-      // Should not throw and should return truthy value
-      const result = await routeMessage(request, mockSender, sendResponse, mockDeps);
-      
-      expect(typeof result === 'boolean' || typeof result === 'object').toBe(true);
+    it.each([
+      {},
+      { id: 'test-extension-id', tab: { id: 1 } },
+      { id: 'other-extension', url: 'chrome-extension://test-extension-id/popup.html' },
+      { id: 'test-extension-id', url: 'chrome-extension://test-extension-id.example/popup.html' },
+      { id: 'test-extension-id', url: 'file:///example.html', tab: { id: 1 } }
+    ])('rejects privileged dispatch from untrusted sender %#', sender => {
+      const respond = vi.fn();
+      routeMessage({ action: 'exportSettings' }, sender, respond, mockDeps);
+      expect(settingsHandlers.handleExportSettings).not.toHaveBeenCalled();
+      expect(respond).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ error: expect.any(String) }));
     });
 
     it('should handle unknown action gracefully', () => {

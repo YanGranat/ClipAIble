@@ -33,7 +33,7 @@ export function handleClearStats(request, sender, sendResponse) {
  */
 export function handleDeleteHistoryItem(request, sender, sendResponse) {
   return withErrorHandling(
-    deleteHistoryItem(request.index).then(() => ({ success: true })),
+    deleteHistoryItem(request.item).then(() => ({ success: true })),
     'historyDeleteFailed',
     sendResponse
   );

@@ -277,19 +277,7 @@ export function isRealHeading(element, win) {
   // Log the check result for debugging
   // Note: This function runs in page context, so console.log will be visible in browser console
   // For service worker visibility, the caller should log via pushDebugLog
-  if (typeof console !== 'undefined' && console.log) {
-    console.log('[isRealHeading]', {
-      tagName,
-      text: cleanedText.substring(0, 50),
-      textLength: cleanedText.length,
-      fontStyle,
-      fontSize,
-      fontWeight,
-      isItalic,
-      result,
-      reason: reason || 'passed all checks'
-    });
-  }
+
   
   // Default: assume it's a real heading if it passed style checks
   return result;

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { isDecorativeImage, isTrackingPixel, extractFeaturedImage } from '../../scripts/extraction/extractor/images.js';
-import { handleFigure, handleImg } from '../../scripts/extraction/extractor/parse.js';
+import { parseElements, handleImg } from '../../scripts/extraction/extractor/parse.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 
 const documents = [];
@@ -24,7 +24,7 @@ describe('Article image classification', () => {
     const image = dom.window.document.querySelector('img');
     expect(isDecorativeImage(dom.window, image, CONSTANTS.LOGO_PATTERNS)).toBe(false);
     expect(handleImg(dom.window, image, state(), CONSTANTS, dom.window.location.href)?.src).toBe(`https://example.test/assets/${filename}`);
-    expect(handleFigure(dom.window, dom.window.document.querySelector('figure'), state(), CONSTANTS, dom.window.location.href)).toMatchObject({ type: 'image', src: `https://example.test/figures/${filename}`, caption: 'The measured response.' });
+    expect(parseElements(dom.window, [dom.window.document.querySelector('figure')], state(), CONSTANTS, dom.window.location.href)).toMatchObject([{ type: 'image', src: `https://example.test/figures/${filename}`, caption: 'The measured response.' }]);
   });
 
   it.each(diagrams)('keeps %s when declared as the featured image', filename => {

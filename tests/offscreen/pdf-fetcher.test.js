@@ -23,35 +23,39 @@ describe('PDF download bounds', () => {
   }
 
   it('reads an exact-limit body without leaving a deadline', async () => {
-    fetch.mockResolvedValueOnce(head()).mockResolvedValueOnce(body([5, 7]));
+    fetch.mockResolvedValueOnce(body([5, 7]));
     await expect(fetchPdfFile('https://example.com/document.pdf')).resolves.toHaveProperty('byteLength', 12);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([null, 1])('cancels an oversized stream despite missing or understated headers', async length => {
     const cancel = vi.fn();
-    fetch.mockResolvedValueOnce(head(length)).mockResolvedValueOnce(body([7, 7, 7], cancel));
+    const response = body([7, 7, 7], cancel);
+    if (length !== null) response.headers.set('Content-Length', String(length));
+    fetch.mockResolvedValueOnce(response);
     await expect(fetchPdfFile('https://example.com/document.pdf')).rejects.toThrow('too large');
     expect(cancel).toHaveBeenCalledOnce();
-    expect(fetch.mock.calls[1][1].signal.aborted).toBe(true);
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('continues with a bounded GET when HEAD is unsupported', async () => {
-    fetch.mockRejectedValueOnce(new Error('HEAD unsupported')).mockResolvedValueOnce(body([6]));
+  it('fetches the selected document once with its browser credentials', async () => {
+    fetch.mockResolvedValueOnce(body([6]));
     await expect(fetchPdfFile('https://example.com/document.pdf')).resolves.toHaveProperty('byteLength', 6);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][1].credentials).toBe('include');
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('aborts and cancels a body that stops producing bytes', async () => {
     const cancel = vi.fn();
-    fetch.mockResolvedValueOnce(head()).mockResolvedValueOnce(new Response(new ReadableStream({ cancel })));
+    fetch.mockResolvedValueOnce(new Response(new ReadableStream({ cancel })));
     const download = fetchPdfFile('https://example.com/document.pdf');
     const rejected = expect(download).rejects.toThrow('PDF download timeout');
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
     await rejected;
     expect(cancel).toHaveBeenCalledOnce();
-    expect(fetch.mock.calls[1][1].signal.aborted).toBe(true);
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -64,7 +68,7 @@ describe('PDF download bounds', () => {
     const controller = new AbortController(), reason = new Error('Owner cancelled');
     const cancel = vi.fn();
     if (phase === 'headers') fetch.mockImplementation(() => new Promise(() => {}));
-    else fetch.mockResolvedValueOnce(head()).mockResolvedValueOnce(new Response(new ReadableStream({ cancel })));
+    else fetch.mockResolvedValueOnce(new Response(new ReadableStream({ cancel })));
     const pending = fetchPdfFile('https://example.com/document.pdf', null, { signal: controller.signal });
     const rejected = expect(pending).rejects.toBe(reason);
     await vi.advanceTimersByTimeAsync(0);
@@ -78,7 +82,7 @@ describe('PDF download bounds', () => {
 
   it('gives the body its own deadline after slow response headers', async () => {
     let deliverHeaders;
-    fetch.mockResolvedValueOnce(head()).mockImplementationOnce(() => new Promise(resolve => { deliverHeaders = resolve; }));
+    fetch.mockImplementationOnce(() => new Promise(resolve => { deliverHeaders = resolve; }));
     const pending = fetchPdfFile('https://example.com/document.pdf');
     let settled = false;
     pending.catch(() => { settled = true; });
@@ -101,10 +105,10 @@ describe('PDF download bounds', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it('does not fall back to GET after cancellation during HEAD', async () => {
+  it('does not fall back to GET after cancellation during response headers', async () => {
     let cancelled = false;
     const error = new Error('Cancelled');
-    fetch.mockImplementationOnce(async () => { cancelled = true; throw new Error('HEAD unavailable'); });
+    fetch.mockImplementationOnce(async () => { cancelled = true; throw new Error('Fetch unavailable'); });
     await expect(fetchPdfFile('https://example.com/document.pdf', null, {
       checkCancelled: () => { if (cancelled) throw error; }
     })).rejects.toBe(error);
@@ -116,7 +120,7 @@ describe('PDF download bounds', () => {
     let cancelled = false;
     const cancel = vi.fn();
     const error = new Error('Cancelled');
-    fetch.mockResolvedValueOnce(head()).mockImplementationOnce(async () => {
+    fetch.mockImplementationOnce(async () => {
       const response = new Response(new ReadableStream({ cancel }));
       cancelled = true;
       return response;
@@ -124,7 +128,7 @@ describe('PDF download bounds', () => {
     await expect(fetchPdfFile('file:///sample.pdf', null, {
       checkCancelled: () => { if (cancelled) throw error; }
     })).rejects.toBe(error);
-    expect(fetch.mock.calls[1][1].signal.aborted).toBe(true);
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
     expect(cancel).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -136,14 +140,14 @@ describe('PDF download bounds', () => {
       read: vi.fn(async () => { cancelled = true; return { done: false, value: new Uint8Array(2) }; }),
       cancel: vi.fn(async () => {}), releaseLock: vi.fn()
     };
-    fetch.mockResolvedValueOnce(head()).mockResolvedValueOnce({ ok: true, body: { getReader: () => reader } });
+    fetch.mockResolvedValueOnce({ ok: true, body: { getReader: () => reader } });
     await expect(fetchPdfFile('https://example.com/document.pdf', null, {
       checkCancelled: () => { if (cancelled) throw error; }
     })).rejects.toBe(error);
     expect(reader.read).toHaveBeenCalledOnce();
     expect(reader.cancel).toHaveBeenCalledOnce();
     expect(reader.releaseLock).toHaveBeenCalledOnce();
-    expect(fetch.mock.calls[1][1].signal.aborted).toBe(true);
+    expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
 });

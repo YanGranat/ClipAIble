@@ -1,4 +1,4 @@
-// Unit tests for scripts/utils/validation.js
+// Unit tests for processing validation
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -17,7 +17,7 @@ vi.mock('../../scripts/state/processing.js', () => ({
   setError: vi.fn(() => Promise.resolve())
 }));
 
-import { validateAudioApiKeys } from '../../scripts/utils/validation.js';
+import { validateAudioApiKeys } from '../../scripts/utils/validation/validation.js';
 import { setError, ERROR_CODES } from '../../scripts/state/processing.js';
 
 const mockStopKeepAlive = vi.fn();

@@ -20,10 +20,11 @@ export function isPdfUrl(url) {
     return true;
   }
   
-  // Check if URL has PDF mime type in query params
-  if (url.includes('content-type=application/pdf') || url.includes('type=pdf')) {
-    return true;
-  }
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get('content-type')?.toLowerCase() === 'application/pdf' ||
+      parsed.searchParams.get('type')?.toLowerCase() === 'pdf';
+  } catch {}
   
   return false;
 }

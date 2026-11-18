@@ -254,21 +254,23 @@ export function sanitizeFilename(name) {
   
   // Remove path traversal attempts (../, ..\, etc.)
   let sanitized = name
+    .replace(/[\x00-\x1F\x7F]/g, '') // Remove controls before empty-name checks
     .replace(/\.\./g, '')           // Remove .. sequences
     .replace(/[<>:"/\\|?*]/g, '')   // Remove invalid characters for Windows/Unix
     .replace(/\s+/g, '_')            // Replace spaces with underscores
     .replace(/_+/g, '_')             // Collapse multiple underscores
     .replace(/^_|_$/g, '')          // Remove leading/trailing underscores
-    .replace(/^\.|\.$/g, '')        // Remove leading/trailing dots
-    .substring(0, 200);             // Limit length (longer than before to allow more descriptive names)
+    .replace(/^\.+|[. ]+$/g, '')
+    .substring(0, 200)
+    .replace(/[\uD800-\uDBFF]$/, '')
+    .replace(/[. ]+$/g, '');
   
   // Ensure filename is not empty after sanitization
   if (!sanitized || sanitized.trim() === '') {
     sanitized = 'file';
   }
   
-  // Remove control characters
-  sanitized = sanitized.replace(/[\x00-\x1F\x7F]/g, '');
+  if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(sanitized)) sanitized = '_' + sanitized;
   
   return sanitized;
 }

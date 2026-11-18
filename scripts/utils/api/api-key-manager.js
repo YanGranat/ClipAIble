@@ -6,7 +6,6 @@
 import { decryptApiKey } from '../security/encryption.js';
 import { getUILanguage, tSync } from '../../locales.js';
 import { log, logError } from '../logging.js';
-import { getProviderApiKey } from '../storage/settings-helpers.js';
 
 /**
  * TTS API key manager
@@ -35,9 +34,9 @@ export class TTSApiKeyManager {
     }
     
     const config = {
-      'elevenlabs': { key: data.elevenlabsApiKey, name: 'ElevenLabs' },
-      'qwen': { key: data.qwenApiKey, name: 'Qwen' },
-      'respeecher': { key: data.respeecherApiKey, name: 'Respeecher' },
+      'elevenlabs': { key: data.elevenlabsApiKey, name: 'ElevenLabs', required: 'errorElevenlabsKeyRequired', invalid: 'errorElevenlabsKeyInvalid' },
+      'qwen': { key: data.qwenApiKey, name: 'Qwen', required: 'errorQwenKeyRequired', invalid: 'errorQwenKeyInvalid' },
+      'respeecher': { key: data.respeecherApiKey, name: 'Respeecher', required: 'errorRespeecherKeyRequired', invalid: 'errorRespeecherKeyInvalid' },
       'google': { key: data.googleTtsApiKey, name: 'GoogleTTS' },
       'openai': { key: openaiKey, name: 'OpenAI' }, // Always use OpenAI key from settings, not data.apiKey
       'offline': { key: null, name: 'Offline' }
@@ -56,7 +55,9 @@ export class TTSApiKeyManager {
     // Check if API key is provided
     if (!providerConfig.key) {
       const uiLang = await getUILanguage();
-      throw new Error(tSync(`error${providerConfig.name}KeyRequired`, uiLang));
+      const translationKey = providerConfig.required || 'errorAudioApiKeyRequired';
+      const translationParams = { provider: providerConfig.name === 'GoogleTTS' ? 'Google TTS' : providerConfig.name };
+      throw Object.assign(new Error(tSync(translationKey, uiLang, translationParams)), { translationKey, translationParams });
     }
     
     // Decrypt API key
@@ -71,7 +72,8 @@ export class TTSApiKeyManager {
     } catch (error) {
       logError(`Failed to decrypt ${providerConfig.name} API key`, error);
       const uiLang = await getUILanguage();
-      throw new Error(tSync(`error${providerConfig.name}KeyInvalid`, uiLang));
+      const translationKey = providerConfig.invalid || 'errorApiKeyInvalid';
+      throw Object.assign(new Error(tSync(translationKey, uiLang)), { translationKey, translationParams: {} });
     }
   }
 }

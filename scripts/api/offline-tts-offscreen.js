@@ -9,7 +9,7 @@ import { ttsQueue } from './tts-queue.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { isCancelled } from '../state/processing.js';
-import { withOffscreenDocumentLock } from './offscreen-document.js';
+import { withOffscreenDocumentLock, setupOffscreenDocumentUnlocked as ensureOffscreenDocumentUnlocked } from './offscreen-document.js';
 
 function assertCurrentRun(processingRunId) {
   if (processingRunId && isCancelled(processingRunId)) {
@@ -76,25 +76,9 @@ async function setupOffscreenDocument() {
 
 async function setupOffscreenDocumentUnlocked() {
   await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_NEXT_TICK_DELAY));
-  if (!chrome.offscreen) {
-    const uiLang = await getUILanguageCached();
-    throw new Error(tSync('errorOffscreenApiNotAvailable', uiLang));
-  }
-
   const offscreenUrl = chrome.runtime.getURL('offscreen.html');
   await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_NEXT_TICK_DELAY));
-  const contexts = await chrome.runtime.getContexts({
-    contextTypes: ['OFFSCREEN_DOCUMENT'],
-    documentUrls: [offscreenUrl]
-  });
-  if (contexts.length > 0) return;
-
-  await chrome.offscreen.createDocument({
-    url: offscreenUrl,
-    reasons: ['BLOBS', 'DOM_SCRAPING'],
-    justification: 'Piper TTS and PDF extraction require WASM and DOM access.'
-  });
-  await new Promise(resolve => setTimeout(resolve, CONFIG.OFFLINE_TTS_SETUP_DELAY));
+  if (!await ensureOffscreenDocumentUnlocked({ delayMs: CONFIG.OFFLINE_TTS_SETUP_DELAY })) return;
   await new Promise(resolve => setTimeout(resolve, 500));
 
   for (let i = 0; i < 5; i++) {
@@ -135,7 +119,6 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
   
   log('[ClipAIble SendToOffscreen] === START ===', {
     type,
-    dataSize: JSON.stringify(data).length,
     retryCount,
     timestamp: sendStartTime
   });
@@ -291,7 +274,6 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
   
   log('[ClipAIble SendToOffscreen] Document exists and verified ready, sending message...', {
     type,
-    messageSize: JSON.stringify({ target: 'offscreen', type, data: dataWithPermissions }).length,
     hasUnlimitedStorage
   });
   
@@ -598,7 +580,6 @@ async function sendToOffscreen(type, data = {}, retryCount = 0) {
               messageId,
               type,
               retryCount,
-              responseSize: JSON.stringify(response).length,
               responseKeys: Object.keys(response),
               duration: responseDuration,
               timestamp: responseTime
@@ -640,50 +621,11 @@ export async function getAvailableVoices() {
   try {
     const response = await sendToOffscreen('GET_VOICES');
     
-    // CRITICAL: Log the exact structure received
-    log('[ClipAIble Offline TTS Offscreen] ===== getAvailableVoices: RESPONSE RECEIVED =====', {
-      timestamp: Date.now(),
-      hasResponse: !!response,
-      hasVoices: !!(response && response.voices),
-      voicesType: response?.voices ? (Array.isArray(response.voices) ? 'array' : typeof response.voices) : 'null',
-      voicesCount: response?.voices ? (Array.isArray(response.voices) ? response.voices.length : Object.keys(response.voices || {}).length) : 0,
-      sampleVoices: response?.voices ? (Array.isArray(response.voices) ? response.voices.slice(0, 3) : Object.values(response.voices).slice(0, 3)) : [],
-      firstVoice: response?.voices && Array.isArray(response.voices) && response.voices.length > 0 ? {
-        id: response.voices[0].id,
-        idType: typeof response.voices[0].id,
-        name: response.voices[0].name,
-        keys: Object.keys(response.voices[0]),
-        fullObj: JSON.stringify(response.voices[0])
-      } : null,
-      fullResponse: JSON.stringify(response).substring(0, 500)
-    });
-    
     const voices = response?.voices || [];
-    
-    // CRITICAL: Validate and log each voice structure
-    if (Array.isArray(voices) && voices.length > 0) {
-      log('[ClipAIble Offline TTS Offscreen] ===== VALIDATING VOICES STRUCTURE =====', {
-        timestamp: Date.now(),
-        voicesCount: voices.length,
-        voicesWithId: voices.filter(v => v && v.id).length,
-        voicesWithValue: voices.filter(v => v && v.value).length,
-        voicesWithKey: voices.filter(v => v && v.key).length,
-        sampleValidations: voices.slice(0, 5).map((v, i) => ({
-          index: i,
-          hasId: !!(v && v.id),
-          id: v?.id,
-          idType: typeof v?.id,
-          hasValue: !!(v && v.value),
-          value: v?.value,
-          hasKey: !!(v && v.key),
-          key: v?.key,
-          keys: v ? Object.keys(v) : [],
-          isIdValid: v?.id && typeof v.id === 'string' && v.id.includes('_') && v.id.includes('-'),
-          fullObj: JSON.stringify(v)
-        }))
-      });
-    }
-    
+    log('[ClipAIble Offline TTS Offscreen] Available voices received', {
+      count: Array.isArray(voices) ? voices.length : Object.keys(voices).length
+    });
+
     return voices;
   } catch (error) {
     logError('[ClipAIble] Failed to get voices from offscreen', error);
@@ -818,62 +760,6 @@ export function cancelOfflineTTSRun(processingRunId) {
       resolve(false);
     }
   });
-}
-
-/** Reset the offscreen document before switching voices. */
-export async function closeOffscreenForVoiceSwitch(processingRunId) {
-  log('[ClipAIble Offscreen] === CLOSING OFFScreen DOCUMENT FOR VOICE SWITCH ===', {
-    timestamp: Date.now()
-  });
-  
-  try {
-    assertCurrentRun(processingRunId);
-    // Send cleanup message to offscreen document before closing
-    // This ensures WASM resources are released before document is destroyed
-    try {
-      await sendToOffscreen('CLEANUP_RESOURCES', { processingRunId });
-      log('[ClipAIble Offscreen] Cleanup message sent to offscreen document', {
-        timestamp: Date.now()
-      });
-    } catch (cleanupError) {
-      logWarn('[ClipAIble Offscreen] Failed to send cleanup message (non-critical)', {
-        error: cleanupError.message
-      });
-      // Continue with closing even if cleanup message fails
-    }
-    
-    return await withOffscreenDocumentLock(async () => {
-    assertCurrentRun(processingRunId);
-    if (chrome.offscreen && typeof chrome.offscreen.closeDocument === 'function') {
-      const hasDocument = await chrome.offscreen.hasDocument();
-      assertCurrentRun(processingRunId);
-      if (hasDocument) {
-        await chrome.offscreen.closeDocument();
-        log('[ClipAIble Offscreen] Offscreen document closed successfully for voice switch', {
-          timestamp: Date.now()
-        });
-        return true;
-      } else {
-        log('[ClipAIble Offscreen] No offscreen document to close', {
-          timestamp: Date.now()
-        });
-        return false;
-      }
-    } else {
-      logError('[ClipAIble Offscreen] chrome.offscreen.closeDocument not available', {
-        timestamp: Date.now()
-      });
-      return false;
-    }
-    });
-  } catch (error) {
-    logError('[ClipAIble Offscreen] Failed to close offscreen document for voice switch', {
-      error: error.message,
-      stack: error.stack,
-      timestamp: Date.now()
-    });
-    return false;
-  }
 }
 
 /**

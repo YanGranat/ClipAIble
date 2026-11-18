@@ -161,6 +161,11 @@ export function deduplicateContent(content, { preserveQuoteOccurrences = false }
 
   for (const item of content) {
     const type = item.type || 'unknown';
+    if (type === 'heading' || type === 'table' || type === 'separator' ||
+        type === 'divider' || type === 'hr' || type.startsWith('infobox_')) {
+      result.push(item);
+      continue;
+    }
     const sample = extractTextForDedup(item);
     
     // Skip empty items

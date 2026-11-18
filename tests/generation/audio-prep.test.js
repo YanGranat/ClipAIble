@@ -125,7 +125,7 @@ describe('generation/audio-prep', () => {
 
     it('should handle content with HTML tags', () => {
       const content = [
-        { type: 'paragraph', text: '<p>Text with <strong>bold</strong> and <em>italic</em></p>' }
+        { type: 'paragraph', html: '<p>Text with <strong>bold</strong> and <em>italic</em></p>' }
       ];
 
       const result = contentToPlainText(content);

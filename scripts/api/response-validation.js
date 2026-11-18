@@ -8,6 +8,9 @@ export function assertCompleteAIResponse(response, provider) {
   if (['length', 'max_tokens', 'MAX_TOKENS', 'CONTINUATION', 'model_context_window_exceeded'].includes(reason)) {
     const error = new Error('The AI response was truncated by the model output limit.');
     error.code = 'AI_RESPONSE_TRUNCATED';
+    error.retryable = false;
+    error.translationKey = 'errorAiResponseTruncated';
+    error.translationParams = {};
     throw error;
   }
   const refusal = provider === 'gemini'
@@ -17,6 +20,9 @@ export function assertCompleteAIResponse(response, provider) {
   if (refusal) {
     const error = new Error('The AI provider declined to produce the requested response.');
     error.code = 'AI_RESPONSE_REFUSED';
+    error.retryable = false;
+    error.translationKey = 'errorAiResponseRefused';
+    error.translationParams = {};
     throw error;
   }
   const incomplete = provider === 'gemini'
@@ -25,6 +31,9 @@ export function assertCompleteAIResponse(response, provider) {
   if (incomplete) {
     const error = new Error('The AI provider stopped before completing the requested response.');
     error.code = 'AI_RESPONSE_INCOMPLETE';
+    error.retryable = false;
+    error.translationKey = 'errorAiResponseIncomplete';
+    error.translationParams = {};
     throw error;
   }
 }

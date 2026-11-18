@@ -37,7 +37,7 @@ export async function processPage(page, pageNum, metrics) {
       textItems = textContent.items || [];
     } catch (error) {
       logWarn(`[PDF v3] Failed to extract text from page ${pageNum}`, error);
-      return [];
+      throw error;
     }
     
     log(`[PDF v3] processPage: Page ${pageNum} - extracted ${textItems.length} text items`);
@@ -205,7 +205,7 @@ export async function processPage(page, pageNum, metrics) {
       console.error(`[PDF v3] processPage ERROR message:`, error.message);
       console.error(`[PDF v3] processPage ERROR stack:`, error.stack);
     }
-    return [];
+    throw error;
   }
 }
 

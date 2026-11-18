@@ -17,5 +17,5 @@ ClipAIble declares the following Chrome extension permissions.
 | `webNavigation` | Observe navigation events used by page processing. |
 | `<all_urls>` host access | Extract page content, retrieve source images and PDFs, download voice models, and contact configured AI and TTS services. |
 
-API keys are encrypted before local storage and excluded from settings exports. The selected features determine which content is sent to external services. See the [Privacy Policy](PRIVACY.md) for data handling and retention.
+API keys are encrypted before local storage using an installation-specific key in the extension's IndexedDB and are excluded from settings exports. The selected features determine which content is sent to external services. See the [Privacy Policy](PRIVACY.md) for data handling and retention.
 

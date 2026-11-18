@@ -6,6 +6,7 @@ import { log, logWarn } from '../../../utils/logging.js';
 import { processPage } from '../processors/page-processor.js';
 import { CROSS_PAGE_BREAK_MARKER } from '../constants.js';
 import { createPdfError } from '../../../utils/pdf-errors.js';
+import { isRunningMargin } from '../analyzers/running-margins.js';
 
 /**
  * Extract content from all pages
@@ -17,7 +18,7 @@ import { createPdfError } from '../../../utils/pdf-errors.js';
  * @throws {Error} If PDF has no text layer (scanned PDF)
  * @throws {Error} If page extraction fails
  */
-export async function extractContentFromPages(pdf, numPages, metrics) {
+export async function extractContentFromPages(pdf, numPages, metrics, requestOptions = {}) {
   // COMMENTED: console.log(secondPassMsg);
   // COMMENTED: log('=== SECOND_PASS_START === ' + secondPassMsg);
   
@@ -37,17 +38,17 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
   
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
     log(`[PDF v3] Processing page ${pageNum}/${numPages}`);
-    const page = await pdf.getPage(pageNum);
-    /** @type {any} */
-    const pageAny = page;
+    await requestOptions.checkCancelled?.();
+    let page;
     
     try {
-      const pageElements = await processPage(pageAny, pageNum, metrics);
+      page = await pdf.getPage(pageNum);
+      const pageElements = await processPage(page, pageNum, metrics);
       log(`[PDF v3] Page ${pageNum} processed - extracted ${pageElements?.length || 0} elements`);
       
       if (pageElements && pageElements.length > 0) {
         hasTextContent = true;
-        allElements.push(...pageElements);
+        allElements.push(...pageElements.filter(element => !isRunningMargin(element, metrics.runningMargins || [])));
         log(`[PDF v3] Page ${pageNum} - added ${pageElements.length} elements, totalElements=${allElements.length}`);
       } else {
         logWarn(`[PDF v3] Page ${pageNum} - no elements extracted`);
@@ -63,11 +64,13 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
     
     // Cleanup page
     try {
-      page.cleanup();
+      page?.cleanup();
     } catch (cleanupError) {
       logWarn(`[PDF v3] Failed to cleanup page ${pageNum}`, cleanupError);
       // Continue anyway
     }
+    await requestOptions.checkCancelled?.();
+    requestOptions.onProgress?.(pageNum, numPages);
   }
 
   if (failedPages.length) {
@@ -89,14 +92,6 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
   }
   
   log(`[PDF v3] Content extracted from all pages - totalElements=${allElements.length}`);
-  
-  // Log elements before sorting
-  const beforeSort = allElements.map((el, idx) => {
-    const colIdx = el.columnIndex !== undefined ? el.columnIndex : '?';
-    const minY = (typeof el.minY === 'number' && el.minY !== 0) ? el.minY.toFixed(2) : (el.lines && el.lines.length > 0 ? el.lines[0].y.toFixed(2) : '0');
-    return `[${idx}]P${el.pageNum || '?'}C${colIdx}Y${minY}:${el.type.substring(0, 1)}`;
-  }).join(' | ');
-  log(`[PDF v3] Elements before sorting - totalElements=${allElements.length}, order=[${beforeSort}]`);
   
   // CRITICAL: Sort elements to maintain correct reading order for multi-column layouts
   // Sort by: pageNum (ascending), then columnIndex (ascending), then Y-coordinate (ascending)
@@ -127,15 +122,6 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
     return yA - yB;
   });
   
-  // Log elements after sorting
-  const afterSort = allElements.map((el, idx) => {
-    const colIdx = el.columnIndex !== undefined ? el.columnIndex : '?';
-    const minY = (typeof el.minY === 'number' && el.minY !== 0) ? el.minY.toFixed(2) : (el.lines && el.lines.length > 0 ? el.lines[0].y.toFixed(2) : '0');
-    const text = el.text ? el.text.substring(0, 30) : 'NO TEXT';
-    return `[${idx}]P${el.pageNum || '?'}C${colIdx}Y${minY}:${el.type.substring(0, 1)}:"${text}"`;
-  }).join(' | ');
-  log(`[PDF v3] Elements after sorting - totalElements=${allElements.length}, sortedBy=[pageNum, columnIndex, minY], order=[${afterSort}]`);
-  
   // Mark cross-page breaks: set gapAfter marker for last element on each page (except last page)
   // This helps cross-page merging logic identify page boundaries
   for (let i = 0; i < allElements.length; i++) {
@@ -146,13 +132,10 @@ export async function extractContentFromPages(pdf, numPages, metrics) {
     if (nextElement && 
         currentElement.pageNum && 
         nextElement.pageNum && 
-        currentElement.pageNum !== nextElement.pageNum) {
+        (currentElement.pageNum !== nextElement.pageNum || currentElement.columnIndex !== nextElement.columnIndex)) {
       // This is the last element on its page, next element is on a different page
       // Set gapAfter marker to indicate cross-page break
-      if (currentElement.gapAfter === null || currentElement.gapAfter === undefined) {
-        currentElement.gapAfter = CROSS_PAGE_BREAK_MARKER;
-        log(`[PDF v3] Marked cross-page break - pageNum=${currentElement.pageNum}, nextPageNum=${nextElement.pageNum}, elementType=${currentElement.type}`);
-      }
+      currentElement.gapAfter = CROSS_PAGE_BREAK_MARKER;
     }
   }
   

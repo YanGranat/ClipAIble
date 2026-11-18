@@ -3,7 +3,7 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { exportStats, normalizeStats } from '../stats/index.js';
-import { getCacheStats } from '../cache/selectors.js';
+import { getCacheStats, normalizeCachedSelectors } from '../cache/selectors.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
@@ -12,6 +12,46 @@ import { IMAGE_TRANSLATION_PROVIDERS } from '../api/image-translation-catalog.js
 
 function importError(key, language, params = {}) {
   return Object.assign(new Error(tSync(key, language, params)), { translationKey: key, translationParams: params });
+}
+
+const isRecord = value => !!value && typeof value === 'object' && !Array.isArray(value);
+const safeMapKey = (value, maxLength = 100) => !['__proto__', 'constructor', 'prototype'].includes(value) && value.length <= maxLength;
+const shortString = value => typeof value === 'string' && value.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(value);
+
+function validComplexSetting(key, value) {
+  if (!isRecord(value) || Object.keys(value).length > 100) return false;
+  if (key === 'audio_voice_map') {
+    const voices = Object.hasOwn(value, 'current') ? value.current : value;
+    return isRecord(voices) && Object.keys(voices).length <= 100 && Object.entries(voices).every(([provider, voice]) => safeMapKey(provider) && shortString(voice));
+  }
+  return Object.entries(value).every(([provider, models]) => safeMapKey(provider) && (
+    key === 'model_by_provider' ? shortString(models)
+      : Array.isArray(models) && models.length <= 1000 && models.every(shortString)
+  ));
+}
+
+function normalizeImportedCache(value) {
+  if (!isRecord(value) || Object.keys(value).length > 10000) return null;
+  const cache = {};
+  for (const [domain, entry] of Object.entries(value)) {
+    if (!safeMapKey(domain, 253) || !isRecord(entry)) return null;
+    try {
+      const url = new URL(`https://${domain}`);
+      if (url.hostname !== domain || url.port || url.pathname !== '/' || url.search || url.hash || url.username || url.password) return null;
+    } catch { return null; }
+    const selectors = normalizeCachedSelectors(entry.selectors);
+    if (!selectors) return null;
+    const normalized = { selectors };
+    for (const name of ['created', 'lastUsed', 'lastSaved', 'successCount']) {
+      if (entry[name] !== undefined && (!Number.isSafeInteger(entry[name]) || entry[name] < 0)) return null;
+      if (entry[name] !== undefined) normalized[name] = entry[name];
+    }
+    if (entry.invalidated !== undefined && typeof entry.invalidated !== 'boolean') return null;
+    normalized.invalidated = entry.invalidated ?? false;
+    normalized.successCount ??= 0;
+    cache[domain] = normalized;
+  }
+  return cache;
 }
 
 // Get current extension version (centralized function)
@@ -244,7 +284,7 @@ export async function importSettings(jsonData, options = {}) {
     };
 
     // Validate version compatibility
-    const exportVersion = data.version || 'unknown';
+    const exportVersion = typeof data.version === 'string' && data.version.length <= 100 ? data.version : 'unknown';
     const currentVersion = getCurrentVersion();
     
     if (exportVersion !== 'unknown') {
@@ -400,11 +440,16 @@ export async function importSettings(jsonData, options = {}) {
         // Validate object structure for complex objects
         if (OBJECT_KEYS[key]) {
           const value = data.settings[key];
-          if (value !== null && (typeof value !== 'object' || Array.isArray(value))) {
+          if (!validComplexSetting(key, value)) {
             logWarn('Invalid object structure for setting', { key, valueType: typeof value, isArray: Array.isArray(value) });
             notice('warnings', 'warningImportObject', { setting: key });
             continue;
           }
+        }
+
+        if (!NUMERIC_RANGES[key] && !BOOLEAN_KEYS.includes(key) && !OBJECT_KEYS[key] && typeof data.settings[key] !== 'string') {
+          notice('warnings', 'warningImportValue', { setting: key });
+          continue;
         }
         
         // Validate boolean settings
@@ -515,7 +560,9 @@ export async function importSettings(jsonData, options = {}) {
           throw importError('errorImportCacheTooLarge', uiLang, { size: sizeMB, max: maxMB });
         }
         
-        await chrome.storage.local.set({ selector_cache: data.selectorCache });
+        const cache = normalizeImportedCache(data.selectorCache);
+        if (!cache) throw importError('errorImportCacheNotObject', uiLang);
+        await chrome.storage.local.set({ selector_cache: cache });
         result.cacheImported = true;
         const domainCount = Object.keys(data.selectorCache).length;
         log('Selector cache imported', { domains: domainCount });

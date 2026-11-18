@@ -46,7 +46,7 @@ describe('non-streaming response deadlines', () => {
     const result = fetchBufferedResponse('https://api.example.org/request', {}, 1000).catch(error => { settled = true; return error; });
     await vi.advanceTimersByTimeAsync(1001);
     expect(settled).toBe(true);
-    expect((await result).name).toBe('AbortError');
+    expect((await result).name).toBe('TimeoutError');
     expect(signal.aborted).toBe(true);
     body.error(new DOMException('Stopped', 'AbortError'));
     expect(vi.getTimerCount()).toBe(0);
@@ -59,7 +59,7 @@ describe('non-streaming response deadlines', () => {
     const result = fetchBufferedResponse('https://api.example.org/request', {}, 1000).catch(error => { settled = true; return error; });
     await vi.advanceTimersByTimeAsync(1001);
     expect(settled).toBe(true);
-    expect((await result).name).toBe('AbortError');
+    expect((await result).name).toBe('TimeoutError');
     expect(vi.getTimerCount()).toBe(0);
   });
 

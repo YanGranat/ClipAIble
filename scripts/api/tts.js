@@ -1,3 +1,4 @@
+import { concatenateWav, readWav } from '../utils/wav.js';
 import { isWavBuffer, pcmToWav } from './audio-format.js';
 import { textToSpeech as openaiTTS } from './openai-tts.js';
 // @ts-check
@@ -19,7 +20,7 @@ logDebug('[ClipAIble TTS] Loading TTS provider modules...', {
 
 import { textToSpeech as elevenlabsTTS, ELEVENLABS_CONFIG } from './elevenlabs.js';
 import { textToSpeech as qwenTTS, QWEN_CONFIG } from './qwen.js';
-import { textToSpeech as respeecherTTS, RESPEECHER_CONFIG } from './respeecher.js';
+import { textToSpeech as respeecherTTS, RESPEECHER_CONFIG, resolveRespeecherLanguage } from './respeecher.js';
 import { textToSpeech as googleTTS, GOOGLE_TTS_CONFIG } from './google-tts.js';
 
 logDebug('[ClipAIble TTS] Loading offline TTS module...', {
@@ -518,6 +519,9 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   }
   
   const provider = options.provider || 'openai';
+  if (provider === 'respeecher') {
+    options = { ...options, language: resolveRespeecherLanguage(chunks.map(chunk => chunk.text).join('\n'), options.language) };
+  }
   let maxInput;
   if (provider === 'elevenlabs') {
     maxInput = ELEVENLABS_CONFIG.MAX_INPUT;
@@ -630,97 +634,21 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     });
   }
   
-  const failedChunks = [];
-  
   try {
     for (let i = 0; i < expandedChunks.length; i++) {
-      // Check if processing was cancelled before processing each chunk
       await checkCancellation(`TTS chunk ${i + 1}/${expandedChunks.length}`, options.processingRunId);
-      
       const chunk = expandedChunks[i];
-      let chunkProcessed = false;
-      let lastChunkError = null;
-      
-      // Use centralized retry logic for each chunk
-      try {
-        const audioBuffer = await callWithRetry(
-          async () => {
-            await checkCancellation('TTS retry', options.processingRunId);
-            // Pass all options including ElevenLabs advanced settings, OpenAI instructions, and tabId for offline TTS
-            return provider === 'openai' ? await openaiTTS(chunk.text, apiKey, options) : await textToSpeech(chunk.text, apiKey, options);
-          },
-          {
-            maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-            delays: CONFIG.RETRY_DELAYS,
-            retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
-            shouldRetry: error => error.retryable === false ? false : undefined,
-            onRetry: (attempt, delay) => {
-              logWarn(`Chunk ${i + 1} failed, retrying... (attempt ${attempt}/${CONFIG.RETRY_MAX_ATTEMPTS + 1}, waiting ${delay}ms)`, {
-                chunkIndex: i + 1,
-                totalChunks: expandedChunks.length
-              });
-            }
-          }
-        );
-        await checkCancellation('TTS response', options.processingRunId);
-        
-        audioBuffers.push(audioBuffer);
-        processedChunks = i + 1; // Update counter for progress tracker
-        chunkProcessed = true;
-      } catch (error) {
-        await checkCancellation('TTS failure', options.processingRunId);
-        if (error.retryable === false) throw error;
-        lastChunkError = error;
-        
-        const chunkError = {
-          index: i + 1,
-          total: expandedChunks.length,
-          error: error?.message || 'Unknown error',
-          status: error?.status,
-          retries: CONFIG.RETRY_MAX_ATTEMPTS + 1
-        };
-        failedChunks.push(chunkError);
-        
-        logError(`Failed to convert chunk ${i + 1}/${expandedChunks.length} after ${CONFIG.RETRY_MAX_ATTEMPTS + 1} attempts`, {
-          chunkIndex: i + 1,
-          totalChunks: expandedChunks.length,
-          error: error?.message,
-          status: error?.status,
-          failedChunksCount: failedChunks.length,
-          processedChunksCount: audioBuffers.length,
-          willContinue: true
-        });
-        
-        // Continue with next chunk instead of throwing error
-        // This allows partial success - we'll handle failed chunks at the end
-      }
-    }
-    
-    // Check if we have any successfully processed chunks
-    if (audioBuffers.length === 0) {
-      const uiLang = await getUILanguageCached();
-      const errorMsg = failedChunks.length > 0
-        ? `All ${expandedChunks.length} chunks failed. Last error: ${failedChunks[failedChunks.length - 1].error}`
-        : 'All chunks failed to convert';
-      throw Object.assign(new Error(tSync('errorTtsAllChunksFailed', uiLang) || errorMsg), {
-        translationKey: 'errorTtsAllChunksFailed', translationParams: {}
-      });
-    }
-    
-    // Log summary of failed chunks (if any)
-    if (failedChunks.length > 0) {
-      const successRate = ((audioBuffers.length / expandedChunks.length) * 100).toFixed(1);
-      logWarn(`TTS processing completed with ${failedChunks.length} failed chunk(s)`, {
-        totalChunks: expandedChunks.length,
-        successfulChunks: audioBuffers.length,
-        failedChunks: failedChunks.length,
-        successRate: `${successRate}%`,
-        failedChunkIndices: failedChunks.map(c => c.index),
-        note: 'Incomplete audio will not be exported'
-      });
-      throw Object.assign(new Error(tSync('errorAudioChunksFailed', uiLang, { failed: failedChunks.length, total: expandedChunks.length })), {
-        translationKey: 'errorAudioChunksFailed', translationParams: { failed: failedChunks.length, total: expandedChunks.length }
-      });
+      const audioBuffer = provider === 'openai'
+        ? await callWithRetry(async () => {
+          await checkCancellation('TTS retry', options.processingRunId);
+          return openaiTTS(chunk.text, apiKey, options);
+        }, { maxRetries: CONFIG.RETRY_MAX_ATTEMPTS, delays: CONFIG.RETRY_DELAYS,
+          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
+          signal: options.signal, shouldRetry: error => error.retryable === false ? false : undefined })
+        : await textToSpeech(chunk.text, apiKey, options);
+      await checkCancellation('TTS response', options.processingRunId);
+      audioBuffers.push(audioBuffer);
+      processedChunks = i + 1;
     }
   } finally {
     // Clean up progress tracker
@@ -741,7 +669,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     progress: 95 
   });
   
-  const concatenated = concatenateAudioBuffers(audioBuffers);
+  const concatenated = concatenateAudioBuffers(audioBuffers, options.returnBlob === true);
   
   // Check final result
   log('=== CONCATENATION COMPLETE ===', { chunkCount: audioBuffers.length, totalSize: concatenated.byteLength });
@@ -750,93 +678,23 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
 }
 
 /**
- * Find the data chunk in a WAV buffer
- * @param {Uint8Array} view - WAV buffer view
- * @returns {{dataStart: number, dataSize: number}} Data chunk info
- */
-function findWavDataChunk(view) {
-  let offset = 12; // Skip RIFF header
-  
-  while (offset < view.length - 8) {
-    const chunkId = String.fromCharCode(view[offset], view[offset + 1], view[offset + 2], view[offset + 3]);
-    const chunkSize = view[offset + 4] | (view[offset + 5] << 8) | (view[offset + 6] << 16) | (view[offset + 7] << 24);
-    
-    if (chunkId === 'data') {
-      return { dataStart: offset + 8, dataSize: chunkSize };
-    }
-    
-    offset += 8 + chunkSize;
-    // Ensure even offset
-    if (chunkSize % 2 !== 0) offset++;
-  }
-  
-  // If no data chunk found, assume everything after header is data
-  return { dataStart: 44, dataSize: view.length - 44 };
-}
-
-/**
- * Concatenate multiple WAV buffers into one
- * @param {Array<ArrayBuffer>} buffers - Array of WAV buffers
- * @returns {ArrayBuffer} Combined WAV buffer
- */
-function concatenateWavBuffers(buffers) {
-  log('=== WAV CONCATENATION START ===', { buffersCount: buffers.length });
-  
-  // Extract audio data from each buffer
-  const dataChunks = [];
-  let totalDataSize = 0;
-  let sampleRate = 44100;
-  let bitsPerSample = 16;
-  let numChannels = 1;
-  
-  for (let i = 0; i < buffers.length; i++) {
-    const view = new Uint8Array(buffers[i]);
-    const { dataStart, dataSize } = findWavDataChunk(view);
-    
-    // Extract format info from first buffer
-    if (i === 0 && view.length >= 44) {
-      numChannels = view[22] | (view[23] << 8);
-      sampleRate = view[24] | (view[25] << 8) | (view[26] << 16) | (view[27] << 24);
-      bitsPerSample = view[34] | (view[35] << 8);
-      log('WAV format detected', { numChannels, sampleRate, bitsPerSample });
-    }
-    
-    const audioData = view.slice(dataStart, dataStart + dataSize);
-    dataChunks.push(audioData);
-    totalDataSize += audioData.length;
-  }
-  
-  const pcm = new Uint8Array(totalDataSize);
-  let offset = 0;
-  for (const chunk of dataChunks) {
-    pcm.set(chunk, offset);
-    offset += chunk.length;
-  }
-  const result = pcmToWav(pcm.buffer, sampleRate, bitsPerSample, numChannels);
-  const totalSize = result.byteLength;
-  
-  log('=== WAV CONCATENATION COMPLETE ===', { chunksCount: dataChunks.length, totalSize });
-  
-  return result;
-}
-
-/**
  * Concatenate multiple audio ArrayBuffers
  * Handles both MP3 (simple concat) and WAV (proper header merging)
  * @param {Array<ArrayBuffer>} buffers - Array of audio buffers
  * @returns {ArrayBuffer} Concatenated buffer
  */
-function concatenateAudioBuffers(buffers) {
+function concatenateAudioBuffers(buffers, asBlob = false) {
   log('concatenateAudioBuffers called', { buffersCount: buffers?.length });
   
   if (!buffers || buffers.length === 0) return new ArrayBuffer(0);
   
-  if (buffers.length === 1) return buffers[0];
-  
   // Check if buffers are WAV format
   if (isWavBuffer(buffers[0])) {
-    return concatenateWavBuffers(buffers);
+    if (buffers.length === 1 && !asBlob) { readWav(buffers[0]); return buffers[0]; }
+    return concatenateWav(buffers, asBlob);
   }
+  if (asBlob) return new Blob(buffers);
+  if (buffers.length === 1) return buffers[0];
   
   // For MP3 and other formats, simple concatenation works
   const totalLength = buffers.reduce((sum, buf) => sum + buf.byteLength, 0);

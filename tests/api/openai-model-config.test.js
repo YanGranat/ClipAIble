@@ -87,10 +87,12 @@ describe('OpenAI model request compatibility', () => {
   });
 
   it('uses the current balanced default and its configured reasoning effort', () => {
-    expect(parseModelConfig()).toEqual({ modelName: 'gpt-6.1-sol', reasoningEffort: 'medium' });
+    expect(parseModelConfig()).toEqual({ modelName: 'gpt-6.2-sol', reasoningEffort: 'medium' });
   });
 
   it.each([
+    ['gpt-6.2-sol-low', 'gpt-6.2-sol', 'low'],
+    ['gpt-6.2-astra-high', 'gpt-6.2-astra', 'high'],
     ['gpt-6.1-sol-low', 'gpt-6.1-sol', 'low'],
     ['gpt-6-astra-high', 'gpt-6-astra', 'high'],
     ['gpt-6.1-terra-high', 'gpt-6.1-terra', 'high'],

@@ -2,6 +2,7 @@
 // Text processing for Piper TTS
 
 import { log, logWarn } from '../../utils/logging.js';
+import { normalizeSpeechText } from '../../utils/audio-text.js';
 
 const MAX_SENTENCE_LENGTH = 200;
 
@@ -21,38 +22,8 @@ export function sanitizeText(text, langCode, messageId) {
   
   log(`[ClipAIble TTS] Text sanitization start`, { messageId, ...beforeStats });
   
-  let sanitized = text
-    // Remove zero-width characters
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    // Replace non-breaking spaces
-    .replace(/\u00A0/g, ' ')
-    // Normalize quotes
-    .replace(/[""]/g, '"')
-    .replace(/['']/g, "'")
-    // Normalize dashes
-    .replace(/—/g, ' - ')
-    .replace(/–/g, '-')
-    // Remove control characters
-    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '')
-    // Remove special symbols
-    .replace(/[←→↑↓↔↕⇐⇒⇑⇓⇔⇕]/g, '')
-    .replace(/[•◦▪▫]/g, ' ')
-    .replace(/[©®™]/g, '')
-    .replace(/[€£¥]/g, '')
-    .replace(/[°±×÷]/g, '')
-    .replace(/[…]/g, '...')
-    // Normalize whitespace
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-  
-  // Language-specific sanitization
-  if (langCode === 'en') {
-    sanitized = sanitizeEnglish(sanitized);
-  } else {
-    sanitized = sanitizeNonEnglish(sanitized, langCode);
-  }
-  
+  const sanitized = normalizeSpeechText(text);
+
   const afterStats = {
     length: sanitized.length,
     lengthChange: sanitized.length - text.length
@@ -64,50 +35,22 @@ export function sanitizeText(text, langCode, messageId) {
 }
 
 /**
- * Sanitize English text (strict ASCII)
- * @param {string} text - Text to sanitize
- * @returns {string} Sanitized text
- */
-function sanitizeEnglish(text) {
-  return text
-    .split('')
-    .map(char => {
-      const code = char.charCodeAt(0);
-      // Allow printable ASCII, newline, tab
-      if ((code >= 32 && code <= 126) || code === 10 || code === 9) {
-        return char;
-      }
-      return ' ';
-    })
-    .join('')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/**
- * Sanitize non-English text (preserve Unicode letters)
- * @param {string} text - Text to sanitize
- * @param {string} langCode - Language code
- * @returns {string} Sanitized text
- */
-function sanitizeNonEnglish(text, langCode) {
-  return text
-    .replace(/[^\p{L}\p{N}\p{P}\p{Z}\n\t]/gu, ' ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-/**
  * Split text into sentences/phrases for streaming
  * @param {string} text - Text to split
  * @returns {string[]} Array of sentences/phrases
  */
 export function splitIntoSentences(text) {
-  // Split by sentence endings
-  let sentences = text.match(/[^.!?…]+[.!?…]*|[.!?…]+/g) || [];
-  sentences = sentences.map(s => s.trim()).filter(s => s.length > 0);
+  // Keep decimal points and short abbreviations inside a narration chunk.
+  const sentences = [];
+  let start = 0;
+  for (const match of text.matchAll(/[.!?…]+(?=\s|$)/g)) {
+    const end = match.index + match[0].length;
+    const fragment = text.slice(start, end);
+    if (match[0] === '.' && /(?:^|\s)(?:\p{L}{1,4}|(?:\p{L}\.)+\p{L})\.$/u.test(fragment)) continue;
+    if (fragment.trim()) sentences.push(fragment.trim());
+    start = end;
+  }
+  if (text.slice(start).trim()) sentences.push(text.slice(start).trim());
   
   // Split long sentences
   const result = [];

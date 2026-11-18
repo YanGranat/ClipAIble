@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cancelProcessing, completeProcessing, getProcessingRunId, getProcessingState, getScopedUpdateState, initPrintTabLifecycle, isCancelled, resetState, restoreStateFromStorage, saveStateToStorageImmediate, setError, setResult, startProcessing, updateState } from '../../scripts/state/processing.js';
+import { cancelProcessing, completeProcessing, getProcessingRunId, getProcessingState, getScopedUpdateState, initPrintTabLifecycle, isCancelled, resetState, restoreStateFromStorage, saveStateToStorageImmediate, setError, startProcessing, updateState } from '../../scripts/state/processing.js';
 import { getUILanguage } from '../../scripts/locales.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
@@ -69,12 +69,12 @@ describe('processing lifecycle', () => {
     await cancelProcessing(vi.fn());
     await startProcessing(vi.fn());
     const newRunId = getProcessingRunId();
-    updateState({ progress: 25, outputFormat: 'markdown' }, newRunId);
+    updateState({ progress: 25, outputFormat: 'markdown', status: 'Current request' }, newRunId);
     oldUpdate({ progress: 95, outputFormat: 'audio' });
-    setResult({ title: 'Stale' }, oldRunId);
+    oldUpdate({ status: 'Stale request' });
     await setError('Stale error', vi.fn(), oldRunId);
     await completeProcessing(vi.fn(), oldRunId);
-    expect(getProcessingState()).toMatchObject({ isProcessing: true, progress: 25, outputFormat: 'markdown', result: null, error: null });
+    expect(getProcessingState()).toMatchObject({ isProcessing: true, progress: 25, outputFormat: 'markdown', status: 'Current request', error: null });
     expect(isCancelled(oldRunId)).toBe(true);
     expect(isCancelled(newRunId)).toBe(false);
   });
@@ -145,29 +145,41 @@ describe('processing lifecycle', () => {
 
   it('does not restore a storage snapshot over an active in-memory operation', async () => {
     await startProcessing(vi.fn());
-    setResult({ title: 'Current article' });
     updateState({ stage: 'extracting', progress: 24, outputFormat: 'markdown' });
     await saveStateToStorageImmediate();
     const restoring = restoreStateFromStorage();
     await vi.advanceTimersByTimeAsync(0);
     await restoring;
-    expect(getProcessingState()).toMatchObject({ isProcessing: true, progress: 24, outputFormat: 'markdown', result: { title: 'Current article' } });
+    expect(getProcessingState()).toMatchObject({ isProcessing: true, progress: 24, outputFormat: 'markdown' });
   });
 
-  it('reports interrupted document work after restart and preserves the extracted result', async () => {
+  it('reports interrupted work without restoring obsolete article payloads', async () => {
     stored.processingState = {
       isProcessing: true, processingRunId: crypto.randomUUID(), outputFormat: 'markdown',
       lastUpdate: Date.now(), progress: 82, result: { title: 'Saved article', content: [] }
     };
+    stored.lastProcessedResult = { title: 'Saved article', content: [] };
     const restoration = restoreStateFromStorage();
     await vi.advanceTimersByTimeAsync(0);
     await restoration;
     expect(getProcessingState()).toMatchObject({
-      isProcessing: false, outputFormat: 'markdown', error: 'statusProcessingInterrupted',
-      result: { title: 'Saved article', content: [] }
+      isProcessing: false, outputFormat: 'markdown', error: 'statusProcessingInterrupted', progress: 82
     });
+    expect(getProcessingState()).not.toHaveProperty('result');
+    expect(stored.processingState).not.toHaveProperty('result');
+    expect(stored).not.toHaveProperty('lastProcessedResult');
     expect(stored.processingState.isProcessing).toBe(false);
     expect(await startProcessing(vi.fn())).toBe(true);
+  });
+
+  it('clears an unused completed snapshot when the worker starts again', async () => {
+    stored.processingState = { isProcessing: false, result: { content: [{ type: 'paragraph', text: 'An obsolete document body.' }] } };
+    const restoration = restoreStateFromStorage();
+    await vi.advanceTimersByTimeAsync(0);
+    await restoration;
+    expect(stored).not.toHaveProperty('processingState');
+    expect(getProcessingState().isProcessing).toBe(false);
+    expect(getProcessingState()).not.toHaveProperty('result');
   });
 
   it.each(['owned', 'missing', 'foreign-extension', 'wrong-job', 'debugger-started'])('checks the saved PDF print tab before restoring %s work', async (kind) => {

@@ -951,7 +951,7 @@ function createTableFromRows(rows, metrics, pageNum) {
   const columns = allLines.length > 0 ? detectTableColumns(allLines, baseFontSize) : [];
   
   const tableElement = {
-    type: 'table',
+    type: 'table', cellFormat: 'text',
     rows: tableRows,
     hasHeaders: hasHeaders || false,
     columnCount: maxColumns,

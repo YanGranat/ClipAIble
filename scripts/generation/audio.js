@@ -1,3 +1,4 @@
+import { downloadBlob } from '../api/blob-download.js';
 // @ts-check
 // Audio generation module for ClipAIble extension
 // Orchestrates text preparation and TTS conversion
@@ -172,7 +173,9 @@ export async function generateAudio(params, updateState) {
   if (isCancelled(processingRunId)) {
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
-  const audioBuffer = await chunksToSpeech(preparedChunks, ttsApiKey, ttsOptions, updateState);
+  const audioResult = await chunksToSpeech(preparedChunks, ttsApiKey, { ...ttsOptions, returnBlob: true }, updateState);
+  const audioBlob = audioResult instanceof Blob ? audioResult : new Blob([audioResult]);
+  const audioBuffer = { byteLength: audioBlob.size };
   if (isCancelled(processingRunId)) {
     throw new Error(tSync('statusCancelled', await getUILanguage()));
   }
@@ -210,7 +213,7 @@ export async function generateAudio(params, updateState) {
   // CRITICAL: Must be done AFTER validation to ensure audioBuffer is valid
   let actualFormat;
   try {
-    actualFormat = detectAudioFormat(audioBuffer);
+    actualFormat = detectAudioFormat(await audioBlob.slice(0, 12).arrayBuffer());
     // Validate detected format
     if (!actualFormat || typeof actualFormat !== 'string') {
       logWarn('Invalid format detected, using requested format as fallback', {
@@ -289,7 +292,7 @@ export async function generateAudio(params, updateState) {
   
   // Use actual format for MIME/extension to avoid corrupt files (e.g., WAV from Qwen/Respeecher)
   try {
-    await downloadAudio(audioBuffer, filename, actualFormat, processingRunId);
+    await downloadBlob(audioBlob.slice(0, audioBlob.size, getMimeType(actualFormat)), filename, processingRunId);
   } catch (downloadError) {
     // Enhanced error context for expensive operations
     logError('Audio download failed', {
@@ -314,77 +317,6 @@ export async function generateAudio(params, updateState) {
   }
   
   log('Audio download complete', { filename });
-}
-
-/**
- * Download audio buffer as file
- * @param {ArrayBuffer} buffer - Audio data
- * @param {string} filename - Target filename
- * @param {string} format - Audio format for MIME type
- */
-async function downloadAudio(buffer, filename, format, processingRunId) {
-  // Check if processing was cancelled before downloading
-  if (isCancelled(processingRunId)) {
-    log('Processing cancelled, skipping audio download');
-    throw new Error(tSync('statusCancelled', await getUILanguage()));
-  }
-  
-  const mimeType = getMimeType(format);
-  
-  // Create blob from buffer
-  const blob = new Blob([buffer], { type: mimeType });
-
-  // In MV3 service worker URL.createObjectURL may be unavailable.
-  const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
-    ? URL
-    : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
-
-  if (urlApi && urlApi.createObjectURL) {
-    const objectUrl = urlApi.createObjectURL(blob);
-    try {
-      // Check again before actual download
-      if (isCancelled(processingRunId)) {
-        log('Processing cancelled, skipping audio download');
-        throw new Error(tSync('statusCancelled', await getUILanguage()));
-      }
-      
-      await chrome.downloads.download({
-        url: objectUrl,
-        filename: filename,
-        saveAs: true
-      });
-      log('Audio download initiated', { filename, size: buffer.byteLength });
-    } finally {
-      urlApi.revokeObjectURL(objectUrl);
-    }
-  } else {
-    // Fallback for environments without createObjectURL (MV3 SW)
-    logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
-      reason: 'URL.createObjectURL not available in MV3 service worker',
-      method: 'data URL via FileReader (fallback)',
-      impact: 'Slower download, higher memory usage',
-      size: `${(buffer.byteLength / 1024 / 1024).toFixed(2)} MB`
-    });
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-
-    // Check again before actual download
-    if (isCancelled(processingRunId)) {
-      log('Processing cancelled, skipping audio download');
-      throw new Error(tSync('statusCancelled', await getUILanguage()));
-    }
-
-    await chrome.downloads.download({
-      url: dataUrl,
-      filename: filename,
-      saveAs: true
-    });
-    log('Audio download initiated (data URL fallback)', { filename, size: buffer.byteLength });
-  }
 }
 
 /**

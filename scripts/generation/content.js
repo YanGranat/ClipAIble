@@ -14,7 +14,7 @@ export function filterFigureParagraphs(content, sourceUrl = '') {
     const next = content[index + 1];
     if (item.type !== 'paragraph' || next?.type !== 'image' || typeof next.src !== 'string' || !next.src) return [item];
     if (next.caption != null && typeof next.caption !== 'string') return [item];
-    const field = item.text ? 'text' : 'html';
+    const field = typeof item.html === 'string' ? 'html' : 'text';
     const original = item[field];
     if (typeof original !== 'string') return [item];
     if ((original.match(/<figure\b/gi) || []).length !== 1) return [item];

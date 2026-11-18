@@ -26,6 +26,15 @@ beforeEach(() => {
 });
 const packet = () => chrome.runtime.sendMessage.mock.calls.find(([value]) => value.action === 'processArticle')?.[0]?.data;
 
+it.each(['elevenlabsApiKey', 'googleTtsApiKey', 'qwenApiKey', 'respeecherApiKey'])('dispatches the current %s speech draft without requiring a save', async field => {
+  elements.mainFormatSelect.value = 'audio';
+  elements[field].value = 'synthetic-unsaved-speech-key';
+  elements[field].dataset.encrypted = 'ENC:v2:stale-ciphertext';
+  await processing.handleSavePdf();
+  expect(packet()?.[field]).toBe('synthetic-unsaved-speech-key');
+  expect(chrome.storage.local.set).not.toHaveBeenCalled();
+});
+
 it('uses the saved OpenAI image key while article processing stays with Claude', async () => {
   await processing.handleSavePdf();
   expect(packet()).toMatchObject({ provider: 'claude', apiKey: 'synthetic-claude-key', imageTranslationProvider: 'openai', imageApiKey: 'synthetic-saved-openai-key', translateImages: true });

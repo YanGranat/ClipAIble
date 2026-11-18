@@ -65,11 +65,7 @@ export function initState(deps) {
     if (state.isProcessing) {
       // Use startTime from background (persists across popup reopens)
       if (state.startTime) {
-        if (stateRefs.currentStartTime !== state.startTime) {
-          startTimerDisplay(state.startTime);
-        }
-        // Ensure timer is running even if startTime was already set
-        if (!stateRefs.timerInterval && state.startTime) {
+        if (stateRefs.currentStartTime?.current !== state.startTime || !stateRefs.timerInterval?.current) {
           startTimerDisplay(state.startTime);
         }
       }
@@ -84,7 +80,7 @@ export function initState(deps) {
         elements.cancelBtn.style.display = 'block';
         elements.cancelBtn.disabled = false;
       }
-      setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime, translation);
+      setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime?.current, translation);
       setProgress(state.progress);
     } else if (state.error || state.isCancelled) {
       // Check if error is actually a cancellation - don't show as error

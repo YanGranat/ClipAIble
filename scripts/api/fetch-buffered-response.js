@@ -3,7 +3,7 @@ import { CONFIG } from '../utils/config.js';
 // Read a non-streaming HTTP response within one request deadline.
 export async function fetchBufferedResponse(url, options = {}, timeoutMs = CONFIG.API_TIMEOUT_MS, requestOptions = {}) {
   const controller = new AbortController();
-  const parentSignal = options.signal;
+  const parentSignals = [...new Set([options.signal, requestOptions.signal].filter(Boolean))];
   let response;
   let rejectCancellation;
   const cancellation = new Promise((_, reject) => { rejectCancellation = reject; });
@@ -13,13 +13,27 @@ export async function fetchBufferedResponse(url, options = {}, timeoutMs = CONFI
     response?.body?.cancel().catch(() => {});
     rejectCancellation(error);
   };
-  const onParentAbort = () => abort(parentSignal.reason);
-  parentSignal?.addEventListener('abort', onParentAbort, { once: true });
-  const timeout = setTimeout(() => abort(new DOMException('Request timed out', 'AbortError')), timeoutMs);
+  const parentListeners = parentSignals.map(signal => {
+    const listener = () => abort(signal.reason);
+    signal.addEventListener('abort', listener, { once: true });
+    return { signal, listener };
+  });
+  const timeout = setTimeout(() => abort(Object.assign(new DOMException('Request timed out', 'TimeoutError'), {
+    translationKey: 'errorTimeout', translationParams: {}, retryable: false
+  })), timeoutMs);
+  let checking = false;
+  const poll = requestOptions.checkCancelled ? setInterval(async () => {
+    if (checking || controller.signal.aborted) return;
+    checking = true;
+    try { await requestOptions.checkCancelled(); } catch (error) { abort(error); }
+    finally { checking = false; }
+  }, 50) : undefined;
   try {
     const operation = (async () => {
       await requestOptions.checkCancelled?.();
-      if (parentSignal?.aborted) throw parentSignal.reason instanceof Error ? parentSignal.reason : new DOMException('Request cancelled', 'AbortError');
+      const aborted = parentSignals.find(signal => signal.aborted);
+      if (aborted) throw aborted.reason instanceof Error ? aborted.reason : new DOMException('Request cancelled', 'AbortError');
+      requestOptions.onRequestStart?.();
       response = await fetch(url, { ...options, signal: controller.signal });
       await requestOptions.checkCancelled?.();
       const body = await response.blob();
@@ -33,12 +47,15 @@ export async function fetchBufferedResponse(url, options = {}, timeoutMs = CONFI
     })();
     return await Promise.race([operation, cancellation]);
   } catch (error) {
+    if (!controller.signal.aborted) {
+      await Promise.race([Promise.resolve().then(() => requestOptions.checkCancelled?.()), cancellation]);
+    }
     controller.abort(error);
     response?.body?.cancel().catch(() => {});
-    await requestOptions.checkCancelled?.();
     throw error;
   } finally {
     clearTimeout(timeout);
-    parentSignal?.removeEventListener('abort', onParentAbort);
+    clearInterval(poll);
+    for (const { signal, listener } of parentListeners) signal.removeEventListener('abort', listener);
   }
 }

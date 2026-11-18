@@ -145,10 +145,8 @@ describe('decodeHtmlEntities', () => {
     expect(decodeHtmlEntities('&#x41;')).toBe('A');
   });
 
-  it('should handle double-encoded entities', () => {
-    // First pass decodes &amp; to &, second pass decodes &nbsp; to space
-    expect(decodeHtmlEntities('&amp;nbsp;')).toBe(' ');
-    // &amp;amp; -> first pass: &amp; -> &amp; (no &amp; in entities list, so stays as &amp;)
+  it('should decode exactly one entity layer', () => {
+    expect(decodeHtmlEntities('&amp;nbsp;')).toBe('&nbsp;');
     expect(decodeHtmlEntities('&amp;amp;')).toBe('&amp;');
   });
 

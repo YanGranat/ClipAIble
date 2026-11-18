@@ -76,7 +76,7 @@ export async function migrateApiKeys() {
       }
     } catch (error) {
       logError('API keys migration failed', error);
-      // Don't throw - migration failure shouldn't break extension
+      throw error;
     }
   });
 }
@@ -88,6 +88,7 @@ export async function migrateApiKeys() {
  */
 export async function initializeDefaultSettings() {
   try {
+    await chrome.storage.local.remove(['lastSubtitles', 'pendingSubtitles']);
     const result = await chrome.storage.local.get([
       'use_selector_cache',
       'enable_selector_caching',
@@ -127,7 +128,7 @@ export async function initializeDefaultSettings() {
     }
   } catch (error) {
     logError('Failed to initialize default settings', error);
-    // Don't throw - initialization failure shouldn't break extension
+    throw error;
   }
 }
 
@@ -136,7 +137,12 @@ export async function initializeDefaultSettings() {
  * @returns {Promise<void>}
  */
 export async function runInitialization() {
-  await Promise.all([migrateApiKeys(), initializeDefaultSettings()]);
+  if (typeof chrome.storage.local.setAccessLevel === 'function') {
+    await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  }
+  const phases = await Promise.allSettled([migrateApiKeys(), initializeDefaultSettings()]);
+  const failure = phases.find(phase => phase.status === 'rejected');
+  if (failure) throw failure.reason;
 }
 
 

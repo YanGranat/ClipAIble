@@ -3,18 +3,18 @@
 // Converts DOM elements to content items
 
 import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneWithoutLinkAnnouncements } from './dom-utils.js';
-import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isNumericHeading, isRealHeading, cleanLatexFormula, isEndOfContentSection } from './text-utils.js';
+import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isNumericHeading, isRealHeading, cleanLatexFormula } from './text-utils.js';
 import { isFootnoteLink, isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded } from './filters.js';
 import { extractBestImageUrl, isTrackingPixel, isDecorativeImage, getImageCaption } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
 import { isStandfirstText } from './standfirst.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
 import { findSplitArticleBody, isOutsideArticleBody } from './discover.js';
+import { CANDIDATE_SELECTOR } from './constants.js';
 
 /**
  * Candidate element selector
  */
-const CANDIDATE_SELECTOR = 'h1, h2, h3, h4, h5, h6, p, img, figure, blockquote, pre, code, ul, ol, table, div';
 
 /**
  * @typedef {import('./types.js').ContentItem} ContentItem
@@ -33,11 +33,7 @@ export function collectCandidateElements(mainContent, win) {
   const hostname = win?.location?.hostname || '';
   
   // Debug log for extraction method selection
-  console.log('[ClipAIble Extraction] collectCandidateElements called', { 
-    hostname, 
-    mainContentTag: mainContent?.tagName,
-    mainContentClass: mainContent?.className?.substring?.(0, 50)
-  });
+
 
   if (hostname.includes('habr.com')) {
     // Habr has complex structure: article > ... > .article-formatted-body contains actual content
@@ -58,20 +54,13 @@ export function collectCandidateElements(mainContent, win) {
   if (hostname.includes('nature.com') || hostname.includes('springer.com') || 
       hostname.includes('biomedcentral.com') || hostname.includes('springernature.com')) {
     const cArticleBody = mainContent.querySelector('.c-article-body');
-    console.log('[ClipAIble Extraction] Nature/Springer detected', {
-      hasCArticleBody: !!cArticleBody,
-      textLength: cArticleBody?.textContent?.length || 0,
-      paragraphs: cArticleBody?.querySelectorAll('p')?.length || 0
-    });
+
     if (cArticleBody) {
       const text = cArticleBody.textContent?.trim() || '';
       const paragraphs = cArticleBody.querySelectorAll('p').length;
       if (text.length > 1000 && paragraphs > 5) {
         const elements = Array.from(cArticleBody.querySelectorAll(CANDIDATE_SELECTOR));
-        console.log('[ClipAIble Extraction] Using c-article-body', { 
-          elementsCount: elements.length,
-          figures: elements.filter(e => e.tagName === 'FIGURE').length
-        });
+
         return elements;
       }
     }
@@ -305,19 +294,7 @@ export function filterCandidateElements(win, allElements, constants, debugInfo) 
       if (isImageOrFigure) {
         excludedImageCount++;
         // Debug log for excluded images/figures
-        console.log('[ClipAIble Extraction] Excluded image/figure', {
-          tag: tagName,
-          className: el.className?.substring?.(0, 40) || '',
-          parentClass: el.parentElement?.className?.substring?.(0, 40) || '',
-          src: (() => {
-            if (tagName === 'img') {
-              const imgSrc = /** @type {any} */ (el).src;
-              return imgSrc ? imgSrc.substring(0, 50) : '';
-            }
-            const img = el.querySelector?.('img');
-            return img && /** @type {any} */ (img).src ? /** @type {any} */ (img).src.substring(0, 50) : '';
-          })()
-        });
+
       }
       else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
       return false;
@@ -351,12 +328,14 @@ export function partitionCandidateElements(elements) {
   const selected = new Set(elements);
   const visited = new Set();
   const entries = [];
+  const blockSelector = CANDIDATE_SELECTOR.split(',').filter(tag => tag !== 'code').concat(['aside', 'nav', 'footer']).join(',');
   function append(element) {
     if (visited.has(element)) return;
     visited.add(element);
-    const descendants = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,img,figure,blockquote,pre,ul,ol,table,div,aside,nav,footer'));
+    const descendants = Array.from(element.querySelectorAll(blockSelector));
     const originalText = element.getAttribute('data-original-text');
-    if (element.tagName !== 'DIV' || descendants.length === 0 || originalText?.trim()) {
+    const inlineImages = element.tagName === 'P' && descendants.some(child => child.tagName === 'IMG');
+    if ((element.tagName !== 'DIV' && !inlineImages) || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
       for (const child of Array.from(element.querySelectorAll('*'))) {
         if (selected.has(child)) append(child);
@@ -409,18 +388,11 @@ export function parseElements(win, elements, state, constants, baseUrl) {
   const content = [];
   let processedCount = 0;
   let skippedCount = 0;
-  let stopProcessing = false;
   const consumed = new Set();
   const containerEligibility = new Map();
   
   for (const { element, container, owned } of partitionCandidateElements(elements)) {
     if (consumed.has(element) || (container && consumed.has(container))) continue;
-    // Stop processing after reference sections (e.g., "See also", "References")
-    if (stopProcessing) {
-      skippedCount++;
-      continue;
-    }
-    
     const tagName = element.tagName.toLowerCase();
     
     // Strong exclusion check (ad/sponsor patterns)
@@ -432,14 +404,16 @@ export function parseElements(win, elements, state, constants, baseUrl) {
     if (container) {
       if (!containerEligibility.has(container)) {
         const previewState = { ...state, addedParagraphs: new Set(state.addedParagraphs || []) };
-        containerEligibility.set(container, !!handleDiv(container, previewState, constants));
+        containerEligibility.set(container, !!(container.tagName === 'P'
+          ? handleParagraph(win, container, previewState, constants)
+          : handleDiv(container, previewState, constants)));
       }
       if (containerEligibility.get(container)) {
         for (const translated of Array.from(element.querySelectorAll('[data-original-text]'))) {
           const original = translated.getAttribute('data-original-text');
           if (original?.trim()) translated.textContent = original.trim();
         }
-        const html = sanitizeParagraphHtml(element);
+        const html = sanitizeParagraphHtml(element, state.selectionExclusions);
         content.push({ type: 'paragraph', text: html, html });
         for (const child of owned || []) consumed.add(child);
         incrementContentType(state.debugInfo, 'paragraph');
@@ -450,16 +424,10 @@ export function parseElements(win, elements, state, constants, baseUrl) {
     const previousCount = content.length;
     
     // Handle by tag type
-    if (tagName.match(/^h[1-6]$/)) {
-      const headingText = (element.textContent || '').trim();
-      
-      // Check if this heading marks end of main content
-      if (isEndOfContentSection(headingText)) {
-        stopProcessing = true;
-        pushDebugLog(state.debugInfo, `Stopping extraction at section: "${headingText}"`);
-        continue;
-      }
-      
+    if (tagName === 'hr') {
+      content.push({ type: 'separator' });
+      processedCount++;
+    } else if (tagName.match(/^h[1-6]$/)) {
       // Check if element is actually a real heading (not just styled text)
       const isReal = isRealHeading(element, win);
       
@@ -477,7 +445,7 @@ export function parseElements(win, elements, state, constants, baseUrl) {
         // Log why heading was rejected by handleHeading
         skippedCount++;
       }
-    } else if (tagName === 'p') {
+    } else if (tagName === 'p' || tagName === 'figcaption') {
       const item = handleParagraph(win, element, state, constants);
       if (item) {
         content.push(item);
@@ -487,14 +455,20 @@ export function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     } else if (tagName === 'figure') {
-      const item = handleFigure(win, element, state, constants, baseUrl);
-      if (item) {
-        content.push(item);
-        incrementContentType(state.debugInfo, 'image');
-        processedCount++;
-      } else {
-        skippedCount++;
+      const mixedContent = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr'))
+        .some(child => !child.closest('figcaption'));
+      if (mixedContent) continue;
+      const images = [];
+      for (const image of Array.from(element.querySelectorAll('img'))) {
+        const item = createImageItem(win, image, state, constants, baseUrl);
+        if (item) images.push(item);
       }
+      if (images.length) {
+        images[images.length - 1].caption = getImageCaption(element.querySelector('img'));
+        content.push(...images);
+        for (const _image of images) incrementContentType(state.debugInfo, 'image');
+        processedCount += images.length;
+      } else skippedCount++;
     } else if (tagName === 'img') {
       const item = handleImg(win, element, state, constants, baseUrl);
       if (item) {
@@ -505,7 +479,7 @@ export function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     } else if (tagName === 'blockquote') {
-      const item = handleBlockquote(element);
+      const item = handleBlockquote(element, state.selectionExclusions);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, 'quote');
@@ -524,14 +498,14 @@ export function parseElements(win, elements, state, constants, baseUrl) {
         processedCount++;
       }
     } else if (tagName === 'ul' || tagName === 'ol') {
-      const item = handleList(element);
+      const item = handleList(element, state.selectionExclusions);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, 'list');
         processedCount++;
       }
     } else if (tagName === 'table') {
-      const item = handleTable(element);
+      const item = handleTable(element, state.selectionExclusions);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, 'table');
@@ -557,7 +531,39 @@ export function parseElements(win, elements, state, constants, baseUrl) {
     state.debugInfo.skippedCount = skippedCount;
   }
   
+  return omitInitialArticleTitle(content, state);
+}
+
+/**
+ * Omit the article's initial H1 while retaining headings at later source positions.
+ * @param {ContentItem[]} content - Content in DOM order
+ * @param {ExtractionState} state - Extraction state
+ * @returns {ContentItem[]} Content without the initial duplicate title
+ */
+export function omitInitialArticleTitle(content, state) {
+  const firstBodyIndex = content.findIndex(item => item.type !== 'subtitle' &&
+    item.type !== 'separator' && !item.isStandfirst && !(item.type === 'image' && item.isFeatured));
+  const firstBody = content[firstBodyIndex];
+  if (firstBody?.type === 'heading' && firstBody.level === 1 && state.mainTitleText &&
+      normalizeHeadingForDedup(firstBody.text) === state.mainTitleText) {
+    return content.filter((_item, index) => index !== firstBodyIndex);
+  }
   return content;
+}
+
+/**
+ * Create a plain heading without collapsing distinct source elements by text.
+ * @param {Element} element - Heading source element
+ * @returns {ContentItem} Plain heading with its original fragment target
+ */
+export function createHeadingItem(element) {
+  return {
+    type: 'heading',
+    level: parseInt(element.tagName.charAt(1)),
+    text: cleanHeadingText(cloneWithoutLinkAnnouncements(element).textContent || ''),
+    format: 'text',
+    id: element.id || undefined
+  };
 }
 
 /**
@@ -582,13 +588,6 @@ export function handleHeading(element, state, constants) {
   
   // Skip empty or too short
   if (cleanedText.length < 3) return null;
-  
-  // Skip if matches main title
-  const normalizedHeading = normalizeHeadingForDedup(cleanedText);
-  if (normalizedHeading === state.mainTitleText) return null;
-  
-  // Skip duplicates
-  if (state.addedHeadings.has(normalizedHeading)) return null;
   
   // Skip subscription/promotional headings
   const lowerText = cleanedText.toLowerCase();
@@ -615,14 +614,12 @@ export function handleHeading(element, state, constants) {
     }
   }
   
-  // Add to seen headings
-  state.addedHeadings.add(normalizedHeading);
-  
   const level = parseInt(element.tagName.charAt(1));
   return {
     type: 'heading',
     level,
     text: cleanedText,
+    format: 'text',
     id: element.id || undefined
   };
 }
@@ -638,9 +635,6 @@ export function handleHeading(element, state, constants) {
 export function handleParagraph(win, element, state, constants) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
-  
-  // Skip if inside figure (except figcaption which is handled by handleFigure)
-  if (element.closest('figure')) return null;
   
   // Skip if inside table (table content is handled as a unit)
   if (element.closest('table')) return null;
@@ -701,7 +695,7 @@ export function handleParagraph(win, element, state, constants) {
 
   // Get original text if translated
   const originalText = getOriginalTextIfTranslated(element);
-  const finalText = originalText || sanitizeParagraphHtml(element);
+  const finalText = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(element, state.selectionExclusions);
   
   return {
     type: 'paragraph',
@@ -748,10 +742,15 @@ export function processMathElements(container) {
       const textNode = document.createTextNode(` $${cleanedLatex}$ `);
       mathEl.replaceWith(textNode);
     } else {
-      // No LaTeX found - remove the element to avoid garbage
-      mathEl.remove();
+      mathEl.replaceWith(document.createTextNode(mathEl.textContent || ''));
     }
   }
+}
+
+export function encodeOriginalText(element, text) {
+  const node = element.ownerDocument.createElement('span');
+  node.textContent = text;
+  return node.innerHTML;
 }
 
 /**
@@ -759,9 +758,14 @@ export function processMathElements(container) {
  * @param {Element} p - Paragraph element
  * @returns {string} - Sanitized HTML
  */
-export function sanitizeParagraphHtml(p) {
+export function sanitizeParagraphHtml(p, excludedSelectors = []) {
   // Clone to avoid modifying original
   const clone = /** @type {Element} */ (cloneWithoutLinkAnnouncements(p));
+  for (const selector of excludedSelectors || []) {
+    for (const element of Array.from(clone.querySelectorAll(selector))) {
+      if (!element.matches('blockquote.twitter-tweet')) element.remove();
+    }
+  }
   
   // Process math elements first - convert to LaTeX
   processMathElements(clone);
@@ -769,6 +773,21 @@ export function sanitizeParagraphHtml(p) {
   // Remove event handlers
   const allElements = clone.querySelectorAll('*');
   for (const el of Array.from(allElements)) {
+    if (el.tagName === 'SPAN') {
+      const style = /** @type {HTMLElement} */ (el).style;
+      const bold = style?.fontWeight === 'bold' || Number(style?.fontWeight) >= 600;
+      const italic = style?.fontStyle === 'italic';
+      if (bold || italic) {
+        const wrapper = clone.ownerDocument.createElement(bold ? 'strong' : 'em');
+        wrapper.append(...el.childNodes);
+        el.replaceWith(wrapper);
+        if (bold && italic) {
+          const emphasis = clone.ownerDocument.createElement('em');
+          emphasis.append(...wrapper.childNodes);
+          wrapper.append(emphasis);
+        }
+      }
+    }
     // Remove on* attributes
     for (const attr of Array.from(el.attributes)) {
       if (attr.name.startsWith('on')) {
@@ -785,6 +804,16 @@ export function sanitizeParagraphHtml(p) {
     if (el.tagName.toLowerCase() === 'style' || el.tagName.toLowerCase() === 'script') {
       el.remove();
     }
+    if (el.tagName === 'A') {
+      const href = el.getAttribute('href');
+      if (href && !href.startsWith('#')) {
+        try {
+          const absolute = new URL(href, p.ownerDocument.baseURI);
+          if (['http:', 'https:', 'mailto:'].includes(absolute.protocol)) el.setAttribute('href', absolute.href);
+          else el.removeAttribute('href');
+        } catch (_) { el.removeAttribute('href'); }
+      }
+    }
   }
   
   // Clean empty elements
@@ -797,48 +826,6 @@ export function sanitizeParagraphHtml(p) {
 }
 
 /**
- * Handle figure element
- * @param {Window} win - Window object
- * @param {Element} element - Figure element
- * @param {ExtractionState} state - State
- * @param {Object} constants - Constants
- * @param {string} baseUrl - Base URL
- * @returns {ContentItem|null} - Content item or null
- */
-export function handleFigure(win, element, state, constants, baseUrl) {
-  const img = element.querySelector('img');
-  if (!img) return null;
-  
-  const src = extractBestImageUrl(/** @type {HTMLImageElement} */ (img));
-  if (!src) return null;
-  
-  // Skip tracking pixels and decorative images
-  if (isTrackingPixel(win, /** @type {HTMLImageElement} */ (img))) return null;
-  if (isDecorativeImage(win, /** @type {HTMLImageElement} */ (img), constants.LOGO_PATTERNS || [])) return null;
-  
-  const absoluteSrc = toAbsoluteUrl(src, baseUrl);
-  const normalizedSrc = normalizeImageUrl(absoluteSrc);
-
-  // Skip duplicates
-  if (state.processedImages.has(normalizedSrc)) return null;
-
-  // Prevent memory leaks: limit processed images set size
-  if (state.processedImages.size < 1000) {
-    state.processedImages.add(normalizedSrc);
-  }
-
-  // Get caption
-  const caption = getImageCaption(/** @type {HTMLImageElement} */ (img));
-  
-  return {
-    type: 'image',
-    src: absoluteSrc,
-    alt: img.alt || '',
-    caption
-  };
-}
-
-/**
  * Handle img element
  * @param {Window} win - Window object
  * @param {Element} element - Image element
@@ -848,9 +835,12 @@ export function handleFigure(win, element, state, constants, baseUrl) {
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleImg(win, element, state, constants, baseUrl) {
-  // Skip if inside figure (handled separately)
-  if (element.closest('figure')) return null;
-  
+  const item = createImageItem(win, element, state, constants, baseUrl);
+  if (item && !element.closest('figure')) item.caption = getImageCaption(element);
+  return item;
+}
+
+export function createImageItem(win, element, state, constants, baseUrl) {
   const img = /** @type {HTMLImageElement} */ (element);
   const src = extractBestImageUrl(img);
   if (!src) return null;
@@ -874,7 +864,7 @@ export function handleImg(win, element, state, constants, baseUrl) {
     type: 'image',
     src: absoluteSrc,
     alt: img.alt || '',
-    caption: getImageCaption(img)
+    caption: ''
   };
 }
 
@@ -883,13 +873,14 @@ export function handleImg(win, element, state, constants, baseUrl) {
  * @param {Element} element - Blockquote element
  * @returns {ContentItem|null} - Content item or null
  */
-export function handleBlockquote(element) {
-  const text = (/** @type {HTMLElement} */ (cloneWithoutLinkAnnouncements(element)).innerHTML || '').trim();
+export function handleBlockquote(element, excludedSelectors = []) {
+  const text = sanitizeParagraphHtml(element, excludedSelectors);
   if (!text) return null;
   
   return {
     type: 'quote',
-    text
+    text,
+    html: text
   };
 }
 
@@ -923,7 +914,8 @@ export function handleCode(element) {
   return {
     type: 'code',
     language,
-    text
+    text,
+    format: 'text'
   };
 }
 
@@ -932,12 +924,9 @@ export function handleCode(element) {
  * @param {Element} element - List element
  * @returns {ContentItem|null} - Content item or null
  */
-export function handleList(element) {
+export function handleList(element, excludedSelectors = []) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
-  
-  // Skip if inside figure (figure content should be handled as part of the image)
-  if (element.closest('figure')) return null;
   
   // Skip if inside table (nested lists in table cells should be part of table)
   if (element.closest('table')) return null;
@@ -953,9 +942,9 @@ export function handleList(element) {
       // Clone and process math elements
       const clone = /** @type {Element} */ (cloneWithoutLinkAnnouncements(li));
       processMathElements(clone);
-      return (clone.textContent || '').trim();
+      return { html: sanitizeParagraphHtml(clone, excludedSelectors) };
     })
-    .filter(text => text.length > 0);
+    .filter(item => item.html.length > 0);
 
   if (items.length === 0) return null;
   
@@ -971,7 +960,7 @@ export function handleList(element) {
  * @param {Element} element - Table element
  * @returns {ContentItem|null} - Content item or null
  */
-export function handleTable(element) {
+export function handleTable(element, excludedSelectors = []) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
   
@@ -981,26 +970,12 @@ export function handleTable(element) {
     return null;
   }
 
-  const tableText = (element.textContent || '').trim();
-  if (tableText.length < 50) return null;
-
-  // Clone and clean
-  const clone = cloneWithoutLinkAnnouncements(element);
-  const allElements = (/** @type {HTMLElement} */ (clone)).querySelectorAll('*');
-  for (const el of Array.from(allElements)) {
-    el.removeAttribute('style');
-    for (const attr of Array.from(el.attributes)) {
-      if (attr.name.startsWith('on')) {
-        el.removeAttribute(attr.name);
-      }
-    }
-  }
-
-  return {
-    type: 'paragraph',
-    text: (/** @type {HTMLElement} */ (clone)).outerHTML,
-    html: (/** @type {HTMLElement} */ (clone)).outerHTML
-  };
+  const ownedRows = Array.from(element.querySelectorAll('tr')).filter(row => row.closest('table') === element);
+  const cells = ownedRows.map(row => Array.from(row.children).filter(cell => cell.tagName === 'TD' || cell.tagName === 'TH'));
+  if (!cells.some(row => row.length)) return null;
+  const hasHeaders = cells[0]?.length > 0 && cells[0].every(cell => cell.tagName === 'TH');
+  const rows = cells.map(row => row.map(cell => sanitizeParagraphHtml(cell, excludedSelectors)));
+  return { type: 'table', cellFormat: 'html', hasHeaders, ...(hasHeaders ? { headers: rows[0] } : {}), rows: hasHeaders ? rows.slice(1) : rows };
 }
 
 /**
@@ -1013,12 +988,6 @@ export function handleTable(element) {
 export function handleDiv(element, state, constants) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
-  
-  // Skip if inside figure (except figcaption which is handled by handleFigure)
-  // Figure content should be handled as part of the image, not separately
-  if (element.closest('figure') && element.tagName.toLowerCase() !== 'figcaption') {
-    return null;
-  }
   
   // Skip if inside table (table content is handled as a unit)
   if (element.closest('table')) return null;
@@ -1036,10 +1005,7 @@ export function handleDiv(element, state, constants) {
   const id = (element.id || '').toLowerCase();
 
   // Skip navigation, buttons, icons, etc.
-  if (className.includes('nav') || className.includes('button') || className.includes('icon') ||
-      className.includes('menu') || className.includes('sidebar') || className.includes('widget') ||
-      className.includes('modal') || className.includes('popup') || className.includes('tooltip') ||
-      id.includes('nav') || id.includes('menu') || id.includes('sidebar')) {
+  if (/(?:^|[\s_-])(?:nav|button|icon|menu|sidebar|widget|modal|popup|tooltip)(?:$|[\s_-])/.test(`${className} ${id}`)) {
     return null;
   }
 
@@ -1052,13 +1018,8 @@ export function handleDiv(element, state, constants) {
 
   // Skip elements with video/audio control text patterns
   const lowerText = text.toLowerCase();
-  if (lowerText.includes('volume') || lowerText.includes('shortcut') ||
-      lowerText.includes('caption') || lowerText.includes('fullscreen') ||
-      lowerText.includes('mute') || lowerText.includes('unmute') ||
-      lowerText.includes('play') || lowerText.includes('pause') ||
-      /^\d+\s+of\s+\d+\s+(minute|second|hour)/i.test(text) ||
-      /^[←→↑↓↗↘◀▶▲▼↩]/.test(text) ||
-      /^[a-z]\s*$/i.test(text)) { // Single letters like "f", "c"
+  if (/^(?:volume|shortcut|caption|fullscreen|mute|unmute|play|pause)$/i.test(text) ||
+      /^\d+\s+of\s+\d+\s+(?:minute|second|hour)s?$/i.test(text)) {
     return null;
   }
 
@@ -1130,7 +1091,7 @@ export function handleDiv(element, state, constants) {
 
   // Get original text if translated
   const originalText = getOriginalTextIfTranslated(element);
-  const finalText = originalText || sanitizeParagraphHtml(element);
+  const finalText = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(element, state.selectionExclusions);
 
   // Add to seen paragraphs
   if (!state.addedParagraphs) state.addedParagraphs = new Set();
@@ -1141,23 +1102,4 @@ export function handleDiv(element, state, constants) {
     text: finalText,
     html: finalText
   };
-}
-
-/**
- * Deduplicate headings in content array
- * @param {ContentItem[]} content - Content items
- * @returns {ContentItem[]} - Deduplicated content
- */
-export function deduplicateHeadings(content) {
-  const seenHeadings = new Set();
-  
-  return content.filter(item => {
-    if (item.type !== 'heading') return true;
-    
-    const normalized = normalizeHeadingForDedup(item.text || '');
-    if (seenHeadings.has(normalized)) return false;
-    
-    seenHeadings.add(normalized);
-    return true;
-  });
 }

@@ -10,6 +10,7 @@ import {
   handleQuickSaveError
 } from '../utils/processing-helpers.js';
 import { createNotification } from './notifications.js';
+import { tSync } from '../locales.js';
 
 /**
  * Handle quick save from context menu
@@ -27,30 +28,22 @@ export async function handleQuickSave(outputFormat, startArticleProcessing, tabI
     return;
   }
   
-  // Show notification about starting save
-  await showQuickSaveNotification(outputFormat, createNotification);
-  
   try {
+    await showQuickSaveNotification(outputFormat, createNotification);
     // Extract page content - use provided tabId if available (from context menu)
     const pageData = await extractPageContent(tabId);
     
     // Prepare processing data from settings
-    let processingData;
-    try {
-      processingData = await prepareQuickSaveProcessingData(outputFormat, pageData);
-    } catch (error) {
-      await handleQuickSaveError(error, createNotification);
-      return;
-    }
+    const processingData = await prepareQuickSaveProcessingData(outputFormat, pageData);
     
     log('Starting quick save processing', { url: pageData.url, model: processingData.model });
     
-    // NOTE: No await here - this is intentional "fire and forget" pattern.
-    // startArticleProcessing returns true/false synchronously, processing
-    // runs async via .then()/.catch() chain with proper error handling.
-    // See systemPatterns.md "Design Decisions" section.
-    // startArticleProcessing is already wrapped with extractFromPageInlined in background.js
-    startArticleProcessing(processingData);
+    const started = await startArticleProcessing(processingData);
+    if (started === false && !getProcessingState().error) {
+      throw Object.assign(new Error(tSync('errorProcessingNotStarted', 'en')), {
+        translationKey: 'errorProcessingNotStarted', translationParams: {}
+      });
+    }
     
   } catch (error) {
     await handleQuickSaveError(error, createNotification);

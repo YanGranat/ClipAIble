@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { createHash } from 'node:crypto';
+import JSZip from './lib/jszip-wrapper.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -19,17 +20,23 @@ const sourceFiles = [
 ];
 const sourceDirectories = [...runtimeDirectories, 'src', 'tests', 'docs', 'third_party/sources'];
 const buildOnlyFiles = new Set(['scripts/apply-extraction-build.js', 'scripts/extraction/extractor/builder.js']);
+const buildOnlyDirectories = ['scripts/extraction/extractor/', 'scripts/extraction/patterns/', 'scripts/extraction/constants/'];
+export const ORT_RUNTIME_FILES = Object.freeze(['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']);
 
-function isRuntimeFile(relativePath) {
-  const normalized = relativePath.split(path.sep).join('/');
-  return !buildOnlyFiles.has(normalized) &&
+export function isSourceFile(relativePath) {
+  const normalized = relativePath.replaceAll('\\', '/');
+  return !['workspace', 'temporary_files', 'node_modules', '.git'].some(directory => normalized === directory || normalized.startsWith(directory + '/')) &&
     !normalized.startsWith('scripts/test/') &&
     !/\.(?:backup|bak)(?:\.|$)/i.test(normalized) &&
     !normalized.endsWith('.map');
 }
 
-function isSourceFile(relativePath) {
-  return buildOnlyFiles.has(relativePath.split(path.sep).join('/')) || isRuntimeFile(relativePath);
+export function isRuntimeFile(relativePath) {
+  const normalized = relativePath.replaceAll('\\', '/');
+  if (!isSourceFile(normalized) || buildOnlyFiles.has(normalized)) return false;
+  if (buildOnlyDirectories.some(directory => normalized === directory.slice(0, -1) || normalized.startsWith(directory))) return false;
+  if (/^lib\/ort[.-]/.test(normalized)) return ORT_RUNTIME_FILES.includes(normalized.slice(4));
+  return true;
 }
 
 async function copyDirectory(source, destination, relativePath, include = isRuntimeFile) {
@@ -49,7 +56,7 @@ async function copyDirectory(source, destination, relativePath, include = isRunt
 }
 
 async function buildBundles() {
-  for (const script of ['build-extraction.js', 'build-offscreen.js', 'build-tts-worker.js']) {
+  for (const script of ['build-extraction.js', 'scripts/apply-extraction-build.js', 'build-offscreen.js', 'build-tts-worker.js']) {
     console.log('Building ' + script);
     const { stdout, stderr } = await execFileAsync(process.execPath, [path.join(root, script)], {
       cwd: root, maxBuffer: 10 * 1024 * 1024
@@ -61,11 +68,8 @@ async function buildBundles() {
 
 async function copyRuntimeLibraries(destination) {
   const onnxDirectory = path.join(root, 'node_modules', 'onnxruntime-web', 'dist');
-  for (const entry of await fs.readdir(onnxDirectory, { withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    if (!entry.name.endsWith('.mjs') && !entry.name.endsWith('.wasm') &&
-        !['ort.all.min.js', 'ort.wasm.min.js'].includes(entry.name)) continue;
-    await fs.copyFile(path.join(onnxDirectory, entry.name), path.join(destination, 'lib', entry.name));
+  for (const filename of ORT_RUNTIME_FILES) {
+    await fs.copyFile(path.join(onnxDirectory, filename), path.join(destination, 'lib', filename));
   }
   const artifacts = JSON.parse(await fs.readFile(path.join(root, 'third_party/sources/piper-phonemize/artifacts.json'), 'utf8'));
   for (const artifact of artifacts) {
@@ -76,38 +80,36 @@ async function copyRuntimeLibraries(destination) {
   }
 }
 
-async function createZip(sourceDirectory, outputPath) {
-  try {
-    await fs.unlink(outputPath);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+export async function createZip(sourceDirectory, outputPath) {
+  const zip = new JSZip();
+  async function addFiles(directory, prefix = '') {
+    const entries = (await fs.readdir(directory, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const name = prefix + entry.name;
+      const filename = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) throw new Error('Symbolic links cannot be packaged: ' + name);
+      if (entry.isDirectory()) await addFiles(filename, name + '/');
+      else if (entry.isFile()) zip.file(name, await fs.readFile(filename));
+    }
   }
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  const command = [
-    "$ErrorActionPreference = 'Stop'",
-    'Add-Type -AssemblyName System.IO.Compression',
-    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
-    '$source = $env:CLIPAIBLE_PACKAGE_SOURCE',
-    '$archive = [IO.Compression.ZipFile]::Open($env:CLIPAIBLE_PACKAGE_OUTPUT, [IO.Compression.ZipArchiveMode]::Create)',
-    'try {',
-    '  Get-ChildItem -LiteralPath $source -File -Recurse | Sort-Object FullName | ForEach-Object {',
-    "    $name = $_.FullName.Substring($source.Length + 1).Replace('\\', '/')",
-    '    $entry = $archive.CreateEntry($name, [IO.Compression.CompressionLevel]::Optimal)',
-    '    $entry.LastWriteTime = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)',
-    '    $inputStream = [IO.File]::OpenRead($_.FullName)',
-    '    $outputStream = $entry.Open()',
-    '    try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose(); $inputStream.Dispose() }',
-    '  }',
-    '} finally { $archive.Dispose() }'
-  ].join('\n');
-  await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
-    env: { ...process.env, CLIPAIBLE_PACKAGE_SOURCE: sourceDirectory, CLIPAIBLE_PACKAGE_OUTPUT: outputPath }
-  });
+  await addFiles(sourceDirectory);
+  const bytes = await zip.generateAsync({ compression: 'DEFLATE' });
+  const parent = path.dirname(outputPath);
+  await fs.mkdir(parent, { recursive: true });
+  const temporary = await fs.mkdtemp(path.join(parent, '.clipaible-zip-'));
+  const candidate = path.join(temporary, 'archive.zip');
+  try {
+    await fs.writeFile(candidate, bytes);
+    await fs.rename(candidate, outputPath);
+  } finally {
+    try { await fs.unlink(candidate); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    await fs.rmdir(temporary);
+  }
 }
 
 async function createArchive() {
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'manifest.json'), 'utf8'));
-  const outputPath = path.resolve(root, process.argv[2] || 'clipaible-' + manifest.version + '-production.zip');
+  const outputPath = path.resolve(root, process.argv[2] || 'workspace/releases/clipaible-' + manifest.version + '-production.zip');
   if (path.extname(outputPath).toLowerCase() !== '.zip') throw new Error('Output must be a ZIP file');
   await buildBundles();
   const temporaryRoot = path.join(root, 'temporary_files');
@@ -137,13 +139,9 @@ async function createArchive() {
       path.join(stagingDirectory, 'scripts', 'extraction', 'automatic.js')
     );
     await copyRuntimeLibraries(stagingDirectory);
-    for (const group of manifest.web_accessible_resources || []) {
-      group.resources = group.resources.filter(resource => !resource.includes('node_modules') && !resource.endsWith('.map'));
-    }
-    await fs.writeFile(path.join(stagingDirectory, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
     for (const filename of [
       'manifest.json', 'scripts/background.js', 'popup/popup.html', 'print/print.html',
-      'dist/offscreen-bundle.js', 'dist/tts-worker-bundle.js', 'lib/ort.all.min.js',
+      'dist/offscreen-bundle.js', 'dist/tts-worker-bundle.js', ...ORT_RUNTIME_FILES.map(filename => 'lib/' + filename),
       'lib/piper-wasm/piper_phonemize.data', 'lib/piper-wasm/piper_phonemize.wasm'
     ]) await fs.access(path.join(stagingDirectory, filename));
     await createZip(stagingDirectory, outputPath);
@@ -170,7 +168,9 @@ async function createArchive() {
   }
 }
 
-createArchive().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  createArchive().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

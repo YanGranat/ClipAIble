@@ -53,7 +53,8 @@ export function isIcon(element) {
   const id = (element.id || '').toLowerCase();
   
   // Icon classes
-  if (className.includes('icon-') || className.includes('icon') || id.includes('icon')) {
+  if (/(?:^|[\s_-])(?:icon|fa|fas|far|fab)(?:$|[\s_-])/.test(className) ||
+      /(?:^|[\s_-])icon(?:$|[\s_-])/.test(id)) {
     return true;
   }
   
@@ -203,7 +204,7 @@ export function isExcluded(win, element, constants) {
     }
   } else {
     // For non-images, exclude if hidden in any way
-    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+    if (style.display === 'none' || style.visibility === 'hidden') {
       return true;
     }
   }
@@ -296,10 +297,6 @@ export function isExcluded(win, element, constants) {
       if (textTrimmed.length < 200 && matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
         return true;
       }
-    } else {
-      if (matchesNavigationPattern(text, NAV_PATTERNS_CONTAINS)) {
-        return true;
-      }
     }
   }
   
@@ -335,6 +332,13 @@ export function isExcluded(win, element, constants) {
       const parentClass = String(parent.className || '').toLowerCase();
       const parentId = (parent.id || '').toLowerCase();
       const parentTag = parent.tagName.toLowerCase();
+
+      if (parentTag === 'nav' || parentTag === 'footer' ||
+          parent.getAttribute('role') === 'navigation') return true;
+      if (EXCLUDED_CLASSES.some(excluded => {
+        const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`);
+      })) return true;
       
       // Clear ad indicators
       const clearAdIndicators = [/\bad\b/, /\badvertisement\b/, /\bsponsor\b/];

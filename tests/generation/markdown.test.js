@@ -153,29 +153,10 @@ describe('generation/markdown', () => {
       expect(chrome.downloads.download).toHaveBeenCalled();
     });
 
-    it('should translate date when language is not auto', async () => {
+    it('formats dates locally without a metadata API request', async () => {
       const { translateMetadata } = await import('../../scripts/translation/index.js');
-      
-      const content = [{ type: 'paragraph', text: 'Content' }];
-      
-      await generateMarkdown({
-        content,
-        title: 'Test',
-        publishDate: '2025-12-23',
-        language: 'ru',
-        apiKey: 'test-key',
-        model: 'gpt-4',
-        aiRequestOptions: { provider: 'openrouter' }
-      });
-
-      expect(translateMetadata).toHaveBeenCalledWith(
-        expect.any(String),
-        'ru',
-        'test-key',
-        'gpt-4',
-        'date',
-        { provider: 'openrouter' }
-      );
+      await generateMarkdown({ content: [{ type: 'paragraph', text: 'Content' }], title: 'Test', publishDate: '2025-12-23', language: 'ru' });
+      expect(translateMetadata).not.toHaveBeenCalled();
     });
 
     it('should handle different content types', async () => {

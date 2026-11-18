@@ -103,6 +103,10 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
       if (!response.ok) {
         throw createPdfError(`Failed to fetch PDF: ${response.status} ${response.statusText}`, 'errorPdfDownloadFailed', { status: response.status });
       }
+      const contentLength = Number(response.headers?.get('Content-Length'));
+      if (Number.isFinite(contentLength) && contentLength > maxSize) {
+        throw createPdfError('PDF file is too large.', 'errorPdfTooLarge', { size: (contentLength / 1024 / 1024).toFixed(1), max: (maxSize / 1024 / 1024).toFixed(0) });
+      }
 
       reader = response.body?.getReader() || null;
       if (!reader) {
@@ -151,23 +155,12 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
   };
 
   try {
-    let headResponse;
-    try {
-      headResponse = await fetchWithTimeout({ method: 'HEAD' });
-    } catch (error) {
-      if (error === cancellationError) throw error;
-      await checkCancelled();
-      logWarn('[PDF v3] HEAD request failed, continuing with GET', { error: error.message });
-    }
-    const contentLength = Number(headResponse?.headers.get('Content-Length'));
-    if (Number.isFinite(contentLength) && contentLength > maxSize) {
-      throw createPdfError(`PDF file is too large. Maximum size: ${(maxSize / 1024 / 1024).toFixed(0)} MB.`, 'errorPdfTooLarge', { size: (contentLength / 1024 / 1024).toFixed(1), max: (maxSize / 1024 / 1024).toFixed(0) });
-    }
-    const arrayBuffer = await fetchWithTimeout({}, true);
+    const arrayBuffer = await fetchWithTimeout({ credentials: 'include' }, true);
     await checkCancelled();
     log('[PDF v3] PDF file fetched', { size: arrayBuffer.byteLength });
     return arrayBuffer;
   } catch (error) {
+    await checkCancelled();
     if (error === cancellationError || error.translationKey) throw error;
     if (fetchUrl.startsWith('file://')) {
       logWarn('[PDF v3] Fetch failed for local file', { error: error.message });

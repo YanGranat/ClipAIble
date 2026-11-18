@@ -43,14 +43,14 @@ describe('TTS output integrity and ownership', () => {
 
   it('rejects an incomplete file when the middle chunk fails', async () => {
     let count = 0;
+    const failure = Object.assign(new Error('Example failure'), { status: 400 });
     openaiTTS.mockImplementation(async () => {
       count++;
-      if (count === 2) throw Object.assign(new Error('Example failure'), { status: 400 });
+      if (count === 2) throw failure;
       return new Uint8Array([count]).buffer;
     });
-    await expect(chunksToSpeech(chunks, 'synthetic-key', { provider: 'openai', processingRunId: getProcessingRunId() })).rejects.toMatchObject({
-      translationKey: 'errorAudioChunksFailed', translationParams: { failed: 1, total: 3 }
-    });
+    await expect(chunksToSpeech(chunks, 'synthetic-key', { provider: 'openai', processingRunId: getProcessingRunId() })).rejects.toBe(failure);
+    expect(count).toBe(2);
   });
 
   it('stops after a late response and preserves a replacement operation', async () => {

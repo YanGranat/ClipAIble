@@ -20,7 +20,7 @@ describe('YouTube subtitle request ownership', () => {
   function respond(request, text, senderTab = request.target.tabId, requestId = request.args[6]) {
     const result = { requestId, subtitles: [{ start: 0, duration: 1, text }], metadata: { title: 'Sample video' } };
     for (const listener of [...listeners]) {
-      listener({ type: 'ClipAIbleYouTubeSubtitles', action: 'youtubeSubtitlesResult', requestId, result }, { tab: { id: senderTab } }, vi.fn());
+      listener({ type: 'ClipAIbleYouTubeSubtitles', action: 'youtubeSubtitlesResult', requestId, result }, { id: 'test-extension-id', url: 'https://www.youtube.com/watch?v=sample-video', tab: { id: senderTab } }, vi.fn());
     }
   }
 
@@ -38,7 +38,7 @@ describe('YouTube subtitle request ownership', () => {
     storage = {};
     dom = new JSDOM('<body></body>', { url: 'https://www.youtube.com/watch?v=sample-video', runScripts: 'outside-only' });
     vi.stubGlobal('chrome', {
-      runtime: { onMessage: { addListener: listener => listeners.add(listener), removeListener: listener => listeners.delete(listener) } },
+      runtime: { id: 'test-extension-id', onMessage: { addListener: listener => listeners.add(listener), removeListener: listener => listeners.delete(listener) } },
       tabs: { sendMessage: vi.fn(async () => ({ success: true })) },
       storage: { local: {
         get: vi.fn(async keys => Object.fromEntries(keys.filter(key => key in storage).map(key => [key, storage[key]]))),
@@ -103,6 +103,21 @@ describe('YouTube subtitle request ownership', () => {
     await expect(current.promise).resolves.toEqual(expect.objectContaining({ subtitles: [expect.objectContaining({ text: 'Owned transcript' })] }));
   });
 
+  it('ignores an untrusted sender with the correct tab and request ID', async () => {
+    const current = await start(1);
+    let settled = false;
+    current.promise.then(() => { settled = true; });
+    const message = { action: 'youtubeSubtitlesResult', requestId: current.request.args[6],
+      result: { requestId: current.request.args[6], subtitles: [{ text: 'Foreign transcript' }] } };
+    const acknowledge = vi.fn();
+    for (const listener of [...listeners]) listener(message, { id: 'other-extension', tab: { id: 1 }, url: 'https://www.youtube.com/watch?v=sample-video' }, acknowledge);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(acknowledge).not.toHaveBeenCalled();
+    respond(current.request, 'Owned transcript');
+    await expect(current.promise).resolves.toEqual(expect.objectContaining({ subtitles: [expect.objectContaining({ text: 'Owned transcript' })] }));
+  });
+
   it('leaves an unrelated DOM payload intact', async () => {
     const element = dom.window.document.createElement('div');
     element.id = 'ClipAIblePendingSubtitles-other-request';
@@ -160,12 +175,12 @@ describe('YouTube subtitle request ownership', () => {
     chrome.storage.local.set = vi.fn(async data => Object.assign(storage, data));
     chrome.runtime.id = 'test-extension-id';
     chrome.runtime.sendMessage = vi.fn((message, callback) => {
-      for (const listener of [...listeners]) listener(message, { tab: { id: 1 } }, callback || (() => {}));
+      for (const listener of [...listeners]) listener(message, { id: 'test-extension-id', url: 'https://www.youtube.com/watch?v=sample-video', tab: { id: 1 } }, callback || (() => {}));
     });
     dom.window.eval(readFileSync(new URL('../../scripts/content.js', import.meta.url), 'utf8'));
     chrome.tabs.sendMessage.mockImplementation(async (_tabId, message) => {
       let reply;
-      for (const listener of [...listeners]) listener(message, {}, value => { reply = value; });
+      for (const listener of [...listeners]) listener(message, { id: 'test-extension-id' }, value => { reply = value; });
       return reply;
     });
     dom.window.yt = { config_: { INNERTUBE_API_KEY: 'test-api-key' } };

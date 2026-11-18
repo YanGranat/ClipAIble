@@ -1,3 +1,5 @@
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { downloadBlob } from '../api/blob-download.js';
 // @ts-check
 // Markdown generation module for ClipAIble extension
 
@@ -8,7 +10,6 @@
 import { log, logWarn, logDebug } from '../utils/logging.js';
 import { stripHtml, htmlToMarkdown, cleanTildaArtifactsFromText } from '../utils/html.js';
 import { getDocumentLocalization, formatDateForDisplay } from '../utils/config.js';
-import { translateMetadata } from '../translation/index.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isCancelled } from '../state/processing.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
@@ -97,7 +98,7 @@ export async function generateMarkdown(data, updateState) {
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingMarkdown', await getUILanguage()), progress: 85 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  let filteredContent = filterFigureParagraphs(content, sourceUrl);
+  let filteredContent = normalizeDocumentContent(content, title, sourceUrl);
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
@@ -106,14 +107,6 @@ export async function generateMarkdown(data, updateState) {
     });
   }
 
-  const normalizeTitle = value => stripHtml(value || '').replace(/^#+\s*/, '').replace(/\s*#+$/, '').trim().toLowerCase();
-  const firstBodyIndex = filteredContent.findIndex(item => item.type !== 'image');
-  const firstBodyItem = filteredContent[firstBodyIndex];
-  if (title && firstBodyItem?.type === 'heading' && firstBodyItem.level === 1 &&
-      normalizeTitle(title) && normalizeTitle(contentItemToMarkdown(firstBodyItem)) === normalizeTitle(title)) {
-    filteredContent = filteredContent.filter((_, index) => index !== firstBodyIndex);
-  }
-  
   // Collect headings for TOC (include all levels, starting from level 1)
   const headings = [];
   for (const item of filteredContent) {
@@ -173,15 +166,6 @@ export async function generateMarkdown(data, updateState) {
   // Format ISO date to readable format before translation
   let translatedDate = formatDateForDisplay(publishDate, langCode) || publishDate;
   
-  // Translate date if language is not auto and API key is available
-  if (language !== 'auto' && apiKey && translatedDate) {
-    try {
-      const translated = await translateMetadata(translatedDate, language, apiKey, model, 'date', data.aiRequestOptions);
-      if (translated) translatedDate = translated;
-    } catch (error) {
-      logWarn('Failed to translate date, using formatted original', error);
-    }
-  }
   
   const metaItems = [];
   // Only show author if it exists and is not empty/anonymous
@@ -389,32 +373,7 @@ export async function generateMarkdown(data, updateState) {
       urlApi.revokeObjectURL(objectUrl);
     }
   } else {
-    // Fallback: data URL via FileReader
-    logWarn('⚠️ FALLBACK: createObjectURL unavailable - using data URL method (slower, larger memory)', {
-      reason: 'URL.createObjectURL not available in MV3 service worker',
-      method: 'data URL via FileReader (fallback)',
-      impact: 'Slower download, higher memory usage',
-      size: `${sizeMB} MB`
-    });
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-    
-    // Check again before actual download
-    if (isCancelled(data.processingRunId)) {
-      log('Processing cancelled, skipping Markdown download');
-      throw new Error(tSync('statusCancelled', await getUILanguage()));
-    }
-    
-    await chrome.downloads.download({
-      url: dataUrl,
-      filename: filename,
-      saveAs: true
-    });
-    log('Downloading Markdown (data URL fallback)...', { filename, length: markdown.length });
+    await downloadBlob(blob, filename, data.processingRunId);
   }
   
   log('=== MARKDOWN GENERATION END ===');
@@ -744,7 +703,7 @@ function contentItemToMarkdown(item) {
         text = textParts.join(' ');
       } else {
         // Fallback to item text without formatting
-        text = stripHtml(item.text || '');
+        text = documentPlainText(item);
       }
       text = cleanTildaArtifactsFromText(text);
       if (!text.trim()) return '';
@@ -754,7 +713,7 @@ function contentItemToMarkdown(item) {
     
     case 'paragraph': {
       // Use fragment-based formatting if available, otherwise fallback to simple formatting
-      const text = formatTextWithFragments(item);
+      const text = item.html !== undefined || item.format === 'text' ? documentMarkdown(item) : formatTextWithFragments(item);
       if (!text.trim()) return '';
       // Paragraphs: just text with one newline after (no leading newline)
       return `${text}\n\n`;
@@ -762,7 +721,7 @@ function contentItemToMarkdown(item) {
     
     case 'quote':
     case 'blockquote': {
-      const text = htmlToMarkdown(item.text || '');
+      const text = documentMarkdown(item);
       if (!text.trim()) return '';
       const quoted = text.split('\n').map(line => `> ${line}`).join('\n');
       return `${quoted}\n\n`;
@@ -771,128 +730,18 @@ function contentItemToMarkdown(item) {
     case 'code': {
       const code = item.text || item.code || '';
       const language = item.language || '';
-      return `\`\`\`${language}\n${code}\n\`\`\`\n\n`;
+      const fence = '`'.repeat(Math.max(3, ...[...code.matchAll(/`+/g)].map(match => match[0].length + 1)));
+      return `${fence}${language}\n${code}\n${fence}\n\n`;
     }
     
     case 'list': {
-      const items = item.items || [];
-      const isOrdered = item.ordered || false;
-      let listMd = '';
-      
-      // FUNDAMENTAL: Handle nested lists with proper indentation
-      // Items can have a 'level' property indicating nesting depth
-      let currentNumber = 0; // For ordered lists, track numbering per level
-      const levelNumbers = {}; // Track numbering for each nesting level
-      
-      items.forEach((listItem, index) => {
-        // Extract text and level
-        let itemText = typeof listItem === 'string' ? listItem : (listItem.html || listItem.text || String(listItem));
-        itemText = cleanTildaArtifactsFromText(itemText) || itemText;
-        const text = htmlToMarkdown(itemText);
-        // CRITICAL: Support both 'level' and 'listLevel' properties for nesting
-        // Type guard for list item object
-        const listItemObj = (typeof listItem === 'object' && listItem !== null) ? /** @type {{html?: string, text?: string, id?: string, level?: number, listLevel?: number, isOrdered?: boolean, parentIsOrdered?: boolean}} */ (listItem) : null;
-        const itemLevel = listItemObj 
-          ? (listItemObj.level !== undefined ? listItemObj.level : (listItemObj.listLevel !== undefined ? listItemObj.listLevel : 0))
-          : 0;
-        const parentIsOrdered = listItemObj && listItemObj.parentIsOrdered !== undefined ? listItemObj.parentIsOrdered : false;
-        
-        // FUNDAMENTAL: Adaptive numbering for ordered lists
-        // Reset numbering when level decreases (returning to parent level)
-        // CRITICAL: Check if this specific item is ordered or unordered
-        const itemIsOrdered = listItemObj && listItemObj.isOrdered !== undefined
-          ? listItemObj.isOrdered 
-          : isOrdered; // Fallback to parent list type
-        
-        let prefix;
-        if (isOrdered && itemIsOrdered) {
-          // Parent list is ordered AND this item is also ordered - use numbering
-          // For ordered lists, track numbering per level
-          // CRITICAL: Support both 'level' and 'listLevel' properties
-          const prevListItem = index > 0 && typeof items[index - 1] === 'object' && items[index - 1] !== null
-            ? /** @type {{html?: string, text?: string, id?: string, level?: number, listLevel?: number, isOrdered?: boolean, parentIsOrdered?: boolean}} */ (items[index - 1])
-            : null;
-          const prevItemLevel = prevListItem
-            ? (prevListItem.level !== undefined ? prevListItem.level : 
-               (prevListItem.listLevel !== undefined ? prevListItem.listLevel : 0))
-            : 0;
-          
-          // CRITICAL: Only count ordered items for numbering
-          // Skip unordered nested items when tracking numbering
-          const prevItemIsOrdered = prevListItem && prevListItem.isOrdered !== undefined
-            ? prevListItem.isOrdered
-            : isOrdered;
-          
-          if (itemLevel === 0) {
-            // Top level - increment counter
-            // CRITICAL: Only increment if this is actually a top-level ordered item
-            currentNumber++;
-            levelNumbers[0] = currentNumber;
-          } else if (itemLevel > prevItemLevel) {
-            // Entering nested level - start numbering from 1
-            levelNumbers[itemLevel] = 1;
-            currentNumber = 1;
-          } else if (itemLevel === prevItemLevel && prevItemIsOrdered) {
-            // Same level and previous was ordered - increment
-            if (!levelNumbers[itemLevel]) {
-              levelNumbers[itemLevel] = 0;
-            }
-            levelNumbers[itemLevel]++;
-            currentNumber = levelNumbers[itemLevel];
-          } else if (itemLevel === prevItemLevel && !prevItemIsOrdered) {
-            // Same level but previous was unordered - don't increment, use same number
-            if (!levelNumbers[itemLevel]) {
-              levelNumbers[itemLevel] = 1;
-            }
-            currentNumber = levelNumbers[itemLevel];
-          } else {
-            // Returning to parent level - continue parent numbering
-            // Find the appropriate number for this level
-            if (!levelNumbers[itemLevel]) {
-              levelNumbers[itemLevel] = 0;
-            }
-            levelNumbers[itemLevel]++;
-            currentNumber = levelNumbers[itemLevel];
-          }
-          prefix = `${currentNumber}.`;
-        } else if (isOrdered && !itemIsOrdered) {
-          // Parent list is ordered BUT this item is unordered (nested bullet list)
-          // Use bullet marker instead of numbering
-          if (itemLevel > 0 && parentIsOrdered) {
-            prefix = '•'; // Nested in ordered list
-          } else {
-            prefix = '-'; // Fallback
-          }
-        } else {
-          // For unordered lists, use different markers based on nesting level and parent type
-          // CRITICAL: In expected output:
-          // - Nested items in unordered lists use '-' (example: "  - Item text")
-          // - Nested items in ordered lists use '•' (example: "  • Item text")
-          // So the rule is:
-          // - If nested (level > 0) AND parent is ordered list, use '•'
-          // - Otherwise (top level or nested in unordered), use '-'
-          if (itemLevel > 0 && parentIsOrdered) {
-            prefix = '•'; // Nested in ordered list
-          } else {
-            prefix = '-'; // Top level or nested in unordered list
-          }
-        }
-        
-        // Add indentation for nested items (2 spaces per level)
-        const indent = '  '.repeat(itemLevel);
-        
-        // Format item with proper indentation
-        listMd += `${indent}${prefix} ${text}\n`;
-      });
-      
-      // CRITICAL: Return list without trailing newline - spacing is handled by main loop
-      // The main loop will add appropriate spacing based on next item type
-      return listMd;
+      return htmlToMarkdown(listHtml(item)) + '\n\n';
     }
     
     case 'image': {
-      // Skip images in markdown output
-      return '';
+      const alt = String(item.alt || '').replace(/([\\\[\]])/g, '\\$1');
+      const src = String(item.src || item.base64 || '').replace(/[<>\s]/g, char => encodeURIComponent(char));
+      return src ? `![${alt}](<${src}>)\n\n${item.caption ? htmlToMarkdown(item.caption) + '\n\n' : ''}` : '';
     }
     
     case 'hr':
@@ -938,7 +787,7 @@ function tableToMarkdown(item) {
     const headerRow = rows[0];
     if (headerRow && headerRow.length > 0) {
       // CRITICAL: Use htmlToMarkdown to preserve links in table cells
-      md += '| ' + headerRow.map(cell => htmlToMarkdown(String(cell || ''))).join(' | ') + ' |\n';
+      md += '| ' + headerRow.map(cell => htmlToMarkdown(tableCellHtml(item, cell)).replace(/\|/g, '\\|').replace(/\n/g, '<br>')).join(' | ') + ' |\n';
       // Create separator row with minimal dashes (Markdown tables only need 3+ dashes)
       // Use a reasonable length based on header, but cap it to avoid excessive length
       const separatorWidths = headerRow.map((headerCell) => {
@@ -957,7 +806,7 @@ function tableToMarkdown(item) {
     const row = rows[i];
     if (row && row.length > 0) {
       // CRITICAL: Use htmlToMarkdown to preserve links in table cells
-      md += '| ' + row.map(cell => htmlToMarkdown(String(cell || ''))).join(' | ') + ' |\n';
+      md += '| ' + row.map(cell => htmlToMarkdown(tableCellHtml(item, cell)).replace(/\|/g, '\\|').replace(/\n/g, '<br>')).join(' | ') + ' |\n';
     }
   }
   

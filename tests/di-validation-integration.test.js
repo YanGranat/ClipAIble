@@ -59,7 +59,6 @@ describe('DI Validation Integration', () => {
       CONFIG: { CHUNK_SIZE: 50000 },
       getProcessingState: () => ({}),
       setError: () => {},
-      setResult: () => {},
       updateState: () => {},
       ERROR_CODES: { SOME_ERROR: 'error' },
       PROCESSING_STAGES: { STAGE1: 'stage1' },

@@ -1,3 +1,4 @@
+import { readZipEntries } from '../helpers/zip-entries.js';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { generateEpub } from '../../scripts/generation/epub.js';
@@ -10,24 +11,7 @@ vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(
 vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () => null), processImagesInBatches: vi.fn(async () => []), embedImages: vi.fn(async html => html) }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: vi.fn(async () => 'en'), tSync: vi.fn(key => key) }));
 
-function epubEntry(bytes, filename) {
-  const buffer = Buffer.from(bytes);
-  let offset = 0;
-  while (offset + 30 <= buffer.length && buffer.readUInt32LE(offset) === 0x04034b50) {
-    const method = buffer.readUInt16LE(offset + 8);
-    const size = buffer.readUInt32LE(offset + 18);
-    const nameLength = buffer.readUInt16LE(offset + 26);
-    const extraLength = buffer.readUInt16LE(offset + 28);
-    const name = buffer.subarray(offset + 30, offset + 30 + nameLength).toString('utf8');
-    const start = offset + 30 + nameLength + extraLength;
-    if (name === filename) {
-      expect(method).toBe(0);
-      return buffer.subarray(start, start + size).toString('utf8');
-    }
-    offset = start + size;
-  }
-  throw new Error(`Archive entry missing: ${filename}`);
-}
+const epubEntry = (bytes, filename) => readZipEntries(bytes)[filename].toString('utf8');
 
 const base = { title: 'Sample article', author: 'Example & Company', language: 'en', sourceUrl: 'https://example.org/article' };
 let createObjectURL, revokeObjectURL;
@@ -64,7 +48,7 @@ describe('document content integrity', () => {
   });
 
   it('keeps EPUB text, inline formatting, and URL query parameters', async () => {
-    const content = [{ type: 'paragraph', text: 'A <strong>formatted</strong> link: <a href="https://example.org/search?a=1&amp;b=2">A &amp; B</a>' }];
+    const content = [{ type: 'paragraph', html: 'A <strong>formatted</strong> link: <a href="https://example.org/search?a=1&amp;b=2">A &amp; B</a>' }];
     const blob = await generateEpub({ ...base, content });
     const xml = epubEntry(await blob.arrayBuffer(), 'OEBPS/content.xhtml');
     const document = new JSDOM(xml, { contentType: 'application/xhtml+xml', url: 'https://example.org/' }).window.document;
@@ -78,7 +62,7 @@ describe('document content integrity', () => {
     const content = [
       { type: 'heading', level: 2, id: 'section" data-extra="value', text: 'First section' },
       { type: 'heading', level: 3, id: 'next', text: 'Next section' },
-      { type: 'paragraph', text: '<span onclick="alert(1)">Visible text</span><a href="javascript:alert(2)">Unsafe link</a>' },
+      { type: 'paragraph', html: '<span onclick="alert(1)">Visible text</span><a href="javascript:alert(2)">Unsafe link</a>' },
       { type: 'image', src: 'https://example.org/image.png?x=" onerror="alert(3)', alt: 'Example image' }
     ];
     const blob = await generateEpub({ ...base, content, generateToc: true });
@@ -91,7 +75,7 @@ describe('document content integrity', () => {
   });
 
   it('keeps FB2 links valid and removes executable attributes', async () => {
-    const blob = await generateFb2({ ...base, content: [{ type: 'paragraph', text: '<strong onclick="alert(1)">Sample</strong> <a href="javascript:alert(2)">Link</a> <a href="https://example.org/search?a=1&amp;b=2">Query</a>' }] });
+    const blob = await generateFb2({ ...base, content: [{ type: 'paragraph', html: '<strong onclick="alert(1)">Sample</strong> <a href="javascript:alert(2)">Link</a> <a href="https://example.org/search?a=1&amp;b=2">Query</a>' }] });
     const document = new JSDOM(await blob.text(), { contentType: 'application/xml', url: 'https://example.org/' }).window.document;
     expect(document.querySelector('[onclick]') === null).toBe(true);
     const links = [...document.querySelectorAll('a')];

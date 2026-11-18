@@ -407,7 +407,11 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   }
   
   // Strategy 1: Semantic HTML5
-  const article = doc.querySelector('article');
+  const article = Array.from(doc.querySelectorAll('article'))
+    .filter(element => (element.textContent || '').trim().length > 500 &&
+      !element.closest('aside, .related, .related-stories, .sidebar, .comments, nav, footer') &&
+      safeGetComputedStyle(win, element)?.display !== 'none')
+    .sort((a, b) => calculateContentScore(win, b) - calculateContentScore(win, a))[0];
   if (article) {
     const articleText = (article.textContent || '').trim();
     if (articleText.length > 500) {
@@ -522,9 +526,6 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
     if (candidateText.length < 100) continue;
     
     const score = calculateContentScore(win, candidate);
-    
-    // Early exit for very good candidates
-    if (score > 100) return candidate;
     
     if (score > maxScore) {
       maxScore = score;

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseElements, deduplicateHeadings, filterCandidateElements } from '../../scripts/extraction/extractor/parse.js';
+import { parseElements, filterCandidateElements } from '../../scripts/extraction/extractor/parse.js';
 import { cleanHeadingText, stripObjMarkers } from '../../scripts/extraction/extractor/text-utils.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { deduplicateContent, filterExtractionNoise } from '../../scripts/extraction/html-utils.js';
@@ -32,9 +32,8 @@ function parse(html, parser = parseElements, filter = false) {
 }
 
 function text(document, item) {
-  if (item.type === 'list') return item.items.join(' ');
   const node = document.createElement('div');
-  node.innerHTML = item.text || '';
+  node.innerHTML = item.type === 'list' ? item.items.map(value => typeof value === 'string' ? value : value.html || value.text || '').join(' ') : item.text || '';
   return node.textContent.replace(/\s+/g, ' ').trim();
 }
 
@@ -68,8 +67,9 @@ describe('Article content conservation', () => {
   });
 
   it('keeps distinct headings whose ordinary words differ', () => {
-    const headings = ['Objective', 'ective', 'Objects', 'ects'].map(value => ({ type: 'heading', text: value, level: 2 }));
-    expect(deduplicateHeadings(headings)).toEqual(headings);
+    const headings = ['Objective', 'ective', 'Objects', 'ects'];
+    const { result } = parse(headings.map(text => `<h2>${text}</h2>`).join(''));
+    expect(result.map(item => item.text)).toEqual(headings);
   });
 
   it('preserves interleaved heading and paragraph order in the final fallback', () => {
@@ -160,9 +160,12 @@ describe('Article content conservation', () => {
     expect(result.map(item => item.type)).toEqual(['quote', 'list']);
   });
 
-  it('preserves the existing end section boundary inside a wrapper', () => {
+  it('preserves references and trailing prose inside the article wrapper', () => {
     const { result, document } = parse('<div><p>The article ends before its reference section.</p><h2>References</h2><p>This reference remains outside article extraction.</p>Trailing reference text.</div>');
-    expect(result.map(item => text(document, item))).toEqual(['The article ends before its reference section.']);
+    expect(result.map(item => text(document, item))).toEqual([
+      'The article ends before its reference section.', 'References',
+      'This reference remains outside article extraction.', 'Trailing reference text.'
+    ]);
   });
 
   it('runs the same partition logic when helpers are inlined', () => {
