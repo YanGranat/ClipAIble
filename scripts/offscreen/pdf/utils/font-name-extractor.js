@@ -3,7 +3,6 @@
 // Maps internal font names (like g_d0_f1) to real names (like Helvetica-Bold)
 // Also extracts fontWeight and fontStyle if available
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, criticalLog } from '../../../utils/logging.js';
 
 /**

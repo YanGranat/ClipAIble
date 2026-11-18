@@ -14,7 +14,7 @@ import { tSync } from '../locales.js';
  * @param {import('../types.js').MessageRequest} request - Request object
  * @param {import('../types.js').ChromeRuntimeMessageSender} sender - Sender object
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
- * @param {function(import('../types.js').ProcessingData, Function): Promise<boolean>} startArticleProcessing - Function to start article processing
+ * @param {function(import('../types.js').ProcessingData): Promise<boolean>} startArticleProcessing - Bound article-processing entry point
  * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
  * @returns {boolean} - Always returns true for async handlers
  */

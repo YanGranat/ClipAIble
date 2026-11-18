@@ -1,6 +1,6 @@
 {
   "name": "clipaible",
-  "version": "3.3.12",
+  "version": "3.3.13",
   "description": "AI-Powered Article Extractor Chrome Extension",
   "type": "module",
   "scripts": {
@@ -14,13 +14,17 @@
     "build:extraction": "node build-extraction.js && node scripts/apply-extraction-build.js",
     "build": "npm run build:extraction && npm run build:offscreen && npm run build:worker",
     "package:production": "node create-production-archive.js",
-    "dev": "npm run build:offscreen:watch"
+    "dev": "npm run build:offscreen:watch",
+    "check": "tsc --project jsconfig.json && tsc --project jsconfig.node.json"
   },
   "devDependencies": {
+    "@types/chrome": "0.3.7",
+    "@types/node": "20.19.43",
     "@vitest/coverage-v8": "^4.1.12",
     "esbuild": "^0.28.2",
     "jsdom": "^27.4.0",
     "nodemon": "^3.0.0",
+    "typescript": "5.9.3",
     "vitest": "^4.1.12"
   },
   "keywords": [

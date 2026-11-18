@@ -18,6 +18,7 @@ export function getClaudeRequestConfig(model, { maxTokens = 50000, shortResponse
   const selectedModel = model || getDefaultModel('claude');
   const metadata = getModelMetadata('claude', selectedModel, { strict: true });
   const modelName = metadata?.apiModel || selectedModel;
+  /** @type {{model: string, max_tokens: number, thinking?: {type: string}, output_config?: {effort: string}, system?: string}} */
   const config = { model: modelName, max_tokens: maxTokens };
   if (metadata?.reasoningEffort === 'none') {
     config.thinking = { type: 'disabled' };
@@ -70,7 +71,7 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', { signal,
           method: 'POST',
@@ -229,7 +230,7 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
     logDebug('Sending request to Claude API with image...');
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', { signal,
           method: 'POST',
@@ -339,7 +340,7 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
     logDebug('Sending request to Claude API with image and history...');
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', { signal,
           method: 'POST',

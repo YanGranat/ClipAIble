@@ -12,19 +12,26 @@ import { log, logWarn, logError } from '../utils/logging.js';
 
 const STORAGE_KEY = 'selector_cache';
 
-/** Keep reusable DOM selectors separate from document metadata. */
+/**
+ * Keep reusable DOM selectors separate from document metadata.
+ * @param {unknown} value
+ * @returns {import('../types.js').CachedSelectors | null}
+ */
 export function normalizeCachedSelectors(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  /** @type {Record<string, unknown>} */
+  const input = /** @type {Record<string, unknown>} */ (value);
+  /** @type {Partial<import('../types.js').CachedSelectors>} */
   const normalized = {};
   for (const name of ['articleContainer', 'content', 'title', 'subtitle', 'heroImage', 'toc']) {
     if (value[name] !== undefined && (typeof value[name] !== 'string' || value[name].length > 4096)) return null;
     if (typeof value[name] === 'string') normalized[name] = value[name].trim();
   }
   if (!normalized.articleContainer && !normalized.content) return null;
-  if (value.exclude !== undefined && (!Array.isArray(value.exclude) || value.exclude.length > 64 ||
-    value.exclude.some(selector => typeof selector !== 'string' || selector.length > 4096))) return null;
-  normalized.exclude = (value.exclude || []).map(selector => selector.trim()).filter(Boolean);
-  return normalized;
+  if (input.exclude !== undefined && (!Array.isArray(input.exclude) || input.exclude.length > 64 ||
+    input.exclude.some(selector => typeof selector !== 'string' || selector.length > 4096))) return null;
+  normalized.exclude = (/** @type {string[]} */ (input.exclude || [])).map(selector => selector.trim()).filter(Boolean);
+  return /** @type {import('../types.js').CachedSelectors} */ (normalized);
 }
 
 // NOTE: Cache has NO TTL (time-to-live) - this is intentional!
@@ -203,7 +210,7 @@ export async function getCachedSelectors(url) {
 /**
  * Cache selectors for URL
  * @param {string} url - Page URL
- * @param {SelectorResult} selectors - Selectors to cache
+ * @param {SelectorResult | import('../types.js').CachedSelectors} selectors - Selectors to cache
  * @returns {Promise<void>}
  */
 export async function cacheSelectors(url, selectors) {

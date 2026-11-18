@@ -3,7 +3,7 @@ import { callDeepSeekAPI } from '../../scripts/api/deepseek.js';
 import { log } from '../../scripts/utils/logging.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logDebug: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (fn) => fn() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en' }));
 vi.mock('../../scripts/locales.js', () => ({ tSync: (key) => key }));
 vi.mock('../../scripts/utils/error-handler.js', () => ({ handleError: async (error) => ({ message: error.message }) }));

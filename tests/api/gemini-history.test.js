@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { callAIWithImageAndHistory } from '../../scripts/api/index.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn(), criticalLog: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ getDecryptedKeyCached: vi.fn(async key => key), decryptApiKey: vi.fn(async key => key) }));
 afterEach(() => vi.unstubAllGlobals());
 

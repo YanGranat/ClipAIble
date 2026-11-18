@@ -12,12 +12,12 @@ import { sendTTSResponse } from './response.js';
 
 /**
  * @typedef {Object} TTSContext
- * @property {function(): Promise<void>} initTTSWorker - Initialize TTS worker
+ * @property {typeof import('../worker/init.js').initTTSWorker} initTTSWorker - Initialize TTS worker
  * @property {function(): Promise<Object>} initPiperTTS - Initialize Piper TTS module
- * @property {function(string, string): Promise<Blob>} predictWithWorker - Predict with worker
+ * @property {typeof import('../worker/api.js').predictWithWorker} predictWithWorker - Predict with worker
  * @property {function(): Promise<any[]>} getVoicesWithWorker - Get voices
  * @property {function(): Promise<string[]>} getStoredWithWorker - Get stored voices
- * @property {function(string, function?): Promise<void>} downloadWithWorker - Download voice
+ * @property {typeof import('../worker/api.js').downloadWithWorker} downloadWithWorker - Download voice
  * @property {function(string): Promise<void>} removeWithWorker - Remove voice
  * @property {Object} state - State object
  */
@@ -30,6 +30,8 @@ import { sendTTSResponse } from './response.js';
  * @param {Object} [data.options] - Options
  * @param {string} [data.options.language] - Language code
  * @param {string|null} [data.options.voice] - Voice ID or name
+ * @param {number} [data.options.speed] - Synthesis speed
+ * @param {string} [data.processingRunId] - Captured operation identity
  * @param {boolean} [data.hasUnlimitedStorage] - Has unlimited storage
  * @param {function(Object): void} sendResponse - Response function
  * @param {TTSContext} context - TTS context with helper functions
@@ -45,7 +47,7 @@ export async function handlePiperTTS(messageId, data, sendResponse, context) {
     }
   };
 
-  log('[ClipAIble TTS] === handlePiperTTS STARTED ===', 'TTS_HANDLER_START', {
+  log('[ClipAIble TTS] === handlePiperTTS STARTED ===', { marker: 'TTS_HANDLER_START',
     timestamp: requestStart,
     messageId,
     textLength: text?.length,

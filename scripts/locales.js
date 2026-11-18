@@ -7800,7 +7800,7 @@ export async function setUILanguage(langCode) {
  * Get localized string
  * @param {string} key - Translation key
  * @param {string} langCode - Optional language code (defaults to current UI language)
- * @param {Record<string, string|number>} [params={}] - Message values
+ * @param {Record<string, unknown>} [params={}] - Message values
  * @returns {Promise<string>} Localized string
  */
 export async function t(key, langCode = null, params = {}) {
@@ -7812,7 +7812,7 @@ export async function t(key, langCode = null, params = {}) {
  * Get localized string synchronously (requires langCode)
  * @param {string} key - Translation key
  * @param {string} langCode - Language code
- * @param {Record<string, string|number>} [params={}] - Message values
+ * @param {Record<string, unknown>} [params={}] - Message values
  * @returns {string} Localized string
  */
 export function tSync(key, langCode, params = {}) {
@@ -7835,7 +7835,12 @@ function getLocaleCode(langCode) {
   return Object.hasOwn(UI_LOCALES, code) ? code : 'en';
 }
 
-/** Format a translated message without interpreting its values as markup. */
+/**
+ * Format a translated message without interpreting its values as markup.
+ * @param {string} key
+ * @param {string} langCode
+ * @param {Record<string, unknown>} [params]
+ */
 export function formatMessage(key, langCode, params = {}) {
   const locale = UI_LOCALES[getLocaleCode(langCode)];
   const values = params && typeof params === 'object' ? params : {};

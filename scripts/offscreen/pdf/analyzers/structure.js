@@ -1,7 +1,6 @@
 // @ts-check
 // Structure analyzer - analyzes document structure
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { ELEMENT_DECISION } from '../constants.js';
 

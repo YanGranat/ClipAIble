@@ -1,6 +1,11 @@
 # Tests
 
-Install dependencies with `npm ci`.
+Install dependencies and build the extension before running tests. Resource checks use the generated bundles.
+
+```sh
+npm ci
+npm run build
+```
 
 ```sh
 npm test

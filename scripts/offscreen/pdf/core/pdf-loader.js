@@ -1,7 +1,6 @@
 // @ts-check
 // PDF loader - handles PDF file loading and parsing
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { fetchPdfFile } from '../utils/pdf-fetcher.js';
 import { parsePdfDocument, releasePdfDocument } from '../utils/pdf-parser.js';

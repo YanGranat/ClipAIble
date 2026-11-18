@@ -2,7 +2,6 @@
 // Table column merger - combines elements from different columns into tables
 // This handles cases where tables are split across columns
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { classifyTable } from '../classifiers/table.js';
 import { extractTableStructure } from './table-extractor.js';

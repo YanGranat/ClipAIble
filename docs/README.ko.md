@@ -1,109 +1,26 @@
 # ClipAIble
 
-AI 기반 기사 추출기.
+웹 문서를 PDF, EPUB, FB2, Markdown 또는 오디오로 저장합니다.
 
-**[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)에서 이용 가능**
-
-## 기능
-
-ClipAIble은 웹페이지에서 기사 콘텐츠를 추출하여 다양한 형식으로 변환합니다:
-- PDF 문서
-- EPUB 파일
-- FB2 파일
-- Markdown 텍스트
-- 오디오 파일
-
-**특별 기능:**
-- **YouTube/Vimeo 지원**: 동영상 자막을 추출하고 이를 바탕으로 기사 생성
-- **PDF 처리**: 온라인 PDF와 로컬 PDF 파일 지원
-- **이미지 번역**: AI를 사용하여 이미지의 텍스트 번역
-- **TLDR 생성**: 문서 내에 짧은 요약 생성
-- **요약 패널**: 처리 후 팝업에 기사 요약 표시
+[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)
 
 ## 사용 방법
 
-1. 브라우저 도구 모음에서 ClipAIble 아이콘을 클릭
-2. 기사, YouTube 동영상 또는 PDF 열기
-3. 원하는 형식 선택 (PDF, EPUB, FB2, Markdown 또는 Audio)
-4. 저장 클릭
+1. 문서, 지원되는 동영상 또는 PDF를 엽니다.
+2. Chrome 도구 모음에서 ClipAIble을 클릭합니다.
+3. 출력 형식과 추출 모드를 선택합니다.
+4. **저장**을 클릭합니다.
 
-**대체 저장 방법:**
-- 웹페이지에서 마우스 오른쪽 버튼을 클릭하고 컨텍스트 메뉴 옵션 사용
+페이지의 마우스 오른쪽 버튼 메뉴에서도 저장할 수 있습니다. 로컬 PDF를 처리하려면 Chrome 확장 프로그램 설정에서 파일 접근을 허용하거나, 안내가 나타나면 해당 파일을 선택하세요. 파일 선택이 필요한 경우 확장 프로그램 팝업을 열어 두세요.
 
-**로컬 PDF 파일의 경우**: AI 모드에서는 브라우저 제한으로 인해 PDF 파일 선택을 요청받습니다.
+웹 문서에서 **자동** 모드는 로컬 휴리스틱과 사용 가능한 캐시된 선택자를 사용합니다. **AI Selector**는 AI 서비스에 CSS 선택자를 요청한 다음 일치하는 페이지 내용을 추출합니다. **AI Extract**는 AI 서비스에 내용의 구조화를 요청합니다. PDF에서는 자동 모드가 텍스트 레이어를 추출하고, AI 모드는 렌더링된 페이지를 처리합니다.
 
-## 설정
+설정에서 텍스트 및 이미지 번역, 문서 스타일, 목차를 지정할 수 있습니다. 팝업에서는 요약이나 핵심 주장도 생성할 수 있습니다. 오디오에는 설정된 TTS 서비스를 사용하거나, 음성 모델을 다운로드한 후 로컬에서 실행되는 Piper를 사용할 수 있습니다.
 
-### 추출 모드
+선택한 AI 및 TTS 기능에 필요한 API 키를 추가하세요. 설정을 내보낼 때 API 키는 포함되지 않습니다. 통계와 선택자 캐시는 선택적으로 포함할 수 있습니다.
 
-- **AI Selector**: 대부분의 사이트에서 권장되는 모드. AI를 사용하여 기사 콘텐츠를 찾습니다.
-- **Automatic**: API 키 없이 작동하는 기본 모드.
-- **AI Extractor**: AI를 사용하는 대안 모드 (정기적인 사용에는 권장되지 않음).
+## 개발
 
-### 성능 기능
+설치, 빌드 및 테스트 방법은 [영문 기본 가이드](../README.md#development)를 참조하세요.
 
-- **셀렉터 캐시**: 이전에 방문한 사이트의 처리를 가속화하기 위해 AI가 학습한 셀렉터 재사용
-
-### 출력 형식
-
-- **PDF**: 4개의 사전 설정 스타일 (어두운, 밝은, 세피아, 높은 대비)과 사용자 정의 가능한 글꼴/색상으로 서식된 문서 생성
-- **EPUB**: Kindle 같은 리더기용 구조화된 전자책 생성
-- **FB2**: PocketBook 및 다른 리더기용 구조화된 전자책 생성
-- **Markdown**: 제목과 목록을 포함한 기사 구조 유지
-- **Audio**: 6개의 다른 TTS 서비스를 사용하여 텍스트를 음성으로 변환
-
-### 오디오
-
-다양한 TTS 제공업체를 사용하여 오디오를 생성할 수 있습니다:
-- OpenAI TTS
-- ElevenLabs
-- Google Gemini
-- Qwen
-- Respeecher (영어와 우크라이나어만)
-- Piper (오프라인, API 키 불필요)
-
-## API 키 (선택사항)
-
-AI 기능을 위해 이러한 제공업체의 API 키를 추가할 수 있습니다:
-
-### OpenAI
-[platform.openai.com/api-keys](https://platform.openai.com/api-keys)에서 키를 얻으세요
-
-### Google Gemini
-[aistudio.google.com/apikey](https://aistudio.google.com/apikey)에서 키를 얻으세요
-
-TTS의 경우 Google Cloud Console에서 [Generative Language API](https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com)를 활성화하세요
-
-### Anthropic Claude
-[console.anthropic.com](https://console.anthropic.com/)에서 키를 얻으세요
-
-### DeepSeek
-[platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)에서 키를 얻으세요
-
-### ElevenLabs
-[elevenlabs.io](https://elevenlabs.io/)에서 키를 얻으세요
-
-### Qwen
-[alibaba cloud dashscope](https://dashscope-intl.console.aliyun.com/)에서 키를 얻으세요
-
-### Respeecher
-[space.respeecher.com](https://space.respeecher.com/)에서 키를 얻으세요
-
-## 추가 기능
-
-- **통계**: 기록과 월간 카운터로 저장한 기사 추적
-- **설정 가져오기/내보내기**: 설정 백업 및 복원
-- **안전한 저장**: API 키는 저장 전에 암호화됩니다
-
-## 권한
-
-확장 프로그램이 작동하려면 이러한 권한이 필요합니다:
-- 방문하는 웹페이지 읽기
-- 컴퓨터에 파일 저장
-- AI 제공업체에 API 호출하기 (해당 기능을 사용할 때만)
-
-**보안**: 모든 API 키는 브라우저에 저장되기 전에 암호화됩니다.
-
----
-
-ClipAIble은 웹 기사를 추출하고 변환합니다.
+[권한](../PERMISSIONS.md) · [개인정보 처리방침](../PRIVACY.md) · [기술 개요](technical-overview.md)

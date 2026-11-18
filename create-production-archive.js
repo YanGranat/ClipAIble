@@ -16,7 +16,7 @@ const runtimeDirectories = ['icons', 'popup', 'scripts', 'config', 'print', 'lib
 const sourceFiles = [
   ...runtimeFiles, '.gitattributes', '.gitignore', 'package.json', 'package-lock.json',
   'build-extraction.js', 'build-offscreen.js', 'build-piper.js', 'build-tts-worker.js',
-  'create-production-archive.js', 'jsconfig.json', 'vitest.config.js', 'THIRD_PARTY_NOTICES.txt'
+  'create-production-archive.js', 'jsconfig.json', 'jsconfig.node.json', 'vitest.config.js', 'THIRD_PARTY_NOTICES.txt'
 ];
 const sourceDirectories = [...runtimeDirectories, 'src', 'tests', 'docs', 'third_party/sources'];
 const buildOnlyFiles = new Set(['scripts/apply-extraction-build.js', 'scripts/extraction/extractor/builder.js']);

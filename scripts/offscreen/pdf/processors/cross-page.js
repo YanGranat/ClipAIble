@@ -4,7 +4,6 @@ import { joinPdfText } from '../utils/text-join.js';
 // Uses unified continuation detection logic with type-specific handling
 // Supports: paragraphs, headings, lists
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { countBy } from '../utils/array-helpers.js';
 import { shouldContinueBlock } from './continuation.js';

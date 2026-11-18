@@ -384,7 +384,7 @@
       if (titleMain) {
         pageTitle = titleMain.textContent.trim();
       } else {
-        const clone = h1.cloneNode(true);
+        const clone = /** @type {Element} */ (h1.cloneNode(true));
         clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
         const cleanTitle = clone.textContent.trim();
         // Only use h1 if it's not just numbers (avoid counters/views on some sites)
@@ -714,8 +714,7 @@
   
 
   // Make function available for direct injection
-  // @ts-ignore - External library may use this
-  window.__webpageToPdf_extractContent = extractPageContent;
+  (/** @type {Window & {__webpageToPdf_extractContent?: typeof extractPageContent}} */ (window)).__webpageToPdf_extractContent = extractPageContent;
   
   // Cleanup function to remove all listeners
   function cleanupListeners() {

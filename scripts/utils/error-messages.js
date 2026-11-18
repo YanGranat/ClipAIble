@@ -96,7 +96,7 @@ export async function getUserFriendlyError(errorType, context = {}) {
  * @param {string} errorType - Type of error
  * @param {Record<string, any>} [context={}] - Additional context
  * @param {string} [errorCode] - Error code (from ERROR_CODES)
- * @returns {Promise<{message: string, code: string}>} Error object with message and code
+ * @returns {Promise<{message: string, code: string, translationKey?: string, translationParams?: Record<string, unknown>}>} Error object with a localized descriptor
  * @see {@link getUserFriendlyError} For generating error messages only
  * @see {@link handleError} For complete error handling that uses this function
  */

@@ -343,7 +343,7 @@ export function initKeyTheses(deps) {
           if (h1) {
             const main = h1.querySelector('.mw-page-title-main');
             pageTitle = main ? main.textContent.trim() : (() => {
-              const clone = h1.cloneNode(true);
+              const clone = /** @type {Element} */ (h1.cloneNode(true));
               clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
               const t = clone.textContent.trim();
               return (t && !/^\d+$/.test(t)) ? t : pageTitle;

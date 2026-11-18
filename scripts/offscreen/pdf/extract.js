@@ -34,7 +34,7 @@ export async function extractPdfContent(url, pdfData = null, requestOptions = {}
   // VERSION v6 - Using log with localStorage and sendMessage
   const startMsg = `[PDF v3] === PDF EXTRACTION START === - ${versionMarker}`;
   const marker = '=== PDF_EXTRACTION_START_MARKER_V6 ===';
-  log(startMsg, marker, { url, version: 'v6' });
+  log(startMsg, { marker: marker, url, version: 'v6' });
   
   let pdf = null;
   const { signal } = requestOptions;

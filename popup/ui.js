@@ -18,7 +18,6 @@ import { escapeHtml } from '../scripts/utils/html.js';
  * @param {Function} deps.setDisplayForIds - Set display for IDs helper
  * @param {Object} deps.currentStartTime - Current start time reference
  * @param {Object} deps.timerInterval - Timer interval reference
- * @returns {Object} UI functions
  */
 export function initUI(deps) {
   const {
@@ -62,7 +61,7 @@ export function initUI(deps) {
         const updates = [];
         document.querySelectorAll('[data-i18n-parts]').forEach(element => {
           updates.push(() => {
-            try { element.textContent = renderParts(JSON.parse(element.dataset.i18nParts), langCode); }
+            try { element.textContent = renderParts(JSON.parse(element.getAttribute('data-i18n-parts')), langCode); }
             catch { /* Keep the existing message if its binding is malformed. */ }
           });
         });

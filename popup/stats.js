@@ -21,7 +21,7 @@ export function getSafeHistoryUrl(value) {
 /**
  * Initialize stats module with dependencies
  * @param {Object} deps - Dependencies object
- * @param {function(string, string?): void} deps.showToast - Show toast function
+ * @param {import('../scripts/types.js').UIModule['showToast']} deps.showToast - Show toast function
  * @returns {import('../scripts/types.js').StatsModule} Stats functions
  */
 export function initStats(deps) {
@@ -156,7 +156,7 @@ export function initStats(deps) {
           domainsEl.textContent = new Intl.NumberFormat(getLocaleTag(langCode)).format(stats.validDomains || 0);
           const label = document.querySelector('[data-i18n="domainsCached"]');
           if (label) {
-            label.dataset.i18nParams = JSON.stringify({ count: stats.validDomains || 0 });
+            label.setAttribute('data-i18n-params', JSON.stringify({ count: stats.validDomains || 0 }));
             label.textContent = formatMessage('domainsCached', langCode, { count: stats.validDomains || 0 });
           }
         }

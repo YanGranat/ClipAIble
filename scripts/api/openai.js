@@ -24,7 +24,11 @@ export function parseModelConfig(model) {
   return { modelName: metadata?.apiModel || selected, reasoningEffort: metadata?.reasoningEffort || null };
 }
 
-/** Build model-specific Chat Completions parameters without changing custom IDs. */
+/**
+ * Build model-specific Chat Completions parameters without changing custom IDs.
+ * @param {string} model
+ * @param {import('../types.js').ModelRequestOptions} [options]
+ */
 export function getOpenAIRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort } = {}) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('openai');
   const metadata = getModelMetadata('openai', selected, { strict: true });
@@ -32,7 +36,7 @@ export function getOpenAIRequestConfig(model, { maxTokens, temperature, shortRes
   const supportsReasoning = Boolean(metadata?.reasoningEfforts || reasoningEffort);
   const selectedEffort = requestedEffort && metadata?.reasoningEfforts?.includes(requestedEffort) ? requestedEffort : reasoningEffort;
   const effort = shortResponse && metadata?.reasoningEfforts?.includes('none') ? 'none' : selectedEffort;
-  /** @type {Record<string, any>} */
+  /** @type {{model: string, reasoning_effort?: string, max_tokens?: number, max_completion_tokens?: number, temperature?: number, response_format?: {type: 'json_object'}}} */
   const parameters = { model: modelName };
   if (effort) parameters.reasoning_effort = effort;
   if (maxTokens !== undefined && !(shortResponse && supportsReasoning && effort !== 'none')) {
@@ -123,7 +127,7 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         // Log periodic updates for long-running requests
         let progressInterval = setInterval(() => {
@@ -367,7 +371,7 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
     });
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', { signal,
           method: 'POST',
@@ -587,7 +591,7 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
     });
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.openai.com/v1/chat/completions', { signal,
           method: 'POST',

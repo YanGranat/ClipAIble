@@ -2,7 +2,6 @@
 // Column detector - detects columns in multi-column documents
 // Based on X-coordinate clustering analysis
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { clusterObjects } from '../core/clustering.js';
 import { CLUSTERING, DEFAULT_METRICS } from '../constants.js';

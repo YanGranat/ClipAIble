@@ -22,7 +22,7 @@ log('[ClipAIble Offscreen] === FILE CACHE CHECK ===', {
   timestamp: Date.now(),
   fileTimestamp: new Date().toISOString(),
   manifestVersion: chrome.runtime.getManifest?.()?.version || 'unknown',
-  scriptUrl: typeof document !== 'undefined' && document.currentScript ? document.currentScript.src : 'unknown',
+  scriptUrl: typeof document !== 'undefined' && document.currentScript ? (/** @type {HTMLScriptElement} */ (document.currentScript)).src : 'unknown',
   documentUrl: typeof location !== 'undefined' ? location.href : 'unknown',
   userAgent: navigator.userAgent,
   chromeVersion: navigator.userAgent.match(/Chrome\/(\d+)/)?.[1],
@@ -193,7 +193,7 @@ try {
 // After imports are loaded, use log
 // This will be called after log import is available
 try {
-  log('[ClipAIble Offscreen] === DOCUMENT LOADED V6 ===', '=== OFFScreen_DOCUMENT_LOADED_V6 ===', {
+  log('[ClipAIble Offscreen] === DOCUMENT LOADED V6 ===', { marker: '=== OFFScreen_DOCUMENT_LOADED_V6 ===',
     version: offscreenVersion,
     timestamp: Date.now(),
     url: window.location.href,
@@ -527,8 +527,9 @@ log('[ClipAIble Offscreen] === READY AND LISTENING FOR MESSAGES ===', {
 
 // Export to global scope for bundle compatibility
 if (typeof window !== 'undefined') {
-  window.offscreenReady = true;
-  window.offscreenInitialized = true;
+  const initializedWindow = /** @type {Window & {offscreenReady?: boolean, offscreenInitialized?: boolean}} */ (window);
+  initializedWindow.offscreenReady = true;
+  initializedWindow.offscreenInitialized = true;
   log('[ClipAIble Offscreen] Bundle loaded and ready', {
     timestamp: readyTime
   });

@@ -1,7 +1,6 @@
 // @ts-check
 // PDF file fetching utility - handles URL conversion and file fetching
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { LIMITS } from '../constants.js';
 import { createPdfError } from '../../../utils/pdf-errors.js';
@@ -27,7 +26,7 @@ export function toFileUrl(url) {
  * Supports both URL-based fetching and direct ArrayBuffer data
  * @param {string} url - PDF file URL (or identifier if pdfData is provided)
  * @param {ArrayBuffer} [pdfData] - Optional: PDF file data as ArrayBuffer (for local files)
- * @param {{checkCancelled?: function(): (void|Promise<void>)}} [requestOptions] - Optional cancellation checks
+ * @param {{signal?: AbortSignal, checkCancelled?: function(): (void|Promise<void>)}} [requestOptions] - Optional cancellation checks
  * @returns {Promise<ArrayBuffer>} PDF file as ArrayBuffer
  */
 export async function fetchPdfFile(url, pdfData = null, requestOptions) {
@@ -57,9 +56,12 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
   const fetchUrl = toFileUrl(url);
   const FETCH_TIMEOUT_MS = 10 * 60 * 1000;
 
+  /** @param {RequestInit} options @param {boolean} [readBody] */
   const fetchWithTimeout = async (options, readBody = false) => {
     const controller = new AbortController();
+    /** @type {ReadableStreamDefaultReader<Uint8Array> | null} */
     let reader = null;
+    /** @type {ReadableStream<Uint8Array> | null} */
     let responseBody = null;
     let readerCancelled = false;
     const abortRead = () => {
@@ -71,6 +73,7 @@ export async function fetchPdfFile(url, pdfData = null, requestOptions) {
       }
     };
     let timeoutId;
+    /** @type {() => void} */
     let resetTimeout;
     const timeout = new Promise((_, reject) => {
       const expire = () => {

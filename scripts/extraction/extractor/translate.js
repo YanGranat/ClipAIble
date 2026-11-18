@@ -86,7 +86,7 @@ export function getOriginalTextIfTranslated(element) {
   // Check if element has data-original-text attribute
   const originalText = element.getAttribute('data-original-text');
   if (originalText && originalText.trim()) {
-    const currentText = element.textContent || element.innerText || '';
+    const currentText = element.textContent || (/** @type {HTMLElement} */ (element)).innerText || '';
     // If original text differs from current text, element was translated
     if (originalText.trim() !== currentText.trim()) {
       return originalText.trim();

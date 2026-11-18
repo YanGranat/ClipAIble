@@ -19,7 +19,11 @@ export function isApiBoundaryError(error) {
     ['AbortError', 'TimeoutError'].includes(error?.name));
 }
 
-/** Keep actionable machine diagnostics without copying an untrusted response body. */
+/**
+ * Keep actionable machine diagnostics without copying an untrusted response body.
+ * @param {Response} response
+ * @param {string} [provider]
+ */
 export async function createApiError(response, provider) {
   let payload;
   try { payload = await (response.clone ? response.clone() : response).json(); } catch {}
@@ -30,7 +34,9 @@ export async function createApiError(response, provider) {
   const parameter = REQUEST_PARAMETERS.has(remote?.param) ? remote.param : undefined;
   const status = response.status;
   const quota = QUOTA_CODES.has(providerCode);
-  let translationKey = 'errorApiError', translationParams = { status };
+  let translationKey = 'errorApiError';
+  /** @type {{status?: number, reason?: string}} */
+  let translationParams = { status };
   if (status === 401) { translationKey = 'errorApiKeyInvalid'; translationParams = {}; }
   else if (status === 403) { translationKey = 'errorApiAccessForbidden'; translationParams = {}; }
   else if (quota) { translationKey = 'errorApiQuotaExceeded'; translationParams = {}; }

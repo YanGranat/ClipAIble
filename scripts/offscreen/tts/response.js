@@ -165,20 +165,19 @@ async function trySaveToIndexedDB(audioData, storageKey, messageId) {
     const dbName = 'ClipAIbleAudioStorage';
     const storeName = 'audioFiles';
     
+    /** @type {IDBDatabase} */
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open(dbName, 1);
       request.onerror = () => reject(new Error('Failed to open IndexedDB'));
       request.onsuccess = () => resolve(request.result);
       request.onupgradeneeded = (event) => {
-        // @ts-ignore
-        const db = event.target.result;
+        const db = (/** @type {IDBOpenDBRequest} */ (event.target)).result;
         if (!db.objectStoreNames.contains(storeName)) {
           db.createObjectStore(storeName);
         }
       };
     });
     
-    // @ts-ignore
     const transaction = db.transaction([storeName], 'readwrite');
     const store = transaction.objectStore(storeName);
     
@@ -188,7 +187,6 @@ async function trySaveToIndexedDB(audioData, storageKey, messageId) {
       request.onerror = () => reject(new Error('Failed to save to IndexedDB'));
     });
     
-    // @ts-ignore
     db.close();
     
     log(`[ClipAIble TTS] Saved to IndexedDB`, { messageId, storageKey });

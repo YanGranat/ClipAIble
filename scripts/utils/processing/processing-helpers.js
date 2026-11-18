@@ -102,7 +102,7 @@ export async function validateAndInitializeProcessing(data, stopKeepAlive, start
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {string} pdfUrl - Original PDF URL
  * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
- * @param {function(import('../../types.js').ProcessingData, import('../../types.js').ExtractionResult, function(): Promise<void>): Promise<void>} continueProcessingPipeline - Function to continue processing pipeline
+ * @param {import('../../types.js').ContinueProcessingPipelineFunction} continueProcessingPipeline - Function to continue processing pipeline
  * @param {{current: number}} processingStartTimeRef - Reference object with processingStartTime property
  * @returns {Promise<boolean>} True if PDF processing started
  * @throws {Error} If PDF processing fails
@@ -162,7 +162,7 @@ export async function handlePdfPageProcessing(
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {{platform: 'youtube'|'vimeo', videoId: string}} videoInfo - Video platform info
  * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
- * @param {function(import('../../types.js').ProcessingData, import('../../types.js').ExtractionResult, import('../../types.js').StopKeepAliveFunction?): Promise<void>} continueProcessingPipeline - Function to continue processing pipeline
+ * @param {import('../../types.js').ContinueProcessingPipelineFunction} continueProcessingPipeline - Function to continue processing pipeline
  * @param {{current: number}} processingStartTimeRef - Reference object with processingStartTime property
  * @returns {Promise<boolean>} True if video processing started
  */
@@ -209,8 +209,8 @@ export async function handleVideoPageProcessing(
  * Handle standard article processing
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
- * @param {function(import('../../types.js').ProcessingData, import('../../types.js').ExtractionResult, import('../../types.js').StopKeepAliveFunction?): Promise<void>} continueProcessingPipeline - Function to continue processing pipeline
- * @param {function(import('../../types.js').SelectorResult, string): Promise<import('../../types.js').InjectionResult>} extractFromPageInlined - Function to extract from page (for selector mode)
+ * @param {import('../../types.js').ContinueProcessingPipelineFunction} continueProcessingPipeline - Function to continue processing pipeline
+ * @param {import('../../types.js').ExtractFromPageFunction} extractFromPageInlined - Function to extract from page (for selector mode)
  * @param {{current: number}} processingStartTimeRef - Reference object with processingStartTime property
  * @returns {Promise<boolean>} True if processing started
  */
@@ -478,7 +478,7 @@ export async function prepareQuickSaveProcessingData(outputFormat, pageData) {
 
 /**
  * Handle quick save error and show notification
- * @param {Error} error - Error object
+ * @param {import('../../types.js').ExtendedError} error - Error object
  * @param {import('../../types.js').CreateNotificationFunction} createNotification - Function to create notification
  * @returns {Promise<void>}
  */

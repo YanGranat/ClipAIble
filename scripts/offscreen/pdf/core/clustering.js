@@ -2,7 +2,6 @@
 // Core clustering algorithm - ported from pdfplumber
 // This is a proven algorithm from Python pdfplumber library
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 
 /**

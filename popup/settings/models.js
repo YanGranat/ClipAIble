@@ -22,7 +22,9 @@ export function initModels(deps) {
   let renderedProvider = null;
   let presentationLanguage = null;
   let storageQueue = Promise.resolve();
-  const isRecord = value => value && typeof value === 'object' && !Array.isArray(value);
+  /** @param {unknown} value @returns {value is Record<string, unknown>} */
+  const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const recordValue = value => isRecord(value) ? value : {};
   const providerValues = (map, provider) => isRecord(map) && Array.isArray(map[provider])
     ? map[provider].filter(value => typeof value === 'string' && value)
     : [];
@@ -33,6 +35,7 @@ export function initModels(deps) {
     const normalized = normalizeModelSelection(provider, value, (key, params) => tSync(key, language, params));
     const { apiModel } = parseModelSelection(normalized);
     if (normalized.length > 4096 || !/^[a-z0-9][a-z0-9\-_\/:.]*$/i.test(apiModel)) {
+      /** @type {import('../../scripts/types.js').ExtendedError} */
       const error = new Error('Enter a valid API model ID.');
       error.translationKey = 'addModelInvalidFormat';
       throw error;
@@ -92,7 +95,7 @@ export function initModels(deps) {
     return queueStorage(async () => {
       const saved = await chrome.storage.local.get([STORAGE_KEYS.MODEL_BY_PROVIDER]);
       if (!isCurrent() || !modelValue) return;
-      const byProvider = isRecord(saved[STORAGE_KEYS.MODEL_BY_PROVIDER]) ? saved[STORAGE_KEYS.MODEL_BY_PROVIDER] : {};
+      const byProvider = recordValue(saved[STORAGE_KEYS.MODEL_BY_PROVIDER]);
       await chrome.storage.local.set({
         [STORAGE_KEYS.MODEL]: modelValue,
         [STORAGE_KEYS.MODEL_BY_PROVIDER]: { ...byProvider, [provider]: modelValue }
@@ -291,8 +294,8 @@ export function initModels(deps) {
     if (elements.apiProviderSelect.value === provider) ++listRevision;
     await queueStorage(async () => {
       const saved = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
-      const custom = isRecord(saved[STORAGE_KEYS.CUSTOM_MODELS]) ? saved[STORAGE_KEYS.CUSTOM_MODELS] : {};
-      const hidden = isRecord(saved[STORAGE_KEYS.HIDDEN_MODELS]) ? saved[STORAGE_KEYS.HIDDEN_MODELS] : {};
+      const custom = recordValue(saved[STORAGE_KEYS.CUSTOM_MODELS]);
+      const hidden = recordValue(saved[STORAGE_KEYS.HIDDEN_MODELS]);
       const customIds = providerValues(custom, provider);
       const existing = customIds.find(id => normalizedStoredModel(provider, id) === modelValue);
       selectedValue = existing || modelValue;
@@ -312,7 +315,7 @@ export function initModels(deps) {
       const saved = await chrome.storage.local.get(settingsKeys);
       const field = custom ? STORAGE_KEYS.CUSTOM_MODELS : STORAGE_KEYS.HIDDEN_MODELS;
       const values = isRecord(saved[field]) ? saved[field] : {};
-      const byProvider = isRecord(saved[STORAGE_KEYS.MODEL_BY_PROVIDER]) ? { ...saved[STORAGE_KEYS.MODEL_BY_PROVIDER] } : {};
+      const byProvider = { ...recordValue(saved[STORAGE_KEYS.MODEL_BY_PROVIDER]) };
       const entries = providerValues(values, provider);
       const changes = { [field]: { ...values, [provider]: custom ? entries.filter(id => id !== modelValue) : [...new Set([...entries, modelValue])] } };
       if (byProvider[provider] === modelValue) {

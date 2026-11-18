@@ -1,7 +1,6 @@
 // @ts-check
 // Constants for offline TTS (Piper TTS)
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { CONFIG } from '../../utils/config.js';
 
 /**

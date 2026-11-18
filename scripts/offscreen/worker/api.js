@@ -35,7 +35,7 @@ export async function predictWithWorker(text, voiceId, speed = 1) {
   const callStartTime = Date.now();
   const callId = 'predict_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
 
-  log('[ClipAIble Offscreen] === predictWithWorker CALL START ===', 'WORKER_PREDICT_START', {
+  log('[ClipAIble Offscreen] === predictWithWorker CALL START ===', { marker: 'WORKER_PREDICT_START',
     callId,
     textLength: text?.length,
     voiceId,

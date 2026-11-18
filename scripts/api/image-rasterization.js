@@ -13,6 +13,7 @@ export async function normalizeImageBlob(blob, options = {}) {
   const signals = [];
   const expiresAt = Date.now() + CONFIG.API_TIMEOUT_MS;
   let failure;
+  /** @type {typeof isRunCancelled} */
   let isCancelled = () => false;
   const check = () => {
     if (failure) throw failure;

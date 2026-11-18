@@ -83,7 +83,7 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model, option
  * Process content without AI (automatic mode)
  * Reuses cached DOM selectors when they match the current page.
  * @param {import('../types.js').ProcessingData} data - Processing data
- * @param {(selectors: Object, baseUrl: string) => any} [extractFromPageInlined] - Optional extraction function for using cached selectors
+ * @param {import('../types.js').ExtractFromPageFunction} [extractFromPageInlined] - Optional extraction function for using cached selectors
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithoutAI(data, extractFromPageInlined) {
@@ -1055,9 +1055,9 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
 /**
  * Extract content using selectors (executes script in page context)
  * @param {number} tabId - Tab ID
- * @param {import('../types.js').SelectorResult} selectors - Selectors object from AI
+ * @param {import('../types.js').SelectorResult | import('../types.js').CachedSelectors} selectors - DOM selectors
  * @param {string} baseUrl - Base URL for resolving relative links
- * @param {(selectors: import('../types.js').SelectorResult, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
+ * @param {import('../types.js').ExtractFromPageFunction} extractFromPageInlined - Inline extraction function (must be passed from background.js)
  * @returns {Promise<import('../types.js').InjectionResult>} Extracted content result
  */
 export async function extractContentWithSelectors(tabId, selectors, baseUrl, extractFromPageInlined) {
@@ -1402,7 +1402,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
 /**
  * Process content with selector mode (AI Selector)
  * @param {import('../types.js').ProcessingData} data - Processing data
- * @param {(selectors: Object, baseUrl: string) => any} extractFromPageInlined - Inline extraction function (must be passed from background.js)
+ * @param {import('../types.js').ExtractFromPageFunction} extractFromPageInlined - Inline extraction function (must be passed from background.js)
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
 export async function processWithSelectorMode(data, extractFromPageInlined) {

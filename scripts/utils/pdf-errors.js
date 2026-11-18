@@ -1,6 +1,9 @@
 import { getUILanguage, tSync } from '../locales.js';
 
-/** Keep diagnostics and a translatable description across PDF execution contexts. */
+/**
+ * Keep diagnostics and a translatable description across PDF execution contexts.
+ * @returns {import('../types.js').ExtendedError}
+ */
 export function createPdfError(message, translationKey, translationParams = {}) {
   return Object.assign(new Error(message), { translationKey, translationParams });
 }

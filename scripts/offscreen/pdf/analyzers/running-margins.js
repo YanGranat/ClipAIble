@@ -3,7 +3,9 @@
 export function findRunningMargins(lines, pageCount, baseFontSize) {
   if (pageCount < 3) return [];
   const groups = new Map();
-  const byPage = Map.groupBy ? Map.groupBy(lines, line => line.pageNum) : lines.reduce((map, line) => {
+  /** @type {MapConstructor & {groupBy?: <T, K>(items: Iterable<T>, key: (item: T, index: number) => K) => Map<K, T[]>}} */
+  const mapConstructor = Map;
+  const byPage = mapConstructor.groupBy ? mapConstructor.groupBy(lines, line => line.pageNum) : lines.reduce((map, line) => {
     if (!map.has(line.pageNum)) map.set(line.pageNum, []);
     map.get(line.pageNum).push(line); return map;
   }, new Map());

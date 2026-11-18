@@ -50,6 +50,7 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
       try { check(); return; }
       catch (error) { if (!error?.cancelledGeneration) throw error; }
     }
+    /** @type {import('../types.js').ExtendedError} */
     const error = new Error('Content extraction cancelled');
     error.cancelledGeneration = true;
     error.keyThesesCancelled = Boolean(autoGenerateKeyTheses);
@@ -59,6 +60,7 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
   const getContent = () => {
     if (!extraction) extraction = (async () => {
       checkExtraction();
+      /** @type {import('../types.js').ProcessingData} */
       const processingData = {
         extractionOnly: true, checkCancelled: checkExtraction,
         autoGenerateKeyTheses: Boolean(autoGenerateKeyTheses),

@@ -13,7 +13,11 @@ import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
 
-/** Build supported parameters for a managed model while preserving custom IDs. */
+/**
+ * Build supported parameters for a managed model while preserving custom IDs.
+ * @param {string} model
+ * @param {import('../types.js').ModelRequestOptions} [options]
+ */
 export function getGrokRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort, imageInput = false } = {}) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('grok');
   const metadata = getModelMetadata('grok', selected, { strict: true });
@@ -22,6 +26,7 @@ export function getGrokRequestConfig(model, { maxTokens, temperature, shortRespo
   if (shortResponse && metadata?.reasoningEfforts) {
     effort = metadata.reasoningEfforts.includes('none') ? 'none' : 'low';
   }
+  /** @type {{model: string, reasoning_effort?: string, max_tokens?: number, temperature?: number, response_format?: {type: 'json_object'}}} */
   const parameters = { model: metadata?.apiModel || selected };
   if (effort) parameters.reasoning_effort = effort;
   const reasoning = Boolean(metadata?.reasoningEfforts?.length || metadata?.reasoningEffort);
@@ -64,7 +69,7 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', { signal,
           method: 'POST',
@@ -341,7 +346,7 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
     logDebug('Sending request to Grok API with image...');
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', { signal,
           method: 'POST',
@@ -591,7 +596,7 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
     logDebug('Sending request to Grok API with image and history...');
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', { signal,
           method: 'POST',

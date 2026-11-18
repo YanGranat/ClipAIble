@@ -1,7 +1,6 @@
 // @ts-check
 // Content extractor - extracts content from all pages
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { processPage } from '../processors/page-processor.js';
 import { CROSS_PAGE_BREAK_MARKER } from '../constants.js';
@@ -11,7 +10,7 @@ import { isRunningMargin } from '../analyzers/running-margins.js';
 /**
  * Extract content from all pages
  * 
- * @param {{getPage: function(number): Promise<{getTextContent: function(): Promise<any>, cleanup: function(): void}>}} pdf - PDF.js document object
+ * @param {{getPage: (pageNumber: number) => Promise<Parameters<typeof processPage>[0]>}} pdf - PDF.js document object
  * @param {number} numPages - Total number of pages
  * @param {{gapThreshold?: number, [key: string]: any}} metrics - PDF metrics with gap analysis
  * @returns {Promise<{elements: Array<any>, hasTextContent: boolean}>} Extracted content

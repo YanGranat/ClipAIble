@@ -2,7 +2,6 @@
 // Graphics extractor - extracts lines and rectangles from PDF operator list
 // This can be used to detect table borders and improve table detection
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { DEFAULT_METRICS, TABLE_DETECTION } from '../constants.js';
 import { loadPdfJs } from './pdf-loader.js';

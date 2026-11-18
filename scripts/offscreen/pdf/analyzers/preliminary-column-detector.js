@@ -3,7 +3,6 @@
 // Used to improve item-to-line grouping by preventing items from different columns
 // from being grouped into the same line
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { clusterObjects } from '../core/clustering.js';
 import { CLUSTERING, DEFAULT_METRICS } from '../constants.js';

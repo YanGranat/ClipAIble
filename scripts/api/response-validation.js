@@ -6,6 +6,7 @@ export function assertCompleteAIResponse(response, provider) {
       ? response?.candidates?.[0]?.finishReason
       : response?.choices?.[0]?.finish_reason;
   if (['length', 'max_tokens', 'MAX_TOKENS', 'CONTINUATION', 'model_context_window_exceeded'].includes(reason)) {
+    /** @type {import('../types.js').ExtendedError} */
     const error = new Error('The AI response was truncated by the model output limit.');
     error.code = 'AI_RESPONSE_TRUNCATED';
     error.retryable = false;
@@ -18,6 +19,7 @@ export function assertCompleteAIResponse(response, provider) {
       ['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY', 'IMAGE_PROHIBITED_CONTENT', 'IMAGE_RECITATION', 'ESCALATION', 'PUP_LIMITED_DISABLED'].includes(reason)
     : reason === 'refusal' || reason === 'content_filter' || Boolean(response?.choices?.[0]?.message?.refusal);
   if (refusal) {
+    /** @type {import('../types.js').ExtendedError} */
     const error = new Error('The AI provider declined to produce the requested response.');
     error.code = 'AI_RESPONSE_REFUSED';
     error.retryable = false;
@@ -29,6 +31,7 @@ export function assertCompleteAIResponse(response, provider) {
     ? ['LANGUAGE', 'OTHER', 'MALFORMED_FUNCTION_CALL', 'IMAGE_OTHER', 'NO_IMAGE', 'UNEXPECTED_TOOL_CALL', 'TOO_MANY_TOOL_CALLS', 'MISSING_THOUGHT_SIGNATURE', 'MALFORMED_RESPONSE'].includes(reason)
     : provider === 'deepseek' && ['aborted', 'insufficient_system_resource'].includes(reason);
   if (incomplete) {
+    /** @type {import('../types.js').ExtendedError} */
     const error = new Error('The AI provider stopped before completing the requested response.');
     error.code = 'AI_RESPONSE_INCOMPLETE';
     error.retryable = false;

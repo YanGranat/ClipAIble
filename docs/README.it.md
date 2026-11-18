@@ -1,109 +1,26 @@
 # ClipAIble
 
-Estrattore di articoli con IA.
+Salva gli articoli web in PDF, EPUB, FB2, Markdown o audio.
 
-**Disponibile su [Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)**
+[Chrome Web Store](https://chromewebstore.google.com/detail/clipaible/khcklmlkddcaflkoonkkefjhdldcfolc)
 
-## Cosa fa
+## Utilizzo
 
-ClipAIble estrae il contenuto degli articoli dalle pagine web e lo converte in diversi formati:
-- Documenti PDF
-- File EPUB
-- File FB2
-- Testo Markdown
-- File audio
+1. Apri un articolo, un video supportato o un PDF.
+2. Fai clic su ClipAIble nella barra degli strumenti di Chrome.
+3. Seleziona il formato di uscita e la modalità di estrazione.
+4. Fai clic su **Salva**.
 
-**Funzionalità speciali:**
-- **Supporto YouTube/Vimeo**: Estrae i sottotitoli video e crea articoli da essi
-- **Elaborazione PDF**: Funziona con PDF online e file PDF locali
-- **Traduzione immagini**: Traduce testo sulle immagini usando IA
-- **Generazione TLDR**: Crea riassunti brevi all'interno dei documenti
-- **Pannello summary**: Mostra riassunti articoli nel popup dopo l'elaborazione
+Anche il menu contestuale della pagina offre azioni di salvataggio. Per i PDF locali, consenti l’accesso ai file nelle impostazioni dell’estensione in Chrome oppure seleziona il file corrispondente quando richiesto. Lascia aperto il pannello dell’estensione se è necessario selezionare un file.
 
-## Come usare
+Per gli articoli web, **Automatico** usa euristiche locali e i selettori disponibili nella cache. **AI Selector** chiede a un servizio IA i selettori CSS, poi estrae il contenuto corrispondente. **AI Extract** chiede al servizio di strutturare il contenuto. Per i PDF, Automatico estrae il livello di testo; le modalità IA elaborano le pagine renderizzate.
 
-1. Clicca sull'icona ClipAIble nella barra degli strumenti del browser
-2. Apri qualsiasi articolo, video YouTube o PDF
-3. Seleziona il formato desiderato (PDF, EPUB, FB2, Markdown o Audio)
-4. Clicca su salva
+Le impostazioni includono la traduzione di testo e immagini, gli stili del documento e un indice. Il pannello consente anche di generare un riepilogo o affermazioni chiave. L’audio usa un servizio TTS configurato oppure la sintesi locale Piper dopo il download di un modello vocale.
 
-**Metodi alternativi di salvataggio:**
-- Clic destro su qualsiasi pagina web e utilizzo delle opzioni del menu contestuale
+Aggiungi le chiavi API richieste dalle funzioni IA e TTS selezionate. L’esportazione delle impostazioni esclude le chiavi API e può includere facoltativamente statistiche e cache dei selettori.
 
-**Per file PDF locali**: Nelle modalità IA, ti verrà chiesto di selezionare il file PDF a causa delle restrizioni del browser.
+## Sviluppo
 
-## Impostazioni
+Le istruzioni per installazione, compilazione e test si trovano nella [guida principale in inglese](../README.md#development).
 
-### Modi di estrazione
-
-- **AI Selector**: Modalità raccomandata per la maggior parte dei siti. Usa l'IA per trovare il contenuto dell'articolo.
-- **Automatic**: Modalità base che funziona senza chiavi API.
-- **AI Extractor**: Modalità alternativa con IA (non raccomandata per uso regolare).
-
-### Funzionalità di performance
-
-- **Caching dei selettori**: Velocizza l'elaborazione dei siti visitati in precedenza riutilizzando i selettori appresi dall'IA
-
-### Formati di output
-
-- **PDF**: Crea documenti formattati con 4 stili predefiniti (Scuro, Chiaro, Seppia, Alto contrasto) e caratteri/colori personalizzabili
-- **EPUB**: Crea libri elettronici strutturati per reader come Kindle
-- **FB2**: Crea libri elettronici strutturati per PocketBook e altri reader
-- **Markdown**: Mantiene la struttura dell'articolo con titoli ed elenchi
-- **Audio**: Converte testo in voce utilizzando 6 diversi servizi TTS
-
-### Audio
-
-L'audio può essere generato con diversi provider TTS:
-- OpenAI TTS
-- ElevenLabs
-- Google Gemini
-- Qwen
-- Respeecher (solo inglese e ucraino)
-- Piper (offline, non sono necessarie chiavi API)
-
-## Chiavi API (opzionale)
-
-Per le funzioni IA, puoi aggiungere chiavi API da questi provider:
-
-### OpenAI
-Ottieni la chiave su [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
-
-### Google Gemini
-Ottieni la chiave su [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-
-Per TTS, attiva [Generative Language API](https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com) in Google Cloud Console
-
-### Anthropic Claude
-Ottieni la chiave su [console.anthropic.com](https://console.anthropic.com/)
-
-### DeepSeek
-Ottieni la chiave su [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys)
-
-### ElevenLabs
-Ottieni la chiave su [elevenlabs.io](https://elevenlabs.io/)
-
-### Qwen
-Ottieni la chiave su [alibaba cloud dashscope](https://dashscope-intl.console.aliyun.com/)
-
-### Respeecher
-Ottieni la chiave su [space.respeecher.com](https://space.respeecher.com/)
-
-## Funzionalità aggiuntive
-
-- **Statistiche**: Traccia i tuoi articoli salvati con cronologia e contatori mensili
-- **Importazione/esportazione impostazioni**: Backup e ripristino delle tue preferenze
-- **Archiviazione sicura**: Le chiavi API vengono crittografate prima del salvataggio
-
-## Permessi
-
-L'estensione ha bisogno di questi permessi per funzionare:
-- Leggere pagine web che visiti
-- Salvare file sul tuo computer
-- Fare chiamate API ai provider IA (solo quando usi quelle funzioni)
-
-**Sicurezza**: Tutte le chiavi API vengono crittografate prima di essere memorizzate nel browser.
-
----
-
-ClipAIble estrae e converte articoli web.
+[Autorizzazioni](../PERMISSIONS.md) · [Privacy](../PRIVACY.md) · [Panoramica tecnica](technical-overview.md)

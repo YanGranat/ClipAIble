@@ -18,6 +18,7 @@ import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
 export function getDeepSeekRequestConfig(model) {
   const selectedModel = model || getDefaultModel('deepseek');
   const metadata = getModelMetadata('deepseek', selectedModel, { strict: true });
+  /** @type {{model: string, thinking?: {type: string}, reasoning_effort?: string, max_tokens?: number, response_format?: {type: 'json_object'}}} */
   const config = { model: metadata?.apiModel || selectedModel };
   if (typeof metadata?.reasoningEnabled === 'boolean') {
     config.thinking = { type: metadata.reasoningEnabled ? 'enabled' : 'disabled' };
@@ -35,6 +36,7 @@ export function getDeepSeekRequestConfig(model) {
 export function assertDeepSeekVisionModel(model) {
   const metadata = getModelMetadata('deepseek', model || getDefaultModel('deepseek'), { strict: true });
   if (metadata?.inputModalities && !metadata.inputModalities.includes('image')) {
+    /** @type {import('../types.js').ExtendedError} */
     const error = new Error('The selected DeepSeek model does not support image input. Select a vision-capable model.');
     error.code = 'AI_MODEL_UNSUPPORTED_IMAGE';
     throw error;
@@ -238,7 +240,7 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       
       // Use retry wrapper for fetch
       response = await callWithRetry(
-        async ({ signal } = {}) => {
+        async ({ signal }) => {
           log('callWithRetry: Calling makeRequest', {
             timestamp: Date.now(),
             useResponseFormat: useResponseFormat
@@ -1381,7 +1383,7 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
     });
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
 
         
         try {
@@ -1611,7 +1613,7 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
     });
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
 
         
         try {

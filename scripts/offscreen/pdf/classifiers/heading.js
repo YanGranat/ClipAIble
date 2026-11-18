@@ -2,7 +2,6 @@
 // Heading classifier - improved scoring system with negative scores and adaptive thresholds
 // FIXES v2 problems: validation, adaptive thresholds, negative scores, gap after analysis
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { 
   HEADING_DETECTION, 

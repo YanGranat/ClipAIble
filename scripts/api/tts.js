@@ -484,7 +484,7 @@ async function textToSpeechOffline(text, apiKey, options = {}) {
  * @param {Array<{text: string, index: number}>} chunks - Prepared text chunks
  * @param {string} apiKey - API key (OpenAI, ElevenLabs, Qwen, Respeecher, or Google Cloud)
  * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
- * @returns {Promise<ArrayBuffer>} Concatenated audio data as ArrayBuffer
+ * @returns {Promise<ArrayBuffer | Blob>} Concatenated audio data
  * @throws {Error} If chunks array is empty
  * @throws {Error} If API key is missing (for non-offline providers)
  * @throws {Error} If TTS conversion fails for any chunk
@@ -672,7 +672,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
   const concatenated = concatenateAudioBuffers(audioBuffers, options.returnBlob === true);
   
   // Check final result
-  log('=== CONCATENATION COMPLETE ===', { chunkCount: audioBuffers.length, totalSize: concatenated.byteLength });
+  log('=== CONCATENATION COMPLETE ===', { chunkCount: audioBuffers.length, totalSize: concatenated instanceof Blob ? concatenated.size : concatenated.byteLength });
   
   return concatenated;
 }
@@ -681,7 +681,8 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
  * Concatenate multiple audio ArrayBuffers
  * Handles both MP3 (simple concat) and WAV (proper header merging)
  * @param {Array<ArrayBuffer>} buffers - Array of audio buffers
- * @returns {ArrayBuffer} Concatenated buffer
+ * @param {boolean} [asBlob=false] - Preserve the assembled audio as Blob parts
+ * @returns {ArrayBuffer|Blob} Concatenated audio
  */
 function concatenateAudioBuffers(buffers, asBlob = false) {
   log('concatenateAudioBuffers called', { buffersCount: buffers?.length });

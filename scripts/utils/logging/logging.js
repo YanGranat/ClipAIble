@@ -3,11 +3,8 @@
 // Supports log levels: DEBUG, INFO, WARN, ERROR
 // Log level can be controlled via CONFIG.LOG_LEVEL
 
-// Type definition for self with dynamically added properties
-// addLogToCollection is added dynamically in service worker (background.js line 1073)
-// Note: Using WorkerGlobalScope as base type since ServiceWorkerGlobalScope may not be available in all contexts
 /**
- * @typedef {WorkerGlobalScope & {
+ * @typedef {typeof globalThis & {
  *   addLogToCollection?: (message: string, data?: any, level?: string) => void;
  * }} ServiceWorkerWithLogging
  */
@@ -412,30 +409,7 @@ export function logWarn(message, data = null) {
 // Export log levels for external use
 export { LOG_LEVELS };
 
-/**
- * CRITICAL LOGGING - Use ALL available methods to ensure logs are captured
- * This function tries multiple logging mechanisms to bypass any console capture issues
- * @param {string} message - Log message
- * @param {string} marker - Optional marker for easy searching
- * @param {*} data - Optional data to log
- */
-/**
- * CRITICAL LOGGING - Use ALL available methods to ensure logs are captured
- * 
- * PROBLEM: Logs from offscreen documents may not be visible in DevTools console
- * if console is opened AFTER logs are written. Chrome caches console output
- * and may not show logs that were written before DevTools was opened.
- * 
- * SOLUTION: Use multiple logging mechanisms:
- * 1. console.log/error/warn - visible in DevTools if opened during execution
- * 2. localStorage - ALWAYS available, persists across sessions
- * 3. chrome.runtime.sendMessage - sends to background, always visible
- * 4. window.postMessage - for cross-context communication
- * 
- * @param {string} message - Log message
- * @param {string} marker - Optional marker for easy searching
- * @param {*} data - Optional data to log
- */
+/** @param {string} [level] */
 export function shouldLogDiagnostic(level = 'debug') {
   if (level === 'error') return shouldLog(LOG_LEVELS.ERROR);
   if (level === 'warn') return shouldLog(LOG_LEVELS.WARN);

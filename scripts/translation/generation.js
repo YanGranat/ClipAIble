@@ -197,7 +197,7 @@ Generate the TL;DR:`;
 
 /**
  * Generate summary for article content
- * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string}} data - Summary generation data
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, provider?: import('../types.js').AIProvider, checkCancelled?: () => void}} data - Summary generation data
  * @returns {Promise<{summary: string}>} Generated summary
  * @throws {Error} If contentItems is empty
  * @throws {Error} If API key is missing
@@ -500,7 +500,7 @@ Generate a summary in Markdown format in ${langName} language:`;
 
 /**
  * Generate key theses from article content (analytical extraction of main claims)
- * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string}} data - Same shape as summary
+ * @param {{contentItems: import('../types.js').ContentItem[], apiKey: string, model: string, url: string, language: string, provider?: import('../types.js').AIProvider, checkCancelled?: () => void}} data - Same shape as summary
  * @returns {Promise<{keyTheses: string}>} Markdown string of theses (from JSON theses)
  * @throws {Error} If content/API/key missing or generation fails
  */

@@ -276,7 +276,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
     if (typeof editKey !== 'string' || !editKey.trim() || editKey.startsWith('****')) throw Object.assign(new Error('Image translation API key required'), {
       translationKey: 'errorImageKeyRequired', translationParams: { provider: 'OpenAI' }
     });
-    if (editKey.startsWith('ENC:')) editKey = await decryptApiKey(editKey, 'openai');
+    if (editKey.startsWith('ENC:')) editKey = await decryptApiKey(editKey);
     await check();
     if (!editKey || editKey.startsWith('ENC:') || editKey.startsWith('****')) throw Object.assign(new Error('Image translation API key required'), {
       translationKey: 'errorImageKeyRequired', translationParams: { provider: 'OpenAI' }

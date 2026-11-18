@@ -1,7 +1,6 @@
 // @ts-check
 // Contextual formatting detection from font metadata and relative text metrics.
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn, criticalLog } from '../../../utils/logging.js';
 import { TEXT_FORMATTING } from '../constants.js';
 

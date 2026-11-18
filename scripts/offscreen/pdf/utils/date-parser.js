@@ -1,7 +1,6 @@
 // @ts-check
 // PDF date parsing utility
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { logWarn } from '../../../utils/logging.js';
 
 /**

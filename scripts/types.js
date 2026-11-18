@@ -12,6 +12,7 @@
  * @property {string} [url] - Image URL (for images) - alias for src
  * @property {string} [alt] - Image alt text (for images)
  * @property {string} [src] - Image source URL (for images) - alias for url
+ * @property {string} [base64] - Embedded image data
  * @property {string} [caption] - Image caption text (for images)
  * @property {boolean} [isFeatured] - Whether the image precedes article content
  * @property {boolean} [translated] - Whether image text was translated (for images)
@@ -47,9 +48,11 @@
  * @property {string|null} [errorTranslationKey] - Error translation key
  * @property {Object|null} [errorTranslationParams] - Error interpolation values
  * @property {string|null} error - Display message if processing failed
+ * @property {string} [errorCode] - Machine-readable processing error code
  * @property {number|null} [inactivityDeadlineAt] - Deadline for the current operation's next progress update
  * @property {number|null} startTime - Processing start timestamp
  * @property {string|null} currentStage - Current processing stage ID
+ * @property {string} [stage] - Stage supplied by state updates
  * @property {Array<string>} completedStages - List of completed stage IDs
  * @property {number} [lastUpdate] - Last update timestamp (for state management)
  * @property {string} [outputFormat] - Output format (pdf, epub, fb2, markdown, audio) - used for UI display and polling intervals
@@ -64,6 +67,8 @@
  * @property {Error|Object|null} originalError - Original error object
  * @property {Object} context - Additional context (source, errorType, etc.)
  */
+
+/** @typedef {{key: string, params?: Record<string, unknown>}} LocalizedMessage */
 
 /**
  * @typedef {Object} ErrorContext
@@ -94,9 +99,13 @@
 /**
  * Extended Error type with custom properties
  * Used instead of @ts-ignore when adding custom properties to Error objects
- * @typedef {Error & {
+ * @typedef {ApiError & {
  *   code?: string;
- *   status?: number;
+ *   retryExhausted?: boolean;
+ *   translationKey?: string;
+ *   translationParams?: Record<string, unknown>;
+ *   cancelledGeneration?: boolean;
+ *   keyThesesCancelled?: boolean;
  *   originalError?: Error|Object|null;
  *   context?: Object;
  *   userMessage?: string;
@@ -241,6 +250,9 @@
 
 /**
  * @typedef {Object} GenerationData
+ * @property {string} [processingRunId] - Captured document operation identity
+ * @property {AIRequestOptions} [aiRequestOptions] - Captured AI operation options
+ * @property {AIProvider} [provider] - Selected article provider
  * @property {Array<ContentItem>} content - Content items to generate
  * @property {string} title - Document title
  * @property {string} [author] - Document author
@@ -255,8 +267,19 @@
  */
 
 /**
+ * @typedef {Object} CachedSelectors
+ * @property {string} [articleContainer]
+ * @property {string} [content]
+ * @property {string} [title]
+ * @property {string} [subtitle]
+ * @property {string} [heroImage]
+ * @property {string} [toc]
+ * @property {string[]} exclude
+ */
+
+/**
  * @typedef {Object} CacheEntry
- * @property {SelectorResult} selectors - Cached selectors
+ * @property {CachedSelectors} selectors - Cached selectors
  * @property {number} timestamp - Cache timestamp
  * @property {number} [successCount] - Number of successful uses
  * @property {number} [failureCount] - Number of failures
@@ -475,8 +498,8 @@
  */
 
 /**
- * @typedef {Blob|{success: boolean}} PdfGenerationResult
- * PDF generation can return either a Blob (when using debugger API) or success object (when using print page)
+ * @typedef {{success: boolean, deferred?: boolean}} PdfGenerationResult
+ * Print-page admission is deferred; debugger completion reports success.
  */
 
 /**
@@ -503,6 +526,8 @@
  * @typedef {PdfGenerationResult|EpubGenerationResult|Fb2GenerationResult|MarkdownGenerationResult|AudioGenerationResult} DocumentGenerationResult
  * Union type for all possible document generation results
  */
+
+/** @typedef {(data: ProcessingData, result: ExtractionResult, stopKeepAlive?: StopKeepAliveFunction) => Promise<DocumentGenerationResult>} ContinueProcessingPipelineFunction */
 
 /**
  * @typedef {('automatic'|'selector'|'extract')} ExtractionMode
@@ -538,6 +563,8 @@
 
 /**
  * @typedef {Object} InjectionResult
+ * @property {boolean} [selectorMatched] - Whether the selected content roots matched
+ * @property {string} [detectedLanguage] - Language from the current source page
  * @property {string} title - Extracted title
  * @property {string} [author] - Extracted author
  * @property {Array<ContentItem>} content - Extracted content
@@ -553,12 +580,18 @@
  * @property {number} [maxRetries] - Maximum retry attempts
  * @property {Array<number>} [delays] - Retry delays in milliseconds
  * @property {Array<number>} [retryableStatusCodes] - HTTP status codes that trigger retry
+ * @property {number} [maxDelayMs] - Maximum accepted retry delay
+ * @property {number} [timeoutMs] - Total operation deadline budget
+ * @property {AbortSignal} [signal] - Captured operation cancellation signal
+ * @property {function(): (void|Promise<void>)} [checkCancelled] - Owner check before and during retries
  * @property {Function} [onRetry] - Callback on retry
  * @property {Function} [shouldRetry] - Function to determine if should retry
  */
 
 /**
  * @typedef {Object} TTSOptions
+ * @property {AbortSignal} [signal] - Captured operation cancellation signal
+ * @property {boolean} [returnBlob] - Return assembled audio as a Blob
  * @property {string} [processingRunId] - Processing run identity
  * @property {string} [provider='openai'] - Provider: 'openai', 'elevenlabs', 'qwen', 'respeecher', 'google', or 'offline'
  * @property {string} [voice] - Voice to use
@@ -590,18 +623,7 @@
  */
 
 /**
- * @typedef {Object} ExtendedGenerationData
- * @property {Array<ContentItem>} content - Content items to generate
- * @property {string} title - Document title
- * @property {string} [author] - Document author
- * @property {string} [sourceUrl] - Source URL
- * @property {string} [publishDate] - Publish date
- * @property {boolean} [generateToc] - Whether to generate table of contents
- * @property {boolean} [generateAbstract] - Whether to generate abstract
- * @property {string} [abstract] - Abstract text
- * @property {string} [language] - Document language
- * @property {string} [apiKey] - API key for translation
- * @property {string} [model] - Model name for translation
+ * @typedef {Object} PdfStyleOptions
  * @property {string} [pageMode] - PDF page mode
  * @property {string} [fontFamily] - PDF font family
  * @property {string} [fontSize] - PDF font size
@@ -611,6 +633,8 @@
  * @property {string} [linkColor] - PDF link color
  * @property {string} [stylePreset] - PDF style preset
  */
+
+/** @typedef {GenerationData & PdfStyleOptions} ExtendedGenerationData */
 
 /**
  * @typedef {ProcessingState & {outputFormat?: string}} ExtendedProcessingState
@@ -622,6 +646,8 @@
 
 /**
  * @typedef {Object} AudioGenerationData
+ * @property {string} [processingRunId] - Captured document operation identity
+ * @property {AIRequestOptions} [aiRequestOptions] - Captured AI operation options
  * @property {Array<ContentItem>} content - Content items
  * @property {string} title - Document title
  * @property {string} apiKey - API key for text preparation
@@ -716,7 +742,18 @@
 /**
  * @typedef {Object} AIRequestOptions
  * @property {AIProvider} [provider] - Explicit selected AI provider
- * @property {function(): void} [checkCancelled] - Synchronous owner check that throws after cancellation
+ * @property {function(): (void|Promise<void>)} [checkCancelled] - Owner check that throws after cancellation
+ * @property {AbortSignal} [signal] - Captured operation cancellation signal
+ * @property {function(): void} [onRequestStart] - Mark admission of an owned request
+ */
+
+/**
+ * @typedef {Object} ModelRequestOptions
+ * @property {number} [maxTokens] - Requested answer token budget
+ * @property {number} [temperature] - Requested sampling temperature
+ * @property {boolean} [shortResponse] - Use the model's ancillary response policy
+ * @property {string} [reasoningEffort] - Requested supported effort override
+ * @property {boolean} [imageInput] - Require image input support
  */
 
 /**
@@ -738,19 +775,14 @@
  */
 
 /**
- * @typedef {WorkerGlobalScope & {
+ * @typedef {typeof globalThis & {
  *   addLogToCollection?: (message: string, data?: any, level?: string) => void;
  *   exportAllLogsToFile?: Function;
  * }} ServiceWorkerWithLogging
  */
 
 /**
- * @typedef {Object} UIModule
- * @property {function(): Promise<void>} applyLocalization - Apply UI localization
- * @property {function(): void} applyTheme - Apply theme
- * @property {function(string, string?, number?): void} setStatus - Set status indicator
- * @property {function(number, boolean?): void} setProgress - Set progress bar
- * @property {function(string, string?): void} showToast - Show toast notification
+ * @typedef {ReturnType<typeof import('../popup/ui.js').initUI>} UIModule
  */
 
 /**
@@ -899,13 +931,7 @@
  */
 
 /**
- * @typedef {Object} ChromeRuntimeMessageSender
- * Chrome Extension runtime message sender object
- * @property {number} [tab] - Tab ID if message is from a tab
- * @property {number} [frameId] - Frame ID
- * @property {string} [id] - Extension ID
- * @property {string} [url] - URL of the page that sent the message
- * @property {string} [tlsChannelId] - TLS channel ID
+ * @typedef {chrome.runtime.MessageSender} ChromeRuntimeMessageSender
  */
 
 /**
@@ -1079,6 +1105,12 @@
  * @property {function(): void} downloadSummary - Download summary
  * @property {function(): void} closeSummary - Close summary
  * @property {function(): Promise<void>} checkSummaryStatus - Check summary status
+ * @property {function(): Promise<void>} handleGenerateKeyTheses - Generate key theses
+ * @property {function(): void} toggleKeyTheses - Toggle key theses
+ * @property {function(): void} copyKeyTheses - Copy key theses
+ * @property {function(): void} downloadKeyTheses - Download key theses
+ * @property {function(): void} closeKeyTheses - Close key theses
+ * @property {function(): Promise<void>} checkKeyThesesStatus - Check key theses status
  * @property {function(): Promise<void>} checkProcessingState - Check processing state
  * @property {function(): void} startStatePolling - Start state polling
  */
@@ -1102,31 +1134,31 @@
  * @property {function(string, any?): void} log - Log function
  * @property {function(string, any?): void} logWarn - Warning logging function
  * @property {import('./types.js').Config} CONFIG - Configuration object
- * @property {function(): import('./types.js').ProcessingState} getProcessingState - Get processing state function
- * @property {function(Error|Object, function(): Promise<void>): Promise<void>} setError - Set error function
- * @property {import('./types.js').UpdateStateFunction} updateState - Update state function
+ * @property {typeof import('./state/processing.js').getProcessingState} getProcessingState - Get processing state function
+ * @property {typeof import('./state/processing.js').setError} setError - Set error function
+ * @property {typeof import('./state/processing.js').updateState} updateState - Update state function
  * @property {any} ERROR_CODES - Error codes object
  * @property {any} PROCESSING_STAGES - Processing stages object
- * @property {function(import('./types.js').ProcessingData, function(): Promise<void>, function(): void): Promise<boolean>} validateAndInitializeProcessing - Validate and initialize processing function
- * @property {function(import('./types.js').ProcessingData, string, function(): Promise<void>, function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, import('./types.js').StopKeepAliveFunction?): Promise<void>, {current: number}): Promise<boolean>} handlePdfPageProcessing - Handle PDF page processing function
- * @property {function(import('./types.js').ProcessingData, any, function(): Promise<void>, function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, import('./types.js').StopKeepAliveFunction?): Promise<void>, {current: number}): Promise<boolean>} handleVideoPageProcessing - Handle video page processing function
- * @property {function(import('./types.js').ProcessingData, function(): Promise<void>, function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, import('./types.js').StopKeepAliveFunction?): Promise<void>, function(import('./types.js').SelectorResult, string): Promise<import('./types.js').InjectionResult>, {current: number}): Promise<boolean>} handleStandardArticleProcessing - Handle standard article processing function
- * @property {function(string): Promise<void>} checkCancellation - Check cancellation function
- * @property {function({id: string, label?: string, name?: string, order?: number}, string, number, {replacements?: Array<string>, extra?: Record<string, any>}?): Promise<void>} updateProgress - Update progress function
+ * @property {typeof import('./utils/processing/processing-helpers.js').validateAndInitializeProcessing} validateAndInitializeProcessing - Validate and initialize processing function
+ * @property {typeof import('./utils/processing/processing-helpers.js').handlePdfPageProcessing} handlePdfPageProcessing - Handle PDF page processing function
+ * @property {typeof import('./utils/processing/processing-helpers.js').handleVideoPageProcessing} handleVideoPageProcessing - Handle video page processing function
+ * @property {typeof import('./utils/processing/processing-helpers.js').handleStandardArticleProcessing} handleStandardArticleProcessing - Handle standard article processing function
+ * @property {typeof import('./utils/processing/pipeline-helpers.js').checkCancellation} checkCancellation - Check cancellation function
+ * @property {typeof import('./utils/processing/pipeline-helpers.js').updateProgress} updateProgress - Update progress function
  * @property {function(): Promise<string>} getUILanguageCached - Get UI language cached function
- * @property {function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, Function, Function, Function, function(Partial<import('./types.js').ProcessingState>): void): Promise<import('./types.js').ExtractionResult>} handleTranslation - Handle translation function
- * @property {function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, Function, function(Partial<import('./types.js').ProcessingState>): void): Promise<void>} handleAbstractGeneration - Handle abstract generation function
- * @property {function(import('./types.js').ProcessingData, import('./types.js').ExtractionResult, Function): Promise<string>} detectEffectiveLanguage - Detect effective language function
- * @property {function(import('./types.js').ExtractionResult, string, string, string, function(Partial<import('./types.js').ProcessingState> & {stage?: string}): void?): Promise<import('./types.js').ExtractionResult>} translateContent - Translate content function
+ * @property {typeof import('./utils/processing/pipeline-helpers.js').handleTranslation} handleTranslation - Handle translation function
+ * @property {typeof import('./utils/processing/pipeline-helpers.js').handleAbstractGeneration} handleAbstractGeneration - Handle abstract generation function
+ * @property {typeof import('./utils/processing/pipeline-helpers.js').detectEffectiveLanguage} detectEffectiveLanguage - Detect effective language function
+ * @property {typeof import('./translation/text.js').translateContent} translateContent - Translate content function
  * @property {typeof import('./translation/images.js').translateImages} translateImages - Translate images function
  * @property {function(Array<import('./types.js').ContentItem>): string} detectSourceLanguage - Detect source language function (supports: en, ru, ua, de, fr, es, it, pt, zh, ja, ko, ar)
- * @property {function(Array<import('./types.js').ContentItem>, string, string, string, string?, function(Partial<import('./types.js').ProcessingState>): void?): Promise<string>} generateAbstract - Generate abstract function
- * @property {function(Array<import('./types.js').ContentItem>, string, string): Promise<string>} detectContentLanguage - Detect content language function
+ * @property {typeof import('./translation/generation.js').generateAbstract} generateAbstract - Generate abstract function
+ * @property {typeof import('./translation/detection.js').detectContentLanguage} detectContentLanguage - Detect content language function
  * @property {any} DocumentGeneratorFactory - Document generator factory class
- * @property {function(string, string?): {isPdf: boolean, originalUrl: string|null}|null} detectPdfPage - Detect PDF page function
- * @property {function(number): Promise<string>} getOriginalPdfUrl - Get original PDF URL function
+ * @property {typeof import('./utils/pdf.js').detectPdfPage} detectPdfPage - Detect PDF page function
+ * @property {typeof import('./utils/pdf.js').getOriginalPdfUrl} getOriginalPdfUrl - Get original PDF URL function
  * @property {function(string): any} detectVideoPlatform - Detect video platform function
- * @property {function(string, string): string} tSync - Synchronous translation function
+ * @property {typeof import('./locales.js').tSync} tSync - Synchronous translation function
  * @property {function(): void} startKeepAlive - Start keep-alive function
  * @property {function(): Promise<void>} stopKeepAlive - Stop keep-alive function
  */
@@ -1140,6 +1172,7 @@
 
 /**
  * @typedef {Object} KeepAliveDeps
+ * @property {() => boolean} isIndependentGenerationActive - Check independently owned generation tasks
  * @property {function(string, any?): void} log - Log function
  * @property {function(string, any?): void} logError - Error logging function
  * @property {function(string, any?): void} logWarn - Warning logging function

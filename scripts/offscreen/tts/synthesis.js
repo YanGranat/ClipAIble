@@ -11,14 +11,15 @@ import { DEFAULT_VOICES, FALLBACK_VOICES } from './voice-selection.js';
  * @param {Object} params - Parameters
  * @param {string} params.text - Sanitized text
  * @param {string} params.voiceId - Voice ID
+ * @param {number} [params.speed] - Synthesis speed
  * @param {string} params.langCode - Language code
  * @param {string} params.messageId - Message ID
  * @param {string} [params.processingRunId] - Processing run owner
- * @param {function(string, string): Promise<Blob>} params.predictWithWorker - Predict function
+ * @param {typeof import('../worker/api.js').predictWithWorker} params.predictWithWorker - Predict function
  * @param {function(): Promise<string[]>} params.getStoredWithWorker - Get stored function
- * @param {function(string, function?): Promise<void>} params.downloadWithWorker - Download function
+ * @param {typeof import('../worker/api.js').downloadWithWorker} params.downloadWithWorker - Download function
  * @param {function(string): Promise<void>} params.removeWithWorker - Remove function
- * @param {function(): Promise<void>} params.initTTSWorker - Init worker function
+ * @param {typeof import('../worker/init.js').initTTSWorker} params.initTTSWorker - Init worker function
  * @param {Object} params.state - State object
  * @returns {Promise<Blob>} Audio blob
  */
@@ -264,7 +265,7 @@ async function synthesizeSinglePass({
 /**
  * Handle model corruption - remove and re-download
  * @param {Object} params - Parameters
- * @returns {Promise<void>}
+ * @returns {Promise<string>} Recovered voice identity
  */
 async function handleModelCorruption({
   voiceId,

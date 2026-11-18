@@ -1,104 +1,45 @@
-# PDF Extraction - Multi-level Classification System
+# PDF processing
 
-## Philosophy
+This module parses PDF text and layout and renders PDF pages in the extension's offscreen document. It uses the bundled PDF.js library and resources under `lib/pdfjs/`.
 
-The system is designed with the need to build a complex multi-level classification system for PDF elements. The architecture is designed for gradual complexity: starting with simple proven algorithms, gradually adding new levels of analysis.
+## Entry points
 
-## Architecture
+Service worker callers use `scripts/api/pdf-offscreen.js`:
 
-```
-pdf/
-├── extract.js              # Main coordinator - entry point
-├── types.js                # Data types and interfaces
-├── constants.js            # Constants and thresholds
-│
-├── core/                   # Core algorithms (proven, from v1)
-│   ├── clustering.js       # Object clustering (pdfplumber)
-│   ├── line-grouping.js    # Grouping items → lines
-│   └── text-collation.js   # Text merging into strings
-│
-├── classifiers/            # Element classifiers (multiple algorithms)
-│   ├── paragraph.js        # Paragraph classification
-│   ├── heading.js          # Heading classification
-│   ├── subheading.js       # Subheading classification
-│   ├── list.js             # List classification
-│   ├── table.js            # Table classification (stub)
-│   ├── image.js            # Image classification (stub)
-│   ├── formula.js          # Formula classification (stub)
-│   └── index.js            # Export all classifiers
-│
-├── analyzers/              # Context and metrics analyzers
-│   ├── metrics.js          # PDF metrics analysis (font sizes, spacing)
-│   ├── context.js          # Element context analysis
-│   ├── structure.js        # Document structure analysis
-│   ├── page-context.js     # Page context
-│   ├── cross-page-context.js # Cross-page context
-│   └── index.js            # Export all analyzers
-│
-├── processors/             # Processing processors
-│   ├── cross-page.js       # Cross-page processing
-│   ├── element-grouper.js  # Grouping lines into elements
-│   ├── element-decider.js  # Element type decision making
-│   ├── list-grouper.js     # List element grouping
-│   ├── list-splitter.js    # Heading and list separation
-│   ├── page-processor.js   # Page processing
-│   ├── post-processing.js  # Post-processing
-│   └── index.js            # Export all processors
-│
-└── utils/                  # Utilities
-    ├── array-helpers.js    # Array manipulation utilities
-    ├── text-helpers.js     # Text manipulation utilities
-    ├── font-detection.js   # Bold/italic detection
-    ├── image-extraction.js # Image extraction
-    ├── coordinate-transform.js # Coordinate transformation
-    ├── regex-patterns.js   # Regular expressions
-    ├── statistics.js      # Statistical functions
-    └── index.js           # Export all utilities
-```
+- `extractPdfViaOffscreen` returns structured content for Automatic extraction.
+- `getPdfMetadata` returns the page count and document metadata.
+- `renderAllPdfPages` renders the document once and returns owned page references. `readRenderedPdfPage` consumes a rendered page for the AI pipeline.
 
-## Principles
+`scripts/processing/pdf.js` acquires and validates PDF bytes before calling these APIs. It reads an online PDF from its source URL. For local files, it tries direct access when Chrome permits it, then available tab data, and finally a file selection in the popup. The selected bytes accompany subsequent requests.
 
-1. **Multiple classification algorithms**: Each element is evaluated by multiple independent algorithms
-2. **Weighted voting**: Decisions are made based on algorithm consensus
-3. **Contextual analysis**: Elements are analyzed in the context of page, neighbors, document
-4. **Adaptive thresholds**: Thresholds adapt to specific PDF
-5. **Detailed logging**: Every decision is logged for debugging
+## Native extraction
 
-## Current Implementation
+`extract.js` exports `extractPdfContent`. The pipeline:
 
-### Implemented Features (v7)
-- ✅ Items → lines clustering (pdfplumber algorithm)
-- ✅ Lines → elements grouping (paragraphs, headings, lists)
-- ✅ Heading level detection (font size clustering, outline, numbering)
-- ✅ List processing (ordered/unordered, nested lists)
-- ✅ Cross-page merging (paragraphs, headings, lists)
-- ✅ Multi-column layout detection
-- ✅ Gap analysis for element boundary detection
-- ✅ Universal algorithms without hardcoding
-- ✅ Modular architecture with separation of concerns
-- ✅ Centralized utilities (validation, formatting, statistics)
+1. Loads one PDF.js document and reads its metadata.
+2. Collects page text, font information, and graphics used for layout analysis.
+3. Computes document-wide font metrics, repeated running margins, and spacing information.
+4. Groups text into lines, columns, and blocks in reading order.
+5. Classifies and merges headings, paragraphs, lists, tables, and other content.
+6. Returns the document title, author, publication date, and structured content.
 
-### Architectural Improvements (v7)
-- ✅ Refactoring large functions into subfunctions
-- ✅ Eliminating code duplication through utilities
-- ✅ Performance optimization (merging array iterations)
-- ✅ Improved error handling (try-catch in critical places)
+Native extraction uses the PDF text layer. Rendered-page AI processing is a separate path for interpreting page images.
 
-### Planned Improvements
-- [ ] Multiple paragraph detection algorithms
-- [ ] Multiple heading detection algorithms
-- [ ] Contextual analysis (neighboring elements, page, document)
-- [ ] Adaptive thresholds based on PDF metrics
-- [ ] Table processing
-- [ ] Formula processing
-- [ ] Unit tests for critical functions
+## Main modules
 
-## Usage
+- `core/` loads and disposes PDF.js documents, collates text, groups lines, and assembles content.
+- `analyzers/` computes layout metrics, columns, heading hierarchy, gaps, and running margins.
+- `classifiers/` identifies content roles from text, geometry, and formatting.
+- `processors/` groups and merges elements, tables, lists, and cross-page continuations.
+- `utils/` contains text, font, coordinate, metadata, graphics, and PDF acquisition helpers.
+- `render-operations.js` owns rendering cancellation; `render-viewport.js` computes render dimensions within the image budget.
 
-```javascript
-import { extractPdfContent } from './extract.js';
-import { log } from '../../utils/logging.js';
+## Data and lifecycle
 
-const result = await extractPdfContent(pdfUrl);
-log('Extracted content', { contentItems: result.content.length });
-```
+Native text remains plain text with optional line and font metadata. Native table cells declare `cellFormat: 'text'`; consumers must escape them rather than interpret comparisons or technical notation as HTML. `scripts/types.js` defines the shared content representation.
+
+PDF requests carry an operation ID and, for document workflows, a `processingRunId`. Input bytes and rendered pages use extension-origin IndexedDB references rather than one large base64 message. A rendered page is consumed by its owner, and the workflow releases remaining records on completion or failure.
+
+PDF.js documents, loading tasks, and render tasks are disposed or cancelled by their owning operation. Page errors propagate to the caller; an incomplete document is not returned as a successful extraction. Rendering progress and terminal errors carry localized message descriptors.
+
+Build the extension before running the PDF tests; the resource tests check generated bundles as well as source modules. See [test commands](../../../tests/README.md).

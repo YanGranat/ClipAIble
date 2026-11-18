@@ -2,7 +2,6 @@
 // Title extraction utility - extracts title from various sources
 // Multiple fallback strategies
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { ELEMENT_DECISION } from '../constants.js';
 

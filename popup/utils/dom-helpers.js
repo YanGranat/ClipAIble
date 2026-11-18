@@ -89,13 +89,15 @@ export function setDisplayForIds(ids, displayValue) {
 /** Keep keyboard focus inside a visible modal until its existing close action runs. */
 export function activateModalDialog(modal, onCancel, initialFocus) {
   const dialog = modal.querySelector('.modal-dialog') || modal;
-  const previousFocus = document.activeElement;
+  const previousFocus = /** @type {HTMLElement | SVGElement | null} */ (document.activeElement);
   const title = dialog.querySelector('h1[id], h2[id], h3[id]');
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
   if (title) dialog.setAttribute('aria-labelledby', title.id);
   dialog.tabIndex = -1;
-  const siblings = Array.from(document.body.children).filter(element => element !== modal && !element.contains(modal));
+  const siblings = (/** @type {Array<Element & {inert: boolean}>} */ (Array.from(document.body.children)))
+    .filter(element => element !== modal && !element.contains(modal));
+  /** @type {Array<[Element & {inert: boolean}, boolean]>} */
   const inertStates = siblings.map(element => [element, element.inert]);
   siblings.forEach(element => { element.inert = true; });
   const focusable = () => Array.from(dialog.querySelectorAll('button, input:not([type="hidden"]), select, textarea, a[href], [tabindex]'))

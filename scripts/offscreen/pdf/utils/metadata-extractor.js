@@ -1,7 +1,6 @@
 // @ts-check
 // PDF metadata extraction utility
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { shouldIgnoreMetadataTitle } from './title-extractor.js';
 import { parsePdfDate } from './date-parser.js';
@@ -10,6 +9,7 @@ import { isAnonymousAuthor, cleanAuthor } from '../../../utils/author-validator.
 /**
  * Extract metadata from PDF document
  * @param {{getMetadata: function(): Promise<{info?: {Title?: string, Author?: string, CreationDate?: string, ModDate?: string}}>}} pdf - PDF.js document object
+ * @param {{signal?: AbortSignal}} [options] - Owned cancellation
  * @returns {Promise<{title: string, author: string, publishDate: string}>} Extracted metadata
  * @throws {Error} If metadata extraction timeout (10s)
  * @throws {Error} If PDF metadata retrieval fails

@@ -6,6 +6,15 @@
 // CRITICAL: Import piper-tts-web statically so esbuild bundles it
 import * as piperTTSModule from '@mintplex-labs/piper-tts-web';
 
+/**
+ * @typedef {typeof import('onnxruntime-web') & {version?: string}} InferenceRuntime
+ * @typedef {{location: Pick<Location, 'href' | 'origin'>, fetch: typeof fetch,
+ *   importScripts: (...urls: string[]) => void, postMessage: Worker['postMessage'],
+ *   addEventListener: Worker['addEventListener'] & ((type: 'unhandledrejection', listener: (event: PromiseRejectionEvent) => void) => void), ort?: InferenceRuntime,
+ *   onnxruntime?: InferenceRuntime}} TTSWorkerScope
+ */
+const self = /** @type {TTSWorkerScope} */ (/** @type {unknown} */ (globalThis));
+
 const LOG_PREFIX = '[ClipAIble TTS Worker]';
 
 // Worker logging function - CRITICAL: ALWAYS log to console AND send to offscreen
@@ -83,7 +92,7 @@ const workerUrl = new URL(self.location.href);
 const origin = workerUrl.origin;
 const ortUrl = origin + '/lib/ort.wasm.min.js';
 try {
-  importScripts(ortUrl);
+  self.importScripts(ortUrl);
   if (!self.ort?.env || !self.ort.InferenceSession) throw new Error('ONNX Runtime unavailable');
   self.onnxruntime = self.ort;
   self.ort.env.wasm.wasmPaths = origin + '/lib/';
@@ -102,7 +111,7 @@ try {
   const originalFetch = self.fetch;
   self.fetch = function(url, options) {
     // Convert URL to string if it's a Request object
-    const urlString = typeof url === 'string' ? url : url.url || String(url);
+    const urlString = typeof url === 'string' ? url : ('url' in url ? url.url : '') || String(url);
 
     workerLog('=== FETCH INTERCEPTED ===', {
       urlString,

@@ -53,7 +53,6 @@ function getLocalization(language) {
  * @param {string} publishDate - Publish date
  * @param {string} language - Language code
  * @param {boolean} generateToc - Whether to generate TOC
- * @param {Array} headings - Collected headings for TOC
  * @param {boolean} generateAbstract - Whether to generate abstract
  * @param {string} abstract - Abstract text
  * @returns {string} HTML document

@@ -11,11 +11,11 @@ Save web articles as PDF, EPUB, FB2, Markdown, or audio.
 3. Select an output format and extraction mode.
 4. Click **Save**.
 
-The page context menu also provides save actions. For local PDFs, AI modes request the file through a file picker.
+The page context menu also provides save actions. For local PDFs, allow file access in Chrome's extension settings or select the matching file when prompted. Keep the popup open if a file selection is needed.
 
-**Automatic** uses local extraction heuristics. **AI Selector** asks an AI provider for content selectors, then extracts the selected page content. **AI Extractor** asks an AI provider to structure the content.
+For web articles, **Automatic** uses local extraction heuristics and available cached selectors. **AI Selector** asks an AI provider for content selectors, then extracts the selected page content. **AI Extract** asks an AI provider to structure the content. For PDFs, Automatic extracts the text layer; AI modes process rendered pages.
 
-Settings include translation, image translation, document styles, a table of contents, summaries, and key theses. Audio can use a configured TTS service or local Piper synthesis after downloading a voice model.
+Settings include translation, image translation, document styles, and a table of contents. The popup can also generate a summary or key claims. Audio can use a configured TTS service or local Piper synthesis after downloading a voice model.
 
 Add the API keys required by the AI and TTS features you select. Settings export excludes API keys and can optionally include statistics and selector cache.
 
@@ -33,6 +33,7 @@ npm run build
 Open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this project folder.
 
 ```sh
+npm run check
 npm test
 ```
 

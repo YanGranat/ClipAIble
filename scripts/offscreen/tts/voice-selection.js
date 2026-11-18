@@ -54,7 +54,7 @@ export function isValidVoiceFormat(voiceId) {
  * @param {string} params.langCode - Language code
  * @param {string} params.messageId - Message ID for logging
  * @param {function(): Promise<any[]>} params.getVoicesWithWorker - Function to get voices
- * @param {function(): Promise<void>} params.initTTSWorker - Function to init TTS worker
+ * @param {typeof import('../worker/init.js').initTTSWorker} params.initTTSWorker - Function to init TTS worker
  * @param {Object} params.state - State object
  * @returns {Promise<{voiceId: string, isFallback: boolean}>} Selected voice
  */
@@ -122,7 +122,7 @@ export async function selectVoice({ requestedVoice, langCode, messageId, getVoic
  * @param {string} params.langCode - Language code
  * @param {string} params.messageId - Message ID
  * @param {function(): Promise<any[]>} params.getVoicesWithWorker - Get voices function
- * @param {function(): Promise<void>} params.initTTSWorker - Init worker function
+ * @param {typeof import('../worker/init.js').initTTSWorker} params.initTTSWorker - Init worker function
  * @param {Object} params.state - State object
  * @returns {Promise<string|null>} Voice ID or null if not found
  */

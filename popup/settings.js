@@ -447,7 +447,7 @@ export function initSettings(deps) {
       }
       if (elements.imageTranslationProvider) {
         const savedImageProvider = result[STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER];
-        elements.imageTranslationProvider.value = IMAGE_TRANSLATION_PROVIDERS.includes(savedImageProvider)
+        elements.imageTranslationProvider.value = typeof savedImageProvider === 'string' && IMAGE_TRANSLATION_PROVIDERS.includes(savedImageProvider)
           ? savedImageProvider : DEFAULT_IMAGE_TRANSLATION_PROVIDER;
       }
       

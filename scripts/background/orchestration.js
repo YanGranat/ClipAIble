@@ -8,7 +8,7 @@ import { getScopedUpdateState, isCancelled, isCurrentProcessingRun } from '../st
 /**
  * Initialize orchestration module with dependencies
  * @param {import('../types.js').OrchestrationDependencies} deps - Dependencies object
- * @returns {{startArticleProcessing: function(import('../types.js').ProcessingData, Function): Promise<boolean>, continueProcessingPipeline: function(import('../types.js').ProcessingData, import('../types.js').ExtractionResult, import('../types.js').StopKeepAliveFunction?): Promise<void>}} Orchestration functions
+ * @returns {{startArticleProcessing: function(import('../types.js').ProcessingData, Function): Promise<boolean>, continueProcessingPipeline: import('../types.js').ContinueProcessingPipelineFunction}} Orchestration functions
  */
 export function initOrchestration(deps) {
   // CRITICAL: Validate DI dependencies to prevent runtime errors
@@ -332,7 +332,6 @@ export function initOrchestration(deps) {
     });
   }
   
-  // @ts-ignore - stage is allowed in UpdateStateFunction type
   updateState({ stage: PROCESSING_STAGES.GENERATING.id, progress: 65 });
   
   // Check if processing was cancelled before document generation

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as grok from '../../scripts/api/grok.js';
 import * as router from '../../scripts/api/openrouter.js';
 
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
 
 const image = 'data:image/jpeg;base64,/9j/2Q==';
 const history = [{ role: 'user', content: 'Previous page' }, { role: 'assistant', content: '{"page":1}' }];

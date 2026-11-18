@@ -1,11 +1,20 @@
 import { CONFIG } from '../utils/config.js';
 
-// Read a non-streaming HTTP response within one request deadline.
+/**
+ * Read a non-streaming HTTP response within one request deadline.
+ * @param {RequestInfo | URL} url
+ * @param {RequestInit} [options]
+ * @param {number} [timeoutMs]
+ * @param {import('../types.js').AIRequestOptions} [requestOptions]
+ * @returns {Promise<Response>}
+ */
 export async function fetchBufferedResponse(url, options = {}, timeoutMs = CONFIG.API_TIMEOUT_MS, requestOptions = {}) {
   const controller = new AbortController();
   const parentSignals = [...new Set([options.signal, requestOptions.signal].filter(Boolean))];
+  /** @type {Response | undefined} */
   let response;
   let rejectCancellation;
+  /** @type {Promise<never>} */
   const cancellation = new Promise((_, reject) => { rejectCancellation = reject; });
   const abort = reason => {
     const error = reason instanceof Error ? reason : new DOMException('Request cancelled', 'AbortError');

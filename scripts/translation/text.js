@@ -73,7 +73,7 @@ async function requestTranslation(systemPrompt, userPrompt, apiKey, model, optio
     parameters = { ...configuration, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] };
     if (batch) parameters.response_format = { type: 'json_object' };
   }
-  const response = await callWithRetry(async ({ signal } = {}) => {
+  const response = await callWithRetry(async ({ signal }) => {
     await checkActive(options);
     const result = await fetchBufferedResponse(url, {
       method: 'POST', headers, body: JSON.stringify(parameters), signal

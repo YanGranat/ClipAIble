@@ -6,7 +6,11 @@ import { createPdfError } from '../../../utils/pdf-errors.js';
 
 const documents = new WeakMap();
 
-/** Parse a request-owned copy; PDF.js transfers its input to the module worker. */
+/**
+ * Parse a request-owned copy; PDF.js transfers its input to the module worker.
+ * @param {ArrayBuffer} arrayBuffer
+ * @param {{signal?: AbortSignal}} [options]
+ */
 export async function parsePdfDocument(arrayBuffer, { signal } = {}) {
   if (signal?.aborted) throw signal.reason;
   const data = new Uint8Array(arrayBuffer.slice(0));

@@ -592,7 +592,7 @@ export function initSummary(deps) {
                 if (titleMain) {
                   pageTitle = titleMain.textContent.trim();
                 } else {
-                  const clone = h1.cloneNode(true);
+                  const clone = /** @type {Element} */ (h1.cloneNode(true));
                   clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
                   const cleanTitle = clone.textContent.trim();
                   // Only use h1 if it's not just numbers (avoid counters/views on some sites)

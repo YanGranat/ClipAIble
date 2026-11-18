@@ -2,7 +2,6 @@
 // Table grouper - groups consecutive table elements into single table
 // Handles tables split across pages or columns
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { ELEMENT_DECISION } from '../constants.js';
 

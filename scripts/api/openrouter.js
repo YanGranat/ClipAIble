@@ -13,7 +13,11 @@ import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
 
-/** OpenRouter normalizes provider reasoning controls through its reasoning object. */
+/**
+ * OpenRouter normalizes provider reasoning controls through its reasoning object.
+ * @param {string} model
+ * @param {import('../types.js').ModelRequestOptions} [options]
+ */
 export function getOpenRouterRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort, imageInput = false } = {}) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('openrouter');
   const metadata = getModelMetadata('openrouter', selected, { strict: true });
@@ -23,6 +27,7 @@ export function getOpenRouterRequestConfig(model, { maxTokens, temperature, shor
   if (shortResponse && !disabled && metadata?.reasoningEfforts) {
     effort = metadata.reasoningEfforts.includes('none') ? 'none' : 'low';
   }
+  /** @type {{model: string, reasoning?: {enabled?: boolean, effort?: string}, provider?: {require_parameters: boolean}, max_tokens?: number, temperature?: number, response_format?: {type: 'json_object'}}} */
   const parameters = { model: metadata?.apiModel || selected };
   if (disabled) parameters.reasoning = { enabled: false };
   else if (effort) parameters.reasoning = { effort };
@@ -97,7 +102,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
     if (useResponseFormat) {
       try {
         response = await callWithRetry(
-          ({ signal } = {}) => makeRequest(true, signal),
+          ({ signal }) => makeRequest(true, signal),
           {
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -115,7 +120,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
           useResponseFormat = false;
           // Retry without response_format
           response = await callWithRetry(
-            ({ signal } = {}) => makeRequest(false, signal),
+            ({ signal }) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -129,7 +134,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
     } else {
       // No response_format from start
       response = await callWithRetry(
-        ({ signal } = {}) => makeRequest(false, signal),
+        ({ signal }) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -257,7 +262,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       // Retry entire request without response_format
       useResponseFormat = false;
       const retryResponse = await callWithRetry(
-        ({ signal } = {}) => makeRequest(false, signal),
+        ({ signal }) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -446,7 +451,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
     if (useResponseFormat) {
       try {
         response = await callWithRetry(
-          ({ signal } = {}) => makeRequest(true, signal),
+          ({ signal }) => makeRequest(true, signal),
           {
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -464,7 +469,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           useResponseFormat = false;
           // Retry without response_format
           response = await callWithRetry(
-            ({ signal } = {}) => makeRequest(false, signal),
+            ({ signal }) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -478,7 +483,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
     } else {
       // No response_format from start
       response = await callWithRetry(
-        ({ signal } = {}) => makeRequest(false, signal),
+        ({ signal }) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -532,7 +537,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           // Retry entire request without response_format
           useResponseFormat = false;
           const retryResponse = await callWithRetry(
-            ({ signal } = {}) => makeRequest(false, signal),
+            ({ signal }) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -666,7 +671,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
     if (useResponseFormat) {
       try {
         response = await callWithRetry(
-          ({ signal } = {}) => makeRequest(true, signal),
+          ({ signal }) => makeRequest(true, signal),
           {
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -684,7 +689,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
           useResponseFormat = false;
           // Retry without response_format
           response = await callWithRetry(
-            ({ signal } = {}) => makeRequest(false, signal),
+            ({ signal }) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
@@ -698,7 +703,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
     } else {
       // No response_format from start
       response = await callWithRetry(
-        ({ signal } = {}) => makeRequest(false, signal),
+        ({ signal }) => makeRequest(false, signal),
         {
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
@@ -753,7 +758,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
           // Retry entire request without response_format
           useResponseFormat = false;
           const retryResponse = await callWithRetry(
-            ({ signal } = {}) => makeRequest(false, signal),
+            ({ signal }) => makeRequest(false, signal),
             {
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);

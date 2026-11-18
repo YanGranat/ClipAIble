@@ -143,6 +143,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     state.standfirstText = standfirstResult.text;
     
     // Initialize content array
+    /** @type {import('./types.js').ContentItem[]} */
     let content = [];
     
     // Add featured image if found
@@ -240,6 +241,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     
     // Final content types count
     if (debugInfo) {
+      /** @type {Record<string, number>} */
       const contentTypes = {};
       for (const item of content) {
         contentTypes[item.type] = (contentTypes[item.type] || 0) + 1;

@@ -1,7 +1,6 @@
 // @ts-check
 // Helper functions for line grouping
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { calculateGapStatistics } from '../utils/statistics.js';
 import { findColumnForItem } from '../utils/column-helpers.js';

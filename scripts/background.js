@@ -8,7 +8,7 @@ log('[ClipAIble Background] === BACKGROUND SCRIPT START LOADING ===', {
   chromeVersion: navigator.userAgent.match(/Chrome\/(\d+)/)?.[1],
   extensionId: chrome.runtime.id,
   url: typeof location !== 'undefined' ? location.href : 'unknown',
-  isServiceWorker: typeof importScripts !== 'undefined',
+  isServiceWorker: typeof (/** @type {typeof globalThis & {importScripts?: Function}} */ (globalThis)).importScripts !== 'undefined',
   hasChromeRuntime: typeof chrome !== 'undefined' && !!chrome.runtime,
   hasStorage: typeof chrome !== 'undefined' && !!chrome.storage,
   hasScripting: typeof chrome !== 'undefined' && !!chrome.scripting,

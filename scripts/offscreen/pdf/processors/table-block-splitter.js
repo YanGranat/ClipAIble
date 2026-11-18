@@ -3,7 +3,6 @@
 // This is needed because Column 1 can contain both regular text (headings, paragraphs)
 // and table elements (cells from multi-column tables)
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS, ELEMENT_DECISION, TABLE_DETECTION } from '../constants.js';
 import { normalizeYCoordinate } from '../utils/table-helpers.js';

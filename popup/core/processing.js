@@ -11,13 +11,13 @@ import { resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helper
 /**
  * Initialize processing module
  * @param {Object} deps - Dependencies
- * @param {Record<string, HTMLElement|null>} deps.elements - DOM elements
- * @param {function(string, string?): Promise<string>} deps.t - Translation function
+ * @param {Record<string, HTMLElement|null> & Partial<Record<'apiProviderSelect'|'mainFormatSelect'|'outputFormat'|'imageTranslationProvider'|'qwenModel'|'qwenRegion', HTMLSelectElement>> & {qwenWorkspaceId?: HTMLInputElement}} deps.elements - DOM elements
+ * @param {typeof import('../../scripts/locales.js').t} deps.t - Translation function
  * @param {function(...*): void} deps.logError - Error logging function
  * @param {function(...*): void} deps.log - Log function
  * @param {function(...*): void} deps.logWarn - Warning logging function
- * @param {function(string, string?): void} deps.showToast - Show toast notification function
- * @param {function(string, string?, number?): void} deps.setStatus - Set status function
+ * @param {import('../../scripts/types.js').UIModule['showToast']} deps.showToast - Show toast notification function
+ * @param {import('../../scripts/types.js').UIModule['setStatus']} deps.setStatus - Set status function
  * @param {function(number, boolean?): void} deps.setProgress - Set progress function
  * @param {function(): void} deps.stopTimerDisplay - Stop timer display function
  * @param {function(string, string): Promise<string>} deps.decryptApiKey - Decrypt API key function
@@ -223,7 +223,7 @@ export function initProcessing(deps) {
       if (titleMain) {
         pageTitle = titleMain.textContent.trim();
       } else {
-        const clone = h1.cloneNode(true);
+        const clone = /** @type {Element} */ (h1.cloneNode(true));
         clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
         const cleanTitle = clone.textContent.trim();
         // Only use h1 if it's not just numbers (avoid counters/views on some sites)
@@ -400,7 +400,7 @@ export function initProcessing(deps) {
                   if (titleMain) {
                     pageTitle = titleMain.textContent.trim();
                   } else {
-                    const clone = h1.cloneNode(true);
+                    const clone = /** @type {Element} */ (h1.cloneNode(true));
                     clone.querySelectorAll('.mw-editsection, [class*="edit-section"], [class*="editsection"]').forEach(el => el.remove());
                     const cleanTitle = clone.textContent.trim();
                     if (cleanTitle) pageTitle = cleanTitle;

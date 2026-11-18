@@ -287,7 +287,7 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
       
       if ('error' in results[0] && results[0].error) {
         log('[YouTube subtitles] executeScript returned error in results[0]', {
-          errorMessage: results[0].error?.message ?? String(results[0].error)
+          errorMessage: (/** @type {{message?: unknown}} */ (results[0].error))?.message ?? String(results[0].error)
         });
         if (!resolved) {
           (async () => {
@@ -472,13 +472,13 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
       if (resolved) return;
       try {
         const storage = await chrome.storage.local.get([storageKey]);
-        if (storage[storageKey]?.requestId === requestId && !resolved) {
+        /** @type {{requestId?: string, timestamp?: number, subtitles?: unknown[], metadata?: Record<string, unknown>, source?: string}} */
+        const pendingData = storage[storageKey];
+        if (pendingData?.requestId === requestId && !resolved) {
           logDebug('[YouTube subtitles] Found pendingSubtitles in storage', {
-            age: Date.now() - (storage[storageKey].timestamp || 0),
-            subtitleCount: storage[storageKey].subtitles?.length ?? 0
+            age: Date.now() - (pendingData.timestamp || 0),
+            subtitleCount: pendingData.subtitles?.length ?? 0
           });
-          /** @type {any} */
-          const pendingData = storage[storageKey];
           // Check if this is recent (within last 60 seconds - same as timeout)
           const age = Date.now() - (pendingData.timestamp || 0);
           if (age < 60000) {
@@ -873,8 +873,10 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
       // IMPORTANT: May return empty response due to expire parameter or POT token
       // ============================================
       if (!subtitleData) {
-        const currentPlayer = () => window.ytInitialPlayerResponse?.videoDetails?.videoId === videoId
-          ? window.ytInitialPlayerResponse : null;
+        /** @type {Window & {ytInitialPlayerResponse?: {videoDetails?: {videoId?: string}, captions?: {playerCaptionsTracklistRenderer?: {captionTracks?: Array<{languageCode?: string, kind?: string, baseUrl?: string}>}}}}} */
+        const pageWindow = window;
+        const currentPlayer = () => pageWindow.ytInitialPlayerResponse?.videoDetails?.videoId === videoId
+          ? pageWindow.ytInitialPlayerResponse : null;
         // Give YouTube time to set ytInitialPlayerResponse (often present after first paint)
         for (let w = 0; w < 5 && !currentPlayer()?.captions?.playerCaptionsTracklistRenderer?.captionTracks; w++) {
           await new Promise(r => setTimeout(r, waitInterval));
@@ -932,7 +934,7 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
 
           if (selectedTrack?.baseUrl) {
             subtitleUrl = selectedTrack.baseUrl;
-            const fetchOpts = { credentials: 'same-origin', referer: window.location.href || undefined };
+            const fetchOpts = { credentials: /** @type {RequestCredentials} */ ('same-origin'), referer: window.location.href || undefined };
 
             const tryFetchUrl = async (url) => {
               const res = await fetch(url, fetchOpts);

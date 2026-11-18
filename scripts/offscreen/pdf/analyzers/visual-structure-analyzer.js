@@ -3,7 +3,6 @@
 // Finds empty vertical strips (gaps) between columns
 // Distinguishes column gaps from paragraph gaps within columns
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { calculateAverage } from '../utils/array-helpers.js';

@@ -11,10 +11,10 @@ import { DEFAULT_VOICES } from './voice-selection.js';
  * @param {string} params.langCode - Language code
  * @param {string} params.messageId - Message ID for logging
  * @param {function(): Promise<string[]>} params.getStoredWithWorker - Get stored voices
- * @param {function(string, function?): Promise<void>} params.downloadWithWorker - Download voice
+ * @param {typeof import('../worker/api.js').downloadWithWorker} params.downloadWithWorker - Download voice
  * @param {function(string): Promise<void>} params.removeWithWorker - Remove voice
  * @param {function(string, string): Promise<Blob>} params.predictWithWorker - Predict for integrity test
- * @param {function(): Promise<void>} params.initTTSWorker - Init TTS worker
+ * @param {typeof import('../worker/init.js').initTTSWorker} params.initTTSWorker - Init TTS worker
  * @param {Object} params.state - State object
  * @returns {Promise<string>} Downloaded voice ID
  */
@@ -66,9 +66,9 @@ export async function ensureVoiceDownloaded({
   
   let lastPercent = -1;
   try {
-    await downloadWithWorker(voiceId, (progress) => {
-      if (progress.total > 0) {
-        const percent = Math.round((progress.loaded * 100) / progress.total);
+    await downloadWithWorker(voiceId, (loaded, total) => {
+      if (total > 0) {
+        const percent = Math.round((loaded * 100) / total);
         if (percent >= lastPercent + 10 || percent === 100) {
           log(`[ClipAIble TTS] Download progress`, { messageId, voiceId, percent });
           lastPercent = percent;
@@ -115,7 +115,7 @@ export async function ensureVoiceDownloaded({
  * @param {string} params.voiceId - Voice ID
  * @param {string} params.messageId - Message ID
  * @param {function(): Promise<string[]>} params.getStoredWithWorker - Get stored
- * @param {function(): Promise<void>} params.initTTSWorker - Init worker
+ * @param {typeof import('../worker/init.js').initTTSWorker} params.initTTSWorker - Init worker
  * @param {Object} params.state - State
  * @returns {Promise<void>}
  */
@@ -154,9 +154,9 @@ async function verifyVoiceStored({ voiceId, messageId, getStoredWithWorker, init
  * @param {string} params.voiceId - Voice ID
  * @param {string} params.messageId - Message ID
  * @param {function(string, string): Promise<Blob>} params.predictWithWorker - Predict
- * @param {function(string, function?): Promise<void>} params.downloadWithWorker - Download
+ * @param {typeof import('../worker/api.js').downloadWithWorker} params.downloadWithWorker - Download
  * @param {function(string): Promise<void>} params.removeWithWorker - Remove
- * @param {function(): Promise<void>} params.initTTSWorker - Init worker
+ * @param {typeof import('../worker/init.js').initTTSWorker} params.initTTSWorker - Init worker
  * @param {Object} params.state - State
  * @returns {Promise<void>}
  */

@@ -2,7 +2,6 @@
 // Element type decision logic - centralized decision making
 // Decides final element type based on classification results and context
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { ELEMENT_DECISION, CONFIDENCE, GAP_ANALYSIS, DEFAULT_METRICS } from '../constants.js';
 

@@ -8,6 +8,10 @@ import { getUILanguage, tSync } from '../locales.js';
 import { isPopupOpen } from '../background/popup-connection.js';
 import { createNotification } from '../background/notifications.js';
 
+/**
+ * @param {{prefix: string, label: string, generate: Function, timeoutMs: number,
+ * notificationKey: string, resultUpdates: Function, progressIntervalMs?: number}} options
+ */
 export function createGenerationTask({ prefix, label, generate, timeoutMs, notificationKey, resultUpdates, progressIntervalMs }) {
   let owner = null;
   let writes = Promise.resolve();
@@ -46,6 +50,7 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
     owner = job;
     const checkCancelled = () => {
       if (owner !== job || job.cancelled) {
+        /** @type {import('../types.js').ExtendedError} */
         const error = new Error(`${label} generation cancelled`);
         error.cancelledGeneration = true;
         error.keyThesesCancelled = prefix === 'key_theses';

@@ -55,13 +55,16 @@ export function getProviderFromModel(model) {
   return getModelProvider(model);
 }
 
-/** Select the explicitly configured provider before interpreting model names. */
+/**
+ * Select the explicitly configured provider before interpreting model names.
+ * @returns {AIProvider}
+ */
 export function resolveAIProvider(model, provider) {
   if (provider === undefined) return getProviderFromModel(model);
   if (typeof provider !== 'string' || !Object.hasOwn(PROVIDER_NAMES, provider)) {
     throw new Error('Unsupported AI provider');
   }
-  return provider;
+  return /** @type {AIProvider} */ (provider);
 }
 
 /**

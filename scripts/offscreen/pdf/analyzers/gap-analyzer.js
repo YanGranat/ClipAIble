@@ -2,7 +2,6 @@
 // Gap analyzer - analyzes gaps between lines to determine paragraph boundaries
 // Uses adaptive statistical analysis with automatic clustering and multi-factor decision making
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { GAP_ANALYSIS, ELEMENT_DECISION, DEFAULT_METRICS } from '../constants.js';
 import {

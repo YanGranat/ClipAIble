@@ -1,7 +1,6 @@
 // @ts-check
 // Gap analysis collector - collects all lines from all pages for global gap analysis
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { processPageItemsToLines } from '../utils/item-transformer.js';
 

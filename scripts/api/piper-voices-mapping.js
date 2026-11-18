@@ -173,6 +173,11 @@ export const PIPER_VOICES_MAPPING = {
   'huayan': 'zh_CN-huayan-medium' // Default (only one available)
 };
 
+/** Normalize a persisted voice alias. @param {string} voiceId */
+export function normalizePiperVoiceId(voiceId) {
+  return voiceId === 'fr_FR-mls_fr-medium' ? 'fr_FR-mls-medium' : voiceId;
+}
+
 /**
  * Find voice ID by name (handles partial matches and aliases)
  * Also tries to construct voice ID from name if not found in mapping
@@ -180,10 +185,6 @@ export const PIPER_VOICES_MAPPING = {
  * @param {string} language - Optional language code (e.g., 'ru', 'en') to help construct ID
  * @returns {string|null} Voice ID or null if not found
  */
-export function normalizePiperVoiceId(voiceId) {
-  return voiceId === 'fr_FR-mls_fr-medium' ? 'fr_FR-mls-medium' : voiceId;
-}
-
 export function findVoiceIdByName(voiceName, language = null) {
   voiceName = normalizePiperVoiceId(voiceName);
   if (!voiceName || voiceName === '0' || voiceName === '') {

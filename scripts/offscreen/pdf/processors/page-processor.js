@@ -1,9 +1,7 @@
 // @ts-check
 // Page processing utility - extracts and processes content from a single PDF page
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { CONFIG } from '../../../utils/config.js';
 import { processPageItemsToLines } from '../utils/item-transformer.js';
 import { groupLinesIntoElements } from './element-grouper.js';

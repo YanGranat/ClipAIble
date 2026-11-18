@@ -1,243 +1,80 @@
 # ClipAIble Technical Overview
 
-## Architecture
+## Runtime
 
-ClipAIble is a Chrome extension built with Manifest V3 using native ES modules. The extension uses a service worker architecture with background processing and offscreen documents for heavy computations.
+ClipAIble is a Manifest V3 Chrome extension for Chrome 116 or newer. It uses native ES modules and a background service worker.
 
-### Core Components
+- `scripts/background.js` coordinates requests, processing state, and downloads.
+- `popup/` contains the toolbar interface and settings.
+- `scripts/content.js` receives subtitle requests on YouTube pages. Article extraction is injected into the selected page through `chrome.scripting`.
+- `offscreen.html` loads `dist/offscreen-bundle.js` for PDF.js, image decoding and conversion, local speech synthesis, and Blob download preparation.
+- `src/tts-worker-entry.js` builds into `dist/tts-worker-bundle.js`. Piper phonemization and ONNX Runtime inference run in this worker with the WebAssembly execution provider.
+- `print/print.html` receives an owned print job and renders the document for PDF export through Chrome's debugging and print interfaces.
 
-- **Background Service Worker** (`scripts/background.js`): Main coordinator using ES modules
-- **Popup Interface** (`popup/`): User interface built with vanilla JavaScript
-- **Content Scripts** (`scripts/content.js`): Injects into YouTube pages for subtitle extraction (matches: `*://*.youtube.com/*`)
-- **Offscreen Documents** (`offscreen.html`): Handles PDF processing, offline TTS synthesis, and other DOM-dependent operations using WebAssembly
+The manifest declares extension-origin scripts and WebAssembly in its Content Security Policy. Bundled libraries, fonts, PDF resources, and WebAssembly files are loaded from the extension. Piper voice models are downloaded separately. See [Permissions](../PERMISSIONS.md) for the declared permissions and their uses.
 
-### Key Technologies
+## Processing
 
-- **WebAssembly**: Used for Piper TTS offline voice synthesis
-- **ONNX Runtime**: ML model inference for offline TTS
-- **PDF.js**: PDF document parsing, text extraction, and page rendering in the offscreen document
-- **IndexedDB**: Fallback storage for large data exceeding chrome.storage limits
-- **Web Crypto API**: AES-256-GCM encryption for API keys
-- **Offscreen API**: Background DOM operations for PDF processing
+The processing pipeline validates the request, acquires the source content, extracts its structure, applies the requested translation and formatting, and generates the selected output.
 
-## Data Flow
+For web articles:
 
-### Processing Pipeline
+- **Automatic** uses local heuristics and available cached selectors.
+- **AI Selector** asks the selected AI provider for CSS selectors, then extracts the matching content locally.
+- **AI Extract** asks the provider to produce structured content from page HTML, using chunks for large inputs.
 
-1. **Initialization**: Background service worker validates request parameters and API keys
-2. **Content Detection**: Determines if page contains articles, videos, or PDFs
-3. **Extraction**: Uses AI or heuristic methods to extract content based on selected mode
-4. **Processing**: Applies translation, image processing, and formatting
-5. **Generation**: Creates output document in requested format (PDF, EPUB, FB2, Markdown, or Audio)
-6. **Download**: Triggers file download through Chrome downloads API
+For PDFs, Automatic parses the text layer and layout with PDF.js. AI modes render pages with PDF.js and send them to an image-capable AI model. Local PDFs are read directly when Chrome file access is allowed; otherwise the popup requests the matching file. See the [PDF module](../scripts/offscreen/pdf/README.md).
 
-### State Management
+Supported video pages supply subtitles, which the AI pipeline turns into an article. The output generators create PDF, EPUB, FB2, Markdown, or audio.
 
-Processing state is maintained through `scripts/state/processing.js` with the following stages:
+`scripts/state/processing.js` owns document progress, cancellation, and terminal state. Each document operation has a `processingRunId`; asynchronous updates must still belong to that operation. After a service worker restart, startup restores progress, reconciles interrupted work, and cleans owned temporary resources. Summary and key-claim generation have separate job owners.
 
-- `STARTING`: Initialization
-- `ANALYZING`: AI page structure analysis
-- `EXTRACTING`: Content extraction
-- `EXTRACTING_SUBTITLES`: YouTube subtitle extraction
-- `PROCESSING_SUBTITLES`: Subtitle processing with AI
-- `TRANSLATING`: Content translation
-- `LOADING_IMAGES`: Image downloading and processing
-- `GENERATING`: Document creation (PDF, EPUB, FB2, Markdown, or Audio)
-- `COMPLETE`: Finalization
+## Content representation
 
-## API Integration
+`scripts/types.js` defines `ContentItem`. The generators consume headings, paragraphs, standfirsts (`subtitle`), images, code, lists, quotes, tables, and infobox boundaries.
 
-### AI Providers
+- `format: 'text'` marks plain text that must be escaped at serialization.
+- `html` carries rich content that is sanitized before rendering. List-item objects can contain nested lists in this field.
+- Legacy AI text without an explicit format uses the Markdown renderer.
+- Tables declare `cellFormat` as `text`, `html`, or `markdown`; `headers`, `hasHeaders`, and `rows` describe the table structure.
+- Images carry a source URL, optional caption and alt text. Image loading validates the response and decodes it before embedding; SVG, WebP, and AVIF are converted through the offscreen image service when needed.
 
-The extension integrates with 6 AI providers through unified API interfaces:
+PDF.js text items also retain line and font information used by native PDF extraction. The document generators preserve the distinction between plain text, rich HTML, and Markdown.
 
-- **OpenAI**: GPT models with text and image input
-- **Claude**: Anthropic models with image processing
-- **Gemini**: Google models with multimodal capabilities
-- **Grok**: xAI models
-- **OpenRouter**: Unified access to multiple providers
-- **DeepSeek**: Chinese AI models
+## Services
 
-### TTS Providers
+The text AI adapters support OpenAI, Anthropic, Google Gemini, xAI Grok, OpenRouter, and DeepSeek. `scripts/utils/model-catalog.js` holds model IDs, labels, capabilities, defaults, and saved-model migrations. Request adapters apply provider-specific parameters and validate responses.
 
-Audio generation supports 6 TTS services:
+Image translation has its own Gemini or OpenAI provider setting. The model bindings and supported output formats are defined in `scripts/api/image-translation-catalog.js`. Image editing credentials are selected independently of the article provider.
 
-- **OpenAI TTS**: Realtime synthesis saved as WAV, with voice selection and speed control (0.25x-1.5x)
-- **ElevenLabs**: Voice selection and model-specific parameters, including speed control (0.7x-1.2x) on supported models
-- **Google Gemini**: WAV generation with voice styles (no speed control)
-- **Qwen**: Speech synthesis with voice selection and speed control (0.5x-2.0x) on Qwen Audio models
-- **Respeecher**: Specialized voices for English and Ukrainian with emotional parameters (no speed control)
-- **Piper**: Offline WebAssembly-based TTS with speed control (0.5x-2.0x)
+Audio supports OpenAI, ElevenLabs, Google Gemini, Qwen, Respeecher, and local Piper. Model and voice capabilities determine the available controls. Cloud narration preparation can use the selected text AI service before synthesis; Piper preparation and synthesis run locally after a voice model has been downloaded.
 
-## Content Processing
+Transport retries are bounded and respect cancellation, terminal errors, and request admission. Processing errors and progress messages carry translation keys and interpolation parameters for the popup. See [Privacy](../PRIVACY.md) for the content sent to external services.
 
-### Extraction Modes
+## Storage and resource ownership
 
-- **AI Selector**: Uses AI to identify article content blocks and generate CSS selectors
-- **Automatic**: Heuristic-based extraction without API calls (uses cached AI-generated selectors if available and reliable)
-- **AI Extract**: Full AI processing with content restructuring and chunking for large pages
+- `chrome.storage.local` stores settings, encrypted API keys, progress, summaries, key claims, selector cache, and usage history. The manifest requests `unlimitedStorage`.
+- Extension-origin IndexedDB stores the non-extractable AES-GCM installation key and owned binary or document-preparation records, including PDF bytes, rendered pages, print jobs, image operations, and audio downloads.
+- Piper voice models are cached in the Origin Private File System (OPFS).
 
-### Content Types
+API keys are encrypted with AES-256-GCM using the installation key. Legacy encrypted values are migrated locally. Settings exports exclude API keys. Job identifiers and run ownership bind temporary records to their consumers; completion, cancellation, and startup recovery perform the corresponding cleanup.
 
-The system processes these content elements:
+## Build and tests
 
-- `heading`: Headings with level 1-6 hierarchy
-- `paragraph`: Text paragraphs with inline formatting
-- `image`: Images with captions and alt text
-- `code`: Code blocks with preserved whitespace and language labels
-- `list`: Ordered and unordered lists
-- `quote`: Blockquotes
-- `table`: Tabular data
-- `subtitle`: YouTube subtitle segments
+Use a Node.js version accepted by `package.json`:
 
-### YouTube Processing
-
-For YouTube pages, the extension:
-
-1. Extracts video subtitles via content script
-2. Sends subtitles to background for AI processing
-3. Reconstructs article from processed subtitle content
-4. Generates documents containing the reconstructed article
-
-## Storage System
-
-### chrome.storage.local
-
-Primary storage for settings, processing state, and recent results:
-- The manifest requests `unlimitedStorage`; the default `storage.local` quota is therefore not enforced.
-- Asynchronous access
-- No complex queries
-- No binary data support (must be JSON-serializable)
-
-### IndexedDB Fallback
-
-Used by the extension's large-data storage helper:
-- Asynchronous access
-- Capacity depends on browser storage and available disk space.
-- Complex data structures support
-
-### Encryption
-
-API keys are encrypted using:
-- AES-256-GCM encryption
-- PBKDF2 key derivation
-- Web Crypto API implementation
-
-## Build System
-
-### Entry Points
-
-- `build-extraction.js`: Content extraction scripts
-- `build-offscreen.js`: Offscreen document bundle
-- `build-tts-worker.js`: Audio synthesis worker
-
-### Bundling
-
-Uses esbuild for:
-- ES module bundling into separate offscreen and worker bundles
-- Source map generation
-- Tree shaking to reduce bundle size
-
-## File Formats
-
-### PDF Generation
-
-Creates formatted documents using HTML/CSS rendering with:
-- Custom fonts and colors from configurable stylesheets
-- Single-page or multi-page A4 layout options
-- Automatic table of contents generation
-- Image embedding with fallback handling
-- Print-optimized CSS for better formatting
-
-### EPUB/FB2 Generation
-
-Creates structured e-books with:
-- Hierarchical table of contents
-- Metadata embedding
-- Image processing
-- Chapter organization
-
-### Markdown Generation
-
-Produces plain text with:
-- Heading hierarchy preservation
-- List formatting
-- Fenced code blocks with language labels
-- Link preservation
-
-### Audio Generation
-
-Creates audio files using:
-- Multiple TTS providers with unified API
-- Voice selection and customization
-- Speed control where supported by the selected provider and model
-- Format support (MP3, WAV, depending on provider)
-- Text preprocessing for better TTS results
-- Chunked processing for long content
-
-## Error Handling
-
-### Error Codes
-
-Standardized error codes:
-- `AUTH_ERROR`: Invalid API keys
-- `RATE_LIMIT`: API rate limiting
-- `TIMEOUT`: Request timeouts
-- `NETWORK_ERROR`: Connection failures
-- `PARSE_ERROR`: JSON parsing issues
-- `PROVIDER_ERROR`: Provider-specific errors
-- `VALIDATION_ERROR`: Input validation failures
-- `UNKNOWN_ERROR`: Unhandled errors
-
-### Recovery Mechanisms
-
-- Exponential backoff for API retries
-- Automatic API key cache clearing on authentication errors
-- IndexedDB fallback storage for large content
-- Processing state restoration after service worker reloads
-- Graceful degradation when features are unavailable
-
-## Permissions
-
-Required Chrome permissions:
-- `activeTab`: Access current tab content
-- `storage`: Local data storage
-- `unlimitedStorage`: Large data handling
-- `scripting`: Content script injection
-- `downloads`: File download triggering
-- `debugger`: PDF generation via Chrome DevTools Protocol
-- `alarms`: Background task scheduling
-- `notifications`: User notifications
-- `contextMenus`: Right-click menu integration
-- `offscreen`: Background DOM operations for PDF.js and offline TTS
-- `webNavigation`: Navigation event monitoring
-
-Host permissions: `<all_urls>` for universal content access.
-
-## Content Security Policy
-
-```json
-"content_security_policy": {
-  "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; base-uri 'self';"
-}
+```sh
+npm ci
+npm run build
+npm test
 ```
 
-Allows WebAssembly execution for offline TTS (Piper) and restricts external script loading.
+`npm run build` generates and applies the Automatic extractor, builds the offscreen bundle, and builds the TTS worker. The authored extractor lives under `scripts/extraction/extractor/`; `scripts/extraction/automatic.js` is its generated runtime artifact.
 
-## Web Accessible Resources
+For local development, `npm run build:offscreen:watch` and `npm run build:worker:watch` rebuild their respective bundles. `npm run dev` starts the offscreen watcher. Reload the unpacked extension after a build.
 
-Provides access to:
-- PDF.js library files
-- Piper TTS WebAssembly modules
-- ONNX Runtime for ML inference
-- CSS stylesheets
-- Worker scripts and TTS utilities
-- Custom wrapper libraries
+```sh
+npm run package:production
+```
 
-## Browser Compatibility
-
-- Chrome 116+ (required for `chrome.runtime.getContexts` in PDF processing and offline TTS)
-- WebAssembly support required (for offline TTS)
-- IndexedDB support required (for fallback storage)
-- Web Crypto API support required (for API key encryption)
-- Manifest V3 support required
+The packager builds the extension and writes the runtime ZIP and matching `-sources.zip` under `workspace/releases/`. A custom output ZIP path can be passed after `--`. The source archive includes the build inputs and third-party source kits; see [Third-party source](../third_party/sources/README.md). Test commands are documented in [tests/README.md](../tests/README.md).

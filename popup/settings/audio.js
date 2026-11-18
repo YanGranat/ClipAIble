@@ -32,7 +32,9 @@ export function initAudio(deps) {
     setElementGroupDisplay
   } = deps;
 
-  for (const [name, models] of [['elevenlabsModel', ELEVENLABS_TTS_MODELS], ['googleTtsModel', GOOGLE_TTS_MODELS], ['qwenModel', QWEN_TTS_MODELS]]) {
+  /** @type {Array<[string, ReadonlyArray<{id: string, name: string}>]>} */
+  const modelGroups = [['elevenlabsModel', ELEVENLABS_TTS_MODELS], ['googleTtsModel', GOOGLE_TTS_MODELS], ['qwenModel', QWEN_TTS_MODELS]];
+  for (const [name, models] of modelGroups) {
     const select = elements[name];
     if (select) select.replaceChildren(...models.map(model => new Option(model.name, model.id)));
   }
@@ -328,7 +330,9 @@ export function initAudio(deps) {
     setElementGroupDisplay('qwenModelGroup', isQwen ? 'flex' : 'none');
     const workspaceRequired = isQwen && isQwenAudioModel(elements.qwenModel?.value);
     for (const group of ['qwenWorkspaceGroup', 'qwenRegionGroup']) setElementGroupDisplay(group, workspaceRequired ? 'flex' : 'none');
-    for (const [name, supported] of [['elevenlabsSimilarity', capabilities.similarity], ['elevenlabsStyle', capabilities.style], ['elevenlabsSpeakerBoost', capabilities.speakerBoost]]) {
+    /** @type {Array<[string, boolean]>} */
+    const capabilityGroups = [['elevenlabsSimilarity', capabilities.similarity], ['elevenlabsStyle', capabilities.style], ['elevenlabsSpeakerBoost', capabilities.speakerBoost]];
+    for (const [name, supported] of capabilityGroups) {
       const row = elements[name]?.closest('.setting-item');
       if (row) row.style.display = supported ? '' : 'none';
     }

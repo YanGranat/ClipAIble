@@ -278,6 +278,7 @@ export function setupPanelHandlers(deps) {
         const uiLang = await getUILanguage();
         const locale = UI_LOCALES[uiLang] || UI_LOCALES.en;
         
+        /** @type {Array<import('../../scripts/types.js').LocalizedMessage>} */
         const parts = [{ key: 'importSettingsCount', params: { count: result.settingsImported } }];
         if (result.settingsSkipped > 0) {
           parts.push({ key: 'importSettingsSkipped', params: { count: result.settingsSkipped } });

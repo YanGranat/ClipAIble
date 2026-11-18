@@ -836,7 +836,7 @@ export function sanitizeParagraphHtml(p, excludedSelectors = []) {
  */
 export function handleImg(win, element, state, constants, baseUrl) {
   const item = createImageItem(win, element, state, constants, baseUrl);
-  if (item && !element.closest('figure')) item.caption = getImageCaption(element);
+  if (item && !element.closest('figure')) item.caption = getImageCaption(/** @type {HTMLImageElement} */ (element));
   return item;
 }
 

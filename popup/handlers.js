@@ -28,14 +28,12 @@ import { CONFIG } from '../scripts/utils/config.js';
 /**
  * @type {WindowWithModules & typeof globalThis}
  */
-// @ts-ignore - window is extended with modules at runtime
 const windowWithModules = window;
 
 /**
  * @type {Scheduler | undefined}
  */
-// @ts-ignore - scheduler is a browser API that may not be available
-const scheduler = typeof self !== 'undefined' && 'scheduler' in self ? self.scheduler : undefined;
+const scheduler = /** @type {Scheduler | undefined} */ (typeof self !== 'undefined' && 'scheduler' in self ? self.scheduler : undefined);
 
 /**
  * Initialize handlers module with dependencies
@@ -55,19 +53,24 @@ const scheduler = typeof self !== 'undefined' && 'scheduler' in self ? self.sche
  * @param {Function} deps.setUILanguage - Set UI language function
  * @param {Object} deps.UI_LOCALES - UI locales object
  * @param {Function} deps.debouncedSaveSettings - Debounced save settings function
- * @param {Function} deps.loadAndDisplayStats - Load and display stats function
+ * @param {() => Promise<void>} deps.loadAndDisplayStats - Load and display stats function
  * @param {Function} deps.applyTheme - Apply theme function
  * @param {Function} deps.applyLocalization - Apply localization function
  * @param {Function} deps.initAllCustomSelects - Initialize all custom selects function
  * @param {Function} deps.handleSavePdf - Handle save PDF function (from core)
  * @param {Function} deps.handleCancel - Handle cancel function (from core)
- * @param {Function} deps.handleGenerateSummary - Handle generate summary function (from core)
+ * @param {import('../scripts/types.js').CoreModule['handleGenerateSummary']} deps.handleGenerateSummary - Handle generate summary function (from core)
  * @param {Function} deps.toggleSummary - Toggle summary function (from core)
  * @param {Function} deps.copySummary - Copy summary function (from core)
  * @param {Function} deps.downloadSummary - Download summary function (from core)
  * @param {Function} deps.closeSummary - Close summary function (from core)
+ * @param {import('../scripts/types.js').CoreModule['handleGenerateKeyTheses']} deps.handleGenerateKeyTheses
+ * @param {import('../scripts/types.js').CoreModule['toggleKeyTheses']} deps.toggleKeyTheses
+ * @param {import('../scripts/types.js').CoreModule['copyKeyTheses']} deps.copyKeyTheses
+ * @param {import('../scripts/types.js').CoreModule['downloadKeyTheses']} deps.downloadKeyTheses
+ * @param {import('../scripts/types.js').CoreModule['closeKeyTheses']} deps.closeKeyTheses
  * @param {Object} [deps.settingsModule] - Settings module (optional, for accessing settings functions)
- * @returns {Function} setupEventListeners function
+ * @returns {{setupEventListeners: () => void}} Event listener setup
  */
 export function initHandlers(deps) {
   const {
@@ -226,8 +229,6 @@ export function initHandlers(deps) {
     // ============================================
     setupModelHandlers({
       elements,
-      STORAGE_KEYS,
-      debouncedSaveSettings,
       settingsModule
     });
     
@@ -553,7 +554,6 @@ export function initHandlers(deps) {
   }
 
   return {
-    // @ts-ignore - setupEventListeners is a function
     setupEventListeners
   };
 }

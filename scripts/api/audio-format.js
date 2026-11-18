@@ -28,7 +28,9 @@ export function pcmToWav(pcmData, sampleRate, bitsPerSample = 16, numChannels = 
   const buffer = new ArrayBuffer(44 + pcmData.byteLength + pcmData.byteLength % 2);
   const bytes = new Uint8Array(buffer);
   const view = new DataView(buffer);
-  for (const [offset, text] of [[0, 'RIFF'], [8, 'WAVE'], [12, 'fmt '], [36, 'data']]) {
+  /** @type {Array<[number, string]>} */
+  const labels = [[0, 'RIFF'], [8, 'WAVE'], [12, 'fmt '], [36, 'data']];
+  for (const [offset, text] of labels) {
     for (let index = 0; index < text.length; index++) bytes[offset + index] = text.charCodeAt(index);
   }
   view.setUint32(4, buffer.byteLength - 8, true);

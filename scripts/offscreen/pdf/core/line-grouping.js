@@ -1,7 +1,6 @@
 // @ts-check
 // Line grouping - groups text items into lines using pdfplumber algorithm
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { clusterObjects } from './clustering.js';
 import { calculateClusterStatistics, splitClusterByXGaps, createLineFromSubCluster } from './line-grouping-helpers.js';

@@ -380,7 +380,7 @@ export function logTTSCallPreparation(provider, ttsVoice, speed, ttsFormat, lang
 /**
  * Log TTS completion
  * @param {number} startTime - Start timestamp (milliseconds since epoch)
- * @param {ArrayBuffer} audioBuffer - Generated audio buffer
+ * @param {{byteLength: number}} audioBuffer - Generated audio size
  */
 export function logTTSCompletion(startTime, audioBuffer) {
   const duration = Date.now() - startTime;

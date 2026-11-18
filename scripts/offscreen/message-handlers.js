@@ -159,8 +159,7 @@ export async function handleGetVoices(messageId, initTTSWorker, getVoicesWithWor
       language: v.language,
       quality: v.quality,
       hasUnderscore: v.id && v.id.includes('_'),
-      hasDash: v.id && v.id.includes('-'),
-      id: v.id
+      hasDash: v.id && v.id.includes('-')
     })),
     firstVoiceId: result[0]?.id,
     firstVoiceIdType: typeof result[0]?.id,
@@ -249,7 +248,7 @@ export function handlePing(messageId, sendResponse) {
 /**
  * Handle EXTRACT_PDF message
  * @param {string} messageId - Message ID for logging
- * @param {{pdfUrl: string}} data - Request data with pdfUrl
+ * @param {{pdfUrl: string, operationId?: string, processingRunId?: string, pdfDataRef?: string}} data - Owned extraction request
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {Promise<void>}
  * @throws {Error} If PDF extraction fails
@@ -284,7 +283,7 @@ export async function handleExtractPdf(messageId, data, sendResponse) {
 /**
  * Handle GET_PDF_METADATA message - get PDF metadata and page count
  * @param {string} messageId - Message ID for logging
- * @param {{pdfUrl: string}} data - Request data with pdfUrl
+ * @param {{pdfUrl: string, operationId?: string, processingRunId?: string, pdfDataRef?: string}} data - Owned metadata request
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {Promise<void>}
  * @throws {Error} If PDF metadata retrieval fails
@@ -320,7 +319,7 @@ export async function handleGetPdfMetadata(messageId, data, sendResponse) {
  * This is MUCH faster than loading PDF for each page separately
  * 
  * @param {string} messageId - Message ID for logging
- * @param {{pdfUrl: string, totalPages: number, scale?: number, pdfDataRef?: string, pdfData?: string|ArrayBuffer, operationId?: string}} data - Message data
+ * @param {{pdfUrl: string, totalPages: number, scale?: number, pdfDataRef?: string, pdfData?: string|ArrayBuffer, operationId?: string, processingRunId?: string}} data - Message data
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {Promise<void>}
  * @throws {Error} If PDF rendering fails
@@ -328,7 +327,7 @@ export async function handleGetPdfMetadata(messageId, data, sendResponse) {
  */
 export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
   const startTime = Date.now();
-  log(`[ClipAIble Offscreen] RENDER_ALL_PDF_PAGES request for ${messageId}`, 'RENDER_ALL_PDF_PAGES_START', {
+  log(`[ClipAIble Offscreen] RENDER_ALL_PDF_PAGES request for ${messageId}`, { marker: 'RENDER_ALL_PDF_PAGES_START',
     messageId,
     pdfUrl: data?.pdfUrl,
     totalPages: data?.totalPages,
@@ -369,7 +368,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     }
     
     // CRITICAL: Load PDF document ONCE for all pages
-    log(`[ClipAIble Offscreen] Loading PDF document ONCE for all pages (${messageId})...`, 'PDF_DOCUMENT_LOAD_START', {
+    log(`[ClipAIble Offscreen] Loading PDF document ONCE for all pages (${messageId})...`, { marker: 'PDF_DOCUMENT_LOAD_START',
       messageId,
       pdfUrl: data.pdfUrl,
       pdfDataSize: pdfData.byteLength
@@ -384,7 +383,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     
     const totalPages = data.totalPages || numPages;
     
-    log(`[ClipAIble Offscreen] PDF document loaded ONCE for ${messageId}`, 'PDF_DOCUMENT_LOADED', {
+    log(`[ClipAIble Offscreen] PDF document loaded ONCE for ${messageId}`, { marker: 'PDF_DOCUMENT_LOADED',
       messageId,
       numPages,
       totalPages,
@@ -436,7 +435,7 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
         });
         
         // CRITICAL: Add immediate diagnostic after render task creation
-        log(`[ClipAIble Offscreen] Render task created, waiting for promise for page ${pageNum} (${messageId})`, 'PDF_PAGE_RENDER_START', {
+        log(`[ClipAIble Offscreen] Render task created, waiting for promise for page ${pageNum} (${messageId})`, { marker: 'PDF_PAGE_RENDER_START',
           messageId,
           pageNum,
           hasRenderTask: !!renderTask,
@@ -595,8 +594,8 @@ export async function handleRenderAllPdfPages(messageId, data, sendResponse) {
     log(`[ClipAIble Offscreen] RENDER_ALL_PDF_PAGES complete for ${messageId}`, {
       messageId,
       totalPages,
-      renderedPages: images.filter(img => !img.error).length,
-      failedPages: images.filter(img => img.error).length,
+      renderedPages: images.filter(img => !('error' in img) || !img.error).length,
+      failedPages: images.filter(img => 'error' in img && img.error).length,
       totalDuration
     });
     

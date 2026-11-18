@@ -2,7 +2,6 @@
 // Text continuation detection - determines if text blocks should be merged
 // Universal language-agnostic heuristics
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { 
   CONTINUATION_SCORES, 

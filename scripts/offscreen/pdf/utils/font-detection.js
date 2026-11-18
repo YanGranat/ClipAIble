@@ -2,7 +2,6 @@
 // Font detection utility - determines bold/italic from font metrics
 // Uses font metadata and explicit family names.
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn, criticalLog } from '../../../utils/logging.js';
 import { TEXT_FORMATTING } from '../constants.js';
 

@@ -5,7 +5,7 @@ ClipAIble declares the following Chrome extension permissions.
 | Permission | Use |
 | --- | --- |
 | `activeTab` | Access the page selected for extraction. |
-| `storage` | Store settings, encrypted API keys, processing results, statistics, and selector cache. |
+| `storage` | Store settings, encrypted API keys, processing state, summaries, key claims, statistics, and selector cache. |
 | `unlimitedStorage` | Store large processing data and local resources. |
 | `scripting` | Run content extraction in the selected page. |
 | `downloads` | Save generated documents and audio files. |
@@ -13,7 +13,7 @@ ClipAIble declares the following Chrome extension permissions.
 | `alarms` | Schedule background processing checks. |
 | `notifications` | Report processing completion and errors. |
 | `contextMenus` | Add save actions to the page context menu. |
-| `offscreen` | Run PDF processing and Piper speech synthesis in a hidden extension document. |
+| `offscreen` | Run PDF processing, Piper speech synthesis, image conversion, and download preparation in a hidden extension document. |
 | `webNavigation` | Observe navigation events used by page processing. |
 | `<all_urls>` host access | Extract page content, retrieve source images and PDFs, download voice models, and contact configured AI and TTS services. |
 

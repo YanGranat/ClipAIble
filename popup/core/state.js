@@ -116,6 +116,7 @@ export function initState(deps) {
         }
         // Use localized error message if errorCode is available
         let errorMessage = state.error;
+        /** @type {import('../../scripts/types.js').LocalizedMessage | null} */
         let errorTranslation = state.errorTranslationKey
           ? { key: state.errorTranslationKey, params: state.errorTranslationParams || {} }
           : null;

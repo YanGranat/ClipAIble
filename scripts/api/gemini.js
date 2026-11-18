@@ -19,7 +19,11 @@ export function getGeminiModelName(model) {
   return getModelMetadata('gemini', selectedModel, { strict: true })?.apiModel || selectedModel;
 }
 
-/** Preserve JSON/output settings while applying the model's supported reasoning configuration. */
+/**
+ * Preserve JSON/output settings while applying the model's supported reasoning configuration.
+ * @param {string} model
+ * @param {{thinkingConfig?: {thinkingBudget?: number, thinkingLevel?: string}, temperature?: number, topP?: number, topK?: number, [key: string]: unknown}} [generationConfig]
+ */
 export function getGeminiGenerationConfig(model, generationConfig = {}) {
   const metadata = getModelMetadata('gemini', model || getDefaultModel('gemini'), { strict: true });
   const config = { ...generationConfig };
@@ -87,7 +91,7 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
     // Use retry wrapper for fetch
     // Each retry has an independent request deadline.
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, { signal,
           method: 'POST',
@@ -232,7 +236,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
   try {
     // Wrap fetch with retry mechanism for reliability (429/5xx errors)
     const response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         const fetchResponse = await fetchBufferedResponse(
           `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
           { signal,
@@ -423,7 +427,7 @@ async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, m
     logDebug('Sending request to Gemini API with image...');
     
     response = await callWithRetry(
-      async ({ signal } = {}) => {
+      async ({ signal }) => {
         
         const fetchResponse = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`, { signal,
           method: 'POST',

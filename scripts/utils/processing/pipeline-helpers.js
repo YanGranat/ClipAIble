@@ -83,6 +83,7 @@ export function getAIRequestOptions(data) {
 /**
  * Check if processing was cancelled and throw error if so
  * @param {string} [context] - Context description (e.g., 'before translation')
+ * @param {string} [runId] - Captured document operation identity
  * @throws {Error} Cancellation error with localized message
  */
 export async function checkCancellation(context = '', runId) {
@@ -127,7 +128,7 @@ export async function updateProgress(stage, statusKey, progress, options = {}) {
 
 /**
  * Finalize processing: record stats, update state, and complete
- * @param {import('../../types.js').ProcessingData} data - Processing data
+ * @param {Pick<import('../../types.js').ProcessingData, 'title'|'url'|'processingRunId'|'outputFormat'>} data - Completion identity and metadata
  * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
  * @param {{current: number}|null} processingStartTimeRef - Reference object with current property (can be null)
  * @returns {Promise<void>}
@@ -141,8 +142,7 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     const processingTime = processingStartTimeRef && processingStartTimeRef.current 
       ? Date.now() - processingStartTimeRef.current 
       : 0;
-    const state = getProcessingState();
-    const savedTitle = state.result?.title || data.title || 'Untitled';
+    const savedTitle = data.title || 'Untitled';
     const savedFormat = data.outputFormat || 'pdf';
     
     await recordSave({
@@ -158,7 +158,6 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
   if (isCancelled(data.processingRunId)) return;
   
   // Store format in state for success message
-  const state = getProcessingState();
   const savedFormat = data.outputFormat || 'pdf';
   // outputFormat is part of ProcessingState type (used for UI display and polling intervals)
   updateState({ outputFormat: savedFormat }, data.processingRunId);
@@ -212,7 +211,7 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
  * @param {import('../../types.js').ExtractionResult} result - Extracted content result
  * @param {function(): Promise<void>} stopKeepAlive - Function to stop keep-alive
  * @param {{current: number}} processingStartTimeRef - Reference object with current property
- * @param {function(import('../../types.js').ProcessingData, import('../../types.js').ExtractionResult, Function?): Promise<void>} continuePipeline - Function to continue processing pipeline
+ * @param {import('../../types.js').ContinueProcessingPipelineFunction} continuePipeline - Function to continue processing pipeline
  * @returns {Promise<void>}
  */
 export async function handleProcessingResult(data, result, stopKeepAlive, processingStartTimeRef, continuePipeline) {
@@ -250,7 +249,8 @@ export async function handleProcessingResult(data, result, stopKeepAlive, proces
   
   const generationResult = await continuePipeline(data, result, stopKeepAlive);
   if (isCancelled(data.processingRunId)) return;
-  if ((data.outputFormat || 'pdf') === 'pdf' && generationResult?.deferred === true) return;
+  if ((data.outputFormat || 'pdf') === 'pdf' && generationResult && typeof generationResult === 'object' &&
+      'deferred' in generationResult && generationResult.deferred === true) return;
   
   // After generation, finalize processing
   await finalizeProcessing(data, stopKeepAlive, processingStartTimeRef);
@@ -307,7 +307,7 @@ export async function handleProcessingError(error, data, stopKeepAlive, errorCon
  * Handle translation step in processing pipeline
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {import('../../types.js').ExtractionResult} result - Extracted content result
- * @param {function(import('../../types.js').ExtractionResult, string, string, string, function(Partial<import('../../types.js').ProcessingState>): void): Promise<import('../../types.js').ExtractionResult>} translateContent - Function to translate content
+ * @param {typeof import('../../translation/text.js').translateContent} translateContent - Function to translate content
  * @param {typeof import('../../translation/images.js').translateImages} translateImages - Function to translate images
  * @param {function(Array<import('../../types.js').ContentItem>): string} detectSourceLanguage - Function to detect source language (synchronous)
  * @param {function(Partial<import('../../types.js').ProcessingState>): void} updateState - Function to update state
@@ -412,7 +412,7 @@ export async function handleTranslation(
  * Handle abstract generation step in processing pipeline
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {import('../../types.js').ExtractionResult} result - Extracted content result
- * @param {function(Array<import('../../types.js').ContentItem>, string, string, string, string?, function(Partial<import('../../types.js').ProcessingState>): void?): Promise<string>} generateAbstract - Function to generate abstract
+ * @param {typeof import('../../translation/generation.js').generateAbstract} generateAbstract - Function to generate abstract
  * @param {function(Partial<import('../../types.js').ProcessingState>): void} updateState - Function to update state
  * @returns {Promise<void>}
  */
@@ -572,7 +572,7 @@ export async function handleAbstractGeneration(
  * Detect effective language for document generation
  * @param {import('../../types.js').ProcessingData} data - Processing data
  * @param {import('../../types.js').ExtractionResult} result - Extracted content result
- * @param {function(Array<import('../../types.js').ContentItem>, string, string): Promise<string>} detectContentLanguage - Function to detect content language
+ * @param {typeof import('../../translation/detection.js').detectContentLanguage} detectContentLanguage - Function to detect content language
  * @returns {Promise<string>} Effective language code
  */
 export async function detectEffectiveLanguage(

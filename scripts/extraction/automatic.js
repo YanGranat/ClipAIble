@@ -1545,7 +1545,8 @@ function getOriginalTextIfTranslated(element) {
   if (!element) return null;
   const originalText = element.getAttribute("data-original-text");
   if (originalText && originalText.trim()) {
-    const currentText = element.textContent || element.innerText || "";
+    const currentText = element.textContent || /** @type {HTMLElement} */
+    element.innerText || "";
     if (originalText.trim() !== currentText.trim()) {
       return originalText.trim();
     }
@@ -3356,7 +3357,10 @@ function handleHeading(element, state, constants) {
 
 function handleImg(win, element, state, constants, baseUrl) {
   const item = createImageItem(win, element, state, constants, baseUrl);
-  if (item && !element.closest("figure")) item.caption = getImageCaption(element);
+  if (item && !element.closest("figure")) item.caption = getImageCaption(
+    /** @type {HTMLImageElement} */
+    element
+  );
   return item;
 }
 

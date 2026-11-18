@@ -2,7 +2,6 @@
 // Item transformer utility - transforms PDF text items to viewport coordinates
 // Centralizes item transformation logic to avoid duplication
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn, logToServiceWorker } from '../../../utils/logging.js';
 import { transformCoordinates } from './coordinate-transform.js';
 import { buildFontFormatMap, detectUnderlinedText } from './font-detection.js';
@@ -80,7 +79,7 @@ export function applyFontFormatting(transformedItems, graphicsData = null, fontN
   }
   
   if (fontNameMap !== null && !(fontNameMap instanceof Map)) {
-    log('applyFontFormatting: fontNameMap is not a Map, ignoring', 'APPLY_FONT_FORMATTING_WARN', {
+    log('applyFontFormatting: fontNameMap is not a Map, ignoring', { marker: 'APPLY_FONT_FORMATTING_WARN',
       pageNum,
       fontNameMapType: typeof fontNameMap
     });
@@ -88,7 +87,7 @@ export function applyFontFormatting(transformedItems, graphicsData = null, fontN
   }
   
   if (fontToFormats !== null && !(fontToFormats instanceof Map)) {
-    log('applyFontFormatting: fontToFormats is not a Map, ignoring', 'APPLY_FONT_FORMATTING_WARN', {
+    log('applyFontFormatting: fontToFormats is not a Map, ignoring', { marker: 'APPLY_FONT_FORMATTING_WARN',
       pageNum,
       fontToFormatsType: typeof fontToFormats
     });
@@ -299,7 +298,7 @@ export function processPageItemsToLines(textItems, viewport, pageNum, metrics = 
   
   // Calculate tolerances
   const { xTolerance, yTolerance } = calculateTolerances(transformedItems);
-    log(`processPageItemsToLines: Calculated tolerances`, 'PROCESS_PAGE_ITEMS_TOLERANCES', {
+    log(`processPageItemsToLines: Calculated tolerances`, { marker: 'PROCESS_PAGE_ITEMS_TOLERANCES',
       pageNum,
       xTolerance: xTolerance.toFixed(2),
       yTolerance: yTolerance.toFixed(2)
@@ -321,7 +320,7 @@ export function processPageItemsToLines(textItems, viewport, pageNum, metrics = 
   try {
     detectContextualFormatting(lines, fontNameMap, fontToFormats, pageNum);
   } catch (error) {
-    log(`detectContextualFormatting failed for page ${pageNum}, continuing without contextual formatting`, 'CONTEXTUAL_FORMATTING_ERROR', {
+    log(`detectContextualFormatting failed for page ${pageNum}, continuing without contextual formatting`, { marker: 'CONTEXTUAL_FORMATTING_ERROR',
       pageNum,
       error: error.message,
       stack: error.stack,

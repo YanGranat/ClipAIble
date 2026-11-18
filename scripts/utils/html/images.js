@@ -26,9 +26,10 @@ async function getLocalizedLoadingStatus(processed, total) {
 }
 
 /**
- * Convert image URL to base64 data URL
+ * Fetch an image response after validating each redirect target.
  * @param {string} url - Image URL
- * @returns {Promise<string|null>} Base64 data URL or null if failed
+ * @param {AbortSignal} [signal] - Owned request cancellation
+ * @returns {Promise<Response>} Validated image response
  */
 async function fetchImageResponse(url, signal) {
   let current = url;

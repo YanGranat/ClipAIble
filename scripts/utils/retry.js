@@ -61,7 +61,13 @@ function waitFor(ms, options) {
     if (options.signal?.aborted) abort();
   });
 }
-/** A transport owns retries for its complete HTTP response, within one deadline. */
+/**
+ * A transport owns retries for its complete HTTP response, within one deadline.
+ * @template T
+ * @param {(context: {signal: AbortSignal, deadline: number}) => T | PromiseLike<T>} fn
+ * @param {import('../types.js').RetryOptions} [options]
+ * @returns {Promise<Awaited<T>>}
+ */
 export async function callWithRetry(fn, options = {}) {
   const retries = options.maxRetries ?? CONFIG.RETRY_MAX_ATTEMPTS;
   const delays = options.delays || CONFIG.RETRY_DELAYS;

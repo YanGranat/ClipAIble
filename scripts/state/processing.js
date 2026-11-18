@@ -3,15 +3,7 @@ import { prunePdfData } from '../api/pdf-storage.js';
 // Processing state management for ClipAIble extension
 
 /**
- * @typedef {Object} ProcessingState
- * @property {boolean} isProcessing
- * @property {boolean} isCancelled
- * @property {number} progress
- * @property {string} status
- * @property {any} error
- * @property {number|null} startTime
- * @property {string|null} currentStage
- * @property {string[]} completedStages
+ * @typedef {import('../types.js').ProcessingState} ProcessingState
  */
 
 import { log, logWarn, logError } from '../utils/logging.js';
@@ -58,6 +50,7 @@ export const PROCESSING_STAGES = {
 };
 
 // Global processing state
+/** @type {ProcessingState} */
 let processingState = {
   isProcessing: false,
   isCancelled: false,
@@ -105,6 +98,7 @@ function clearProcessingDeadline() {
   inactivityTimer = null;
 }
 
+/** @param {Error} [reason] */
 function stopOwnedRequests(reason = new DOMException('Processing cancelled', 'AbortError')) {
   clearProcessingDeadline();
   processingController.abort(reason);
@@ -135,7 +129,7 @@ function scheduleProcessingDeadline(runId, deadline = Date.now() + CONFIG.PROCES
     clearDecryptedKeyCache();
     void notifyTerminal(error, runId);
   }, Math.max(0, deadline - Date.now()));
-  inactivityTimer.unref?.();
+  (/** @type {number & {unref?: () => void}} */ (inactivityTimer)).unref?.();
 }
 
 function enqueueStorageOperation(operation) {
@@ -563,12 +557,8 @@ export function getProcessingState() {
 
 /**
  * Update processing state
- * @param {object} updates - State updates (Partial<ProcessingState> & {stage?: string})
- * @param {number} [updates.progress] - Progress percentage (0-100)
- * @param {string} [updates.status] - Status message
- * @param {string} [updates.stage] - Optional stage ID to set
- * @param {Error|Object|null} [updates.error] - Error object
- * @param {string} [updates.outputFormat] - Output format (pdf, epub, fb2, markdown, audio)
+ * @param {Partial<ProcessingState> & {stage?: string}} updates - State updates
+ * @param {string} [runId] - Captured operation identity
  */
 export function updateState(updates, runId) {
   if (!isCurrentProcessingRun(runId)) return;

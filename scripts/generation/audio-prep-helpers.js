@@ -136,7 +136,7 @@ export function logChunkSplittingResults(chunks) {
  * @param {string} apiKey - API key (if AI cleanup)
  * @param {string} model - Model (if AI cleanup)
  * @param {string} language - Language code
- * @param {function(string, number, number, string, string, string): Promise<string>} prepareChunkForAudio - AI cleanup function
+ * @param {typeof import('./audio-prep.js').prepareChunkForAudio} prepareChunkForAudio - AI cleanup function
  * @param {function(string, string): string} basicCleanup - Basic cleanup function
  * @returns {Promise<{text: string, index: number, originalIndex: number}>} Prepared chunk
  */

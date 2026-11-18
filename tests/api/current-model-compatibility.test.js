@@ -5,7 +5,7 @@ import { callDeepSeekAPI, callDeepSeekAPIWithImage, callDeepSeekAPIWithImageAndH
 import { GEMINI_IMAGE_MODEL, resolveSavedModel } from '../../scripts/utils/model-catalog.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn(), criticalLog: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: vi.fn(async () => 'en') }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ decryptApiKey: vi.fn(async value => value) }));
 

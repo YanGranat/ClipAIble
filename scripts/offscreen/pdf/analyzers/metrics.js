@@ -1,7 +1,6 @@
 // @ts-check
 // PDF metrics analyzer - analyzes font sizes, spacing, etc.
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS } from '../constants.js';
 

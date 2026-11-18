@@ -153,12 +153,11 @@ function splitByWords(text) {
  * @returns {boolean} True if memory is OK
  */
 export function checkMemory() {
-  // @ts-ignore - performance.memory is non-standard
-  if (performance.memory) {
-    // @ts-ignore
-    const used = performance.memory.usedJSHeapSize / 1024 / 1024;
-    // @ts-ignore
-    const limit = performance.memory.jsHeapSizeLimit / 1024 / 1024;
+  /** @type {Performance & {memory?: {usedJSHeapSize: number, jsHeapSizeLimit: number}}} */
+  const memoryPerformance = performance;
+  if (memoryPerformance.memory) {
+    const used = memoryPerformance.memory.usedJSHeapSize / 1024 / 1024;
+    const limit = memoryPerformance.memory.jsHeapSizeLimit / 1024 / 1024;
     const usage = used / limit;
     
     if (usage > 0.9) {

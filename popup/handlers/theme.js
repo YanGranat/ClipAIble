@@ -11,6 +11,7 @@
  * @param {Function} deps.setUILanguage - Set UI language function
  * @param {Function} deps.applyLocalization - Apply localization function
  * @param {Function} deps.initAllCustomSelects - Initialize all custom selects function
+ * @param {import('../../scripts/types.js').StatsModule['loadAndDisplayStats']} deps.loadAndDisplayStats - Refresh statistics presentation
  * @param {Object} [deps.settingsModule] - Settings module
  */
 export function setupThemeHandlers(deps) {

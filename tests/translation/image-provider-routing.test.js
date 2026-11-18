@@ -28,7 +28,7 @@ it('uses the independent OpenAI key and dedicated high-detail classifier with a 
   const items = content();
   expect(await run(items, options())).toBe(items);
   expect(items[1]).toMatchObject({ src: `data:image/png;base64,${EDITED_PNG}`, translated: true });
-  expect(decryptApiKey).toHaveBeenCalledExactlyOnceWith('ENC:synthetic-image', 'openai');
+  expect(decryptApiKey).toHaveBeenCalledExactlyOnceWith('ENC:synthetic-image');
   expect(fetch).toHaveBeenCalledTimes(2);
   const [detection, edit] = fetch.mock.calls;
   expect(detection[0]).toBe('https://api.openai.com/v1/chat/completions');

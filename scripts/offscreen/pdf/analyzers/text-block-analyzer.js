@@ -3,9 +3,7 @@
 // Groups lines into visual blocks based on Y-coordinates and gaps
 // Helps identify paragraph boundaries by detecting empty spaces between text blocks
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log } from '../../../utils/logging.js';
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { CONFIG } from '../../../utils/config.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { calculateAverage } from '../utils/array-helpers.js';

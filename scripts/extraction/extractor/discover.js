@@ -160,6 +160,7 @@ export function calculateStopwordBonus(text) {
   ]);
 
   // Extract Latin-script words (length ≥ 2)
+  /** @type {string[]} */
   const words = text.toLowerCase().match(/[a-zа-яёіїєäöüßàáâèéêìíîòóôùúûñ]{2,}/g) || [];
   if (words.length < 8) return 0;
 

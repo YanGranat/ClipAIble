@@ -2,7 +2,6 @@
 // Heading hierarchy analyzer - determines heading levels using clustering, outline, and numbering
 // FIXES v2 problems: adaptive thresholds, validation, relative position checking
 
-// @ts-ignore - Module resolution issue, but file exists at runtime
 import { log, logWarn } from '../../../utils/logging.js';
 import { FONT_SIZE_THRESHOLDS, HEADING_THRESHOLDS, ELEMENT_DECISION } from '../constants.js';
 import { calculateAverage } from '../utils/array-helpers.js';

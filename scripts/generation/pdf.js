@@ -25,7 +25,7 @@ import { getDefaultModel } from '../utils/model-catalog.js';
  * Generate PDF from content
  * @param {import('../types.js').ExtendedGenerationData} data - Generation data with PDF-specific options (pageMode, fontFamily, fontSize, bgColor, textColor, headingColor, linkColor)
  * @param {function(Partial<import('../types.js').ProcessingState> & {stage?: string}): void} [updateState] - State update function
- * @returns {Promise<Blob|{success: boolean}>} Generated PDF blob (when using debugger API) or success object (when using print page)
+ * @returns {Promise<import('../types.js').PdfGenerationResult>} Deferred print admission
  * @throws {Error} If content is empty
  * @throws {Error} If styles loading fails
  * @throws {Error} If PDF generation fails
@@ -36,7 +36,7 @@ import { getDefaultModel } from '../utils/model-catalog.js';
  * @see {@link generateFb2} For FB2 generation (similar structure)
  * @example
  * // Generate PDF with custom styles
- * const pdfBlob = await generatePdf({
+ * await generatePdf({
  *   content: contentItems,
  *   title: 'Article Title',
  *   author: 'Author Name',
@@ -48,8 +48,6 @@ import { getDefaultModel } from '../utils/model-catalog.js';
  *   generateToc: true,
  *   generateAbstract: true
  * }, updateState);
- * const url = URL.createObjectURL(pdfBlob);
- * // Download or display PDF...
  */
 export async function generatePdf(data, updateState) {
   const processingRunId = data.processingRunId ?? getProcessingRunId();
@@ -387,9 +385,6 @@ export async function generatePdf(data, updateState) {
 
     log('Print page opened, it will handle the rest');
     log('=== PDF GENERATION END ===');
-    // Note: Function signature says it returns Blob, but in practice it returns success object
-    // The actual PDF generation happens in the print page
-    /** @type {any} */
     const result = { success: true, deferred: true };
     return result;
 
