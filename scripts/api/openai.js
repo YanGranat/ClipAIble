@@ -20,14 +20,14 @@ import { handleError } from '../utils/error-handler.js';
  */
 export function parseModelConfig(model) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('openai');
-  const metadata = getModelMetadata('openai', selected);
+  const metadata = getModelMetadata('openai', selected, { strict: true });
   return { modelName: metadata?.apiModel || selected, reasoningEffort: metadata?.reasoningEffort || null };
 }
 
 /** Build model-specific Chat Completions parameters without changing custom IDs. */
 export function getOpenAIRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort } = {}) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('openai');
-  const metadata = getModelMetadata('openai', selected);
+  const metadata = getModelMetadata('openai', selected, { strict: true });
   const { modelName, reasoningEffort } = parseModelConfig(selected);
   const supportsReasoning = Boolean(metadata?.reasoningEfforts || reasoningEffort);
   const selectedEffort = requestedEffort && metadata?.reasoningEfforts?.includes(requestedEffort) ? requestedEffort : reasoningEffort;

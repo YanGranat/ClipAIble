@@ -16,15 +16,15 @@ import { handleError } from '../utils/error-handler.js';
 /** Build supported parameters for a managed model while preserving custom IDs. */
 export function getGrokRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort, imageInput = false } = {}) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('grok');
-  const metadata = getModelMetadata('grok', selected);
-  if (imageInput && metadata && !metadata.inputModalities.includes('image')) throw Object.assign(new Error('The selected model does not support image input.'), { code: 'AI_MODEL_UNSUPPORTED_IMAGE' });
+  const metadata = getModelMetadata('grok', selected, { strict: true });
+  if (imageInput && metadata?.inputModalities && !metadata.inputModalities.includes('image')) throw Object.assign(new Error('The selected model does not support image input.'), { code: 'AI_MODEL_UNSUPPORTED_IMAGE' });
   let effort = requestedEffort && metadata?.reasoningEfforts?.includes(requestedEffort) ? requestedEffort : metadata?.reasoningEffort;
   if (shortResponse && metadata?.reasoningEfforts) {
     effort = metadata.reasoningEfforts.includes('none') ? 'none' : 'low';
   }
   const parameters = { model: metadata?.apiModel || selected };
   if (effort) parameters.reasoning_effort = effort;
-  const reasoning = Boolean(metadata?.reasoningEfforts?.length);
+  const reasoning = Boolean(metadata?.reasoningEfforts?.length || metadata?.reasoningEffort);
   if (maxTokens !== undefined && !(shortResponse && reasoning && effort !== 'none')) parameters.max_tokens = maxTokens;
   if (temperature !== undefined && (!reasoning || effort === 'none')) parameters.temperature = temperature;
   return parameters;

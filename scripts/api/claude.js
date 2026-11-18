@@ -16,17 +16,19 @@ import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
 /** Build Messages API parameters for the selected model and response role. */
 export function getClaudeRequestConfig(model, { maxTokens = 50000, shortResponse = false } = {}) {
   const selectedModel = model || getDefaultModel('claude');
-  const metadata = getModelMetadata('claude', selectedModel);
+  const metadata = getModelMetadata('claude', selectedModel, { strict: true });
   const modelName = metadata?.apiModel || selectedModel;
   const config = { model: modelName, max_tokens: maxTokens };
-  if (metadata?.reasoningEffort) {
+  if (metadata?.reasoningEffort === 'none') {
+    config.thinking = { type: 'disabled' };
+  } else if (metadata?.reasoningEffort) {
     config.output_config = { effort: metadata.reasoningEffort };
     config.thinking = { type: 'adaptive' };
   }
   if (shortResponse) {
-    if (modelName === 'claude-sonnet-5-5') config.thinking = { type: 'between_tools' };
-    else if (modelName === 'claude-haiku-5-5') config.thinking = { type: 'disabled' };
-    else if (modelName === 'claude-opus-5-5' || modelName === 'claude-fable-5-2') config.max_tokens = 50000;
+    if (!metadata?.reasoningEffort && modelName === 'claude-sonnet-5-5') config.thinking = { type: 'between_tools' };
+    else if (!metadata?.reasoningEffort && modelName === 'claude-haiku-5-5') config.thinking = { type: 'disabled' };
+    if ((metadata?.reasoningEffort && metadata.reasoningEffort !== 'none') || modelName === 'claude-opus-5-5' || modelName === 'claude-fable-5-2') config.max_tokens = 50000;
   }
   return config;
 }

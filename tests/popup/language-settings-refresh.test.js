@@ -6,7 +6,7 @@ import { setupThemeHandlers } from '../../popup/handlers/theme.js';
 import { setupAudioHandlers } from '../../popup/handlers/audio.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 import { DEFAULT_STYLES, STORAGE_KEYS, STYLE_PRESETS } from '../../popup/constants.js';
-import { t, getUILanguage, setUILanguage, tSync } from '../../scripts/locales.js';
+import { t, getUILanguage, setUILanguage } from '../../scripts/locales.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -56,5 +56,5 @@ it('keeps accepted audio choices when a language change is pending without reloa
   expect(elements.apiKey.value).toBe('sample-unsaved-key');
   expect(stored.audio_speed).toBe(unchanged.speed);
   expect(stored.audio_voice_map).toEqual(unchanged.voiceMap);
-  expect(elements.modelSelect.selectedOptions[0].textContent).toContain(tSync('reasoningEffort_medium', 'de'));
+  expect(elements.modelSelect.selectedOptions[0].textContent).toContain('(reasoning: medium)');
 });

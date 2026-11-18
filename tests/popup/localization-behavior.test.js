@@ -178,9 +178,9 @@ describe('translation parameters and language tags', () => {
     expect(formatMessage('statusRenderingPdfPages', 'en', { count: 1, pages: 1 })).toBe('Rendering 1 PDF page...');
   });
 
-  it('localizes managed model annotations while keeping arbitrary IDs literal', () => {
+  it('keeps provider reasoning annotations in English and arbitrary IDs literal', () => {
     const translate = (key, params) => tSync(key, 'ru', params);
-    expect(formatModelLabel('openai', 'gpt-6.1-sol-high', translate)).toBe('gpt-6.1-sol (рассуждение: высокое)');
+    expect(formatModelLabel('openai', 'gpt-6.1-sol-high', translate)).toBe('gpt-6.1-sol (reasoning: high)');
     expect(formatModelLabel('openai', 'sample-model-high', translate)).toBe('sample-model-high');
   });
 });

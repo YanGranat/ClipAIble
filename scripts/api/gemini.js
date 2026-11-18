@@ -16,16 +16,22 @@ import { GEMINI_IMAGE_MODEL, getDefaultModel, getModelMetadata } from '../utils/
 
 export function getGeminiModelName(model) {
   const selectedModel = model || getDefaultModel('gemini');
-  return getModelMetadata('gemini', selectedModel)?.apiModel || selectedModel;
+  return getModelMetadata('gemini', selectedModel, { strict: true })?.apiModel || selectedModel;
 }
 
 /** Preserve JSON/output settings while applying the model's supported reasoning configuration. */
 export function getGeminiGenerationConfig(model, generationConfig = {}) {
-  const metadata = getModelMetadata('gemini', model || getDefaultModel('gemini'));
+  const metadata = getModelMetadata('gemini', model || getDefaultModel('gemini'), { strict: true });
   const config = { ...generationConfig };
   if (metadata?.reasoningEffort) {
-    config.thinkingConfig = { ...config.thinkingConfig, thinkingLevel: metadata.reasoningEffort };
-    delete config.thinkingConfig.thinkingBudget;
+    config.thinkingConfig = { ...config.thinkingConfig };
+    if (metadata.reasoningEffort === 'none') {
+      config.thinkingConfig.thinkingBudget = 0;
+      delete config.thinkingConfig.thinkingLevel;
+    } else {
+      config.thinkingConfig.thinkingLevel = metadata.reasoningEffort;
+      delete config.thinkingConfig.thinkingBudget;
+    }
     delete config.temperature;
     delete config.topP;
     delete config.topK;

@@ -6,7 +6,7 @@
  * @property {string} apiModel
  * @property {string} [displayName]
  * @property {string} provider
- * @property {ReadonlyArray<string>} inputModalities
+ * @property {ReadonlyArray<string>} [inputModalities]
  * @property {ReadonlyArray<string>} [reasoningEfforts]
  * @property {string} [reasoningEffort]
  * @property {boolean} [reasoningEnabled]
@@ -21,6 +21,27 @@ const GEMINI_REASONING = Object.freeze(['low', 'medium', 'high']);
 const DEEPSEEK_REASONING = Object.freeze(['low', 'high', 'max']);
 const GPT51_REASONING = Object.freeze(['none', 'low', 'medium', 'high']);
 const GPT52_REASONING = Object.freeze(['none', 'low', 'medium', 'high', 'xhigh']);
+const ANNOTATION_EFFORTS = Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+function invalidReasoning() {
+  return Object.assign(new Error('Use a supported reasoning setting in the form model-id (reasoning: effort).'), {
+    code: 'AI_MODEL_INVALID_REASONING', translationKey: 'errorModelReasoningInvalid', translationParams: {}, retryable: false
+  });
+}
+
+/** Parse only an explicit trailing annotation; API model names remain opaque. */
+export function parseModelSelection(value) {
+  if (typeof value !== 'string' || !value.trim()) throw invalidReasoning();
+  const annotation = value.match(/^([\s\S]*?\S)\s*\(\s*reasoning\s*:\s*([a-z]+)\s*\)\s*$/i);
+  if (!annotation) {
+    if (/\(\s*reasoning\s*(?::|\))/i.test(value)) throw invalidReasoning();
+    return { apiModel: value, reasoningEffort: null };
+  }
+  const apiModel = annotation[1].trimEnd();
+  const reasoningEffort = annotation[2].toLowerCase();
+  if (!apiModel.trim() || /\(\s*reasoning\s*:/i.test(apiModel) || !ANNOTATION_EFFORTS.includes(reasoningEffort)) throw invalidReasoning();
+  return { apiModel, reasoningEffort };
+}
 
 export const GEMINI_IMAGE_MODEL = 'gemini-3-pro-image';
 
@@ -51,7 +72,7 @@ export const MODEL_CATALOG = Object.freeze({
     model('claude', 'claude-sonnet-5-5', { reasoningEfforts: CLAUDE_REASONING }),
     model('claude', 'claude-opus-5-5', { reasoningEfforts: CLAUDE_REASONING }),
     model('claude', 'claude-fable-5-2', { reasoningEffort: 'high', reasoningEfforts: CLAUDE_REASONING }),
-    model('claude', 'claude-haiku-5-5', { reasoningEfforts: CLAUDE_REASONING })
+    model('claude', 'claude-haiku-5-5', { reasoningEfforts: Object.freeze(['none', ...CLAUDE_REASONING]) })
   ]),
   gemini: Object.freeze([
     model('gemini', 'gemini-4-hydrogen', { reasoningEfforts: Object.freeze([...GEMINI_REASONING, 'xhigh']) }),
@@ -171,29 +192,78 @@ export function resolveSavedModel(provider, id, customIds = []) {
   return aliases && Object.hasOwn(aliases, id) ? aliases[id] : id;
 }
 
-/** Look up an exact managed model or variant without rewriting custom API IDs. */
-export function getModelMetadata(provider, id) {
+function getExactModelMetadata(provider, id) {
   const entry = getModelCatalog(provider).find(item => item.id === id);
   if (entry) return entry;
   const legacy = Object.hasOwn(LEGACY_MODELS, provider) ? LEGACY_MODELS[provider] : [];
   return legacy.find(item => item.id === id) || null;
 }
 
-/** Format managed reasoning variants without interpreting arbitrary custom suffixes. */
+function effortOf(metadata) {
+  return metadata.reasoningEnabled === false ? 'none' : metadata.reasoningEffort || null;
+}
+
+function baseLabel(metadata, translate) {
+  const label = metadata.displayName || metadata.apiModel;
+  return metadata.inputModalities && !metadata.inputModalities.includes('image')
+    ? translate ? translate('modelTextOnly', { model: label }) : `${label} (text only)` : label;
+}
+
+function metadataLabel(metadata, translate) {
+  const effort = effortOf(metadata);
+  return `${baseLabel(metadata, translate)}${effort ? ` (reasoning: ${effort})` : ''}`;
+}
+
+function annotationMetadata(provider, id) {
+  const exact = getExactModelMetadata(provider, id);
+  if (exact) return exact;
+  const entries = getModelCatalog(provider);
+  const displayed = entries.find(entry => metadataLabel(entry) === id);
+  if (displayed) return displayed;
+  const { apiModel, reasoningEffort } = parseModelSelection(id);
+  if (!reasoningEffort) return null;
+  const known = getExactModelMetadata(provider, apiModel) || entries.find(entry =>
+    baseLabel(entry) === apiModel || entry.displayName === apiModel);
+  const providerEfforts = provider === 'deepseek' ? ['none', ...DEEPSEEK_REASONING]
+    : provider === 'claude' ? ['none', ...CLAUDE_REASONING]
+      : provider === 'gemini' ? ['none', 'minimal', ...GEMINI_REASONING, 'xhigh']
+        : provider === 'grok' ? ['none', 'low', 'medium', 'high', 'xhigh'] : ANNOTATION_EFFORTS;
+  if (!providerEfforts.includes(reasoningEffort)) throw invalidReasoning();
+  if (known?.reasoningEfforts && !known.reasoningEfforts.includes(reasoningEffort)) {
+    const disabledVariant = reasoningEffort === 'none' && entries.some(entry =>
+      entry.apiModel === known.apiModel && entry.reasoningEnabled === false);
+    if (!disabledVariant) throw invalidReasoning();
+  }
+  return Object.freeze({ ...(known || { provider }), id, apiModel: known?.apiModel || apiModel, reasoningEffort,
+    ...((provider === 'deepseek' || known?.reasoningEnabled !== undefined) ? { reasoningEnabled: reasoningEffort !== 'none' } : {}) });
+}
+
+/** Display lookups tolerate saved invalid entries; request boundaries opt into validation. */
+export function getModelMetadata(provider, id, { strict = false } = {}) {
+  try { return annotationMetadata(provider, id); }
+  catch (error) { if (strict) throw error; return null; }
+}
+
+/** Resolve equivalent preset labels without changing an opaque custom API ID. */
+export function normalizeModelSelection(provider, value, translate) {
+  const selected = typeof value === 'string' ? value.trim() : value;
+  const displayed = getModelCatalog(provider).find(entry => metadataLabel(entry, translate) === selected);
+  if (displayed) return displayed.id;
+  const parsed = parseModelSelection(selected);
+  const displayedBase = parsed.reasoningEffort && getModelCatalog(provider).find(entry => baseLabel(entry, translate) === parsed.apiModel);
+  const lookup = displayedBase ? `${displayedBase.apiModel} (reasoning: ${parsed.reasoningEffort})` : selected;
+  const metadata = getModelMetadata(provider, lookup, { strict: true });
+  if (!metadata) return selected;
+  const equivalent = getModelCatalog(provider).find(entry => entry.apiModel === metadata.apiModel &&
+    effortOf(entry) === effortOf(metadata) &&
+    (entry.reasoningEnabled ?? (effortOf(entry) ? effortOf(entry) !== 'none' : undefined)) ===
+    (metadata.reasoningEnabled ?? (effortOf(metadata) ? effortOf(metadata) !== 'none' : undefined)));
+  if (equivalent) return equivalent.id;
+  return parsed.reasoningEffort ? `${metadata.apiModel} (reasoning: ${parsed.reasoningEffort})` : selected;
+}
+
+/** Reasoning annotations always use provider syntax, independently of UI language. */
 export function formatModelLabel(provider, id, translate) {
   const metadata = getModelMetadata(provider, id);
-  if (!metadata) return id || '';
-  if (translate) {
-    let label = metadata.displayName || metadata.apiModel;
-    if (metadata.reasoningEffort && metadata.reasoningEffort !== 'none') {
-      label = translate('modelReasoningEffort', { model: label, effort: translate(`reasoningEffort_${metadata.reasoningEffort}`) });
-    }
-    if (metadata.reasoningEffort === 'none' || metadata.reasoningEnabled === false) label = translate('modelNoReasoning', { model: label });
-    if (!metadata.inputModalities.includes('image')) label = translate('modelTextOnly', { model: label });
-    return label;
-  }
-  const effort = metadata.reasoningEffort ? ` (reasoning effort - ${metadata.reasoningEffort})` : '';
-  const disabled = metadata.reasoningEnabled === false ? ' (no reasoning)' : '';
-  const textOnly = !metadata.inputModalities.includes('image') ? ' (text only)' : '';
-  return `${metadata.displayName || metadata.apiModel}${effort}${disabled}${textOnly}`;
+  return metadata ? metadataLabel(metadata, translate) : id || '';
 }

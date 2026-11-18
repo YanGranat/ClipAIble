@@ -10,7 +10,8 @@ import { parseBase64Image } from '../api/image-data.js';
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { LANGUAGE_NAMES, CONFIG } from '../utils/config.js';
-import { resolveAIProvider, parseModelConfig, callAIWithImage } from '../api/index.js';
+import { resolveAIProvider, callAIWithImage } from '../api/index.js';
+import { getModelMetadata } from '../utils/model-catalog.js';
 import { translateImageWithGemini, getGeminiModelName, getGeminiGenerationConfig, getGeminiResponseText } from '../api/gemini.js';
 import { getClaudeRequestConfig, getClaudeResponseText } from '../api/claude.js';
 import { getOpenAIRequestConfig } from '../api/openai.js';
@@ -54,7 +55,7 @@ Respond with ONLY "yes" or "no".`;
 
   try {
     const provider = resolveAIProvider(model, options.provider);
-    const { modelName } = parseModelConfig(model);
+    const modelName = getModelMetadata(provider, model, { strict: true })?.apiModel || model;
     let answer;
     
     if (provider === 'deepseek') {

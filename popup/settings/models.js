@@ -3,7 +3,7 @@
 // Handles model list updates, custom models, hidden models
 
 import { t, tSync, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
-import { getModelCatalog, getModelMetadata, resolveSavedModel, resolveStoredModelSelection } from '../../scripts/utils/model-catalog.js';
+import { getModelCatalog, getModelMetadata, resolveSavedModel, resolveStoredModelSelection, normalizeModelSelection, parseModelSelection } from '../../scripts/utils/model-catalog.js';
 
 /**
  * Initialize models module
@@ -29,6 +29,27 @@ export function initModels(deps) {
   const settingsKeys = [STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS,
     STORAGE_KEYS.MODEL_BY_PROVIDER, STORAGE_KEYS.MODEL, STORAGE_KEYS.API_PROVIDER];
 
+  function normalizeModelInput(provider, value, language = 'en') {
+    const normalized = normalizeModelSelection(provider, value, (key, params) => tSync(key, language, params));
+    const { apiModel } = parseModelSelection(normalized);
+    if (normalized.length > 4096 || !/^[a-z0-9][a-z0-9\-_\/:.]*$/i.test(apiModel)) {
+      const error = new Error('Enter a valid API model ID.');
+      error.translationKey = 'addModelInvalidFormat';
+      throw error;
+    }
+    return normalized;
+  }
+
+  function normalizedStoredModel(provider, value) {
+    try { return normalizeModelSelection(provider, value); }
+    catch { return null; }
+  }
+
+  function hiddenModelIdentity(provider, value, customIds) {
+    const resolved = resolveSavedModel(provider, value, customIds);
+    return normalizedStoredModel(provider, resolved) || resolved;
+  }
+
   function queueStorage(operation) {
     const pending = storageQueue.then(operation);
     storageQueue = pending.catch(() => {});
@@ -38,14 +59,15 @@ export function initModels(deps) {
   function visibleModels(settings, provider, selection) {
     const customIds = providerValues(settings[STORAGE_KEYS.CUSTOM_MODELS], provider);
     const hiddenIds = providerValues(settings[STORAGE_KEYS.HIDDEN_MODELS], provider);
-    const hidden = new Set(hiddenIds.flatMap(id => [id, resolveSavedModel(provider, id, customIds)]));
+    const hidden = new Set(hiddenIds.flatMap(id => [id, hiddenModelIdentity(provider, id, customIds)]));
     const entries = new Map(getModelCatalog(provider).map(entry => [entry.id,
       { value: entry.id, isCustom: customIds.includes(entry.id), isLegacy: false }]));
     for (const id of customIds) entries.set(id, { value: id, isCustom: true, isLegacy: false });
     if (selection && !entries.has(selection)) {
       entries.set(selection, { value: selection, isCustom: customIds.includes(selection), isLegacy: true });
     }
-    return [...entries.values()].filter(entry => !hidden.has(entry.value));
+    return [...entries.values()].filter(entry => !hidden.has(entry.value) &&
+      !hidden.has(normalizedStoredModel(provider, entry.value)));
   }
 
   function modelLabel(entry, provider, language) {
@@ -171,6 +193,7 @@ export function initModels(deps) {
       const labelSpan = document.createElement('span');
       labelSpan.className = 'custom-model-label';
       labelSpan.textContent = modelLabel(visible.find(entry => entry.value === modelValue), provider, language);
+      labelSpan.title = labelSpan.textContent;
       labelSpan.setAttribute('role', 'gridcell');
       labelSpan.id = `modelLabel-${encodeURIComponent(provider)}-${encodeURIComponent(modelValue)}`;
       
@@ -237,12 +260,11 @@ export function initModels(deps) {
       return;
     }
     
-    const trimmedName = modelName.trim();
-    
-    // Validate model name format - allow alphanumeric, hyphens, underscores, slashes, colons, dots
-    if (!trimmedName.match(/^[a-z0-9][a-z0-9\-_\/:\.]*$/i)) {
-      const errorMsg = locale.addModelInvalidFormat || 'Enter a valid API model ID.';
-      alert(errorMsg);
+    let modelValue;
+    try {
+      modelValue = normalizeModelInput(provider, modelName, uiLang);
+    } catch (error) {
+      alert(locale[error.translationKey] || locale.addModelInvalidFormat || 'Enter a valid API model ID with an optional (reasoning: high).');
       return;
     }
     
@@ -250,31 +272,38 @@ export function initModels(deps) {
     const storageResult = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
     const providerCustomModels = providerValues(storageResult[STORAGE_KEYS.CUSTOM_MODELS], provider);
     
-    if (providerCustomModels.includes(trimmedName) && !providerValues(storageResult[STORAGE_KEYS.HIDDEN_MODELS], provider).includes(trimmedName)) {
+    const existing = providerCustomModels.find(id => normalizedStoredModel(provider, id) === modelValue);
+    const hidden = providerValues(storageResult[STORAGE_KEYS.HIDDEN_MODELS], provider)
+      .some(id => hiddenModelIdentity(provider, id, providerCustomModels) === modelValue);
+    if (existing && !hidden) {
       const errorMsg = locale.addModelAlreadyExists || 'This model already exists';
       alert(errorMsg);
       return;
     }
     
     // Add model
-    await addCustomModel(trimmedName, provider);
+    await addCustomModel(modelValue, provider);
   }
 
   async function addCustomModel(modelValue, provider = elements.apiProviderSelect.value) {
+    modelValue = normalizeModelInput(provider, modelValue);
+    let selectedValue = modelValue;
     if (elements.apiProviderSelect.value === provider) ++listRevision;
     await queueStorage(async () => {
       const saved = await chrome.storage.local.get([STORAGE_KEYS.CUSTOM_MODELS, STORAGE_KEYS.HIDDEN_MODELS]);
       const custom = isRecord(saved[STORAGE_KEYS.CUSTOM_MODELS]) ? saved[STORAGE_KEYS.CUSTOM_MODELS] : {};
       const hidden = isRecord(saved[STORAGE_KEYS.HIDDEN_MODELS]) ? saved[STORAGE_KEYS.HIDDEN_MODELS] : {};
       const customIds = providerValues(custom, provider);
-      const restoringBuiltIn = providerValues(hidden, provider).includes(modelValue) &&
-        !customIds.includes(modelValue) && getModelCatalog(provider).some(entry => entry.id === modelValue);
+      const existing = customIds.find(id => normalizedStoredModel(provider, id) === modelValue);
+      selectedValue = existing || modelValue;
+      const builtIn = getModelCatalog(provider).some(entry => entry.id === modelValue);
       await chrome.storage.local.set({
-        [STORAGE_KEYS.CUSTOM_MODELS]: { ...custom, [provider]: restoringBuiltIn ? customIds : [...new Set([...customIds, modelValue])] },
-        [STORAGE_KEYS.HIDDEN_MODELS]: { ...hidden, [provider]: providerValues(hidden, provider).filter(id => id !== modelValue) }
+        [STORAGE_KEYS.CUSTOM_MODELS]: { ...custom, [provider]: existing || builtIn ? customIds : [...customIds, modelValue] },
+        [STORAGE_KEYS.HIDDEN_MODELS]: { ...hidden, [provider]: providerValues(hidden, provider)
+          .filter(id => hiddenModelIdentity(provider, id, customIds) !== modelValue) }
       });
     });
-    if (elements.apiProviderSelect.value === provider) await updateModelList(modelValue);
+    if (elements.apiProviderSelect.value === provider) await updateModelList(selectedValue);
   }
 
   async function removeModel(modelValue, provider, custom) {

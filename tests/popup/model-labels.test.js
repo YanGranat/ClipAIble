@@ -26,7 +26,7 @@ it('shows the served DeepSeek version while retaining its API ID in the selectio
   expect(determineProviderAndModel(stored)).toEqual({ provider: 'deepseek', model: 'deepseek-flash' });
   expect(getModelMetadata('deepseek', elements.modelSelect.value).apiModel).toBe('deepseek-flash');
   expect([...elements.modelSelect.options].find(option => option.value === 'deepseek-flash-no-thinking').textContent)
-    .toBe('DeepSeek V4.1 Flash (no reasoning)');
+    .toBe('DeepSeek V4.1 Flash (reasoning: none)');
   expect([...elements.modelSelect.options].find(option => option.value === 'deepseek-v4-pro').textContent)
     .toBe('DeepSeek V4 Pro (text only)');
 });

@@ -7,7 +7,8 @@ import { assertCompleteAIResponse } from '../api/response-validation.js';
 import { fetchBufferedResponse } from '../api/fetch-buffered-response.js';
 import { createApiError } from '../api/http-errors.js';
 import { log, logWarn } from '../utils/logging.js';
-import { resolveAIProvider, parseModelConfig } from '../api/index.js';
+import { resolveAIProvider } from '../api/index.js';
+import { getModelMetadata } from '../utils/model-catalog.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { stripHtml } from '../utils/html.js';
 import { handleError } from '../utils/error-handler.js';
@@ -378,7 +379,7 @@ Example outputs: ru, en, ua, de`;
   
   try {
     const provider = resolveAIProvider(model, options.provider);
-    const { modelName } = parseModelConfig(model);
+    const modelName = getModelMetadata(provider, model, { strict: true })?.apiModel || model;
     let langCode = null;
     let rawResponse = null;
     let parsedResult = null;

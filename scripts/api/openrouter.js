@@ -16,8 +16,8 @@ import { handleError } from '../utils/error-handler.js';
 /** OpenRouter normalizes provider reasoning controls through its reasoning object. */
 export function getOpenRouterRequestConfig(model, { maxTokens, temperature, shortResponse = false, reasoningEffort: requestedEffort, imageInput = false } = {}) {
   const selected = typeof model === 'string' && model ? model : getDefaultModel('openrouter');
-  const metadata = getModelMetadata('openrouter', selected);
-  if (imageInput && metadata && !metadata.inputModalities.includes('image')) throw Object.assign(new Error('The selected model does not support image input.'), { code: 'AI_MODEL_UNSUPPORTED_IMAGE' });
+  const metadata = getModelMetadata('openrouter', selected, { strict: true });
+  if (imageInput && metadata?.inputModalities && !metadata.inputModalities.includes('image')) throw Object.assign(new Error('The selected model does not support image input.'), { code: 'AI_MODEL_UNSUPPORTED_IMAGE' });
   const disabled = metadata?.reasoningEnabled === false;
   let effort = requestedEffort && metadata?.reasoningEfforts?.includes(requestedEffort) ? requestedEffort : metadata?.reasoningEffort;
   if (shortResponse && !disabled && metadata?.reasoningEfforts) {
@@ -27,7 +27,7 @@ export function getOpenRouterRequestConfig(model, { maxTokens, temperature, shor
   if (disabled) parameters.reasoning = { enabled: false };
   else if (effort) parameters.reasoning = { effort };
   if (parameters.reasoning) parameters.provider = { require_parameters: true };
-  const reasoning = Boolean(metadata?.reasoningEfforts?.length || metadata?.reasoningEnabled !== undefined);
+  const reasoning = Boolean(metadata?.reasoningEfforts?.length || metadata?.reasoningEffort || metadata?.reasoningEnabled !== undefined);
   if (maxTokens !== undefined && !(shortResponse && reasoning && !disabled && effort !== 'none')) parameters.max_tokens = maxTokens;
   if (temperature !== undefined && (!reasoning || disabled || effort === 'none')) parameters.temperature = temperature;
   return parameters;

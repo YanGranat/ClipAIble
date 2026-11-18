@@ -17,7 +17,7 @@ import { getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
 /** Resolve UI variants and legacy aliases before sending the vendor request. */
 export function getDeepSeekRequestConfig(model) {
   const selectedModel = model || getDefaultModel('deepseek');
-  const metadata = getModelMetadata('deepseek', selectedModel);
+  const metadata = getModelMetadata('deepseek', selectedModel, { strict: true });
   const config = { model: metadata?.apiModel || selectedModel };
   if (typeof metadata?.reasoningEnabled === 'boolean') {
     config.thinking = { type: metadata.reasoningEnabled ? 'enabled' : 'disabled' };
@@ -33,8 +33,8 @@ export function getDeepSeekRequestConfig(model) {
 
 /** Reject known text-only selections before any image request is sent. */
 export function assertDeepSeekVisionModel(model) {
-  const metadata = getModelMetadata('deepseek', model || getDefaultModel('deepseek'));
-  if (metadata && !metadata.inputModalities.includes('image')) {
+  const metadata = getModelMetadata('deepseek', model || getDefaultModel('deepseek'), { strict: true });
+  if (metadata?.inputModalities && !metadata.inputModalities.includes('image')) {
     const error = new Error('The selected DeepSeek model does not support image input. Select a vision-capable model.');
     error.code = 'AI_MODEL_UNSUPPORTED_IMAGE';
     throw error;
