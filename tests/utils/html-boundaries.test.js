@@ -43,10 +43,10 @@ describe('HTML token boundaries', () => {
     expect(doc.querySelector('svg,math,script,image')).toBeNull();
   });
 
-  it('resolves relative links while keeping external and query-specific fragments external', () => {
+  it('resolves relative links without guessing whether fragment targets are exported', () => {
     const source = 'https://example.org/story?version=1';
     const doc = documentFor(sanitizeHtml('<a href="../notes#part">Notes</a><a href="https://other.example/story#end">Other</a><a href="?version=2#part">Version</a><a href="?version=1#part">Same</a>', source));
-    expect([...doc.querySelectorAll('a')].map(a => a.getAttribute('href'))).toEqual(['https://example.org/notes#part', 'https://other.example/story#end', 'https://example.org/story?version=2#part', '#part']);
+    expect([...doc.querySelectorAll('a')].map(a => a.getAttribute('href'))).toEqual(['https://example.org/notes#part', 'https://other.example/story#end', 'https://example.org/story?version=2#part', 'https://example.org/story?version=1#part']);
   });
 
   it.each(['java&#x09;script:run()', 'javascript&colon;run()', 'data:text/html,test', 'vbscript:run()'])('rejects executable URL %s', href => {

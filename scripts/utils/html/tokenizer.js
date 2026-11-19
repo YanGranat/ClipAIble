@@ -85,10 +85,6 @@ export function safeLink(value, sourceUrl = '', allowFileProtocol = false) {
   try {
     const resolved = sourceUrl ? new URL(href, sourceUrl) : new URL(href);
     if (!['http:', 'https:', 'mailto:', 'tel:', ...(allowFileProtocol ? ['file:'] : [])].includes(resolved.protocol)) return null;
-    if (sourceUrl && resolved.hash) {
-      const source = new URL(sourceUrl);
-      if (source.protocol === resolved.protocol && source.host === resolved.host && source.pathname === resolved.pathname && source.search === resolved.search) return resolved.hash;
-    }
     return /^[a-z][a-z\d+.-]*:/i.test(href) ? href : resolved.href;
   } catch {
     return !/^[a-z][a-z\d+.-]*:/i.test(protocolProbe) && !href.startsWith('//') ? href : null;
@@ -110,6 +106,7 @@ function safeColor(value) {
 export function renderRich(value, sourceUrl = '', options = {}, block = false) {
   const allowed = block ? BLOCK : INLINE;
   const stack = [];
+  const literal = [];
   let dropped = '';
   let result = '';
   for (const token of tokenizeHtml(value)) {
@@ -117,6 +114,12 @@ export function renderRich(value, sourceUrl = '', options = {}, block = false) {
     if (token.type === 'comment') continue;
     if (token.type === 'text') { result += richText(token.raw); continue; }
     const tag = token.name;
+    if (tag === 'pre' || tag === 'code') {
+      if (token.closing) {
+        const index = literal.lastIndexOf(tag);
+        if (index >= 0) literal.length = index;
+      } else literal.push(tag);
+    }
     if (DROP.has(tag)) { if (!token.closing && !['input', 'embed'].includes(tag)) dropped = tag; continue; }
     if (!allowed.has(tag)) { if (BLOCK_BOUNDARIES.has(tag) && (token.closing || tag === 'br')) result += '<br>'; continue; }
     if (token.closing) {
@@ -135,10 +138,12 @@ export function renderRich(value, sourceUrl = '', options = {}, block = false) {
         const href = safeLink(attr.value, sourceUrl, options.allowFileProtocol);
         attrs.push(`href="${escapeText(href ?? '#')}"`);
         if (href && /^https?:/i.test(href)) attrs.push('target="_blank"', 'rel="noopener noreferrer"');
-      } else if (['id', 'name'].includes(name) && ['a', 'span', 'sub', 'sup'].includes(tag)) {
+      } else if ((['id', 'name'].includes(name) && ['a', 'span', 'sub', 'sup'].includes(tag)) || (block && tag === 'li' && name === 'id')) {
         attrs.push(`${name}="${escapeText(value)}"`);
       } else if ((name === 'title' && ['a', 'abbr'].includes(tag)) || (name === 'datetime' && tag === 'time')) {
         attrs.push(`${name}="${escapeText(value)}"`);
+      } else if (name === 'role' && tag === 'a' && !literal.length && value.trim() === 'doc-backlink') {
+        attrs.push('role="doc-backlink"');
       } else if (name === 'cite' && tag === 'q') {
         const href = safeLink(attr.value, sourceUrl, options.allowFileProtocol);
         if (href) attrs.push(`cite="${escapeText(href)}"`);

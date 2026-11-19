@@ -64,7 +64,6 @@ vi.mock('../../scripts/extraction/prompts.js', () => ({
 vi.mock('../../scripts/extraction/html-utils.js', async (importOriginal) => ({
   ...await importOriginal(),
   splitHtmlIntoChunks: vi.fn((html, size, overlap) => [html]),
-  deduplicateContent: vi.fn((content) => content),
   trimHtmlForAnalysis: vi.fn((html, maxSize) => html.substring(0, Math.min(html.length, maxSize)))
 }));
 
@@ -534,7 +533,7 @@ describe('processing/modes', () => {
 
     it('should process content with extract mode (multiple chunks)', async () => {
       const { callAI } = await import('../../scripts/api/index.js');
-      const { splitHtmlIntoChunks, deduplicateContent } = await import('../../scripts/extraction/html-utils.js');
+      const { splitHtmlIntoChunks } = await import('../../scripts/extraction/html-utils.js');
       
       splitHtmlIntoChunks.mockReturnValueOnce([
         '<html>Chunk 1</html>',
@@ -554,8 +553,6 @@ describe('processing/modes', () => {
         .mockResolvedValueOnce(mockResult1)
         .mockResolvedValueOnce(mockResult2);
 
-      deduplicateContent.mockImplementation((content) => content);
-
       const result = await processWithExtractMode({
         html: '<html>Long content</html>',
         url: 'https://example.com',
@@ -566,7 +563,7 @@ describe('processing/modes', () => {
 
       expect(result.title).toBe('Test Title');
       expect(callAI).toHaveBeenCalledTimes(2);
-      expect(deduplicateContent).toHaveBeenCalled();
+      expect(result.content.map(item => item.text)).toEqual(['Chunk 1 content', 'Chunk 2 content']);
     });
 
     it('should throw error if HTML is missing', async () => {

@@ -15,7 +15,7 @@ export const NAVIGATION_PATTERNS = {
   // Patterns that match if text STARTS with them
   startsWith: [
     // English
-    /^next:/i, /^read more/i, /^keep reading/i, /^subscribe/i,
+    /^next:/i, /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i, /^keep reading/i, /^subscribe/i,
     /^sign (in|up)/i, /^already have an account/i, /^try \d+ days/i,
     /^start (free )?trial/i, /^give a gift/i, /^manage subscription/i,
     /^essential journalism/i, /^support independent journalism/i,
@@ -104,8 +104,8 @@ export const NAVIGATION_PATTERNS = {
   contains: [
     // English
     /previous\s+post/i, /next\s+post/i, /related\s+posts?/i, /recommended\s+posts?/i,
-    /read\s+more/i, /keep\s+reading/i, /you\s+might\s+also\s+like/i,
-    /you\s+may\s+also\s+like/i, /also\s+in\s+/i, /more\s+in\s+/i,
+    /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i, /keep\s+reading/i, /you\s+might\s+also\s+like/i,
+    /you\s+may\s+also\s+like/i, /also\s+in\s+/i, /^more\s+in\s+/i,
     /next\s+article/i, /previous\s+article/i, /next:/i,
     /subscribe\s+(now|today|for)/i, /sign\s+up/i, /start\s+(free\s+)?trial/i,
     /support\s+(independent\s+)?journalism/i, /donate\s+(to|now)/i,

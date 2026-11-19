@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { deduplicateContent } from '../../scripts/extraction/html-utils.js';
+import { mergeChunkContent } from '../../scripts/extraction/html-utils.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { isExcluded, isIcon } from '../../scripts/extraction/extractor/filters.js';
 import { isDecorativeImage, isTrackingPixel, extractBestImageUrl } from '../../scripts/extraction/extractor/images.js';
@@ -47,7 +47,7 @@ describe('Semantic article content', () => {
       { type: 'paragraph', text: 'The second experiment uses a wider range.' },
       { type: 'infobox_end' }
     ];
-    expect(deduplicateContent(content)).toEqual(content);
+    expect(mergeChunkContent([content], [''])).toEqual(content);
   });
 
   it.each(['pre', 'blockquote', 'ul'])('preserves navigation words inside %s content', tag => {

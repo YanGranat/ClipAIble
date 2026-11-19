@@ -70,3 +70,66 @@ it.each([
   expect(output).toContain(`${'#'.repeat(expectedLevel)} ${content.at(-1).text}`);
   expect(output.match(/^# /gm)).toHaveLength(expectedLevel === 1 ? 2 : 1);
 });
+
+it('preserves rich inline spaces through paragraph, list, quote and table export', async () => {
+  const content = [
+    { type: 'paragraph', html: 'Before <em>highlight! </em>After <a href="https://example.org/reference">reference </a>tail.' },
+    { type: 'list', ordered: false, items: [{ html: 'prefix<strong>unit. </strong>end' }] },
+    { type: 'quote', html: 'Start<strong> punctuation.</strong>next' },
+    { type: 'table', cellFormat: 'html', hasHeaders: false, rows: [['Cell <em>value </em>continues']] }
+  ];
+  const before = structuredClone(content);
+  const output = await generateMarkdown({ title: 'Measurements', language: 'en', content });
+  expect(output).toContain('Before *highlight!* After [reference ](https://example.org/reference)tail.');
+  expect(output).toContain('- prefix**unit.** end');
+  expect(output).toContain('> Start <strong>punctuation.</strong>next');
+  expect(output).toContain('Cell *value* continues');
+  expect(content).toEqual(before);
+});
+
+it('exports existing paragraph, inline-reference and list-note identities', async () => {
+  const content = [
+    { type: 'paragraph', id: 'memo-intro', html: 'Text<sup id="memo-ref"><a href="#memo-note">1</a></sup> after.' },
+    { type: 'list', ordered: true, items: [{ id: 'memo-note', html: 'Note <a href="#memo-ref">Back</a>' }] },
+    { type: 'paragraph', id: 'plain-target', format: 'text', text: 'A literal <tag>.' }
+  ];
+  const before = structuredClone(content);
+  const output = await generateMarkdown({ title: 'References', language: 'en', content });
+  for (const id of ['memo-intro', 'memo-ref', 'memo-note', 'plain-target']) {
+    expect(output.split(`id="${id}"`)).toHaveLength(2);
+  }
+  expect(output).toContain('[1](#memo-note)');
+  expect(output).toContain('[Back](#memo-ref)');
+  expect(output).toContain('A literal \\<tag\\>.');
+  expect(content).toEqual(before);
+});
+
+it('preserves rich script positions while keeping plain and code markup literal', async () => {
+  const content = [
+    { type: 'paragraph', html: '2<sup>N</sup> and H<sub>2</sub>O.' },
+    { type: 'list', items: [{ html: 'x<sub>i</sub><sup>2</sup>' }] },
+    { type: 'table', cellFormat: 'html', hasHeaders: false, rows: [['a<sup>b</sup>']] },
+    { type: 'paragraph', format: 'text', text: 'Literal <sup>N</sup>.' },
+    { type: 'code', text: '<sub>i</sub>', language: 'html' }
+  ];
+  const original = structuredClone(content);
+  const output = await generateMarkdown({ title: 'Script positions', language: 'en', content });
+  expect(output).toContain('2<sup>N</sup> and H<sub>2</sub>O.');
+  expect(output).toContain('- x<sub>i</sub><sup>2</sup>');
+  expect(output).toContain('a<sup>b</sup>');
+  expect(output).toContain('Literal \\<sup\\>N\\</sup\\>.');
+  expect(output).toContain('```html\n<sub>i</sub>\n```');
+  expect(content).toEqual(original);
+});
+
+it.each([
+  [false, [['A', 'B'], ['C', 'D']], '|  |  |\n|---|---|\n| A | B |\n| C | D |'],
+  [false, [['A'], ['B', 'C', 'D'], []], '|  |  |  |\n|---|---|---|\n| A |  |  |\n| B | C | D |\n|  |  |  |'],
+  [true, [['Header'], ['A', 'B']], '| Header |  |\n|------|---|\n| A | B |']
+])('preserves all table cells with hasHeaders=%s', async (hasHeaders, rows, expected) => {
+  const content = [{ type: 'table', cellFormat: 'text', hasHeaders, rows }];
+  const original = structuredClone(content);
+  const output = await generateMarkdown({ title: 'Table data', language: 'en', content });
+  expect(output).toContain(expected);
+  expect(content).toEqual(original);
+});

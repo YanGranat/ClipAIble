@@ -147,6 +147,26 @@ export function isNavigationParagraph(text, navPatternsStartsWith, paywallPatter
   return false;
 }
 
+/** Identify subscription controls by their form ownership and explicit action. */
+export function isSubscriptionFormContent(element) {
+  const form = element.closest('form');
+  if (!form) return false;
+  const emailField = Array.from(form.querySelectorAll('input')).some(input =>
+    (input.getAttribute('type') || '').toLowerCase() === 'email' ||
+    (input.getAttribute('name') || '').toLowerCase() === 'email' ||
+    (input.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).includes('email'));
+  if (!emailField) return false;
+  const labels = [form.getAttribute('aria-label') || ''];
+  for (const id of (form.getAttribute('aria-labelledby') || '').split(/\s+/)) {
+    if (id) labels.push(form.ownerDocument.getElementById(id)?.textContent || '');
+  }
+  for (const action of Array.from(form.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"]'))) {
+    labels.push(action.textContent || '', action.getAttribute('aria-label') || '', action.getAttribute('value') || '');
+    for (const part of Array.from(action.querySelectorAll('*'))) labels.push(part.textContent || '');
+  }
+  return labels.some(label => /\b(?:sign[\s-]*up|subscribe|subscription)\b/i.test(label));
+}
+
 /**
  * Check if element should be excluded from extraction
  * This is the main filtering function with many exclusion conditions
@@ -209,15 +229,17 @@ export function isExcluded(win, element, constants) {
     }
   }
   
-  // Exclude iframes (mostly ads)
+  // Exclude form-owned subscription controls.
+  if (isSubscriptionFormContent(element)) return true;
+
+  // Exclude advertising frames
   if (tagName === 'iframe') {
     const iframeElement = /** @type {HTMLIFrameElement} */ (element);
-    const src = (iframeElement.src || '').toLowerCase();
-    const adPatterns = ['ad', 'ads', 'advertisement', 'doubleclick', 'googleads', 'pubmatic'];
-    if (adPatterns.some(pattern => src.includes(pattern))) {
-      return true;
-    }
-    return true; // Exclude all iframes for now
+    try {
+      const hostname = new URL(iframeElement.src, element.ownerDocument.baseURI).hostname.toLowerCase();
+      const adHosts = ['doubleclick.net', 'googleadservices.com', 'pubmatic.com', 'imasdk.googleapis.com'];
+      if (adHosts.some(host => hostname === host || hostname.endsWith('.' + host))) return true;
+    } catch (_) { }
   }
   
   // Exclude footnotes and icons
@@ -336,6 +358,9 @@ export function isExcluded(win, element, constants) {
       if (parentTag === 'nav' || parentTag === 'footer' ||
           parent.getAttribute('role') === 'navigation') return true;
       if (EXCLUDED_CLASSES.some(excluded => {
+        if (excluded === 'next' || excluded === 'prev' || excluded === 'previous') {
+          return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
+        }
         const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`);
       })) return true;

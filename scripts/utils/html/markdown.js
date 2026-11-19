@@ -108,16 +108,60 @@ function markdownText(text) {
   return decodeEntities(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/([\\`*_[\]])/g, '\\$1');
 }
 
-function flattenedText(node) {
+function flattenedText(node, plain = false) {
   const pending = [node];
   let text = '';
   while (pending.length) {
     const current = pending.pop();
-    if (typeof current === 'string') text += markdownText(current);
+    if (typeof current === 'string') text += plain ? decodeEntities(current) : markdownText(current);
     else if (current.name === 'br') text += '\n';
     else for (let index = current.children.length - 1; index >= 0; index--) pending.push(current.children[index]);
   }
   return text;
+}
+
+function boundaryCharacter(value, last = false) {
+  return Array.from(value).at(last ? -1 : 0) || '';
+}
+
+function formattingAtEdge(node, last = false) {
+  let current = node;
+  const value = flattenedText(node, true);
+  if (!value || /\s/u.test(boundaryCharacter(value, last))) return false;
+  while (typeof current !== 'string') {
+    if (['strong', 'b', 'em', 'i', 's', 'del'].includes(current.name)) return true;
+    if (['a', 'code', 'br'].includes(current.name)) return false;
+    const children = last ? [...current.children].reverse() : current.children;
+    current = children.find(child => flattenedText(child, true));
+    if (current === undefined) return false;
+  }
+  return false;
+}
+
+function inlineContexts(children, outer = { before: '', after: '', beforeFormatting: false, afterFormatting: false }) {
+  const texts = children.map(child => flattenedText(child, true));
+  const contexts = texts.map(() => ({ before: '', after: '', beforeFormatting: false, afterFormatting: false }));
+  let previous = outer.before;
+  let previousFormatting = outer.beforeFormatting;
+  for (let index = 0; index < texts.length; index++) {
+    contexts[index].before = previous;
+    contexts[index].beforeFormatting = previousFormatting;
+    if (texts[index]) {
+      previous = boundaryCharacter(texts[index], true);
+      previousFormatting = formattingAtEdge(children[index], true);
+    }
+  }
+  let next = outer.after;
+  let nextFormatting = outer.afterFormatting;
+  for (let index = texts.length - 1; index >= 0; index--) {
+    contexts[index].after = next;
+    contexts[index].afterFormatting = nextFormatting;
+    if (texts[index]) {
+      next = boundaryCharacter(texts[index]);
+      nextFormatting = formattingAtEdge(children[index]);
+    }
+  }
+  return contexts;
 }
 
 export function richMarkdown(value, sourceUrl = '') {
@@ -131,6 +175,13 @@ export function richMarkdown(value, sourceUrl = '') {
     stack.at(-1).children.push(node);
     if (!['br', 'hr'].includes(node.name)) stack.push(node);
   }
+  const emittedIds = new Set();
+  const renderAnchor = node => node.attrs.filter(attr => ['id', 'name'].includes(attr.name)).map(attr => {
+    const id = decodeEntities(attr.value);
+    if (!id || emittedIds.has(id)) return '';
+    emittedIds.add(id);
+    return `<a id="${escapeText(id)}"></a>`;
+  }).join('');
   const renderList = (node, indentation = '', depth = 0) => {
     if (depth > 64) return flattenedText(node);
     let number = Number(node.attrs.find(attr => attr.name === 'start')?.value) || 1;
@@ -140,7 +191,7 @@ export function richMarkdown(value, sourceUrl = '') {
       if (child.name !== 'li') { output.push(indentation + render(child, depth + 1)); continue; }
       const marker = node.name === 'ol' ? `${number++}. ` : '- ';
       const continuation = indentation + ' '.repeat(marker.length);
-      let paragraph = '';
+      let paragraph = renderAnchor(child);
       let started = false;
       const flush = () => {
         if (!paragraph.trim()) return;
@@ -149,26 +200,43 @@ export function richMarkdown(value, sourceUrl = '') {
         paragraph = '';
         started = true;
       };
-      for (const part of child.children) {
+      const contexts = inlineContexts(child.children);
+      for (const [index, part] of child.children.entries()) {
         if (typeof part !== 'string' && ['ul', 'ol'].includes(part.name)) {
           flush();
           if (!started) { output.push(indentation + marker.trimEnd()); started = true; }
           output.push(renderList(part, continuation, depth + 1));
-        } else paragraph += render(part, depth + 1);
+        } else paragraph += render(part, depth + 1, contexts[index]);
       }
       flush();
       if (!started) output.push(indentation + marker.trimEnd());
     }
     return output.join('\n');
   };
-  const render = (node, depth = 0) => {
+  const renderContent = (node, depth = 0, context = { before: '', after: '', beforeFormatting: false, afterFormatting: false }) => {
     if (typeof node === 'string') return markdownText(node);
     if (depth > 64) return flattenedText(node);
-    if (node.name === 'ul' || node.name === 'ol') return '\n' + renderList(node, '', depth) + '\n';
-    const inner = node.children.map(child => render(child, depth + 1)).join('');
+    if (node.name === 'ul' || node.name === 'ol') return '\n\n' + renderList(node, '', depth) + '\n\n';
+    const block = ['p', 'blockquote', 'tr', 'li', 'pre'].includes(node.name) || /^h[1-6]$/.test(node.name);
+    const contexts = inlineContexts(node.children, block ? undefined : context);
+    const inner = node.children.map((child, index) => render(child, depth + 1, contexts[index])).join('');
     if (['strong', 'b', 'em', 'i', 's', 'del'].includes(node.name)) {
       const marker = ['strong', 'b'].includes(node.name) ? '**' : ['s', 'del'].includes(node.name) ? '~~' : '*';
-      return inner.trim() ? `${marker}${inner.trim()}${marker}` : '';
+      const value = inner.trim();
+      if (!value) return inner;
+      const leading = inner.slice(0, inner.length - inner.trimStart().length);
+      const trailing = inner.slice(inner.trimEnd().length);
+      const left = leading.at(-1) || context.before;
+      const right = trailing[0] || context.after;
+      const whitespace = char => !char || /\s/u.test(char);
+      const punctuation = char => !!char && /[\p{P}\p{S}]/u.test(char);
+      const canOpen = !punctuation(boundaryCharacter(value)) || whitespace(left) || punctuation(left);
+      const canClose = !punctuation(boundaryCharacter(value, true)) || whitespace(right) || punctuation(right);
+      const nestedDelimiter = value.startsWith(marker[0]) || value.endsWith(marker[0]);
+      const joinedDelimiter = (!leading && context.beforeFormatting) || (!trailing && context.afterFormatting);
+      const tag = marker === '**' ? 'strong' : marker === '*' ? 'em' : 's';
+      const formatted = canOpen && canClose && !nestedDelimiter && !joinedDelimiter ? `${marker}${value}${marker}` : `<${tag}>${value}</${tag}>`;
+      return leading + formatted + trailing;
     }
     if (node.name === 'code') {
       const code = node.children.map(child => typeof child === 'string' ? decodeEntities(child) : render(child, depth)).join('');
@@ -177,6 +245,7 @@ export function richMarkdown(value, sourceUrl = '') {
       return `${marker}${code}${marker}`;
     }
     if (node.name === 'pre') return '\n\n' + inner + '\n\n';
+    if (node.name === 'sup' || node.name === 'sub') return `<${node.name}>${inner}</${node.name}>`;
     if (node.name === 'a') {
       const href = node.attrs.find(attr => attr.name === 'href');
       return href ? `[${inner}](${decodeEntities(href.value).replace(/\(/g, '%28').replace(/\)/g, '%29')})` : inner;
@@ -187,5 +256,7 @@ export function richMarkdown(value, sourceUrl = '') {
     if (['p', 'blockquote', 'tr'].includes(node.name)) return '\n' + inner + '\n';
     return inner;
   };
-  return render(root).replace(/([\p{L}\p{N}.,;:!?)\]])(\*\*)(?=[\p{L}\p{N}])/gu, '$1$2 ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const render = (node, depth = 0, context = { before: '', after: '', beforeFormatting: false, afterFormatting: false }) =>
+    typeof node === 'string' ? markdownText(node) : renderAnchor(node) + renderContent(node, depth, context);
+  return render(root).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }

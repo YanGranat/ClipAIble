@@ -3,7 +3,9 @@
 
 import { log } from '../utils/logging.js';
 import { CONFIG } from '../utils/config.js';
-import { stripHtml } from '../utils/html/html.js';
+import { renderContentText, stripHtml } from '../utils/html/html.js';
+import { decodeEntities, escapeText, tokenizeHtml } from '../utils/html/tokenizer.js';
+import { collectRenderedFragmentIds } from '../generation/source-fragments.js';
 
 /**
  * Trim HTML for AI analysis - removes noise while preserving structure
@@ -109,101 +111,175 @@ export function splitHtmlIntoChunks(html, chunkSize = CONFIG.CHUNK_SIZE, overlap
   return chunks;
 }
 
-/**
- * Extract plain text from a single sub-item (for items[].html / items[].text)
- */
-function extractSubItemText(sub) {
-  if (typeof sub === 'string') return sub.trim();
-  if (sub && (sub.html != null || sub.text != null)) {
-    const raw = sub.html ?? sub.text ?? '';
-    if (typeof raw !== 'string') return '';
-    if (!/<[^>]+>/.test(raw)) return raw.trim();
-    return stripHtml(raw).trim();
+/** @param {unknown} value @returns {unknown} */
+function canonicalChunkValue(value) {
+  if (Array.isArray(value)) return value.map(canonicalChunkValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalChunkValue(value[key])]));
   }
-  return '';
+  return value;
 }
 
-/**
- * Extract plain text from content item for deduplication
- * Optimized to avoid expensive stripHtml when possible.
- * When item has items[] (selector-mode blocks), extract text from each .html/.text so
- * different sections get different keys instead of "[object Object]|...".
- */
-function extractTextForDedup(item) {
-  if (item.text) {
-    // Fast path: if text doesn't contain HTML tags, use as-is
-    if (!/<[^>]+>/.test(item.text)) {
-      return item.text.trim();
-    }
-    // Slow path: strip HTML for items with tags
-    return stripHtml(item.text).trim();
-  }
-  if (item.src) return item.src;
-  if (Array.isArray(item.items)) {
-    const parts = item.items.map(extractSubItemText).filter(Boolean);
-    return parts.join('|');
-  }
-  return '';
+function normalizedWitness(value) {
+  return value.replace(/\s+/gu, ' ').trim();
 }
 
-/**
- * Remove items with identical types and normalized text, preserving first occurrence order.
- * @param {Array} content - Extracted content items
- * @param {{preserveQuoteOccurrences?: boolean}} [options] - Preserve independently owned DOM quotations
- * @returns {Array} Deduplicated content
- */
-export function deduplicateContent(content, { preserveQuoteOccurrences = false } = {}) {
-  log('deduplicateContent', { inputCount: content.length });
-  
-  const result = [];
-  const seen = new Set();
-  const duplicatesFound = [];
+function imageWitness(src, sourceUrl) {
+  try { return '\0image:' + JSON.stringify(new URL(src, sourceUrl || undefined).href) + '\0'; }
+  catch { return '\0image:' + JSON.stringify(src) + '\0'; }
+}
 
-  for (const item of content) {
-    const type = item.type || 'unknown';
-    if (type === 'heading' || type === 'table' || type === 'separator' ||
-        type === 'divider' || type === 'hr' || type.startsWith('infobox_')) {
-      result.push(item);
-      continue;
-    }
-    const sample = extractTextForDedup(item);
-    
-    // Skip empty items
-    if (!sample) {
-      continue;
-    }
+function itemWitness(item, sourceUrl) {
+  if (!item || typeof item !== 'object') return null;
+  if (item.type === 'image') return typeof item.src === 'string' ? imageWitness(item.src, sourceUrl) : null;
+  const plain = value => typeof value === 'string' ? value : '';
+  const inline = value => typeof value === 'string' ? stripHtml(value) : '';
+  const text = value => value?.format === 'text' || value?.type === 'code' ? plain(value.text) : inline(value?.html ?? value?.text);
+  const value = Array.isArray(item.items) ? item.items.map(sub => typeof sub === 'string' ? inline(sub) : text(sub)).join(' ') : text(item);
+  return value ? value.replace(/\0/g, '\0\0') : null;
+}
 
-    if (preserveQuoteOccurrences && type === 'quote') {
-      result.push(item);
-      continue;
-    }
-    
-    const key = `${type}:${sample.length}:${sample}`;
-
-    if (!seen.has(key)) {
-      seen.add(key);
-      result.push(item);
-    } else {
-      // Log duplicate for debugging (only first few to avoid log spam)
-      if (duplicatesFound.length < 5) {
-        duplicatesFound.push({
-          type,
-          textPreview: sample.substring(0, 100),
-          textLength: sample.length
-        });
+function htmlWitness(html, images, sourceUrl) {
+  const marked = tokenizeHtml(html).map(token => {
+    if (token.type === 'text') return token.raw.replace(/\0/g, '\0\0');
+    if (token.type === 'tag' && !token.closing && token.name === 'img') {
+      for (const name of ['src', 'data-src', 'data-original', 'data-lazy-src']) {
+        const attr = token.attrs.find(attr => attr.name === name);
+        const marker = attr && imageWitness(decodeEntities(attr.value), sourceUrl);
+        if (marker && images.has(marker)) return ' ' + escapeText(marker) + ' ';
       }
     }
-  }
+    return token.raw;
+  }).join('');
+  return normalizedWitness(stripHtml(marked));
+}
 
-  const removed = content.length - result.length;
-  log('deduplicateContent result', { 
-    outputCount: result.length, 
-    removed,
-    duplicateRate: content.length > 0 ? `${Math.round((removed / content.length) * 100)}%` : '0%',
-    duplicatesPreview: duplicatesFound
-  });
-  
+function occursOnce(haystack, needle) {
+  const first = haystack.indexOf(needle);
+  return first >= 0 && haystack.indexOf(needle, first + 1) < 0;
+}
+
+function longestChunkOverlap(previous, current) {
+  const prefix = new Array(current.length).fill(0);
+  for (let index = 1; index < current.length; index++) {
+    let matched = prefix[index - 1];
+    while (matched > 0 && current[index] !== current[matched]) matched = prefix[matched - 1];
+    if (current[index] === current[matched]) matched++;
+    prefix[index] = matched;
+  }
+  let matched = 0;
+  for (const key of previous) {
+    while (matched > 0 && (matched === current.length || key !== current[matched])) matched = prefix[matched - 1];
+    if (key === current[matched]) matched++;
+  }
+  return matched;
+}
+
+/**
+ * Merge only a repeated suffix/prefix witnessed in the adjacent HTML overlap.
+ * Independent occurrences elsewhere, ambiguous source repetitions and changed
+ * rich content remain intact. Inputs are never mutated.
+ * @param {Array<Array<import('../types.js').ContentItem>>} chunkContents
+ * @param {Array<string>} sourceChunks
+ * @param {{overlap?: number, sourceUrl?: string}} [options]
+ * @returns {Array<import('../types.js').ContentItem>}
+ */
+export function mergeChunkContent(chunkContents, sourceChunks, { overlap = CONFIG.CHUNK_OVERLAP, sourceUrl = '' } = {}) {
+  const result = [];
+  const keys = chunkContents.map(content => content.map(item => JSON.stringify(canonicalChunkValue(item))));
+  for (let index = 0; index < chunkContents.length; index++) {
+    const current = chunkContents[index];
+    let repeated = 0;
+    const previousHtml = sourceChunks[index - 1] ?? '';
+    const currentHtml = sourceChunks[index] ?? '';
+    const sharedLength = Math.min(overlap, previousHtml.length, currentHtml.length);
+    if (index > 0 && sharedLength > 0 && previousHtml.endsWith(currentHtml.slice(0, sharedLength))) {
+      const count = longestChunkOverlap(keys[index - 1], keys[index]);
+      if (count > 0) {
+        const candidate = current.slice(0, count);
+        const parts = candidate.map(item => itemWitness(item, sourceUrl));
+        if (parts.every(part => part !== null)) {
+          const needle = normalizedWitness(parts.join(' '));
+          const images = new Set(candidate.filter(item => item.type === 'image').map(item => imageWitness(item.src, sourceUrl)));
+          if (needle && occursOnce(htmlWitness(currentHtml.slice(0, sharedLength), images, sourceUrl), needle) &&
+              occursOnce(htmlWitness(previousHtml, images, sourceUrl), needle) &&
+              occursOnce(htmlWitness(currentHtml, images, sourceUrl), needle)) repeated = count;
+        }
+        // An ambiguous longest match must not fall back to a shorter coincidence.
+      }
+    }
+    result.push(...current.slice(repeated));
+  }
   return result;
+}
+
+function sourceMainHeadings(html) {
+  const nonReading = new Set(['head', 'script', 'style', 'template', 'noscript', 'textarea', 'svg', 'math']);
+  const literal = new Set(['pre', 'code', 'kbd', 'samp', 'xmp', 'plaintext']);
+  const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+  const stack = [];
+  const headings = [];
+  let active = null;
+  for (const token of tokenizeHtml(html)) {
+    const parent = stack.at(-1);
+    if (token.type === 'text') {
+      if (active && !parent?.suppressed) active.parts.push(token.raw);
+      continue;
+    }
+    if (token.type !== 'tag') continue;
+    if (token.closing) {
+      let index = stack.length - 1;
+      while (index >= 0 && stack[index].name !== token.name) index--;
+      if (index < 0) continue;
+      const frames = stack.slice(index);
+      if (active && frames.some(frame => frame.heading === active)) {
+        if (token.name === 'h1' && stack[index].heading === active && !active.invalid) {
+          headings.push(normalizedWitness(stripHtml(active.parts.join(''))));
+        }
+        active = null;
+      } else if (active && !parent?.suppressed) active.parts.push(token.raw);
+      stack.length = index;
+      continue;
+    }
+    const attrs = new Map();
+    for (const attr of token.attrs) if (!attrs.has(attr.name)) attrs.set(attr.name, decodeEntities(attr.value));
+    const style = String(attrs.get('style') ?? '');
+    const hidden = attrs.has('hidden') || attrs.get('aria-hidden')?.toLowerCase() === 'true' ||
+      /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!\s*important)?\s*(?:;|$)/i.test(style);
+    const suppressed = parent?.suppressed || nonReading.has(token.name) || hidden;
+    const isLiteral = parent?.literal || literal.has(token.name);
+    if (token.name === 'plaintext' && !parent?.suppressed) break;
+    if (active && /^h[1-6]$/.test(token.name)) active.invalid = true;
+    let heading = null;
+    if (token.name === 'h1' && !suppressed && !isLiteral) {
+      if (active) active.invalid = true;
+      else { heading = { parts: [], invalid: false }; active = heading; }
+    } else if (active && !suppressed) active.parts.push(token.raw);
+    if (!voidTags.has(token.name)) stack.push({ name: token.name, suppressed, literal: isLiteral, heading });
+  }
+  return headings;
+}
+
+/**
+ * Remove one witnessed article header already represented by title metadata.
+ * Ambiguous source/response headings and later independent headings are kept.
+ * @param {Array<import('../types.js').ContentItem>} content
+ * @param {string} title
+ * @param {string} sourceHtml
+ * @returns {Array<import('../types.js').ContentItem>}
+ */
+export function removeExtractedMainTitle(content, title, sourceHtml) {
+  const target = normalizedWitness(String(title ?? ''));
+  if (!target || sourceMainHeadings(sourceHtml).filter(value => value === target).length !== 1) return content;
+  const matches = content.map((item, index) => {
+    if (item.type !== 'heading' || item.level !== 1) return -1;
+    const value = item.format === 'text' ? item.text ?? '' : stripHtml(item.html ?? item.text ?? '');
+    return normalizedWitness(value) === target ? index : -1;
+  }).filter(index => index >= 0);
+  // Metadata titles do not serialize an authored fragment ID. Keep that owner.
+  if (matches.length === 1 && (String(content[matches[0]].id ?? '') !== '' ||
+      collectRenderedFragmentIds(renderContentText(content[matches[0]])).size > 0)) return content;
+  return matches.length === 1 ? content.filter((_, index) => index !== matches[0]) : content;
 }
 
 /**

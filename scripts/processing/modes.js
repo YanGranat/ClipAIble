@@ -14,7 +14,7 @@ import {
   SELECTOR_SYSTEM_PROMPT,
   buildSelectorUserPrompt
 } from '../extraction/prompts.js';
-import { splitHtmlIntoChunks, deduplicateContent, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
+import { splitHtmlIntoChunks, mergeChunkContent, removeExtractedMainTitle, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
 import { cleanTitleFromServiceTokens, stripHtml } from '../utils/html.js';
 import { detectLanguageByCharacters } from '../translation/index.js';
 import { extractAutomaticallyInlined } from '../extraction/automatic.js';
@@ -35,9 +35,11 @@ import {
  * @param {string} title - Page title
  * @param {string} apiKey - API key
  * @param {string} model - Model name
+ * @param {import('../types.js').AIRequestOptions} [options] - Captured request ownership and routing
+ * @param {{ previousSelectors: unknown } | null} [repairFeedback] - Failed selector application
  * @returns {Promise<Object>} Selectors object
  */
-export async function getSelectorsFromAI(html, url, title, apiKey, model, options = {}) {
+export async function getSelectorsFromAI(html, url, title, apiKey, model, options = {}, repairFeedback = null) {
   logDebug('getSelectorsFromAI called', { url, model, htmlLength: html.length });
   
   // SECURITY: Validate HTML size before processing
@@ -49,7 +51,10 @@ export async function getSelectorsFromAI(html, url, title, apiKey, model, option
   }
   
   const systemPrompt = SELECTOR_SYSTEM_PROMPT;
-  const userPrompt = buildSelectorUserPrompt(html, url, title);
+  let userPrompt = buildSelectorUserPrompt(html, url, title);
+  if (repairFeedback) {
+    userPrompt += `\n\nThe previous selector set returned no article content when applied to this page. Recheck the positive selectors and exclusions against the same HTML without assuming either has priority. Return a corrected selector set in the required JSON format.\nPrevious selector set:\n${JSON.stringify(repairFeedback.previousSelectors)}`;
+  }
   
   logDebug('Sending request to AI...', { model, promptLength: userPrompt.length });
   
@@ -778,7 +783,7 @@ export async function processWithExtractMode(data) {
     result = await processMultipleChunks(chunks, url, title, apiKey, model, data);
   }
   await checkCancellation('extracted content publication');
-  if (Array.isArray(result.content)) result.content = filterExtractionNoise(result.content);
+  if (Array.isArray(result.content)) result.content = filterExtractionNoise(removeExtractedMainTitle(result.content, result.title || title, html));
   
   log(`✅ AI Extract mode complete: ${result.content?.length || 0} content items extracted`, { title: result.title });
 
@@ -864,6 +869,7 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
   });
   
   const allContent = [];
+  const contentByChunk = [];
   let articleTitle = title;
   let publishDate = '';
   let articleAuthor = '';
@@ -959,6 +965,7 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
       if (resultAny.content && Array.isArray(resultAny.content)) {
         allContent.push(...resultAny.content);
       }
+      contentByChunk.push(Array.isArray(resultAny.content) ? resultAny.content : []);
     } catch (error) {
       logError(`Failed to process chunk ${i + 1}`, error);
       throw error;
@@ -1007,7 +1014,7 @@ async function processMultipleChunks(chunks, url, title, apiKey, model, data) {
     });
   }
   
-  const deduplicated = deduplicateContent(allContent);
+  const deduplicated = mergeChunkContent(contentByChunk, chunks, { sourceUrl: url });
   
   if (CONFIG.LOG_LEVEL === 0 && CONFIG.VERBOSE_LOGGING) {
     logDebug('=== FULL DEDUPLICATED CONTENT (MULTIPLE CHUNKS) ===', {
@@ -1379,20 +1386,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     log('No subtitle debug info available');
   }
   
-  // CRITICAL: Deduplicate content to remove duplicates from Twitter/X processing
-  // This ensures that div.longform-unstyled and div.public-DraftStyleDefault-block duplicates are removed
   if (injectionResult.content && injectionResult.content.length > 0) {
-    const originalCount = injectionResult.content.length;
-    injectionResult.content = deduplicateContent(injectionResult.content, { preserveQuoteOccurrences: true });
-    let duplicatesRemoved = originalCount - injectionResult.content.length;
-    if (duplicatesRemoved > 0) {
-      log('✅ Deduplication applied to selector mode content', {
-        originalCount,
-        deduplicatedCount: injectionResult.content.length,
-        duplicatesRemoved,
-        duplicateRate: `${Math.round((duplicatesRemoved / originalCount) * 100)}%`
-      });
-    }
     injectionResult.content = filterExtractionNoise(injectionResult.content);
   }
   
@@ -1441,79 +1435,57 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     }
   }
 
-  if (!fromCache) {
-    // Check if processing was cancelled before AI analysis
-    await checkCancellation('AI selector analysis');
+  let selectorAiCalls = 0;
+  let extractionAttempted = false;
+  let htmlForAnalysis;
+  let requestOptions;
+  let repairFeedback = null;
+  let extractedContent;
+  while (true) {
+    if (!selectors) {
+      await checkCancellation('AI selector analysis');
+      await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', extractionAttempted ? 5 : 3);
 
-    await updateProgress(PROCESSING_STAGES.ANALYZING, 'stageAnalyzing', 3);
+      if (htmlForAnalysis === undefined) {
+        const provider = getProviderFromModel(model);
+        const isQwen = provider === 'openrouter' && model && model.toLowerCase().includes('qwen');
+        const maxHtmlLength = (provider === 'deepseek' || isQwen) ? 200000 : CONFIG.MAX_HTML_FOR_ANALYSIS;
+        htmlForAnalysis = trimHtmlForAnalysis(html, maxHtmlLength);
+        requestOptions = getAIRequestOptions(data);
+      }
 
-    // Trim HTML for analysis
-    // DeepSeek and Qwen have smaller context windows, use 200k instead of 450k
-    const provider = getProviderFromModel(model);
-    const isQwen = provider === 'openrouter' && model && model.toLowerCase().includes('qwen');
-    const maxHtmlLength = (provider === 'deepseek' || isQwen) ? 200000 : CONFIG.MAX_HTML_FOR_ANALYSIS;
-    
-    log('Trimming HTML for analysis...', { provider, maxHtmlLength });
-    const htmlForAnalysis = trimHtmlForAnalysis(html, maxHtmlLength);
-    const htmlUsagePercent = Math.round((html.length / maxHtmlLength) * 100);
-    log('Trimmed HTML', { 
-      originalLength: html.length, 
-      trimmedLength: htmlForAnalysis.length,
-      limit: maxHtmlLength,
-      provider,
-      usage: `${htmlUsagePercent}%`,
-      warning: htmlUsagePercent > 80 ? '⚠️ Close to limit' : 'OK'
-    });
-    
-    // Get selectors from AI
-    log('🤖 Requesting selectors from AI...');
+      selectorAiCalls++;
+      selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model, requestOptions, repairFeedback);
+      if (!selectors) throw new Error(tSync('errorAiEmptySelectors', uiLang));
+    }
+
+    await checkCancellation('content extraction');
+    await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
+    extractionAttempted = true;
+
     try {
-      selectors = await getSelectorsFromAI(htmlForAnalysis, url, title, apiKey, model, getAIRequestOptions(data));
-      log('✅ Selectors received from AI', selectors);
+      extractedContent = await extractContentWithSelectors(tabId, selectors, url, extractFromPageInlined);
+      await checkCancellation('selector extraction completion');
+      if (Array.isArray(extractedContent?.content) && extractedContent.content.length === 0) {
+        throw Object.assign(new Error(tSync('errorContentEmpty', uiLang)), {
+          code: 'SELECTOR_MISS', translationKey: 'errorContentEmpty', translationParams: {}, retryable: false
+        });
+      }
+      break;
     } catch (error) {
-      logError('Failed to get selectors from AI', error);
+      await checkCancellation('selector recovery');
+      if (fromCache) {
+        await invalidateCache(url);
+        fromCache = false;
+      }
+      if (error.code === 'SELECTOR_MISS' && selectorAiCalls < 2) {
+        repairFeedback = { previousSelectors: selectors };
+        selectors = null;
+        continue;
+      }
+      logError('Failed to extract content with selectors', error);
       throw error;
     }
-    
-    if (!selectors) {
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('errorAiEmptySelectors', uiLang));
-    }
-  }
-  
-  // Check if processing was cancelled before content extraction
-  await checkCancellation('content extraction');
-  
-  await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
-  
-  // Extract content using selectors
-  log('🔍 Extracting content using selectors...', { tabId });
-  
-  
-  let extractedContent;
-  try {
-    extractedContent = await extractContentWithSelectors(tabId, selectors, url, extractFromPageInlined);
-    
-    log(`✅ Content extracted: ${extractedContent?.content?.length || 0} items`, { 
-      title: extractedContent?.title
-    });
-  } catch (error) {
-    // Invalidate cache if extraction failed with cached selectors
-    if (fromCache) {
-      logWarn('⚠️ FALLBACK: Extraction failed with cached selectors - invalidating cache and will retry', {
-        reason: 'Cached selectors failed to extract content',
-        method: 'cache invalidation + retry',
-        impact: 'Will request new selectors from AI on next attempt',
-        url
-      });
-      await invalidateCache(url);
-      if (error.code === 'SELECTOR_MISS') {
-        await checkCancellation('selector cache recovery');
-        return processWithSelectorMode({ ...data, useCache: false }, extractFromPageInlined);
-      }
-    }
-    logError('Failed to extract content with selectors', error);
-    throw error;
   }
   
   if (!extractedContent || !extractedContent.content) {
@@ -1522,17 +1494,9 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     throw new Error(tSync('errorNoContentExtracted', uiLang));
   }
   
-  if (extractedContent.content.length === 0) {
-    if (fromCache) await invalidateCache(url);
-    const selectorsStr = JSON.stringify(selectors);
-    const truncated = selectorsStr.length > 200 ? selectorsStr.substring(0, 200) + '...' : selectorsStr;
-    logError('Extracted content is empty', { selectors: truncated });
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('errorContentEmpty', uiLang));
-  }
-  
   // Cache selectors after successful extraction ONLY
   // If extraction failed, cache is already invalidated above
+  await checkCancellation('selector cache update');
   try {
     if (!fromCache) {
       await cacheSelectors(url, selectors);

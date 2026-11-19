@@ -10,7 +10,7 @@ import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
 import { DEFAULT_GOOGLE_TTS_MODEL, getDefaultTtsVoice } from './tts-catalog.js';
-import { PROCESSING_STAGES, getScopedUpdateState } from '../state/processing.js';
+import { PROCESSING_STAGES, getScopedUpdateState, markProcessingRequestStarted } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { getUILanguageCached, checkCancellation } from '../utils/pipeline-helpers.js';
 
@@ -638,15 +638,18 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
     for (let i = 0; i < expandedChunks.length; i++) {
       await checkCancellation(`TTS chunk ${i + 1}/${expandedChunks.length}`, options.processingRunId);
       const chunk = expandedChunks[i];
+      if (provider !== 'openai') markProcessingRequestStarted(options.processingRunId);
       const audioBuffer = provider === 'openai'
         ? await callWithRetry(async () => {
           await checkCancellation('TTS retry', options.processingRunId);
+          markProcessingRequestStarted(options.processingRunId);
           return openaiTTS(chunk.text, apiKey, options);
         }, { maxRetries: CONFIG.RETRY_MAX_ATTEMPTS, delays: CONFIG.RETRY_DELAYS,
           retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
           signal: options.signal, shouldRetry: error => error.retryable === false ? false : undefined })
         : await textToSpeech(chunk.text, apiKey, options);
       await checkCancellation('TTS response', options.processingRunId);
+      markProcessingRequestStarted(options.processingRunId);
       audioBuffers.push(audioBuffer);
       processedChunks = i + 1;
     }

@@ -3,6 +3,7 @@
 // Extracts title, author, and publication date from page
 
 import { cleanHeadingText } from './text-utils.js';
+import { readArticleMetadataText } from './dom-utils.js';
 
 /**
  * Check if h1 looks like a valid article title (not site name)
@@ -11,7 +12,7 @@ import { cleanHeadingText } from './text-utils.js';
  */
 export function isValidArticleTitle(h1Element) {
   if (!h1Element || !h1Element.textContent) return false;
-  const text = (h1Element.textContent || '').trim();
+  const text = readArticleMetadataText(h1Element);
   if (text.length < 5) return false;
   
   const siteNamePatterns = ['home', 'about', 'contact', 'blog', 'news', 'archive'];
@@ -129,6 +130,40 @@ export function parseDateToISO(dateStr) {
   return null;
 }
 
+/** Read author names from structured data for the current article. */
+export function readStructuredArticleAuthor(doc, baseUrl) {
+  const records = [];
+  for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
+    try {
+      const data = JSON.parse(script.textContent || '');
+      const pending = Array.isArray(data) ? [...data] : [data];
+      while (pending.length) {
+        const record = pending.shift();
+        if (!record || typeof record !== 'object') continue;
+        records.push(record);
+        if (Array.isArray(record['@graph'])) pending.push(...record['@graph']);
+        if (record.mainEntity && typeof record.mainEntity === 'object') pending.push(record.mainEntity);
+      }
+    } catch (_) { }
+  }
+  const canonical = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') || baseUrl;
+  const pageIdentity = value => { const url = new URL(value, baseUrl); url.hash = ''; return url.href; };
+  for (const record of records) {
+    const types = Array.isArray(record['@type']) ? record['@type'] : [record['@type']];
+    if (!types.some(type => typeof type === 'string' && /(?:Article|BlogPosting)$/.test(type))) continue;
+    const identity = record.url || (typeof record.mainEntityOfPage === 'string' ? record.mainEntityOfPage : record.mainEntityOfPage?.['@id']);
+    try { if (identity && pageIdentity(identity) !== pageIdentity(canonical)) continue; } catch (_) { continue; }
+    const authors = Array.isArray(record.author) ? record.author : [record.author];
+    const names = authors.map(author => {
+      if (typeof author === 'string') return author;
+      const resolved = author?.name ? author : records.find(candidate => author?.['@id'] && candidate['@id'] === author['@id']);
+      return typeof resolved?.name === 'string' ? resolved.name : '';
+    }).map(name => name.trim()).filter(Boolean);
+    if (names.length) return names.join(', ');
+  }
+  return '';
+}
+
 /**
  * Extract metadata (title, author, date) from document
  * @param {Document} doc - Document object
@@ -146,14 +181,14 @@ export function extractMetadata(doc, baseUrl) {
   // 1. h1 inside article
   const h1InArticle = doc.querySelector('article h1');
   if (h1InArticle && isValidArticleTitle(h1InArticle)) {
-    metadata.title = cleanHeadingText(h1InArticle.textContent || '');
+    metadata.title = cleanHeadingText(readArticleMetadataText(h1InArticle));
   }
   
   // 2. h1 inside main
   if (!metadata.title) {
     const h1InMain = doc.querySelector('main h1');
     if (h1InMain && isValidArticleTitle(h1InMain)) {
-      metadata.title = cleanHeadingText(h1InMain.textContent || '');
+      metadata.title = cleanHeadingText(readArticleMetadataText(h1InMain));
     }
   }
   
@@ -161,7 +196,7 @@ export function extractMetadata(doc, baseUrl) {
   if (!metadata.title) {
     const firstH1 = doc.querySelector('h1');
     if (firstH1 && isValidArticleTitle(firstH1)) {
-      metadata.title = cleanHeadingText(firstH1.textContent || '');
+      metadata.title = cleanHeadingText(readArticleMetadataText(firstH1));
     }
   }
   
@@ -178,21 +213,20 @@ export function extractMetadata(doc, baseUrl) {
     '[rel="author"]',
     '.author', '.byline', '.meta-author',
     '[itemprop="author"]',
-    'a[rel="author"]',
-    'a[href*="/author/"]',
-    'a[href*="/profile/"]'
+    'a[rel="author"]'
   ];
   
   for (const selector of authorSelectors) {
     try {
-      const element = doc.querySelector(selector);
-      if (element) {
+      const elements = Array.from(doc.querySelectorAll(selector));
+      for (const element of elements) {
+        if (element.closest('[hidden], [aria-hidden="true"]')) continue;
         let authorText = '';
         
         if (element.tagName === 'META') {
           authorText = element.getAttribute('content') || '';
         } else {
-          authorText = (element.textContent || '').trim();
+          authorText = readArticleMetadataText(element);
         }
         
         // Clean "By " prefix
@@ -214,7 +248,19 @@ export function extractMetadata(doc, baseUrl) {
           }
         }
       }
+      if (metadata.author) break;
     } catch (e) { }
+  }
+
+  if (!metadata.author) metadata.author = readStructuredArticleAuthor(doc, baseUrl);
+  if (!metadata.author) {
+    for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {
+      try {
+        if (new URL(element.getAttribute('href'), baseUrl).origin !== new URL(baseUrl).origin) continue;
+        const text = readArticleMetadataText(element).replace(/^by\s+/i, '').trim();
+        if (text && !text.startsWith('http') && text.length < 100) { metadata.author = text; break; }
+      } catch (_) { }
+    }
   }
   
   // Date extraction

@@ -79,11 +79,11 @@ describe('sanitizeHtml', () => {
     expect(result).toContain('rel="noopener noreferrer"');
   });
 
-  it('should convert internal links to anchors', () => {
+  it('should preserve absolute references until document targets are known', () => {
     const html = '<a href="https://example.com/page#anchor">Link</a>';
     const result = sanitizeHtml(html, 'https://example.com/page');
-    expect(result).toContain('href="#anchor"');
-    expect(result).not.toContain('target="_blank"');
+    expect(result).toContain('href="https://example.com/page#anchor"');
+    expect(sanitizeHtml('<a href="#anchor">Local</a>')).toContain('href="#anchor"');
   });
 });
 
@@ -180,9 +180,9 @@ describe('htmlToMarkdown', () => {
     expect(htmlToMarkdown('Line1<br>Line2')).toBe('Line1\nLine2');
   });
 
-  it('should insert space after closing ** when followed by letter', () => {
-    expect(htmlToMarkdown('<strong>word</strong>next')).toBe('**word** next');
-    expect(htmlToMarkdown('<strong>Speed.</strong>in tissues')).toBe('**Speed.** in tissues');
+  it('should preserve adjoining text without adding spaces', () => {
+    expect(htmlToMarkdown('<strong>word</strong>next')).toBe('**word**next');
+    expect(htmlToMarkdown('<strong>Speed.</strong>in tissues')).toBe('<strong>Speed.</strong>in tissues');
   });
 });
 

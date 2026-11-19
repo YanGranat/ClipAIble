@@ -121,6 +121,7 @@
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing
  * @property {string[]} [selectionExclusions] - Excluded subtrees for the current selector extraction
+ * @property {Element[]|null} [referenceRoots] - Selected reading scopes that own canonical reference targets
  * @property {ContentItem[]} content - Content items array being built
  * @property {DebugInfo|null} debugInfo - Debug info object
  */

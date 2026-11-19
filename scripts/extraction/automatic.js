@@ -51,12 +51,12 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
       /next\s+post/i,
       /related\s+posts?/i,
       /recommended\s+posts?/i,
-      /read\s+more/i,
+      /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i,
       /keep\s+reading/i,
       /you\s+might\s+also\s+like/i,
       /you\s+may\s+also\s+like/i,
       /also\s+in\s+/i,
-      /more\s+in\s+/i,
+      /^more\s+in\s+/i,
       /next\s+article/i,
       /previous\s+article/i,
       /next:/i,
@@ -265,7 +265,7 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     // Navigation patterns (starts with)
     const NAV_PATTERNS_STARTS_WITH = [
       /^next:/i,
-      /^read more/i,
+      /^read\s+more(?:\s*[.!?:;…»›>]+)?\s*$/i,
       /^keep reading/i,
       /^subscribe/i,
       /^sign (in|up)/i,
@@ -902,7 +902,7 @@ export async function extractAutomaticallyInlined(baseUrl, enableDebugInfo = fal
     ];
     
     // Candidate element selector (used by parse.js)
-    const CANDIDATE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,img,figure,figcaption,blockquote,pre,code,ul,ol,table,div,hr";
+    const CANDIDATE_SELECTOR = "h1,h2,h3,h4,h5,h6,p,img,iframe,video,audio,figure,figcaption,blockquote,pre,code,ul,ol,table,div,hr";
     
     // CONSTANTS object (used by runExtraction)
     const CONSTANTS = {
@@ -937,6 +937,33 @@ function cloneWithoutLinkAnnouncements(element) {
   return clone;
 }
 
+function cloneWithoutRepeatedNoteTooltips(element, referenceRoots = null, excludedSelectors = []) {
+  const clone = cloneWithoutLinkAnnouncements(element);
+  for (const reference of Array.from(clone.querySelectorAll("a[href]"))) {
+    if (!reference.matches('[data-footnote-ref], [role="doc-noteref"]') && !/^\d+$/.test(reference.textContent?.trim() || "")) continue;
+    const target = getDocumentFragmentTarget(reference);
+    if (!target || element.contains(target)) continue;
+    if (referenceRoots && !referenceRoots.some((root) => root.contains(target))) continue;
+    if (excludedSelectors.some((selector) => target.closest(selector))) continue;
+    const canonical = target.cloneNode(true);
+    for (const backlink of Array.from(canonical.querySelectorAll("a"))) {
+      if (backlink.getAttribute("role") === "doc-backlink" || /^[\s↩︎↩←↑]+$/.test(backlink.textContent || "")) backlink.remove();
+    }
+    const noteText = (node) => {
+      const copy = node.cloneNode(true);
+      const marker = copy.firstElementChild;
+      if (marker?.tagName === "SUP" && /^\d+$/.test(marker.textContent?.trim() || "")) marker.remove();
+      return (copy.textContent || "").replace(/\s+/g, " ").trim();
+    };
+    const canonicalText = noteText(canonical);
+    const owner = reference.closest("sup") || reference.parentElement;
+    for (const tooltip of Array.from(owner?.querySelectorAll('[aria-hidden="true"], [hidden], [role="tooltip"]') || [])) {
+      if (canonicalText && noteText(tooltip) === canonicalText) tooltip.remove();
+    }
+  }
+  return clone;
+}
+
 function compareDomOrder(a, b) {
   const position = a.compareDocumentPosition(b);
   if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
@@ -946,6 +973,20 @@ function compareDomOrder(a, b) {
     return 1;
   }
   return 0;
+}
+
+function getDocumentFragmentTarget(element) {
+  const href = element.getAttribute("href");
+  if (!href) return null;
+  try {
+    const document2 = element.ownerDocument;
+    const target = new URL(href, document2.baseURI);
+    const source = new URL(document2.URL);
+    if (!target.hash || target.origin !== source.origin || target.pathname !== source.pathname || target.search !== source.search) return null;
+    return document2.getElementById(decodeURIComponent(target.hash.slice(1)));
+  } catch (_) {
+    return null;
+  }
 }
 
 function getTextContent(element) {
@@ -989,6 +1030,20 @@ function normalizeImageUrl(url) {
   } catch (e) {
     return url;
   }
+}
+
+function readArticleMetadataText(element) {
+  if (!element || element.closest('[hidden], [aria-hidden="true"]')) return "";
+  const clone = cloneWithoutRepeatedNoteTooltips(element);
+  for (const node of Array.from(clone.querySelectorAll('[hidden], [aria-hidden="true"]'))) {
+    if (!node.closest("math, .MathJax, .katex, mjx-container")) node.remove();
+  }
+  for (const reference of Array.from(clone.querySelectorAll("a[href]"))) {
+    if (reference.matches('[data-footnote-ref], [role="doc-noteref"]') || /^\d+$/.test(reference.textContent?.trim() || "") && getDocumentFragmentTarget(reference)) {
+      (reference.closest("sup") || reference).remove();
+    }
+  }
+  return (clone.textContent || "").replace(/\s+/g, " ").trim();
 }
 
 function safeClosest(element, selector) {
@@ -1617,17 +1672,18 @@ function isExcluded(win, element, constants) {
       return true;
     }
   }
+  if (isSubscriptionFormContent(element)) return true;
   if (tagName === "iframe") {
     const iframeElement = (
       /** @type {HTMLIFrameElement} */
       element
     );
-    const src = (iframeElement.src || "").toLowerCase();
-    const adPatterns = ["ad", "ads", "advertisement", "doubleclick", "googleads", "pubmatic"];
-    if (adPatterns.some((pattern) => src.includes(pattern))) {
-      return true;
+    try {
+      const hostname = new URL(iframeElement.src, element.ownerDocument.baseURI).hostname.toLowerCase();
+      const adHosts = ["doubleclick.net", "googleadservices.com", "pubmatic.com", "imasdk.googleapis.com"];
+      if (adHosts.some((host) => hostname === host || hostname.endsWith("." + host))) return true;
+    } catch (_) {
     }
-    return true;
   }
   if (isFootnoteLink(element)) return true;
   if (isIcon(element)) return true;
@@ -1701,6 +1757,9 @@ function isExcluded(win, element, constants) {
       const parentTag = parent.tagName.toLowerCase();
       if (parentTag === "nav" || parentTag === "footer" || parent.getAttribute("role") === "navigation") return true;
       if (EXCLUDED_CLASSES2.some((excluded) => {
+        if (excluded === "next" || excluded === "prev" || excluded === "previous") {
+          return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
+        }
         const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`);
       })) return true;
@@ -1784,6 +1843,22 @@ function isNavigationParagraph(text, navPatternsStartsWith, paywallPatterns) {
     return true;
   }
   return false;
+}
+
+function isSubscriptionFormContent(element) {
+  const form = element.closest("form");
+  if (!form) return false;
+  const emailField = Array.from(form.querySelectorAll("input")).some((input) => (input.getAttribute("type") || "").toLowerCase() === "email" || (input.getAttribute("name") || "").toLowerCase() === "email" || (input.getAttribute("autocomplete") || "").toLowerCase().split(/\s+/).includes("email"));
+  if (!emailField) return false;
+  const labels = [form.getAttribute("aria-label") || ""];
+  for (const id of (form.getAttribute("aria-labelledby") || "").split(/\s+/)) {
+    if (id) labels.push(form.ownerDocument.getElementById(id)?.textContent || "");
+  }
+  for (const action of Array.from(form.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"]'))) {
+    labels.push(action.textContent || "", action.getAttribute("aria-label") || "", action.getAttribute("value") || "");
+    for (const part of Array.from(action.querySelectorAll("*"))) labels.push(part.textContent || "");
+  }
+  return labels.some((label) => /\b(?:sign[\s-]*up|subscribe|subscription)\b/i.test(label));
 }
 
 function isWidget(win, element) {
@@ -2473,18 +2548,18 @@ function extractMetadata(doc, baseUrl) {
   };
   const h1InArticle = doc.querySelector("article h1");
   if (h1InArticle && isValidArticleTitle(h1InArticle)) {
-    metadata.title = cleanHeadingText(h1InArticle.textContent || "");
+    metadata.title = cleanHeadingText(readArticleMetadataText(h1InArticle));
   }
   if (!metadata.title) {
     const h1InMain = doc.querySelector("main h1");
     if (h1InMain && isValidArticleTitle(h1InMain)) {
-      metadata.title = cleanHeadingText(h1InMain.textContent || "");
+      metadata.title = cleanHeadingText(readArticleMetadataText(h1InMain));
     }
   }
   if (!metadata.title) {
     const firstH1 = doc.querySelector("h1");
     if (firstH1 && isValidArticleTitle(firstH1)) {
-      metadata.title = cleanHeadingText(firstH1.textContent || "");
+      metadata.title = cleanHeadingText(readArticleMetadataText(firstH1));
     }
   }
   if (!metadata.title) {
@@ -2499,19 +2574,18 @@ function extractMetadata(doc, baseUrl) {
     ".byline",
     ".meta-author",
     '[itemprop="author"]',
-    'a[rel="author"]',
-    'a[href*="/author/"]',
-    'a[href*="/profile/"]'
+    'a[rel="author"]'
   ];
   for (const selector of authorSelectors) {
     try {
-      const element = doc.querySelector(selector);
-      if (element) {
+      const elements = Array.from(doc.querySelectorAll(selector));
+      for (const element of elements) {
+        if (element.closest('[hidden], [aria-hidden="true"]')) continue;
         let authorText = "";
         if (element.tagName === "META") {
           authorText = element.getAttribute("content") || "";
         } else {
-          authorText = (element.textContent || "").trim();
+          authorText = readArticleMetadataText(element);
         }
         authorText = authorText.replace(/^by\s+/i, "").trim();
         if (authorText && !authorText.startsWith("http") && authorText.length < 100) {
@@ -2527,7 +2601,22 @@ function extractMetadata(doc, baseUrl) {
           }
         }
       }
+      if (metadata.author) break;
     } catch (e) {
+    }
+  }
+  if (!metadata.author) metadata.author = readStructuredArticleAuthor(doc, baseUrl);
+  if (!metadata.author) {
+    for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {
+      try {
+        if (new URL(element.getAttribute("href"), baseUrl).origin !== new URL(baseUrl).origin) continue;
+        const text = readArticleMetadataText(element).replace(/^by\s+/i, "").trim();
+        if (text && !text.startsWith("http") && text.length < 100) {
+          metadata.author = text;
+          break;
+        }
+      } catch (_) {
+      }
     }
   }
   const dateSelectors = [
@@ -2598,7 +2687,7 @@ function getMonthNumber(monthName) {
 
 function isValidArticleTitle(h1Element) {
   if (!h1Element || !h1Element.textContent) return false;
-  const text = (h1Element.textContent || "").trim();
+  const text = readArticleMetadataText(h1Element);
   if (text.length < 5) return false;
   const siteNamePatterns = ["home", "about", "contact", "blog", "news", "archive"];
   const lowerText = text.toLowerCase();
@@ -2636,6 +2725,48 @@ function parseDateToISO(dateStr) {
   const yearMatch = dateStr.match(/^(\d{4})$/);
   if (yearMatch) return yearMatch[1];
   return null;
+}
+
+function readStructuredArticleAuthor(doc, baseUrl) {
+  const records = [];
+  for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
+    try {
+      const data = JSON.parse(script.textContent || "");
+      const pending = Array.isArray(data) ? [...data] : [data];
+      while (pending.length) {
+        const record = pending.shift();
+        if (!record || typeof record !== "object") continue;
+        records.push(record);
+        if (Array.isArray(record["@graph"])) pending.push(...record["@graph"]);
+        if (record.mainEntity && typeof record.mainEntity === "object") pending.push(record.mainEntity);
+      }
+    } catch (_) {
+    }
+  }
+  const canonical = doc.querySelector('link[rel="canonical"]')?.getAttribute("href") || baseUrl;
+  const pageIdentity = (value) => {
+    const url = new URL(value, baseUrl);
+    url.hash = "";
+    return url.href;
+  };
+  for (const record of records) {
+    const types = Array.isArray(record["@type"]) ? record["@type"] : [record["@type"]];
+    if (!types.some((type) => typeof type === "string" && /(?:Article|BlogPosting)$/.test(type))) continue;
+    const identity = record.url || (typeof record.mainEntityOfPage === "string" ? record.mainEntityOfPage : record.mainEntityOfPage?.["@id"]);
+    try {
+      if (identity && pageIdentity(identity) !== pageIdentity(canonical)) continue;
+    } catch (_) {
+      continue;
+    }
+    const authors = Array.isArray(record.author) ? record.author : [record.author];
+    const names = authors.map((author) => {
+      if (typeof author === "string") return author;
+      const resolved = author?.name ? author : records.find((candidate) => author?.["@id"] && candidate["@id"] === author["@id"]);
+      return typeof resolved?.name === "string" ? resolved.name : "";
+    }).map((name) => name.trim()).filter(Boolean);
+    if (names.length) return names.join(", ");
+  }
+  return "";
 }
 
 // --- Images ---
@@ -2712,7 +2843,7 @@ function extractBestImageUrl(imgElement) {
   return src;
 }
 
-function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
+function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns, captionOwners = null) {
   const featuredImageSelectors = [
     'meta[property="og:image"]',
     'meta[name="twitter:image"]',
@@ -2748,8 +2879,7 @@ function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
       );
       const src = extractBestImageUrl(imgElement);
       if (!src) continue;
-      const naturalWidth = imgElement.naturalWidth || 0;
-      const naturalHeight = imgElement.naturalHeight || 0;
+      const { width: naturalWidth, height: naturalHeight } = getSelectedImageNaturalSize(imgElement);
       if (naturalWidth >= 400 || naturalHeight >= 300 || naturalWidth === 0 && naturalHeight === 0) {
         const absoluteUrl = toAbsoluteUrl(src, baseUrl);
         if (isDecorativeImage(doc.defaultView, imgElement, logoPatterns)) {
@@ -2758,7 +2888,7 @@ function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
         return {
           src: absoluteUrl,
           alt: imgElement.alt || "",
-          caption: getImageCaption(imgElement)
+          caption: getImageCaption(imgElement, captionOwners)
         };
       }
     }
@@ -2798,12 +2928,52 @@ function getBestSrcsetUrl(srcset) {
   return bestUrl;
 }
 
-function getImageCaption(img) {
+function getEmbeddedMediaItems(element) {
+  if (!element || !["IFRAME", "VIDEO", "AUDIO"].includes(element.tagName)) return [];
+  const base = element.ownerDocument.baseURI;
+  const safeUrl = (value) => {
+    if (!value || !value.trim()) return null;
+    try {
+      const url = new URL(value, base);
+      return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url : null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const source = safeUrl(element.getAttribute("src") || element.querySelector("source[src]")?.getAttribute("src"));
+  if (!source) return [];
+  const escape = (value) => String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  })[character]);
+  const label = (element.getAttribute("title") || element.getAttribute("aria-label") || "").trim() || source.href;
+  let preview = element.tagName === "VIDEO" ? safeUrl(element.getAttribute("poster"))?.href : null;
+  if (element.tagName === "IFRAME" && source.hostname === "datawrapper.dwcdn.net") {
+    const chart = source.pathname.match(/^\/([A-Za-z0-9]{5})\/(?:\d+\/?)?$/);
+    if (chart) preview = `https://datawrapper.dwcdn.net/${chart[1]}/full.png`;
+  }
+  const items = [];
+  if (preview) items.push({ type: "image", src: preview, alt: label, caption: "" });
+  items.push({
+    type: "paragraph",
+    text: label,
+    html: `<a href="${escape(source.href)}">${escape(label)}</a>`
+  });
+  return items;
+}
+
+function getImageCaption(img, captionOwners = null) {
   const captionText = (element) => (cloneWithoutLinkAnnouncements(element).textContent || "").trim();
   const figure = img.closest("figure");
   if (figure) {
     const figcaption = figure.querySelector("figcaption");
-    if (figcaption) return captionText(figcaption);
+    if (figcaption) {
+      captionOwners?.add(figcaption);
+      return captionText(figcaption);
+    }
   }
   const ariaLabel = img.getAttribute("aria-label");
   if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
@@ -2824,14 +2994,26 @@ function getImageCaption(img) {
   return "";
 }
 
+function getSelectedImageNaturalSize(img) {
+  const selectedSource = extractBestImageUrl(img);
+  const loadedSource = img.currentSrc || img.src || "";
+  const matches = !selectedSource || normalizeImageUrl(toAbsoluteUrl(selectedSource, img.ownerDocument.baseURI)) === normalizeImageUrl(toAbsoluteUrl(loadedSource, img.ownerDocument.baseURI));
+  return {
+    width: matches ? img.naturalWidth || 0 : 0,
+    height: matches ? img.naturalHeight || 0 : 0,
+    matchesSource: matches
+  };
+}
+
 function isDecorativeImage(win, img, logoPatterns) {
   if (!img) return false;
-  const src = (img.src || "").toLowerCase();
+  const src = (extractBestImageUrl(img) || img.src || "").toLowerCase();
   const alt = (img.alt || "").toLowerCase();
   const className = String(img.className || "").toLowerCase();
   const id = (img.id || "").toLowerCase();
-  const naturalWidth = img.naturalWidth || img.width || 0;
-  const naturalHeight = img.naturalHeight || img.height || 0;
+  const naturalSize = getSelectedImageNaturalSize(img);
+  const naturalWidth = naturalSize.width || (naturalSize.matchesSource ? img.width : Number(img.getAttribute("width"))) || 0;
+  const naturalHeight = naturalSize.height || (naturalSize.matchesSource ? img.height : Number(img.getAttribute("height"))) || 0;
   if (img.getAttribute("role") === "separator") return true;
   if (naturalWidth > 0 && naturalHeight > 0 && (naturalWidth > 3 && naturalHeight <= 3 || naturalHeight > 3 && naturalWidth <= 3)) {
     return true;
@@ -2844,18 +3026,14 @@ function isDecorativeImage(win, img, logoPatterns) {
     const parentClass = String(checkParent.className || "").toLowerCase();
     const parentId = (checkParent.id || "").toLowerCase();
     if (parentClass.includes("contributor") || parentClass.includes("byline") || parentClass.includes("author-info") || parentClass.includes("author-bio")) {
-      const naturalWidth2 = img.naturalWidth || img.width || 0;
-      const naturalHeight2 = img.naturalHeight || img.height || 0;
-      if (naturalWidth2 > 0 && naturalHeight2 > 0 && naturalWidth2 <= 150 && naturalHeight2 <= 150) {
+      if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 150 && naturalHeight <= 150) {
         return true;
       }
     }
     checkParent = checkParent.parentElement;
   }
   if (alt && (alt.includes("'s avatar") || alt.includes(" avatar") || alt === "avatar")) {
-    const naturalWidth2 = img.naturalWidth || img.width || 0;
-    const naturalHeight2 = img.naturalHeight || img.height || 0;
-    if (naturalWidth2 > 0 && naturalHeight2 > 0 && naturalWidth2 <= 50 && naturalHeight2 <= 50) {
+    if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
       return true;
     }
   }
@@ -2914,24 +3092,22 @@ function isPlaceholderUrl(url) {
 }
 
 function isTrackingPixel(win, img) {
+  const selectedSource = extractBestImageUrl(img);
+  const { width: naturalWidth, height: naturalHeight } = getSelectedImageNaturalSize(img);
   try {
     const style = safeGetComputedStyle(win, img);
     if (style && (style.display === "none" || style.visibility === "hidden" || style.opacity === "0")) {
-      const naturalWidth2 = img.naturalWidth || 0;
-      const naturalHeight2 = img.naturalHeight || 0;
-      if (naturalWidth2 > 0 && naturalHeight2 > 0 && naturalWidth2 <= 3 && naturalHeight2 <= 3) {
+      if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 3 && naturalHeight <= 3) {
         return true;
       }
     }
   } catch (e) {
   }
-  const naturalWidth = img.naturalWidth || 0;
-  const naturalHeight = img.naturalHeight || 0;
   if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 3 && naturalHeight <= 3) {
     return true;
   }
   try {
-    const url = new URL(img.src || "", img.ownerDocument.baseURI);
+    const url = new URL(selectedSource || img.src || "", img.ownerDocument.baseURI);
     return /(?:^|\.)doubleclick\.net$/i.test(url.hostname) || /(?:^|\.)googleadservices\.com$/i.test(url.hostname) || /(?:^|\.)facebook\.com$/i.test(url.hostname) && /^\/tr\/?$/i.test(url.pathname);
   } catch (_) {
     return false;
@@ -2990,6 +3166,41 @@ function isStandfirstText(text, standfirstText) {
 }
 
 // --- Parse ---
+function cloneFigureText(element) {
+  const clone = (
+    /** @type {Element} */
+    element.cloneNode(true)
+  );
+  const omitted = 'script,style,template,noscript,button,input,select,textarea,[role="button"],iframe,svg,canvas,nav,footer,[hidden],[aria-hidden="true"]';
+  function excluded(original) {
+    if (original.closest(omitted)) return true;
+    for (let parent = original; parent; parent = parent.parentElement) {
+      const style = parent.ownerDocument.defaultView?.getComputedStyle(parent);
+      if (style?.display === "none" || style?.visibility === "hidden") return true;
+      if (parent.tagName === "FIGURE") break;
+    }
+    return false;
+  }
+  if (excluded(element)) {
+    clone.replaceChildren();
+    return clone;
+  }
+  const originals = [element, ...Array.from(element.querySelectorAll("*"))];
+  const copies = [clone, ...Array.from(clone.querySelectorAll("*"))];
+  for (let index = 0; index < originals.length; index++) {
+    const original = originals[index];
+    if (index > 0 && excluded(original)) {
+      copies[index].remove();
+      continue;
+    }
+    const originalText = original.getAttribute("data-original-text");
+    if (original.tagName !== "FIGURE" && originalText?.trim() && !original.querySelector("img,iframe,video,audio,table,pre,ul,ol")) {
+      copies[index].textContent = originalText.trim();
+    }
+  }
+  return clone;
+}
+
 function collectCandidateElements(mainContent, win) {
   const hostname = win?.location?.hostname || "";
   if (hostname.includes("habr.com")) {
@@ -3222,8 +3433,8 @@ function filterCandidateElements(win, allElements, constants, debugInfo) {
   return filteredElements;
 }
 
-function handleBlockquote(element, excludedSelectors = []) {
-  const text = sanitizeParagraphHtml(element, excludedSelectors);
+function handleBlockquote(element, excludedSelectors = [], referenceRoots = null) {
+  const text = sanitizeParagraphHtml(element, excludedSelectors, referenceRoots);
   if (!text) return null;
   return {
     type: "quote",
@@ -3263,6 +3474,13 @@ function handleCode(element) {
 function handleDiv(element, state, constants) {
   if (element.closest("blockquote")) return null;
   if (element.closest("table")) return null;
+  const figure = element.closest("figure");
+  if (figure && !element.closest("figcaption") && hasFigureBodyText(figure)) {
+    const clone = cloneFigureText(element);
+    if (!clone.textContent?.trim()) return null;
+    const html = sanitizeParagraphHtml(clone, state.selectionExclusions, state.referenceRoots);
+    return html ? { type: "paragraph", text: html, html } : null;
+  }
   const text = (element.textContent || "").trim();
   if (isStandfirstText(text, state.standfirstText)) return null;
   if (text.length < 10) return null;
@@ -3325,7 +3543,7 @@ function handleDiv(element, state, constants) {
 
 function handleHeading(element, state, constants) {
   if (state.standfirstElement && element === state.standfirstElement) return null;
-  const rawText = cloneWithoutLinkAnnouncements(element).textContent || "";
+  const rawText = readArticleMetadataText(element);
   const cleanedText = cleanHeadingText(rawText);
   if (isStandfirstText(cleanedText, state.standfirstText)) return null;
   if (isNumericHeading(cleanedText)) return null;
@@ -3364,19 +3582,37 @@ function handleImg(win, element, state, constants, baseUrl) {
   return item;
 }
 
-function handleList(element, excludedSelectors = []) {
+function handleList(element, excludedSelectors = [], referenceRoots = null) {
   if (element.closest("blockquote")) return null;
   if (element.closest("table")) return null;
   if (element.closest(".navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .sidebar, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc")) {
     return null;
   }
-  const items = Array.from(element.querySelectorAll("li")).filter((li) => li.closest("ul, ol") === element).map((li) => {
+  const children = Array.from(element.querySelectorAll("li")).filter((li) => li.closest("ul, ol") === element);
+  const generatedCounterMatches = element.tagName === "OL" && !element.hasAttribute("reversed") && (!element.hasAttribute("start") || element.getAttribute("start")?.trim() === "1") && children.every((li) => !li.hasAttribute("value"));
+  const items = children.map((li, index) => {
     const clone = (
       /** @type {Element} */
       cloneWithoutLinkAnnouncements(li)
     );
+    const leading = Array.from(li.childNodes).find((node) => node.nodeType !== 8 && (node.nodeType !== 3 || node.textContent?.trim()));
+    if (generatedCounterMatches && leading?.nodeType === 1 && /** @type {Element} */
+    leading.tagName === "SUP" && leading.textContent?.trim() === String(index + 1) && li.id) {
+      const label = leading.textContent.trim();
+      const reciprocal = Array.from(li.querySelectorAll('a[role="doc-backlink"][href]')).some((backlink) => {
+        const target = getDocumentFragmentTarget(backlink);
+        if (!target || li.contains(target)) return false;
+        const references = target.matches("a[href]") ? [target] : Array.from(target.querySelectorAll("a[href]"));
+        return references.some((reference) => reference.textContent?.trim() === label && getDocumentFragmentTarget(reference) === li);
+      });
+      if (reciprocal) {
+        const copy = Array.from(clone.childNodes).find((node) => node.nodeType !== 8 && (node.nodeType !== 3 || node.textContent?.trim()));
+        if (copy?.nodeType === 1 && /** @type {Element} */
+        copy.tagName === "SUP" && copy.textContent?.trim() === label) copy.remove();
+      }
+    }
     processMathElements(clone);
-    return { html: sanitizeParagraphHtml(clone, excludedSelectors) };
+    return { html: sanitizeParagraphHtml(clone, excludedSelectors, referenceRoots), ...li.id ? { id: li.id } : {} };
   }).filter((item) => item.html.length > 0);
   if (items.length === 0) return null;
   return {
@@ -3394,8 +3630,6 @@ function handleParagraph(win, element, state, constants) {
   if (isStandfirstText(text, state.standfirstText)) return null;
   if (text.length < 5) return null;
   const lowerText = text.toLowerCase();
-  if (lowerText.startsWith("by ") && text.length < 100) return null;
-  if (lowerText.startsWith("edited by") && text.length < 100) return null;
   if (/^\d+\s+words?$/i.test(text)) return null;
   if (/^\d+\s+min(utes?)?\s+read$/i.test(text)) return null;
   if (isNavigationParagraph(text, constants.NAV_PATTERNS_STARTS_WITH || [], constants.PAYWALL_PATTERNS || [])) {
@@ -3417,26 +3651,96 @@ function handleParagraph(win, element, state, constants) {
     return null;
   }
   const originalText = getOriginalTextIfTranslated(element);
-  const finalText = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(element, state.selectionExclusions);
+  const finalText = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(element, state.selectionExclusions, state.referenceRoots);
   return {
     type: "paragraph",
     text: finalText,
-    html: finalText
+    html: finalText,
+    ...element.id ? { id: element.id } : {}
   };
 }
 
-function handleTable(element, excludedSelectors = []) {
+function handleTable(element, excludedSelectors = [], referenceRoots = null) {
   if (element.closest("blockquote")) return null;
   const className = String(element.className || "").toLowerCase();
   if (className.includes("navbox") || className.includes("authority-control")) {
     return null;
   }
-  const ownedRows = Array.from(element.querySelectorAll("tr")).filter((row) => row.closest("table") === element);
-  const cells = ownedRows.map((row) => Array.from(row.children).filter((cell) => cell.tagName === "TD" || cell.tagName === "TH"));
-  if (!cells.some((row) => row.length)) return null;
-  const hasHeaders = cells[0]?.length > 0 && cells[0].every((cell) => cell.tagName === "TH");
-  const rows = cells.map((row) => row.map((cell) => sanitizeParagraphHtml(cell, excludedSelectors)));
+  const table = (
+    /** @type {HTMLTableElement} */
+    element
+  );
+  const win = element.ownerDocument.defaultView;
+  const styles = /* @__PURE__ */ new Map();
+  const style = (node) => {
+    if (!styles.has(node)) styles.set(node, win ? safeGetComputedStyle(win, node) : null);
+    return styles.get(node);
+  };
+  const noLayout = (node, includeCollapsed = true) => {
+    for (let current = node; current; current = current.parentElement) {
+      const value = style(current);
+      if (value?.display === "none" || includeCollapsed && ["TR", "THEAD", "TBODY", "TFOOT"].includes(current.tagName) && value?.visibility === "collapse") return true;
+    }
+    return false;
+  };
+  const hiddenContent = (node) => ["hidden", "collapse"].includes(style(node)?.visibility);
+  if (noLayout(element)) return null;
+  const ownedRows = Array.from(table.rows).filter((row) => !noLayout(row, false));
+  const cells = ownedRows.map((row) => noLayout(row) ? [] : Array.from(row.cells).filter((cell) => !noLayout(cell)));
+  const grid = ownedRows.map(() => []);
+  const remainingRows = [];
+  let groupEnd = ownedRows.length;
+  for (let index = ownedRows.length - 1; index >= 0; index--) {
+    if (ownedRows[index + 1]?.parentElement !== ownedRows[index].parentElement) groupEnd = index + 1;
+    remainingRows[index] = groupEnd - index;
+  }
+  for (const [rowIndex, row] of ownedRows.entries()) {
+    let column = 0;
+    for (const cell of cells[rowIndex]) {
+      const width = cell.colSpan;
+      const remaining = remainingRows[rowIndex];
+      const height = Math.min(cell.rowSpan || remaining, remaining);
+      let free = 0;
+      while (free < width) {
+        if (grid[rowIndex][column + free]) {
+          column += free + 1;
+          free = 0;
+        } else free++;
+      }
+      const visible = !hiddenContent(cell);
+      const html = visible ? sanitizeParagraphHtml(cell, excludedSelectors, referenceRoots) : "";
+      let repeated = html;
+      if (width * height > 1 && html) {
+        const template = element.ownerDocument.createElement("template");
+        template.innerHTML = html;
+        for (const target of Array.from(template.content.querySelectorAll("[id], [name]"))) {
+          target.removeAttribute("id");
+          target.removeAttribute("name");
+        }
+        repeated = template.innerHTML;
+      }
+      for (let down = 0; down < height; down++) {
+        for (let across = 0; across < width; across++) {
+          grid[rowIndex + down][column + across] = { html: down || across ? repeated : html, visible };
+        }
+      }
+      column += width;
+    }
+  }
+  const columns = grid.reduce((width, row) => Math.max(width, row.length), 0);
+  if (!columns) return null;
+  const visibleRows = ownedRows.map((row, index) => ({ row, index })).filter(({ row, index }) => !noLayout(row) && (grid[index].some((cell) => cell.visible) || !row.cells.length && !hiddenContent(row)));
+  if (!visibleRows.length) return null;
+  const firstCells = cells[visibleRows[0].index];
+  const hasHeaders = firstCells.length > 0 && firstCells.every((cell) => cell.tagName === "TH");
+  const rows = visibleRows.map(({ index }) => Array.from({ length: columns }, (_, column) => grid[index][column]?.html || ""));
   return { type: "table", cellFormat: "html", hasHeaders, ...hasHeaders ? { headers: rows[0] } : {}, rows: hasHeaders ? rows.slice(1) : rows };
+}
+
+function hasFigureBodyText(element) {
+  const clone = cloneFigureText(element);
+  for (const caption of Array.from(clone.querySelectorAll("figcaption"))) caption.remove();
+  return !!clone.textContent?.trim();
 }
 
 function omitInitialArticleTitle(content, state) {
@@ -3464,14 +3768,17 @@ function parseElements(win, elements, state, constants, baseUrl) {
     if (container) {
       if (!containerEligibility.has(container)) {
         const previewState = { ...state, addedParagraphs: new Set(state.addedParagraphs || []) };
-        containerEligibility.set(container, !!(container.tagName === "P" ? handleParagraph(win, container, previewState, constants) : handleDiv(container, previewState, constants)));
+        containerEligibility.set(container, container.tagName === "FIGURE" ? hasFigureBodyText(container) : !!(container.tagName === "P" ? handleParagraph(win, container, previewState, constants) : handleDiv(container, previewState, constants)));
       }
       if (containerEligibility.get(container)) {
         for (const translated of Array.from(element.querySelectorAll("[data-original-text]"))) {
           const original = translated.getAttribute("data-original-text");
           if (original?.trim()) translated.textContent = original.trim();
         }
-        const html = sanitizeParagraphHtml(element, state.selectionExclusions);
+        const figure = container.closest("figure");
+        const fragment = figure && !container.closest("figcaption") ? cloneFigureText(element) : element;
+        const html = sanitizeParagraphHtml(fragment, state.selectionExclusions, state.referenceRoots);
+        if (!html) continue;
         content.push({ type: "paragraph", text: html, html });
         for (const child of owned || []) consumed.add(child);
         incrementContentType(state.debugInfo, "paragraph");
@@ -3483,6 +3790,17 @@ function parseElements(win, elements, state, constants, baseUrl) {
     if (tagName === "hr") {
       content.push({ type: "separator" });
       processedCount++;
+    } else if (["iframe", "video", "audio"].includes(tagName)) {
+      for (const item of getEmbeddedMediaItems(element)) {
+        if (item.type === "image") {
+          const key = normalizeImageUrl(item.src);
+          if (state.processedImages.has(key)) continue;
+          if (state.processedImages.size < 1e3) state.processedImages.add(key);
+        }
+        content.push(element.id && item.type !== "image" ? { ...item, id: element.id } : item);
+        incrementContentType(state.debugInfo, item.type);
+        processedCount++;
+      }
     } else if (tagName.match(/^h[1-6]$/)) {
       const isReal = isRealHeading(element, win);
       if (!isReal) {
@@ -3507,7 +3825,22 @@ function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     } else if (tagName === "figure") {
-      const mixedContent = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr")).some((child) => !child.closest("figcaption"));
+      if (hasFigureBodyText(element)) {
+        const originalText = element.getAttribute("data-original-text")?.trim();
+        const html = originalText ? encodeOriginalText(element, originalText) : sanitizeParagraphHtml(cloneFigureText(element), state.selectionExclusions, state.referenceRoots);
+        if (html) {
+          content.push({ type: "paragraph", text: html, html });
+          incrementContentType(state.debugInfo, "paragraph");
+          processedCount++;
+        }
+        if (originalText) {
+          for (const child of Array.from(element.querySelectorAll("*"))) {
+            if (!child.matches("img,iframe,video,audio")) consumed.add(child);
+          }
+        }
+        continue;
+      }
+      const mixedContent = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr,iframe,video,audio")).some((child) => !child.closest("figcaption"));
       if (mixedContent) continue;
       const images = [];
       for (const image of Array.from(element.querySelectorAll("img"))) {
@@ -3530,7 +3863,7 @@ function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     } else if (tagName === "blockquote") {
-      const item = handleBlockquote(element, state.selectionExclusions);
+      const item = handleBlockquote(element, state.selectionExclusions, state.referenceRoots);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, "quote");
@@ -3548,14 +3881,14 @@ function parseElements(win, elements, state, constants, baseUrl) {
         processedCount++;
       }
     } else if (tagName === "ul" || tagName === "ol") {
-      const item = handleList(element, state.selectionExclusions);
+      const item = handleList(element, state.selectionExclusions, state.referenceRoots);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, "list");
         processedCount++;
       }
     } else if (tagName === "table") {
-      const item = handleTable(element, state.selectionExclusions);
+      const item = handleTable(element, state.selectionExclusions, state.referenceRoots);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, "table");
@@ -3571,8 +3904,11 @@ function parseElements(win, elements, state, constants, baseUrl) {
         skippedCount++;
       }
     }
-    if (content.length > previousCount) {
-      for (const child of Array.from(element.querySelectorAll("*"))) consumed.add(child);
+    if (content.length > previousCount && !["iframe", "video", "audio"].includes(tagName)) {
+      const originalMedia = ["p", "div"].includes(tagName) && element.getAttribute("data-original-text")?.trim();
+      for (const child of Array.from(element.querySelectorAll("*"))) {
+        if (!originalMedia || !child.matches("img,iframe,video,audio")) consumed.add(child);
+      }
     }
   }
   if (state.debugInfo) {
@@ -3592,8 +3928,9 @@ function partitionCandidateElements(elements) {
     visited.add(element);
     const descendants = Array.from(element.querySelectorAll(blockSelector));
     const originalText = element.getAttribute("data-original-text");
-    const inlineImages = element.tagName === "P" && descendants.some((child) => child.tagName === "IMG");
-    if (element.tagName !== "DIV" && !inlineImages || descendants.length === 0 || originalText?.trim()) {
+    const inlineMedia = element.tagName === "P" && descendants.some((child) => child.matches("img,iframe,video,audio"));
+    const richFigure = element.tagName === "FIGURE" && hasFigureBodyText(element);
+    if (element.tagName !== "DIV" && !inlineMedia && !richFigure || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
       for (const child of Array.from(element.querySelectorAll("*"))) {
         if (selected.has(child)) append(child);
@@ -3637,11 +3974,18 @@ function partitionCandidateElements(elements) {
 }
 
 function processMathElements(container) {
-  const mathElements = container.querySelectorAll(".mwe-math-element, .mathjax, .latex, .katex, math");
+  const mathElements = container.querySelectorAll(".mwe-math-element, .mathjax, .MathJax, .MathJax_Display, .latex, .katex, math");
   for (const mathEl of Array.from(mathElements)) {
+    if (!container.contains(mathEl)) continue;
     let latex = "";
+    const frame = mathEl.matches(".MathJax") ? mathEl : mathEl.querySelector(".MathJax");
+    const sourceId = frame?.id.replace(/-Frame$/, "");
+    const script = (sourceId ? container.ownerDocument.getElementById(sourceId) : null) || frame?.nextElementSibling || mathEl.nextElementSibling;
+    if (script?.tagName === "SCRIPT" && /^math\/tex(?:;|$)/i.test(script.getAttribute("type") || "")) {
+      latex = script.textContent || "";
+    }
     const img = mathEl.querySelector("img");
-    if (img && img.alt) {
+    if (!latex && img && img.alt) {
       latex = img.alt;
     }
     const mathTag = mathEl.querySelector("math") || (mathEl.tagName.toLowerCase() === "math" ? mathEl : null);
@@ -3654,21 +3998,74 @@ function processMathElements(container) {
         latex = annotation.textContent || "";
       }
     }
-    if (latex) {
+    let semanticMath = mathTag;
+    if (!semanticMath && frame?.getAttribute("data-mathml")) {
+      const Parser = container.ownerDocument.defaultView?.DOMParser;
+      if (Parser) {
+        const parsed = new Parser().parseFromString(frame.getAttribute("data-mathml"), "application/xml");
+        if (!parsed.querySelector("parsererror")) semanticMath = parsed.documentElement;
+      }
+    }
+    const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument) : null;
+    if (rendered) {
+      const wrapper = container.ownerDocument.createElement("span");
+      wrapper.className = "math";
+      wrapper.appendChild(rendered);
+      mathEl.replaceWith(wrapper);
+    } else if (latex) {
       const cleanedLatex = cleanLatexFormula(latex);
-      const textNode = document.createTextNode(` $${cleanedLatex}$ `);
+      const textNode = container.ownerDocument.createTextNode(` $${cleanedLatex}$ `);
       mathEl.replaceWith(textNode);
     } else {
-      mathEl.replaceWith(document.createTextNode(mathEl.textContent || ""));
+      mathEl.replaceWith(container.ownerDocument.createTextNode(mathEl.textContent || ""));
     }
   }
 }
 
-function sanitizeParagraphHtml(p, excludedSelectors = []) {
+function renderSimpleMathMl(math, outputDocument = math.ownerDocument) {
+  try {
+    let render = function(element) {
+      if (element.namespaceURI !== "http://www.w3.org/1998/Math/MathML") return null;
+      const tag = element.localName;
+      if (!["math", "mrow", "mi", "mn", "mo", "msup", "msub"].includes(tag)) return null;
+      for (const attribute of Array.from(element.attributes)) {
+        if (attribute.name === "class" || tag === "math" && attribute.name === "xmlns") continue;
+        if (tag === "mo" && attribute.name === "stretchy" && /^(true|false)$/.test(attribute.value)) continue;
+        return null;
+      }
+      if (["mi", "mn", "mo"].includes(tag)) {
+        if (Array.from(element.childNodes).some((node) => node.nodeType !== 3) || !element.textContent?.trim()) return null;
+        return outputDocument.createTextNode(element.textContent);
+      }
+      if (Array.from(element.childNodes).some((node) => node.nodeType !== 1 && (node.nodeType !== 3 || node.textContent?.trim()))) return null;
+      const children = Array.from(element.children);
+      if (!children.length || ["msup", "msub"].includes(tag) && children.length !== 2) return null;
+      const parts = children.map(render);
+      if (parts.some((part) => !part)) return null;
+      const result = outputDocument.createDocumentFragment();
+      if (tag === "msup" || tag === "msub") {
+        result.appendChild(parts[0]);
+        const script = outputDocument.createElement(tag === "msup" ? "sup" : "sub");
+        script.appendChild(parts[1]);
+        result.appendChild(script);
+      } else for (const part of parts) result.appendChild(part);
+      return result;
+    };
+    if (math.localName !== "math") return null;
+    return render(math);
+  } catch (_) {
+    return null;
+  }
+}
+
+function sanitizeParagraphHtml(p, excludedSelectors = [], referenceRoots = null) {
   const clone = (
     /** @type {Element} */
-    cloneWithoutLinkAnnouncements(p)
+    cloneWithoutRepeatedNoteTooltips(p, referenceRoots, excludedSelectors)
   );
+  for (const form of Array.from(clone.querySelectorAll("form"))) {
+    if (isSubscriptionFormContent(form)) form.remove();
+  }
   for (const selector of excludedSelectors || []) {
     for (const element of Array.from(clone.querySelectorAll(selector))) {
       if (!element.matches("blockquote.twitter-tweet")) element.remove();
@@ -3700,7 +4097,7 @@ function sanitizeParagraphHtml(p, excludedSelectors = []) {
         el.removeAttribute(attr.name);
       }
     }
-    if (isFootnoteLink(el) || isIcon(el)) {
+    if (isFootnoteLink(el) && !getDocumentFragmentTarget(el) || isIcon(el)) {
       el.remove();
     }
     if (el.tagName.toLowerCase() === "style" || el.tagName.toLowerCase() === "script") {
@@ -3745,7 +4142,8 @@ function isSelectedContentExcluded(element, exclusions) {
 function readSelectedText(doc, value) {
   for (const selector of selectorValues(value)) {
     const node = doc.querySelector(selector);
-    if (node?.textContent?.trim()) return node.textContent.trim();
+    const text = node ? readArticleMetadataText(node) : "";
+    if (text) return text;
   }
   return "";
 }
@@ -4144,16 +4542,32 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
       };
     }
     const mainContent = selection?.roots[0] || findMainContent(win, doc, (el) => isExcluded(win, el, constants));
+    state.referenceRoots = selection?.roots || (mainContent ? [mainContent] : null);
     pushDebugLog(debugInfo, "MAIN_CONTENT_FOUND", {
       found: !!mainContent,
       tagName: mainContent?.tagName,
       className: mainContent?.className,
       textLength: mainContent?.textContent?.length || 0
     });
-    const selectedHero = selectors?.heroImage ? selectorValues(selectors.heroImage).flatMap((selector) => Array.from(doc.querySelectorAll(selector))).find((node) => node.tagName === "IMG" && !isSelectedContentExcluded(node, selection.exclusions)) : null;
-    const featuredImage = selection ? selectedHero ? createImageItem(win, selectedHero, state, constants, baseUrl) : null : extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || []);
+    const heroCandidates = selectors?.heroImage ? selectorValues(selectors.heroImage).flatMap((selector) => Array.from(doc.querySelectorAll(selector))).flatMap((container) => (container.tagName === "IMG" ? [container] : Array.from(container.querySelectorAll("img"))).map((img) => ({ container, img }))) : [];
+    const selectedHeroCandidate = heroCandidates.find(({ img }) => !isSelectedContentExcluded(img, selection.exclusions));
+    const selectedHero = selectedHeroCandidate?.img;
+    const selectedHeroInsideReadingRoot = selectedHero && selection.roots.some((root) => root.contains(selectedHero));
+    let declaredHero = null;
+    if (selectedHeroCandidate && selectedHeroCandidate.container.tagName !== "IMG" && !selection.roots.some((root) => root.contains(selectedHeroCandidate.container) || selectedHeroCandidate.container.contains(root))) {
+      const images = Array.from(selectedHeroCandidate.container.querySelectorAll("img"));
+      const ogImage = doc.querySelector('meta[property="og:image"]')?.getAttribute("content");
+      if (images.length > 1 && images.every((img) => !isSelectedContentExcluded(img, selection.exclusions)) && ogImage?.trim()) {
+        const metadataHero = extractFeaturedImage(doc, baseUrl, null, CONSTANTS.LOGO_PATTERNS || []);
+        if (metadataHero?.src === toAbsoluteUrl(ogImage, baseUrl)) {
+          declaredHero = { ...metadataHero, caption: getImageCaption(selectedHero) };
+        }
+      }
+    }
+    const featuredCaptionOwners = /* @__PURE__ */ new WeakSet();
+    const featuredImage = selection ? declaredHero || (selectedHero && !selectedHeroInsideReadingRoot ? createImageItem(win, selectedHero, state, constants, baseUrl) : null) : extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || [], featuredCaptionOwners);
     const selectedSubtitle = selectors?.subtitle ? selectorValues(selectors.subtitle).map((selector) => doc.querySelector(selector)).find(Boolean) : null;
-    const standfirstResult = selection ? { text: selectedSubtitle?.textContent?.trim() || null, element: selectedSubtitle } : extractStandfirst(mainContent);
+    const standfirstResult = selection ? { text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) || null : null, element: selectedSubtitle } : extractStandfirst(mainContent);
     state.standfirstElement = standfirstResult.element;
     state.standfirstText = standfirstResult.text;
     let content = [];
@@ -4184,12 +4598,37 @@ function tryExtractTwitterX(win, doc, state, constants, baseUrl) {
         debugInfo.foundElements = allElements.length;
       }
       const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo);
+      const headerCredits = [];
+      if (!selection && filteredElements.length) {
+        const owner = mainContent.closest("article");
+        const first = sortElementsInDomOrder(filteredElements)[0];
+        const captionConstants = { ...constants, EXCLUDED_CLASSES: constants.EXCLUDED_CLASSES.filter((value) => value !== "header") };
+        if (owner) for (const caption of Array.from(owner.querySelectorAll("figure > figcaption"))) {
+          if (caption.closest("article") !== owner || !caption.textContent?.trim() || !(caption.compareDocumentPosition(first) & 4) || filteredElements.some((element) => element === caption || element.contains(caption)) || isOutsideArticleBody(caption, owner) || isExcluded(win, caption, captionConstants)) continue;
+          const figure = caption.parentElement;
+          if (!figure.querySelector("img")) continue;
+          let hidden = false;
+          for (let element = caption; element && element !== owner; element = element.parentElement) {
+            const style = safeGetComputedStyle(win, element);
+            if (style?.display === "none" || style?.visibility === "hidden" || style?.visibility === "collapse") {
+              hidden = true;
+              break;
+            }
+          }
+          if (hidden) continue;
+          const alreadyOwned = featuredCaptionOwners.has(caption);
+          if (!alreadyOwned) {
+            const html = sanitizeParagraphHtml(caption, state.selectionExclusions, state.referenceRoots);
+            if (html.trim()) headerCredits.push({ type: "paragraph", text: html, html, ...caption.id ? { id: caption.id } : {} });
+          }
+        }
+      }
       if (debugInfo) {
         debugInfo.filteredElements = filteredElements.length;
       }
       const sortedElements = sortElementsInDomOrder(filteredElements);
       const parsedContent = parseElements(win, sortedElements, state, constants, baseUrl);
-      content.push(...parsedContent);
+      content.push(...headerCredits, ...parsedContent);
     } else {
       pushDebugLog(debugInfo, "MAIN_CONTENT_MISSING_FALLBACK", {});
       const fallbackContent = extractWhenMainContentMissing(win, doc, state, constants, baseUrl);

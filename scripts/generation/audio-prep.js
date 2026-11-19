@@ -4,8 +4,10 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { normalizeSpeechText } from '../utils/audio-text.js';
-import { documentPlainText, listHtml } from './document-content.js';
+import { documentText, listHtml, tableCellHtml } from './document-content.js';
+import { isNativePdfContent } from './xml.js';
 import { stripHtml as stripRichHtml } from '../utils/html.js';
+import { tokenizeHtml, decodeEntities } from '../utils/html/tokenizer.js';
 import { isTerminalAIResponseError } from '../api/response-validation.js';
 import { callAI } from '../api/index.js';
 import { getUILanguage, tSync } from '../locales.js';
@@ -56,6 +58,40 @@ export const AUDIO_CONFIG = {
   DEFAULT_SPEED: 1.0
 };
 
+/** Project reading text and semantic math without marked backlink controls. */
+function narrationPlainText(html) {
+  /** @type {Array<{name: string, math: boolean, literal: boolean, script: boolean, backlink: boolean}>} */
+  const stack = [];
+  let output = '';
+  for (const token of tokenizeHtml(html)) {
+    if (token.type !== 'tag') { if (!stack.at(-1)?.backlink) output += token.raw; continue; }
+    if (token.closing) {
+      const backlink = Boolean(stack.at(-1)?.backlink);
+      const index = stack.map(frame => frame.name).lastIndexOf(token.name);
+      const frame = index >= 0 ? stack[index] : null;
+      if (index >= 0) stack.length = index;
+      if (!backlink) output += frame?.script ? '}' : token.raw;
+      continue;
+    }
+    // A new anchor ends an earlier anchor in HTML, including a backlink.
+    if (token.name === 'a' && !stack.at(-1)?.literal) {
+      const index = stack.map(frame => frame.name).lastIndexOf('a');
+      if (index >= 0 && stack[index].backlink) stack.length = index;
+    }
+    const parent = stack.at(-1);
+    const classes = decodeEntities(token.attrs.find(attr => attr.name === 'class')?.value || '').split(/\s+/);
+    const math = Boolean(parent?.math || (token.name === 'span' && classes.includes('math')));
+    const literal = Boolean(parent?.literal || ['code', 'pre'].includes(token.name));
+    const role = decodeEntities(token.attrs.find(attr => attr.name === 'role')?.value || '').trim();
+    const backlink = Boolean(parent?.backlink || (!literal && token.name === 'a' && role === 'doc-backlink'));
+    const script = math && !literal && ['sup', 'sub'].includes(token.name);
+    if (!['br', 'hr'].includes(token.name)) stack.push({ name: token.name, math, literal, script, backlink });
+    if (backlink && !parent?.backlink) output += ' ';
+    if (!backlink) output += script ? (token.name === 'sup' ? '^{' : '_{') : token.raw;
+  }
+  return stripRichHtml(output);
+}
+
 /**
  * Convert content items to plain text
  * @param {Array} content - Array of content items from extraction
@@ -85,7 +121,7 @@ export function contentToPlainText(content) {
     switch (item.type) {
       case 'heading':
         // Add heading with newlines for natural pauses
-        const headingText = documentPlainText(item);
+        const headingText = narrationPlainText(documentText(item));
         if (headingText) {
           textParts.push(`\n\n${headingText}\n`);
           itemLog.extractedLength = headingText.length;
@@ -97,8 +133,9 @@ export function contentToPlainText(content) {
         processedItems.push(itemLog);
         break;
         
+      case 'subtitle':
       case 'paragraph':
-        const paraText = documentPlainText(item);
+        const paraText = narrationPlainText(documentText(item));
         if (paraText) {
           textParts.push(paraText);
           itemLog.extractedLength = paraText.length;
@@ -112,7 +149,7 @@ export function contentToPlainText(content) {
         
       case 'quote':
       case 'blockquote':
-        const quoteText = documentPlainText(item);
+        const quoteText = narrationPlainText(documentText(item));
         if (quoteText) {
           textParts.push(`Quote: ${quoteText}`);
           itemLog.extractedLength = quoteText.length;
@@ -126,7 +163,7 @@ export function contentToPlainText(content) {
         
       case 'list':
         if (item.items && Array.isArray(item.items)) {
-          const listItems = [stripRichHtml(listHtml(item))];
+          const listItems = [narrationPlainText(listHtml(item))];
           if (listItems.length > 0) {
             const listText = listItems.join('\n');
             textParts.push(listText);
@@ -155,7 +192,10 @@ export function contentToPlainText(content) {
       case 'image':
         // Include image caption if present
         if (item.caption) {
-          const captionText = stripHtml(item.caption);
+          const literalCaption = item.format === 'text' || isNativePdfContent(item);
+          const captionText = narrationPlainText(documentText(literalCaption
+            ? { format: 'text', text: item.caption }
+            : { html: item.caption }));
           if (captionText) {
             textParts.push(`Image: ${captionText}`);
             itemLog.extractedLength = captionText.length;
@@ -173,11 +213,29 @@ export function contentToPlainText(content) {
         break;
         
       case 'table':
-        // Skip tables - too complex for audio
-        skippedItems.push({ type: 'table', rows: item.rows?.length || 0 });
-        itemLog.skipped = true;
-        itemLog.reason = 'Tables too complex for audio';
-        itemLog.rows = item.rows?.length || 0;
+        const tableHeaders = Array.isArray(item.headers)
+          ? item.headers.map(value => narrationPlainText(tableCellHtml(item, value))) : [];
+        const tableRows = Array.isArray(item.rows) ? item.rows : [];
+        const narrationRows = [];
+        for (const row of tableRows) {
+          if (!Array.isArray(row)) continue;
+          const fields = [];
+          row.forEach((cell, column) => {
+            const value = narrationPlainText(tableCellHtml(item, cell));
+            if (value) fields.push(tableHeaders[column] ? `${tableHeaders[column]}: ${value}` : value);
+          });
+          if (fields.length) narrationRows.push(fields.join('; '));
+        }
+        const tableText = narrationRows.length ? narrationRows.join('\n\n') : tableHeaders.filter(Boolean).join('; ');
+        if (tableText) {
+          textParts.push(tableText);
+          itemLog.extractedLength = tableText.length;
+          itemLog.added = true;
+        } else {
+          itemLog.added = false;
+          itemLog.reason = 'Empty table';
+        }
+        itemLog.rows = tableRows.length;
         processedItems.push(itemLog);
         break;
         
@@ -253,32 +311,6 @@ export function contentToPlainText(content) {
   });
   
   return result;
-}
-
-/**
- * Strip HTML tags from text
- * @param {string} html - HTML string
- * @returns {string} Plain text
- */
-function stripHtml(html) {
-  if (!html) return '';
-  
-  return html
-    // Remove HTML tags
-    .replace(/<[^>]*>/g, ' ')
-    // Decode common entities
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–')
-    .replace(/&hellip;/g, '...')
-    // Normalize whitespace
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 /**
@@ -528,20 +560,21 @@ RULES:
    - Email addresses
    - Code snippets and technical syntax
    - Footnote markers like [1], [2], etc.
-   - Reference markers like ^1, ^2
+   - Bracketed reference markers like [^1], [^2]
    - File paths
    - Markdown formatting symbols (*, _, #, etc.)
    - PDF page numbers and page references: "Page X", "Page X of Y", "see page X", "refer to page X"
-   - Standalone page numbers (numbers that appear alone on a line or at the end of lines)
 
 2. CONVERT to readable form:
    - Abbreviations → full words (e.g., "etc." → "and so on", "e.g." → "for example")
    - Numbers → written out for small numbers or keep as digits for large ones
    - Dates → natural spoken form
    - Technical terms → keep but ensure pronounceable
+   - Mathematical operators, powers and indices → spoken form in the original language, preserving their meaning and operands
 
 3. PRESERVE:
    - All meaningful content and ideas
+   - Meaningful numbers, including standalone years, counts, and mathematical exponents
    - Natural paragraph structure
    - Quotes and attributions
    - Names of people, places, companies
@@ -597,7 +630,7 @@ ${chunkText}`;
       .replace(/\*\*([^*]+)\*\*/g, '$1')
       .replace(/\*([^*]+)\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
-      .replace(/_([^_]+)_/g, '$1')
+      .replace(/_(?!\{)([^_]+)_(?!\{)/g, '$1')
       .replace(/`([^`]+)`/g, '$1')
       // Remove leftover URLs
       .replace(/https?:\/\/\S+/g, '')
@@ -607,7 +640,6 @@ ${chunkText}`;
       .replace(/\bpage\s+\d+\b/gi, '') // "Page X" or "page X"
       .replace(/\bsee\s+page\s+\d+\b/gi, '') // "see page 5"
       .replace(/\brefer\s+to\s+page\s+\d+\b/gi, '') // "refer to page 5"
-      .replace(/^\s*\d+\s*$/gm, '') // Standalone page numbers (entire line with just a number)
       // Clean up whitespace
       .replace(/\s+/g, ' ')
       .replace(/\n\s*\n/g, '\n\n')
@@ -695,15 +727,12 @@ export function basicCleanup(text, language = 'auto') {
     .replace(/www\.\S+/g, '')
     // Remove footnotes and references
     .replace(/\[\d+\]/g, '')
-    .replace(/\^\d+/g, '')
-    .replace(/\(see\s+[^)]+\)/gi, '') // Remove "see X" references
+    .replace(/\[\^\d+\]/g, '')
     // Remove PDF-specific elements: page numbers and page references
     .replace(/\bpage\s+\d+\s+of\s+\d+\b/gi, '') // "Page X of Y"
     .replace(/\bpage\s+\d+\b/gi, '') // "Page X" or "page X" (standalone, not part of other text)
     .replace(/\bsee\s+page\s+\d+\b/gi, '') // "see page 5"
     .replace(/\brefer\s+to\s+page\s+\d+\b/gi, '') // "refer to page 5"
-    .replace(/^\s*\d+\s*$/gm, '') // Standalone page numbers (entire line with just a number, likely from footer)
-    // Note: We don't remove numbers at end of lines as they might be part of content (e.g., "Section 1", "Chapter 2")
     // Remove code blocks and inline code
     .replace(/```[\s\S]*?```/g, '')
     .replace(/`[^`]+`/g, '')
@@ -711,7 +740,7 @@ export function basicCleanup(text, language = 'auto') {
     .replace(/\*\*([^*]+)\*\*/g, '$1') // Bold
     .replace(/\*([^*]+)\*/g, '$1')     // Italic
     .replace(/__([^_]+)__/g, '$1')     // Bold underscore
-    .replace(/_([^_]+)_/g, '$1')       // Italic underscore
+    .replace(/_(?!\{)([^_]+)_(?!\{)/g, '$1') // Italic underscore, excluding mathematical indices
     .replace(/#{1,6}\s+/g, '')         // Headers
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Links [text](url) -> text
     // Remove email addresses

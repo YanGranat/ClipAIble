@@ -2,6 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { generateFb2 } from '../../scripts/generation/fb2.js';
+import { JSDOM } from 'jsdom';
 
 // Mock dependencies
 vi.mock('../../scripts/utils/logging.js', () => ({
@@ -86,6 +87,17 @@ describe('generation/fb2', () => {
   });
 
   describe('generateFb2', () => {
+    it.each([['single', 1, false], ['consecutive', 2, false], ['captioned', 1, true]])('keeps an image-led %s section schema-valid', async (_, count, captioned) => {
+      const images = Array.from({ length: count }, (_, index) => ({ type: 'image', src: `https://example.org/illustration-${index}.png`, caption: captioned ? 'Figure caption.' : '' }));
+      const blob = await generateFb2({ title: 'Reference document', language: 'en', content: [...images, { type: 'heading', level: 2, text: 'Body' }, { type: 'paragraph', text: 'Body text.', format: 'text' }] });
+      const xml = new JSDOM(await blob.text(), { contentType: 'application/xml' }).window.document;
+      const intro = [...xml.querySelectorAll('body > section')].find(section => section.firstElementChild?.localName === 'image');
+      expect(intro).toBeTruthy();
+      expect(['p', 'poem', 'subtitle', 'cite', 'empty-line', 'table']).toContain(intro.firstElementChild.nextElementSibling?.localName);
+      expect(intro.querySelectorAll('image')).toHaveLength(count);
+      if (captioned) expect(intro.textContent).toContain('Figure caption.');
+    });
+
     it('should throw error if content is empty', async () => {
       await expect(
         generateFb2({ content: [], title: 'Test' })

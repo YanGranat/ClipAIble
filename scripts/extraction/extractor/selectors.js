@@ -1,6 +1,7 @@
 // @ts-check
 
 import { CANDIDATE_SELECTOR } from './constants.js';
+import { readArticleMetadataText } from './dom-utils.js';
 
 export function selectorValues(value) {
   return (Array.isArray(value) ? value : [value]).filter(item => typeof item === 'string' && item.trim());
@@ -50,7 +51,8 @@ export function isSelectedContentExcluded(element, exclusions) {
 export function readSelectedText(doc, value) {
   for (const selector of selectorValues(value)) {
     const node = doc.querySelector(selector);
-    if (node?.textContent?.trim()) return node.textContent.trim();
+    const text = node ? readArticleMetadataText(node) : '';
+    if (text) return text;
   }
   return '';
 }

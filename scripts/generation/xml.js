@@ -1,5 +1,6 @@
 // @ts-check
 import { decodeHtmlEntities } from '../utils/html.js';
+import { decodeFragmentIdentifier } from './source-fragments.js';
 
 /** Replace code points forbidden by XML 1.0 while preserving valid Unicode. */
 export function normalizeXmlCharacters(value) {
@@ -20,7 +21,7 @@ export function escapeXml(value) {
 
 export function xmlIdentifier(value) {
   const id = String(value || '');
-  return /^[\p{L}_][\p{L}\p{N}\p{M}_.-]*$/u.test(id) ? id : `id-${Array.from(id, character => character.codePointAt(0).toString(16)).join('-')}`;
+  return !id.startsWith('id-') && /^[\p{L}_][\p{L}\p{N}\p{M}_.-]*$/u.test(id) ? id : `id-${Array.from(id, character => character.codePointAt(0).toString(16)).join('-')}`;
 }
 
 /** Native PDF text contains glyph strings, not HTML or Markdown. */
@@ -70,6 +71,7 @@ export function serializeXmlInline(value, format, block = false) {
     }
     const values = {};
     for (const attr of match[0].matchAll(/\s+([a-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) values[attr[1].toLowerCase()] = attr[2] ?? attr[3];
+    if (format === 'fb2' && name === 'a' && !values.href?.trim()) continue;
     if (values.href) {
       let probe = values.href;
       for (let layer = 0; layer < 5; layer++) {
@@ -85,8 +87,9 @@ export function serializeXmlInline(value, format, block = false) {
       if (name === 'a') {
         if (values.href) {
           const href = decodeHtmlEntities(values.href, true);
-          attrs += ` l:href="${escapeXml(href.startsWith('#') && href.length > 1 ? '#' + xmlIdentifier(href.slice(1)) : href)}"`;
-        } else attrs += ' l:href="#"';
+          const target = decodeFragmentIdentifier(href.slice(1));
+          attrs += ` l:href="${escapeXml(href.startsWith('#') && href.length > 1 ? '#' + xmlIdentifier(target) : href)}"`;
+        }
       }
     } else {
       for (const key of attributes[name] || []) if (values[key] !== undefined) attrs += ` ${key}="${attribute(values[key])}"`;

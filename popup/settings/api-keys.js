@@ -6,6 +6,7 @@ import { encryptApiKey, decryptApiKey, maskApiKey, saveApiKeySettings } from '..
 import { t, tSync, getUILanguage, UI_LOCALES } from '../../scripts/locales.js';
 import { logError } from '../../scripts/utils/logging.js';
 import { formatModelLabel as formatCatalogModelLabel } from '../../scripts/utils/model-catalog.js';
+import { isApiKeyToken } from '../utils/api-key-validation.js';
 
 /**
  * Initialize API keys module
@@ -53,8 +54,8 @@ export function initApiKeys(deps) {
       placeholderText = 'sk-ant-...';
     } else if (provider === 'gemini') {
       labelKey = 'geminiApiKey';
-      placeholderKey = 'enterGeminiApiKey';
-      placeholderText = 'AIza...';
+      placeholderKey = 'pleaseEnterApiKey';
+      placeholderText = 'Enter API key';
     } else if (provider === 'grok') {
       labelKey = 'grokApiKey';
       placeholderKey = 'enterGrokApiKey';
@@ -150,9 +151,9 @@ export function initApiKeys(deps) {
             return;
           }
         } else if (provider === 'gemini') {
-          if (!apiKey.startsWith('AIza')) {
-            const invalidGeminiKeyText = await t('invalidGeminiKeyFormat');
-            showToast(invalidGeminiKeyText, 'error', { key: 'invalidGeminiKeyFormat' });
+          if (!isApiKeyToken(apiKey)) {
+            const invalidGeminiKeyText = await t('invalidKeyFormat');
+            showToast(invalidGeminiKeyText, 'error', { key: 'invalidKeyFormat' });
             return;
           }
           try {

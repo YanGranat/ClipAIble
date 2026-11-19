@@ -156,6 +156,63 @@ export function cloneWithoutLinkAnnouncements(element) {
   return clone;
 }
 
+/** Resolve an internal fragment against its source document. */
+export function getDocumentFragmentTarget(element) {
+  const href = element.getAttribute('href');
+  if (!href) return null;
+  try {
+    const document = element.ownerDocument;
+    const target = new URL(href, document.baseURI);
+    const source = new URL(document.URL);
+    if (!target.hash || target.origin !== source.origin || target.pathname !== source.pathname || target.search !== source.search) return null;
+    return document.getElementById(decodeURIComponent(target.hash.slice(1)));
+  } catch (_) { return null; }
+}
+
+/** Remove a hidden note copy only when its canonical target contains the same text. */
+export function cloneWithoutRepeatedNoteTooltips(element, referenceRoots = null, excludedSelectors = []) {
+  const clone = cloneWithoutLinkAnnouncements(element);
+  for (const reference of Array.from(clone.querySelectorAll('a[href]'))) {
+    if (!reference.matches('[data-footnote-ref], [role="doc-noteref"]') && !/^\d+$/.test(reference.textContent?.trim() || '')) continue;
+    const target = getDocumentFragmentTarget(reference);
+    if (!target || element.contains(target)) continue;
+    if (referenceRoots && !referenceRoots.some(root => root.contains(target))) continue;
+    if (excludedSelectors.some(selector => target.closest(selector))) continue;
+    const canonical = target.cloneNode(true);
+    for (const backlink of Array.from(canonical.querySelectorAll('a'))) {
+      if (backlink.getAttribute('role') === 'doc-backlink' || /^[\s↩︎↩←↑]+$/.test(backlink.textContent || '')) backlink.remove();
+    }
+    const noteText = node => {
+      const copy = node.cloneNode(true);
+      const marker = copy.firstElementChild;
+      if (marker?.tagName === 'SUP' && /^\d+$/.test(marker.textContent?.trim() || '')) marker.remove();
+      return (copy.textContent || '').replace(/\s+/g, ' ').trim();
+    };
+    const canonicalText = noteText(canonical);
+    const owner = reference.closest('sup') || reference.parentElement;
+    for (const tooltip of Array.from(owner?.querySelectorAll('[aria-hidden="true"], [hidden], [role="tooltip"]') || [])) {
+      if (canonicalText && noteText(tooltip) === canonicalText) tooltip.remove();
+    }
+  }
+  return clone;
+}
+
+/** Read metadata without hidden announcements or separately owned reference markers. */
+export function readArticleMetadataText(element) {
+  if (!element || element.closest('[hidden], [aria-hidden="true"]')) return '';
+  const clone = cloneWithoutRepeatedNoteTooltips(element);
+  for (const node of Array.from(clone.querySelectorAll('[hidden], [aria-hidden="true"]'))) {
+    if (!node.closest('math, .MathJax, .katex, mjx-container')) node.remove();
+  }
+  for (const reference of Array.from(clone.querySelectorAll('a[href]'))) {
+    if (reference.matches('[data-footnote-ref], [role="doc-noteref"]') ||
+        (/^\d+$/.test(reference.textContent?.trim() || '') && getDocumentFragmentTarget(reference))) {
+      (reference.closest('sup') || reference).remove();
+    }
+  }
+  return (clone.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * Check if element is in viewport (visible area)
  * @param {Element} element - Element to check

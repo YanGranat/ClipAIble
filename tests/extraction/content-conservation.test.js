@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { parseElements, filterCandidateElements } from '../../scripts/extraction/extractor/parse.js';
 import { cleanHeadingText, stripObjMarkers } from '../../scripts/extraction/extractor/text-utils.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
-import { deduplicateContent, filterExtractionNoise } from '../../scripts/extraction/html-utils.js';
+import { mergeChunkContent, filterExtractionNoise } from '../../scripts/extraction/html-utils.js';
 import { extractUltimateFallbackAllParagraphs } from '../../scripts/extraction/extractor/fallbacks.js';
 import { isDecorativeImage, isTrackingPixel } from '../../scripts/extraction/extractor/images.js';
 
@@ -38,17 +38,16 @@ function text(document, item) {
 }
 
 describe('Article content conservation', () => {
-  it('preserves independently owned repeated DOM quotations while retaining chunk-overlap deduplication', () => {
+  it('preserves independently owned repeated quotations and prose within a chunk', () => {
     const quote = { type: 'quote', text: 'A field measurement is useful only when its method is clear.' };
     const prose = { type: 'paragraph', text: 'The conclusion returns to the earlier quotation.' };
     const content = [quote, prose, { ...quote }, { ...prose }];
-    expect(deduplicateContent(content, { preserveQuoteOccurrences: true })).toEqual([quote, prose, quote]);
-    expect(deduplicateContent(content)).toEqual([quote, prose]);
+    expect(mergeChunkContent([content], [''])).toEqual(content);
   });
   it('keeps distinct equal-length content even when a short hash would collide', () => {
     const first = { type: 'paragraph', text: 'The example includes Aa in this position.' };
     const second = { type: 'paragraph', text: 'The example includes B@ in this position.' };
-    expect(deduplicateContent([first, second, { ...first }])).toEqual([first, second]);
+    expect(mergeChunkContent([[first, second, { ...first }]], [''])).toEqual([first, second, first]);
   });
 
   it('preserves article paragraphs that discuss section titles', () => {

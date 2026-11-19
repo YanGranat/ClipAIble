@@ -2,6 +2,7 @@
 // TTS API key save handlers (ElevenLabs, Qwen, Respeecher, Google TTS)
 
 import { saveApiKeySettings } from '../../scripts/utils/encryption.js';
+import { isApiKeyToken } from '../utils/api-key-validation.js';
 
 /**
  * Generic function to save TTS API key
@@ -188,14 +189,9 @@ export function setupTtsKeyHandlers(deps) {
         showToast,
         t,
         validateKey: async (key) => {
-          if (!key.startsWith('AIza')) {
-            const invalidKeyText = await t('invalidGoogleTtsKeyFormat');
-            showToast(invalidKeyText, 'error', { key: 'invalidGoogleTtsKeyFormat' });
-            return false;
-          }
-          if (key.length < 20) {
-            const keyTooShortText = await t('keyTooShort');
-            showToast(keyTooShortText, 'error', { key: 'keyTooShort' });
+          if (!isApiKeyToken(key)) {
+            const invalidKeyText = await t('invalidKeyFormat');
+            showToast(invalidKeyText, 'error', { key: 'invalidKeyFormat' });
             return false;
           }
           return true;
@@ -219,9 +215,9 @@ export function setupTtsKeyHandlers(deps) {
         showToast,
         t,
         validateKey: async (key) => {
-          if (!key.startsWith('AIza')) {
-            const invalidGoogleKeyText = await t('invalidGoogleKeyFormat');
-            showToast(invalidGoogleKeyText, 'error', { key: 'invalidGoogleKeyFormat' });
+          if (!isApiKeyToken(key)) {
+            const invalidGoogleKeyText = await t('invalidKeyFormat');
+            showToast(invalidGoogleKeyText, 'error', { key: 'invalidKeyFormat' });
             return false;
           }
           return true;

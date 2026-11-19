@@ -144,7 +144,7 @@ ${inlinedCode}
  */
 export function getExtractorVersion() {
   return {
-    version: '3.3.13',
+    version: '3.3.14',
     modules: [
       'dom-utils',
       'text-utils',

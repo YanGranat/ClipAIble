@@ -1,9 +1,9 @@
-// Unit tests for scripts/extraction/html-utils.js (deduplicateContent)
+// Unit tests for extraction content conservation.
 
 import { describe, it, expect } from 'vitest';
-import { deduplicateContent } from '../../scripts/extraction/html-utils.js';
+import { mergeChunkContent } from '../../scripts/extraction/html-utils.js';
 
-describe('deduplicateContent', () => {
+describe('mergeChunkContent', () => {
   it('should keep blocks with item.items[].html as distinct when content differs', () => {
     const content = [
       {
@@ -27,20 +27,20 @@ describe('deduplicateContent', () => {
         ]
       }
     ];
-    const result = deduplicateContent(content);
+    const result = mergeChunkContent([content], ['']);
     expect(result).toHaveLength(3);
     expect(result[0].items[0].html).toContain('молекулярных');
     expect(result[1].items[0].html).toContain('Дестабилизация');
     expect(result[2].items[0].html).toContain('Нарушения');
   });
 
-  it('should deduplicate only when item.items text is identical', () => {
+  it('preserves repeated list content within one independently extracted chunk', () => {
     const content = [
       { type: 'list', items: [{ html: '<p>Same text</p>', id: '' }] },
       { type: 'list', items: [{ html: '<p>Same text</p>', id: '' }] },
       { type: 'list', items: [{ html: '<p>Different text</p>', id: '' }] }
     ];
-    const result = deduplicateContent(content);
-    expect(result).toHaveLength(2);
+    const result = mergeChunkContent([content], ['']);
+    expect(result).toEqual(content);
   });
 });

@@ -1,4 +1,6 @@
 // @ts-check
+import { encodeFragmentIdentifier } from './source-fragments.js';
+import { xmlIdentifier } from './xml.js';
 // Universal TOC (Table of Contents) builder for all formats
 // This module provides a unified algorithm for building nested TOC structures
 
@@ -83,7 +85,7 @@ export function renderTocAsHtml(items, escapeHtml, escapeAttr, listTag = 'ul', l
   
   const defaultLinkFormatter = (id, text) => {
     if (id) {
-      return `<a href="#${escapeAttr(id)}">${escapeHtml(text)}</a>`;
+      return `<a href="#${escapeAttr(encodeFragmentIdentifier(id))}">${escapeHtml(text)}</a>`;
     }
     return escapeHtml(text);
   };
@@ -162,7 +164,7 @@ export function renderTocAsFb2(items, escapeXml) {
     
     for (const item of items) {
       const hasChildren = item.children && item.children.length > 0;
-      const linkHref = item.id ? `#${escapeXml(item.id)}` : '';
+      const linkHref = item.id ? `#${escapeXml(xmlIdentifier(item.id))}` : '';
       const bullet = '• ';
       
       // Use simple paragraph with non-breaking space indentation for hierarchy

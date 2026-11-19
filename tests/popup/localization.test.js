@@ -6,6 +6,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+it('provides a neutral credential prompt and validation message in every UI locale', () => {
+  const retired = ['enterGeminiApiKey', 'enterGoogleApiKey', 'invalidGeminiKeyFormat', 'invalidGoogleTtsKeyFormat', 'invalidGoogleKeyFormat'];
+  for (const [language, locale] of Object.entries(UI_LOCALES)) {
+    expect(tSync('pleaseEnterApiKey', language)).toBe(locale.pleaseEnterApiKey);
+    expect(tSync('invalidKeyFormat', language)).toBe(locale.invalidKeyFormat);
+    expect(locale.pleaseEnterApiKey).toBeTruthy();
+    expect(locale.invalidKeyFormat).toBeTruthy();
+    for (const key of retired) expect(locale).not.toHaveProperty(key);
+  }
+});
+
 describe('localization fallback', () => {
   it('uses English when an existing locale has no translation', async () => {
     const key = 'errorOffscreenApiNotAvailable';

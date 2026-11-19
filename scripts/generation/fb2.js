@@ -54,7 +54,7 @@ export async function generateFb2(data, updateState) {
   } = data;
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = normalizeDocumentContent(content, title, sourceUrl);
+  const filteredContent = normalizeDocumentContent(content, title, sourceUrl, { inlineFragmentTargets: false });
   if (filteredContent.length !== (content?.length || 0)) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content?.length || 0,
@@ -711,7 +711,8 @@ ${indentStr}  <title><p>${escapeXml(section.title)}</p></title>`;
     });
   }
   
-  const ownItems = section.items.map(item => contentItemToFb2(item, sourceUrl, indent + 1)).join('');
+  let ownItems = section.items.map(item => contentItemToFb2(item, sourceUrl, indent + 1)).join('');
+  ownItems = ownItems.replace(/^(\s*<image\b[^>]*\/>)(?=\s*(?:<image\b|$))/, `$1\n${indentStr}  <empty-line/>`);
   sectionXml += ownItems && section.nestedSections?.length ? `\n${indentStr}  <section>${ownItems}\n${indentStr}  </section>` : ownItems;
   if (!ownItems && !section.nestedSections?.length) sectionXml += `\n${indentStr}  <empty-line/>`;
   
@@ -738,8 +739,7 @@ ${indentStr}  <title><p>${escapeXml(section.title)}</p></title>`;
 }
 
 /**
- * Create FB2 anchor tag for internal links target
- * FB2 uses <a id="xxx"/> inside <p> as anchor target
+ * Create a schema-valid ID attribute for a block target.
  */
 function createFb2Anchor(id) {
   if (!id) return '';
@@ -859,53 +859,12 @@ function tableToFb2(item, sourceUrl = '', indent = 1) {
   let fb2 = `\n${indentStr}  <empty-line/>`;
   
   for (const row of rows) {
-    const cells = row.map(cell => isNativePdfContent(item) ? String(cell ?? '') : stripHtml(cell)).join(' | ');
-    fb2 += `\n${indentStr}  <p>${escapeXml(cells)}</p>`;
+    const cells = row.map(cell => serializeXmlInline(tableCellHtml(item, cell, sourceUrl), 'fb2')).join(' | ');
+    fb2 += `\n${indentStr}  <p>${cells}</p>`;
   }
   
   fb2 += `\n${indentStr}  <empty-line/>`;
   return fb2;
-}
-
-/**
- * Convert internal links to local anchors for FB2
- * Links like https://site.com/page#anchor or /page#anchor -> #anchor
- */
-function convertInternalLinks(html, sourceUrl) {
-  if (!html || !sourceUrl) return html;
-  
-  try {
-    const sourceUrlObj = new URL(sourceUrl);
-    const sourceOrigin = sourceUrlObj.origin;
-    const sourcePath = decodeURIComponent(sourceUrlObj.pathname).replace(/\/$/, '');
-    
-    // Match all href attributes
-    return html.replace(/href=["']([^"']+)["']/gi, (match, href) => {
-      if (!href.includes('#')) return match;
-      
-      // Already a local anchor
-      if (href.startsWith('#')) return match;
-      
-      try {
-        // Handle both absolute and relative URLs
-        const hrefUrl = new URL(href, sourceUrl);
-        const hrefPath = decodeURIComponent(hrefUrl.pathname).replace(/\/$/, '');
-        
-        // Check if same origin and same page
-        if (hrefUrl.origin === sourceOrigin && hrefPath === sourcePath) {
-          // Convert to local anchor
-          const anchor = '#' + href.split('#')[1];
-          return `href="${anchor}"`;
-        }
-      } catch {
-        // Not a valid URL, keep as is
-      }
-      
-      return match;
-    });
-  } catch {
-    return html;
-  }
 }
 
 /**
@@ -919,7 +878,6 @@ function convertInlineHtmlToFb2(html, sourceUrl = '', plainText = false) {
   const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(result);
   if (hasMarkdown && !hasHtmlTags) result = markdownToHtml(result);
   result = sanitizeHtml(protectXmlLiteralText(result), sourceUrl);
-  if (sourceUrl) result = convertInternalLinks(result, sourceUrl);
   return serializeXmlInline(result, 'fb2');
 }
 

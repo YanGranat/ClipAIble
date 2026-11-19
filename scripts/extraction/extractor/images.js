@@ -169,18 +169,36 @@ export function extractBestImageUrl(imgElement) {
 }
 
 /**
+ * Read decoded dimensions only when they describe the resource selected for export.
+ * @param {HTMLImageElement} img
+ * @returns {{width: number, height: number, matchesSource: boolean}}
+ */
+export function getSelectedImageNaturalSize(img) {
+  const selectedSource = extractBestImageUrl(img);
+  const loadedSource = img.currentSrc || img.src || '';
+  const matches = !selectedSource || normalizeImageUrl(toAbsoluteUrl(selectedSource, img.ownerDocument.baseURI)) ===
+    normalizeImageUrl(toAbsoluteUrl(loadedSource, img.ownerDocument.baseURI));
+  return {
+    width: matches ? (img.naturalWidth || 0) : 0,
+    height: matches ? (img.naturalHeight || 0) : 0,
+    matchesSource: matches
+  };
+}
+
+/**
  * Check if image is tracking pixel
  * @param {Window} win - Window object
  * @param {HTMLImageElement} img - Image element
  * @returns {boolean} - True if image is tracking pixel
  */
 export function isTrackingPixel(win, img) {
+  const selectedSource = extractBestImageUrl(img);
+  const { width: naturalWidth, height: naturalHeight } = getSelectedImageNaturalSize(img);
+
   // Check if hidden
   try {
     const style = safeGetComputedStyle(win, img);
     if (style && (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')) {
-      const naturalWidth = img.naturalWidth || 0;
-      const naturalHeight = img.naturalHeight || 0;
       if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 3 && naturalHeight <= 3) {
         return true;
       }
@@ -188,15 +206,13 @@ export function isTrackingPixel(win, img) {
   } catch (e) { }
   
   // Check dimensions
-  const naturalWidth = img.naturalWidth || 0;
-  const naturalHeight = img.naturalHeight || 0;
   if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 3 && naturalHeight <= 3) {
     return true;
   }
   
   // Check src for tracking patterns
   try {
-    const url = new URL(img.src || '', img.ownerDocument.baseURI);
+    const url = new URL(selectedSource || img.src || '', img.ownerDocument.baseURI);
     return /(?:^|\.)doubleclick\.net$/i.test(url.hostname) ||
       /(?:^|\.)googleadservices\.com$/i.test(url.hostname) ||
       (/(?:^|\.)facebook\.com$/i.test(url.hostname) && /^\/tr\/?$/i.test(url.pathname));
@@ -213,12 +229,13 @@ export function isTrackingPixel(win, img) {
 export function isDecorativeImage(win, img, logoPatterns) {
   if (!img) return false;
   
-  const src = (img.src || '').toLowerCase();
+  const src = (extractBestImageUrl(img) || img.src || '').toLowerCase();
   const alt = (img.alt || '').toLowerCase();
   const className = String(img.className || '').toLowerCase();
   const id = (img.id || '').toLowerCase();
-  const naturalWidth = img.naturalWidth || img.width || 0;
-  const naturalHeight = img.naturalHeight || img.height || 0;
+  const naturalSize = getSelectedImageNaturalSize(img);
+  const naturalWidth = naturalSize.width || (naturalSize.matchesSource ? img.width : Number(img.getAttribute('width'))) || 0;
+  const naturalHeight = naturalSize.height || (naturalSize.matchesSource ? img.height : Number(img.getAttribute('height'))) || 0;
 
   if (img.getAttribute('role') === 'separator') return true;
   if (naturalWidth > 0 && naturalHeight > 0 &&
@@ -241,8 +258,6 @@ export function isDecorativeImage(win, img, logoPatterns) {
     
     if (parentClass.includes('contributor') || parentClass.includes('byline') ||
         parentClass.includes('author-info') || parentClass.includes('author-bio')) {
-      const naturalWidth = img.naturalWidth || img.width || 0;
-      const naturalHeight = img.naturalHeight || img.height || 0;
       if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 150 && naturalHeight <= 150) {
         return true;
       }
@@ -252,8 +267,6 @@ export function isDecorativeImage(win, img, logoPatterns) {
   
   // Avatar images
   if (alt && (alt.includes("'s avatar") || alt.includes(' avatar') || alt === 'avatar')) {
-    const naturalWidth = img.naturalWidth || img.width || 0;
-    const naturalHeight = img.naturalHeight || img.height || 0;
     if (naturalWidth > 0 && naturalHeight > 0 && naturalWidth <= 50 && naturalHeight <= 50) {
       return true;
     }
@@ -285,15 +298,19 @@ export function isDecorativeImage(win, img, logoPatterns) {
 /**
  * Get image caption from nearby elements
  * @param {HTMLImageElement} img - Image element
+ * @param {WeakSet<Element>|null} [captionOwners] - Captions consumed by this image choice
  * @returns {string} - Caption text or empty string
  */
-export function getImageCaption(img) {
+export function getImageCaption(img, captionOwners = null) {
   const captionText = element => (cloneWithoutLinkAnnouncements(element).textContent || '').trim();
   // Check for figcaption in figure
   const figure = img.closest('figure');
   if (figure) {
     const figcaption = figure.querySelector('figcaption');
-    if (figcaption) return captionText(figcaption);
+    if (figcaption) {
+      captionOwners?.add(figcaption);
+      return captionText(figcaption);
+    }
   }
   
   // Check aria-label or title
@@ -328,9 +345,10 @@ export function getImageCaption(img) {
  * @param {string} baseUrl - Base URL
  * @param {Element|null} mainContent - Main content element
  * @param {string[]} logoPatterns - Logo URL patterns
+ * @param {WeakSet<Element>|null} [captionOwners] - Captions consumed by the chosen image
  * @returns {{src: string, alt: string, caption: string}|null} - Featured image or null
  */
-export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
+export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns, captionOwners = null) {
   const featuredImageSelectors = [
     'meta[property="og:image"]',
     'meta[name="twitter:image"]',
@@ -375,8 +393,7 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
       if (!src) continue;
       
       // Check dimensions
-      const naturalWidth = imgElement.naturalWidth || 0;
-      const naturalHeight = imgElement.naturalHeight || 0;
+      const { width: naturalWidth, height: naturalHeight } = getSelectedImageNaturalSize(imgElement);
       
       // Must be reasonably large
       if (naturalWidth >= 400 || naturalHeight >= 300 || (naturalWidth === 0 && naturalHeight === 0)) {
@@ -389,11 +406,45 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns) {
         return {
           src: absoluteUrl,
           alt: imgElement.alt || '',
-          caption: getImageCaption(imgElement)
+          caption: getImageCaption(imgElement, captionOwners)
         };
       }
     }
   }
   
   return null;
+}
+
+/**
+ * Preserve readable references and static previews for article media embeds.
+ * @param {Element} element
+ * @returns {import('./types.js').ContentItem[]}
+ */
+export function getEmbeddedMediaItems(element) {
+  if (!element || !['IFRAME', 'VIDEO', 'AUDIO'].includes(element.tagName)) return [];
+  const base = element.ownerDocument.baseURI;
+  const safeUrl = value => {
+    if (!value || !value.trim()) return null;
+    try {
+      const url = new URL(value, base);
+      return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url : null;
+    } catch (_) { return null; }
+  };
+  const source = safeUrl(element.getAttribute('src') || element.querySelector('source[src]')?.getAttribute('src'));
+  if (!source) return [];
+  const escape = value => String(value).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[character]);
+  const label = (element.getAttribute('title') || element.getAttribute('aria-label') || '').trim() || source.href;
+  let preview = element.tagName === 'VIDEO' ? safeUrl(element.getAttribute('poster'))?.href : null;
+  if (element.tagName === 'IFRAME' && source.hostname === 'datawrapper.dwcdn.net') {
+    const chart = source.pathname.match(/^\/([A-Za-z0-9]{5})\/(?:\d+\/?)?$/);
+    if (chart) preview = `https://datawrapper.dwcdn.net/${chart[1]}/full.png`;
+  }
+  /** @type {import('./types.js').ContentItem[]} */
+  const items = [];
+  if (preview) items.push({ type: 'image', src: preview, alt: label, caption: '' });
+  items.push({ type: 'paragraph', text: label,
+    html: `<a href="${escape(source.href)}">${escape(label)}</a>` });
+  return items;
 }

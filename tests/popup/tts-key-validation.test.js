@@ -24,22 +24,22 @@ describe('Google TTS key validation', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('does not store a key rejected by asynchronous validation', async () => {
-    deps.elements.googleTtsApiKey.value = 'invalid-key-value';
+    deps.elements.googleTtsApiKey.value = 'invalid key value';
     await save();
     expect(deps.encryptApiKey).not.toHaveBeenCalled();
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
-    expect(deps.showToast).toHaveBeenCalledWith('invalidGoogleTtsKeyFormat', 'error', { key: 'invalidGoogleTtsKeyFormat' });
+    expect(deps.showToast).toHaveBeenCalledWith('invalidKeyFormat', 'error', { key: 'invalidKeyFormat' });
   });
 
-  it('does not store a Google key that is too short', async () => {
-    deps.elements.googleTtsApiKey.value = 'AIza-short';
+  it('does not store a Google key with control characters', async () => {
+    deps.elements.googleTtsApiKey.value = 'synthetic\u0001token';
     await save();
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
-    expect(deps.showToast).toHaveBeenCalledWith('keyTooShort', 'error', { key: 'keyTooShort' });
+    expect(deps.showToast).toHaveBeenCalledWith('invalidKeyFormat', 'error', { key: 'invalidKeyFormat' });
   });
 
   it('stores a key accepted by asynchronous validation', async () => {
-    deps.elements.googleTtsApiKey.value = 'AIza-synthetic-validation-input';
+    deps.elements.googleTtsApiKey.value = 'synthetic-speech-token';
     await save();
     expect(chrome.storage.local.set).toHaveBeenCalledWith({ google_tts_api_key: 'encrypted-key' });
     expect(navigator.locks.request).toHaveBeenCalledWith('clipaible-api-key-storage', expect.any(Function));

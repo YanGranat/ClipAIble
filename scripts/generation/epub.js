@@ -21,6 +21,7 @@ import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { filterFigureParagraphs } from './content.js';
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
+import { encodeFragmentIdentifier } from './source-fragments.js';
 import { normalizeXmlCharacters, escapeXml, isNativePdfContent, protectXmlLiteralText, serializeXmlInline } from './xml.js';
 
 
@@ -339,7 +340,7 @@ function generateNavXhtml(title, headings, generateToc, language = 'en') {
   let tocHtml = '';
   if (generateToc && headings.length > 1) {
     const tocListHtml = renderTocAsHtml(buildTocStructure(headings).items, escapeXml, escapeXml,
-      'ol', '', (id, text) => `<a href="content.xhtml#${escapeXml(id)}">${escapeXml(text)}</a>`);
+      'ol', '', (id, text) => `<a href="content.xhtml#${escapeXml(encodeFragmentIdentifier(id))}">${escapeXml(text)}</a>`);
     tocHtml = `    <nav epub:type="toc" id="toc">
       <h2>${escapeXml(contentsLabel)}</h2>${tocListHtml}
     </nav>`;
@@ -378,7 +379,7 @@ function generateTocNcx(bookId, title, headings, generateToc) {
     navPoints = headings.map((h, i) => `
     <navPoint id="navpoint-${i + 1}" playOrder="${i + 1}">
       <navLabel><text>${escapeXml(h.text)}</text></navLabel>
-      <content src="content.xhtml#${escapeXml(h.id)}"/>
+      <content src="content.xhtml#${escapeXml(encodeFragmentIdentifier(h.id))}"/>
     </navPoint>`).join('');
   } else {
     navPoints = `
@@ -687,47 +688,6 @@ function tableToXhtml(item, sourceUrl = '') {
 }
 
 /**
- * Convert internal links to local anchors
- * Links like https://site.com/page#anchor or /page#anchor -> #anchor
- */
-function convertInternalLinks(html, sourceUrl) {
-  if (!html || !sourceUrl) return html;
-  
-  try {
-    const sourceUrlObj = new URL(sourceUrl);
-    const sourceOrigin = sourceUrlObj.origin;
-    const sourcePath = decodeURIComponent(sourceUrlObj.pathname).replace(/\/$/, '');
-    
-    // Match all href attributes
-    return html.replace(/href=["']([^"']+)["']/gi, (match, href) => {
-      if (!href.includes('#')) return match;
-      
-      // Already a local anchor
-      if (href.startsWith('#')) return match;
-      
-      try {
-        // Handle both absolute and relative URLs
-        const hrefUrl = new URL(href, sourceUrl);
-        const hrefPath = decodeURIComponent(hrefUrl.pathname).replace(/\/$/, '');
-        
-        // Check if same origin and same page
-        if (hrefUrl.origin === sourceOrigin && hrefPath === sourcePath) {
-          // Convert to local anchor
-          const anchor = '#' + href.split('#')[1];
-          return `href="${anchor}"`;
-        }
-      } catch {
-        // Not a valid URL, keep as is
-      }
-      
-      return match;
-    });
-  } catch {
-    return html;
-  }
-}
-
-/**
  * Sanitize HTML for XHTML (close tags, escape entities)
  */
 function sanitizeHtmlForXhtml(html, sourceUrl = '', plainText = false) {
@@ -737,7 +697,6 @@ function sanitizeHtmlForXhtml(html, sourceUrl = '', plainText = false) {
   const hasMarkdown = /(\*\*[^*]+\*\*|__[^_]+__|\*[^*\s\n]+\*|_[^_\s\n]+_|`[^`]+`|\[[^\]]+\]\([^)]+\)|~~[^~]+~~)/.test(result);
   if (hasMarkdown) result = markdownToHtml(result);
   result = sanitizeHtml(protectXmlLiteralText(result), sourceUrl);
-  if (sourceUrl) result = convertInternalLinks(result, sourceUrl);
   result = result.replace(/\s*style\s*=\s*["'][^"']*color\s*:[^"']*["']/gi, '');
   result = result.replace(/\s*style\s*=\s*["']\s*["']/gi, '');
   return serializeXmlInline(result, 'xhtml').trim();

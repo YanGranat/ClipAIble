@@ -1,5 +1,5 @@
 // @ts-check
-import { tokenizeHtml } from '../utils/html/tokenizer.js';
+import { tokenizeHtml, decodeEntities } from '../utils/html/tokenizer.js';
 import { stripHtml } from '../utils/html.js';
 
 /** Split a list tree into ordered paragraph fragments without a browser DOM. */
@@ -8,7 +8,7 @@ export function fb2ListParagraphs(html) {
   let buffer = '';
   const flush = () => {
     const current = items.at(-1);
-    if (current && stripHtml(buffer).trim()) {
+    if (current && (stripHtml(buffer).trim() || (current.first && current.id))) {
       paragraphs.push({ html: buffer + formatting.slice().reverse().map(token => `</${token.name}>`).join(''),
         prefix: current.first ? current.prefix : '', id: current.first ? current.id : '', depth: current.depth });
       current.first = false;
@@ -29,7 +29,7 @@ export function fb2ListParagraphs(html) {
       else {
         const list = lists.at(-1);
         items.push({ prefix: list?.ordered ? `${list.number++}. ` : '• ',
-          depth: Math.max(0, lists.length - 1), first: true, id: token.attrs.find(attr => attr.name === 'id')?.value || '' });
+          depth: Math.max(0, lists.length - 1), first: true, id: decodeEntities(token.attrs.find(attr => attr.name === 'id')?.value || '') });
       }
     } else if (token.name === 'br') { begin(); buffer += ' '; }
     else if (token.closing) {

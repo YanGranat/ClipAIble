@@ -67,9 +67,9 @@ describe('HTML extraction response boundary', () => {
     expect(result.content[5]).toEqual({ ...first.content[5], format: 'text' });
     for (const index of [6, 7, 8, 10, 11, 12]) expect(result.content[index]).toEqual(first.content[index]);
     expect(result.content[9]).toMatchObject({ html: '<strong>HTML-only response</strong>', text: 'HTML-only response' });
-    expect(result.content).toHaveLength(first.content.length + count - 1);
+    expect(result.content).toHaveLength(first.content.length + (count === 2 ? 2 : 0));
     if (count === 2) expect(result.content.at(-1)).toMatchObject({ text: 'A final observation.', html: 'A final <em>observation</em>.' });
-    expect(result.content.filter(item => item.html === link)).toHaveLength(1);
+    expect(result.content.filter(item => item.html === link)).toHaveLength(count);
     expect(first).toEqual(before);
     expect(mocks.ai).toHaveBeenCalledTimes(count);
     for (const args of mocks.ai.mock.calls) {

@@ -8,7 +8,7 @@ import { downloadBlob } from '../api/blob-download.js';
 // @typedef {import('../types.js').ProcessingState} ProcessingState
 
 import { log, logWarn, logDebug } from '../utils/logging.js';
-import { stripHtml, htmlToMarkdown, cleanTildaArtifactsFromText } from '../utils/html.js';
+import { stripHtml, htmlToMarkdown, cleanTildaArtifactsFromText, escapeAttr } from '../utils/html.js';
 import { getDocumentLocalization, formatDateForDisplay } from '../utils/config.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isCancelled } from '../state/processing.js';
@@ -708,15 +708,18 @@ function contentItemToMarkdown(item) {
       text = cleanTildaArtifactsFromText(text);
       if (!text.trim()) return '';
       // Headings: one newline before, one after (will be cleaned up if needed)
-      return `\n${prefix} ${text}\n\n`;
+      const anchor = item.id ? htmlToMarkdown(`<a id="${escapeAttr(item.id)}"></a>`) + '\n' : '';
+      return `\n${anchor}${prefix} ${text}\n\n`;
     }
     
     case 'paragraph': {
       // Use fragment-based formatting if available, otherwise fallback to simple formatting
-      const text = item.html !== undefined || item.format === 'text' ? documentMarkdown(item) : formatTextWithFragments(item);
+      const text = item.html !== undefined || item.format === 'text' || !fragmentsMatchText || !item.lines?.length
+        ? documentMarkdown(item) : formatTextWithFragments(item);
       if (!text.trim()) return '';
+      const anchor = typeof item.id === 'string' && item.id ? htmlToMarkdown(`<a id="${escapeAttr(item.id)}"></a>`) : '';
       // Paragraphs: just text with one newline after (no leading newline)
-      return `${text}\n\n`;
+      return `${anchor && !text.includes(anchor) ? anchor : ''}${text}\n\n`;
     }
     
     case 'quote':
@@ -781,10 +784,13 @@ function tableToMarkdown(item) {
   
   let md = '\n';
   const hasHeaders = item.hasHeaders !== false; // Default to true if not specified
+  const columns = rows.reduce((width, row) => Math.max(width, Array.isArray(row) ? row.length : 0), 0);
+  if (!columns) return '';
+  const padRow = row => Array.from({ length: columns }, (_, index) => row[index] ?? '');
   
   // Handle header row if present
-  if (hasHeaders && rows.length > 0) {
-    const headerRow = rows[0];
+  {
+    const headerRow = hasHeaders ? padRow(rows[0] || []) : Array(columns).fill('');
     if (headerRow && headerRow.length > 0) {
       // CRITICAL: Use htmlToMarkdown to preserve links in table cells
       md += '| ' + headerRow.map(cell => htmlToMarkdown(tableCellHtml(item, cell)).replace(/\|/g, '\\|').replace(/\n/g, '<br>')).join(' | ') + ' |\n';
@@ -804,9 +810,9 @@ function tableToMarkdown(item) {
   const startRow = hasHeaders ? 1 : 0;
   for (let i = startRow; i < rows.length; i++) {
     const row = rows[i];
-    if (row && row.length > 0) {
+    if (Array.isArray(row)) {
       // CRITICAL: Use htmlToMarkdown to preserve links in table cells
-      md += '| ' + row.map(cell => htmlToMarkdown(tableCellHtml(item, cell)).replace(/\|/g, '\\|').replace(/\n/g, '<br>')).join(' | ') + ' |\n';
+      md += '| ' + padRow(row).map(cell => htmlToMarkdown(tableCellHtml(item, cell)).replace(/\|/g, '\\|').replace(/\n/g, '<br>')).join(' | ') + ' |\n';
     }
   }
   
