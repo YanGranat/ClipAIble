@@ -48,11 +48,11 @@ export function normalizeImageUrl(url) {
  */
 export function compareDomOrder(a, b) {
   const position = a.compareDocumentPosition(b);
-  if (position & Node.DOCUMENT_POSITION_FOLLOWING) {
+  if (position & a.DOCUMENT_POSITION_FOLLOWING) {
     // b follows a, so a comes first
     return -1;
   }
-  if (position & Node.DOCUMENT_POSITION_PRECEDING) {
+  if (position & a.DOCUMENT_POSITION_PRECEDING) {
     // b precedes a, so b comes first
     return 1;
   }
@@ -143,9 +143,60 @@ export function getTextContent(element) {
   return (element.textContent || '').trim().replace(/\s+/g, ' ');
 }
 
-/** Clone content while removing assistive announcements attached to links. */
-export function cloneWithoutLinkAnnouncements(element) {
+/** Apply source exclusions while retaining the reading alternative of an embedded quotation. */
+export function isSourceExcluded(element, exclusions = []) {
+  return exclusions.some(rule => {
+    try {
+      const owner = typeof rule === 'string' ? element.closest(rule) : rule.contains(element) ? rule : null;
+      return !!owner && !(owner.matches('blockquote.twitter-tweet') && owner.textContent?.trim());
+    } catch (_) { return true; }
+  });
+}
+
+/** Clone readable source content without changing its DOM or interpreting literal text. */
+export function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
   const clone = element.cloneNode(true);
+  copyMap?.set(element, clone);
+  const excluded = node => isSourceExcluded(node, exclusions);
+  if (excluded(element)) { clone.replaceChildren(); return clone; }
+  const originals = Array.from(element.querySelectorAll('*'));
+  const copies = Array.from(clone.querySelectorAll('*'));
+  const win = element.ownerDocument.defaultView;
+  const rootStyle = disclosed && win ? safeGetComputedStyle(win, element) : null;
+  const hidden = value => value === 'hidden' || value === 'collapse';
+  const disclosureVisibility = hidden(rootStyle?.visibility) ? rootStyle.visibility : null;
+  const inheritsDisclosureVisibility = new Set(disclosureVisibility ? [element] : []);
+  for (let index = 0; index < originals.length; index++) copyMap?.set(originals[index], copies[index]);
+  for (let index = 0; index < originals.length; index++) {
+    const original = originals[index], copy = copies[index];
+    if (excluded(original)) { copy.remove(); continue; }
+    const literal = original.closest('pre,code,math,mjx-container,.MathJax,.katex');
+    const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
+    if (!literal && (original.matches('script,style,template,noscript,input,select,textarea') || style?.display === 'none' || (!style && original.hasAttribute('hidden')))) {
+      copy.remove();
+      continue;
+    }
+    const ownVisibility = /** @type {HTMLElement} */ (original).style?.visibility;
+    if (disclosureVisibility === style?.visibility && !hidden(ownVisibility) &&
+        inheritsDisclosureVisibility.has(original.parentElement)) inheritsDisclosureVisibility.add(original);
+    const textHidden = !literal && hidden(style?.visibility) && !inheritsDisclosureVisibility.has(original);
+    if (textHidden) {
+      for (const child of Array.from(copy.childNodes)) if (child.nodeType === 3) child.remove();
+    }
+    const originalText = original.getAttribute('data-original-text');
+    if (!textHidden && originalText?.trim()) copy.textContent = originalText;
+    if (!original.matches('span,a,button,b,i,em,strong,small,sup,sub') ||
+        original.closest('pre,code,math,mjx-container,.MathJax,.katex')) continue;
+    const parentStyle = original.parentElement && original.ownerDocument.defaultView?.getComputedStyle(original.parentElement);
+    if (['block', 'flex', 'grid', 'table', 'table-row'].includes(style?.display) ||
+        ['flex', 'grid'].includes(parentStyle?.display)) {
+      copy.before(clone.ownerDocument.createElement('br'), '\n');
+      copy.after(clone.ownerDocument.createElement('br'), '\n');
+    } else {
+      if (parseFloat(style?.marginInlineStart) > 0) copy.before(' ');
+      if (parseFloat(style?.marginInlineEnd) > 0) copy.after(' ');
+    }
+  }
   for (const node of Array.from(clone.querySelectorAll('.screen-reader-text, .screen-reader-only, .sr-only, .visually-hidden'))) {
     if (!node.closest('a') || node.closest('pre, code, math, mjx-assistive-mml, .MathJax, .katex') ||
         node.querySelector('math, mjx-assistive-mml, .MathJax, .katex')) continue;
@@ -169,15 +220,33 @@ export function getDocumentFragmentTarget(element) {
   } catch (_) { return null; }
 }
 
+/** Distinguish note references from ordinary numeric links and literal notation. */
+export function isDocumentNoteReference(reference) {
+  if (reference.closest('pre,code,math,mjx-container,.MathJax,.katex')) return false;
+  if (reference.matches('[data-footnote-ref],[role="doc-noteref"]') ||
+      (reference.getAttribute('epub:type') || '').split(/\s+/).includes('noteref')) return true;
+  if (!/^\[?\d+\]?$/.test(reference.textContent?.trim() || '')) return false;
+  const target = getDocumentFragmentTarget(reference);
+  if (!target) return false;
+  if (target.closest('[role="doc-footnote"],[role="doc-endnote"],[role="doc-endnotes"]') ||
+      ['footnote', 'endnote'].some(type => (target.getAttribute('epub:type') || '').split(/\s+/).includes(type))) return true;
+  const carrier = reference.closest('sup');
+  if (!carrier) return false;
+  return Array.from(target.querySelectorAll('a[href]')).some(backlink => {
+    const destination = getDocumentFragmentTarget(backlink);
+    return destination === reference || destination === carrier;
+  });
+}
+
 /** Remove a hidden note copy only when its canonical target contains the same text. */
-export function cloneWithoutRepeatedNoteTooltips(element, referenceRoots = null, excludedSelectors = []) {
-  const clone = cloneWithoutLinkAnnouncements(element);
+export function cloneWithoutRepeatedNoteTooltips(element, referenceRoots = null, excludedSelectors = [], copyMap = null) {
+  const clone = cloneReadingContent(element, excludedSelectors, copyMap);
   for (const reference of Array.from(clone.querySelectorAll('a[href]'))) {
-    if (!reference.matches('[data-footnote-ref], [role="doc-noteref"]') && !/^\d+$/.test(reference.textContent?.trim() || '')) continue;
+    if (!isDocumentNoteReference(reference)) continue;
     const target = getDocumentFragmentTarget(reference);
     if (!target || element.contains(target)) continue;
     if (referenceRoots && !referenceRoots.some(root => root.contains(target))) continue;
-    if (excludedSelectors.some(selector => target.closest(selector))) continue;
+    if (isSourceExcluded(target, excludedSelectors)) continue;
     const canonical = target.cloneNode(true);
     for (const backlink of Array.from(canonical.querySelectorAll('a'))) {
       if (backlink.getAttribute('role') === 'doc-backlink' || /^[\s↩︎↩←↑]+$/.test(backlink.textContent || '')) backlink.remove();
@@ -199,14 +268,25 @@ export function cloneWithoutRepeatedNoteTooltips(element, referenceRoots = null,
 
 /** Read metadata without hidden announcements or separately owned reference markers. */
 export function readArticleMetadataText(element) {
-  if (!element || element.closest('[hidden], [aria-hidden="true"]')) return '';
+  if (!element) return '';
+  for (let node = element; node; node = node.parentElement) {
+    const style = node.ownerDocument.defaultView?.getComputedStyle(node);
+    if (style?.display === 'none' || (!style && node.hasAttribute('hidden'))) return '';
+  }
   const clone = cloneWithoutRepeatedNoteTooltips(element);
-  for (const node of Array.from(clone.querySelectorAll('[hidden], [aria-hidden="true"]'))) {
+  for (const control of Array.from(clone.querySelectorAll('.mw-editsection'))) {
+    if (!control.closest('pre,code,math,mjx-container,.MathJax,.katex')) control.remove();
+  }
+  for (const node of Array.from(clone.querySelectorAll('[hidden]'))) {
     if (!node.closest('math, .MathJax, .katex, mjx-container')) node.remove();
   }
   for (const reference of Array.from(clone.querySelectorAll('a[href]'))) {
-    if (reference.matches('[data-footnote-ref], [role="doc-noteref"]') ||
-        (/^\d+$/.test(reference.textContent?.trim() || '') && getDocumentFragmentTarget(reference))) {
+    if (reference.textContent?.trim() === '#' && getDocumentFragmentTarget(reference) === element &&
+        !reference.closest('pre,code,math,mjx-container,.MathJax,.katex')) {
+      reference.remove();
+      continue;
+    }
+    if (isDocumentNoteReference(reference)) {
       (reference.closest('sup') || reference).remove();
     }
   }

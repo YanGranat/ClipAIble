@@ -16,6 +16,7 @@ import { getDeepSeekRequestConfig } from '../api/deepseek.js';
 import { getOpenAIRequestConfig } from '../api/openai.js';
 import { getGrokRequestConfig } from '../api/grok.js';
 import { getOpenRouterRequestConfig } from '../api/openrouter.js';
+import { verifiedTableLayout, synchronizeTableAliases } from '../generation/document-content.js';
 
 async function checkActive(options) {
   if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new DOMException('Translation cancelled', 'AbortError');
@@ -152,6 +153,8 @@ function copyContentItem(item) {
   if (Array.isArray(item.items)) copy.items = item.items.map(value => value && typeof value === 'object' ? { ...value } : value);
   if (Array.isArray(item.headers)) copy.headers = [...item.headers];
   if (Array.isArray(item.rows)) copy.rows = item.rows.map(row => [...row]);
+  if (Array.isArray(item.layoutRows)) copy.layoutRows = item.layoutRows.map(row => ({ ...row,
+    cells: Array.isArray(row?.cells) ? row.cells.map(cell => ({ ...cell })) : row?.cells }));
   return copy;
 }
 
@@ -174,6 +177,7 @@ export async function translateContent(original, targetLang, apiKey, model, upda
     result.author = author ? cleanAuthor(await translateText(author, language, apiKey, model, options)) : '';
   }
   const fields = [];
+  const tableLayouts = [];
   const collect = (owner, field, htmlOwner = null) => {
     if (typeof owner[field] === 'string' && owner[field].trim()) fields.push({ owner, field, text: owner[field], htmlOwner });
   };
@@ -192,8 +196,15 @@ export async function translateContent(original, targetLang, apiKey, model, upda
       }
     }
     if (item.type === 'table') {
-      for (let column = 0; column < (item.headers?.length || 0); column++) collect(item.headers, column);
-      for (const row of item.rows || []) for (let column = 0; column < row.length; column++) collect(row, column);
+      const layout = verifiedTableLayout(item);
+      if (layout) {
+        tableLayouts.push({ item, layout });
+        for (const origin of layout.origins) collect(layout.values[origin.row], origin.column);
+      } else {
+        delete item.layoutRows;
+        for (let column = 0; column < (item.headers?.length || 0); column++) collect(item.headers, column);
+        for (const row of item.rows || []) for (let column = 0; column < row.length; column++) collect(row, column);
+      }
     }
   }
   const chunks = [];
@@ -218,6 +229,7 @@ export async function translateContent(original, targetLang, apiKey, model, upda
     }
   }
   await checkActive(options);
+  for (const { item, layout } of tableLayouts) synchronizeTableAliases(item, layout);
   await progress('statusTranslationComplete', 60);
   return result;
 }

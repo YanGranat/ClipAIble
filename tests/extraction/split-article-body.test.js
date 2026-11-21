@@ -13,18 +13,19 @@ afterEach(() => { for (const dom of documents.splice(0)) dom.window.close(); vi.
 const paragraphs = Array.from({ length: 12 }, (_, index) => `<p>Observation ${index + 1}: ${'The study measures how tidal flow changes the distribution of nutrients throughout the harbor. '.repeat(6)}</p>`).join('');
 const figure = '<figure><img src="/tides.png" width="640" height="480" alt="Tidal measurements"><figcaption>Tidal measurements across the harbor.</figcaption></figure>';
 function extract(markup, title = 'Harbor Ecology Field Report') {
-  const dom = new JSDOM(`<title>${title}</title>${markup}`, { url: 'https://example.com/report' });
+  const dom = new JSDOM(`<!doctype html><title>${title}</title>${markup}`, { url: 'https://example.com/report' });
   documents.push(dom);
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('Node', dom.window.Node);
   vi.spyOn(console, 'log').mockImplementation(() => {});
-  const root = findMainContent(dom.window, dom.window.document, element => isExcluded(dom.window, element, constants));
   const before = dom.window.document.body.innerHTML;
+  const root = findMainContent(dom.window, dom.window.document, element => isExcluded(dom.window, element, constants));
   const candidates = collectCandidateElements(root, dom.window);
-  const state = { processedImages: new Set(), addedHeadings: new Set(), addedParagraphs: new Set(), mainTitleText: '', standfirstElement: null, standfirstText: null, debugInfo: null };
-  const result = parseElements(dom.window, sortElementsInDomOrder(filterCandidateElements(dom.window, candidates, constants, null)), state, constants, dom.window.location.href);
+  const state = { processedImages: new Set(), addedHeadings: new Set(), mainTitleText: '', standfirstElement: null, standfirstText: null, referenceRoots: [root], debugInfo: null };
+  const result = parseElements(dom.window, sortElementsInDomOrder(filterCandidateElements(dom.window, candidates, constants, null, [root])), state, constants, dom.window.location.href);
   expect(dom.window.document.body.innerHTML).toBe(before);
-  return { result, candidates, text: result.map(item => item.text || item.caption || '').join('\n') };
+  expect(dom.window.document.compatMode).toBe('CSS1Compat');
+  return { root, result, candidates, text: result.map(item => item.text || item.caption || '').join('\n') };
 }
 
 describe('Split article bodies', () => {
@@ -54,7 +55,7 @@ describe('Split article bodies', () => {
     for (const value of ['Direct opening text', 'with inline emphasis.', 'Direct closing text belongs to this block.', 'Final observation remains important.', 'Observation 7:']) expect(text.split(value)).toHaveLength(2);
   });
 
-  it.each(['aside', 'nav', 'div class="comments"', 'div class="related-stories"', 'div class="advertisement"', 'div data-module="ad"'])('excludes same-class bodies and figures inside %s', noise => {
+  it.each(['nav', 'div class="comments"', 'div class="related-stories"', 'div class="advertisement"', 'div data-module="ad"'])('excludes same-class bodies and figures inside %s', noise => {
     const tag = noise.split(' ')[0];
     const { text, result } = extract(`<main><h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}</div><${noise}><div class="post-content"><p>UNRELATED PANEL CONTENT MUST STAY OUT.</p><figure><img src="/panel.png" width="640" height="480"></figure></div></${tag}><div class="post-content"><p>The final observation completes the study.</p></div></main>`);
     expect(text).toContain('The final observation completes the study.');
@@ -63,10 +64,12 @@ describe('Split article bodies', () => {
   });
 
   it('does not merge continuations belonging to another article or class owner', () => {
-    const { text } = extract(`<main><article><h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}</div><div class="post-content"><p>The final observation completes the study.</p></div><article><div class="post-content"><p>ANOTHER ARTICLE CONTENT MUST STAY OUT.</p></div></article></article><div class="post"><h1>Another Field Report</h1><div class="post-content"><p>ANOTHER POST CONTENT MUST STAY OUT.</p></div></div></main>`);
+    const { root, text } = extract(`<main><article id="reading-owner"><h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}</div><div class="post-content"><p>The final observation completes the study.</p></div><nav aria-label="Related articles"><article><div class="post-content"><p>ANOTHER ARTICLE CONTENT MUST STAY OUT.</p></div></article></nav></article><article><p>SIBLING ARTICLE CONTENT MUST STAY OUT.</p></article><div class="post"><h1>Another Field Report</h1><div class="post-content"><p>ANOTHER POST CONTENT MUST STAY OUT.</p></div></div></main>`);
+    expect(root.id).toBe('reading-owner');
     expect(text).toContain('The final observation completes the study.');
     expect(text).not.toContain('ANOTHER ARTICLE');
     expect(text).not.toContain('ANOTHER POST');
+    expect(text).not.toContain('SIBLING ARTICLE');
   });
 
   it('keeps main-page commentary outside a validated class-based article owner', () => {
@@ -76,17 +79,25 @@ describe('Split article bodies', () => {
     expect(result.filter(item => item.type === 'image')).toHaveLength(1);
   });
 
-  it('keeps figures outside the body range excluded', () => {
+  it('preserves article-owned figures before and after class-based body blocks', () => {
     const image = marker => `<figure><img src="/${marker}.png" width="640" height="480"></figure>`;
     const { result } = extract(`<article><h1>Harbor Ecology Field Report</h1>${image('before')}<div class="post-content">${paragraphs}</div>${figure}<div class="post-content"><p>The final observation completes the study.</p></div>${image('after')}</article>`);
-    expect(result.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.com/tides.png']);
+    expect(result.filter(item => item.type === 'image').map(item => item.src)).toEqual([
+      'https://example.com/before.png', 'https://example.com/tides.png', 'https://example.com/after.png'
+    ]);
+    const position = value => result.findIndex(item => (item.src || item.text || '').includes(value));
+    expect(position('before.png')).toBeLessThan(position('Observation 1:'));
+    expect(position('Observation 12:')).toBeLessThan(position('tides.png'));
+    expect(position('tides.png')).toBeLessThan(position('The final observation'));
+    expect(position('The final observation')).toBeLessThan(position('after.png'));
   });
 
-  it('preserves a captioned article illustration in an aside while excluding its unrelated prose', () => {
-    const { text, result } = extract(`<article><h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}<aside>UNRELATED DIRECT ASIDE TEXT.<p>UNRELATED ASIDE PARAGRAPH.</p>${figure}</aside></div><div class="post-content"><p>The final observation completes the study.</p></div></article>`);
+  it('preserves an article aside with its direct text, paragraph, and illustration', () => {
+    const { text, result } = extract(`<article><h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}<aside>Authored direct aside text.<p>Authored aside paragraph.</p>${figure}</aside></div><div class="post-content"><p>The final observation completes the study.</p></div></article>`);
     expect(result.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.com/tides.png']);
     expect(text).toContain('Tidal measurements across the harbor.');
-    expect(text).not.toContain('UNRELATED');
+    expect(text).toContain('Authored direct aside text.');
+    expect(text).toContain('Authored aside paragraph.');
   });
 
   it('emits a layout illustration caption and credit exactly once when both contain paragraphs', () => {
@@ -97,17 +108,14 @@ describe('Split article bodies', () => {
     expect(serialized.match(/Field Survey Archive/g)).toHaveLength(1);
   });
 
-  it.each(['no-caption', 'outside-body', 'author-bio', 'comments', 'advertisement', 'nav'])('does not admit aside illustrations from %s', kind => {
-    const candidate = kind === 'no-caption' ? '<figure><img src="/panel.png" width="640" height="480"></figure>' : figure;
-    const panel = kind === 'nav' ? `<nav><aside>${candidate}</aside></nav>` : `<aside class="${kind}">${candidate}</aside>`;
-    const inside = kind === 'outside-body' ? '' : panel;
-    const outside = kind === 'outside-body' ? panel : '';
-    const { result } = extract(`<article><h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}${inside}</div>${outside}<div class="post-content"><p>The final observation completes the study.</p></div></article>`);
+  it.each(['author-bio', 'comments', 'advertisement', 'nav'])('does not admit aside illustrations from %s', kind => {
+    const panel = kind === 'nav' ? `<nav><aside>${figure}</aside></nav>` : `<aside class="${kind}">${figure}</aside>`;
+    const { result } = extract(`<article>${panel}<h1>Harbor Ecology Field Report</h1><div class="post-content">${paragraphs}${panel}</div><div class="post-content"><p>The final observation completes the study.</p></div>${panel}</article>`);
     expect(result.filter(item => item.type === 'image')).toHaveLength(0);
   });
 
   it('executes the serialized extractor with its split-body dependencies in page context', async () => {
-    const dom = new JSDOM(`<title>Harbor Ecology Field Report</title><main><h1>Harbor Ecology Field Report</h1><div class="wysiwyg">${paragraphs}</div>${figure}<div class="wysiwyg"><p>The final observation completes the study.</p></div></main>`, { url: 'https://example.com/report', runScripts: 'outside-only' });
+    const dom = new JSDOM(`<!doctype html><title>Harbor Ecology Field Report</title><main><h1>Harbor Ecology Field Report</h1><div class="wysiwyg">${paragraphs}</div>${figure}<div class="wysiwyg"><p>The final observation completes the study.</p></div></main>`, { url: 'https://example.com/report', runScripts: 'outside-only' });
     documents.push(dom);
     vi.spyOn(dom.window.console, 'log').mockImplementation(() => {});
     const builder = new URL('../../scripts/extraction/extractor/builder.js', import.meta.url).href;

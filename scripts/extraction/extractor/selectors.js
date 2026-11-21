@@ -32,12 +32,16 @@ export function resolveContentSelection(doc, selectors) {
   }
   const exclusions = selectorValues(selectors.exclude).flatMap(selector => Array.from(doc.querySelectorAll(selector)))
     .filter(node => !containers.some(container => node.contains(container)));
+  const containerQueries = selectorValues(selectors.articleContainer);
+  const exclusionSelectors = selectorValues(selectors.exclude).map(selector => containerQueries.length
+    ? `:is(${selector}):not(:is(${containerQueries.join(',')})):not(:has(:is(${containerQueries.join(',')})))`
+    : selector);
   const elements = new Set();
   for (const root of roots) {
     if (root.matches(CANDIDATE_SELECTOR)) elements.add(root);
     for (const node of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) elements.add(node);
   }
-  return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions };
+  return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions, exclusionSelectors };
 }
 
 export function isSelectedContentExcluded(element, exclusions) {

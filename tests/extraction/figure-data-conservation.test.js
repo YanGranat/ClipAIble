@@ -52,7 +52,8 @@ describe('Authored figure data', () => {
 
   it('continues emitting an image-only figure with one caption', async () => {
     const content = await extract(`<figure><div>${image}</div><figcaption><p>Measured response.</p></figcaption></figure>`);
-    expect(content).toMatchObject([{ type: 'image', src: 'https://example.test/measurements.png', caption: 'Measured response.' }]);
+    expect(content).toMatchObject([{ type: 'image', src: 'https://example.test/measurements.png' }]);
+    expect(visibleContent(content)).toEqual(['Measured response.']);
     expect(content).toHaveLength(1);
   });
 
@@ -83,9 +84,9 @@ describe('Authored figure data', () => {
     expect(visibleContent(content).join(' ').split('Cedar').length - 1).toBe(1);
   });
 
-  it('does not broaden ordinary short layout text outside figures', async () => {
-    const content = await extract('<div>Q7</div><p>The report retains its complete body paragraph.</p><aside><figure><div>Unrelated menu label</div><div>42</div></figure></aside>');
-    expect(visibleContent(content)).toEqual(['The report retains its complete body paragraph.']);
+  it('preserves short reading text while excluding navigation figures', async () => {
+    const content = await extract('<div>Q7</div><p>The report retains its complete body paragraph.</p><aside><nav><figure><div>Unrelated menu label</div><div>42</div></figure></nav></aside>');
+    expect(visibleContent(content)).toEqual(['Q7', 'The report retains its complete body paragraph.']);
   });
 
   it('retains figure fields in the serialized page extractor', async () => {

@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
-import { processMathElements, handleList, sanitizeParagraphHtml } from '../../scripts/extraction/extractor/parse.js';
+import { handleList } from '../../scripts/extraction/extractor/parse.js';
+import { processMathElements, serializeReadingHtml } from '../../scripts/extraction/extractor/inline-content.js';
 import { listHtml } from '../../scripts/generation/document-content.js';
 
 const documents = [];
@@ -25,7 +26,7 @@ describe('Portable semantic math representation', () => {
     const dom = page(`<p>${formula('<msup><mn>3</mn><mi>k</mi></msup><mo>+</mo><mo>(</mo><mn>1</mn><mo>/</mo><mn>3</mn><msup><mo>)</mo><mi>k</mi></msup><mo>+</mo><msub><mi>x</mi><mi>i</mi></msub>')}</p>`);
     const p = dom.window.document.querySelector('p');
     const before = p.outerHTML;
-    const html = sanitizeParagraphHtml(p);
+    const html = serializeReadingHtml(p);
     const output = dom.window.document.createElement('div'); output.innerHTML = html;
     expect(output.querySelector('span.math')).not.toBeNull();
     expect([...output.querySelectorAll('sup')].map(node => node.textContent)).toEqual(['k', 'k']);
@@ -65,13 +66,13 @@ describe('Portable semantic math representation', () => {
   it('escapes token text and preserves the original TeX when semantic XML cannot be parsed', () => {
     const dom = page(`<p>${formula('<mi>a</mi><mo>&lt;</mo><mi>b</mi>', 'a&lt;b')}</p><p><span class="MathJax" id="broken-Frame" data-mathml="&lt;math&gt;"></span><script id="broken" type="math/tex">r^5</script></p>`);
     const [safe, broken] = dom.window.document.querySelectorAll('p');
-    expect(sanitizeParagraphHtml(safe)).toBe('<span class="math">a&lt;b</span>');
-    expect(sanitizeParagraphHtml(broken)).toContain('$r^5$');
+    expect(serializeReadingHtml(safe)).toBe('<span class="math">a&lt;b</span>');
+    expect(serializeReadingHtml(broken)).toContain('$r^5$');
   });
 
   it('keeps an operand containing angle brackets as text rather than interpreting HTML', () => {
     const dom = page(`<p>${formula('<mi>&lt;b&gt;value&lt;/b&gt;</mi>', 'value')}</p>`);
-    expect(sanitizeParagraphHtml(dom.window.document.querySelector('p'))).toBe('<span class="math">&lt;b&gt;value&lt;/b&gt;</span>');
+    expect(serializeReadingHtml(dom.window.document.querySelector('p'))).toBe('<span class="math">&lt;b&gt;value&lt;/b&gt;</span>');
   });
 
   it('executes the real serialized extractor without borrowing a module closure', async () => {
@@ -88,7 +89,7 @@ describe('Portable semantic math representation', () => {
     const dom = page('<p><span class="MathJax" id="foreign-Frame"></span><script id="foreign" type="math/tex">u^2</script></p>');
     const p = dom.window.document.querySelector('p');
     p.querySelector('.MathJax').setAttribute('data-mathml', '<math xmlns="https://example.test/vocabulary"><msup><mi>u</mi><mn>2</mn></msup></math>');
-    expect(sanitizeParagraphHtml(p)).toContain('$u^2$');
+    expect(serializeReadingHtml(p)).toContain('$u^2$');
   });
 });
 

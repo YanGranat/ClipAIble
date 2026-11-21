@@ -3,7 +3,8 @@ import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { extractMetadata } from '../../scripts/extraction/extractor/metadata.js';
 import { readSelectedText } from '../../scripts/extraction/extractor/selectors.js';
-import { handleParagraph, sanitizeParagraphHtml } from '../../scripts/extraction/extractor/parse.js';
+import { handleParagraph } from '../../scripts/extraction/extractor/parse.js';
+import { serializeReadingHtml } from '../../scripts/extraction/extractor/inline-content.js';
 import { CONSTANTS, NAVIGATION_PATTERNS } from '../../scripts/extraction/extractor/constants.js';
 import { listHtml } from '../../scripts/generation/document-content.js';
 
@@ -57,7 +58,7 @@ describe('Reading metadata and source references', () => {
 
   it('retains a hidden annotation when there is no canonical duplicate target', () => {
     const dom = page('<p>A measurement<sup><a href="#absent" data-footnote-ref="true">3</a><span aria-hidden="true">A unique explanatory note.</span></sup> follows.</p>');
-    expect(sanitizeParagraphHtml(dom.window.document.querySelector('p'))).toContain('A unique explanatory note.');
+    expect(serializeReadingHtml(dom.window.document.querySelector('p'))).toContain('A unique explanatory note.');
   });
 
   it('retains an inline annotation when its canonical target is outside the selected or allowed scope', async () => {
@@ -68,11 +69,26 @@ describe('Reading metadata and source references', () => {
     expect(result.content.find(item => item.type === 'paragraph')?.text).toContain(noteText);
     expect(dom.window.document.body.innerHTML).toBe(before);
     const paragraph = dom.window.document.querySelector('p');
-    expect(sanitizeParagraphHtml(paragraph, ['#separate-note'], [dom.window.document.body])).toContain(noteText);
+    expect(serializeReadingHtml(paragraph, ['#separate-note'], [dom.window.document.body])).toContain(noteText);
   });
 
-  it('reads a visible author instead of a hidden avatar or an unrelated external profile', () => {
+  it('prefers a full-name label over initials linked to the same exact author profile', () => {
     const dom = page('<a href="https://social.example/profile/publisher">Publisher account</a><a aria-hidden="true" href="/author/morgan-example">ME</a><a href="/author/morgan-example">Morgan Example</a><article><h1>Field observations</h1></article>');
+    expect(extractMetadata(dom.window.document, dom.window.location.href).author).toBe('Morgan Example');
+  });
+
+  it('does not borrow a full name from a different author profile', () => {
+    const dom = page('<a rel="author" href="/author/one">ME</a><a href="/author/two">Morgan Example</a><article><h1>Field observations</h1></article>');
+    expect(extractMetadata(dom.window.document, dom.window.location.href).author).toBe('ME');
+  });
+
+  it('retains a visible full name excluded only from the accessibility tree', () => {
+    const dom = page('<a rel="author" aria-hidden="true" href="/writers/morgan-example">Morgan Example</a><article><h1>Field observations</h1></article>');
+    expect(extractMetadata(dom.window.document, dom.window.location.href).author).toBe('Morgan Example');
+  });
+
+  it.each(['hidden', 'style="display:none"'])('ignores genuinely undisplayed profile names: %s', hidden => {
+    const dom = page(`<a rel="author" ${hidden} href="/author/stale-example">Stale Example</a><a rel="author" href="/author/morgan-example">ME</a><a ${hidden} href="/author/morgan-example">Montgomery Example</a><a href="/author/morgan-example">Morgan Example</a><article><h1>Field observations</h1></article>`);
     expect(extractMetadata(dom.window.document, dom.window.location.href).author).toBe('Morgan Example');
   });
 

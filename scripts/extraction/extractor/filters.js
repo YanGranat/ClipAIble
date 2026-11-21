@@ -4,6 +4,20 @@
 
 import { safeGetComputedStyle, safeClosest } from './dom-utils.js';
 import { isArticleContentFigure } from './discover.js';
+import { isReadingOwned } from './reading-context.js';
+import { getGraphicReadingOwner } from './graphics.js';
+import { getAnnotationTarget } from './annotations.js';
+
+/** Labels owned by interactive controls are not independent reading blocks. */
+export function isInteractiveControlLabel(element) {
+  const label = element.closest('label,[id]');
+  if (!label) return false;
+  if (label.tagName === 'LABEL' && label.getAttribute('for')) return true;
+  if (!label.id || !label.contains(element)) return false;
+  return Array.from(element.ownerDocument.querySelectorAll('[aria-labelledby]')).some(control =>
+    (control.getAttribute('aria-labelledby') || '').split(/\s+/).includes(label.id) &&
+    control.matches('input,select,button,[role="radiogroup"],[role="listbox"],[role="tablist"],[role="menu"]'));
+}
 
 // Optimized navigation pattern matching
 export function matchesNavigationPattern(text, patterns) {
@@ -17,35 +31,12 @@ export function matchesNavigationPattern(text, patterns) {
 }
 
 /**
- * Check if element is a footnote link (number or arrow that links to #)
- * @param {Element} element - Element to check
- * @returns {boolean} - True if element is a footnote link
- */
-export function isFootnoteLink(element) {
-  if (element.tagName.toLowerCase() !== 'a') return false;
-  const href = element.getAttribute('href') || '';
-  // Link to anchor or contains #note
-  if (href === '#' || (href.startsWith('#') && href.length > 1) || href.includes('#note')) {
-    const text = (element.textContent || '').trim();
-    // Just a number or arrow symbol
-    if (/^[\d\s]+$/.test(text) || /^[←→↑↓↗↘↩]+$/.test(text) || text.toLowerCase().includes('open these')) {
-      return true;
-    }
-    // Contains only an emoji arrow image
-    const img = element.querySelector('img');
-    if (img && (img.alt === '↩' || img.src.includes('emoji') || String(img.className || '').includes('emoji'))) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * Check if element is an icon (SVG or icon font)
  * @param {Element} element - Element to check
  * @returns {boolean} - True if element is an icon
  */
 export function isIcon(element) {
+  if (element.closest('pre,code,math,mjx-container,.MathJax,.katex')) return false;
   const tagName = element.tagName.toLowerCase();
   if (tagName === 'svg') return true;
   
@@ -151,20 +142,32 @@ export function isNavigationParagraph(text, navPatternsStartsWith, paywallPatter
 export function isSubscriptionFormContent(element) {
   const form = element.closest('form');
   if (!form) return false;
-  const emailField = Array.from(form.querySelectorAll('input')).some(input =>
+  const emailFields = Array.from(form.querySelectorAll('input')).filter(input =>
     (input.getAttribute('type') || '').toLowerCase() === 'email' ||
     (input.getAttribute('name') || '').toLowerCase() === 'email' ||
     (input.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).includes('email'));
-  if (!emailField) return false;
+  if (!emailFields.length) return false;
   const labels = [form.getAttribute('aria-label') || ''];
   for (const id of (form.getAttribute('aria-labelledby') || '').split(/\s+/)) {
     if (id) labels.push(form.ownerDocument.getElementById(id)?.textContent || '');
   }
-  for (const action of Array.from(form.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"]'))) {
-    labels.push(action.textContent || '', action.getAttribute('aria-label') || '', action.getAttribute('value') || '');
-    for (const part of Array.from(action.querySelectorAll('*'))) labels.push(part.textContent || '');
+  const subscription = label => /\b(?:sign[\s-]*up|subscribe|subscription)\b/i.test(label);
+  const actions = Array.from(form.querySelectorAll('button,input[type="submit"],input[type="button"],[role="button"]'));
+  const subscriptionActions = actions.filter(action =>
+    [action.textContent || '', action.getAttribute('aria-label') || '', action.getAttribute('value') || '',
+      ...Array.from(action.querySelectorAll('*')).map(part => part.textContent || '')].some(subscription));
+  if (!subscriptionActions.length && !labels.some(subscription)) return false;
+  for (const email of emailFields) {
+    for (const action of subscriptionActions.length ? subscriptionActions : actions) {
+      let component = email.parentElement;
+      while (component && component !== form && !component.contains(action)) component = component.parentElement;
+      if (!component || !component.contains(element)) continue;
+      // An enclosing application form can own separate article and subscription regions.
+      if (component === form && form.querySelector('article,main,[itemprop~="articleBody"]')) continue;
+      return true;
+    }
   }
-  return labels.some(label => /\b(?:sign[\s-]*up|subscribe|subscription)\b/i.test(label));
+  return false;
 }
 
 /**
@@ -179,7 +182,7 @@ export function isSubscriptionFormContent(element) {
  * @param {string[]} constants.COURSE_AD_PATTERNS - Course ad patterns
  * @returns {boolean} - True if element should be excluded
  */
-export function isExcluded(win, element, constants) {
+export function isExcluded(win, element, constants, readingRoots = []) {
   const {
     EXCLUDED_CLASSES,
     PAYWALL_CLASSES,
@@ -194,6 +197,20 @@ export function isExcluded(win, element, constants) {
   // Semantic containers (article, main) should be more lenient
   const isSemanticContainer = tagName === 'article' || tagName === 'main';
   const isImageOrFigure = tagName === 'img' || tagName === 'figure';
+  const readingOwned = isReadingOwned(element, readingRoots);
+  const authoredHeading = readingOwned && /^h[1-6]$/.test(tagName);
+  const control = element.closest('button,[role="button"],input,select,textarea');
+  if (control && !getAnnotationTarget(control)) return true;
+  const selectedMedia = readingRoots.some(root => root.matches('figure,img,picture,svg,canvas') &&
+    (root === element || root.contains(element)));
+  const selectedInline = readingRoots.some(root => root.matches('p,span,div') &&
+    !root.querySelector('article,section,p,table,ul,ol,figure,form') && (root === element || root.contains(element)));
+  for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+    const ancestorStyle = safeGetComputedStyle(win, ancestor);
+    if (ancestorStyle?.display === 'none') return true;
+    if (['data-module', 'data-component', 'data-type'].some(attribute =>
+      ['ad', 'advertisement'].includes((ancestor.getAttribute(attribute) || '').toLowerCase()))) return true;
+  }
   
   // Get computed style safely
   const style = safeGetComputedStyle(win, element);
@@ -231,6 +248,7 @@ export function isExcluded(win, element, constants) {
   
   // Exclude form-owned subscription controls.
   if (isSubscriptionFormContent(element)) return true;
+  if (isInteractiveControlLabel(element)) return true;
 
   // Exclude advertising frames
   if (tagName === 'iframe') {
@@ -243,11 +261,10 @@ export function isExcluded(win, element, constants) {
   }
   
   // Exclude footnotes and icons
-  if (isFootnoteLink(element)) return true;
-  if (isIcon(element)) return true;
+  if (isIcon(element) && !getGraphicReadingOwner(element, readingRoots)) return true;
   
   // Exclude aside and complementary
-  if (tagName === 'aside' || element.getAttribute('role') === 'complementary') {
+  if (!readingOwned && (tagName === 'aside' || element.getAttribute('role') === 'complementary')) {
     return true;
   }
   
@@ -300,19 +317,19 @@ export function isExcluded(win, element, constants) {
   const pricePattern = /\$\s*\d{3,4}(\.\d{2})?/;
   const hasPrice = pricePattern.test(text);
   const isCourseAd = COURSE_AD_PATTERNS.some(pattern => textLower.includes(pattern));
-  if (hasPrice && isCourseAd) {
+  if (!readingOwned && hasPrice && isCourseAd) {
     return true;
   }
   
   // Tab navigation elements
   const role = element.getAttribute('role') || '';
-  if (role === 'tab' || role === 'tabpanel' || 
+  if (role === 'tab' ||
       safeClosest(element, '[role="tablist"]') !== null) {
     return true;
   }
   
   // Navigation pattern check (skip for semantic containers and images)
-  if (!isSemanticContainer && !isImageOrFigure) {
+  if (!readingOwned && !isSemanticContainer && !isImageOrFigure) {
     const isParagraphOrHeading = tagName === 'p' || tagName.match(/^h[1-6]$/);
     if (isParagraphOrHeading) {
       // Only exclude if short and matches navigation
@@ -323,18 +340,20 @@ export function isExcluded(win, element, constants) {
   }
   
   // Newsletter blocks (skip for semantic containers)
-  if (!isSemanticContainer && (textLower.includes('sign up to our newsletter') || 
+  if (!readingOwned && !isSemanticContainer && (textLower.includes('sign up to our newsletter') ||
       (textLower.includes('newsletter') && textLower.includes('subscribe')))) {
     return true;
   }
   
   // Email service providers
-  if (textLower.includes('powered by salesforce') || textLower.includes('marketing cloud')) {
+  if (!readingOwned && (textLower.includes('powered by salesforce') || textLower.includes('marketing cloud'))) {
     return true;
   }
   
   // Check excluded classes with word boundaries
   for (const excluded of EXCLUDED_CLASSES) {
+    if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) continue;
+    if (selectedMedia && excluded === 'overlay') continue;
     const pattern = new RegExp(`\\b${excluded}\\b`);
     if (pattern.test(className) || pattern.test(id) ||
         className === excluded || className.startsWith(excluded + '-') || 
@@ -349,7 +368,7 @@ export function isExcluded(win, element, constants) {
     let iterations = 0;
     const maxIterations = 50;
     
-    while (parent && parent !== document.body && iterations < maxIterations) {
+    while (parent && parent !== element.ownerDocument.body && iterations < maxIterations) {
       iterations++;
       const parentClass = String(parent.className || '').toLowerCase();
       const parentId = (parent.id || '').toLowerCase();
@@ -358,6 +377,8 @@ export function isExcluded(win, element, constants) {
       if (parentTag === 'nav' || parentTag === 'footer' ||
           parent.getAttribute('role') === 'navigation') return true;
       if (EXCLUDED_CLASSES.some(excluded => {
+        if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) return false;
+        if (selectedMedia && excluded === 'overlay') return false;
         if (excluded === 'next' || excluded === 'prev' || excluded === 'previous') {
           return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
         }
@@ -371,7 +392,7 @@ export function isExcluded(win, element, constants) {
         indicator.test(parentClass) || indicator.test(parentId)
       );
       
-      if (isClearAd || (parentTag === 'aside' && !isArticleContentFigure(win, element))) {
+      if (isClearAd || (parentTag === 'aside' && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element))) {
         return true;
       }
       

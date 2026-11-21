@@ -42,7 +42,7 @@ beforeEach(async () => {
   global.chrome.windows = { getCurrent: vi.fn(async () => ({ id: 1 })) };
   global.chrome.tabs.create = vi.fn(async () => ({ id: 12 }));
   global.chrome.tabs.remove = vi.fn(async () => {});
-  global.chrome.debugger = { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(async () => ({ data: 'JVBERi0xLjQ=' })) };
+  global.chrome.debugger = { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(async () => ({ data: 'JVBERi0xLjQ=', result: { value: { contentHeight: 1000 } } })) };
   global.fetch = vi.fn(async () => ({ ok: true, text: async () => 'body { color: #111; }' }));
   putPrintJob.mockImplementation(async () => {});
   processImagesInBatches.mockImplementation(async () => []);
@@ -135,10 +135,10 @@ describe('document processing ownership', () => {
 
   it('detaches an owned PDF debugger and rejects a stale print result', async () => {
     const pending = deferred();
-    global.chrome.debugger.sendCommand.mockImplementation(async (_target, method) => method === 'Page.printToPDF' ? pending.promise : {});
+    global.chrome.debugger.sendCommand.mockImplementation(async (_target, method) => method === 'Page.printToPDF' ? pending.promise : { result: { value: { contentHeight: 1000 } } });
     const oldRun = await beginRun('pdf');
     const complete = vi.fn(), fail = vi.fn();
-    const generation = generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, complete, fail, oldRun);
+    const generation = generatePdfWithDebugger(12, 'Sample', 'multi', complete, fail, oldRun);
     const outcome = expect(generation).rejects.toThrow();
     await vi.waitFor(() => expect(global.chrome.debugger.sendCommand).toHaveBeenCalledWith(expect.anything(), 'Page.printToPDF', expect.anything()));
     await replaceRun();
@@ -152,8 +152,31 @@ describe('document processing ownership', () => {
 
   it('does not detach another debugger when attach fails', async () => {
     global.chrome.debugger.attach.mockRejectedValueOnce(new Error('Debugger already attached'));
-    await expect(generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, vi.fn(), vi.fn())).rejects.toThrow('Debugger already attached');
+    await expect(generatePdfWithDebugger(12, 'Sample', 'multi', vi.fn(), vi.fn())).rejects.toThrow('Debugger already attached');
     expect(global.chrome.debugger.detach).not.toHaveBeenCalled();
+  });
+
+  it('measures print media before printing a naturally sized single page', async () => {
+    const run = await beginRun('pdf');
+    await generatePdfWithDebugger(12, 'Sample', 'single', vi.fn(), vi.fn(), run);
+    const calls = chrome.debugger.sendCommand.mock.calls;
+    const media = calls.findIndex(call => call[1] === 'Emulation.setEmulatedMedia');
+    const measure = calls.findIndex(call => call[1] === 'Runtime.evaluate' && call[2].awaitPromise);
+    const print = calls.findIndex(call => call[1] === 'Page.printToPDF');
+    expect(media).toBeGreaterThanOrEqual(0);
+    expect(measure).toBeGreaterThan(media);
+    expect(print).toBeGreaterThan(measure);
+    expect(calls[media][2]).toEqual({ media: 'print' });
+    expect(calls[print][2]).toMatchObject({ paperWidth: 8.27, paperHeight: 1000 / 96, scale: 1 });
+  });
+
+  it('detaches and reports a failed print-layout measurement before downloading', async () => {
+    const run = await beginRun('pdf');
+    chrome.debugger.sendCommand.mockResolvedValue({ exceptionDetails: { text: 'Layout failed' } });
+    await expect(generatePdfWithDebugger(12, 'Sample', 'single', vi.fn(), vi.fn(), run)).rejects.toThrow('prepare the PDF print layout');
+    expect(chrome.debugger.detach).toHaveBeenCalledOnce();
+    expect(chrome.debugger.sendCommand.mock.calls.some(call => call[1] === 'Page.printToPDF')).toBe(false);
+    expect(chrome.downloads.download).not.toHaveBeenCalled();
   });
 
   it('closes only the captured print job after debugger failure', async () => {
@@ -161,10 +184,10 @@ describe('document processing ownership', () => {
     chrome.tabs.get.mockResolvedValue({ id: 12, url: `${chrome.runtime.getURL('print/print.html')}?job=${job}` });
     chrome.debugger.sendCommand.mockImplementation(async (_target, method) => {
       if (method === 'Page.printToPDF') throw new Error('Print failed');
-      return {};
+      return { result: { value: { contentHeight: 1000 } } };
     });
     const run = await beginRun('pdf');
-    await expect(generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, vi.fn(), vi.fn(), run)).rejects.toThrow('Print failed');
+    await expect(generatePdfWithDebugger(12, 'Sample', 'multi', vi.fn(), vi.fn(), run)).rejects.toThrow('Print failed');
     expect(chrome.debugger.detach).toHaveBeenCalledOnce();
     expect(chrome.tabs.remove).toHaveBeenCalledWith(12);
   });
@@ -175,7 +198,7 @@ describe('document processing ownership', () => {
     const decode = vi.spyOn(globalThis, 'atob');
     try {
       const run = await beginRun('pdf');
-      await generatePdfWithDebugger(12, 'Sample', 'multi', 794, 1000, vi.fn(), vi.fn(), run);
+      await generatePdfWithDebugger(12, 'Sample', 'multi', vi.fn(), vi.fn(), run);
       expect(chrome.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: 'data:application/pdf;base64,JVBERi0xLjQ=' }));
       expect(decode).not.toHaveBeenCalled();
     } finally { URL.createObjectURL = create; decode.mockRestore(); }

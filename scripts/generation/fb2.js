@@ -1,7 +1,7 @@
 import { imageDataError } from '../utils/html/image-bytes.js';
 import { fb2ListParagraphs } from './fb2-list.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, flatTableProjection } from './document-content.js';
 // @ts-check
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
@@ -851,8 +851,9 @@ function contentItemToFb2(item, sourceUrl = '', indent = 1) {
  * Convert table cells to FB2 paragraphs.
  */
 function tableToFb2(item, sourceUrl = '', indent = 1) {
-  const rows = Array.isArray(item.headers) && item.headers.length
-    ? [item.headers, ...(item.rows || [])] : item.rows;
+  const projection = flatTableProjection(item);
+  const rows = Array.isArray(projection.headers) && projection.headers.length
+    ? [projection.headers, ...(projection.rows || [])] : projection.rows;
   if (!rows || !rows.length) return '';
   const indentStr = '  '.repeat(indent);
   

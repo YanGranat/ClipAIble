@@ -2,7 +2,8 @@
 // Image processing functions for extraction
 // Handles image URL extraction, filtering, and featured image detection
 
-import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle, cloneWithoutLinkAnnouncements } from './dom-utils.js';
+import { toAbsoluteUrl, normalizeImageUrl, safeGetComputedStyle, compareDomOrder } from './dom-utils.js';
+import { serializeReadingHtml } from './inline-content.js';
 
 /**
  * Check if URL is a placeholder (base64 1x1 transparent pixel, etc.)
@@ -299,40 +300,62 @@ export function isDecorativeImage(win, img, logoPatterns) {
  * Get image caption from nearby elements
  * @param {HTMLImageElement} img - Image element
  * @param {WeakSet<Element>|null} [captionOwners] - Captions consumed by this image choice
- * @returns {string} - Caption text or empty string
+ * @param {Array<Element|string>} [excludedElements] - Excluded source subtrees or selectors
+ * @returns {string} - Portable inline caption HTML or empty string
  */
-export function getImageCaption(img, captionOwners = null) {
-  const captionText = element => (cloneWithoutLinkAnnouncements(element).textContent || '').trim();
+export function getImageCaption(img, captionOwners = null, excludedElements = []) {
+  const captionText = element => serializeReadingHtml(element, excludedElements);
+  const excluded = element => excludedElements.some(rule => {
+    try { return typeof rule === 'string' ? !!element.closest(rule) : rule.contains(element); }
+    catch (_) { return true; }
+  });
+  const readable = element => {
+    if (excluded(element)) return false;
+    for (let node = element; node; node = node.parentElement) {
+      if (node.matches('[hidden]')) return false;
+      const style = safeGetComputedStyle(img.ownerDocument.defaultView, node);
+      if (style?.display === 'none') return false;
+    }
+    const style = safeGetComputedStyle(img.ownerDocument.defaultView, element);
+    if (style?.visibility === 'hidden' || style?.visibility === 'collapse') return false;
+    return true;
+  };
   // Check for figcaption in figure
   const figure = img.closest('figure');
   if (figure) {
-    const figcaption = figure.querySelector('figcaption');
-    if (figcaption) {
+    for (const figcaption of Array.from(figure.querySelectorAll('figcaption'))) {
+      if (figcaption.closest('figure') !== figure || !readable(figcaption)) continue;
+      const text = captionText(figcaption);
+      if (!text) continue;
       captionOwners?.add(figcaption);
-      return captionText(figcaption);
+      return text;
     }
   }
   
-  // Check aria-label or title
-  const ariaLabel = img.getAttribute('aria-label');
-  if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
-  
-  const title = img.getAttribute('title');
-  if (title && title.trim() && title !== img.alt) return title.trim();
+  for (const id of (img.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)) {
+    const description = img.ownerDocument.getElementById(id);
+    if (!description || description.contains(img) || !readable(description)) continue;
+    const text = captionText(description);
+    if (text) { captionOwners?.add(description); return text; }
+  }
   
   // Check next sibling
   const nextSibling = img.nextElementSibling;
-  if (nextSibling && (nextSibling.tagName === 'P' || String(nextSibling.className || '').toLowerCase().includes('caption'))) {
-    return captionText(nextSibling);
+  if (nextSibling && readable(nextSibling) && String(nextSibling.className || '').toLowerCase().includes('caption')) {
+    const text = captionText(nextSibling);
+    if (text) { captionOwners?.add(nextSibling); return text; }
   }
   
   // Check for caption in parent
   const parent = img.parentElement;
-  if (parent) {
+  if (parent && parent.querySelectorAll('img').length === 1) {
     const captionEl = parent.querySelector('.caption, .image-caption, .photo-caption');
-    if (captionEl) {
+    if (captionEl && readable(captionEl)) {
       const text = captionText(captionEl);
-      if (text && text !== img.alt) return text;
+      if (text && text !== img.alt && captionEl.closest('figure') === figure) {
+        captionOwners?.add(captionEl);
+        return text;
+      }
     }
   }
   
@@ -340,21 +363,18 @@ export function getImageCaption(img, captionOwners = null) {
 }
 
 /**
- * Extract featured image from page
+ * Read a publisher metadata image when source reading media is absent.
  * @param {Document} doc - Document object
  * @param {string} baseUrl - Base URL
- * @param {Element|null} mainContent - Main content element
  * @param {string[]} logoPatterns - Logo URL patterns
- * @param {WeakSet<Element>|null} [captionOwners] - Captions consumed by the chosen image
  * @returns {{src: string, alt: string, caption: string}|null} - Featured image or null
  */
-export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns, captionOwners = null) {
+export function extractMetadataImage(doc, baseUrl, logoPatterns) {
   const featuredImageSelectors = [
     'meta[property="og:image"]',
     'meta[name="twitter:image"]',
     'meta[property="article:image"]',
-    'meta[name="image"]',
-    '[itemprop="image"]'
+    'meta[name="image"]'
   ];
   
   // Try meta tags first
@@ -362,9 +382,7 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns, ca
     try {
       const element = doc.querySelector(selector);
       if (element) {
-        const content = element.tagName === 'META' 
-          ? element.getAttribute('content') 
-          : (element instanceof HTMLImageElement ? element.src : element.getAttribute('src'));
+        const content = element.getAttribute('content');
         
         if (content) {
           const absoluteUrl = toAbsoluteUrl(content, baseUrl);
@@ -377,42 +395,70 @@ export function extractFeaturedImage(doc, baseUrl, mainContent, logoPatterns, ca
     } catch (e) { }
   }
   
-  // Fallback: first large image before first paragraph in main content
-  if (mainContent) {
-    const firstParagraph = mainContent.querySelector('p');
-    const images = mainContent.querySelectorAll('img');
+  return null;
+}
 
-    for (const img of Array.from(images)) {
-      // Stop if we passed the first paragraph
-      if (firstParagraph && img.compareDocumentPosition(firstParagraph) & Node.DOCUMENT_POSITION_PRECEDING) {
-        break;
-      }
-      
-      const imgElement = /** @type {HTMLImageElement} */ (img);
-      const src = extractBestImageUrl(imgElement);
-      if (!src) continue;
-      
-      // Check dimensions
-      const { width: naturalWidth, height: naturalHeight } = getSelectedImageNaturalSize(imgElement);
-      
-      // Must be reasonably large
-      if (naturalWidth >= 400 || naturalHeight >= 300 || (naturalWidth === 0 && naturalHeight === 0)) {
-        const absoluteUrl = toAbsoluteUrl(src, baseUrl);
-        // Apply the same decorative-image rules as the body parser.
-        if (isDecorativeImage(doc.defaultView, imgElement, logoPatterns)) {
-          continue;
-        }
-        
-        return {
-          src: absoluteUrl,
-          alt: imgElement.alt || '',
-          caption: getImageCaption(imgElement, captionOwners)
-        };
-      }
+/** Resolve source media owners without admitting a selector's unrelated surrounding prose. */
+export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
+  const mediaSelector = 'figure,img,picture,svg,canvas,video,audio,iframe';
+  const mediaRoots = new Set();
+  const featuredRoots = new Set();
+  const ownerOf = element => element.closest('figure') || element.closest('picture') || element;
+  const insideBody = element => bodyRoots.some(root => root.contains(element));
+  const before = (left, right) => left !== right && !left.contains(right) && compareDomOrder(left, right) < 0;
+  for (const root of bodyRoots) {
+    for (const element of [...(root.matches(mediaSelector) ? [root] : []), ...Array.from(root.querySelectorAll(mediaSelector))]) {
+      const media = ownerOf(element);
+      if (root.contains(media)) mediaRoots.add(media);
     }
   }
-  
-  return null;
+  const owners = new Map();
+  for (const root of bodyRoots) {
+    const owner = root.closest('article,[itemprop~="articleBody"]');
+    if (!owner) continue;
+    if (!owners.has(owner)) owners.set(owner, []);
+    owners.get(owner).push(root);
+  }
+  const headerOf = (element, owner) => {
+    for (let node = element.parentElement; node && node !== owner; node = node.parentElement) {
+      if (node.tagName === 'HEADER' || /(?:^|[\s_-])header(?:$|[\s_-])/i.test(node.getAttribute('class') || '')) return node;
+    }
+    return null;
+  };
+  for (const [owner, roots] of owners) {
+    const ordered = [...roots].sort(compareDomOrder);
+    const narrativeStart = roots.flatMap(root => [...(root.matches('p,blockquote,pre,ul,ol,table') ? [root] : []), ...Array.from(root.querySelectorAll('p,blockquote,pre,ul,ol,table'))])
+      .filter(element => !element.closest('figure,figcaption') && !headerOf(element, owner)).sort(compareDomOrder)[0];
+    for (const element of Array.from(owner.querySelectorAll(mediaSelector))) {
+      const media = ownerOf(element);
+      if (media.closest('article,[itemprop~="articleBody"]') !== owner) continue;
+      const outside = !insideBody(media) && !bodyRoots.some(root => media.contains(root));
+      const leading = outside && before(media, ordered[0]);
+      const interleaved = outside && ordered.some(root => before(root, media)) && ordered.some(root => before(media, root));
+      const header = headerOf(media, owner);
+      if (leading || interleaved || (header && insideBody(media))) mediaRoots.add(media);
+      if (leading || (header && narrativeStart && before(media, narrativeStart))) featuredRoots.add(media);
+    }
+  }
+  for (const selected of selectedHeroes) {
+    // An ancestor selector cannot expand the article into page-wide reading content.
+    if (!selected.matches(mediaSelector) && bodyRoots.some(root => selected === root || selected.contains(root))) continue;
+    const elements = [...(selected.matches(mediaSelector) ? [selected] : []), ...Array.from(selected.querySelectorAll(mediaSelector))];
+    for (const element of elements) {
+      const media = ownerOf(element);
+      mediaRoots.add(media);
+      if (!insideBody(media) && !bodyRoots.some(root => media.contains(root))) featuredRoots.add(media);
+    }
+  }
+  return { roots: [...mediaRoots], featuredRoots: [...featuredRoots] };
+}
+
+/** Failed or excluded source media must not be replaced with an unrelated metadata cover. */
+export function hasSourceReadingMedia(roots, logoPatterns = []) {
+  const selector = 'img,svg,canvas,video,audio,iframe';
+  return roots.some(root => [...(root.matches(selector) ? [root] : []), ...Array.from(root.querySelectorAll(selector))].some(element =>
+    element.tagName !== 'IMG' || (!isTrackingPixel(element.ownerDocument.defaultView, /** @type {HTMLImageElement} */ (element)) &&
+      !isDecorativeImage(element.ownerDocument.defaultView, /** @type {HTMLImageElement} */ (element), logoPatterns))));
 }
 
 /**

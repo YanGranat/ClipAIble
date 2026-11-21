@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { isExcluded, isSubscriptionFormContent } from '../../scripts/extraction/extractor/filters.js';
-import { sanitizeParagraphHtml } from '../../scripts/extraction/extractor/parse.js';
+import { serializeReadingHtml } from '../../scripts/extraction/extractor/inline-content.js';
 import { CONSTANTS, NAVIGATION_PATTERNS } from '../../scripts/extraction/extractor/constants.js';
 
 const documents=[];
@@ -40,7 +40,7 @@ describe('Form-owned subscription controls',()=>{
  it('removes nested controls from a rich container without consuming surrounding authored prose',()=>{
   const dom=page('<div id="reading">Before the observation.<form><input name="email"><label>Receive daily updates.</label><button>Subscribe</button></form>After the observation.</div>');
   const source=dom.window.document.getElementById('reading'),before=source.outerHTML;
-  expect(sanitizeParagraphHtml(source)).toBe('Before the observation.After the observation.');
+  expect(serializeReadingHtml(source)).toBe('Before the observation.After the observation.');
   expect(source.outerHTML).toBe(before);
  });
 

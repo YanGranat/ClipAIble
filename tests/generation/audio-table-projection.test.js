@@ -12,6 +12,17 @@ const documents = [];
 afterEach(() => { for (const dom of documents.splice(0)) dom.window.close(); vi.clearAllMocks(); });
 
 describe('Table narration', () => {
+  it('keeps compound headings with each value instead of narrating a header as data', () => {
+    const dom = new JSDOM('<!doctype html><table><thead><tr><th rowspan="2">Station</th><th colspan="2">Depth</th></tr><tr><th>Shallow</th><th>Deep</th></tr></thead><tbody><tr><td>North</td><td>12</td><td>18</td></tr></tbody></table>');
+    documents.push(dom);
+    const table = handleTable(dom.window.document.querySelector('table'));
+    expect(contentToPlainText([table])).toBe('Station: North; Depth Shallow: 12; Depth Deep: 18');
+  });
+
+  it('narrates authored graphic labels before the separate caption', () => {
+    expect(contentToPlainText([{ type: 'image', isGraphic: true, alt: 'Station A\nMeasured current\nStation B', caption: '<a href="https://example.test/data">Measured sequence.</a>' }]))
+      .toBe('Station A\nMeasured current\nStation B\n\nImage: Measured sequence.');
+  });
   it('keeps each value with its column header and each row in source order', () => {
     const table = { type: 'table', headers: ['Site', 'Count', 'Change'], rows: [['North', 0, '-2.5%'], ['South', 12, '0%']] };
     expect(contentToPlainText([table])).toBe('Site: North; Count: 0; Change: -2.5%\n\nSite: South; Count: 12; Change: 0%');

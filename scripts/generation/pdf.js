@@ -19,6 +19,7 @@ import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES, isCancelled, getProcessingRunId } from '../state/processing.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { getDefaultModel } from '../utils/model-catalog.js';
+import { preparePdfLayout } from './pdf-layout.js';
 
 
 /**
@@ -405,14 +406,12 @@ export async function generatePdf(data, updateState) {
  * @param {number} tabId - Tab ID
  * @param {string} title - Document title
  * @param {string} pageMode - 'single' or 'multi'
- * @param {number} contentWidth - Content width
- * @param {number} contentHeight - Content height
  * @param {import('../types.js').CompleteProcessingFunction} completeProcessing - Completion callback
  * @param {import('../types.js').SetErrorFunction} setError - Error callback
  */
-export async function generatePdfWithDebugger(tabId, title, pageMode, contentWidth, contentHeight, completeProcessing, setError, processingRunId) {
+export async function generatePdfWithDebugger(tabId, title, pageMode, completeProcessing, setError, processingRunId) {
   log('=== DEBUGGER PDF START ===');
-  log('Input', { tabId, title, pageMode, contentWidth, contentHeight });
+  log('Input', { tabId, title, pageMode });
   
   const debuggee = { tabId };
   let attached = false;
@@ -439,10 +438,18 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, contentWid
     const paperWidth = 8.27; // A4 width in inches
     const a4Height = 11.69;
     
+    await chrome.debugger.sendCommand(debuggee, 'Emulation.setEmulatedMedia', { media: 'print' });
+    const layoutResult = /** @type {{result?: {value?: {contentHeight?: number}}, exceptionDetails?: unknown}} */ (await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+      expression: `(${preparePdfLayout.toString()})(${paperWidth}, ${JSON.stringify(pageMode)})`,
+      awaitPromise: true,
+      returnByValue: true
+    }));
+    if (layoutResult.exceptionDetails) throw new Error('Failed to prepare the PDF print layout.');
+    const layout = layoutResult.result?.value;
+    if (!Number.isFinite(layout?.contentHeight) || layout.contentHeight <= 0) throw new Error('Invalid PDF print dimensions.');
     let paperHeight;
     if (pageMode === 'single') {
-      const printPaddingInches = 0.2;
-      paperHeight = Math.max(a4Height, (contentHeight / 96) + printPaddingInches);
+      paperHeight = layout.contentHeight / 96;
       log(`Single page: ${paperWidth}x${paperHeight.toFixed(2)} inches`);
     } else {
       paperHeight = a4Height;

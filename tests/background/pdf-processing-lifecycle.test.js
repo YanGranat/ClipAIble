@@ -39,7 +39,7 @@ describe('PDF processing lifecycle', () => {
     expect(getProcessingState()).toMatchObject({ isProcessing: true, progress: 95 });
     expect(recordSave).not.toHaveBeenCalled();
     handleGeneratePdfDebugger({ data: { ...data, sourceUrl: data.url } }, sender, vi.fn(), vi.fn());
-    const complete = generatePdfWithDebugger.mock.calls[0][5];
+    const complete = generatePdfWithDebugger.mock.calls[0][3];
     expect(getProcessingState().isProcessing).toBe(true);
     await complete();
     expect(getProcessingState()).toMatchObject({ isProcessing: false, progress: 100, status: 'statusDone' });
@@ -51,7 +51,7 @@ describe('PDF processing lifecycle', () => {
 
   it('allows cancellation while a PDF print tab is pending and ignores late completion', async () => {
     handleGeneratePdfDebugger({ data: { processingRunId: runId, title: 'Article' } }, sender, vi.fn(), vi.fn());
-    const complete = generatePdfWithDebugger.mock.calls[0][5];
+    const complete = generatePdfWithDebugger.mock.calls[0][3];
     await cancelProcessing(vi.fn());
     await startProcessing(vi.fn());
     updateState({ outputFormat: 'markdown', progress: 37 });

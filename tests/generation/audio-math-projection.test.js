@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { sanitizeParagraphHtml } from '../../scripts/extraction/extractor/parse.js';
+import { serializeReadingHtml } from '../../scripts/extraction/extractor/inline-content.js';
 import { basicCleanup, contentToPlainText, prepareChunkForAudio, prepareContentForAudio } from '../../scripts/generation/audio-prep.js';
 import { callAI } from '../../scripts/api/index.js';
 
@@ -20,7 +20,7 @@ describe('Semantic math narration projection', () => {
     dom = new JSDOM('<!doctype html><p>The count is <math xmlns="http://www.w3.org/1998/Math/MathML"><msup><mn>7</mn><mrow><mi>r</mi><mo>+</mo><mn>1</mn></mrow></msup><mo>+</mo><msub><mi>z</mi><mi>i</mi></msub></math>.</p>');
     expect(dom.window.document.compatMode).toBe('CSS1Compat');
     const paragraph = dom.window.document.querySelector('p'), before = paragraph.outerHTML;
-    const html = sanitizeParagraphHtml(paragraph);
+    const html = serializeReadingHtml(paragraph);
     expect(html).toContain('class="math"');
     const content = [{ type: 'paragraph', html, text: html }];
     expect(contentToPlainText(content)).toBe('The count is 7^{r+1}+z_{i}.');

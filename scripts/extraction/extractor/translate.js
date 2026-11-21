@@ -93,15 +93,6 @@ export function getOriginalTextIfTranslated(element) {
     }
   }
   
-  // Check child elements for data-original-text
-  const childWithOriginal = element.querySelector('[data-original-text]');
-  if (childWithOriginal) {
-    const childOriginal = childWithOriginal.getAttribute('data-original-text');
-    if (childOriginal && childOriginal.trim()) {
-      return childOriginal.trim();
-    }
-  }
-  
   return null;
 }
 

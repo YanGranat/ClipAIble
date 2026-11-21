@@ -3,7 +3,6 @@ import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { handleImg } from '../../scripts/extraction/extractor/parse.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
-import { extractFeaturedImage } from '../../scripts/extraction/extractor/images.js';
 
 const placeholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const stripes = [
@@ -66,11 +65,11 @@ describe('Loaded placeholders and deferred article images', () => {
     expect(extractImage(dom, image)).toBeNull();
   });
 
-  it('uses the deferred resource for the leading featured-image fallback', () => {
+  it('uses the deferred resource for a leading source figure in the shared parser', () => {
     const { dom, image } = page('data-src="/survey.png"');
     const article = dom.window.document.querySelector('article');
     article.prepend(image.closest('figure'));
-    expect(extractFeaturedImage(dom.window.document, dom.window.location.href, article, CONSTANTS.LOGO_PATTERNS)?.src).toBe('https://example.test/survey.png');
+    expect(extractImage(dom, image)?.src).toBe('https://example.test/survey.png');
   });
 
   it('uses currentSrc dimensions only for the decoded resource while a new src is pending', () => {

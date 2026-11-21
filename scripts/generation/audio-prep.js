@@ -4,7 +4,7 @@
 
 import { log, logError, logWarn } from '../utils/logging.js';
 import { normalizeSpeechText } from '../utils/audio-text.js';
-import { documentText, listHtml, tableCellHtml } from './document-content.js';
+import { documentText, listHtml, tableCellHtml, flatTableProjection } from './document-content.js';
 import { isNativePdfContent } from './xml.js';
 import { stripHtml as stripRichHtml } from '../utils/html.js';
 import { tokenizeHtml, decodeEntities } from '../utils/html/tokenizer.js';
@@ -190,6 +190,11 @@ export function contentToPlainText(content) {
         break;
         
       case 'image':
+        if (item.isGraphic && item.alt?.trim()) {
+          textParts.push(item.alt.trim());
+          itemLog.added = true;
+          itemLog.extractedLength = item.alt.trim().length;
+        }
         // Include image caption if present
         if (item.caption) {
           const literalCaption = item.format === 'text' || isNativePdfContent(item);
@@ -206,16 +211,17 @@ export function contentToPlainText(content) {
             itemLog.reason = 'Empty caption after stripHtml';
           }
         } else {
-          itemLog.added = false;
-          itemLog.reason = 'No caption';
+          itemLog.added = !!(item.isGraphic && item.alt?.trim());
+          if (!itemLog.added) itemLog.reason = 'No caption';
         }
         processedItems.push(itemLog);
         break;
         
       case 'table':
-        const tableHeaders = Array.isArray(item.headers)
-          ? item.headers.map(value => narrationPlainText(tableCellHtml(item, value))) : [];
-        const tableRows = Array.isArray(item.rows) ? item.rows : [];
+        const tableProjection = flatTableProjection(item);
+        const tableHeaders = Array.isArray(tableProjection.headers)
+          ? tableProjection.headers.map(value => narrationPlainText(tableCellHtml(item, value))) : [];
+        const tableRows = Array.isArray(tableProjection.rows) ? tableProjection.rows : [];
         const narrationRows = [];
         for (const row of tableRows) {
           if (!Array.isArray(row)) continue;

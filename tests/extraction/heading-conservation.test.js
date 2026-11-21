@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { build } from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { JSDOM } from 'jsdom';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { normalizeHeadingForDedup } from '../../scripts/extraction/extractor/text-utils.js';
 import { collectCandidateElements, parseElements } from '../../scripts/extraction/extractor/parse.js';
-import { extractWhenMainContentMissing, extractLastResortContainerSearch, extractUltimateFallbackAllParagraphs, extractEmergencyFallback, tryExtractTwitterX } from '../../scripts/extraction/extractor/fallbacks.js';
+import { runExtraction } from '../../scripts/extraction/extractor/index.js';
+
+vi.mock('../../scripts/extraction/extractor/spa.js', () => ({ waitForContentLoad: async () => {} }));
 
 const title = 'A measured response';
 const prose = '<p>The first observation records a complete independent measurement.</p>';
@@ -14,6 +16,7 @@ const windows = [];
 function page(body, url = 'https://example.org/article') {
   const dom = new JSDOM(`<title>${title}</title><article>${body}</article>`, { url, runScripts: 'outside-only' });
   windows.push(dom.window);
+  vi.stubGlobal('window', dom.window);
   vi.stubGlobal('document', dom.window.document);
   vi.stubGlobal('Node', dom.window.Node);
   return dom.window;
@@ -25,9 +28,8 @@ function headings(content) {
   return content.filter(item => item.type === 'heading').map(({ id, text, level, format }) => ({ id, text, level, format }));
 }
 async function generatedRunner(win) {
-  const built = await build({ entryPoints: ['scripts/extraction/extractor/builder.js'], bundle: true, platform: 'node', format: 'esm', write: false, logLevel: 'silent' });
-  const builder = await import(`data:text/javascript;base64,${Buffer.from(built.outputFiles[0].text).toString('base64')}`);
-  const generated = await builder.generateExtractAutomaticallyInlined();
+  const builder = new URL('../../scripts/extraction/extractor/builder.js', import.meta.url).href;
+  const generated = execFileSync(process.execPath, ['--input-type=module', '-e', `import { generateExtractAutomaticallyInlined } from ${JSON.stringify(builder)}; process.stdout.write(await generateExtractAutomaticallyInlined());`], { encoding: 'utf8' });
   return win.eval(`${generated.replace(/^export /m, '')}\nextractAutomaticallyInlined;`);
 }
 const expected = [
@@ -65,20 +67,16 @@ describe('Heading source positions', () => {
     expect(headings(parseElements(win, collectCandidateElements(root, win), state(), constants, win.location.href))).toEqual([expected[0]]);
   });
 
-  it.each([
-    ['missing main', extractWhenMainContentMissing],
-    ['container search', extractLastResortContainerSearch],
-    ['all paragraphs', extractUltimateFallbackAllParagraphs],
-    ['emergency main', (win, doc, current, config, url) => extractEmergencyFallback(win, doc, current, config, doc.querySelector('article'))],
-    ['emergency container', (win, doc, current, config) => extractEmergencyFallback(win, doc, current, config, null)]
-  ])('preserves distinct body heading occurrences in %s', (_name, extract) => {
+  it('preserves distinct body heading occurrences in automatic extraction', async () => {
     const win = page(markup);
-    expect(headings(extract(win, win.document, state(), constants, win.location.href))).toEqual(expected);
+    const result = await runExtraction(win.location.href);
+    expect(result.error).toBeUndefined();
+    expect(headings(result.content)).toEqual(expected);
   });
 
-  it('deduplicates the same Draft heading node without collapsing another source heading', () => {
+  it('deduplicates the same Draft heading node without collapsing another source heading', async () => {
     const win = page(`<div data-testid="twitterArticleReadView"><div data-offset-key="a"><h1 class="longform-header-one" id="cover">${title}</h1></div><div data-offset-key="b">An independent body paragraph precedes the return.</div><div data-offset-key="c"><h2 class="longform-header-two" id="method">${title}</h2></div><div data-offset-key="d"><h2 class="longform-header-two" id="repeat">${title}</h2></div></div>`, 'https://x.com/i/article/123');
-    expect(headings(tryExtractTwitterX(win, win.document, state(), constants, win.location.href))).toEqual([expected[0], expected[2]]);
+    expect(headings((await runExtraction(win.location.href)).content)).toEqual([expected[0], expected[2]]);
   });
 
   it.each([
@@ -96,8 +94,8 @@ describe('Heading source positions', () => {
     expect(headings(content)).toEqual([{ id: 'body-title', text: title, level: 1, format: 'text' }]);
   });
 
-  it('uses DOM order before deciding whether an ultimate fallback H1 is initial', () => {
+  it('uses DOM order before deciding whether an automatic body H1 is initial', async () => {
     const win = page(`${prose}<h1 id="body-title">${title}</h1>${prose}`);
-    expect(headings(extractUltimateFallbackAllParagraphs(win, win.document, state(), constants))).toEqual([{ id: 'body-title', text: title, level: 1, format: 'text' }]);
+    expect(headings((await runExtraction(win.location.href)).content)).toEqual([{ id: 'body-title', text: title, level: 1, format: 'text' }]);
   });
 });

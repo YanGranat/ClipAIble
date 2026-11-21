@@ -3,25 +3,12 @@
 // Text cleaning, normalization, and analysis helpers
 
 /**
- * Clean heading text by removing replacement characters and presentation markup
+ * Normalize authored plain heading text without interpreting it as markup
  * @param {string} text - Heading text to clean
  * @returns {string} - Cleaned heading text
  */
 export function cleanHeadingText(text) {
-  if (!text) return '';
-  return text
-    // Remove U+FFFC (Object Replacement Character)
-    .replace(/\uFFFC/g, '')
-    // Remove any remaining HTML tags
-    .replace(/<[^>]+>/g, '')
-    // Remove Wikipedia edit section patterns (all languages): [edit], [ред. | ред. код], etc.
-    .replace(/\s*\[[^\]]{1,30}\s*\|\s*[^\]]{1,30}\]\s*$/g, '')
-    .replace(/\s*\[(edit|ред\.?|редагувати|править|editar|modifier|bearbeiten|編集|编辑|편집)[^\]]*\]\s*$/gi, '')
-    // Remove trailing # (often from anchor links)
-    .replace(/\s*#\s*$/, '')
-    // Normalize whitespace
-    .replace(/\s+/g, ' ')
-    .trim();
+  return text ? text.replace(/\uFFFC/g, '').replace(/\s+/g, ' ').trim() : '';
 }
 
 /**

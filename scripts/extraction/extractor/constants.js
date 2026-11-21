@@ -5,7 +5,7 @@
 import { CONTENT_THRESHOLDS, IMAGE_THRESHOLDS, SCORING_THRESHOLDS, CONTENT_SELECTORS, STANDFIRST_SELECTORS, AUTHOR_SELECTORS, DATE_SELECTORS, FEATURED_IMAGE_SELECTORS } from '../constants/content-thresholds.js';
 import { NAVIGATION_PATTERNS, PAYWALL_PATTERNS, RELATED_ARTICLES_PATTERNS, COURSE_AD_PATTERNS, EXCLUDED_CLASSES, PAYWALL_CLASSES, LOGO_PATTERNS, TRACKING_PATTERNS, PLACEHOLDER_PATTERNS } from '../patterns/exclusion-patterns.js';
 
-export const CANDIDATE_SELECTOR = 'h1,h2,h3,h4,h5,h6,p,img,iframe,video,audio,figure,figcaption,blockquote,pre,code,ul,ol,table,div,hr';
+export const CANDIDATE_SELECTOR = 'article,section,main,aside,body,h1,h2,h3,h4,h5,h6,p,img,svg,canvas,iframe,video,audio,figure,figcaption,blockquote,pre,code,ul,ol,dl,dt,dd,table,td,th,div,hr';
 
 /**
  * Flatten paywall patterns from language-keyed object to array
@@ -86,93 +86,3 @@ export {
   DATE_SELECTORS,
   FEATURED_IMAGE_SELECTORS
 };
-
-/**
- * Generate inlined constants code string for build process
- * @returns {string} - JavaScript code string defining all constants
- */
-export function getInlinedConstantsCode() {
-  const navContains = NAVIGATION_PATTERNS.contains.map(r => r.toString()).join(',\n      ');
-  const navStartsWith = NAVIGATION_PATTERNS.startsWith.map(r => r.toString()).join(',\n      ');
-  const paywallFlat = flattenPatterns(PAYWALL_PATTERNS);
-  const relatedFlat = flattenPatterns(RELATED_ARTICLES_PATTERNS);
-  
-  return `
-    // ============================================
-    // INLINED CONSTANTS AND PATTERNS
-    // (Generated from scripts/extraction/extractor/constants.js)
-    // ============================================
-    
-    // Content thresholds
-    const MIN_CONTENT_LENGTH = ${CONTENT_THRESHOLDS.MIN_CONTENT_LENGTH};
-    const SUBSTANTIAL_CONTENT_LENGTH = ${CONTENT_THRESHOLDS.SUBSTANTIAL_CONTENT_LENGTH};
-    const MIN_PARAGRAPH_LENGTH = ${CONTENT_THRESHOLDS.MIN_PARAGRAPH_LENGTH};
-    const MIN_HEADING_LENGTH = ${CONTENT_THRESHOLDS.MIN_HEADING_LENGTH};
-    const MIN_STANDFIRST_LENGTH = ${CONTENT_THRESHOLDS.MIN_STANDFIRST_LENGTH};
-    const MAX_STANDFIRST_LENGTH = ${CONTENT_THRESHOLDS.MAX_STANDFIRST_LENGTH};
-    const SHORT_PARAGRAPH_THRESHOLD = ${CONTENT_THRESHOLDS.SHORT_PARAGRAPH_THRESHOLD};
-    const VERY_SHORT_PARAGRAPH = ${CONTENT_THRESHOLDS.VERY_SHORT_PARAGRAPH};
-    const MAX_AUTHOR_METADATA_LENGTH = ${CONTENT_THRESHOLDS.MAX_AUTHOR_METADATA_LENGTH};
-    const MAX_WORD_COUNT_METADATA_LENGTH = ${CONTENT_THRESHOLDS.MAX_WORD_COUNT_METADATA_LENGTH};
-    
-    // Image thresholds
-    const FEATURED_IMAGE_MIN_WIDTH = ${IMAGE_THRESHOLDS.FEATURED_IMAGE_MIN_WIDTH};
-    const FEATURED_IMAGE_MIN_HEIGHT = ${IMAGE_THRESHOLDS.FEATURED_IMAGE_MIN_HEIGHT};
-    const AUTHOR_PHOTO_MAX_SIZE = ${IMAGE_THRESHOLDS.AUTHOR_PHOTO_MAX_SIZE};
-    const AUTHOR_PHOTO_SMALL_SIZE = ${IMAGE_THRESHOLDS.AUTHOR_PHOTO_SMALL_SIZE};
-    const TRACKING_PIXEL_MAX_SIZE = ${IMAGE_THRESHOLDS.TRACKING_PIXEL_MAX_SIZE};
-    
-    // Scoring thresholds
-    const MIN_CONTENT_SCORE = ${SCORING_THRESHOLDS.MIN_CONTENT_SCORE};
-    const GOOD_ENOUGH_SCORE = ${SCORING_THRESHOLDS.GOOD_ENOUGH_SCORE};
-    
-    // Navigation patterns (contains)
-    const NAV_PATTERNS_CONTAINS = [
-      ${navContains}
-    ];
-    
-    // Navigation patterns (starts with)
-    const NAV_PATTERNS_STARTS_WITH = [
-      ${navStartsWith}
-    ];
-    
-    // Paywall patterns (flattened)
-    const PAYWALL_PATTERNS = ${JSON.stringify(paywallFlat, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Related articles patterns (flattened)
-    const RELATED_PATTERNS = ${JSON.stringify(relatedFlat, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Course ad patterns
-    const COURSE_AD_PATTERNS = ${JSON.stringify(COURSE_AD_PATTERNS, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Excluded classes
-    const EXCLUDED_CLASSES = ${JSON.stringify(EXCLUDED_CLASSES, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Paywall classes
-    const PAYWALL_CLASSES = ${JSON.stringify(PAYWALL_CLASSES, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Logo patterns
-    const LOGO_PATTERNS = ${JSON.stringify(LOGO_PATTERNS, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Standfirst selectors (used by standfirst.js)
-    const STANDFIRST_SELECTORS = ${JSON.stringify(STANDFIRST_SELECTORS, null, 6).replace(/\n/g, '\n    ')};
-    
-    // Candidate element selector (used by parse.js)
-    const CANDIDATE_SELECTOR = ${JSON.stringify(CANDIDATE_SELECTOR)};
-    
-    // CONSTANTS object (used by runExtraction)
-    const CONSTANTS = {
-      EXCLUDED_CLASSES,
-      PAYWALL_CLASSES,
-      NAVIGATION_PATTERNS_CONTAINS: NAV_PATTERNS_CONTAINS,
-      NAVIGATION_PATTERNS_STARTS_WITH: NAV_PATTERNS_STARTS_WITH,
-      COURSE_AD_PATTERNS,
-      PAYWALL_PATTERNS,
-      LOGO_PATTERNS
-    };
-    
-    // ============================================
-    // END OF INLINED CONSTANTS
-    // ============================================
-`;
-}

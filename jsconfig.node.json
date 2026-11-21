@@ -11,7 +11,9 @@
     ]
   },
   "include": [
-    "scripts/apply-extraction-build.js"
+    "scripts/apply-extraction-build.js",
+    "scripts/extraction/extractor/builder.js",
+    "build-extraction.js"
   ],
   "exclude": [
     "node_modules"

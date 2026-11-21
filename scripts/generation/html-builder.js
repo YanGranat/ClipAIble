@@ -1,5 +1,5 @@
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent } from './document-content.js';
 // @ts-check
 // HTML builder for PDF generation
 
@@ -272,9 +272,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
           return `${anchorTag}<pre${idAttr}><code class="language-${escapeAttr(item.language || 'text')}">${escapeHtml(codeText)}</code></pre>`;
         
         case 'table':
-          const headers = (item.headers || []).map(cell => `<th>${tableCellHtml(item, cell, sourceUrl)}</th>`).join('');
-          const rows = (item.rows || []).map(row => `<tr>${row.map(cell => `<td>${tableCellHtml(item, cell, sourceUrl)}</td>`).join('')}</tr>`).join('');
-          return `${anchorTag}<table${idAttr}>${headers ? `<thead><tr>${headers}</tr></thead>` : ''}<tbody>${rows}</tbody></table>`;
+          return `${anchorTag}${renderTableHtml(item, sourceUrl)}`;
         case 'hr':
         case 'divider':
         case 'separator':
@@ -646,6 +644,8 @@ ul, ol { font-size: ${fontSizes.base} !important; }
 .infobox, .infobox-content { font-size: ${fontSizes.base} !important; ${fontFamilyStyle} }
 .infobox-title { font-size: ${Math.round(parseInt(fontSizes.base) * 1.1)}px !important; }
 strong, b { color: ${headingColor} !important; }
+th { background-color: color-mix(in srgb, ${bgColor} 88%, ${textColor}); color: ${textColor}; }
+.table-muted { color: color-mix(in srgb, ${textColor} 68%, ${bgColor}); }
 a, a[href^="#"], blockquote a, strong a, b a, em a, i a, p a, li a, td a, th a, .article-meta a { color: ${linkColor} !important; }
 blockquote { 
   background-color: ${quoteBackground} !important; 

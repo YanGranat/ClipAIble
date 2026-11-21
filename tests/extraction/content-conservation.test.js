@@ -6,8 +6,10 @@ import { parseElements, filterCandidateElements } from '../../scripts/extraction
 import { cleanHeadingText, stripObjMarkers } from '../../scripts/extraction/extractor/text-utils.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { mergeChunkContent, filterExtractionNoise } from '../../scripts/extraction/html-utils.js';
-import { extractUltimateFallbackAllParagraphs } from '../../scripts/extraction/extractor/fallbacks.js';
 import { isDecorativeImage, isTrackingPixel } from '../../scripts/extraction/extractor/images.js';
+import { runExtraction } from '../../scripts/extraction/extractor/index.js';
+
+vi.mock('../../scripts/extraction/extractor/spa.js', () => ({ waitForContentLoad: async () => {} }));
 
 const documents = [];
 const extractionConstants = { ...CONSTANTS,
@@ -61,7 +63,7 @@ describe('Article content conservation', () => {
       expect(cleanHeadingText(value)).toBe(value);
       expect(stripObjMarkers(value)).toBe(value);
     }
-    expect(cleanHeadingText('A\uFFFC heading #')).toBe('A heading');
+    expect(cleanHeadingText('A\uFFFC heading #')).toBe('A heading #');
     expect(stripObjMarkers('A\uFFFC heading')).toBe('A heading');
   });
 
@@ -71,13 +73,14 @@ describe('Article content conservation', () => {
     expect(result.map(item => item.text)).toEqual(headings);
   });
 
-  it('preserves interleaved heading and paragraph order in the final fallback', () => {
-    const dom = new JSDOM('<h2>First section</h2><p>The first paragraph explains its section.</p><h2>Second section</h2><p>The second paragraph follows its heading.</p>');
+  it('preserves interleaved heading and paragraph order in automatic extraction', async () => {
+    const dom = new JSDOM('<h2>First section</h2><p>The first paragraph explains its section.</p><h2>Second section</h2><p>The second paragraph follows its heading.</p>', { url: 'https://example.test/report' });
     documents.push(dom);
     vi.stubGlobal('Node', dom.window.Node);
     vi.stubGlobal('document', dom.window.document);
-    const state = { mainTitleText: '', addedHeadings: new Set() };
-    const result = extractUltimateFallbackAllParagraphs(dom.window, dom.window.document, state, extractionConstants);
+    vi.stubGlobal('window', dom.window);
+    const { content: result, error } = await runExtraction(dom.window.location.href);
+    expect(error).toBeUndefined();
     expect(result.map(item => item.text)).toEqual([
       'First section', 'The first paragraph explains its section.', 'Second section', 'The second paragraph follows its heading.'
     ]);
@@ -99,11 +102,11 @@ describe('Article content conservation', () => {
   it.each([
     ['https://example.com/image?id=first', 'https://example.com/image?id=second'],
     ['https://example.com/diagram.svg#first-view', 'https://example.com/diagram.svg#second-view']
-  ])('keeps distinct image URL identities while removing exact duplicates', (first, second) => {
+  ])('keeps image resource identities at each independent reading occurrence', (first, second) => {
     const { result } = parse([first, second, first].map((source, index) =>
       `<img src="${source}" width="600" height="400" alt="Diagram ${index + 1}">`
     ).join(''));
-    expect(result.filter(item => item.type === 'image').map(item => item.src)).toEqual([first, second]);
+    expect(result.filter(item => item.type === 'image').map(item => item.src)).toEqual([first, second, first]);
   });
 
   it('extracts nested prose and headings exactly once', () => {
@@ -167,12 +170,20 @@ describe('Article content conservation', () => {
     ]);
   });
 
-  it('runs the same partition logic when helpers are inlined', () => {
-    const helpers = execFileSync(process.execPath, ['--input-type=module', '-e',
-      "import { buildCompleteInlinedFunction } from './scripts/extraction/extractor/builder.js'; process.stdout.write(buildCompleteInlinedFunction());"
+  it('runs the same partition logic through the serialized page entry point', async () => {
+    const source = execFileSync(process.execPath, ['--input-type=module', '-e',
+      "import { generateExtractAutomaticallyInlined } from './scripts/extraction/extractor/builder.js'; process.stdout.write(await generateExtractAutomaticallyInlined());"
     ], { cwd: fileURLToPath(new URL('../../', import.meta.url)), encoding: 'utf8', maxBuffer: 1024 * 1024 });
-    const inlined = new Function(`${helpers}\nreturn parseElements;`)();
-    const { result, document } = parse('<div>Text before the block.<p>The block text is included once.</p>After.</div>', inlined);
-    expect(result.map(item => text(document, item))).toEqual(['Text before the block.', 'The block text is included once.', 'After.']);
+    const dom = new JSDOM('<!doctype html><title>Field report</title><article><h1>Field report</h1><div>Text before the block.<p>The block text is included once.</p>After.</div></article>', {
+      url: 'https://example.test/report', runScripts: 'outside-only'
+    });
+    documents.push(dom);
+    dom.window.console.log = () => {};
+    dom.window.eval(source.replace('export async function', 'async function') + '\nwindow.extract = extractAutomaticallyInlined;');
+    const before = dom.window.document.body.innerHTML;
+    const result = await dom.window.extract(dom.window.location.href, false, { content: 'article', title: 'h1' });
+    expect(result.error).toBeUndefined();
+    expect(result.content.map(item => text(dom.window.document, item))).toEqual(['Text before the block.', 'The block text is included once.', 'After.']);
+    expect(dom.window.document.body.innerHTML).toBe(before);
   });
 });

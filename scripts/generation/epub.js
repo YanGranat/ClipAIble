@@ -1,6 +1,6 @@
 import { imageDataError } from '../utils/html/image-bytes.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent } from './document-content.js';
 // @ts-check
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
@@ -579,7 +579,8 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
     case 'image': {
       // Use embedded path if available, otherwise original src
       const src = item._epubSrc || '';
-      if (!src) return item.src ? `    <p>${serializeXmlInline(sanitizeHtml(`<a href="${escapeXml(item.src)}">${escapeXml(item.alt || item.caption || item.src)}</a>`, sourceUrl), 'xhtml')}</p>\n` : '';
+      const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
+      if (!src) return item.src ? `    <p${idAttr}>${serializeXmlInline(sanitizeHtml(`<a href="${escapeXml(item.src)}">${escapeXml(item.alt || item.caption || item.src)}</a>`, sourceUrl), 'xhtml')}</p>\n` : '';
       const alt = escapeXml(item.alt || '');
       
       // Check if caption is generic (e.g., "image3", "image1", "photo2", etc.)
@@ -615,7 +616,6 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       const caption = (captionText && !isGenericCaption(captionText)) ? sanitizeHtmlForXhtml(captionText, sourceUrl, isNativePdfContent(item)) : '';
       if (!src) return '';
 
-      const idAttr = item.id ? ` id="${escapeXml(item.id)}"` : '';
       let figureHtml = `    <figure${idAttr}><img src="${escapeXml(src)}" alt="${alt}"/>`;
       if (caption) {
         figureHtml += `<figcaption>${caption}</figcaption>`;
@@ -632,7 +632,7 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
     }
     
     case 'table': {
-      return tableToXhtml(item, sourceUrl);
+      return `    ${renderTableHtml(item, sourceUrl, { xhtml: true, assumeFirstRowHeader: true })}\n`;
     }
     
     case 'subtitle': {
@@ -647,44 +647,6 @@ function contentItemToXhtml(item, headings, headingIndex, sourceUrl = '') {
       return '';
     }
   }
-}
-
-/**
- * Convert table to XHTML
- */
-function tableToXhtml(item, sourceUrl = '') {
-  const rows = Array.isArray(item.headers) && item.headers.length
-    ? [item.headers, ...(item.rows || [])] : item.rows;
-  if (!rows || !rows.length) return '';
-  
-  let html = '    <table>\n';
-  const hasHeaders = item.hasHeaders !== false;
-  
-  // First row as header
-  if (hasHeaders) {
-    html += '      <thead><tr>\n';
-    rows[0].forEach(cell => {
-      html += `        <th>${serializeXmlInline(tableCellHtml(item, cell, sourceUrl), 'xhtml')}</th>\n`;
-    });
-    html += '      </tr></thead>\n';
-  }
-  
-  // Body rows
-  const startRow = hasHeaders ? 1 : 0;
-  if (rows.length > startRow) {
-    html += '      <tbody>\n';
-    for (let i = startRow; i < rows.length; i++) {
-      html += '      <tr>\n';
-      rows[i].forEach(cell => {
-        html += `        <td>${serializeXmlInline(tableCellHtml(item, cell, sourceUrl), 'xhtml')}</td>\n`;
-      });
-      html += '      </tr>\n';
-    }
-    html += '      </tbody>\n';
-  }
-  
-  html += '    </table>\n';
-  return html;
 }
 
 /**
@@ -819,11 +781,13 @@ li {
 }
 
 figure {
+  display: block;
   margin: 1em 0;
   text-align: center;
 }
 
 figcaption {
+  display: block;
   font-size: 0.9em;
   color: #666;
   font-style: italic;
@@ -847,6 +811,10 @@ th, td {
   border: 1px solid #ddd;
   padding: 0.5em;
   text-align: left;
+}
+
+.table-muted {
+  opacity: 0.68;
 }
 
 th {

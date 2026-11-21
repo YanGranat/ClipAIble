@@ -18,22 +18,43 @@ async function extract({hero=images,selector='#cover',inside=false,metadata='<me
 }
 const featured=result=>result.content.find(item=>item.type==='image'&&item.isFeatured);
 
-describe('Declared single cover for an ambiguous outside-body hero container',()=>{
- it('prefers the publisher cover over an arbitrary component and preserves the original figure credit',async()=>{
+describe('Declared source hero media', () => {
+ it('keeps all source gallery images and the owned credit without unrelated OG substitution',async()=>{
   const result=await extract();
-  expect(featured(result)).toMatchObject({src:'https://example.test/complete-cover.jpg',caption:'Artwork credit.'});
+  expect(result.error).toBeUndefined();
+  expect(result.content.filter(item=>item.type==='image').map(item=>item.src)).toEqual(['https://example.test/base.jpg','https://example.test/overlay.png']);
+  expect(result.content.filter(item=>item.caption==='Artwork credit.')).toHaveLength(1);
   expect(result.content.some(item=>item.type==='paragraph'&&item.text.includes('complete observation record'))).toBe(true);
  });
- it('preserves an explicit image selection',async()=>expect(featured(await extract({selector:'#base'})).src).toBe('https://example.test/base.jpg'));
+ it('resolves an explicit IMG to its exact source FIGURE owner',async()=>{
+  const result=await extract({selector:'#base'});
+  expect(result.content.filter(item=>item.type==='image').map(item=>item.src)).toEqual(['https://example.test/base.jpg','https://example.test/overlay.png']);
+  expect(result.content.filter(item=>item.caption==='Artwork credit.')).toHaveLength(1);
+ });
  it('preserves a single-image container',async()=>expect(featured(await extract({hero:'<img id="base" src="/base.jpg" width="640" height="400">'})).src).toBe('https://example.test/base.jpg'));
  it('preserves ordinary galleries inside the selected article body',async()=>{
   const result=await extract({inside:true});
   expect(featured(result)).toBeUndefined();
   expect(result.content.filter(item=>item.type==='image').map(item=>item.src)).toEqual(['https://example.test/base.jpg','https://example.test/overlay.png']);
  });
- it('does not treat an ancestor of the reading body as an outside-body hero',async()=>expect(featured(await extract({selector:'body'})).src).toBe('https://example.test/base.jpg'));
- it('keeps the existing fallback when OG is absent even if another metadata image exists',async()=>expect(featured(await extract({metadata:'<meta name="twitter:image" content="/alternative.jpg">'})).src).toBe('https://example.test/base.jpg'));
- it('does not replace an explicitly excluded component with a combined metadata cover',async()=>expect(featured(await extract({exclude:['#overlay']})).src).toBe('https://example.test/base.jpg'));
- it('respects exclusion of the entire hero container',async()=>expect(featured(await extract({exclude:['#cover']}))).toBeUndefined());
- it('uses the declared single cover for a selected header gallery without promising a current frame',async()=>expect(featured(await extract({hero:`<div aria-roledescription="carousel">${images}</div>`})).src).toBe('https://example.test/complete-cover.jpg'));
+ it('does not admit page-wide media through a selector that contains the body root',async()=>{
+  const result=await extract({selector:'body'});
+  expect(result.content.filter(item=>item.type==='image')).toEqual([]);
+ });
+ it('keeps physical source images when OG is absent and other metadata exists',async()=>{
+  const result=await extract({metadata:'<meta name="twitter:image" content="/alternative.jpg">'});
+  expect(result.content.filter(item=>item.type==='image').map(item=>item.src)).toEqual(['https://example.test/base.jpg','https://example.test/overlay.png']);
+ });
+ it('does not resurrect an excluded gallery component through metadata',async()=>{
+  const result=await extract({exclude:['#overlay']});
+  expect(result.content.filter(item=>item.type==='image').map(item=>item.src)).toEqual(['https://example.test/base.jpg']);
+ });
+ it('respects exclusion of the entire hero container',async()=>{
+  const result=await extract({exclude:['#cover']});
+  expect(result.content.filter(item=>item.type==='image')).toEqual([]);
+ });
+ it('keeps source gallery media inside a carousel container',async()=>{
+  const result=await extract({hero:`<div aria-roledescription="carousel">${images}</div>`});
+  expect(result.content.filter(item=>item.type==='image').map(item=>item.src)).toEqual(['https://example.test/base.jpg','https://example.test/overlay.png']);
+ });
 });

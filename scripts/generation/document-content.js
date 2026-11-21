@@ -1,6 +1,6 @@
 // @ts-check
-import { renderContentText, sanitizeMarkdownHtml, sanitizeHtml, markdownToHtml, htmlToMarkdown, stripHtml, escapeHtml } from '../utils/html.js';
-import { isNativePdfContent } from './xml.js';
+import { renderContentText, sanitizeMarkdownHtml, sanitizeHtml, markdownToHtml, htmlToMarkdown, stripHtml, escapeHtml, removeHtmlAttributes } from '../utils/html.js';
+import { isNativePdfContent, escapeXml, serializeXmlInline } from './xml.js';
 import { filterFigureParagraphs } from './content.js';
 import { collectRenderedFragmentIds, rewriteHtmlFragmentLinks, rewriteMarkdownFragmentLinks } from './source-fragments.js';
 
@@ -16,6 +16,136 @@ export function tableCellHtml(item, value, sourceUrl = '') {
   if (item.cellFormat === 'text' || isNativePdfContent(item)) return escapeHtml(String(value ?? ''));
   if (item.cellFormat === 'html') return sanitizeHtml(String(value ?? ''), sourceUrl);
   return markdownToHtml(String(value ?? ''), sourceUrl);
+}
+
+/** Read the value grid shared by every table projection. */
+export function tableValueRows(item) {
+  const rows = Array.isArray(item.rows) ? item.rows : [];
+  return Array.isArray(item.headers) && item.headers.length ? [item.headers, ...rows] : rows;
+}
+
+/** Validate physical ownership before using spans to suppress repeated grid slots. */
+export function verifiedTableLayout(item) {
+  const values = tableValueRows(item);
+  const layout = item.layoutRows;
+  if (!Array.isArray(layout) || !layout.length || layout.length !== values.length || values.some(row => !Array.isArray(row))) return null;
+  const columns = Math.max(0, ...values.map(row => row.length));
+  if (!columns) return null;
+  const groups = { head: 0, body: 1, foot: 2 };
+  for (let row = 0; row < layout.length; row++) {
+    const current = layout[row];
+    if (!current || !Object.hasOwn(groups, current.group) || !Array.isArray(current.cells) ||
+        (current.groupStart !== undefined && typeof current.groupStart !== 'boolean') ||
+        (row && groups[current.group] < groups[layout[row - 1].group])) return null;
+    if (row && current.group === layout[row - 1].group && current.group !== 'body' && current.groupStart) return null;
+  }
+  const owners = values.map(() => Array(columns).fill(null));
+  const origins = [], aliases = [];
+  for (let row = 0; row < layout.length; row++) {
+    let groupEnd = row + 1;
+    while (groupEnd < layout.length && layout[groupEnd].group === layout[row].group && !layout[groupEnd].groupStart) groupEnd++;
+    for (const cell of layout[row].cells) {
+      if (!cell || !Number.isInteger(cell.column) || cell.column < 0 || cell.column >= values[row].length ||
+          !Number.isInteger(cell.rowSpan) || cell.rowSpan < 1 || row + cell.rowSpan > groupEnd ||
+          !Number.isInteger(cell.colSpan) || cell.colSpan < 1 || cell.column + cell.colSpan > columns ||
+          typeof cell.header !== 'boolean' || (cell.scope !== undefined &&
+            (!cell.header || !['row', 'col', 'rowgroup', 'colgroup'].includes(cell.scope)))) return null;
+      const origin = { row, column: cell.column, cell };
+      const text = String(values[row][cell.column] ?? '');
+      const derived = item.cellFormat === 'html' ? removeHtmlAttributes(text, ['id', 'name']) : text;
+      for (let down = row; down < row + cell.rowSpan; down++) for (let across = cell.column; across < cell.column + cell.colSpan; across++) {
+        if (owners[down][across]) return null;
+        const value = String(values[down][across] ?? '');
+        if (value !== text && value !== derived) return null;
+        owners[down][across] = origin;
+        if (down !== row || across !== cell.column) aliases.push({ row: down, column: across, origin });
+      }
+      origins.push(origin);
+    }
+  }
+  if (values.some((row, rowIndex) => row.some((value, column) => !owners[rowIndex][column] && String(value ?? '') !== ''))) return null;
+  return { values, rows: layout, columns, owners, origins, aliases };
+}
+
+/** Update only aliases whose physical ownership was verified before translation. */
+export function synchronizeTableAliases(item, layout) {
+  for (const alias of layout.aliases) {
+    const value = layout.values[alias.origin.row][alias.origin.column];
+    layout.values[alias.row][alias.column] = item.cellFormat === 'html'
+      ? removeHtmlAttributes(String(value ?? ''), ['id', 'name']) : value;
+  }
+}
+
+/** Project multi-row column headers into formats without merged cells. */
+export function flatTableProjection(item) {
+  const layout = verifiedTableLayout(item);
+  const rowsWithAnnotations = layout && layout.values.map((row, rowIndex) => row.map((value, column) =>
+    value != null && String(value).trim() && layout.owners[rowIndex][column]?.cell.muted === true ? `${value} (gray)` : value));
+  let headerCount = 0;
+  if (layout) while (layout.rows[headerCount]?.group === 'head') headerCount++;
+  if (!layout) return { headers: item.headers, rows: item.rows, hasHeaders: item.hasHeaders };
+  if (headerCount < 2) return {
+    headers: item.headers?.length ? rowsWithAnnotations[0] : item.headers,
+    rows: rowsWithAnnotations.slice(item.headers?.length ? 1 : 0), hasHeaders: item.hasHeaders
+  };
+  const emitted = new Set();
+  const headers = Array.from({ length: layout.columns }, (_, column) => {
+    const seen = new Set(), parts = [];
+    for (let row = 0; row < headerCount; row++) {
+      const owner = layout.owners[row][column];
+      if (!owner || seen.has(owner)) continue;
+      seen.add(owner);
+      let value = String(rowsWithAnnotations[owner.row][owner.column] ?? '');
+      if (item.cellFormat === 'html' && emitted.has(owner)) value = removeHtmlAttributes(value, ['id', 'name']);
+      emitted.add(owner);
+      if (value) parts.push(value);
+    }
+    return parts.join(item.cellFormat === 'text' || isNativePdfContent(item) ? '\n' : '<br>');
+  });
+  return { headers, rows: rowsWithAnnotations.slice(headerCount), hasHeaders: true };
+}
+
+/** Render physical cells from the canonical value grid, with a flat fallback. */
+export function renderTableHtml(item, sourceUrl = '', { xhtml = false, assumeFirstRowHeader = false } = {}) {
+  const values = tableValueRows(item);
+  if (!values.length) return '';
+  const render = value => {
+    const html = tableCellHtml(item, value, sourceUrl);
+    return xhtml ? serializeXmlInline(html, 'xhtml') : html;
+  };
+  const id = item.id ? ` id="${xhtml ? escapeXml(item.id) : escapeHtml(item.id)}"` : '';
+  const layout = verifiedTableLayout(item);
+  if (!layout) {
+    const hasHeaders = item.hasHeaders !== false && (assumeFirstRowHeader || item.hasHeaders === true ||
+      (Array.isArray(item.headers) && item.headers.length > 0));
+    const headers = hasHeaders ? `<thead><tr>${(values[0] || []).map(value => `<th>${render(value)}</th>`).join('')}</tr></thead>` : '';
+    const body = values.slice(hasHeaders ? 1 : 0).filter(Array.isArray)
+      .map(row => `<tr>${row.map(value => `<td>${render(value)}</td>`).join('')}</tr>`).join('');
+    return `<table${id}>${headers}<tbody>${body}</tbody></table>`;
+  }
+  let html = `<table${id}>`, previousGroup = '';
+  const tags = { head: 'thead', body: 'tbody', foot: 'tfoot' };
+  for (const [rowIndex, row] of layout.rows.entries()) {
+    const group = tags[row.group];
+    if (group !== previousGroup || row.groupStart) {
+      if (previousGroup) html += `</${previousGroup}>`;
+      html += `<${group}>`; previousGroup = group;
+    }
+    html += '<tr>';
+    for (let column = 0; column < layout.columns;) {
+      const owner = layout.owners[rowIndex][column];
+      if (!owner) { html += row.group === 'head' ? '<th></th>' : '<td></td>'; column++; continue; }
+      if (owner.row !== rowIndex || owner.column !== column) { column++; continue; }
+      const cell = owner.cell, tag = cell.header ? 'th' : 'td';
+      const attributes = (cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : '') +
+        (cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '') + (cell.scope ? ` scope="${cell.scope}"` : '') +
+        (cell.muted === true ? ' class="table-muted"' : '');
+      html += `<${tag}${attributes}>${render(layout.values[rowIndex][column])}</${tag}>`;
+      column += cell.colSpan;
+    }
+    html += '</tr>';
+  }
+  return `${html}</${previousGroup}></table>`;
 }
 export function listHtml(item, sourceUrl = '') {
   const tag = item.ordered ? 'ol' : 'ul';
@@ -48,6 +178,7 @@ function fragmentViews(content, sourceUrl) {
   };
   for (const item of content) {
     const literal = item.format === 'text' || isNativePdfContent(item);
+    if (item.type === 'image' && (item.src || item.base64)) addId(item.id);
     if (['paragraph', 'heading', 'quote', 'blockquote', 'subtitle'].includes(item.type)) {
       const rendered = documentText(item, sourceUrl);
       if ((item.type === 'paragraph' && rendered.trim()) || (item.type === 'heading' && documentPlainText(item, sourceUrl).trim())) addId(item.id);

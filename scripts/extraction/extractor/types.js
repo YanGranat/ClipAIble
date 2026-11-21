@@ -115,12 +115,18 @@
 /**
  * @typedef {Object} ExtractionState
  * @property {Set<string>} processedImages - Set of processed image URLs (normalized)
+ * @property {WeakSet<Element>} [captionOwners] - Source captions owned by image occurrences
+ * @property {number} [extractionDeadline] - Absolute deadline shared by source extraction and graphics
+ * @property {Map<Element, ContentItem>} [readingGraphics] - Captured source graphic owners
+ * @property {Map<Element, string>} [readingMediaIds] - Local references for media within structured blocks
+ * @property {number} [readingMediaCounter] - Allocation sequence for structured-block media
+ * @property {Element[]} [featuredMediaRoots] - Source owners of media preceding the selected body
  * @property {Set<string>} addedHeadings - Set of added heading texts (normalized)
  * @property {Set<string>} [addedParagraphs] - Lazily collected paragraph text keys
  * @property {string} mainTitleText - Main title text (normalized)
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing
- * @property {string[]} [selectionExclusions] - Excluded subtrees for the current selector extraction
+ * @property {Array<Element|string>} [selectionExclusions] - Excluded subtrees for the current extraction
  * @property {Element[]|null} [referenceRoots] - Selected reading scopes that own canonical reference targets
  * @property {ContentItem[]} content - Content items array being built
  * @property {DebugInfo|null} debugInfo - Debug info object
@@ -159,7 +165,6 @@
  * @typedef {Object} ExtractionHelpers
  * @property {function(string, string): string} toAbsoluteUrl - Convert URL to absolute
  * @property {function(string): string} normalizeImageUrl - Normalize image URL for deduplication
- * @property {function(Element): boolean} isFootnoteLink - Check if element is footnote link
  * @property {function(Element): boolean} isIcon - Check if element is icon
  * @property {function(Element): boolean} isWidget - Check if element is widget
  * @property {function(Element): boolean} isExcluded - Check if element should be excluded

@@ -3,7 +3,7 @@
 // Extracts title, author, and publication date from page
 
 import { cleanHeadingText } from './text-utils.js';
-import { readArticleMetadataText } from './dom-utils.js';
+import { readArticleMetadataText, safeGetComputedStyle } from './dom-utils.js';
 
 /**
  * Check if h1 looks like a valid article title (not site name)
@@ -94,6 +94,8 @@ export function parseDateToISO(dateStr) {
   // Already ISO format
   const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (isoMatch) return isoMatch[0];
+  const partialIsoMatch = dateStr.match(/^\d{4}(?:-(0[1-9]|1[0-2]))?$/);
+  if (partialIsoMatch) return partialIsoMatch[0];
   
   // Try Date object
   try {
@@ -130,38 +132,165 @@ export function parseDateToISO(dateStr) {
   return null;
 }
 
-/** Read author names from structured data for the current article. */
-export function readStructuredArticleAuthor(doc, baseUrl) {
+/** Read publication metadata from the structured record owned by this page. */
+export function readStructuredArticleMetadata(doc, baseUrl) {
   const records = [];
   for (const script of Array.from(doc.querySelectorAll('script[type="application/ld+json"]'))) {
     try {
       const data = JSON.parse(script.textContent || '');
-      const pending = Array.isArray(data) ? [...data] : [data];
+      const pending = [data];
       while (pending.length) {
         const record = pending.shift();
         if (!record || typeof record !== 'object') continue;
+        if (Array.isArray(record)) { pending.push(...record); continue; }
         records.push(record);
-        if (Array.isArray(record['@graph'])) pending.push(...record['@graph']);
-        if (record.mainEntity && typeof record.mainEntity === 'object') pending.push(record.mainEntity);
+        pending.push(...Object.values(record).filter(value => value && typeof value === 'object'));
       }
     } catch (_) { }
   }
-  const canonical = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') || baseUrl;
-  const pageIdentity = value => { const url = new URL(value, baseUrl); url.hash = ''; return url.href; };
+  const absoluteId = value => {
+    try { return typeof value === 'string' && value.trim() ? new URL(value, baseUrl).href : ''; }
+    catch (_) { return ''; }
+  };
+  const pageIdentity = value => {
+    try {
+      const url = new URL(value, baseUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) return '';
+      url.hash = '';
+      return url.href;
+    } catch (_) { return ''; }
+  };
+  const pages = new Set([baseUrl, doc.URL, doc.querySelector('link[rel="canonical"]')?.getAttribute('href')]
+    .filter(Boolean).map(pageIdentity).filter(Boolean));
+  const byId = new Map();
+  const conflictingIds = new Set();
+  const comparable = value => {
+    if (Array.isArray(value)) return value.map(comparable);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(Object.keys(value).sort().map(key => [key, key === '@id' ? absoluteId(value[key]) : comparable(value[key])]));
+  };
   for (const record of records) {
-    const types = Array.isArray(record['@type']) ? record['@type'] : [record['@type']];
-    if (!types.some(type => typeof type === 'string' && /(?:Article|BlogPosting)$/.test(type))) continue;
-    const identity = record.url || (typeof record.mainEntityOfPage === 'string' ? record.mainEntityOfPage : record.mainEntityOfPage?.['@id']);
-    try { if (identity && pageIdentity(identity) !== pageIdentity(canonical)) continue; } catch (_) { continue; }
-    const authors = Array.isArray(record.author) ? record.author : [record.author];
-    const names = authors.map(author => {
-      if (typeof author === 'string') return author;
-      const resolved = author?.name ? author : records.find(candidate => author?.['@id'] && candidate['@id'] === author['@id']);
-      return typeof resolved?.name === 'string' ? resolved.name : '';
-    }).map(name => name.trim()).filter(Boolean);
-    if (names.length) return names.join(', ');
+    const id = absoluteId(record['@id']);
+    if (!id) continue;
+    byId.set(id, { ...byId.get(id), ...record });
   }
-  return '';
+  const resolve = value => value && typeof value === 'object' && value['@id']
+    ? { ...byId.get(absoluteId(value['@id'])), ...value } : value;
+  const values = value => Array.isArray(value) ? value : [value];
+  const identities = value => values(value).flatMap(item => {
+    const resolved = resolve(item);
+    return typeof resolved === 'string' ? [resolved] : resolved?.url
+      ? values(resolved.url).filter(url => typeof url === 'string') : typeof resolved?.['@id'] === 'string' ? [resolved['@id']] : [];
+  });
+  const matchesPage = value => identities(value).some(identity => pages.has(pageIdentity(identity)));
+  const metadataValue = (field, value) => {
+    if (field === 'url' || field === 'mainEntityOfPage') return identities(value).map(identity => pageIdentity(identity) || absoluteId(identity));
+    if (field === 'datePublished' && typeof value === 'string') return parseDateToISO(value);
+    if (field === 'author') return values(value).map(author => {
+      if (typeof author === 'string') return byId.get(absoluteId(author))?.name || author;
+      return resolve(author)?.name || absoluteId(author?.['@id']);
+    });
+    return comparable(value);
+  };
+  const assertions = new Map();
+  for (const record of records) {
+    const id = absoluteId(record['@id']);
+    if (!id) continue;
+    const previous = assertions.get(id) || {};
+    for (const field of ['author', 'datePublished', 'url', 'mainEntityOfPage', 'name', 'headline']) {
+      if (record[field] === undefined) continue;
+      const value = JSON.stringify(metadataValue(field, record[field]));
+      if (previous[field] !== undefined && previous[field] !== value) conflictingIds.add(id);
+      previous[field] = value;
+    }
+    assertions.set(id, previous);
+  }
+  const hasType = (record, pattern) => values(record?.['@type']).some(type => typeof type === 'string' && pattern.test(type));
+  const currentPageSubjects = new Set();
+  const inlineSubjects = new Set();
+  for (const record of records) {
+    if (!hasType(record, /WebPage$/) || !matchesPage(record.url || record['@id'])) continue;
+    for (const subject of values(record.mainEntity)) {
+      const id = absoluteId(typeof subject === 'string' ? subject : subject?.['@id']);
+      if (id) currentPageSubjects.add(id);
+      if (subject && typeof subject === 'object') inlineSubjects.add(subject);
+    }
+  }
+  const title = (readArticleMetadataText(doc.querySelector('article h1,main h1,h1')) || doc.title || '').replace(/\s+/g, ' ').trim();
+  const candidates = [];
+  const seenIds = new Set();
+  for (const source of records) {
+    const record = resolve(source);
+    if (!hasType(record, /(?:Article|BlogPosting)$/)) continue;
+    const id = absoluteId(record['@id']);
+    if (id && conflictingIds.has(id)) continue;
+    if (id && seenIds.has(id)) continue;
+    if (id) seenIds.add(id);
+    let rank;
+    if (identities(record.mainEntityOfPage).length) {
+      if (!matchesPage(record.mainEntityOfPage)) continue;
+      rank = 4;
+    } else if ((id && currentPageSubjects.has(id)) || inlineSubjects.has(source)) {
+      rank = 4;
+    } else if (identities(record.url).length) {
+      if (!matchesPage(record.url)) continue;
+      rank = 3;
+    } else if (id && pageIdentity(id)) {
+      if (!pages.has(pageIdentity(id))) continue;
+      rank = 2;
+    } else if (id) continue;
+    else rank = 0;
+    const headlineMatches = typeof record.headline === 'string' && record.headline.replace(/\s+/g, ' ').trim() === title;
+    candidates.push({ record, rank, headlineMatches });
+  }
+  candidates.sort((a, b) => b.rank - a.rank || Number(b.headlineMatches) - Number(a.headlineMatches));
+  const chosen = candidates[0];
+  const empty = { author: '', publishDate: '' };
+  if (!chosen || candidates.some((candidate, index) => index > 0 && candidate.rank === chosen.rank && candidate.headlineMatches === chosen.headlineMatches &&
+      JSON.stringify(comparable([candidate.record.author, candidate.record.datePublished])) !== JSON.stringify(comparable([chosen.record.author, chosen.record.datePublished])))) return empty;
+  const article = chosen.record;
+  const names = values(article.author).map(author => {
+    if (typeof author === 'string') {
+      if (conflictingIds.has(absoluteId(author))) return '';
+      const referenced = byId.get(absoluteId(author));
+      return referenced?.name || (/^(?:https?:|urn:|#)/i.test(author) ? '' : author);
+    }
+    if (conflictingIds.has(absoluteId(author?.['@id']))) return '';
+    return resolve(author)?.name;
+  }).filter(name => typeof name === 'string').map(name => name.trim()).filter(Boolean);
+  return { author: names.join(', '), publishDate: typeof article.datePublished === 'string' ? parseDateToISO(article.datePublished) || '' : '' };
+}
+
+/** Exclude non-rendered author candidates without treating ARIA exposure as visibility. */
+function isAuthorCandidateDisplayed(element) {
+  for (let node = element; node; node = node.parentElement) {
+    const style = safeGetComputedStyle(element.ownerDocument.defaultView, node);
+    if (style?.display === 'none' || (!style && node.hasAttribute('hidden'))) return false;
+  }
+  return true;
+}
+
+/** Prefer an expanded name over initials only when both labels identify the same profile. */
+function readAuthorProfileName(element, baseUrl) {
+  const readLabel = node => readArticleMetadataText(node).replace(/^by\s+/i, '').trim();
+  const label = readLabel(element);
+  const anchor = element.closest('a[href]');
+  const initials = label.replace(/[\s.\u00b7-]/g, '');
+  if (!anchor || !/^\p{Lu}{1,4}$/u.test(initials)) return label;
+  let identity;
+  try { identity = new URL(anchor.getAttribute('href'), baseUrl).href; } catch (_) { return label; }
+  for (const candidate of Array.from(element.ownerDocument.querySelectorAll('a[href]'))) {
+    if (!isAuthorCandidateDisplayed(candidate)) continue;
+    try { if (new URL(candidate.getAttribute('href'), baseUrl).href !== identity) continue; }
+    catch (_) { continue; }
+    const name = readLabel(candidate);
+    const words = name.match(/[\p{L}\p{M}]+/gu) || [];
+    if (words.length < 2 || name.length >= 100) continue;
+    const letters = words.map(word => Array.from(word)[0].toUpperCase());
+    if (letters.join('') === initials || letters[0] + letters[letters.length - 1] === initials ||
+        (initials.length === 1 && letters[0] === initials)) return name;
+  }
+  return label;
 }
 
 /**
@@ -219,14 +348,19 @@ export function extractMetadata(doc, baseUrl) {
   for (const selector of authorSelectors) {
     try {
       const elements = Array.from(doc.querySelectorAll(selector));
+      if (selector === 'meta[name="citation_author"]') {
+        const names = elements.map(element => (element.getAttribute('content') || '').trim())
+          .filter(name => name && !/^https?:/i.test(name) && name.length < 100);
+        if (names.length) { metadata.author = names.join(', '); break; }
+      }
       for (const element of elements) {
-        if (element.closest('[hidden], [aria-hidden="true"]')) continue;
+        if (element.tagName !== 'META' && !isAuthorCandidateDisplayed(element)) continue;
         let authorText = '';
         
         if (element.tagName === 'META') {
           authorText = element.getAttribute('content') || '';
         } else {
-          authorText = readArticleMetadataText(element);
+          authorText = readAuthorProfileName(element, baseUrl);
         }
         
         // Clean "By " prefix
@@ -252,12 +386,14 @@ export function extractMetadata(doc, baseUrl) {
     } catch (e) { }
   }
 
-  if (!metadata.author) metadata.author = readStructuredArticleAuthor(doc, baseUrl);
+  const structured = readStructuredArticleMetadata(doc, baseUrl);
+  if (!metadata.author) metadata.author = structured.author;
   if (!metadata.author) {
     for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {
       try {
         if (new URL(element.getAttribute('href'), baseUrl).origin !== new URL(baseUrl).origin) continue;
-        const text = readArticleMetadataText(element).replace(/^by\s+/i, '').trim();
+        if (!isAuthorCandidateDisplayed(element)) continue;
+        const text = readAuthorProfileName(element, baseUrl);
         if (text && !text.startsWith('http') && text.length < 100) { metadata.author = text; break; }
       } catch (_) { }
     }
@@ -298,5 +434,6 @@ export function extractMetadata(doc, baseUrl) {
     } catch (e) { }
   }
   
+  if (!metadata.publishDate) metadata.publishDate = structured.publishDate;
   return metadata;
 }

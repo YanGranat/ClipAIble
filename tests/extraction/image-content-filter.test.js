@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
-import { isDecorativeImage, isTrackingPixel, extractFeaturedImage } from '../../scripts/extraction/extractor/images.js';
-import { parseElements, handleImg } from '../../scripts/extraction/extractor/parse.js';
+import { isDecorativeImage, isTrackingPixel, extractMetadataImage } from '../../scripts/extraction/extractor/images.js';
+import { collectCandidateElements, parseElements, handleImg } from '../../scripts/extraction/extractor/parse.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 
 const documents = [];
@@ -24,7 +24,7 @@ describe('Article image classification', () => {
     const image = dom.window.document.querySelector('img');
     expect(isDecorativeImage(dom.window, image, CONSTANTS.LOGO_PATTERNS)).toBe(false);
     expect(handleImg(dom.window, image, state(), CONSTANTS, dom.window.location.href)?.src).toBe(`https://example.test/assets/${filename}`);
-    expect(parseElements(dom.window, [dom.window.document.querySelector('figure')], state(), CONSTANTS, dom.window.location.href)).toMatchObject([{ type: 'image', src: `https://example.test/figures/${filename}`, caption: 'The measured response.' }]);
+    expect(parseElements(dom.window, collectCandidateElements(dom.window.document.querySelector('figure')), state(), CONSTANTS, dom.window.location.href)).toMatchObject([{ type: 'image', src: `https://example.test/figures/${filename}`, caption: 'The measured response.' }]);
   });
 
   it.each(diagrams)('keeps %s when declared as the featured image', filename => {
@@ -32,12 +32,12 @@ describe('Article image classification', () => {
     const meta = dom.window.document.createElement('meta');
     meta.setAttribute('property', 'og:image'); meta.content = `/assets/${filename}`;
     dom.window.document.head.append(meta);
-    expect(extractFeaturedImage(dom.window.document, dom.window.location.href, dom.window.document.querySelector('main'), CONSTANTS.LOGO_PATTERNS)?.src).toBe(`https://example.test/assets/${filename}`);
+    expect(extractMetadataImage(dom.window.document, dom.window.location.href, CONSTANTS.LOGO_PATTERNS)?.src).toBe(`https://example.test/assets/${filename}`);
   });
 
-  it('keeps a large leading diagram as the featured fallback', () => {
+  it('keeps a large leading diagram in the shared image parser', () => {
     const dom = scene('<img src="/assets/line-chart-series.png" width="640" height="240"><p>The report explains the measurements.</p>');
-    expect(extractFeaturedImage(dom.window.document, dom.window.location.href, dom.window.document.querySelector('main'), CONSTANTS.LOGO_PATTERNS)?.src).toBe('https://example.test/assets/line-chart-series.png');
+    expect(handleImg(dom.window, dom.window.document.querySelector('img'), state(), CONSTANTS, dom.window.location.href)?.src).toBe('https://example.test/assets/line-chart-series.png');
   });
 
   it.each([
@@ -54,7 +54,7 @@ describe('Article image classification', () => {
   it.each([[640, 2], [2, 640]])('excludes a known %i by %i pixel separator without guessing its filename', (width, height) => {
     const dom = scene(`<img src="/assets/stroke.png" width="${width}" height="${height}"><p>The report explains the measurements.</p>`);
     expect(isDecorativeImage(dom.window, dom.window.document.querySelector('img'), CONSTANTS.LOGO_PATTERNS)).toBe(true);
-    expect(extractFeaturedImage(dom.window.document, dom.window.location.href, dom.window.document.querySelector('main'), CONSTANTS.LOGO_PATTERNS)).toBeNull();
+    expect(handleImg(dom.window, dom.window.document.querySelector('img'), state(), CONSTANTS, dom.window.location.href)).toBeNull();
   });
 
   it('recognizes an explicit separator role while retaining an article image of unknown size', () => {

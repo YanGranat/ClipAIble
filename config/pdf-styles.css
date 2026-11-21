@@ -169,8 +169,8 @@ a {
   color: var(--color-link) !important;
   text-decoration: none;
   /* CRITICAL: Break long URLs to prevent PDF width expansion */
-  word-break: break-all;
-  overflow-wrap: break-word;
+  word-break: normal;
+  overflow-wrap: anywhere;
   hyphens: auto;
 }
 
@@ -451,15 +451,54 @@ table {
 }
 
 th, td {
-  padding: 0.75em;
+  padding: 0.75em 0.25em;
   text-align: left;
   border-bottom: 1px solid #444;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 th {
   font-weight: 600;
   background-color: #3a3a3a;
   color: var(--color-heading);
+}
+
+.table-muted {
+  color: color-mix(in srgb, var(--color-text) 68%, var(--color-background));
+}
+
+.pdf-table-records {
+  margin: 1.5em 0;
+}
+
+.pdf-table-record {
+  padding: 0.75em 0;
+  border-bottom: 1px solid #444;
+}
+
+.pdf-table-context {
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pdf-table-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 0.35em 0.75em;
+  margin: 0.35em 0;
+  break-inside: avoid;
+}
+
+.pdf-table-field dt {
+  font-weight: 600;
+}
+
+.pdf-table-field dt,
+.pdf-table-field dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 /* ===== PRINT STYLES ===== */
@@ -472,6 +511,8 @@ th {
   }
 
   html {
+    width: var(--pdf-layout-width, var(--pdf-page-width, 8.27in));
+    min-height: 0;
     background: #303030 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -479,6 +520,9 @@ th {
   }
 
   body {
+    width: 100% !important;
+    min-height: 0 !important;
+    height: auto !important;
     background: #303030 !important;
     color: #b9b9b9 !important;
     font-size: var(--font-size-base) !important;
@@ -490,6 +534,7 @@ th {
   }
 
   .article {
+    width: auto !important;
     max-width: none;
     padding: 0;
     margin: 0;
@@ -507,8 +552,8 @@ th {
     color: #6cacff !important;
     text-decoration: none;
     /* CRITICAL: Break long URLs to prevent PDF width expansion */
-    word-break: break-all !important;
-    overflow-wrap: break-word !important;
+    word-break: normal !important;
+    overflow-wrap: anywhere !important;
     hyphens: auto !important;
   }
   

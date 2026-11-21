@@ -231,7 +231,7 @@ export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKee
     return true;
   }
   
-  const { title, pageMode, contentWidth, contentHeight, processingRunId, sourceUrl } = request.data;
+  const { title, pageMode, processingRunId, sourceUrl } = request.data;
   if (!isValidProcessingRunId(processingRunId) || isCancelled(processingRunId)) {
     sendResponse({ success: true, ignored: true });
     return true;
@@ -248,12 +248,12 @@ export function handleGeneratePdfDebugger(request, sender, sendResponse, stopKee
     return true;
   }
   
-  log('generatePdfDebugger', { title, pageMode, contentWidth, contentHeight, tabId });
+  log('generatePdfDebugger', { title, pageMode, tabId });
   updateState({ pdfDebuggerStarted: true }, processingRunId);
   const processingStartTime = getProcessingState().startTime;
   
   generatePdfWithDebugger(
-    tabId, title, pageMode, contentWidth, contentHeight,
+    tabId, title, pageMode,
     async () => await finalizeProcessing({ processingRunId, title, url: sourceUrl || '', outputFormat: 'pdf' }, stopKeepAlive, { current: processingStartTime }),
     async (errorMsg) => await setError(errorMsg, stopKeepAlive, processingRunId),
     processingRunId

@@ -282,12 +282,6 @@ function validateMessageParams(request) {
     if (data.pageMode !== undefined && typeof data.pageMode !== 'string') {
       return { valid: false, error: 'generatePdfDebugger.data.pageMode must be a string' };
     }
-    if (data.contentWidth !== undefined && typeof data.contentWidth !== 'number') {
-      return { valid: false, error: 'generatePdfDebugger.data.contentWidth must be a number' };
-    }
-    if (data.contentHeight !== undefined && typeof data.contentHeight !== 'number') {
-      return { valid: false, error: 'generatePdfDebugger.data.contentHeight must be a number' };
-    }
   }
   if (action === 'printJobFailed' && (!data || typeof data.error !== 'string' || typeof data.printJobId !== 'string' ||
       (data.processingRunId !== undefined && typeof data.processingRunId !== 'string'))) {

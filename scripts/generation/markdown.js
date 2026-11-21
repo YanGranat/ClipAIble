@@ -1,4 +1,4 @@
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, flatTableProjection } from './document-content.js';
 import { downloadBlob } from '../api/blob-download.js';
 // @ts-check
 // Markdown generation module for ClipAIble extension
@@ -744,7 +744,8 @@ function contentItemToMarkdown(item) {
     case 'image': {
       const alt = String(item.alt || '').replace(/([\\\[\]])/g, '\\$1');
       const src = String(item.src || item.base64 || '').replace(/[<>\s]/g, char => encodeURIComponent(char));
-      return src ? `![${alt}](<${src}>)\n\n${item.caption ? htmlToMarkdown(item.caption) + '\n\n' : ''}` : '';
+      const anchor = item.id ? htmlToMarkdown(`<a id="${escapeAttr(item.id)}"></a>`) + '\n' : '';
+      return src ? `${anchor}![${alt}](<${src}>)\n\n${item.caption ? htmlToMarkdown(item.caption) + '\n\n' : ''}` : '';
     }
     
     case 'hr':
@@ -778,12 +779,13 @@ function contentItemToMarkdown(item) {
  * @returns {string} Markdown table
  */
 function tableToMarkdown(item) {
-  const rows = Array.isArray(item.headers) && item.headers.length
-    ? [item.headers, ...(item.rows || [])] : item.rows;
+  const projection = flatTableProjection(item);
+  const rows = Array.isArray(projection.headers) && projection.headers.length
+    ? [projection.headers, ...(projection.rows || [])] : projection.rows;
   if (!rows || !rows.length) return '';
   
   let md = '\n';
-  const hasHeaders = item.hasHeaders !== false; // Default to true if not specified
+  const hasHeaders = projection.hasHeaders !== false; // Default to true if not specified
   const columns = rows.reduce((width, row) => Math.max(width, Array.isArray(row) ? row.length : 0), 0);
   if (!columns) return '';
   const padRow = row => Array.from({ length: columns }, (_, index) => row[index] ?? '');

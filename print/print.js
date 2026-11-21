@@ -6,6 +6,7 @@ import { cleanTitleForFilename, escapeHtml } from '../scripts/utils/html.js';
 import { getUILanguage, tSync, getLocaleTag } from '../scripts/locales.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { getErrorTranslation } from '../scripts/utils/error-handler.js';
+import { waitForPrintImages } from '../scripts/generation/print-images.js';
 
 const LOG_PREFIX = '[ClipAIble:Print]';
 
@@ -137,63 +138,10 @@ async function init() {
     const images = document.querySelectorAll('img');
     log(`Waiting for ${images.length} images...`);
     
-    await Promise.all(Array.from(images).map(img => {
-      return new Promise(resolve => {
-        const finish = () => {
-          if (img.naturalWidth === 0) {
-            const figure = img.closest('figure');
-            if (figure) figure.style.display = 'none';
-          }
-          resolve();
-        };
-        if (img.complete) finish();
-        else {
-          img.onload = finish;
-          img.onerror = finish;
-        }
-      });
-    }));
+    await waitForPrintImages(document);
     
     log('Images loaded');
     await new Promise(r => setTimeout(r, 200));
-    
-    // Get article element
-    const articleElement = document.querySelector('.article') || document.body;
-    const article = articleElement instanceof HTMLElement ? articleElement : document.body;
-    
-    // For single page mode, fix width to match print layout
-    // @media print has padding: 5mm on body = 19px on each side
-    // So content width = A4 width - 2*padding = 794 - 38 = 756px
-    if (pageMode === 'single') {
-      const printPaddingPx = 19; // 5mm at 96dpi
-      const a4WidthPx = 794; // 8.27 inches * 96 dpi
-      const contentWidthPx = a4WidthPx - (printPaddingPx * 2);
-      
-      article.style.width = contentWidthPx + 'px';
-      article.style.maxWidth = contentWidthPx + 'px';
-      document.body.style.width = contentWidthPx + 'px';
-      
-      // Wait for reflow
-      await new Promise(r => setTimeout(r, 200));
-      log(`Fixed width to ${contentWidthPx}px (A4 minus padding)`);
-    }
-    
-    // Measure content height accurately
-    const contentWidth = article.offsetWidth;
-    
-    // Get multiple height measurements
-    const articleScrollH = article.scrollHeight;
-    const articleOffsetH = article.offsetHeight;
-    const bodyScrollH = document.body.scrollHeight;
-    const documentH = document.documentElement.scrollHeight;
-    
-    // Use the most accurate height - typically scrollHeight is most reliable
-    // But compare with body height to catch any outliers
-    const contentHeight = Math.ceil(Math.min(articleScrollH, bodyScrollH, documentH));
-    
-    log(`Height measurements: articleScroll=${articleScrollH}, articleOffset=${articleOffsetH}, bodyScroll=${bodyScrollH}, doc=${documentH}, using=${contentHeight}`);
-    
-    log(`Content dimensions: ${contentWidth}x${contentHeight}px`);
     
     // CRITICAL: Check first paragraph again before PDF generation
     const firstParagraphBeforePdf = document.querySelector('.article-content p, article p, .article p');
@@ -238,9 +186,7 @@ async function init() {
         processingRunId: printJob.processingRunId,
         sourceUrl: printJob.sourceUrl,
         title: title,
-        pageMode: pageMode,
-        contentWidth: contentWidth,
-        contentHeight: contentHeight
+        pageMode: pageMode
       }
     });
     

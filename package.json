@@ -1,6 +1,6 @@
 {
   "name": "clipaible",
-  "version": "3.3.14",
+  "version": "3.3.15",
   "description": "AI-Powered Article Extractor Chrome Extension",
   "type": "module",
   "scripts": {
@@ -48,6 +48,7 @@
   "homepage": "https://github.com/YanGranat/ClipAIble#readme",
   "dependencies": {
     "@mintplex-labs/piper-tts-web": "^1.0.4",
+    "html-to-image": "1.11.13",
     "onnxruntime-web": "1.19.0"
   },
   "engines": {

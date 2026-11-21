@@ -31,7 +31,8 @@
     "docs",
     "doc",
     "memory-bank",
-    "scripts/apply-extraction-build.js"
+    "scripts/apply-extraction-build.js",
+    "scripts/extraction/extractor/builder.js"
   ],
   "typeAcquisition": {
     "enable": true,

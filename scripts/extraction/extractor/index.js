@@ -6,16 +6,18 @@ import { createDebugInfo, pushDebugLog, logExtractionStart, logHtmlState } from 
 import { waitForContentLoad } from './spa.js';
 import { detectGoogleTranslateState, checkFirstParagraph } from './translate.js';
 import { extractMetadata } from './metadata.js';
-import { findMainContent, isOutsideArticleBody } from './discover.js';
-import { extractFeaturedImage, getImageCaption } from './images.js';
-import { normalizeImageUrl, readArticleMetadataText, toAbsoluteUrl, safeGetComputedStyle } from './dom-utils.js';
+import { findMainContent } from './discover.js';
+import { discoverReadingMedia, extractMetadataImage, hasSourceReadingMedia } from './images.js';
+import { readArticleMetadataText } from './dom-utils.js';
 import { extractStandfirst } from './standfirst.js';
-import { collectCandidateElements, filterCandidateElements, sortElementsInDomOrder, parseElements, createImageItem, sanitizeParagraphHtml } from './parse.js';
+import { collectCandidateElements, filterCandidateElements, sortElementsInDomOrder, parseElements } from './parse.js';
+import { captureReadingGraphics } from './graphics.js';
 import { resolveContentSelection, isSelectedContentExcluded, readSelectedText, selectorValues } from './selectors.js';
 import { isExcluded } from './filters.js';
 import { normalizeHeadingForDedup } from './text-utils.js';
-import { tryExtractTwitterX, extractWhenMainContentMissing, extractLastResortContainerSearch, extractUltimateFallbackAllParagraphs, extractEmergencyFallback } from './fallbacks.js';
-import { CONSTANTS, getInlinedConstantsCode } from './constants.js';
+import { findSocialReadingRoot, findFallbackReadingRoots } from './fallbacks.js';
+import { CONSTANTS } from './constants.js';
+import { CONFIG } from '../../utils/config.js';
 
 /**
  * @typedef {import('./types.js').ExtractionResult} ExtractionResult
@@ -31,6 +33,7 @@ import { CONSTANTS, getInlinedConstantsCode } from './constants.js';
  * @returns {Promise<ExtractionResult>} - Extraction result
  */
 export async function runExtraction(baseUrl, enableDebugInfo = false, selectors = null) {
+  const extractionDeadline = Date.now() + CONFIG.EXTRACTION_AUTOMATIC_TIMEOUT;
   // Get window and document
   const win = window;
   const doc = document;
@@ -91,199 +94,68 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     
     pushDebugLog(debugInfo, 'METADATA_EXTRACTED', metadata);
     
-    // Initialize extraction state
-    /** @type {ExtractionState} */
-    const state = {
-      processedImages: new Set(),
-      addedHeadings: new Set(),
-      mainTitleText,
-      standfirstElement: null,
-      standfirstText: null,
-      content: [],
-      selectionExclusions: selectors ? selectorValues(selectors.exclude) : [],
-      debugInfo
-    };
-    
-    // Try Twitter/X extraction first
-    const twitterContent = selectors ? null : tryExtractTwitterX(win, doc, state, constants, baseUrl);
-    if (twitterContent && twitterContent.length > 0) {
-      return {
-        title: metadata.title,
-        author: metadata.author,
-        publishDate: metadata.publishDate,
-        content: twitterContent,
+    const socialRoot = selectors ? null : findSocialReadingRoot(baseUrl, doc);
+    const primaryRoot = selection?.roots[0] || socialRoot || findMainContent(win, doc, (el) => isExcluded(win, el, constants));
+
+    // Discovery changes roots, while every source occurrence uses the same parser.
+    const extractReadingRoots = async bodyRoots => {
+      const mainContent = bodyRoots[0];
+      const selectedHeroes = selectorValues(selectors?.heroImage)
+        .flatMap(selector => Array.from(doc.querySelectorAll(selector)));
+      const media = discoverReadingMedia(bodyRoots, selectedHeroes);
+      const selectedSubtitle = selectorValues(selectors?.subtitle)
+        .flatMap(selector => Array.from(doc.querySelectorAll(selector)))
+        .find(element => !isSelectedContentExcluded(element, selection.exclusions));
+      const standfirst = selection
+        ? { element: selectedSubtitle || null, text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) : null }
+        : extractStandfirst(mainContent);
+      const readingRoots = [...new Set([...bodyRoots, ...media.roots, ...(standfirst.element ? [standfirst.element] : [])])];
+      /** @type {ExtractionState} */
+      const state = {
+        processedImages: new Set(),
+        addedHeadings: new Set(),
+        mainTitleText,
+        standfirstElement: standfirst.element,
+        standfirstText: standfirst.text,
+        content: [],
+        selectionExclusions: selection?.exclusionSelectors || [],
+        referenceRoots: readingRoots,
+        featuredMediaRoots: media.featuredRoots,
+        extractionDeadline,
         debugInfo
       };
-    }
-    
-    // Find main content container
-    const mainContent = selection?.roots[0] || findMainContent(win, doc, (el) => isExcluded(win, el, constants));
-    state.referenceRoots = selection?.roots || (mainContent ? [mainContent] : null);
-    
-    pushDebugLog(debugInfo, 'MAIN_CONTENT_FOUND', {
-      found: !!mainContent,
-      tagName: mainContent?.tagName,
-      className: mainContent?.className,
-      textLength: mainContent?.textContent?.length || 0
-    });
-    
-    // Extract featured image
-    const heroCandidates = selectors?.heroImage ? selectorValues(selectors.heroImage)
-      .flatMap(selector => Array.from(doc.querySelectorAll(selector)))
-      .flatMap(container => (container.tagName === 'IMG' ? [container] : Array.from(container.querySelectorAll('img')))
-        .map(img => ({ container, img }))) : [];
-    const selectedHeroCandidate = heroCandidates.find(({ img }) => !isSelectedContentExcluded(img, selection.exclusions));
-    const selectedHero = selectedHeroCandidate?.img;
-    const selectedHeroInsideReadingRoot = selectedHero && selection.roots.some(root => root.contains(selectedHero));
-    let declaredHero = null;
-    if (selectedHeroCandidate && selectedHeroCandidate.container.tagName !== 'IMG' &&
-        !selection.roots.some(root => root.contains(selectedHeroCandidate.container) || selectedHeroCandidate.container.contains(root))) {
-      const images = Array.from(selectedHeroCandidate.container.querySelectorAll('img'));
-      const ogImage = doc.querySelector('meta[property="og:image"]')?.getAttribute('content');
-      if (images.length > 1 && images.every(img => !isSelectedContentExcluded(img, selection.exclusions)) && ogImage?.trim()) {
-        const metadataHero = extractFeaturedImage(doc, baseUrl, null, CONSTANTS.LOGO_PATTERNS || []);
-        if (metadataHero?.src === toAbsoluteUrl(ogImage, baseUrl)) {
-          declaredHero = { ...metadataHero, caption: getImageCaption(selectedHero) };
-        }
-      }
-    }
-    const featuredCaptionOwners = new WeakSet();
-    const featuredImage = selection
-      ? (declaredHero || (selectedHero && !selectedHeroInsideReadingRoot ? createImageItem(win, selectedHero, state, constants, baseUrl) : null))
-      : extractFeaturedImage(doc, baseUrl, mainContent, CONSTANTS.LOGO_PATTERNS || [], featuredCaptionOwners);
-    
-    // Extract standfirst
-    const selectedSubtitle = selectors?.subtitle ? selectorValues(selectors.subtitle).map(selector => doc.querySelector(selector)).find(Boolean) : null;
-    const standfirstResult = selection
-      ? { text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) || null : null, element: selectedSubtitle }
-      : extractStandfirst(mainContent);
-    state.standfirstElement = standfirstResult.element;
-    state.standfirstText = standfirstResult.text;
-    
-    // Initialize content array
-    /** @type {import('./types.js').ContentItem[]} */
-    let content = [];
-    
-    // Add featured image if found
-    if (featuredImage) {
-      const normalizedFeaturedSrc = normalizeImageUrl(featuredImage.src);
-
-      // Prevent memory leaks: limit processed images set size
-      if (state.processedImages.size < 1000) {
-        state.processedImages.add(normalizedFeaturedSrc);
-      }
-      
-      content.push({
-        type: 'image',
-        src: featuredImage.src,
-        alt: featuredImage.alt,
-        caption: featuredImage.caption,
-        isFeatured: true
-      });
-    }
-    
-    // Add standfirst if found
-    if (state.standfirstText) {
-      content.push({
-        type: 'subtitle',
-        text: state.standfirstText,
-        format: 'text',
-        isStandfirst: true
-      });
-    }
-    
-    // Main extraction path
-    if (mainContent) {
-      // Collect candidate elements
-      const allElements = selection
-        ? selection.elements.filter(element => !isSelectedContentExcluded(element, selection.exclusions))
-        : collectCandidateElements(mainContent, win);
-      
+      const allElements = [...new Set([...readingRoots.flatMap(root => collectCandidateElements(root)), ...(standfirst.element ? [standfirst.element] : [])])]
+        .filter(element => !selection || !isSelectedContentExcluded(element, selection.exclusions));
+      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots);
+      const sortedElements = sortElementsInDomOrder(filteredElements);
       if (debugInfo) {
         debugInfo.foundElements = allElements.length;
-      }
-      
-      // Filter elements
-      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo);
-      const headerCredits = [];
-
-      // Preserve owned figure credits omitted with an article's presentation header.
-      if (!selection && filteredElements.length) {
-        const owner = mainContent.closest('article');
-        const first = sortElementsInDomOrder(filteredElements)[0];
-        const captionConstants = { ...constants, EXCLUDED_CLASSES: constants.EXCLUDED_CLASSES.filter(value => value !== 'header') };
-        if (owner) for (const caption of Array.from(owner.querySelectorAll('figure > figcaption'))) {
-          if (caption.closest('article') !== owner || !caption.textContent?.trim() ||
-              !(caption.compareDocumentPosition(first) & 4) ||
-              filteredElements.some(element => element === caption || element.contains(caption)) ||
-              isOutsideArticleBody(caption, owner) || isExcluded(win, caption, captionConstants)) continue;
-          const figure = caption.parentElement;
-          if (!figure.querySelector('img')) continue;
-          let hidden = false;
-          for (let element = caption; element && element !== owner; element = element.parentElement) {
-            const style = safeGetComputedStyle(win, element);
-            if (style?.display === 'none' || style?.visibility === 'hidden' || style?.visibility === 'collapse') { hidden = true; break; }
-          }
-          if (hidden) continue;
-          const alreadyOwned = featuredCaptionOwners.has(caption);
-          if (!alreadyOwned) {
-            const html = sanitizeParagraphHtml(caption, state.selectionExclusions, state.referenceRoots);
-            if (html.trim()) headerCredits.push({ type: 'paragraph', text: html, html, ...(caption.id ? { id: caption.id } : {}) });
-          }
-        }
-      }
-      
-      if (debugInfo) {
         debugInfo.filteredElements = filteredElements.length;
       }
-      
-      // Sort in DOM order
-      const sortedElements = sortElementsInDomOrder(filteredElements);
-      
-      // Parse elements into content items
-      const parsedContent = parseElements(win, sortedElements, state, constants, baseUrl);
-      content.push(...headerCredits, ...parsedContent);
-    } else {
-      // Fallback when main content not found
-      pushDebugLog(debugInfo, 'MAIN_CONTENT_MISSING_FALLBACK', {});
-      
-      const fallbackContent = extractWhenMainContentMissing(win, doc, state, constants, baseUrl);
-      if (fallbackContent) {
-        content.push(...fallbackContent);
+      pushDebugLog(debugInfo, 'READING_ROOTS_FOUND', {
+        bodyRoots: bodyRoots.length, mediaRoots: media.roots.length, candidates: sortedElements.length
+      });
+      state.readingGraphics = await captureReadingGraphics(win, sortedElements, state, constants);
+      const content = parseElements(win, sortedElements, state, constants, baseUrl);
+      const hasReadingContent = content.length > 0;
+      if (!selection && !content.some(item => item.type === 'image') && !hasSourceReadingMedia(readingRoots, constants.LOGO_PATTERNS)) {
+        const image = extractMetadataImage(doc, baseUrl, constants.LOGO_PATTERNS);
+        if (image) content.unshift({ type: 'image', ...image, isFeatured: true });
+      }
+      return { content, hasReadingContent };
+    };
+
+    let attempt = primaryRoot ? await extractReadingRoots(selection?.roots || [primaryRoot]) : null;
+    if (!selection && !attempt?.hasReadingContent) {
+      for (const root of findFallbackReadingRoots(win, doc, constants, primaryRoot ? [primaryRoot] : [])) {
+        pushDebugLog(debugInfo, 'FALLBACK_READING_ROOT', { tagName: root.tagName, className: root.className });
+        const alternative = await extractReadingRoots([root]);
+        if (alternative.hasReadingContent) { attempt = alternative; break; }
+        if (!attempt?.content.length) attempt = alternative;
       }
     }
-    
-    // If content is still empty, try additional fallbacks
-    if (!selection && (content.length === 0 || (content.length === 1 && content[0].type === 'image'))) {
-      pushDebugLog(debugInfo, 'LAST_RESORT_FALLBACK', {});
-      
-      // Last resort: search for best container
-      const lastResortContent = extractLastResortContainerSearch(win, doc, state, constants, baseUrl);
-      if (lastResortContent) {
-        content.push(...lastResortContent);
-      }
-    }
-    
-    // Ultimate fallback: all paragraphs
-    if (!selection && (content.length === 0 || (content.length === 1 && content[0].type === 'image'))) {
-      pushDebugLog(debugInfo, 'ULTIMATE_FALLBACK', {});
-      
-      const ultimateContent = extractUltimateFallbackAllParagraphs(win, doc, state, constants);
-      if (ultimateContent) {
-        content.push(...ultimateContent);
-      }
-    }
-    
-    // Emergency fallback
-    if (!selection && content.length === 0) {
-      pushDebugLog(debugInfo, 'EMERGENCY_FALLBACK', {});
-      
-      const emergencyContent = extractEmergencyFallback(win, doc, state, constants, mainContent);
-      if (emergencyContent) {
-        content.push(...emergencyContent);
-      }
-    }
-    
+    const content = attempt?.content || [];
+
     // Final content types count
     if (debugInfo) {
       /** @type {Record<string, number>} */
@@ -328,5 +200,4 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
 }
 
 // Re-export utilities for external use
-export { getInlinedConstantsCode } from './constants.js';
 export { CONSTANTS } from './constants.js';

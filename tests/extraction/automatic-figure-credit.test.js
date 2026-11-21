@@ -28,77 +28,82 @@ async function extract({ header = figure('Original artwork credit.'), inside = '
 }
 const count = (content, credit) => content.filter(item => item.caption === credit || item.type === 'paragraph' && item.text === credit).length;
 
-describe('Automatic article figure credits', () => {
-  it('retains an omitted article-header figure credit without assigning it to an unrelated metadata cover', async () => {
+describe('Automatic article figure media ownership', () => {
+  it('keeps physical header media and its exact caption without substituting an unrelated metadata cover', async () => {
     const content = await extract();
-    expect(content.find(item => item.isFeatured)).toMatchObject({ src: 'https://example.test/metadata-cover.jpg', caption: '' });
+    expect(content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/base.jpg', 'https://example.test/overlay.png']);
     expect(count(content, 'Original artwork credit.')).toBe(1);
-    expect(content.findIndex(item => item.text === 'Original artwork credit.')).toBeLessThan(content.findIndex(item => item.text?.startsWith('Observation 1.')));
+    expect(content.findIndex(item => item.caption === 'Original artwork credit.')).toBeLessThan(content.findIndex(item => item.text?.startsWith('Observation 1.')));
+    expect(content.some(item => item.src === 'https://example.test/metadata-cover.jpg')).toBe(false);
   });
 
-  it('preserves two separate header caption owners in source order instead of guessing a cover association', async () => {
+  it('preserves separate header figure owners and gallery caption order', async () => {
     const content = await extract({ header: figure('First artwork credit.') + figure('Second artwork credit.') });
-    expect(content.filter(item => item.type === 'paragraph').slice(0, 2).map(item => item.text)).toEqual(['First artwork credit.', 'Second artwork credit.']);
+    const images = content.filter(item => item.type === 'image');
+    expect(images).toHaveLength(4);
+    expect(images.map(item => item.caption)).toEqual(['', 'First artwork credit.', '', 'Second artwork credit.']);
     expect(count(content, 'First artwork credit.')).toBe(1);
     expect(count(content, 'Second artwork credit.')).toBe(1);
-    expect(content.find(item => item.isFeatured).caption).toBe('');
   });
 
-  it('does not duplicate the caption already owned by the exact featured DOM resource when metadata is absent', async () => {
+  it('keeps the same exact source owners when metadata is absent', async () => {
     const content = await extract({ metadata: '' });
-    expect(content.find(item => item.isFeatured)).toMatchObject({ src: 'https://example.test/base.jpg', caption: 'Original artwork credit.' });
+    expect(content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/base.jpg', 'https://example.test/overlay.png']);
     expect(count(content, 'Original artwork credit.')).toBe(1);
   });
 
-  it('keeps body galleries and their credits in their existing reading position', async () => {
+  it('keeps body galleries and their credits in their source position', async () => {
     const content = await extract({ header: '', inside: figure('Body gallery credit.') + '<p>The final observation follows the gallery.</p>' });
-    expect(content.filter(item => item.type === 'image' && !item.isFeatured).map(item => item.src)).toEqual(['https://example.test/base.jpg', 'https://example.test/overlay.png']);
-    expect(content.filter(item => item.type === 'paragraph' && item.text === 'Body gallery credit.')).toHaveLength(0);
+    expect(content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/base.jpg', 'https://example.test/overlay.png']);
+    expect(content.some(item => item.isFeatured)).toBe(false);
+    expect(count(content, 'Body gallery credit.')).toBe(1);
     expect(content.findIndex(item => item.caption === 'Body gallery credit.')).toBeGreaterThan(content.findIndex(item => item.text?.startsWith('Observation 7.')));
   });
 
-  it('does not borrow hidden, related, aside, navigation or another article captions', async () => {
-    const content = await extract({ header: `<aside>${figure('Aside credit.')}</aside><nav>${figure('Navigation credit.')}</nav><div class="related">${figure('Related credit.')}</div><div hidden>${figure('Hidden credit.')}</div><div style="display:none">${figure('CSS-hidden credit.')}</div><article>${figure('Nested article credit.')}</article>`, outside: `<article>${figure('Other article credit.')}</article>` });
-    for (const value of ['Aside credit.', 'Navigation credit.', 'Related credit.', 'Hidden credit.', 'CSS-hidden credit.', 'Nested article credit.', 'Other article credit.']) expect(count(content, value)).toBe(0);
+  it('excludes proven publisher panels and media belonging to another article', async () => {
+    const content = await extract({ header: `<aside class="related-stories">${figure('Aside panel credit.')}</aside><nav>${figure('Navigation credit.')}</nav><div class="related">${figure('Related credit.')}</div><div hidden>${figure('Hidden credit.')}</div><div style="display:none">${figure('CSS-hidden credit.')}</div><article class="related-stories">${figure('Related article credit.')}</article>`, outside: `<article>${figure('Other article credit.')}</article>` });
+    for (const value of ['Aside panel credit.', 'Navigation credit.', 'Related credit.', 'Hidden credit.', 'CSS-hidden credit.', 'Related article credit.', 'Other article credit.']) expect(count(content, value)).toBe(0);
   });
 
-  it('preserves identical credits belonging to separate source figures', async () => {
+  it('preserves identical credits and resource URLs belonging to separate figures', async () => {
     const content = await extract({ header: figure('Shared artwork credit.') + figure('Shared artwork credit.') });
+    expect(content.filter(item => item.type === 'image')).toHaveLength(4);
     expect(count(content, 'Shared artwork credit.')).toBe(2);
   });
 
-  it('does not conflate URL queries when deciding whether a caption was already retained', async () => {
+  it('keeps URL query identity for distinct physical header images', async () => {
     const content = await extract({ metadata: '', header: figure('Shared image credit.', '<img src="/base.jpg?variant=first" width="640" height="400">') + figure('Shared image credit.', '<img src="/base.jpg?variant=second" width="640" height="400">') });
-    expect(content.find(item => item.isFeatured).src).toBe('https://example.test/base.jpg?variant=first');
+    expect(content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/base.jpg?variant=first', 'https://example.test/base.jpg?variant=second']);
     expect(count(content, 'Shared image credit.')).toBe(2);
   });
 
-  it('retains short authored credits without applying prose-length heuristics', async () => {
+  it('retains short authored credits without prose-length heuristics', async () => {
     expect(count(await extract({ header: figure('A.B.') }), 'A.B.')).toBe(1);
   });
 
-  it('keeps a separate body figure credit when its resource also occurs in the header', async () => {
+  it('keeps a separate body figure when its resource also occurs in the header', async () => {
     const content = await extract({ inside: figure('Body owner credit.', '<img src="/base.jpg" width="640" height="400">') });
     expect(count(content, 'Original artwork credit.')).toBe(1);
-    expect(content.find(item => item.src === 'https://example.test/base.jpg' && !item.isFeatured).caption).toBe('Body owner credit.');
+    expect(count(content, 'Body owner credit.')).toBe(1);
+    expect(content.filter(item => item.src === 'https://example.test/base.jpg')).toHaveLength(2);
+    expect(content.findIndex(item => item.caption === 'Body owner credit.')).toBeGreaterThan(content.findIndex(item => item.text?.startsWith('Observation 7.')));
   });
 
-  it('does not prepend a trailing presentation caption to the reading body', async () => {
+  it('keeps an admitted trailing figure after the body instead of prepending its credit', async () => {
     const content = await extract({ header: '', after: `<div class="article-header">${figure('Trailing credit.')}</div>` });
-    expect(count(content, 'Trailing credit.')).toBe(0);
+    expect(count(content, 'Trailing credit.')).toBe(1);
+    expect(content.findIndex(item => item.caption === 'Trailing credit.')).toBeGreaterThan(content.findIndex(item => item.text?.startsWith('Observation 7.')));
   });
 
-  it('leaves an explicit Selector hero and its existing caption ownership unchanged', async () => {
+  it('uses the same physical source gallery in Selector mode', async () => {
     const content = await extract({ selectors: { content: '.entry-content', title: 'h1', heroImage: '.article-header figure' } });
-    expect(content.find(item => item.isFeatured)).toMatchObject({ src: 'https://example.test/metadata-cover.jpg', caption: 'Original artwork credit.' });
+    expect(content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/base.jpg', 'https://example.test/overlay.png']);
     expect(count(content, 'Original artwork credit.')).toBe(1);
-    expect(content.some(item => item.type === 'paragraph' && item.text === 'Original artwork credit.')).toBe(false);
+    expect(content.some(item => item.src === 'https://example.test/metadata-cover.jpg')).toBe(false);
   });
 
-  it('keeps separate caption owners even when their image URL and credit text are identical', async () => {
-    const content = await extract({ metadata: '', header: figure('Shared owner credit.') + figure('Shared owner credit.') });
-    expect(content.find(item => item.isFeatured).caption).toBe('Shared owner credit.');
-    expect(content.filter(item => item.type === 'paragraph' && item.text === 'Shared owner credit.')).toHaveLength(1);
-    expect(count(content, 'Shared owner credit.')).toBe(2);
+  it('uses an uncaptioned metadata cover only when source reading media is absent', async () => {
+    const content = await extract({ header: '' });
+    expect(content.filter(item => item.type === 'image')).toMatchObject([{ src: 'https://example.test/metadata-cover.jpg', caption: '', isFeatured: true }]);
   });
 });

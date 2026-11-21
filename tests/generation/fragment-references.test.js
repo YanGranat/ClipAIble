@@ -5,6 +5,7 @@ import { generateMarkdown } from '../../scripts/generation/markdown.js';
 import { generateEpub } from '../../scripts/generation/epub.js';
 import { generateFb2 } from '../../scripts/generation/fb2.js';
 import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
+import { generateExtractAutomaticallyInlined } from '../../scripts/extraction/extractor/builder.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logDebug: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () => null), processImagesInBatches: vi.fn(async () => []), embedImages: vi.fn(async value => value) }));
@@ -63,6 +64,21 @@ function assertTarget(output, label, id, expectedText) {
 }
 
 describe.each(['pdf', 'markdown', 'epub', 'fb2'])('%s document fragment references', format => {
+  it('retains the source cell reference to each extracted image occurrence', async () => {
+    const source = await generateExtractAutomaticallyInlined();
+    const page = new JSDOM('<!doctype html><article><h1>Reading guide</h1><table><caption>Field comparison.</caption><tr><th>Station</th><th>Plot</th></tr><tr><td>North</td><td><img src="/field.png" width="640" height="480" alt="Field plot"></td></tr></table><p>The final observation remains available.</p></article>', { url: sourceUrl, runScripts: 'outside-only' });
+    try {
+      page.window.eval(source.replace('export async function', 'async function') + '\nwindow.extract = extractAutomaticallyInlined;');
+      const result = await page.window.extract(sourceUrl, false, { content: 'article' });
+      expect(result.error).toBeUndefined();
+      const image = result.content.find(item => item.type === 'image');
+      expect(image).toMatchObject({ src: 'https://example.org/field.png', alt: 'Field plot' });
+      expect(result.content.find(item => item.type === 'table').rows[0][1]).toContain(`href="#${image.id}"`);
+      const output = await render(format, result.content);
+      assertTarget(output, 'Field plot', image.id, '');
+      expect(format === 'markdown' ? output.markdown : output.document.documentElement.textContent).toContain('Field comparison.');
+    } finally { page.window.close(); }
+  });
   it('keeps generated navigation separate from original source references', async () => {
     const content = [
       { type: 'heading', level: 2, text: 'Generated body section', format: 'text' },

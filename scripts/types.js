@@ -2,6 +2,23 @@
 // This file contains JSDoc type definitions for commonly used data structures
 
 /**
+ * @typedef {Object} TableLayoutCell
+ * @property {number} column - Origin in the logical value grid
+ * @property {number} rowSpan
+ * @property {number} colSpan
+ * @property {boolean} header
+ * @property {boolean} [muted] - Source cell text is visually distinguished by a muted foreground
+ * @property {string} [scope] - HTML table header scope
+ */
+
+/**
+ * @typedef {Object} TableLayoutRow
+ * @property {'head'|'body'|'foot'} group
+ * @property {boolean} [groupStart] - Start a distinct row group of the same kind
+ * @property {TableLayoutCell[]} cells
+ */
+
+/**
  * @typedef {Object} ContentItem
  * @property {string} type - Content type: 'text', 'heading', 'paragraph', 'image', 'code', 'list', 'quote', 'table', 'subtitle', 'infobox_start', 'infobox_end'
  * @property {string} [content] - Content text (for text, code, quote)
@@ -15,6 +32,7 @@
  * @property {string} [base64] - Embedded image data
  * @property {string} [caption] - Image caption text (for images)
  * @property {boolean} [isFeatured] - Whether the image precedes article content
+ * @property {boolean} [isGraphic] - Whether image alt text contains authored graphic labels
  * @property {boolean} [translated] - Whether image text was translated (for images)
  * @property {number} [level] - Heading level 1-6 (for headings)
  * @property {string} [language] - Code language (for code blocks)
@@ -24,6 +42,7 @@
  * @property {Array<Array<string>>} [rows] - Table rows (for tables)
  * @property {'html'|'text'|'markdown'} [cellFormat] - Table cell representation; legacy AI cells use Markdown
  * @property {boolean} [hasHeaders] - Whether table has headers (for tables)
+ * @property {TableLayoutRow[]} [layoutRows] - Physical ownership of values in headers and rows
  * @property {string} [id] - Element ID (for headings with anchors)
  * @property {boolean} [isStandfirst] - Whether text is standfirst (for text blocks)
  * @property {string} [title] - Title text (for infobox_start)
