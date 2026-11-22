@@ -11,7 +11,7 @@ export const SELECTOR_SYSTEM_PROMPT = `You are an expert web scraper. Your task:
 RETURN JSON:
 {
   "articleContainer": "selector for outermost article wrapper",
-  "content": "selector for the FULL article body - must include ALL headings (h2, h3) AND paragraphs together. NEVER use :first-child, :first-of-type, or :nth-child(1) - the selector must match the ENTIRE container with ALL content, not just one element.",
+  "content": "CSS selector or comma-separated selectors for the complete article body, including all authored sections, figures and back matter. Select the smallest roots that together cover all article content.",
   "title": "selector for MAIN title of the entire page/book (NOT chapter titles)",
   "subtitle": "selector for subtitle/deck text below title, or empty string",
   "heroImage": "selector for main featured image, or empty string",
@@ -177,36 +177,13 @@ ALWAYS EXCLUDE these sections (add their selectors to "exclude"):
 - Elements with links to /about#translations or similar translation info pages
 - Navigation blocks like "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs, sidebar TOCs pointing to other posts. These are NOT article content.
 - Post footers/headers with series navigation ("Next post", "Previous post", "Next/Prev in sequence", breadcrumbs), and site-wide "Related/More from ..." lists. Exclude them so they do not appear in exports.
-- CRITICAL - RELATED ARTICLES AND SERIES CONTENT: If you see text that appears AFTER the main article but is clearly from a DIFFERENT article or post (e.g., starts with a new heading, tells a different story, mentions different topics), this is NOT part of the current article. Look for:
-  * Text blocks that start with new headings after the article's conclusion
-  * Content that doesn't logically follow from the article's ending
-  * Sections labeled "Part of the sequence", "Series", "Related", "Mentioned in", "More from [Author]", "Curated and popular this week"
-  * Text that appears to be from another article in a series (different topic, different narrative, different story)
-  * If the article ends with a conclusion or final paragraph, and then you see a new heading or block of text that starts a different topic, that is NOT part of this article - exclude it
-  * IMPORTANT: Some pages display MULTIPLE articles on the same page (e.g., main article + related articles, series posts, author's other posts). The "content" selector must ONLY match the CURRENT article being viewed, not other articles on the page. If you see multiple article containers, identify which one contains the main article (usually the largest one, or the one with the page's title) and exclude all others.
-
-CRITICAL - ARTICLE BOUNDARY DETECTION (UNIVERSAL RULE FOR ALL SITES):
-- You MUST identify where the CURRENT article ENDS and other content begins
-- The article ends when you see one of these indicators:
-  * Comments section (heading "Comments", "Discussion", "Leave a comment", etc.)
-  * Series navigation ("Part of the sequence", "Next post", "Previous post")
-  * Related articles section
-  * A new article or post that is clearly different content (different topic, different narrative, starts with new heading)
-  * Author bio or "About the author" section
-  * Social share buttons, citation tools
-- CRITICAL - RELATED CONTENT DETECTION:
-  * If the article has a clear conclusion (final paragraph that wraps up the topic), everything AFTER that conclusion is NOT part of the article
-  * If you see text that starts a completely different topic or story (e.g., article about "Bayesian Judo" ends, then text about "Carl Sagan" and "dragon in garage" begins), that is a DIFFERENT article - exclude it
-  * Look for structural breaks: article ends with </p>, then you see a new heading or section that doesn't logically continue the article - that's the boundary
-  * If content appears to be from another post in a series or collection, it's NOT part of the current article
-  * IMPORTANT: Some pages may have MULTIPLE articles displayed (main article + related articles sidebar, author's other posts, series navigation with full text of other posts). You must identify which container holds ONLY the current article and exclude all other article containers. If you see multiple <article> elements or multiple content containers, only include the one that matches the page's main title.
-- CRITICAL - DETERMINE ARTICLE BY PAGE TITLE (MOST IMPORTANT RULE):
-  * The page URL and title tell you which article is the MAIN article
-  * Example: If page URL is "/posts/NKaPFf98Y5otMbsPk/bayesian-judo" and title is "Bayesian Judo", then ONLY content about "Bayesian Judo" is the main article
-  * If you see content about "Belief in Belief" or "Carl Sagan" or "dragon in garage" on this page, that is a DIFFERENT article - exclude it
-  * Even if multiple articles are in the same DOM container, you must identify which one matches the page title and exclude all others
-  * Use the page title as the PRIMARY identifier - if content doesn't match the page title, it's NOT the main article
-  * If you see a heading that matches the page title, that's the start of the main article. Everything before it (if any) and everything after the article's conclusion is NOT part of the main article
+CRITICAL - ARTICLE OWNERSHIP:
+- Use the page title and URL to identify the intended article. Use its markup, heading hierarchy, reading order, and references to determine what belongs to it.
+- Keep authored sidebars, figures and captions, footnotes, references, and appendices, including when they appear after the conclusion or beside the main prose wrapper. An article TOC or inline link to a matching heading or note is strong ownership evidence.
+- Include every authored root in "content", using a comma-separated selector list when there is no shared editorial wrapper. A legacy page can put its entire prose in one paragraph or table cell.
+- Exclude comments, recommendation cards, author profiles, and navigation by their own structural containers. A topic change, a new heading, an aside tag, emphasis within a paragraph, or a name like "sidebar" is insufficient to exclude a block.
+- Validate exclusions against the supplied markup. An exclusion removes all matching descendants, so use a narrower selector if it would remove authored text, an internal anchor target, the standfirst, or an article figure.
+- Select the actual featured image shown in the article, when present. Verify the image or its ancestor does not match any exclusion. Scope promoted images by their recommendation or promotion container.
 - COMMENTS DETECTION:
   * Comments sections often appear INSIDE the main content container (e.g., #postContent, #article-content, .article-body, #main-content)
   * Look for visual and structural indicators:
@@ -220,8 +197,6 @@ CRITICAL - ARTICLE BOUNDARY DETECTION (UNIVERSAL RULE FOR ALL SITES):
   * Find the container that wraps ALL comments (not individual comments, but the whole comments section)
   * Common selectors: elements with class/id containing "comment", "discussion", "thread", "reply", "feedback", "reviews", "responses", "reactions"
   * Add that container's selector to "exclude" array
-- The "content" selector should NOT include comments, related articles, or series navigation - it should stop at the end of the CURRENT article text only
-- Example: If article ends with </p> and then you see <h2>Comments</h2> OR a new heading about a different topic, find the container that wraps everything from that point onwards and exclude it
 
 NEVER EXCLUDE these (important article content):
 - Table of Contents (use "toc" field instead!)
@@ -286,7 +261,7 @@ TITLE DETECTION:
 - "article h1", "main h1", "h2" are chapter titles - WRONG for books!
 
 OTHER REQUIREMENTS:
-- "content" must be a CONTAINER with ALL headings (h2, h3) AND paragraphs together, not just text
+- "content" must include the complete article, including authored sidebars, figures, notes, references, and appendices. Use comma-separated selectors for disjoint article sections.
 - If multiple chapters exist, selector must match ALL of them (use "article" not "#chapter-1")
 - Use semantic tags (article, main, section) if no stable classes exist
 - PREFER flexible selectors: use descendant selectors (space) instead of direct child (>)
@@ -315,16 +290,10 @@ OTHER REQUIREMENTS:
 - EXCLUDE navigation blocks linking to other posts (e.g., "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs to other articles).
 - EXCLUDE comment listings, vote counts, user handles, "New Comment", "Submit", and any sidebar link lists pointing to other posts.
 - CRITICAL - COMMENTS AND THEIR CONTENT: The "content" selector must NOT include any content from comments sections. Comments contain replies, user avatars, emoji images, and other user-generated content that is NOT part of the main article. Exclude the entire comments section container, not individual comments.
-- CRITICAL - ARTICLE BOUNDARY: The "content" selector must ONLY include the CURRENT article, not related articles or posts. If you see the article ends with a conclusion, and then there's a new heading or block of text that starts a different topic/story (e.g., article about "Bayesian Judo" ends, then text about "Carl Sagan" begins), that is a DIFFERENT article - exclude it. The article ends when you see: comments section, series navigation, related articles, or content that clearly belongs to another post.
+- Use structural ownership to distinguish the current article and its supplements from other posts and site UI, even after the last prose paragraph.
 - CRITICAL - MULTIPLE ARTICLES ON PAGE: Some pages display multiple articles (main article + related articles, author's other posts, series posts with full text). You must identify which container holds ONLY the current article (the one with the page's main title) and exclude all other article containers. If you see multiple <article> elements or multiple content containers, add selectors for all OTHER articles to "exclude" array. Only the main article (matching the page title) should be in "content" selector.
 - CRITICAL - IMAGES FROM RECOMMENDED ARTICLES: When excluding related/recommended articles, also exclude ALL IMAGES from those sections. Images from "Recommended from Medium", "You might also like", "Related posts", or similar sections must NOT be included in the main article content. These images belong to other articles and should be completely excluded from the extraction.
-- CRITICAL - USE PAGE TITLE TO IDENTIFY MAIN ARTICLE:
-  * The page title (provided in the prompt) is the PRIMARY identifier for the main article
-  * If page title is "Bayesian Judo", then ONLY content about "Bayesian Judo" is the main article
-  * If you see content about other topics (e.g., "Belief in Belief", "Carl Sagan", "dragon in garage"), that is a DIFFERENT article - exclude it
-  * Even if multiple articles are in the same DOM container, identify which one matches the page title
-  * The "content" selector must ONLY match the article that corresponds to the page title
-  * If you see a heading that matches the page title, that's the start of the main article. Everything after the article's conclusion is NOT part of the main article, even if it's in the same container
+- Verify that the exclusions do not match a selected featured image, an authored section, or their ancestors. Narrow an exclusion to the actual site UI when a class is shared.
 
 SELECTOR FLEXIBILITY - CRITICAL:
 - If you see structure like: <body><section><p>text</p></section></body>

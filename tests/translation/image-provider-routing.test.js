@@ -26,10 +26,12 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it('uses the independent OpenAI key and dedicated high-detail classifier with a text-only article provider', async () => {
   const items = content();
-  expect(await run(items, options())).toBe(items);
+  const onRequestStart = vi.fn();
+  expect(await run(items, { ...options(), onRequestStart })).toBe(items);
   expect(items[1]).toMatchObject({ src: `data:image/png;base64,${EDITED_PNG}`, translated: true });
   expect(decryptApiKey).toHaveBeenCalledExactlyOnceWith('ENC:synthetic-image');
   expect(fetch).toHaveBeenCalledTimes(2);
+  expect(onRequestStart).toHaveBeenCalledTimes(2);
   const [detection, edit] = fetch.mock.calls;
   expect(detection[0]).toBe('https://api.openai.com/v1/chat/completions');
   expect(JSON.parse(detection[1].body)).toMatchObject({ model: 'gpt-6-luna', reasoning_effort: 'none', max_completion_tokens: 16, messages: [{ content: [expect.anything(), { type: 'image_url', image_url: { url: source, detail: 'high' } }] }] });
@@ -62,16 +64,74 @@ it('keeps the original image and does not retry or switch editors after an edit 
   expect(fetch).toHaveBeenCalledTimes(2); expect(translateImageWithGemini).not.toHaveBeenCalled();
 });
 
-it('does not send an edit when the classifier answers no', async () => {
-  fetch.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: 'no' } }] })));
-  expect(await run(content(), options())).toEqual(content()); expect(fetch).toHaveBeenCalledOnce();
+it.each(['no', '  No.  '])('keeps the original without a warning when the classifier answers %j', async answer => {
+  fetch.mockResolvedValue(Response.json({ choices: [{ finish_reason: 'stop', message: { content: answer } }] }));
+  const status = vi.fn();
+  expect(await run(content(), options(), status)).toEqual(content());
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(status.mock.calls.map(([value]) => value.imageTranslationFailureCount).filter(Boolean)).toEqual([]);
 });
 
-it('keeps the original when the bounded classifier response is incomplete', async () => {
-  fetch.mockResolvedValue(new Response(JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: 'yes' } }] })));
-  expect(await run(content(), options())).toEqual(content());
+it.each([
+  ['HTTP 401', () => new Response('Unavailable', { status: 401 })],
+  ['HTTP 429', () => new Response('Unavailable', { status: 429 })],
+  ['incomplete', () => Response.json({ choices: [{ finish_reason: 'length', message: { content: 'yes' } }] })],
+  ['empty', () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: '' } }] })],
+  ['ambiguous', () => Response.json({ choices: [{ finish_reason: 'stop', message: { content: 'yes or no' } }] })],
+  ['malformed JSON', () => new Response('{')]
+])('keeps the original and records a %s classifier failure', async (_kind, reply) => {
+  fetch.mockResolvedValue(reply());
+  const status = vi.fn();
+  expect(await run(content(), options(), status)).toEqual(content());
   expect(fetch).toHaveBeenCalledOnce();
+  expect(status).toHaveBeenLastCalledWith({ imageTranslationFailureCount: 1 });
   expect(translateImageWithGemini).not.toHaveBeenCalled();
+});
+
+it('edits an affirmative image and reports all failed images in one update', async () => {
+  const items = [...content(), { type: 'image', src: source }, { type: 'image', src: source }, { type: 'image', src: source }];
+  const status = vi.fn();
+  fetch.mockReset()
+    .mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: 'stop', message: { content: '  Yes.  ' } }] }))
+    .mockResolvedValueOnce(Response.json({ data: [{ b64_json: EDITED_PNG }] }))
+    .mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: 'stop', message: { content: 'No.' } }] }))
+    .mockResolvedValueOnce(new Response('Unavailable', { status: 401 }))
+    .mockResolvedValueOnce(Response.json({ choices: [{ finish_reason: 'stop', message: { content: 'yes' } }] }))
+    .mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
+  await run(items, options(), status);
+  expect(items[1]).toMatchObject({ src: `data:image/png;base64,${EDITED_PNG}`, translated: true });
+  expect(items.slice(2)).toEqual(Array.from({ length: 3 }, () => ({ type: 'image', src: source })));
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/images/edits'))).toHaveLength(2);
+  expect(status.mock.calls.filter(([value]) => 'imageTranslationFailureCount' in value)).toEqual([
+    [{ imageTranslationFailureCount: 2 }]
+  ]);
+});
+
+it('aborts an owned remote image fetch without starting classification or publishing a warning', async () => {
+  const owner = new AbortController();
+  const reason = new DOMException('Cancelled', 'AbortError');
+  const status = vi.fn();
+  let admit, rejectDownload;
+  const started = new Promise(resolve => { admit = resolve; });
+  fetch.mockImplementation((_url, { signal }) => new Promise((_, reject) => {
+    rejectDownload = reject;
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    admit(signal);
+  }));
+  const image = { type: 'image', src: 'https://example.test/diagram.png' };
+  const pending = run([image], { ...options(), signal: owner.signal }, status).catch(error => error);
+  const downloadSignal = await started;
+  try {
+    owner.abort(reason);
+    expect(downloadSignal.aborted).toBe(true);
+    await expect(pending).resolves.toBe(reason);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(status.mock.calls.some(([value]) => 'imageTranslationFailureCount' in value)).toBe(false);
+    expect(image).not.toHaveProperty('translated');
+  } finally {
+    rejectDownload(reason);
+    await pending;
+  }
 });
 
 it('awaits owner cancellation after an edit and before changing any source image', async () => {

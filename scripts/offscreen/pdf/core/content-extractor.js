@@ -128,10 +128,11 @@ export async function extractContentFromPages(pdf, numPages, metrics, requestOpt
     const nextElement = i < allElements.length - 1 ? allElements[i + 1] : null;
     
     // If current element is on a different page than next element, mark it as cross-page break
-    if (nextElement && 
-        currentElement.pageNum && 
-        nextElement.pageNum && 
-        (currentElement.pageNum !== nextElement.pageNum || currentElement.columnIndex !== nextElement.columnIndex)) {
+    if (!currentElement.pageNum || !nextElement?.pageNum) continue;
+    const differentPage = currentElement.pageNum !== nextElement.pageNum;
+    const sameProseFlow = currentElement.recoveredProseRegion !== 'spanning' && nextElement.recoveredProseRegion !== 'spanning';
+    const columnBreak = currentElement.columnIndex !== nextElement.columnIndex && sameProseFlow;
+    if (differentPage || columnBreak) {
       // This is the last element on its page, next element is on a different page
       // Set gapAfter marker to indicate cross-page break
       currentElement.gapAfter = CROSS_PAGE_BREAK_MARKER;

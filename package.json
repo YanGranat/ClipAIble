@@ -1,6 +1,6 @@
 {
   "name": "clipaible",
-  "version": "3.3.15",
+  "version": "3.3.16",
   "description": "AI-Powered Article Extractor Chrome Extension",
   "type": "module",
   "scripts": {

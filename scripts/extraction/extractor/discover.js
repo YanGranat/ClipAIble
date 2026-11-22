@@ -2,7 +2,8 @@
 // Content discovery functions for extraction
 // Finds the main content container using multiple strategies
 
-import { safeGetComputedStyle } from './dom-utils.js';
+import { safeGetComputedStyle, INTERFACE_REGIONS } from './dom-utils.js';
+import { EDITORIAL_CONTAINERS, isEditorialOwner } from './reading-context.js';
 
 /**
  * Recognize a captioned illustration embedded in an article's prose body.
@@ -383,13 +384,15 @@ export function hasSubstantialContent(element) {
  * @returns {Element|null} - Main content element
  */
 export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
+  const confirmedOwner = Array.from(doc.querySelectorAll(EDITORIAL_CONTAINERS))
+    .find(element => isEditorialOwner(element) && !isExcluded(element));
   // Strategy 0: SPA root containers
   const spaSelectors = [
     '#root', '#app', '#__next', '[data-reactroot]', '[ng-app]',
     '.notion-page-content', '.notion-page'
   ];
   
-  for (const selector of spaSelectors) {
+  for (const selector of confirmedOwner ? [] : spaSelectors) {
     try {
       const spaRoot = doc.querySelector(selector);
       if (spaRoot) {
@@ -399,7 +402,7 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
           if (specificContent && (specificContent.textContent || '').trim().length >= 500) {
             if (!isExcluded(specificContent)) return specificContent;
           }
-          if (!isExcluded(spaRoot) || isLikelyContentContainer(spaRoot)) {
+          if (!isExcluded(spaRoot)) {
             return spaRoot;
           }
         }
@@ -408,14 +411,15 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   }
   
   // Strategy 1: Semantic HTML5
-  const article = Array.from(doc.querySelectorAll('article'))
+  const article = confirmedOwner || Array.from(doc.querySelectorAll('article'))
     .filter(element => (element.textContent || '').trim().length > 500 &&
       !element.closest('aside, .related, .related-stories, .sidebar, .comments, nav, footer') &&
+      !isExcluded(element) &&
       safeGetComputedStyle(win, element)?.display !== 'none')
     .sort((a, b) => calculateContentScore(win, b) - calculateContentScore(win, a))[0];
   if (article) {
     const articleText = (article.textContent || '').trim();
-    if (articleText.length > 500) {
+    if (confirmedOwner || articleText.length > 500) {
       const isRelatedArticle = article.querySelector('.gc__image-placeholder') !== null ||
                                article.closest('aside, .related, .sidebar') !== null;
       if (!isRelatedArticle) {
@@ -501,7 +505,7 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
       if (element) {
         const elementText = (element.textContent || '').trim();
         if (elementText.length > 100) {
-          if (isLikelyContentContainer(element) || !isExcluded(element)) {
+          if (!isExcluded(element)) {
             return element;
           }
         }
@@ -521,7 +525,7 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   let maxScore = 0;
   
   for (const candidate of candidates) {
-    if (!isLikelyContentContainer(candidate) && isExcluded(candidate)) continue;
+    if (isExcluded(candidate) || candidate.closest(INTERFACE_REGIONS)) continue;
     
     const candidateText = (candidate.textContent || '').trim();
     if (candidateText.length < 100) continue;

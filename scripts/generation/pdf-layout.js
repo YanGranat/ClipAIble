@@ -7,6 +7,13 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
   document.documentElement.style.setProperty('--pdf-layout-width', pageMode === 'multi' ? `calc(${paperWidthInches}in - 10mm)` : `${paperWidthInches}in`);
   if (document.fonts?.ready) await document.fonts.ready;
   const article = document.querySelector('.article') || document.body;
+  if (pageMode === 'single') {
+    const flow = article.querySelector('.article-content') ?? article;
+    // Empty final paragraphs can create a print fragment after the article.
+    while (flow.lastElementChild?.matches('p:empty:not([id],[name])')) {
+      flow.lastElementChild.remove();
+    }
+  }
   const tableLayouts = [];
 
   function projectTable(table) {

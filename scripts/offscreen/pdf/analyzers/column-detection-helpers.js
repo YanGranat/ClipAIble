@@ -179,6 +179,55 @@ export function calculateLineRight(line, baseFontSize) {
 }
 
 /**
+ * Recover two sustained prose lanes when small inline fragments connect their X clusters.
+ * Keep spanning headings and trailing notes in their own reading regions.
+ */
+export function recoverProseColumnRegions(lines, viewport, baseFontSize) {
+  const measured = lines.map(line => ({ line, x: line.x, y: line.y, right: calculateLineRight(line, baseFontSize) }));
+  const prose = measured.filter(({ line, x, right }) =>
+    right - x >= viewport.width * 0.19 && right - x <= viewport.width * 0.55 &&
+    ((line.text || '').match(/[\p{L}\p{N}]+/gu) || []).length >= 6
+  ).sort((a, b) => a.x - b.x);
+  /** @type {Array<typeof prose>} */
+  const bands = [];
+  for (const row of prose) {
+    const band = bands.at(-1);
+    if (band && row.x - band[0].x <= baseFontSize * 0.75) band.push(row);
+    else bands.push([row]);
+  }
+  const lanes = bands.filter(band => band.length >= Math.max(7, prose.length * 0.18));
+  if (lanes.length !== 2) return [];
+  const [left, right] = lanes;
+  if (right[0].x - left[0].x < viewport.width * 0.2) return [];
+  const leftEdge = Math.max(...left.map(row => row.right));
+  const rightEdge = right[0].x;
+  if (rightEdge - leftEdge < baseFontSize * 0.2) return [];
+  const leftY = left.map(row => row.y);
+  const rightY = right.map(row => row.y);
+  const sharedTop = Math.max(Math.min(...leftY), Math.min(...rightY));
+  const sharedBottom = Math.min(Math.max(...leftY), Math.max(...rightY));
+  if (sharedBottom - sharedTop < baseFontSize * 6) return [];
+
+  const gutter = (leftEdge + rightEdge) / 2;
+  const top = Math.min(...leftY, ...rightY) - baseFontSize;
+  const bottom = Math.max(...leftY, ...rightY) + baseFontSize;
+  if (measured.some(row => row.y >= top && row.y <= bottom && row.x < gutter && row.right > gutter)) return [];
+  const regions = [
+    measured.filter(row => row.y < top),
+    measured.filter(row => row.y >= top && row.y <= bottom && row.x < gutter),
+    measured.filter(row => row.y >= top && row.y <= bottom && row.x >= gutter),
+    measured.filter(row => row.y > bottom)
+  ];
+  return regions.flatMap((region, slot) => {
+    if (!region.length) return [];
+    const x = Math.min(...region.map(row => row.x));
+    const maxX = Math.max(...region.map(row => row.right));
+    const role = slot === 1 || slot === 2 ? 'lane' : 'spanning';
+    return [{ x, maxX, width: maxX - x, role, lines: region.map(row => row.line).sort((a, b) => a.y - b.y), lineCount: region.length }];
+  });
+}
+
+/**
  * Recalculate column boundaries using conservative percentile approach
  * 
  * @param {Array} columnCandidates - Column candidates

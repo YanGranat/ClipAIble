@@ -336,8 +336,8 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
       );
       await checkCancellation('subtitle chunk result', processingRunId);
     } catch (error) {
-      // All retries exhausted - throw error
-      throw new Error(`Failed to process subtitle chunk ${i + 1}/${chunks.length} after ${CONFIG.RETRY_MAX_ATTEMPTS + 1} attempts: ${error.message}`);
+      logError(`Failed to process subtitle chunk ${i + 1}/${chunks.length}`, error);
+      throw error;
     }
     
     allContent.push(...chunkContent);

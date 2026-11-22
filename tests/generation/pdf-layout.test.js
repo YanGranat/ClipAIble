@@ -15,7 +15,7 @@ function page(markup, naturalWidth = 756) {
   for (const table of doc.querySelectorAll('table')) {
     table.getBoundingClientRect = () => ({ width: Math.max(756, naturalWidth * parseFloat(win.getComputedStyle(table.querySelector('th,td')).fontSize) / 31) });
   }
-  const prepare = () => win.eval(`(${preparePdfLayout.toString()})(8.27)`);
+  const prepare = (mode = 'single') => win.eval(`(${preparePdfLayout.toString()})(8.27, ${JSON.stringify(mode)})`);
   return { win, doc, prepare };
 }
 afterEach(() => windows.splice(0).forEach(win => win.close()));
@@ -25,6 +25,28 @@ describe('Final PDF print layout', () => {
     const { doc, prepare } = page('<p>A complete observation.</p>');
     expect(await prepare()).toMatchObject({ contentWidth: 756, contentHeight: 420, tableLayouts: [] });
     expect(doc.documentElement.style.getPropertyValue('--pdf-page-width')).toBe('8.27in');
+  });
+
+  it('removes only unanchored empty paragraphs at the end of a continuous page', async () => {
+    const { doc, prepare } = page('<p>Opening note.</p><p data-spacer></p><p>Closing note.</p><p></p><p></p>');
+    const flow = doc.querySelector('.article-content');
+    const article = doc.querySelector('article');
+    Object.defineProperty(article, 'scrollHeight', {
+      get: () => flow.lastElementChild.textContent ? 400 : 420,
+    });
+    expect((await prepare()).contentHeight).toBe(420);
+    expect([...flow.children].map(node => node.textContent)).toEqual(['Opening note.', '', 'Closing note.']);
+    expect(flow.querySelector('[data-spacer]')).not.toBeNull();
+  });
+
+  it('keeps final link targets and leaves paginated paragraphs alone', async () => {
+    const continuous = page('<p>Closing note.</p><p id="reference"></p>');
+    await continuous.prepare();
+    expect(continuous.doc.getElementById('reference')).not.toBeNull();
+
+    const paginated = page('<p>Closing note.</p><p></p>');
+    await paginated.prepare('multi');
+    expect(paginated.doc.querySelectorAll('.article-content > p')).toHaveLength(2);
   });
 
   it('rejects a screen-media measurement', async () => {

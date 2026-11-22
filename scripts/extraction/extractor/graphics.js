@@ -3,6 +3,7 @@ import { toSvg } from 'html-to-image';
 import { CONFIG } from '../../utils/config.js';
 import { MAX_IMAGE_BYTES, detectImageMime, imageDataUrlBytes, readImageBytes, imageDataError } from '../../utils/html/image-bytes.js';
 import { isSourceExcluded } from './dom-utils.js';
+import { isPlaceholderUrl } from './images.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OMIT = 'figcaption,script,style,template,noscript,source,button,input,select,textarea,nav,footer,iframe,video,audio,object,embed,[role="button"],[role="navigation"],[contenteditable="true"]';
@@ -29,8 +30,15 @@ function controls(element) {
   return !!element.closest('button,input,select,textarea,nav,footer,[role="button"],[role="navigation"],[contenteditable="true"]');
 }
 
+function isRenderedPlaceholder(element) {
+  if (element.tagName !== 'IMG') return false;
+  const image = /** @type {HTMLImageElement} */ (element);
+  const source = image.currentSrc || image.getAttribute('src');
+  return !!source && isPlaceholderUrl(source, image);
+}
+
 function hasLayeredImages(figure) {
-  const bounds = Array.from(figure.querySelectorAll('img')).filter(image => image.closest('figure') === figure && image.complete && image.naturalWidth && image.naturalHeight && !controls(image) && !hidden(image)).map(image => {
+  const bounds = Array.from(figure.querySelectorAll('img')).filter(image => image.closest('figure') === figure && image.complete && image.naturalWidth && image.naturalHeight && !isRenderedPlaceholder(image) && !controls(image) && !hidden(image)).map(image => {
     const border = image.getBoundingClientRect(), style = image.ownerDocument.defaultView.getComputedStyle(image);
     if (!(border.width > 0 && border.height > 0)) return null;
     const inset = side => parseFloat(style.getPropertyValue(`border-${side}-width`) || '0') + parseFloat(style.getPropertyValue(`padding-${side}`) || '0');
@@ -77,7 +85,7 @@ export function getGraphicReadingOwner(element, roots) {
     const layered = hasLayeredImages(figure);
     if (graphics.length || layered) {
       const mixed = !!figure.querySelector('figure') || Array.from(figure.querySelectorAll('p,table,img,blockquote,pre,ul,ol')).some(node =>
-        !(layered && node.tagName === 'IMG') && !node.closest('figcaption,svg,[role="img"]') && !controls(node) && !hidden(node));
+        !(layered && node.tagName === 'IMG') && !isRenderedPlaceholder(node) && !node.closest('figcaption,svg,[role="img"]') && !controls(node) && !hidden(node));
       if (!mixed) return figure;
       return element.closest('svg,canvas');
     }
@@ -89,7 +97,7 @@ export function getGraphicReadingOwner(element, roots) {
 }
 
 function excluded(element, owner, selectors) {
-  if (hidden(element, true) || isSourceExcluded(element, selectors)) return true;
+  if (isRenderedPlaceholder(element) || hidden(element, true) || isSourceExcluded(element, selectors)) return true;
   for (let node = element; node && node !== owner; node = node.parentElement) {
     if (node.matches(OMIT)) return true;
   }
@@ -137,6 +145,21 @@ function localReference(value, doc) {
   } catch { return null; }
 }
 
+function originalImageLayers(owner, included) {
+  if (owner.tagName !== 'FIGURE' || included.some(node => node.matches('svg,canvas'))) return [];
+  const images = included.filter(node => node.tagName === 'IMG' && node.closest('figure') === owner);
+  const sources = [];
+  for (const node of images) {
+    const image = /** @type {HTMLImageElement} */ (node);
+    const source = image.currentSrc || image.getAttribute('src');
+    if (!source || !image.complete || !image.naturalWidth || !image.naturalHeight) return [];
+    const url = new URL(source, image.ownerDocument.baseURI);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return [];
+    sources.push(url.href);
+  }
+  return sources;
+}
+
 /** Capture each owned graphic once without modifying its source document. */
 export async function captureReadingGraphics(win, elements, state, constants) {
   const roots = state.referenceRoots || [];
@@ -155,6 +178,7 @@ export async function captureReadingGraphics(win, elements, state, constants) {
   const aborted = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(imageDataError('IMAGE_TIMEOUT')), { once: true }));
   const bounded = promise => Promise.race([promise, aborted]);
   const resources = new Map();
+  const failedFetches = new WeakSet();
   const validateResource = bytes => {
     const mime = detectImageMime(bytes);
     if (mime === 'image/svg+xml') {
@@ -171,7 +195,10 @@ export async function captureReadingGraphics(win, elements, state, constants) {
     const absolute = new URL(url, doc.baseURI);
     if (!['https:', 'http:', 'blob:'].includes(absolute.protocol) || absolute.username || absolute.password) throw failure();
     if (!resources.has(absolute.href)) resources.set(absolute.href, (async () => {
-      const response = await win.fetch(absolute.href, { credentials: 'omit', signal: controller.signal });
+      const response = await win.fetch(absolute.href, { credentials: 'omit', signal: controller.signal }).catch(error => {
+        if (!controller.signal.aborted && error?.name === 'TypeError') failedFetches.add(error);
+        throw error;
+      });
       if (!response.ok) throw failure();
       const bytes = await readImageBytes(response), mime = validateResource(bytes);
       return await new Promise((resolve, reject) => {
@@ -189,7 +216,7 @@ export async function captureReadingGraphics(win, elements, state, constants) {
   }
 
   try {
-    for (const owner of owners) {
+    captureOwner: for (const owner of owners) {
       if (Date.now() >= deadline) throw imageDataError('IMAGE_TIMEOUT');
       if (excluded(owner, owner, selectors)) continue;
       const doc = owner.ownerDocument;
@@ -228,12 +255,16 @@ export async function captureReadingGraphics(win, elements, state, constants) {
           const original = nodes[index], copy = copies[index];
           const pseudoReferences = [];
           const style = win.getComputedStyle(original);
-          for (const property of Array.from(style)) {
-            let value = style.getPropertyValue(property);
-            value = value.replace(/url\((['"]?)(.*?)\1\)/g, (match, quote, url) => {
-              const local = localReference(url, doc); return local ? `url("${local}")` : match;
-            });
-            copy.style?.setProperty(property, value, 'important');
+          if (copy.style) {
+            const declarations = [];
+            for (const property of Array.from(style)) {
+              const value = style.getPropertyValue(property).replace(/url\((['"]?)(.*?)\1\)/g, (match, quote, url) => {
+                const local = localReference(url, doc); return local ? `url("${local}")` : match;
+              });
+              if (value) declarations.push(`${property}:${value}!important;`);
+              else copy.style.removeProperty(property);
+            }
+            copy.style.cssText += declarations.join('');
           }
           for (const attribute of Array.from(copy.attributes || [])) if (/^on/i.test(attribute.name)) copy.removeAttribute(attribute.name);
           if ((original === owner || owner.contains(original)) && excluded(original, owner, selectors)) {
@@ -262,7 +293,18 @@ export async function captureReadingGraphics(win, elements, state, constants) {
           if (original.tagName === 'IMG') {
             const source = original.currentSrc || original.getAttribute('src');
             if (!source) throw failure();
-            copy.setAttribute('src', await dataUrl(source, doc));
+            let embeddedSource;
+            try {
+              embeddedSource = await dataUrl(source, doc);
+            } catch (error) {
+              if (!failedFetches.has(error) || new URL(source, doc.baseURI).origin === new URL(doc.URL).origin) throw error;
+              const layers = originalImageLayers(owner, included);
+              if (layers.length < 2) throw error;
+              state.originalImageLayers ||= new Map();
+              state.originalImageLayers.set(owner, layers);
+              continue captureOwner;
+            }
+            copy.setAttribute('src', embeddedSource);
             for (const attribute of ['srcset', 'sizes', 'loading', 'crossorigin']) copy.removeAttribute(attribute);
           }
           for (const attribute of ['href', 'xlink:href', 'src']) {
@@ -283,7 +325,9 @@ export async function captureReadingGraphics(win, elements, state, constants) {
               if (!/^(?:background|mask|-webkit-mask|border-image|list-style-image)/.test(property)) throw failure();
               embedded = embedded.replace(match[0], `url("${await dataUrl(match[2], doc)}")`);
             }
-            copy.style.setProperty(property, embedded, 'important');
+            if (embedded !== value || copy.style.getPropertyPriority(property) !== 'important') {
+              copy.style.setProperty(property, embedded, 'important');
+            }
           }
           const references = [...pseudoReferences, ...Array.from(copy.attributes).flatMap(attribute => {
             const values = [...attribute.value.matchAll(/url\(['"]?(#[^)'"\s]+)['"]?\)/g)].map(match => match[1]);

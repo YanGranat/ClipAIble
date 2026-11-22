@@ -4,9 +4,10 @@
 // @ts-check
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { tSync } from '../locales.js';
-import { checkCancellation, updateProgress, getUILanguageCached, getAIRequestOptions } from '../utils/pipeline-helpers.js';
-import { PROCESSING_STAGES, getScopedUpdateState } from '../state/processing.js';
+import { checkCancellation, updateProgress, getAIRequestOptions } from '../utils/pipeline-helpers.js';
+import { ERROR_CODES, PROCESSING_STAGES, getScopedUpdateState } from '../state/processing.js';
+import { normalizeError } from '../utils/error-handler.js';
+import { getUserFriendlyErrorDescriptor } from '../utils/error-messages.js';
 import { extractYouTubeSubtitles, extractVimeoSubtitles } from '../extraction/video-subtitles.js';
 import { processSubtitlesWithAI } from '../extraction/video-processor.js';
 import { detectSourceLanguage, detectContentLanguage } from '../translation/detection.js';
@@ -141,19 +142,22 @@ export async function processVideoPage(data, videoInfo) {
 
     subtitles = subtitlesData.subtitles;
     metadata = subtitlesData.metadata;
+    if (!subtitles?.length) throw new Error('No subtitles found.');
 
     log(`✅ Subtitles extracted: ${subtitles.length} entries`, { title: metadata.title });
   } catch (error) {
     logError('Failed to extract subtitles', error);
-    const uiLang = await getUILanguageCached();
-    const errorMsg = tSync('errorNoSubtitles', uiLang);
-    throw new Error(errorMsg);
+    throw Object.assign(new Error('No subtitles found.', { cause: error }), {
+      code: ERROR_CODES.VALIDATION_ERROR,
+      translationKey: 'errorNoSubtitles'
+    });
   }
-  
-  if (!subtitles || subtitles.length === 0) {
-    const uiLang = await getUILanguageCached();
-    const errorMsg = tSync('errorNoSubtitles', uiLang);
-    throw new Error(errorMsg);
+
+  if (!apiKey?.trim()) {
+    throw Object.assign(new Error('An API key is required to process video subtitles.'), {
+      code: ERROR_CODES.AUTH_ERROR,
+      translationKey: 'errorNoApiKey'
+    });
   }
   
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingSubtitles', 15, { processingRunId: data.processingRunId });
@@ -177,9 +181,16 @@ export async function processVideoPage(data, videoInfo) {
     log(`✅ Subtitles processed: ${content.length} content items created`);
   } catch (error) {
     logError('Failed to process subtitles', error);
-    const uiLang = await getUILanguageCached();
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    throw new Error(tSync('errorSubtitleProcessingFailed', uiLang).replace('{error}', errorMsg));
+    const normalized = normalizeError(error);
+    const errorType = normalized.code === ERROR_CODES.PARSE_ERROR ? 'parseError' : 'subtitleProcessingFailed';
+    const descriptor = getUserFriendlyErrorDescriptor(errorType, {
+      error: { ...normalized, status: error?.status || error?.statusCode || error?.response?.status }
+    });
+    throw Object.assign(new Error(normalized.message, { cause: error }), {
+      code: normalized.code,
+      translationKey: descriptor?.key,
+      translationParams: descriptor?.params
+    });
   }
   
   updateState({ progress: 40 });

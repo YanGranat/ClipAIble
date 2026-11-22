@@ -5,7 +5,7 @@ vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
   checkCancellation: vi.fn(), updateProgress: vi.fn(), getUILanguageCached: async () => 'en', getAIRequestOptions: () => ({})
 }));
-vi.mock('../../scripts/state/processing.js', () => ({ PROCESSING_STAGES: { EXTRACTING: 'extracting' }, getScopedUpdateState: () => vi.fn() }));
+vi.mock('../../scripts/state/processing.js', async importOriginal => ({ ...await importOriginal(), getScopedUpdateState: () => vi.fn() }));
 vi.mock('../../scripts/extraction/video-subtitles.js', () => ({ extractYouTubeSubtitles: deps.youtube, extractVimeoSubtitles: deps.vimeo }));
 vi.mock('../../scripts/extraction/video-processor.js', () => ({ processSubtitlesWithAI: deps.process }));
 vi.mock('../../scripts/translation/detection.js', () => ({ detectContentLanguage: deps.detect, detectSourceLanguage: () => 'en' }));
@@ -29,12 +29,42 @@ describe('Video caption language selection', () => {
 
   it('normalizes the supported Ukrainian locale for caption tracks', async () => {
     deps.detect.mockResolvedValue('ua');
-    await processVideoPage({ language: 'ua', tabId: 7 }, { platform: 'youtube', videoId: 'sample-video' });
+    await processVideoPage({ language: 'ua', tabId: 7, apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' });
     expect(deps.youtube).toHaveBeenCalledWith(7, 'uk', 'uk');
   });
 
   it('keeps automatic caption selection when no translation is requested', async () => {
-    await processVideoPage({ language: 'auto', tabId: 7 }, { platform: 'youtube', videoId: 'sample-video' });
+    await processVideoPage({ language: 'auto', tabId: 7, apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' });
     expect(deps.youtube).toHaveBeenCalledWith(7, 'auto', 'de');
+  });
+
+  it('keeps missing subtitles independent from missing provider credentials', async () => {
+    deps.youtube.mockResolvedValueOnce({ subtitles: [], metadata: {} });
+    const source = { platform: 'youtube', videoId: 'sample-video' };
+    await expect(processVideoPage({ tabId: 7 }, source)).rejects.toMatchObject({
+      code: 'validation_error', translationKey: 'errorNoSubtitles'
+    });
+    await expect(processVideoPage({ tabId: 7 }, source)).rejects.toMatchObject({
+      code: 'auth_error', translationKey: 'errorNoApiKey'
+    });
+    expect(deps.process).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, 'auth_error', 'errorApiKeyInvalid'],
+    [403, 'auth_error', 'errorApiAccessForbidden'],
+    [429, 'rate_limit', 'errorRateLimit']
+  ])('retains the provider error identity for HTTP %s after subtitles were found', async (status, code, translationKey) => {
+    const cause = Object.assign(new Error('Provider declined the request.'), { status });
+    deps.process.mockRejectedValueOnce(cause);
+    await expect(processVideoPage({ tabId: 7, apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' }))
+      .rejects.toMatchObject({ cause, code, translationKey });
+  });
+
+  it('reports malformed provider output as a response error after subtitles were found', async () => {
+    const cause = new SyntaxError('Unexpected token in JSON response.');
+    deps.process.mockRejectedValueOnce(cause);
+    await expect(processVideoPage({ tabId: 7, apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' }))
+      .rejects.toMatchObject({ cause, code: 'parse_error', translationKey: 'errorFailedToParseResponse' });
   });
 });

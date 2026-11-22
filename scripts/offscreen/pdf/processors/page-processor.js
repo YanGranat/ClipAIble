@@ -136,7 +136,7 @@ export async function processPage(page, pageNum, metrics) {
   let pageElements;
   try {
     log(`[PDF v3] Page ${pageNum} - Calling processLinesByColumns with ${lines.length} lines`);
-    pageElements = processLinesByColumns(physical.remainingLines, viewport, metrics, groupLinesIntoElements);
+    pageElements = processLinesByColumns(physical.remainingLines, viewport, metrics, groupLinesIntoElements, physical.tables.length === 0);
     log(`[PDF v3] Page ${pageNum} - processLinesByColumns returned ${pageElements?.length || 0} elements`);
   } catch (error) {
     logWarn(`[PDF v3] processLinesByColumns failed for page ${pageNum}`, {
@@ -152,25 +152,28 @@ export async function processPage(page, pageNum, metrics) {
     throw error; // Re-throw to be caught by outer try-catch
   }
   
-  // Step 3.5: SPLIT LARGE BLOCKS FROM COLUMN 1 THAT CONTAIN TABLE ELEMENTS
-  // Column 1 can contain both regular text (headings, paragraphs) and table elements
-  // We need to split these blocks before merging into tables
-  try {
-    pageElements = splitTableBlocksFromColumn1(pageElements, metrics);
-  } catch (error) {
-    logWarn(`[PDF v3] Failed to split table blocks from column 1 on page ${pageNum}`, error);
-    // Continue with original elements
+  // Recovered prose regions supply reading order without changing table ownership.
+  if (!pageElements?.some(element => element.recoveredProseRegion)) {
+    // Step 3.5: SPLIT LARGE BLOCKS FROM COLUMN 1 THAT CONTAIN TABLE ELEMENTS
+    // Column 1 can contain both regular text (headings, paragraphs) and table elements
+    // We need to split these blocks before merging into tables
+    try {
+      pageElements = splitTableBlocksFromColumn1(pageElements, metrics);
+    } catch (error) {
+      logWarn(`[PDF v3] Failed to split table blocks from column 1 on page ${pageNum}`, error);
+      // Continue with original elements
+    }
+
+    // Step 4: MERGE ELEMENTS FROM DIFFERENT COLUMNS INTO TABLES
+    // Elements from different columns that are on the same Y-coordinate are likely table rows
+    try {
+      pageElements = mergeColumnElementsIntoTables(pageElements, metrics);
+    } catch (error) {
+      logWarn(`[PDF v3] Failed to merge column elements into tables on page ${pageNum}`, error);
+      // Continue with elements as-is (without table merging)
+    }
   }
-  
-  // Step 4: MERGE ELEMENTS FROM DIFFERENT COLUMNS INTO TABLES
-  // Elements from different columns that are on the same Y-coordinate are likely table rows
-  try {
-    pageElements = mergeColumnElementsIntoTables(pageElements, metrics);
-  } catch (error) {
-    logWarn(`[PDF v3] Failed to merge column elements into tables on page ${pageNum}`, error);
-    // Continue with elements as-is (without table merging)
-  }
-  
+
     // Ensure pageElements is always an array
     if (!Array.isArray(pageElements)) {
       logWarn(`[PDF v3] Page ${pageNum}: processLinesByColumns returned non-array, converting to array`, {

@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { translateBatch, translateContent, translateText } from '../../scripts/translation/text.js';
 import { detectLanguageByCharacters } from '../../scripts/translation/detection.js';
+import { CONFIG } from '../../scripts/utils/config.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ decryptApiKey: async key => key, getDecryptedKeyCached: async key => key }));
@@ -65,6 +66,33 @@ it('updates rich and plain text together and keeps the input intact', async () =
   expect(result.content[0]).toMatchObject({ text: 'Phrase cible', html: '<em>Phrase cible</em>' });
   expect(result.content[1].text).toBe('Autre texte');
   expect(input).toEqual(before);
+});
+
+it('bounds indexed batches and preserves source order across batch boundaries', async () => {
+  const inputs = Array.from({ length: CONFIG.TRANSLATION_BATCH_MAX_FIELDS + 2 }, (_, i) => 'Record ' + i);
+  const sizes = [];
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    const body = JSON.parse(init.body);
+    const values = JSON.parse(body.messages[1].content.split('\n').at(-1));
+    sizes.push(values.length);
+    return reply(JSON.stringify({ translations: values.map(value => 'Translated ' + value) }));
+  }));
+  const result = await translateContent({ content: inputs.map(text => ({ type: 'paragraph', text })) },
+    'fr', 'synthetic-key', 'gpt-example', undefined, options);
+  expect(sizes).toEqual([CONFIG.TRANSLATION_BATCH_MAX_FIELDS, 2]);
+  expect(result.content.map(item => item.text)).toEqual(inputs.map(text => 'Translated ' + text));
+});
+
+it('retries an invalid response in two smaller batches without keeping any ambiguous slots', async () => {
+  const source = { content: ['A', 'B', 'C', 'D'].map(text => ({ type: 'paragraph', text })) };
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(reply('{"translations":{"0":"Wrong","1":"Wrong","02":"Wrong","3":"Wrong"}}'))
+    .mockResolvedValueOnce(reply('{"translations":["A translated","B translated"]}'))
+    .mockResolvedValueOnce(reply('{"translations":["C translated","D translated"]}')));
+  const result = await translateContent(source, 'fr', 'synthetic-key', 'gpt-example', undefined, options);
+  expect(result.content.map(item => item.text)).toEqual(['A translated', 'B translated', 'C translated', 'D translated']);
+  expect(source.content.map(item => item.text)).toEqual(['A', 'B', 'C', 'D']);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 
 it('preserves the selected reasoning effort for translation requests', async () => {

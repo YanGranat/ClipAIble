@@ -1,8 +1,114 @@
 // @ts-check
 
+import { getDocumentFragmentTarget, INTERFACE_REGIONS } from './dom-utils.js';
+
+const DECLARED_BODY = '[itemprop~="articleBody"],.instapaper_body';
+export const EDITORIAL_CONTAINERS = 'article,[role~="article"],' + DECLARED_BODY;
+const HEADINGS = 'h1,h2,h3,h4,h5,h6';
+const RELATED_HEADING = /^(?:related (?:articles|stories|(?:blog )?posts)|recommended (?:articles|stories|posts)|most (?:read|viewed)|you (?:may|might) also like|also in .+)$/i;
+const normalizedLabel = value => (value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+/** Reading landmarks are evaluated at their own boundary during discovery. */
+export function isSemanticReadingScope(element) {
+  return element.matches(EDITORIAL_CONTAINERS + ',main,[role~="main"]');
+}
+
+function ownHeadings(element) {
+  return Array.from(element.querySelectorAll('h1')).filter(heading =>
+    heading.closest(EDITORIAL_CONTAINERS) === element && !heading.closest(INTERFACE_REGIONS));
+}
+
+/** Identify the scope of the document headline or a declared article body. */
+export function isEditorialOwner(element) {
+  if (!element?.matches(EDITORIAL_CONTAINERS) || element.closest(INTERFACE_REGIONS)) return false;
+  if (element.matches(DECLARED_BODY)) return true;
+  const doc = element.ownerDocument;
+  const headings = ownHeadings(element);
+  const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute('content')].map(normalizedLabel);
+  if (headings.some(heading => {
+    const label = normalizedLabel(heading.textContent);
+    return !!label && titles.some(title => title === label ||
+      [' | ', ' — ', ' – ', ' - '].some(separator => title.startsWith(label + separator)));
+  })) return true;
+  if (headings.length !== 1 || !normalizedLabel(headings[0].textContent) ||
+      doc.querySelector('meta[property="og:type"]')?.getAttribute('content')?.toLowerCase() !== 'article') return false;
+  return !Array.from(doc.querySelectorAll('article,[role~="article"]')).some(other =>
+    other !== element && ownHeadings(other).some(heading => normalizedLabel(heading.textContent)));
+}
+
+/** Compound layout labels can enclose the editorial owner without owning a panel. */
+export function isEditorialLayoutLabel(region, source, role) {
+  if (role !== 'newsletter' && role !== 'sidebar' && role !== 'header') return false;
+  if (region.matches('aside,[role~="complementary"],header,[role~="banner"]')) return false;
+  if (region.id.toLowerCase() === role || Array.from(region.classList).some(name => name.toLowerCase() === role)) return false;
+  const owner = source.closest(EDITORIAL_CONTAINERS);
+  return isEditorialOwner(owner) && (region === owner || (role !== 'newsletter' && region.contains(owner)));
+}
+
+/** A section destination referenced by its heading belongs to the article's reading order. */
+export function isReferencedReadingAside(element, roots) {
+  if (!element.matches('aside[id],[role~="complementary"][id]')) return false;
+  const heading = element.querySelector('h2,h3,h4,h5,h6');
+  const label = normalizedLabel(heading?.textContent);
+  if (!label || !element.querySelector('p,blockquote,ul,ol,figure,table')) return false;
+  const articleRoots = roots.filter(root => !root.matches('body,html'));
+  if (!articleRoots.some(root => root.contains(element))) return false;
+  return articleRoots.some(root =>
+    Array.from(root.querySelectorAll('a[href*="#"]')).some(link => !element.contains(link) &&
+      normalizedLabel(link.textContent) === label && getDocumentFragmentTarget(link) === element));
+}
+
 /** Every admitted reading scope owns its nested authored content. */
 export function isReadingOwned(element, roots = []) {
   return (roots || []).some(root => root.contains(element));
+}
+
+/** Find independent navigation collections by their heading and linked card structure. */
+export function findRecommendationRegions(root) {
+  const regions = [];
+  const linkedTargets = new Set(Array.from(root.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget));
+  const page = new URL(root.ownerDocument.URL);
+  page.hash = '';
+  function linkedPage(heading) {
+    const link = heading.closest('a[href]') || heading.querySelector('a[href]');
+    if (!link) return null;
+    try {
+      const url = new URL(link.getAttribute('href'), root.ownerDocument.baseURI);
+      url.hash = '';
+      return /^https?:$/.test(url.protocol) && url.href !== page.href ? url.href : null;
+    } catch { return null; }
+  }
+  for (const label of Array.from(root.querySelectorAll(HEADINGS))) {
+    if (label.tagName === 'H1' || !RELATED_HEADING.test(normalizedLabel(label.textContent)) || linkedTargets.has(label) ||
+        label.closest('pre,blockquote,figcaption,a')) continue;
+    for (let region = label.parentElement; region && region !== root; region = region.parentElement) {
+      if (linkedTargets.has(region) || region.querySelector('table,pre,blockquote,math,[role~="doc-bibliography"],[role~="doc-endnotes"]')) break;
+      const headings = Array.from(region.querySelectorAll(HEADINGS));
+      if (headings[0] !== label) break;
+      const cards = headings.slice(1);
+      const destinations = cards.map(linkedPage);
+      if (destinations.includes(null) || cards.some(heading => linkedTargets.has(heading))) break;
+      if (new Set(destinations).size < 2) continue;
+      if (containsOnlyCardText(region, label, cards)) regions.push(region);
+      break;
+    }
+  }
+  return regions;
+}
+
+/** Every non-label text node must belong to a single linked card. */
+function containsOnlyCardText(region, label, cards) {
+  const walker = region.ownerDocument.createTreeWalker(region, region.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (!node.textContent?.trim() || label.contains(node) ||
+        node.parentElement?.closest('script,style,template,noscript,button,[role="button"]')) continue;
+    let count = 0;
+    for (let owner = node.parentElement; owner && owner !== region && count === 0; owner = owner.parentElement) {
+      count = cards.filter(card => owner.contains(card)).length;
+    }
+    if (count !== 1) return false;
+  }
+  return true;
 }
 
 /** Presentation tables provide flow layout rather than data-cell ownership. */

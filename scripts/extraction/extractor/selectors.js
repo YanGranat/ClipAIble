@@ -52,11 +52,15 @@ export function isSelectedContentExcluded(element, exclusions) {
   });
 }
 
-export function readSelectedText(doc, value) {
+export function findSelectedTextElement(doc, value) {
   for (const selector of selectorValues(value)) {
     const node = doc.querySelector(selector);
-    const text = node ? readArticleMetadataText(node) : '';
-    if (text) return text;
+    if (node && readArticleMetadataText(node)) return node;
   }
-  return '';
+  return null;
+}
+
+export function readSelectedText(doc, value) {
+  const node = findSelectedTextElement(doc, value);
+  return node ? readArticleMetadataText(node) : '';
 }

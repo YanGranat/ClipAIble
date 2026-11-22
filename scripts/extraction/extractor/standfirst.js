@@ -2,9 +2,10 @@
 // Standfirst/subtitle extraction for extraction
 // Extracts article standfirst/deck/subtitle text
 
-import { cloneReadingContent, safeGetComputedStyle } from './dom-utils.js';
+import { cloneReadingContent, safeGetComputedStyle, INTERFACE_REGIONS } from './dom-utils.js';
 import { STANDFIRST_SELECTORS } from '../constants/content-thresholds.js';
 import { isOutsideArticleBody } from './discover.js';
+import { isEditorialLayoutLabel } from './reading-context.js';
 
 /**
  * Extract standfirst/subtitle from main content
@@ -17,12 +18,14 @@ export function extractStandfirst(mainContent) {
   }
   const isNewsletterCandidate = element => {
     for (let node = element; node; node = node.parentElement) {
-      if (/(?:^|[\s_-])newsletter(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute('class') || ''}`)) return true;
+      if (/(?:^|[\s_-])newsletter(?:$|[\s_-])/i.test(`${node.id} ${node.getAttribute('class') || ''}`) &&
+          !isEditorialLayoutLabel(node, element, 'newsletter')) return true;
       if (node === mainContent) break;
     }
     return false;
   };
   const isInlineCandidate = element => {
+    if (element.closest(INTERFACE_REGIONS)) return false;
     if (!element.matches('p,div,span') || element.querySelector('h1,h2,h3,h4,h5,h6,p,div,ul,ol,menu,dl,dt,dd,table,pre,blockquote,figure,figcaption,img,picture,svg,canvas,iframe,video,audio,object,embed,details,summary,article,aside,section,header,footer,nav,main,form,hr,address,button,input,select,textarea')) return false;
     for (let node = element; node; node = node.parentElement) {
       if (node.matches('[hidden],[aria-hidden="true"],[inert]')) return false;

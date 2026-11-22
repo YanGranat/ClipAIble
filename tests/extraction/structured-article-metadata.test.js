@@ -32,6 +32,15 @@ describe('Current structured article metadata', () => {
     expect(metadata(current)).toMatchObject({ author: 'Morgan Example', publishDate: '2024-04-17' });
   });
 
+  it('keeps a media credit from becoming the article author', () => {
+    const extra = `<meta property="article:author" content="https://example.test/author/morgan">
+      <div itemtype="https://schema.org/ImageObject" itemscope>
+        <span itemprop="author">Image Studio</span>
+      </div>
+      <figure><figcaption><a rel="author" href="/author/artist">Photo Contributor</a></figcaption></figure>`;
+    expect(metadata(current, { extra }).author).toBe('Morgan Example');
+  });
+
   it('retains every repeated scholarly author metadata value without including institutions', () => {
     const extra = '<meta name="citation_author" content="Morgan Example"><meta name="citation_author_institution" content="Survey Institute"><meta name="citation_author" content="Casey Example">';
     expect(metadata(current, { extra })).toMatchObject({ author: 'Morgan Example, Casey Example' });

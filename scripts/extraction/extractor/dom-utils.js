@@ -2,6 +2,33 @@
 // DOM utility functions for extraction
 // URL handling, DOM order comparison, computed style helpers
 
+/** Regions that own interface text independently of the surrounding article. */
+export const INTERFACE_REGIONS = 'nav,footer,dialog,[role~="navigation"],[role~="dialog"],[role~="alertdialog"],[aria-modal="true"]';
+
+/** Identify controls that share the current article or follow its publisher. */
+export function isPublisherLinkAction(element) {
+  const link = element.closest('a[href]');
+  if (!link) return false;
+  const doc = link.ownerDocument;
+  try {
+    const target = new URL(link.getAttribute('href'), doc.baseURI);
+    if (link.closest('[data-preferred-source]') &&
+        ['google.com', 'www.google.com'].includes(target.hostname) && target.pathname === '/preferences/source') return true;
+    const marked = link.hasAttribute('data-social-service') ||
+      /(?:^|\/)(?:share|sharer|shareArticle|intent)(?:[./]|$)/i.test(target.pathname);
+    if (!marked || link.querySelector('figure,p,blockquote')) return false;
+    const urls = [doc.URL, doc.querySelector('link[rel="canonical"]')?.getAttribute('href')]
+      .filter(Boolean).map(value => new URL(value, doc.baseURI));
+    for (const value of target.searchParams.values()) {
+      for (const address of value.match(/https?:\/\/[^\s<>"']+/g) || []) {
+        const shared = new URL(address);
+        if (urls.some(url => url.origin === shared.origin && url.pathname === shared.pathname)) return true;
+      }
+    }
+    return false;
+  } catch (_) { return false; }
+}
+
 /**
  * Convert relative URL to absolute URL
  * Handles data: URLs, http(s) URLs, and relative paths
@@ -157,7 +184,10 @@ export function isSourceExcluded(element, exclusions = []) {
 export function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
   const clone = element.cloneNode(true);
   copyMap?.set(element, clone);
-  const excluded = node => isSourceExcluded(node, exclusions);
+  const excluded = node => {
+    const region = node.closest(INTERFACE_REGIONS);
+    return (region && !(disclosed && region === element)) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
+  };
   if (excluded(element)) { clone.replaceChildren(); return clone; }
   const originals = Array.from(element.querySelectorAll('*'));
   const copies = Array.from(clone.querySelectorAll('*'));
@@ -185,6 +215,16 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     }
     const originalText = original.getAttribute('data-original-text');
     if (!textHidden && originalText?.trim()) copy.textContent = originalText;
+    if (!literal && original.matches('.screen-reader-text,.screen-reader-only,.sr-only,.visually-hidden') &&
+        original.closest('a') && !original.closest('mjx-assistive-mml') &&
+        !original.querySelector('math,mjx-assistive-mml,.MathJax,.katex')) {
+      let label = (copy.textContent || '').trim().replace(/\s+/g, ' ').toLowerCase();
+      if (label.startsWith('(') && label.endsWith(')')) label = label.slice(1, -1).trim();
+      if (/^opens(?: in)? a new (?:tab|window)$/.test(label)) {
+        copy.remove();
+        continue;
+      }
+    }
     if (!original.matches('span,a,button,b,i,em,strong,small,sup,sub') ||
         original.closest('pre,code,math,mjx-container,.MathJax,.katex')) continue;
     const parentStyle = original.parentElement && original.ownerDocument.defaultView?.getComputedStyle(original.parentElement);
@@ -196,13 +236,6 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
       if (parseFloat(style?.marginInlineStart) > 0) copy.before(' ');
       if (parseFloat(style?.marginInlineEnd) > 0) copy.after(' ');
     }
-  }
-  for (const node of Array.from(clone.querySelectorAll('.screen-reader-text, .screen-reader-only, .sr-only, .visually-hidden'))) {
-    if (!node.closest('a') || node.closest('pre, code, math, mjx-assistive-mml, .MathJax, .katex') ||
-        node.querySelector('math, mjx-assistive-mml, .MathJax, .katex')) continue;
-    let label = (node.textContent || '').trim().replace(/\s+/g, ' ').toLowerCase();
-    if (label.startsWith('(') && label.endsWith(')')) label = label.slice(1, -1).trim();
-    if (/^opens(?: in)? a new (?:tab|window)$/.test(label)) node.remove();
   }
   return clone;
 }

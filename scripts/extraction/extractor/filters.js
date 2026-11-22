@@ -2,9 +2,9 @@
 // Element filtering functions for extraction
 // Determines which elements should be excluded from extraction
 
-import { safeGetComputedStyle, safeClosest } from './dom-utils.js';
+import { compareDomOrder, getDocumentFragmentTarget, safeGetComputedStyle, safeClosest, INTERFACE_REGIONS, isPublisherLinkAction } from './dom-utils.js';
 import { isArticleContentFigure } from './discover.js';
-import { isReadingOwned } from './reading-context.js';
+import { isEditorialLayoutLabel, isReadingOwned, isReferencedReadingAside } from './reading-context.js';
 import { getGraphicReadingOwner } from './graphics.js';
 import { getAnnotationTarget } from './annotations.js';
 
@@ -145,6 +145,7 @@ export function isSubscriptionFormContent(element) {
   const emailFields = Array.from(form.querySelectorAll('input')).filter(input =>
     (input.getAttribute('type') || '').toLowerCase() === 'email' ||
     (input.getAttribute('name') || '').toLowerCase() === 'email' ||
+    /^e-?mail(?: address)?$/i.test((input.getAttribute('aria-label') || '').trim()) ||
     (input.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).includes('email'));
   if (!emailFields.length) return false;
   const labels = [form.getAttribute('aria-label') || ''];
@@ -168,6 +169,91 @@ export function isSubscriptionFormContent(element) {
     }
   }
   return false;
+}
+
+const PANEL_HEADING = 'h2,h3,h4,h5,h6';
+const FORM_CONTROL = 'button,input[type="submit"],[role="button"]';
+const SUBSCRIBE_PROMPT = /^(?:subscribe|sign[\s-]*up)\b/i;
+const PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
+const SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
+const PROTECTED_READING = 'article,main,[role~="article"],[role~="main"],[itemprop~="articleBody"],.instapaper_body,h1,table,pre,blockquote,math';
+
+/** Locate independently owned subscription and comment controls before projecting article content. */
+export function findPublisherFormRegions(root) {
+  const regions = new Set();
+  const linkedTargets = new Set(Array.from(root.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget));
+  for (const link of Array.from(root.querySelectorAll('a[href="#"]'))) {
+    if (link.closest('p,blockquote,pre,figcaption') || linkedTargets.has(link)) continue;
+    const action = (link.getAttribute('class') || '').replace(/([a-z])([A-Z])/g, '$1 $2').split(/[\s_-]+/);
+    if (action.some(word => /^(?:show|open|toggle)$/i.test(word)) &&
+        action.some(word => /^comments?$/i.test(word))) regions.add(link);
+  }
+  for (const form of Array.from(root.querySelectorAll('form'))) {
+    const subscription = isSubscriptionFormContent(form);
+    const comment = form.querySelector('textarea[name="comment" i]') && form.querySelector(FORM_CONTROL) &&
+      form.querySelector('input[name="email" i],input[name="author" i]');
+    if ((!subscription && !comment) || form.querySelector(PROTECTED_READING) || form.closest('blockquote,pre')) continue;
+    regions.add(form);
+    for (let panel = form.parentElement; panel && panel !== root; panel = panel.parentElement) {
+      if (panel.matches(PROTECTED_READING) || panel.querySelector(PROTECTED_READING) || panel.querySelectorAll('form').length !== 1) break;
+      const heading = Array.from(panel.querySelectorAll(PANEL_HEADING));
+      const label = (panel.getAttribute('aria-label') || '').trim();
+      const caption = panel.firstElementChild;
+      const isCommentPanel = comment && caption?.matches('p,' + PANEL_HEADING) &&
+        /^(?:leave a (?:comment|reply)|post a comment)$/i.test(caption.textContent.trim()) &&
+        !Array.from(panel.childNodes).some(node => node !== form && node !== caption && node.textContent?.trim());
+      const isSubscriptionPanel = subscription && (SUBSCRIPTION_PANEL.test(label) ||
+        (heading.length === 1 && PANEL_PROMPT.test(heading[0].textContent.trim()) &&
+          compareDomOrder(heading[0], form) < 0 && !form.contains(heading[0]) &&
+          Array.from(panel.querySelectorAll('a[href]')).some(link =>
+            /^(?:privacy policy|terms of (?:use|service))$/i.test(link.textContent.trim()))));
+      if (!isCommentPanel && !isSubscriptionPanel) continue;
+      if (linkedTargets.has(panel) || heading.some(node => linkedTargets.has(node))) break;
+      regions.add(panel);
+      if (label && isSubscriptionPanel) addPanelSkipControls(panel, label, regions);
+      break;
+    }
+  }
+  const paragraphs = root.matches('p') ? [root] : Array.from(root.querySelectorAll('p'));
+  for (const paragraph of paragraphs) {
+    if (paragraph.closest('blockquote,pre,figcaption,form') || linkedTargets.has(paragraph)) continue;
+    const actions = Array.from(paragraph.querySelectorAll('a[href]'));
+    const firstAction = actions[0]?.textContent.trim() || '';
+    if (!SUBSCRIBE_PROMPT.test(firstAction) || !paragraph.textContent.trim().startsWith(firstAction)) continue;
+    if (!actions.every(action => {
+      try {
+        const pathname = new URL(action.getAttribute('href'), action.baseURI).pathname;
+        return /(?:^|[/_-])(?:newsletters?|subscribe|subscriptions?|signup|sign-up)(?:$|[/_.-])/i.test(pathname);
+      } catch { return false; }
+    })) continue;
+    regions.add(paragraph);
+    // A compact sign-up panel can own an image as well as its action text.
+    const panel = paragraph.parentElement;
+    if (!panel || !root.contains(panel) || panel.childElementCount !== 2) continue;
+    const figure = Array.from(panel.children).find(child => child.matches('figure'));
+    if (!figure || linkedTargets.has(figure) || figure.querySelector('figcaption') ||
+        !Array.from(figure.querySelectorAll('img[alt]')).some(image =>
+          /\b(?:promotional banner|newsletter (?:banner|sign[\s-]*up))\b/i.test(image.getAttribute('alt') || ''))) continue;
+    regions.add(figure);
+  }
+  return [...regions];
+}
+
+/** Drop a skip link and its marker when they explicitly surround a removed panel. */
+function addPanelSkipControls(panel, label, regions) {
+  const wrapper = panel.closest('figure,section');
+  if (!wrapper) return;
+  const normalize = text => text.trim().replace(/\s+/g, ' ').toLowerCase();
+  const after = 'after ' + normalize(label);
+  for (const link of Array.from(wrapper.querySelectorAll('a[href*="#"]'))) {
+    if (!/^skip\b/i.test(link.textContent.trim()) || compareDomOrder(link, panel) >= 0) continue;
+    const target = getDocumentFragmentTarget(link);
+    if (wrapper.contains(target) && compareDomOrder(panel, target) < 0 && target.matches('[role~="note"]') &&
+        normalize(target.getAttribute('aria-label') || target.textContent || '') === after) {
+      regions.add(link);
+      regions.add(target);
+    }
+  }
 }
 
 /**
@@ -199,6 +285,7 @@ export function isExcluded(win, element, constants, readingRoots = []) {
   const isImageOrFigure = tagName === 'img' || tagName === 'figure';
   const readingOwned = isReadingOwned(element, readingRoots);
   const authoredHeading = readingOwned && /^h[1-6]$/.test(tagName);
+  if (element.closest(INTERFACE_REGIONS) || isPublisherLinkAction(element)) return true;
   const control = element.closest('button,[role="button"],input,select,textarea');
   if (control && !getAnnotationTarget(control)) return true;
   const selectedMedia = readingRoots.some(root => root.matches('figure,img,picture,svg,canvas') &&
@@ -355,9 +442,11 @@ export function isExcluded(win, element, constants, readingRoots = []) {
     if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) continue;
     if (selectedMedia && excluded === 'overlay') continue;
     const pattern = new RegExp(`\\b${excluded}\\b`);
-    if (pattern.test(className) || pattern.test(id) ||
+    if ((pattern.test(className) || pattern.test(id) ||
         className === excluded || className.startsWith(excluded + '-') || 
-        className.endsWith('-' + excluded)) {
+        className.endsWith('-' + excluded)) &&
+        !isEditorialLayoutLabel(element, element, excluded) &&
+        !(excluded === 'sidebar' && isReferencedReadingAside(element, readingRoots))) {
       return true;
     }
   }
@@ -383,7 +472,9 @@ export function isExcluded(win, element, constants, readingRoots = []) {
           return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
         }
         const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`);
+        return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`) &&
+          !isEditorialLayoutLabel(parent, element, excluded) &&
+          !(excluded === 'sidebar' && isReferencedReadingAside(parent, readingRoots));
       })) return true;
       
       // Clear ad indicators

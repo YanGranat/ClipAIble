@@ -57,22 +57,26 @@ vi.mock('../../scripts/state/processing.js', () => {
   };
 });
 
-vi.mock('../../scripts/locales.js', () => ({
-  getUILanguage: vi.fn(() => Promise.resolve('en')),
-  tSync: vi.fn((key) => {
-    const translations = {
-      statusCancelled: 'Cancelled',
-      statusDone: 'Done!',
-      statusTranslatingContent: 'Translating content...',
-      statusAnalyzingImages: 'Analyzing images...',
-      statusTranslatingText: 'Translating text...',
-      stageGeneratingAbstract: 'Generating abstract...',
-      errorTranslationFailed: 'Translation failed',
-      errorAuthFailed: 'Authentication failed'
-    };
-    return translations[key] || key;
-  })
-}));
+vi.mock('../../scripts/locales.js', async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getUILanguage: vi.fn(() => Promise.resolve('en')),
+    tSync: vi.fn((key, language, params) => {
+      const translations = {
+        statusCancelled: 'Cancelled',
+        statusDone: 'Done!',
+        statusTranslatingContent: 'Translating content...',
+        statusAnalyzingImages: 'Analyzing images...',
+        statusTranslatingText: 'Translating text...',
+        stageGeneratingAbstract: 'Generating abstract...',
+        errorTranslationFailed: 'Translation failed',
+        errorAuthFailed: 'Authentication failed'
+      };
+      return translations[key] || actual.tSync(key, language, params);
+    })
+  };
+});
 
 vi.mock('../../scripts/background/popup-connection.js', () => ({
   isPopupOpen: vi.fn(() => true) // Default: skip completion notifications in unit tests
@@ -181,6 +185,23 @@ describe('utils/pipeline-helpers', () => {
       );
       
       expect(recordSave).toHaveBeenCalled();
+    });
+
+    it.each([
+      [2, false, 'Ready: PDF. Image translation failures: 2.'],
+      [undefined, false, 'Ready: PDF'],
+      [2, true, null]
+    ])('sends one completion message for image failure count %s with popup open %s', async (imageTranslationFailureCount, popupOpen, message) => {
+      const { createNotification } = await import('../../scripts/background/notifications.js');
+      const { isPopupOpen } = await import('../../scripts/background/popup-connection.js');
+      isPopupOpen.mockReturnValueOnce(popupOpen);
+      if (!popupOpen) isPopupOpen.mockReturnValueOnce(false);
+      mocks.mockGetProcessingState.mockReturnValueOnce({ outputFormat: 'pdf', imageTranslationFailureCount });
+
+      await finalizeProcessing({ title: 'Article', url: 'https://example.test', outputFormat: 'pdf' }, vi.fn(), null);
+
+      if (message) expect(createNotification).toHaveBeenCalledExactlyOnceWith(message);
+      else expect(createNotification).not.toHaveBeenCalled();
     });
   });
 

@@ -8,9 +8,10 @@ import { serializeReadingHtml } from './inline-content.js';
 /**
  * Check if URL is a placeholder (base64 1x1 transparent pixel, etc.)
  * @param {string} url - URL to check
+ * @param {HTMLImageElement} [image] - Source element, for explicitly labelled fallbacks
  * @returns {boolean} - True if URL is placeholder
  */
-export function isPlaceholderUrl(url) {
+export function isPlaceholderUrl(url, image) {
   if (!url) return true;
   if (/^data:image\/(?:png|gif);base64,/i.test(url)) {
     try {
@@ -31,7 +32,10 @@ export function isPlaceholderUrl(url) {
   }
   try {
     const basename = decodeURIComponent(new URL(url, 'https://example.invalid/').pathname.split('/').pop() || '');
-    return /^(?:placeholder|spacer|blank|transparent|1x1|pixel)\.(?:gif|png|svg|webp)$/i.test(basename);
+    if (/^(?:placeholder|spacer|blank|transparent|1x1|pixel)\.(?:gif|png|svg|webp)$/i.test(basename)) return true;
+    const label = (image?.getAttribute('aria-label') || image?.alt || '').trim().replace(/\s+/g, ' ');
+    return /^(?:image|photo|picture) (?:is )?(?:unavailable|not available|not found)$/i.test(label) &&
+      /(?:^|[-_.])(?:placeholder|fallback)(?:[-_.]|$)/i.test(basename);
   } catch (_) { return false; }
 }
 
@@ -47,9 +51,10 @@ export function isDecorativeImageUrl(url, patterns) {
 /**
  * Extract best URL from srcset attribute
  * @param {string} srcset - srcset attribute value
+ * @param {HTMLImageElement} [image] - Source element, for explicitly labelled fallbacks
  * @returns {string|null} - Best URL or null
  */
-export function getBestSrcsetUrl(srcset) {
+export function getBestSrcsetUrl(srcset, image) {
   if (!srcset) return null;
   const sources = srcset.split(',').map(s => s.trim());
   let bestUrl = null;
@@ -59,7 +64,7 @@ export function getBestSrcsetUrl(srcset) {
     const parts = source.trim().split(/\s+/);
     if (parts.length < 1) continue;
     const url = parts[0];
-    if (isPlaceholderUrl(url)) continue;
+    if (isPlaceholderUrl(url, image)) continue;
     
     if (parts.length > 1) {
       const descriptor = parts[1];
@@ -96,19 +101,19 @@ export function extractBestImageUrl(imgElement) {
 
   for (const attr of ['data-full-src', 'data-high-res', 'data-original-src', 'data-srcset', 'data-src', 'data-lazy-src', 'data-original', 'data-lazy']) {
     const value = imgElement.getAttribute(attr);
-    const candidate = attr === 'data-srcset' ? getBestSrcsetUrl(value) : value;
-    if (candidate && !isPlaceholderUrl(candidate)) return candidate;
+    const candidate = attr === 'data-srcset' ? getBestSrcsetUrl(value, imgElement) : value;
+    if (candidate && !isPlaceholderUrl(candidate, imgElement)) return candidate;
   }
   
   // Priority 1: currentSrc (browser's selected src from srcset)
-  if (imgElement.currentSrc && imgElement.currentSrc.length > 0 && !isPlaceholderUrl(imgElement.currentSrc)) {
+  if (imgElement.currentSrc && !isPlaceholderUrl(imgElement.currentSrc, imgElement)) {
     src = imgElement.currentSrc;
   }
   
   // Priority 2: src attribute
   if (!src) {
     const imgSrc = imgElement.src || imgElement.getAttribute('src');
-    if (imgSrc && imgSrc.length > 0 && !isPlaceholderUrl(imgSrc)) {
+    if (imgSrc && !isPlaceholderUrl(imgSrc, imgElement)) {
       src = imgSrc;
     }
   }
@@ -117,7 +122,7 @@ export function extractBestImageUrl(imgElement) {
   if (!src) {
     const srcset = imgElement.getAttribute('srcset');
     if (srcset) {
-      src = getBestSrcsetUrl(srcset);
+      src = getBestSrcsetUrl(srcset, imgElement);
     }
   }
   
@@ -128,7 +133,7 @@ export function extractBestImageUrl(imgElement) {
       for (const source of Array.from(picture.querySelectorAll('source[srcset]'))) {
         const srcset = source.getAttribute('srcset');
         if (srcset) {
-          const candidate = getBestSrcsetUrl(srcset);
+          const candidate = getBestSrcsetUrl(srcset, imgElement);
           if (candidate) {
             src = candidate;
             break;
@@ -144,9 +149,9 @@ export function extractBestImageUrl(imgElement) {
                        'data-full-src', 'data-high-res', 'data-srcset', 'data-original-src'];
     for (const attr of dataAttrs) {
       const val = imgElement.getAttribute(attr);
-      if (val && !val.includes('data:') && !isPlaceholderUrl(val)) {
+      if (val && !val.includes('data:') && !isPlaceholderUrl(val, imgElement)) {
         if (attr === 'data-srcset') {
-          src = getBestSrcsetUrl(val);
+          src = getBestSrcsetUrl(val, imgElement);
         } else {
           src = val;
         }
@@ -160,7 +165,7 @@ export function extractBestImageUrl(imgElement) {
     const parentLink = imgElement.closest('a[href]');
     if (parentLink) {
       const href = parentLink.getAttribute('href');
-      if (href && (href.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i) || href.includes('image'))) {
+      if (href && !isPlaceholderUrl(href, imgElement) && (href.match(/\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i) || href.includes('image'))) {
         src = href;
       }
     }
@@ -412,6 +417,21 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
       if (root.contains(media)) mediaRoots.add(media);
     }
   }
+  for (const root of bodyRoots) {
+    const body = root.closest('[itemprop~="articleBody"]');
+    const article = body?.parentElement?.closest('[itemscope][itemtype]');
+    if (!(article?.getAttribute('itemtype') || '').split(/\s+/).some(type =>
+      /^https?:\/\/schema\.org\/\w*(?:Article|BlogPosting)$/.test(type))) continue;
+    for (const declaration of Array.from(article.querySelectorAll('[itemprop~="image"]'))) {
+      if (declaration.parentElement?.closest('[itemscope]') !== article) continue;
+      for (const source of declaration.matches('img') ? [declaration] : Array.from(declaration.querySelectorAll('img'))) {
+        const media = ownerOf(source);
+        if (insideBody(media) || !before(media, body)) continue;
+        mediaRoots.add(media);
+        featuredRoots.add(media);
+      }
+    }
+  }
   const owners = new Map();
   for (const root of bodyRoots) {
     const owner = root.closest('article,[itemprop~="articleBody"]');
@@ -481,7 +501,8 @@ export function getEmbeddedMediaItems(element) {
   const escape = value => String(value).replace(/[&<>"']/g, character => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
-  const label = (element.getAttribute('title') || element.getAttribute('aria-label') || '').trim() || source.href;
+  const description = (element.getAttribute('title') || element.getAttribute('aria-label') || '').trim();
+  const label = description || source.href;
   let preview = element.tagName === 'VIDEO' ? safeUrl(element.getAttribute('poster'))?.href : null;
   if (element.tagName === 'IFRAME' && source.hostname === 'datawrapper.dwcdn.net') {
     const chart = source.pathname.match(/^\/([A-Za-z0-9]{5})\/(?:\d+\/?)?$/);
@@ -489,7 +510,7 @@ export function getEmbeddedMediaItems(element) {
   }
   /** @type {import('./types.js').ContentItem[]} */
   const items = [];
-  if (preview) items.push({ type: 'image', src: preview, alt: label, caption: '' });
+  if (preview) items.push({ type: 'image', src: preview, alt: description, caption: '' });
   items.push({ type: 'paragraph', text: label,
     html: `<a href="${escape(source.href)}">${escape(label)}</a>` });
   return items;

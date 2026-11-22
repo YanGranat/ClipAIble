@@ -2,6 +2,8 @@
 // State management module
 // Handles processing state polling, UI updates, and stage mapping
 
+import { getDocumentReadyMessage } from '../../scripts/locales.js';
+
 /**
  * Initialize state module
  * @param {Object} deps - Dependencies
@@ -170,9 +172,8 @@ export function initState(deps) {
         const formatKey = formatKeyMap[savedFormat] || 'formatPdf';
         const formatLabel = await t(formatKey);
 
-        const messageTemplate = await t('notificationReady');
-        const successMessage = messageTemplate.replace('{format}', formatLabel);
-        setStatus('ready', successMessage, null, { key: 'notificationReady', params: { format: formatLabel } });
+        const message = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount);
+        setStatus('ready', await t(message.key, null, message.params), null, message);
         setProgress(0, false); // Hide progress bar immediately
       } else {
         // Processing completed but status not set to "Done!" - show ready state
@@ -294,6 +295,7 @@ export function initState(deps) {
       JSON.stringify(newState.errorTranslationParams) !== JSON.stringify(oldState.errorTranslationParams) ||
       newState.isCancelled !== oldState.isCancelled ||
       newState.outputFormat !== oldState.outputFormat ||
+      newState.imageTranslationFailureCount !== oldState.imageTranslationFailureCount ||
       newState.startTime !== oldState.startTime
     );
   }

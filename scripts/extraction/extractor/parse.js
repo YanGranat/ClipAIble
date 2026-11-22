@@ -2,7 +2,7 @@
 // Main DOM parser for extraction
 // Converts DOM elements to content items
 
-import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, safeGetComputedStyle, isSourceExcluded } from './dom-utils.js';
+import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, safeGetComputedStyle, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isRealHeading } from './text-utils.js';
 import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent } from './filters.js';
 import { extractBestImageUrl, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
@@ -10,7 +10,7 @@ import { getOriginalTextIfTranslated } from './translate.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
 import { serializeReadingHtml, processMathElements, encodeOriginalText } from './inline-content.js';
 import { CANDIDATE_SELECTOR } from './constants.js';
-import { isReadingOwned, isLayoutTable, isFlowContainer } from './reading-context.js';
+import { isReadingOwned, isLayoutTable, isFlowContainer, isReferencedReadingAside } from './reading-context.js';
 import { collectAnnotationTargets, emittedReadingIds, reuseAnnotationCitations } from './annotations.js';
 import { projectAtomicMedia } from './atomic-media.js';
 
@@ -79,6 +79,26 @@ export function sortElementsInDomOrder(elements) {
   return [...elements].sort(compareDomOrder);
 }
 
+/** Preserve the source links when the browser cannot read a layered figure's pixels. */
+function originalFigureContent(element, baseUrl, layers, caption) {
+  const document = element.ownerDocument;
+  const paragraph = document.createElement('p');
+  const original = new URL(baseUrl);
+  if (element.id) original.hash = element.id;
+  const link = document.createElement('a');
+  link.href = original.href;
+  link.textContent = 'View the original layered figure';
+  paragraph.append('This figure could not be reproduced in the export. ', link, ' · ');
+  layers.forEach((source, index) => {
+    const layer = document.createElement('a');
+    layer.href = source;
+    layer.textContent = `Layer ${index + 1}`;
+    if (index > 0) paragraph.append(', ');
+    paragraph.append(layer);
+  });
+  return paragraph.innerHTML + (caption ? '<br>' + caption : '');
+}
+
 /** Keep authored destinations that cannot be represented by raster pixels. */
 function graphicReferences(owner, state, constants, win, baseUrl) {
   const references = [];
@@ -118,13 +138,14 @@ export function hasFigureBodyText(element) {
 /**
  * Partition selected containers around their selected blocks, preserving inline markup.
  * @param {Element[]} elements - Selected elements in DOM order
+ * @param {{has(element: Element): boolean}} graphics - Atomic graphic owners
  * @returns {Array<{element: Element, container?: Element, owned?: Element[]}>} Ordered parse entries
  */
 export function partitionCandidateElements(elements, graphics = new Map(), readingBoundaries = []) {
   const selected = new Set(elements);
   const visited = new Set();
   const entries = [];
-  const blockSelector = CANDIDATE_SELECTOR.split(',').filter(tag => tag !== 'code').concat(['aside', 'nav', 'footer']).join(',');
+  const blockSelector = CANDIDATE_SELECTOR.split(',').filter(tag => tag !== 'code').concat(INTERFACE_REGIONS).join(',');
   function append(element) {
     if (visited.has(element)) return;
     visited.add(element);
@@ -210,11 +231,22 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     }
   }
   
-  for (const { element, container, owned } of partitionCandidateElements(elements, state.readingGraphics,
-    state.standfirstElement ? [state.standfirstElement] : [])) {
+  const readingBoundaries = (state.selectionExclusions || []).filter(rule => typeof rule !== 'string');
+  if (state.standfirstElement) readingBoundaries.push(state.standfirstElement);
+  const graphicOwners = state.originalImageLayers?.size
+    ? new Set([...state.readingGraphics?.keys() || [], ...state.originalImageLayers.keys()])
+    : state.readingGraphics;
+  const sourceTitle = state.originalImageLayers?.size && state.mainTitleText
+    ? elements.find(element => element.tagName === 'H1' &&
+      normalizeHeadingForDedup(readArticleMetadataText(element)) === state.mainTitleText)
+    : null;
+  for (const { element, container, owned } of partitionCandidateElements(elements, graphicOwners, readingBoundaries)) {
     if (consumed.has(element) || (container && consumed.has(container))) continue;
     if (state.captionOwners.has(container || element)) continue;
     const tagName = element.tagName.toLowerCase();
+    if (tagName === 'h1' && element === state.titleElement && content.every(item =>
+      item.type === 'subtitle' || item.type === 'separator' || item.isStandfirst || item.isFeatured ||
+      (item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || '')))) continue;
     
     // Strong exclusion check (ad/sponsor patterns)
     if (shouldSkipStronglyExcluded(container || element)) {
@@ -231,14 +263,23 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     }
 
     const graphic = state.readingGraphics?.get(element);
-    if (graphic) {
+    const originalLayers = state.originalImageLayers?.get(element);
+    if (graphic || originalLayers) {
       const caption = Array.from(element.querySelectorAll('figcaption')).find(node => node.closest('figure') === element);
-      content.push({ ...graphic, ...(element.id ? { id: element.id } : {}),
-        ...(caption ? { caption: serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots) } : {}),
-        ...(state.featuredMediaRoots?.some(root => root === element || root.contains(element)) ? { isFeatured: true } : {}) });
+      const captionHtml = caption ? serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots) : '';
+      if (graphic) {
+        content.push({ ...graphic, ...(element.id ? { id: element.id } : {}),
+          ...(caption ? { caption: captionHtml } : {}),
+          ...(state.featuredMediaRoots?.some(root => root === element || root.contains(element)) ? { isFeatured: true } : {}) });
+      } else {
+        const html = originalFigureContent(element, baseUrl, originalLayers, captionHtml);
+        const leadsTitle = sourceTitle && !element.contains(sourceTitle) && compareDomOrder(element, sourceTitle) < 0;
+        content.push({ type: 'paragraph', text: html, html, ...(element.id ? { id: element.id } : {}),
+          ...(leadsTitle ? { isFeatured: true } : {}) });
+      }
       content.push(...graphicReferences(element, state, constants, win, baseUrl));
       for (const child of Array.from(element.querySelectorAll('*'))) consumed.add(child);
-      incrementContentType(state.debugInfo, 'image');
+      incrementContentType(state.debugInfo, graphic ? 'image' : 'paragraph');
       processedCount++;
       continue;
     }
@@ -451,7 +492,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
  */
 export function omitInitialArticleTitle(content, state) {
   const firstBodyIndex = content.findIndex(item => item.type !== 'subtitle' &&
-    item.type !== 'separator' && !item.isStandfirst && !(item.type === 'image' && item.isFeatured));
+    item.type !== 'separator' && !item.isStandfirst && !item.isFeatured);
   const firstBody = content[firstBodyIndex];
   if (firstBody?.type === 'heading' && firstBody.level === 1 && state.mainTitleText &&
       normalizeHeadingForDedup(firstBody.text) === state.mainTitleText) {
@@ -521,12 +562,15 @@ export function handleHeading(element, state, constants) {
   }
   
   const level = parseInt(element.tagName.charAt(1));
+  const aside = element.closest('aside[id],[role~="complementary"][id]');
+  const sectionId = aside?.querySelector('h2,h3,h4,h5,h6') === element &&
+    isReferencedReadingAside(aside, state.referenceRoots) ? aside.id : undefined;
   return {
     type: 'heading',
     level,
     text: cleanedText,
     format: 'text',
-    id: element.id || undefined
+    id: element.id || sectionId
   };
 }
 
@@ -542,8 +586,10 @@ export function handleParagraph(win, element, state, constants) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
   
-  // Skip if inside table (table content is handled as a unit)
-  if (element.closest('table') && !isLayoutTable(element.closest('table'))) return null;
+  // A selected table emits its cells as a unit. A selection inside a cell can
+  // instead own prose without owning the enclosing table.
+  const table = element.closest('table');
+  if (table && !isLayoutTable(table) && isReadingOwned(table, state.referenceRoots)) return null;
   
   // Skip if standfirst element
   if (state.standfirstElement && element === state.standfirstElement) return null;
@@ -713,8 +759,10 @@ export function handleList(element, excludedSelectors = [], referenceRoots = nul
   // Skip if inside table (nested lists in table cells should be part of table)
   if (element.closest('table')) return null;
   
-  // Check if list is inside navbox, authority-control, sidebar, or sister-box (Wikipedia)
-  if (element.closest('.navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .sidebar, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc')) {
+  // Navigation lists and utility sidebars are outside the reading order.
+  const sidebar = element.closest('.sidebar');
+  if (element.closest('.navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc') ||
+      (sidebar && !isReferencedReadingAside(sidebar, referenceRoots || []))) {
     return null;
   }
 
@@ -866,8 +914,8 @@ export function handleDiv(element, state, constants) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
   
-  // Skip if inside table (table content is handled as a unit)
-  if (element.closest('table') && !isLayoutTable(element.closest('table'))) return null;
+  const table = element.closest('table');
+  if (table && !isLayoutTable(table) && isReadingOwned(table, state.referenceRoots)) return null;
 
   const figure = element.closest('figure');
   if (figure && !element.closest('figcaption') && hasFigureBodyText(figure)) {

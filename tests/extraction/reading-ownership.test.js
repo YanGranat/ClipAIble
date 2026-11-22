@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { collectAnnotationTargets } from '../../scripts/extraction/extractor/annotations.js';
 import { generateExtractAutomaticallyInlined } from '../../scripts/extraction/extractor/builder.js';
 
 const pages = [];
@@ -71,6 +72,60 @@ describe('Reading ownership', () => {
     const result = await extract('<article><h1>Field report</h1><table role="presentation"><tr><td><h2>Measurements</h2><p>The first observation remains before its image.</p><img src="/chart.png" width="640" height="480"><p>The final observation remains after its image.</p></td></tr></table></article>');
     expect(result.content.map(item => item.type)).toEqual(['heading', 'paragraph', 'image', 'paragraph']);
   });
+
+  it('retains selected prose inside a table outside the reading roots', async () => {
+    const html = '<h1>Field report</h1><table><tr><td><p>Navigation.</p></td><td><p id="report">The first observation.<br>The final observation.</p></td></tr></table>';
+    const result = await extract(html, { content: '#report' });
+    expect(result.content.map(item => item.type)).toEqual(['paragraph']);
+    expect(result.content[0].html).toContain('The first observation.<br>The final observation.');
+    expect(result.plain).not.toContain('Navigation.');
+  });
+
+  it('keeps reading links while dropping standalone comment controls', async () => {
+    const result = await extract('<article><h1>Field report</h1><p>See <a href="#notes">the notes</a> for details.</p><a href="#" class="open-comments-panel">Join the discussion</a><section id="notes"><h2>Notes</h2><p>The sample was sealed.</p></section></article>');
+    expect(result.plain).toContain('See the notes for details.');
+    expect(result.plain).toContain('The sample was sealed.');
+    expect(result.plain).not.toContain('Join the discussion');
+  });
+
+  it('keeps a titled aside linked from another selected reading root', async () => {
+    const html = '<main><h1>Field report</h1><section class="contents"><a href="#method">Calibration method</a></section>' +
+      '<div class="body"><p>The first observation.</p><aside id="method" class="sidebar"><h3>Calibration method</h3>' +
+      '<p>The instrument was sealed after calibration.</p></aside><aside class="sidebar" id="other"><h3>Updates</h3>' +
+      '<p>Publisher announcements and updates.</p></aside></div></main>';
+    const result = await extract(html, { articleContainer: 'main', content: '.contents, .body' });
+    expect(result.plain).toContain('The instrument was sealed after calibration.');
+    expect(result.plain).not.toContain('Publisher announcements and updates.');
+  });
+
+  it('drops a newsletter banner owned by a sign-up panel while retaining editorial figures', async () => {
+    const result = await extract('<article><h1>Field report</h1><figure><img src="/measuring.png" width="640" height="480" alt="Test apparatus"><figcaption>Measuring apparatus</figcaption></figure>' +
+      '<p>Measurements were taken at regular intervals.</p><div><figure><img src="/promo.png" width="640" height="480" alt="A promotional banner for the bulletin"></figure>' +
+      '<p><a href="/newsletters/lab">Sign up for the bulletin</a> for weekly updates.</p></div></article>');
+    const sources = result.content.filter(item => item.type === 'image').map(item => item.src);
+    expect(sources).toEqual(['https://example.test/measuring.png']);
+    expect(result.plain).not.toContain('weekly updates');
+  });
+
+  it('omits the source headline after masthead metadata while keeping later headings and links', async () => {
+    const url = 'https://www.google.com/preferences/source?q=example.test';
+    const result = await extract('<article><p><a href="/reports">Field reports</a></p><h1>Field report</h1>' +
+      '<div data-preferred-source><a href="' + url + '">Follow this publisher</a></div><p>The first observation.</p>' +
+      '<section><h1>Field report</h1><p><a href="' + url + '">Background link</a> is an editorial link.</p></section></article>');
+    expect(result.title).toBe('Field report');
+    expect(result.content.filter(item => item.type === 'heading').map(item => item.text)).toEqual(['Field report']);
+    expect(result.plain).toContain('Background link');
+    expect(result.plain).not.toContain('Follow this publisher');
+  });
+
+  it('keeps links inline when a hidden browser announcement has a block layout', async () => {
+    const result = await extract('<article><h1>Field report</h1><p>See <a href="/methods">the method' +
+      '<span class="screen-reader-text" style="display: block; position: absolute">(opens a new tab)</span>' +
+      '</a>, which uses a calibrated instrument.</p></article>');
+    const text = result.content.find(item => item.type === 'paragraph').html;
+    expect(text).toContain('the method</a>, which');
+    expect(text).not.toContain('<br');
+  });
   it('follows authored note portals without exporting adjacent account controls', async () => {
     const result = await extract('<article><h1>Field report</h1><p>An observation<button popovertarget="measurement-note" aria-label="Footnote"><span></span></button> retains its note.</p><p>A <button popovertarget="term">calibrated</button> instrument was used.</p></article><div id="measurement-note" popover hidden><p>The instrument was calibrated independently.</p><blockquote>Calibration retained the uncertainty bound.</blockquote></div><div id="term" popover><p>A scale comparison defines this term.</p></div><div id="account" popover><form><input name="email"><button>Sign in</button></form></div>');
     expect(result.plain).toContain('calibrated instrument');
@@ -109,6 +164,32 @@ describe('Reading ownership', () => {
     const result = await extract('<article><h1>Field report</h1><p>Measurement<a href="#offset" role="doc-noteref">1</a>.</p><aside class="sidebar" id="offset"><p>The offset was measured separately.</p></aside></article>');
     expect(result.plain).toContain('The offset was measured separately.');
     expect(result.content.filter(item => item.id === 'offset')).toHaveLength(1);
+  });
+  it('checks reading visibility only for eligible annotation sources and keeps nested notes', () => {
+    const page = new JSDOM(`<!doctype html><p id="reading">
+      ${Array.from({ length: 80 }, (_, index) => `<a href="/report/${index}">Related report</a>`).join('')}
+      <a id="hidden-reference" role="doc-noteref" href="#note">Hidden reference</a>
+      <a id="visible-reference" role="doc-noteref" href="#note">Observed detail</a>
+      <a id="duplicate-reference" role="doc-noteref" href="#note">Repeated reference</a>
+      <a id="known-reference" role="doc-noteref" href="#known">Already present</a>
+      <a id="excluded-reference" class="omit" role="doc-noteref" href="#excluded-source">Excluded reference</a>
+      <a id="excluded-target-reference" role="doc-noteref" href="#excluded-target">Excluded target</a>
+    </p><div id="note" popover><p>The original observation includes
+      <a role="doc-noteref" href="#detail">an independent measurement</a>.</p></div>
+    <p id="detail">Supporting measurement.</p><p id="known">A previously emitted note.</p>
+    <p id="excluded-source">Unreferenced material.</p><p id="excluded-target" class="omit">Excluded material.</p>`,
+    { url: 'https://example.test/report' });
+    pages.push(page);
+    const checked = [];
+    const dependencies = collectAnnotationTargets([page.window.document.getElementById('reading')], new Set(['known']), ['.omit'], reference => {
+      checked.push(reference.id);
+      return reference.id !== 'hidden-reference';
+    });
+    expect(checked).toEqual(['hidden-reference', 'visible-reference']);
+    expect(dependencies.map(({ target, label }) => [target.id, label])).toEqual([
+      ['note', 'Observed detail'], ['detail', 'an independent measurement']
+    ]);
+    expect(dependencies[1].clone.textContent).toBe('Supporting measurement.');
   });
   it('links repeated citation popups to one matching bibliography paragraph', async () => {
     const entry = 'Survey Group. <a href="https://example.test/method">Coastal measurements.</a>';

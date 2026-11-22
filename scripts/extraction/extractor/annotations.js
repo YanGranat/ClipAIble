@@ -114,10 +114,11 @@ export function collectAnnotationTargets(elements, emittedIds, excludedSelectors
     visited.add(owner);
     const references = [owner, ...Array.from(owner.querySelectorAll('a,button,[role="button"]'))];
     for (const reference of references) {
-      if ((!projected && !accept(reference)) || isSourceExcluded(reference, excludedSelectors)) continue;
+      if (isSourceExcluded(reference, excludedSelectors)) continue;
       const target = getAnnotationTarget(reference);
       if (!target || seenTargets.has(target) || emittedIds.has(target.id) ||
           isSourceExcluded(target, excludedSelectors)) continue;
+      if (!projected && !accept(reference)) continue;
       seenTargets.add(target);
       const clone = cloneAnnotationContent(target, excludedSelectors);
       targets.push({ target, clone, citation: reference.matches(CITATION_REFERENCE),
@@ -133,7 +134,7 @@ export function cloneAnnotationContent(target, exclusions = []) {
   let clone = cloneReadingContent(target, exclusions, null, { disclosed: true });
   for (const nested of Array.from(clone.querySelectorAll('[popover],script,style,template'))) nested.remove();
   for (const attribute of ['id', 'popover', 'hidden', 'aria-hidden', 'style', 'class', 'role']) clone.removeAttribute(attribute);
-  if (['LI', 'DD', 'DT', 'SPAN'].includes(clone.tagName)) {
+  if (['LI', 'DD', 'DT', 'SPAN', 'DIALOG'].includes(clone.tagName)) {
     const wrapper = target.ownerDocument.createElement('div');
     wrapper.append(...clone.childNodes);
     clone = wrapper;

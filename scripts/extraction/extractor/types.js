@@ -118,12 +118,14 @@
  * @property {WeakSet<Element>} [captionOwners] - Source captions owned by image occurrences
  * @property {number} [extractionDeadline] - Absolute deadline shared by source extraction and graphics
  * @property {Map<Element, ContentItem>} [readingGraphics] - Captured source graphic owners
+ * @property {Map<Element, string[]>} [originalImageLayers] - Original image layer URLs for uncapturable rendered figures
  * @property {Map<Element, string>} [readingMediaIds] - Local references for media within structured blocks
  * @property {number} [readingMediaCounter] - Allocation sequence for structured-block media
  * @property {Element[]} [featuredMediaRoots] - Source owners of media preceding the selected body
  * @property {Set<string>} addedHeadings - Set of added heading texts (normalized)
  * @property {Set<string>} [addedParagraphs] - Lazily collected paragraph text keys
  * @property {string} mainTitleText - Main title text (normalized)
+ * @property {Element | null} [titleElement] - Source element used for the document title
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing
  * @property {Array<Element|string>} [selectionExclusions] - Excluded subtrees for the current extraction

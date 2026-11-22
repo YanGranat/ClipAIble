@@ -188,7 +188,7 @@ describe('processing lifecycle', () => {
     stored.processingState = {
       isProcessing: true, processingRunId: runId, outputFormat: 'pdf',
       pdfPrintTabId: 21, pdfPrintJobId: jobId, pdfDebuggerStarted: kind === 'debugger-started',
-      lastUpdate: Date.now(), startTime: Date.now(), progress: 95
+      lastUpdate: Date.now(), startTime: Date.now(), progress: 95, imageTranslationFailureCount: 2
     };
     let url = `${chrome.runtime.getURL('print/print.html')}?job=${jobId}`;
     if (kind === 'foreign-extension') url = `chrome-extension://other-extension/print/print.html?job=${jobId}`;
@@ -200,9 +200,10 @@ describe('processing lifecycle', () => {
     await restoration;
     expect(getProcessingState()).toMatchObject({ isProcessing: kind === 'owned', outputFormat: 'pdf', processingRunId: runId });
     if (kind === 'owned') {
-      expect(getProcessingState()).toMatchObject({ pdfPrintTabId: 21, pdfPrintJobId: jobId });
+      expect(getProcessingState()).toMatchObject({ pdfPrintTabId: 21, pdfPrintJobId: jobId, imageTranslationFailureCount: 2 });
     } else {
       expect(getProcessingState().error).toBe('statusProcessingInterrupted');
+      expect(getProcessingState()).not.toHaveProperty('imageTranslationFailureCount');
     }
   });
 

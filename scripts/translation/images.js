@@ -8,10 +8,9 @@ import { parseBase64Image } from '../api/image-data.js';
 
 // @typedef {import('../types.js').ContentItem} ContentItem
 
-import { log, logError, logWarn } from '../utils/logging.js';
+import { log, logWarn } from '../utils/logging.js';
 import { LANGUAGE_NAMES, CONFIG } from '../utils/config.js';
 import { resolveAIProvider, callAIWithImage } from '../api/index.js';
-import { getModelMetadata } from '../utils/model-catalog.js';
 import { translateImageWithGemini, getGeminiModelName, getGeminiGenerationConfig, getGeminiResponseText } from '../api/gemini.js';
 import { getClaudeRequestConfig, getClaudeResponseText } from '../api/claude.js';
 import { getOpenAIRequestConfig } from '../api/openai.js';
@@ -30,6 +29,12 @@ async function checkImageOwner(options) {
   if (options.signal?.aborted) throw options.signal.reason;
   await options.checkCancelled?.();
   if (options.signal?.aborted) throw options.signal.reason;
+}
+
+function requireDetectionResponse(response) {
+  if (!response.ok) throw Object.assign(new Error('Image text detection failed'), {
+    status: response.status, retryable: false
+  });
 }
 
 /**
@@ -55,12 +60,10 @@ Respond with ONLY "yes" or "no".`;
 
   try {
     const provider = resolveAIProvider(model, options.provider);
-    const modelName = getModelMetadata(provider, model, { strict: true })?.apiModel || model;
     let answer;
     
     if (provider === 'deepseek') {
-      const result = await callAIWithImage('', prompt, imageBase64, apiKey, model, false, options);
-      answer = typeof result === 'string' ? result.toLowerCase().trim() : String(result).toLowerCase().trim();
+      answer = await callAIWithImage('', prompt, imageBase64, apiKey, model, false, options);
     } else if (provider === 'grok') {
       // Grok API format (same as OpenAI)
       const response = await fetchBufferedResponse('https://api.x.ai/v1/chat/completions', {
@@ -83,16 +86,12 @@ Respond with ONLY "yes" or "no".`;
         })
       }, undefined, options);
 
-      if (!response.ok) {
-        logWarn('Grok API error in detectImageText', { status: response.status, model: modelName });
-        return false;
-      }
+      requireDetectionResponse(response);
       const data = await response.json();
       assertCompleteAIResponse(data, provider);
-      answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+      answer = data.choices?.[0]?.message?.content;
     } else if (provider === 'openrouter') {
       // OpenRouter API format (similar to OpenAI but with different endpoint)
-      const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
       const { base64Image, mimeType } = parseBase64Image(imageBase64);
       
       const response = await fetchBufferedResponse('https://openrouter.ai/api/v1/chat/completions', {
@@ -117,13 +116,10 @@ Respond with ONLY "yes" or "no".`;
         })
       }, undefined, options);
 
-      if (!response.ok) {
-        logWarn('OpenRouter API error in detectImageText', { status: response.status, model: modelName });
-        return false;
-      }
+      requireDetectionResponse(response);
       const data = await response.json();
       assertCompleteAIResponse(data, provider);
-      answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+      answer = data.choices?.[0]?.message?.content;
     } else if (provider === 'openai') {
       const controller = new AbortController();
       const onAbort = () => controller.abort(options.signal.reason);
@@ -158,10 +154,10 @@ Respond with ONLY "yes" or "no".`;
           })
         }, undefined, options);
 
-        if (!response.ok) return false;
+        requireDetectionResponse(response);
         const data = await response.json();
         assertCompleteAIResponse(data, provider);
-        answer = data.choices?.[0]?.message?.content?.toLowerCase()?.trim();
+        answer = data.choices?.[0]?.message?.content;
       } finally {
         settled = true;
         clearTimeout(timer);
@@ -169,7 +165,7 @@ Respond with ONLY "yes" or "no".`;
       }
     } else if (provider === 'claude') {
       const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
-      if (!matches) return false;
+      if (!matches) throw new Error('Image text detection requires a data URL');
       
       const response = await fetchBufferedResponse('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -191,13 +187,13 @@ Respond with ONLY "yes" or "no".`;
         })
       }, undefined, options);
 
-      if (!response.ok) return false;
+      requireDetectionResponse(response);
       const data = await response.json();
       assertCompleteAIResponse(data, provider);
-      answer = getClaudeResponseText(data).toLowerCase().trim();
+      answer = getClaudeResponseText(data);
     } else if (provider === 'gemini') {
       const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
-      if (!matches) return false;
+      if (!matches) throw new Error('Image text detection requires a data URL');
       
       const response = await fetchBufferedResponse(`https://generativelanguage.googleapis.com/v1beta/models/${getGeminiModelName(model)}:generateContent`, {
         method: 'POST',
@@ -216,31 +212,19 @@ Respond with ONLY "yes" or "no".`;
         })
       }, undefined, options);
 
-      if (!response.ok) return false;
+      requireDetectionResponse(response);
       const data = await response.json();
       assertCompleteAIResponse(data, provider);
-      answer = getGeminiResponseText(data).toLowerCase().trim();
+      answer = getGeminiResponseText(data);
     }
     
     await checkImageOwner(options);
-    log('detectImageText result', { answer });
-    return answer === 'yes';
+    const decision = typeof answer === 'string' && /^(yes|no)\.?$/.exec(answer.trim().toLowerCase());
+    if (!decision) throw new Error('Invalid image text detection response');
+    return decision[1] === 'yes';
   } catch (error) {
     await checkImageOwner(options);
-    if (error?.code === 'AI_MODEL_UNSUPPORTED_IMAGE') throw error;
-    // Normalize error with context for better logging and error tracking
-    await handleError(error, {
-      source: 'imageTranslation',
-      errorType: 'detectImageTextFailed',
-      logError: true,
-      createUserMessage: false, // Keep existing behavior - return false on error
-      context: {
-        operation: 'detectImageText',
-        targetLang,
-        model
-      }
-    });
-    return false;
+    throw error;
   }
 }
 
@@ -336,7 +320,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
     try {
       let imageBase64 = img.src;
       if (!imageBase64.startsWith('data:')) {
-        imageBase64 = await imageToBase64(img.src);
+        imageBase64 = await imageToBase64(img.src, { signal: options.signal });
         await check();
         if (!imageBase64) {
           logWarn(`Could not fetch image ${i + 1}`);
@@ -403,6 +387,7 @@ export async function translateImages(content, sourceLang, targetLang, apiKey, g
     }
   }
   await check();
+  if (failed > 0) updateState?.({ imageTranslationFailureCount: failed });
   log('=== IMAGE TRANSLATION END ===', { translated, skipped, failed });
   return content;
 }

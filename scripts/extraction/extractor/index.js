@@ -5,17 +5,18 @@
 import { createDebugInfo, pushDebugLog, logExtractionStart, logHtmlState } from './debug.js';
 import { waitForContentLoad } from './spa.js';
 import { detectGoogleTranslateState, checkFirstParagraph } from './translate.js';
-import { extractMetadata } from './metadata.js';
+import { extractMetadata, findArticleTitleElement } from './metadata.js';
 import { findMainContent } from './discover.js';
 import { discoverReadingMedia, extractMetadataImage, hasSourceReadingMedia } from './images.js';
-import { readArticleMetadataText } from './dom-utils.js';
+import { isSourceExcluded, readArticleMetadataText } from './dom-utils.js';
 import { extractStandfirst } from './standfirst.js';
 import { collectCandidateElements, filterCandidateElements, sortElementsInDomOrder, parseElements } from './parse.js';
 import { captureReadingGraphics } from './graphics.js';
-import { resolveContentSelection, isSelectedContentExcluded, readSelectedText, selectorValues } from './selectors.js';
-import { isExcluded } from './filters.js';
+import { resolveContentSelection, isSelectedContentExcluded, findSelectedTextElement, selectorValues } from './selectors.js';
+import { findPublisherFormRegions, isExcluded } from './filters.js';
 import { normalizeHeadingForDedup } from './text-utils.js';
 import { findSocialReadingRoot, findFallbackReadingRoots } from './fallbacks.js';
+import { findRecommendationRegions, isEditorialOwner, isSemanticReadingScope } from './reading-context.js';
 import { CONSTANTS } from './constants.js';
 import { CONFIG } from '../../utils/config.js';
 
@@ -82,11 +83,16 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     };
     
     // Extract metadata (title, author, date)
-    const metadata = extractMetadata(doc, baseUrl);
+    let titleElement = findArticleTitleElement(doc);
+    const metadata = extractMetadata(doc, baseUrl, titleElement);
     const selection = selectors ? resolveContentSelection(doc, selectors) : null;
     if (selectors) {
       if (!selection.matched) return { ...metadata, content: [], selectorMatched: false, debugInfo };
-      metadata.title = readSelectedText(doc, selectors.title) || metadata.title;
+      const selectedTitle = findSelectedTextElement(doc, selectors.title);
+      if (selectedTitle) {
+        metadata.title = readArticleMetadataText(selectedTitle);
+        titleElement = selectedTitle;
+      }
     }
     const language = (doc.documentElement.lang || '').trim().toLowerCase().split(/[-_]/)[0];
     const detectedLanguage = /^[a-z]{2,3}$/.test(language) ? (language === 'ua' ? 'uk' : language) : undefined;
@@ -95,7 +101,8 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     pushDebugLog(debugInfo, 'METADATA_EXTRACTED', metadata);
     
     const socialRoot = selectors ? null : findSocialReadingRoot(baseUrl, doc);
-    const primaryRoot = selection?.roots[0] || socialRoot || findMainContent(win, doc, (el) => isExcluded(win, el, constants));
+    const primaryRoot = selection?.roots[0] || socialRoot || findMainContent(win, doc, (el) =>
+      isExcluded(win, el, constants, isSemanticReadingScope(el) ? [el] : []));
 
     // Discovery changes roots, while every source occurrence uses the same parser.
     const extractReadingRoots = async bodyRoots => {
@@ -110,22 +117,27 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         ? { element: selectedSubtitle || null, text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) : null }
         : extractStandfirst(mainContent);
       const readingRoots = [...new Set([...bodyRoots, ...media.roots, ...(standfirst.element ? [standfirst.element] : [])])];
+      const recommendationRegions = selection ? [] : bodyRoots.flatMap(findRecommendationRegions);
+      const publisherIgnores = bodyRoots.flatMap(root => Array.from(root.querySelectorAll('.instapaper_body .instapaper_ignore')));
+      const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions).concat(recommendationRegions, publisherIgnores);
       /** @type {ExtractionState} */
       const state = {
         processedImages: new Set(),
         addedHeadings: new Set(),
         mainTitleText,
+        titleElement,
         standfirstElement: standfirst.element,
         standfirstText: standfirst.text,
         content: [],
-        selectionExclusions: selection?.exclusionSelectors || [],
+        selectionExclusions: [...(selection?.exclusionSelectors || []), ...interfaceRegions],
         referenceRoots: readingRoots,
         featuredMediaRoots: media.featuredRoots,
         extractionDeadline,
         debugInfo
       };
       const allElements = [...new Set([...readingRoots.flatMap(root => collectCandidateElements(root)), ...(standfirst.element ? [standfirst.element] : [])])]
-        .filter(element => !selection || !isSelectedContentExcluded(element, selection.exclusions));
+        .filter(element => (!selection || !isSelectedContentExcluded(element, selection.exclusions)) &&
+          !isSourceExcluded(element, interfaceRegions));
       const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots);
       const sortedElements = sortElementsInDomOrder(filteredElements);
       if (debugInfo) {
@@ -137,8 +149,8 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       });
       state.readingGraphics = await captureReadingGraphics(win, sortedElements, state, constants);
       const content = parseElements(win, sortedElements, state, constants, baseUrl);
-      const hasReadingContent = content.length > 0;
-      if (!selection && !content.some(item => item.type === 'image') && !hasSourceReadingMedia(readingRoots, constants.LOGO_PATTERNS)) {
+      const hasReadingContent = content.some(item => !['heading', 'separator'].includes(item.type));
+      if (hasReadingContent && !selection && !content.some(item => item.type === 'image') && !hasSourceReadingMedia(readingRoots, constants.LOGO_PATTERNS)) {
         const image = extractMetadataImage(doc, baseUrl, constants.LOGO_PATTERNS);
         if (image) content.unshift({ type: 'image', ...image, isFeatured: true });
       }
@@ -146,7 +158,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     };
 
     let attempt = primaryRoot ? await extractReadingRoots(selection?.roots || [primaryRoot]) : null;
-    if (!selection && !attempt?.hasReadingContent) {
+    if (!selection && !attempt?.hasReadingContent && !isEditorialOwner(primaryRoot)) {
       for (const root of findFallbackReadingRoots(win, doc, constants, primaryRoot ? [primaryRoot] : [])) {
         pushDebugLog(debugInfo, 'FALLBACK_READING_ROOT', { tagName: root.tagName, className: root.className });
         const alternative = await extractReadingRoots([root]);
@@ -154,7 +166,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         if (!attempt?.content.length) attempt = alternative;
       }
     }
-    const content = attempt?.content || [];
+    const content = attempt && (selection || attempt.hasReadingContent) ? attempt.content : [];
 
     // Final content types count
     if (debugInfo) {

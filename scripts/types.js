@@ -31,7 +31,7 @@
  * @property {string} [src] - Image source URL (for images) - alias for url
  * @property {string} [base64] - Embedded image data
  * @property {string} [caption] - Image caption text (for images)
- * @property {boolean} [isFeatured] - Whether the image precedes article content
+ * @property {boolean} [isFeatured] - Whether the media or its fallback precedes article content
  * @property {boolean} [isGraphic] - Whether image alt text contains authored graphic labels
  * @property {boolean} [translated] - Whether image text was translated (for images)
  * @property {number} [level] - Heading level 1-6 (for headings)
@@ -75,6 +75,7 @@
  * @property {Array<string>} completedStages - List of completed stage IDs
  * @property {number} [lastUpdate] - Last update timestamp (for state management)
  * @property {string} [outputFormat] - Output format (pdf, epub, fb2, markdown, audio) - used for UI display and polling intervals
+ * @property {number} [imageTranslationFailureCount] - Images kept after a translation error in this run
  */
 
 /**
@@ -346,7 +347,7 @@
  * @property {boolean} [translateImages] - Translate images
  * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
  * @property {string|null} [imageApiKey] - Image provider API key
- * @property {string} [pageMode] - PDF page mode ('single'|'double')
+ * @property {string} [pageMode] - PDF page mode ('single'|'multi')
  * @property {string} [fontFamily] - PDF font family
  * @property {string} [fontSize] - PDF font size
  * @property {string} [bgColor] - PDF background color
@@ -780,6 +781,7 @@
  * @property {AIProvider} [provider] - Article classifier provider for Gemini editing
  * @property {function(): (void|Promise<void>)} [checkCancelled] - Image operation owner check
  * @property {AbortSignal} [signal] - Operation cancellation signal
+ * @property {() => void} [onRequestStart] - Record admitted provider requests for the operation deadline
  * @property {'gemini'|'openai'} [imageTranslationProvider] - Image editor provider
  * @property {string|null} [imageApiKey] - Selected image provider credential
  * @property {ExportFormat} [outputFormat] - Destination document format

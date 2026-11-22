@@ -64,6 +64,13 @@ describe('Subtitle processing run ownership', () => {
     expect(progress).toHaveBeenLastCalledWith(2, 2);
   });
 
+  it('preserves the original provider error after exhausting a chunk', async () => {
+    const cause = Object.assign(new Error('Provider declined the request.'), { status: 429, code: 'rate_limit' });
+    dependencies.callAI.mockRejectedValueOnce(cause);
+    const subtitles = Array.from({ length: 501 }, () => ({ text: 'Sample text' }));
+    await expect(processSubtitlesWithAI(subtitles, 'placeholder', 'model', null, 'current')).rejects.toBe(cause);
+  });
+
   it.each([1, 501])('preserves explicit provider and cancellation options for every chunk (%s)', async count => {
     const options = { provider: 'openai', checkCancelled: vi.fn() };
     await processSubtitlesWithAI(Array.from({ length: count }, () => ({ text: 'Sample text' })), 'placeholder', 'custom-model', null, 'current', options);

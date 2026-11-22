@@ -15,7 +15,8 @@ import {
   createColumnCandidates,
   recalculateColumnBoundaries,
   assignLinesToColumns,
-  calculateLineRight
+  calculateLineRight,
+  recoverProseColumnRegions
 } from './column-detection-helpers.js';
 
 /**
@@ -518,8 +519,9 @@ export function detectColumns(lines, viewport, metrics = {}) {
  * @param {{baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
  * @param {import('../../../types.js').ProcessLinesFunction} processFunction - Function to process lines (e.g., groupLinesIntoElements)
  * @returns {Array} Processed elements from all columns
+ * @param {boolean} [allowProseRecovery] - Whether the page has no painted tables to preserve
  */
-export function processLinesByColumns(lines, viewport, metrics, processFunction) {
+export function processLinesByColumns(lines, viewport, metrics, processFunction, allowProseRecovery = true) {
   if (!lines || lines.length === 0) {
     return [];
   }
@@ -569,6 +571,11 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction)
     columns = [];
   }
   
+  const proseRegions = columns.length === 0 && allowProseRecovery
+    ? recoverProseColumnRegions(lines, viewport, metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE)
+    : [];
+  if (proseRegions.length) columns = proseRegions;
+
   // If no columns detected, process all lines together as single column
   if (columns.length === 0) {
     log(`[PDF v3] processLinesByColumns: Single-column layout detected - processing all ${lines.length} lines together`);
@@ -639,7 +646,7 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction)
       // to identify paragraph boundaries (large gaps) vs line continuations (small gaps)
       const columnGapAnalysis = analyzeGaps(column.lines);
       columnMetrics.gapAnalysis = columnGapAnalysis;
-      log(`[PDF v3] processLinesByColumns: Column ${colIdx + 1} gap analysis (WITHIN column) - documentType=${columnGapAnalysis.documentType}, normalGapMax=${columnGapAnalysis.normalGapMax.toFixed(2)}, paragraphGapMin=${columnGapAnalysis.paragraphGapMin.toFixed(2)}, mean=${columnGapAnalysis.mean.toFixed(2)}, lineCount=${column.lines.length}`);
+      log(`[PDF v3] processLinesByColumns: Column ${colIdx + 1} gap analysis (WITHIN column) - documentType=${columnGapAnalysis.documentType}, normalGapMax=${columnGapAnalysis.normalGapMax.toFixed(2)}, paragraphGapMin=${columnGapAnalysis.paragraphGapMin.toFixed(2)}, mean=${columnGapAnalysis.mean?.toFixed(2) ?? 'n/a'}, lineCount=${column.lines.length}`);
     }
     
     // Process column lines with column-specific metrics
@@ -667,6 +674,7 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction)
     
     // Add column index to elements for tracking
     for (const element of columnElements) {
+      if (proseRegions.length) element.recoveredProseRegion = column.role;
       element.columnIndex = colIdx;
       element.columnX = column.x;
       // Log element info for debugging

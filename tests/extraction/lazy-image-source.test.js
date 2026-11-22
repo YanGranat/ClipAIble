@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { handleImg } from '../../scripts/extraction/extractor/parse.js';
+import { extractBestImageUrl } from '../../scripts/extraction/extractor/images.js';
 import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 
 const placeholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
@@ -27,6 +28,21 @@ afterEach(() => {
 const extractImage = (dom, image) => handleImg(dom.window, image, { processedImages: new Set() }, CONSTANTS, dom.window.location.href);
 
 describe('Loaded placeholders and deferred article images', () => {
+  it('does not emit a labelled fallback asset and still chooses a real deferred source', () => {
+    const { image } = page('aria-label="Image unavailable"', {
+      source: 'https://example.test/media/neutral-placeholder.png', width: 160, height: 90
+    });
+    expect(extractBestImageUrl(image)).toBeNull();
+    image.setAttribute('srcset', '/small-photo.webp 400w, /neutral-fallback.webp 800w');
+    expect(extractBestImageUrl(image)).toBe('/small-photo.webp');
+    image.removeAttribute('srcset');
+    image.setAttribute('aria-label', 'Neutral reference pattern');
+    expect(extractBestImageUrl(image)).toBe('https://example.test/media/neutral-placeholder.png');
+    image.setAttribute('aria-label', 'Image unavailable');
+    image.setAttribute('src', '/observations/observation.jpg');
+    expect(extractBestImageUrl(image)).toBe('https://example.test/observations/observation.jpg');
+  });
+
   it.each([
     ['data-src="/survey.png"', '/survey.png'],
     ['data-full-src="/survey-full.png"', '/survey-full.png'],

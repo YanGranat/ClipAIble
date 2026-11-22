@@ -4,7 +4,7 @@
 // @ts-check
 
 import { isCancelled, isCurrentProcessingRun, getScopedUpdateState, getProcessingSignal, markProcessingRequestStarted } from '../../state/processing.js';
-import { getUILanguage, tSync } from '../../locales.js';
+import { getDocumentReadyMessage, getUILanguage, tSync } from '../../locales.js';
 import { updateState, getProcessingState } from '../../state/processing.js';
 import { PROCESSING_STAGES } from '../../state/processing.js';
 import { log, logError, logWarn } from '../logging.js';
@@ -177,7 +177,8 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     }
 
     const uiLang = await getUILanguageCached();
-    const savedFormat = data.outputFormat || getProcessingState().outputFormat || 'pdf';
+    const state = getProcessingState();
+    const savedFormat = data.outputFormat || state.outputFormat || 'pdf';
     const formatKeyMap = {
       pdf: 'formatPdf',
       epub: 'formatEpub',
@@ -188,15 +189,15 @@ export async function finalizeProcessing(data, stopKeepAlive, processingStartTim
     const formatKey = formatKeyMap[savedFormat] || 'formatPdf';
     const formatLabel = tSync(formatKey, uiLang);
 
-    const messageTemplate = tSync('notificationReady', uiLang);
-    const message = messageTemplate.replace('{format}', formatLabel);
+    const notice = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount);
+    const message = tSync(notice.key, uiLang, notice.params);
 
     log('Showing completion notification (popup is closed)', {
       timestamp: Date.now(),
       outputFormat: savedFormat,
       message
     });
-    if (isCancelled(data.processingRunId)) return;
+    if (isCancelled(data.processingRunId) || isPopupOpen()) return;
     await createNotification(message);
   } catch (notifError) {
     logWarn('Failed to show completion notification (non-critical)', {

@@ -270,6 +270,15 @@ function isAuthorCandidateDisplayed(element) {
   return true;
 }
 
+function isArticleAuthorCandidate(element) {
+  if (!isAuthorCandidateDisplayed(element) || element.closest('figure, figcaption')) return false;
+  for (let node = element; node; node = node.parentElement) {
+    const types = (node.getAttribute('itemtype') || '').split(/\s+/);
+    if (types.some(type => /^https?:\/\/schema\.org\/(ImageObject|VideoObject|AudioObject)\/?$/.test(type))) return false;
+  }
+  return true;
+}
+
 /** Prefer an expanded name over initials only when both labels identify the same profile. */
 function readAuthorProfileName(element, baseUrl) {
   const readLabel = node => readArticleMetadataText(node).replace(/^by\s+/i, '').trim();
@@ -280,7 +289,7 @@ function readAuthorProfileName(element, baseUrl) {
   let identity;
   try { identity = new URL(anchor.getAttribute('href'), baseUrl).href; } catch (_) { return label; }
   for (const candidate of Array.from(element.ownerDocument.querySelectorAll('a[href]'))) {
-    if (!isAuthorCandidateDisplayed(candidate)) continue;
+    if (!isArticleAuthorCandidate(candidate)) continue;
     try { if (new URL(candidate.getAttribute('href'), baseUrl).href !== identity) continue; }
     catch (_) { continue; }
     const name = readLabel(candidate);
@@ -299,40 +308,12 @@ function readAuthorProfileName(element, baseUrl) {
  * @param {string} baseUrl - Base URL
  * @returns {{title: string, author: string, publishDate: string}} - Metadata object
  */
-export function extractMetadata(doc, baseUrl) {
+export function extractMetadata(doc, baseUrl, titleElement = findArticleTitleElement(doc)) {
   const metadata = {
-    title: '',
+    title: titleElement ? cleanHeadingText(readArticleMetadataText(titleElement)) : doc.title || '',
     author: '',
     publishDate: ''
   };
-  
-  // Title extraction - prioritized order
-  // 1. h1 inside article
-  const h1InArticle = doc.querySelector('article h1');
-  if (h1InArticle && isValidArticleTitle(h1InArticle)) {
-    metadata.title = cleanHeadingText(readArticleMetadataText(h1InArticle));
-  }
-  
-  // 2. h1 inside main
-  if (!metadata.title) {
-    const h1InMain = doc.querySelector('main h1');
-    if (h1InMain && isValidArticleTitle(h1InMain)) {
-      metadata.title = cleanHeadingText(readArticleMetadataText(h1InMain));
-    }
-  }
-  
-  // 3. First h1
-  if (!metadata.title) {
-    const firstH1 = doc.querySelector('h1');
-    if (firstH1 && isValidArticleTitle(firstH1)) {
-      metadata.title = cleanHeadingText(readArticleMetadataText(firstH1));
-    }
-  }
-  
-  // 4. Fallback to document.title
-  if (!metadata.title) {
-    metadata.title = doc.title || '';
-  }
   
   // Author extraction
   const authorSelectors = [
@@ -354,7 +335,7 @@ export function extractMetadata(doc, baseUrl) {
         if (names.length) { metadata.author = names.join(', '); break; }
       }
       for (const element of elements) {
-        if (element.tagName !== 'META' && !isAuthorCandidateDisplayed(element)) continue;
+        if (element.tagName !== 'META' && !isArticleAuthorCandidate(element)) continue;
         let authorText = '';
         
         if (element.tagName === 'META') {
@@ -392,7 +373,7 @@ export function extractMetadata(doc, baseUrl) {
     for (const element of Array.from(doc.querySelectorAll('a[href*="/author/"], a[href*="/profile/"]'))) {
       try {
         if (new URL(element.getAttribute('href'), baseUrl).origin !== new URL(baseUrl).origin) continue;
-        if (!isAuthorCandidateDisplayed(element)) continue;
+        if (!isArticleAuthorCandidate(element)) continue;
         const text = readAuthorProfileName(element, baseUrl);
         if (text && !text.startsWith('http') && text.length < 100) { metadata.author = text; break; }
       } catch (_) { }
@@ -436,4 +417,13 @@ export function extractMetadata(doc, baseUrl) {
   
   if (!metadata.publishDate) metadata.publishDate = structured.publishDate;
   return metadata;
+}
+
+/** Return the source heading used to populate the document title. */
+export function findArticleTitleElement(doc) {
+  for (const selector of ['article h1', 'main h1', 'h1']) {
+    const heading = doc.querySelector(selector);
+    if (heading && isValidArticleTitle(heading)) return heading;
+  }
+  return null;
 }

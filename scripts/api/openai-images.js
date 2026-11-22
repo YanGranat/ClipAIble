@@ -73,9 +73,9 @@ export async function translateImageWithOpenAI(imageData, targetLang, apiKey, re
     await check();
     validateInput(imageData);
     if (typeof apiKey !== 'string' || !apiKey.trim() || typeof targetLang !== 'string' || !targetLang.trim() || targetLang.length > 128) throw failure();
-    const prompt = `Translate only the readable text in this image into ${JSON.stringify(targetLang.trim())}. ` +
+    const prompt = `Translate all readable text in this image into ${JSON.stringify(targetLang.trim())}, including small labels, captions, legends, and words next to numbers or units. ` +
       'Preserve the complete image, layout, aspect ratio, colors, fonts, charts, arrows, formulas, numbers, units, credits, and background. ' +
-      'Use established technical terminology in the target language. Keep names, numeric values, symbols, and equations unchanged. ' +
+      'Use established technical terminology in the target language. Keep names, numeric values, unit symbols, and equations unchanged, and translate the words around them. ' +
       'Replace text in place without adding, removing, cropping, or rearranging visual elements. Preserve flat fills and textures without adding gradients or texture. Make no other changes.';
     requestOptions.signal?.addEventListener('abort', onParentAbort, { once: true });
     if (requestOptions.signal?.aborted) onParentAbort();
@@ -93,7 +93,7 @@ export async function translateImageWithOpenAI(imageData, targetLang, apiKey, re
         model: OPENAI_IMAGE_TRANSLATION_MODEL, prompt, images: [{ image_url: imageData }], n: 1,
         output_format: 'png', size: 'auto', quality: 'medium', complexity: 'medium'
       })
-    }, CONFIG.API_TIMEOUT_MS, { checkCancelled: check });
+    }, CONFIG.API_TIMEOUT_MS, { checkCancelled: check, onRequestStart: requestOptions.onRequestStart });
     await check();
     if (!response.ok) throw failure(response.status);
     const result = await response.json();

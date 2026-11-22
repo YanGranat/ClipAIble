@@ -943,7 +943,12 @@ export function restoreStateFromStorage() {
                 currentStage: savedState.currentStage || null,
                 completedStages: Array.isArray(savedState.completedStages) ? savedState.completedStages : [],
                 outputFormat,
-                ...(resumablePdf ? { pdfPrintTabId: savedState.pdfPrintTabId, pdfPrintJobId: savedState.pdfPrintJobId } : {})
+                ...(resumablePdf ? {
+                  pdfPrintTabId: savedState.pdfPrintTabId,
+                  pdfPrintJobId: savedState.pdfPrintJobId,
+                  imageTranslationFailureCount: Number.isSafeInteger(savedState.imageTranslationFailureCount) &&
+                    savedState.imageTranslationFailureCount > 0 ? savedState.imageTranslationFailureCount : undefined
+                } : {})
               };
               if (resumablePdf) {
                 processingController = new AbortController();

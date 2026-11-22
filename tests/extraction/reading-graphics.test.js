@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
+import { CONSTANTS } from '../../scripts/extraction/extractor/constants.js';
 import { captureReadingGraphics, getGraphicReadingOwner } from '../../scripts/extraction/extractor/graphics.js';
+import { parseElements } from '../../scripts/extraction/extractor/parse.js';
 
 const windows = [];
 function page(markup) {
@@ -10,6 +12,25 @@ function page(markup) {
   return { win, doc, root, owner: selector => getGraphicReadingOwner(doc.querySelector(selector), [root]) };
 }
 afterEach(() => windows.splice(0).forEach(win => win.close()));
+
+function layeredFigure(extra = '') {
+  const { win, doc, root } = page(`<p>Read the observations below for an independent comparison.</p>
+    <figure id="layers"><img src="https://assets.example.test/base.jpg"><img src="https://assets.example.test/overlay.png">${extra}
+    <figcaption>Credit and <a href="/method">diagram method</a>.</figcaption></figure>
+    <table><tr><th>Trial</th><th>Result</th></tr><tr><td>First</td><td>17</td></tr></table>
+    <p>The measurements were repeated carefully in a second trial.</p>`);
+  const figure = doc.querySelector('figure');
+  for (const image of doc.querySelectorAll('img')) {
+    Object.defineProperties(image, { complete: { value: true, configurable: true }, naturalWidth: { value: 100 }, naturalHeight: { value: 80 } });
+    image.getBoundingClientRect = () => ({ left: 0, top: 0, right: 100, bottom: 80, width: 100, height: 80 });
+  }
+  win.HTMLCanvasElement.prototype.getContext = () => ({ fillRect() {} });
+  const computedStyle = win.getComputedStyle.bind(win);
+  win.getComputedStyle = element => computedStyle(element);
+  const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(), content: [], debugInfo: null };
+  const elements = [...root.querySelectorAll('p,figure,img,svg,figcaption,table,td,th')];
+  return { win, doc, root, figure, state, elements };
+}
 
 describe('Reading graphic ownership', () => {
   it('keeps a decorative arrow with its labelled link, including inside a prose figure', () => {
@@ -94,6 +115,23 @@ describe('Reading graphic ownership', () => {
     expect(owner('img')).toBeNull();
   });
 
+  it('leaves a photograph in normal reading flow when an unavailable-image fallback overlaps it', () => {
+    const { doc, owner } = page(`<figure>
+      <img src="/media/neutral-placeholder.png" aria-label="Image unavailable" style="position:absolute">
+      <img src="/media/observation.jpg" alt="Observation site">
+      <figcaption>Field photograph.</figcaption>
+    </figure>`);
+    const [overlay, photograph] = doc.querySelectorAll('img');
+    for (const image of [overlay, photograph]) {
+      Object.defineProperties(image, { complete: { value: true }, naturalWidth: { value: 200 }, naturalHeight: { value: 100 } });
+      image.getBoundingClientRect = () => ({ left: 0, top: 0, right: 200, bottom: 100, width: 200, height: 100 });
+    }
+    expect(owner('figure')).toBeNull();
+    expect(owner('img:last-of-type')).toBeNull();
+    overlay.setAttribute('aria-label', 'Neutral reference pattern');
+    expect(owner('figure')).toBe(doc.querySelector('figure'));
+  });
+
   it('does not infer a composite from overlapping empty object-fit letterboxes', () => {
     const { doc, owner } = page('<figure><img style="object-fit:contain;object-position:50% 0%"><img style="object-fit:contain;object-position:50% 100%"></figure>');
     for (const image of doc.querySelectorAll('img')) {
@@ -101,5 +139,52 @@ describe('Reading graphic ownership', () => {
       image.getBoundingClientRect = () => ({ left: 0, top: 0, right: 600, bottom: 180, width: 600, height: 180 });
     }
     expect(owner('figure')).toBeNull();
+  });
+
+  it('preserves original layer links, figure credit, and surrounding content when page-context fetch cannot read rendered pixels', async () => {
+    const { win, doc, root, state, elements } = layeredFigure();
+    const before = root.outerHTML;
+    win.fetch = vi.fn().mockRejectedValue(new win.TypeError('Failed to fetch'));
+    state.readingGraphics = await captureReadingGraphics(win, elements, state, CONSTANTS);
+    const content = parseElements(win, elements, state, CONSTANTS, doc.URL);
+    const block = content.find(item => item.id === 'layers');
+    const links = JSDOM.fragment(block.html).querySelectorAll('a');
+    expect([...links].map(link => link.getAttribute('href'))).toEqual([
+      'https://example.test/report#layers', 'https://assets.example.test/base.jpg', 'https://assets.example.test/overlay.png', 'https://example.test/method'
+    ]);
+    expect(block.html).toMatch(/could not be reproduced.*Credit and/s);
+    expect(content.map(item => item.type)).toEqual(['paragraph', 'paragraph', 'table', 'paragraph']);
+    expect(content[2].rows).toEqual([['First', '17']]);
+    expect(content.at(-1).html).toContain('second trial');
+    expect(root.outerHTML).toBe(before);
+  });
+
+  it('omits only the initial title after a leading figure fallback', async () => {
+    const { win, doc, root, figure, state, elements } = layeredFigure();
+    root.prepend(figure);
+    const title = doc.createElement('h1');
+    title.textContent = 'Field report';
+    figure.after(title);
+    root.append(title.cloneNode(true));
+    const source = [...root.querySelectorAll('h1,p,figure,img,figcaption,table,td,th')];
+    state.mainTitleText = 'field report';
+    win.fetch = vi.fn().mockRejectedValue(new win.TypeError('Failed to fetch'));
+    state.readingGraphics = await captureReadingGraphics(win, elements, state, CONSTANTS);
+    const content = parseElements(win, source, state, CONSTANTS, doc.URL);
+    expect(content[0]).toMatchObject({ id: 'layers', isFeatured: true });
+    expect(content.filter(item => item.type === 'heading')).toEqual([content.at(-1)]);
+    expect(content.at(-1)).toMatchObject({ type: 'heading', text: 'Field report' });
+  });
+
+  it.each(['HTTP error', 'unrendered layer', 'vector composition'])('requires a rendered raster-only composition and a fetch rejection (%s)', async scenario => {
+    const { win, figure, state, elements } = layeredFigure(scenario === 'vector composition' ? '<svg role="img" aria-label="Shape"/>' : '');
+    win.fetch = scenario === 'HTTP error'
+      ? vi.fn().mockResolvedValue({ ok: false })
+      : vi.fn(async () => {
+        if (scenario === 'unrendered layer') Object.defineProperty(figure.querySelector('img:last-of-type'), 'complete', { value: false });
+        throw new win.TypeError('Failed to fetch');
+      });
+    await expect(captureReadingGraphics(win, elements, state, CONSTANTS)).rejects.toMatchObject({ code: 'GRAPHIC_CAPTURE_FAILED' });
+    expect(state.originalImageLayers).toBeUndefined();
   });
 });

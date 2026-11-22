@@ -177,6 +177,7 @@ export async function handleVideoPageProcessing(
   
   (async () => {
     try {
+      if (await stopForUnavailablePage(data, stopKeepAlive)) return;
       const result = await processVideoPage(data, videoInfo);
       log('Video processing complete', { 
         title: result.title, 
@@ -221,47 +222,21 @@ export async function handleStandardArticleProcessing(
   extractFromPageInlined,
   processingStartTimeRef
 ) {
-  const { mode } = data;
-  
-  log('=== startArticleProcessing: Selecting process function ===', {
-    mode: mode,
-    hasProcessWithoutAI: typeof processWithoutAI === 'function',
-    hasProcessWithSelectorMode: typeof processWithSelectorMode === 'function',
-    hasProcessWithExtractMode: typeof processWithExtractMode === 'function',
-    timestamp: Date.now()
-  });
-  
-  const processFunction = mode === 'automatic'
-    ? processWithoutAI
-    : mode === 'selector' 
-    ? processWithSelectorMode 
-    : processWithExtractMode;
-  
-  log('=== startArticleProcessing: Process function selected ===', {
-    mode: mode,
-    functionName: processFunction?.name || 'unknown',
-    timestamp: Date.now()
-  });
-  
-  log('=== startArticleProcessing: About to call processFunction ===', {
-    functionName: processFunction?.name || 'unknown',
-    timestamp: Date.now()
-  });
-  
-  // Call processFunction with appropriate arguments
-  // processWithSelectorMode and processWithoutAI require extractFromPageInlined as second argument
-  let processPromise;
-  if (mode === 'selector') {
-    processPromise = processWithSelectorMode(data, extractFromPageInlined);
-  } else if (mode === 'automatic') {
-    processPromise = processWithoutAI(data, extractFromPageInlined);
-  } else {
-    processPromise = processWithExtractMode(data);
-  }
-  
   (async () => {
     try {
-      const result = await processPromise;
+      if (await stopForUnavailablePage(data, stopKeepAlive)) return;
+
+      let result;
+      switch (data.mode) {
+        case 'automatic':
+          result = await processWithoutAI(data, extractFromPageInlined);
+          break;
+        case 'selector':
+          result = await processWithSelectorMode(data, extractFromPageInlined);
+          break;
+        default:
+          result = await processWithExtractMode(data);
+      }
       log('=== startArticleProcessing: processFunction completed ===', {
         hasResult: !!result,
         resultKeys: result ? Object.keys(result) : [],
@@ -289,6 +264,53 @@ export async function handleStandardArticleProcessing(
   })();
   
   return true;
+}
+
+/** @param {import('../../types.js').ProcessingData} data */
+async function stopForUnavailablePage(data, stopKeepAlive) {
+  const unavailable = await isSourcePageUnavailable(data.tabId, data.url);
+  if (isCancelled(data.processingRunId)) return true;
+  if (!unavailable) return false;
+  const translationKey = 'errorSourcePageUnavailable';
+  const language = await getUILanguageCached();
+  await setError({ message: tSync(translationKey, language), code: ERROR_CODES.VALIDATION_ERROR,
+    translationKey, translationParams: {} }, stopKeepAlive, data.processingRunId);
+  return true;
+}
+
+/** Reject error documents without re-requesting the source or its credentials. */
+async function isSourcePageUnavailable(tabId, url) {
+  if (!tabId) return false;
+  try {
+    const [frame] = await chrome.scripting.executeScript({
+      target: { tabId }, func: inspectSourcePage, args: [url]
+    });
+    return frame?.result === true;
+  } catch {
+    // Preserve the extraction path's own handling of inaccessible or closed tabs.
+    return false;
+  }
+}
+
+/** Inspect the live top-level document in Chrome's isolated extension world. */
+function inspectSourcePage(expectedUrl) {
+  const pageUrl = value => new URL(value).href.split('#')[0];
+  const liveUrl = pageUrl(location.href);
+  if (liveUrl !== pageUrl(expectedUrl)) return false;
+
+  const [entry] = /** @type {PerformanceNavigationTiming[]} */ (performance.getEntriesByType('navigation'));
+  if (entry && pageUrl(entry.name) === liveUrl && entry.responseStatus >= 400 && entry.responseStatus < 600) return true;
+  if (!document.body || document.readyState === 'loading' ||
+      document.querySelector('article, [role="article"], [itemprop="articleBody"]')) return false;
+
+  const heading = document.querySelector('h1')?.innerText?.trim() || '';
+  const challengeWidget = document.querySelector('script[src*="/cdn-cgi/challenge-platform/"], iframe[src*="/challenge-platform/"], iframe[src*="/turnstile/"], iframe[src*="/recaptcha/"], form[action*="/challenge-platform/"]');
+  const challengeHeading = /^(?:just a moment[.…]*|verify to continue|security verification|checking your browser[.…]*)$/i;
+  if (challengeWidget && [document.title, heading].some(text => challengeHeading.test(text.trim()))) return true;
+
+  const isSignIn = /^(?:log\s*in|sign\s*in|sign\s*in to continue|log\s*in to continue)$/i.test(heading);
+  return isSignIn && /(?:^|\/)(?:login|signin|sign-in|sign_in)(?:\/|$)/i.test(location.pathname) &&
+    !!document.querySelector('form input[type="password"]');
 }
 
 /**

@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { initState } from '../../popup/core/state.js';
+import { formatMessage } from '../../scripts/locales.js';
 
 afterEach(() => vi.unstubAllGlobals());
 it.each(['cancelled', 'old error', 'connection failure'])('does not remove a new background run after reading %s state', async kind => {
@@ -21,4 +22,30 @@ it.each(['cancelled', 'old error', 'connection failure'])('does not remove a new
   await pending;
   expect(stored.processingState).toBe(current);
   expect(chrome.storage.local.remove).not.toHaveBeenCalled();
+});
+
+it.each([
+  [2, 'Ready: PDF. Image translation failures: 2.', 'notificationReadyWithImageFailures'],
+  [undefined, 'Ready: PDF', 'notificationReady']
+])('displays the final document status for image failure count %s', async (imageTranslationFailureCount, text, key) => {
+  const terminalState = { isProcessing: false, status: 'Done!', statusTranslationKey: 'statusDone', outputFormat: 'pdf',
+    imageTranslationFailureCount };
+  chrome.runtime.sendMessage.mockImplementation((_message, callback) => callback(terminalState));
+  chrome.storage.local.get.mockResolvedValue({ processingState: terminalState });
+  let render;
+  vi.stubGlobal('requestAnimationFrame', callback => { render = callback; return 1; });
+  const setStatus = vi.fn();
+  const state = initState({
+    elements: { savePdfBtn: { style: {} } },
+    t: async (name, language, params) => formatMessage(name, language || 'en', params),
+    setStatus, setProgress: vi.fn(), stopTimerDisplay: vi.fn(), stateRefs: {}
+  });
+
+  await state.checkProcessingState();
+  expect(render).toBeTypeOf('function');
+  await render();
+
+  expect(setStatus).toHaveBeenCalledExactlyOnceWith('ready', text, null, {
+    key, params: imageTranslationFailureCount ? { format: 'PDF', count: imageTranslationFailureCount } : { format: 'PDF' }
+  });
 });
