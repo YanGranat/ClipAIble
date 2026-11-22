@@ -947,14 +947,14 @@ var clipaibleArticleExtractor = (() => {
     const owner = source.closest(EDITORIAL_CONTAINERS);
     return isEditorialOwner(owner) && (region === owner || role !== "newsletter" && region.contains(owner));
   }
-  function isReferencedReadingAside(element, roots) {
+  function isReferencedReadingAside(element, roots, tocRoots = []) {
     if (!element.matches('aside[id],[role~="complementary"][id]')) return false;
     const heading = element.querySelector("h2,h3,h4,h5,h6");
     const label = normalizedLabel(heading?.textContent);
     if (!label || !element.querySelector("p,blockquote,ul,ol,figure,table")) return false;
     const articleRoots = roots.filter((root) => !root.matches("body,html"));
     if (!articleRoots.some((root) => root.contains(element))) return false;
-    return articleRoots.some((root) => Array.from(root.querySelectorAll('a[href*="#"]')).some((link) => !element.contains(link) && normalizedLabel(link.textContent) === label && getDocumentFragmentTarget(link) === element));
+    return [...articleRoots, ...tocRoots].some((root) => Array.from(root.querySelectorAll('a[href*="#"]')).some((link) => !element.contains(link) && normalizedLabel(link.textContent) === label && getDocumentFragmentTarget(link) === element));
   }
   function isReadingOwned(element, roots = []) {
     return (roots || []).some((root) => root.contains(element));
@@ -3298,6 +3298,18 @@ var clipaibleArticleExtractor = (() => {
   var PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
   var SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
   var PROTECTED_READING = 'article,main,[role~="article"],[role~="main"],[itemprop~="articleBody"],.instapaper_body,h1,table,pre,blockquote,math';
+  function isSingleChildBlock(element) {
+    return element?.matches("div,section") && element.childElementCount === 1 && element.textContent.trim() === element.firstElementChild.textContent.trim();
+  }
+  function findSignupBanner(sibling, linkedTargets) {
+    let figure = sibling;
+    while (isSingleChildBlock(figure)) {
+      if (linkedTargets.has(figure)) return null;
+      figure = figure.firstElementChild;
+    }
+    if (!figure?.matches("figure") || linkedTargets.has(figure) || figure.querySelector("figcaption") || figure.textContent.trim()) return null;
+    return Array.from(figure.querySelectorAll("img[alt]")).some((image) => /\b(?:promotional banner|newsletter (?:banner|sign[\s-]*up))\b/i.test(image.getAttribute("alt") || "")) ? figure : null;
+  }
   function findPublisherFormRegions(root) {
     const regions = /* @__PURE__ */ new Set();
     const linkedTargets = new Set(Array.from(root.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget));
@@ -3340,11 +3352,13 @@ var clipaibleArticleExtractor = (() => {
         }
       })) continue;
       regions.add(paragraph);
-      const panel = paragraph.parentElement;
-      if (!panel || !root.contains(panel) || panel.childElementCount !== 2) continue;
-      const figure = Array.from(panel.children).find((child) => child.matches("figure"));
-      if (!figure || linkedTargets.has(figure) || figure.querySelector("figcaption") || !Array.from(figure.querySelectorAll("img[alt]")).some((image) => /\b(?:promotional banner|newsletter (?:banner|sign[\s-]*up))\b/i.test(image.getAttribute("alt") || ""))) continue;
-      regions.add(figure);
+      for (let block = paragraph; block !== root; block = block.parentElement) {
+        for (const sibling of [block.previousElementSibling, block.nextElementSibling]) {
+          const banner = findSignupBanner(sibling, linkedTargets);
+          if (banner) regions.add(banner);
+        }
+        if (!isSingleChildBlock(block.parentElement) || linkedTargets.has(block.parentElement)) break;
+      }
     }
     return [...regions];
   }
@@ -3362,7 +3376,7 @@ var clipaibleArticleExtractor = (() => {
       }
     }
   }
-  function isExcluded(win, element, constants, readingRoots = []) {
+  function isExcluded(win, element, constants, readingRoots = [], tocRoots = []) {
     const {
       EXCLUDED_CLASSES: EXCLUDED_CLASSES2,
       PAYWALL_CLASSES: PAYWALL_CLASSES2,
@@ -3479,7 +3493,7 @@ var clipaibleArticleExtractor = (() => {
       if ((authoredHeading || selectedMedia || selectedInline) && ["header", "article-section-title"].includes(excluded2)) continue;
       if (selectedMedia && excluded2 === "overlay") continue;
       const pattern = new RegExp(`\\b${excluded2}\\b`);
-      if ((pattern.test(className) || pattern.test(id) || className === excluded2 || className.startsWith(excluded2 + "-") || className.endsWith("-" + excluded2)) && !isEditorialLayoutLabel(element, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(element, readingRoots))) {
+      if ((pattern.test(className) || pattern.test(id) || className === excluded2 || className.startsWith(excluded2 + "-") || className.endsWith("-" + excluded2)) && !isEditorialLayoutLabel(element, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(element, readingRoots, tocRoots))) {
         return true;
       }
     }
@@ -3500,7 +3514,7 @@ var clipaibleArticleExtractor = (() => {
             return parentClass.split(/\s+/).includes(excluded2) || parentId === excluded2;
           }
           const escaped = excluded2.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`) && !isEditorialLayoutLabel(parent, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(parent, readingRoots));
+          return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`) && !isEditorialLayoutLabel(parent, element, excluded2) && !(excluded2 === "sidebar" && isReferencedReadingAside(parent, readingRoots, tocRoots));
         })) return true;
         const clearAdIndicators = [/\bad\b/, /\badvertisement\b/, /\bsponsor\b/];
         const isClearAd = clearAdIndicators.some(
@@ -5370,13 +5384,13 @@ var clipaibleArticleExtractor = (() => {
   function collectCandidateElements(mainContent) {
     return [mainContent, ...Array.from(mainContent.querySelectorAll(CANDIDATE_SELECTOR))].filter((element) => element.matches(CANDIDATE_SELECTOR));
   }
-  function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = []) {
+  function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = []) {
     let excludedImageCount = 0;
     let excludedByType = {};
     const filteredElements = allElements.filter((el) => {
       const tagName = el.tagName.toLowerCase();
       const isImageOrFigure = tagName === "img" || tagName === "figure";
-      if (isExcluded(win, el, constants, readingRoots)) {
+      if (isExcluded(win, el, constants, readingRoots, tocRoots)) {
         if (isImageOrFigure) {
           excludedImageCount++;
         } else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -5413,7 +5427,7 @@ var clipaibleArticleExtractor = (() => {
   function graphicReferences(owner, state, constants, win, baseUrl) {
     const references = [];
     for (const source of Array.from(owner.querySelectorAll("a"))) {
-      if (source.closest("figcaption,button,nav,footer") || isSourceExcluded(source, state.selectionExclusions) || isExcluded(win, source, constants, state.referenceRoots)) continue;
+      if (source.closest("figcaption,button,nav,footer") || isSourceExcluded(source, state.selectionExclusions) || isExcluded(win, source, constants, state.referenceRoots, state.tocRoots)) continue;
       const href = source.getAttribute("href") || source.getAttributeNS("http://www.w3.org/1999/xlink", "href");
       if (!href) continue;
       let url;
@@ -5724,7 +5738,7 @@ var clipaibleArticleExtractor = (() => {
           processedCount++;
         }
       } else if (tagName === "ul" || tagName === "ol") {
-        const item = handleList(unit, state.selectionExclusions, state.referenceRoots);
+        const item = handleList(unit, state.selectionExclusions, state.referenceRoots, state.tocRoots);
         if (item) {
           content.push(item);
           incrementContentType(state.debugInfo, "list");
@@ -5778,7 +5792,7 @@ var clipaibleArticleExtractor = (() => {
         elements,
         emittedReadingIds(content, document2),
         state.selectionExclusions,
-        (reference) => !isExcluded(win, reference, constants, state.referenceRoots)
+        (reference) => !isExcluded(win, reference, constants, state.referenceRoots, state.tocRoots)
       );
       const projected = dependencies.map(({ target, clone, label, citation }) => {
         const roots = [...state.referenceRoots || [], clone];
@@ -5828,7 +5842,7 @@ var clipaibleArticleExtractor = (() => {
     }
     const level = parseInt(element.tagName.charAt(1));
     const aside = element.closest('aside[id],[role~="complementary"][id]');
-    const sectionId = aside?.querySelector("h2,h3,h4,h5,h6") === element && isReferencedReadingAside(aside, state.referenceRoots) ? aside.id : void 0;
+    const sectionId = aside?.querySelector("h2,h3,h4,h5,h6") === element && isReferencedReadingAside(aside, state.referenceRoots, state.tocRoots) ? aside.id : void 0;
     return {
       type: "heading",
       level,
@@ -5944,11 +5958,11 @@ var clipaibleArticleExtractor = (() => {
       format: "text"
     };
   }
-  function handleList(element, excludedSelectors = [], referenceRoots = null) {
+  function handleList(element, excludedSelectors = [], referenceRoots = null, tocRoots = []) {
     if (element.closest("blockquote")) return null;
     if (element.closest("table")) return null;
     const sidebar = element.closest(".sidebar");
-    if (element.closest(".navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc") || sidebar && !isReferencedReadingAside(sidebar, referenceRoots || [])) {
+    if (element.closest(".navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc") || sidebar && !isReferencedReadingAside(sidebar, referenceRoots || [], tocRoots)) {
       return null;
     }
     const children = Array.from(element.querySelectorAll("li")).filter((li) => li.closest("ul, ol") === element);
@@ -6169,12 +6183,12 @@ var clipaibleArticleExtractor = (() => {
         for (const selector of selectorValues(selectors[name])) doc.querySelector(selector);
       }
     } catch (error) {
-      if (error?.name === "SyntaxError") return { matched: false, roots: [], elements: [], exclusions: [] };
+      if (error?.name === "SyntaxError") return { matched: false, roots: [], elements: [], exclusions: [], tocRoots: [] };
       throw error;
     }
     const containers = selectorValues(selectors.articleContainer).flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
     if (selectorValues(selectors.articleContainer).length && !containers.length) {
-      return { matched: false, roots: [], elements: [], exclusions: [] };
+      return { matched: false, roots: [], elements: [], exclusions: [], tocRoots: [] };
     }
     const scopes = containers.length ? containers : [doc];
     const queries = selectorValues(selectors.content);
@@ -6194,7 +6208,8 @@ var clipaibleArticleExtractor = (() => {
       if (root.matches(CANDIDATE_SELECTOR)) elements.add(root);
       for (const node of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) elements.add(node);
     }
-    return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions, exclusionSelectors };
+    const tocRoots = selectorValues(selectors.toc).flatMap((selector) => containers.flatMap((container) => [...container.querySelectorAll(selector)])).filter((node) => !isSelectedContentExcluded(node, exclusions));
+    return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions, exclusionSelectors, tocRoots };
   }
   function isSelectedContentExcluded(element, exclusions) {
     return exclusions.some((node) => {
@@ -6326,12 +6341,13 @@ var clipaibleArticleExtractor = (() => {
           content: [],
           selectionExclusions: [...selection?.exclusionSelectors || [], ...interfaceRegions],
           referenceRoots: readingRoots,
+          tocRoots: selection?.tocRoots,
           featuredMediaRoots: media.featuredRoots,
           extractionDeadline,
           debugInfo
         };
         const allElements = [.../* @__PURE__ */ new Set([...readingRoots.flatMap((root) => collectCandidateElements(root)), ...standfirst.element ? [standfirst.element] : []])].filter((element) => (!selection || !isSelectedContentExcluded(element, selection.exclusions)) && !isSourceExcluded(element, interfaceRegions));
-        const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots);
+        const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots);
         const sortedElements = sortElementsInDomOrder(filteredElements);
         if (debugInfo) {
           debugInfo.foundElements = allElements.length;

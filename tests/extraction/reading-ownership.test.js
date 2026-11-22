@@ -98,12 +98,36 @@ describe('Reading ownership', () => {
     expect(result.plain).not.toContain('Publisher announcements and updates.');
   });
 
+  it('uses a selected contents list as evidence without exporting it as article prose', async () => {
+    const html = '<a href="#other">Updates</a><main><h1>Field report</h1><div id="contents"><h2>Contents</h2>' +
+      '<a href="#method">Calibration method</a></div><div id="story"><p>The first observation.</p>' +
+      '<aside id="method" class="sidebar"><h3>Calibration method</h3><p>The instrument was sealed after calibration.</p>' +
+      '<ul><li>Measure the reference first.</li></ul></aside>' +
+      '<aside id="other" class="sidebar"><h3>Updates</h3><p>Publisher announcements and updates.</p></aside></div></main>';
+    const result = await extract(html, { articleContainer: 'main', content: '#story', toc: '#contents' });
+    expect(result.plain).toContain('The instrument was sealed after calibration.');
+    expect(result.plain).toContain('Measure the reference first.');
+    expect(result.content.find(item => item.type === 'heading' && item.text === 'Calibration method')?.id).toBe('method');
+    expect(result.plain).not.toContain('Publisher announcements and updates.');
+    expect(result.plain).not.toContain('Contents');
+  });
+
   it('drops a newsletter banner owned by a sign-up panel while retaining editorial figures', async () => {
     const result = await extract('<article><h1>Field report</h1><figure><img src="/measuring.png" width="640" height="480" alt="Test apparatus"><figcaption>Measuring apparatus</figcaption></figure>' +
       '<p>Measurements were taken at regular intervals.</p><div><figure><img src="/promo.png" width="640" height="480" alt="A promotional banner for the bulletin"></figure>' +
       '<p><a href="/newsletters/lab">Sign up for the bulletin</a> for weekly updates.</p></div></article>');
     const sources = result.content.filter(item => item.type === 'image').map(item => item.src);
     expect(sources).toEqual(['https://example.test/measuring.png']);
+    expect(result.plain).not.toContain('weekly updates');
+  });
+
+  it('drops a banner in the neighboring sign-up block and keeps a captioned editorial image', async () => {
+    const html = '<article><h1>Field report</h1><p>Measurements were taken at regular intervals.</p>' +
+      '<div><div><figure><img src="/promo.png" width="640" height="480" alt="A promotional banner for the bulletin"></figure></div></div>' +
+      '<div><div><p><a href="/newsletters/lab">Sign up for the bulletin</a> for weekly updates.</p></div></div>' +
+      '<div><figure><img src="/measuring.png" width="640" height="480" alt="A promotional banner at the site"><figcaption>An exhibit documented in the report.</figcaption></figure></div></article>';
+    const result = await extract(html);
+    expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/measuring.png']);
     expect(result.plain).not.toContain('weekly updates');
   });
 

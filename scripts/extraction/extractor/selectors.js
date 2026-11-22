@@ -13,12 +13,12 @@ export function resolveContentSelection(doc, selectors) {
       for (const selector of selectorValues(selectors[name])) doc.querySelector(selector);
     }
   } catch (error) {
-    if (error?.name === 'SyntaxError') return { matched: false, roots: [], elements: [], exclusions: [] };
+    if (error?.name === 'SyntaxError') return { matched: false, roots: [], elements: [], exclusions: [], tocRoots: [] };
     throw error;
   }
   const containers = selectorValues(selectors.articleContainer).flatMap(selector => Array.from(doc.querySelectorAll(selector)));
   if (selectorValues(selectors.articleContainer).length && !containers.length) {
-    return { matched: false, roots: [], elements: [], exclusions: [] };
+    return { matched: false, roots: [], elements: [], exclusions: [], tocRoots: [] };
   }
   const scopes = containers.length ? containers : [doc];
   const queries = selectorValues(selectors.content);
@@ -41,7 +41,10 @@ export function resolveContentSelection(doc, selectors) {
     if (root.matches(CANDIDATE_SELECTOR)) elements.add(root);
     for (const node of Array.from(root.querySelectorAll(CANDIDATE_SELECTOR))) elements.add(node);
   }
-  return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions, exclusionSelectors };
+  const tocRoots = selectorValues(selectors.toc)
+    .flatMap(selector => containers.flatMap(container => [...container.querySelectorAll(selector)]))
+    .filter(node => !isSelectedContentExcluded(node, exclusions));
+  return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions, exclusionSelectors, tocRoots };
 }
 
 export function isSelectedContentExcluded(element, exclusions) {

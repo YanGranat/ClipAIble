@@ -131,6 +131,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         content: [],
         selectionExclusions: [...(selection?.exclusionSelectors || []), ...interfaceRegions],
         referenceRoots: readingRoots,
+        tocRoots: selection?.tocRoots,
         featuredMediaRoots: media.featuredRoots,
         extractionDeadline,
         debugInfo
@@ -138,7 +139,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       const allElements = [...new Set([...readingRoots.flatMap(root => collectCandidateElements(root)), ...(standfirst.element ? [standfirst.element] : [])])]
         .filter(element => (!selection || !isSelectedContentExcluded(element, selection.exclusions)) &&
           !isSourceExcluded(element, interfaceRegions));
-      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots);
+      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots);
       const sortedElements = sortElementsInDomOrder(filteredElements);
       if (debugInfo) {
         debugInfo.foundElements = allElements.length;

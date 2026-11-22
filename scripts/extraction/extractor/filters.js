@@ -178,6 +178,23 @@ const PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
 const SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
 const PROTECTED_READING = 'article,main,[role~="article"],[role~="main"],[itemprop~="articleBody"],.instapaper_body,h1,table,pre,blockquote,math';
 
+function isSingleChildBlock(element) {
+  return element?.matches('div,section') && element.childElementCount === 1 &&
+    element.textContent.trim() === element.firstElementChild.textContent.trim();
+}
+
+function findSignupBanner(sibling, linkedTargets) {
+  let figure = sibling;
+  while (isSingleChildBlock(figure)) {
+    if (linkedTargets.has(figure)) return null;
+    figure = figure.firstElementChild;
+  }
+  if (!figure?.matches('figure') || linkedTargets.has(figure) || figure.querySelector('figcaption') ||
+      figure.textContent.trim()) return null;
+  return Array.from(figure.querySelectorAll('img[alt]')).some(image =>
+    /\b(?:promotional banner|newsletter (?:banner|sign[\s-]*up))\b/i.test(image.getAttribute('alt') || '')) ? figure : null;
+}
+
 /** Locate independently owned subscription and comment controls before projecting article content. */
 export function findPublisherFormRegions(root) {
   const regions = new Set();
@@ -227,14 +244,14 @@ export function findPublisherFormRegions(root) {
       } catch { return false; }
     })) continue;
     regions.add(paragraph);
-    // A compact sign-up panel can own an image as well as its action text.
-    const panel = paragraph.parentElement;
-    if (!panel || !root.contains(panel) || panel.childElementCount !== 2) continue;
-    const figure = Array.from(panel.children).find(child => child.matches('figure'));
-    if (!figure || linkedTargets.has(figure) || figure.querySelector('figcaption') ||
-        !Array.from(figure.querySelectorAll('img[alt]')).some(image =>
-          /\b(?:promotional banner|newsletter (?:banner|sign[\s-]*up))\b/i.test(image.getAttribute('alt') || ''))) continue;
-    regions.add(figure);
+    // A sign-up action and its banner may be arranged in neighboring blocks.
+    for (let block = paragraph; block !== root; block = block.parentElement) {
+      for (const sibling of [block.previousElementSibling, block.nextElementSibling]) {
+        const banner = findSignupBanner(sibling, linkedTargets);
+        if (banner) regions.add(banner);
+      }
+      if (!isSingleChildBlock(block.parentElement) || linkedTargets.has(block.parentElement)) break;
+    }
   }
   return [...regions];
 }
@@ -268,7 +285,7 @@ function addPanelSkipControls(panel, label, regions) {
  * @param {string[]} constants.COURSE_AD_PATTERNS - Course ad patterns
  * @returns {boolean} - True if element should be excluded
  */
-export function isExcluded(win, element, constants, readingRoots = []) {
+export function isExcluded(win, element, constants, readingRoots = [], tocRoots = []) {
   const {
     EXCLUDED_CLASSES,
     PAYWALL_CLASSES,
@@ -446,7 +463,7 @@ export function isExcluded(win, element, constants, readingRoots = []) {
         className === excluded || className.startsWith(excluded + '-') || 
         className.endsWith('-' + excluded)) &&
         !isEditorialLayoutLabel(element, element, excluded) &&
-        !(excluded === 'sidebar' && isReferencedReadingAside(element, readingRoots))) {
+        !(excluded === 'sidebar' && isReferencedReadingAside(element, readingRoots, tocRoots))) {
       return true;
     }
   }
@@ -474,7 +491,7 @@ export function isExcluded(win, element, constants, readingRoots = []) {
         const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`) &&
           !isEditorialLayoutLabel(parent, element, excluded) &&
-          !(excluded === 'sidebar' && isReferencedReadingAside(parent, readingRoots));
+          !(excluded === 'sidebar' && isReferencedReadingAside(parent, readingRoots, tocRoots));
       })) return true;
       
       // Clear ad indicators

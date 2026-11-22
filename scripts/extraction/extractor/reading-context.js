@@ -46,14 +46,14 @@ export function isEditorialLayoutLabel(region, source, role) {
 }
 
 /** A section destination referenced by its heading belongs to the article's reading order. */
-export function isReferencedReadingAside(element, roots) {
+export function isReferencedReadingAside(element, roots, tocRoots = []) {
   if (!element.matches('aside[id],[role~="complementary"][id]')) return false;
   const heading = element.querySelector('h2,h3,h4,h5,h6');
   const label = normalizedLabel(heading?.textContent);
   if (!label || !element.querySelector('p,blockquote,ul,ol,figure,table')) return false;
   const articleRoots = roots.filter(root => !root.matches('body,html'));
   if (!articleRoots.some(root => root.contains(element))) return false;
-  return articleRoots.some(root =>
+  return [...articleRoots, ...tocRoots].some(root =>
     Array.from(root.querySelectorAll('a[href*="#"]')).some(link => !element.contains(link) &&
       normalizedLabel(link.textContent) === label && getDocumentFragmentTarget(link) === element));
 }

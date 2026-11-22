@@ -42,7 +42,7 @@ export function collectCandidateElements(mainContent) {
  * @param {DebugInfo|null} debugInfo - Debug info
  * @returns {Element[]} - Filtered elements
  */
-export function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = []) {
+export function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = []) {
   let excludedImageCount = 0;
   let excludedByType = {};
   
@@ -50,7 +50,7 @@ export function filterCandidateElements(win, allElements, constants, debugInfo, 
     const tagName = el.tagName.toLowerCase();
     const isImageOrFigure = tagName === 'img' || tagName === 'figure';
     
-    if (isExcluded(win, el, constants, readingRoots)) {
+    if (isExcluded(win, el, constants, readingRoots, tocRoots)) {
       if (isImageOrFigure) {
         excludedImageCount++;
         // Debug log for excluded images/figures
@@ -104,7 +104,7 @@ function graphicReferences(owner, state, constants, win, baseUrl) {
   const references = [];
   for (const source of Array.from(owner.querySelectorAll('a'))) {
     if (source.closest('figcaption,button,nav,footer') || isSourceExcluded(source, state.selectionExclusions) ||
-        isExcluded(win, source, constants, state.referenceRoots)) continue;
+        isExcluded(win, source, constants, state.referenceRoots, state.tocRoots)) continue;
     const href = source.getAttribute('href') || source.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
     if (!href) continue;
     let url;
@@ -421,7 +421,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
         processedCount++;
       }
     } else if (tagName === 'ul' || tagName === 'ol') {
-      const item = handleList(unit, state.selectionExclusions, state.referenceRoots);
+      const item = handleList(unit, state.selectionExclusions, state.referenceRoots, state.tocRoots);
       if (item) {
         content.push(item);
         incrementContentType(state.debugInfo, 'list');
@@ -470,7 +470,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
   if (!annotationPass && elements.length) {
     const document = elements[0].ownerDocument;
     const dependencies = collectAnnotationTargets(elements, emittedReadingIds(content, document), state.selectionExclusions,
-      reference => !isExcluded(win, reference, constants, state.referenceRoots));
+      reference => !isExcluded(win, reference, constants, state.referenceRoots, state.tocRoots));
     const projected = dependencies.map(({ target, clone, label, citation }) => {
       const roots = [...(state.referenceRoots || []), clone];
       const candidates = [clone, ...Array.from(clone.querySelectorAll(CANDIDATE_SELECTOR))];
@@ -564,7 +564,7 @@ export function handleHeading(element, state, constants) {
   const level = parseInt(element.tagName.charAt(1));
   const aside = element.closest('aside[id],[role~="complementary"][id]');
   const sectionId = aside?.querySelector('h2,h3,h4,h5,h6') === element &&
-    isReferencedReadingAside(aside, state.referenceRoots) ? aside.id : undefined;
+    isReferencedReadingAside(aside, state.referenceRoots, state.tocRoots) ? aside.id : undefined;
   return {
     type: 'heading',
     level,
@@ -752,7 +752,7 @@ export function handleCode(element) {
  * @param {Element} element - List element
  * @returns {ContentItem|null} - Content item or null
  */
-export function handleList(element, excludedSelectors = [], referenceRoots = null) {
+export function handleList(element, excludedSelectors = [], referenceRoots = null, tocRoots = []) {
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
   
@@ -762,7 +762,7 @@ export function handleList(element, excludedSelectors = [], referenceRoots = nul
   // Navigation lists and utility sidebars are outside the reading order.
   const sidebar = element.closest('.sidebar');
   if (element.closest('.navbox, .authority-control, .side-box, .sister-box, .sistersitebox, .infobox, .hatnote, .mw-panel-toc, .vector-toc, #toc') ||
-      (sidebar && !isReferencedReadingAside(sidebar, referenceRoots || []))) {
+      (sidebar && !isReferencedReadingAside(sidebar, referenceRoots || [], tocRoots))) {
     return null;
   }
 

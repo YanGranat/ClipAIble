@@ -126,6 +126,7 @@
  * @property {Set<string>} [addedParagraphs] - Lazily collected paragraph text keys
  * @property {string} mainTitleText - Main title text (normalized)
  * @property {Element | null} [titleElement] - Source element used for the document title
+ * @property {Element[]} [tocRoots] - Article contents used to verify section destinations
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing
  * @property {Array<Element|string>} [selectionExclusions] - Excluded subtrees for the current extraction
