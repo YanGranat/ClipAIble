@@ -133,6 +133,17 @@ describe('live localized messages', () => {
     expect(elements.statusText.textContent).toBe(formatMessage('errorOpenaiVoiceUnavailable', 'de', { voice: 'sample-voice' }));
   });
 
+  it('retranslates the saved format when the interface language changes', async () => {
+    elements.savePdfBtn = document.createElement('button');
+    const state = initState({ elements, t, setStatus: ui.setStatus, setProgress: vi.fn(), stopTimerDisplay: vi.fn(), stateRefs: {} });
+    await state.updateUIFromState({ isProcessing: false, statusTranslationKey: 'statusDone', outputFormat: 'audio' });
+    expect(elements.statusText.textContent).toBe('Ready: Audio');
+
+    language = 'ru';
+    await ui.applyLocalization();
+    expect(elements.statusText.textContent).toBe(formatMessage('notificationReady', 'ru', { format: UI_LOCALES.ru.formatAudio }));
+  });
+
   it('keeps parameterized progress more specific than its generic stage', async () => {
     elements.savePdfBtn = document.createElement('button');
     elements.cancelBtn = document.createElement('button');

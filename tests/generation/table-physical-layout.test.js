@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { inflateRawSync } from 'node:zlib';
+import { JSDOM } from 'jsdom';
+import { extractAutomaticallyInlined } from '../../scripts/extraction/automatic.js';
 import { renderTableHtml, verifiedTableLayout, flatTableProjection } from '../../scripts/generation/document-content.js';
 import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
 import { generateEpub } from '../../scripts/generation/epub.js';
+import { preparePdfLayout } from '../../scripts/generation/pdf-layout.js';
 
 const table = () => ({
   type: 'table', id: 'observations', cellFormat: 'html', hasHeaders: true,
@@ -108,6 +111,83 @@ describe('Physical table layout', () => {
     expect(document.querySelector('parsererror')).toBeNull();
     checkPhysicalTable(document);
     expect(source).toEqual(before);
+  });
+
+  it('preserves authored table destinations and header associations from source through PDF records and EPUB', async () => {
+    const url = 'https://example.com/survey';
+    const source = new JSDOM(`<!doctype html><main><h1>Field survey</h1>
+      <p>Review the <a href="#flow">flow definition</a> and <a href="#length">length definition</a>
+      before examining the independent measurements recorded at each observation station.</p>
+      <table id="survey"><colgroup span="1"></colgroup><colgroup><col span="2"></colgroup>
+        <thead><tr><th scope="col">Station</th><th scope="col" id="length">Length</th><th scope="col" id="flow">Flow</th></tr></thead>
+        <tbody><tr><td>North</td><td headers="flow absent flow">27</td><td headers="">31</td></tr></tbody></table>
+      <p>The inspection team recorded two more surveys at other locations in the same region.</p></main>`,
+    { url, runScripts: 'outside-only' });
+    let print;
+    try {
+      const extract = source.window.eval(`(${extractAutomaticallyInlined.toString()})`);
+      const { content, title } = await extract(url, false, { articleContainer: 'main', content: 'main' });
+      const html = buildHtmlForPdf(content, title, '', '<style></style>', url);
+      print = new JSDOM(html, { runScripts: 'outside-only' });
+      const { document } = print.window;
+      const grid = document.querySelector('table');
+      const checkGrid = table => {
+        expect(table.id).toBe('survey');
+        expect([...table.querySelectorAll('colgroup')].map(group => group.getAttribute('span'))).toEqual(['1', '2']);
+        expect([...table.querySelectorAll('td')].map(cell => cell.getAttribute('headers'))).toEqual([null, 'flow', '']);
+        expect(table.querySelector('th#flow').textContent).toBe('Flow');
+      };
+      checkGrid(grid);
+      const chapter = await epubContent(await generateEpub({ title, content, sourceUrl: url, language: 'en' }));
+      const epub = new DOMParser().parseFromString(chapter, 'application/xhtml+xml');
+      expect(epub.querySelector('parsererror')).toBeNull();
+      checkGrid(epub.querySelector('table'));
+      expect(epub.querySelector('a[href="#flow"]').textContent).toBe('flow definition');
+
+      print.window.matchMedia = () => ({ matches: true });
+      const article = document.querySelector('article');
+      article.getBoundingClientRect = () => ({ top: 0, bottom: 300, width: 756, height: 300 });
+      grid.parentElement.getBoundingClientRect = () => ({ width: 756 });
+      grid.getBoundingClientRect = () => ({ width: 1600 });
+      const layout = await print.window.eval(`(${preparePdfLayout.toString()})(8.27,"multi",11.69)`);
+      expect(layout.tableLayouts[0].mode).toBe('records');
+      expect([...document.querySelectorAll('dt')].map(cell => cell.textContent)).toEqual(['Station', 'Flow', '3']);
+      expect([...document.querySelectorAll('dd')].map(cell => cell.textContent)).toEqual(['North', '27', '31']);
+      expect(document.querySelector('.pdf-table-records #length').textContent).toBe('Length');
+      expect(document.querySelectorAll('#flow')).toHaveLength(1);
+      expect(document.querySelector('a[href="#length"]').textContent).toBe('length definition');
+    } finally {
+      print?.window.close();
+      source.window.close();
+    }
+  });
+
+  it('preserves the first authored header destination when other references are hidden, foreign, or invalid', async () => {
+    const url = 'https://example.com/observations';
+    const page = new JSDOM(`<!doctype html><main><h1>Field observations</h1>
+      <p>These measurements provide a useful comparison between stations affected by several independent weather systems.</p>
+      <table id="readings">
+        <thead><tr><th id="level" scope="COL">First heading</th><th id="level" scope="diagonal">Second heading</th>
+          <th id="hidden" style="visibility:hidden">Hidden heading</th></tr></thead>
+        <tbody><tr><td headers="level hidden outside alias">8</td><td headers="outside">9</td><td><a name="alias">Note</a></td></tr></tbody></table>
+      <table id="another"><thead><tr><th id="outside">Foreign heading</th></tr></thead><tbody><tr><td>10</td></tr></tbody></table>
+      <p>The inspectors made separate measurements during the following two weeks with independent equipment.</p></main>`,
+    { url, runScripts: 'outside-only' });
+    try {
+      const extract = page.window.eval(`(${extractAutomaticallyInlined.toString()})`);
+      const { content, title } = await extract(url, false, { articleContainer: 'main', content: 'main' });
+      const html = buildHtmlForPdf(content, title, '', '<style></style>', url);
+      const document = new DOMParser().parseFromString(html, 'text/html');
+      expect(document.querySelector('#readings #level').textContent).toBe('First heading');
+      expect(document.querySelectorAll('#level')).toHaveLength(1);
+      expect(document.querySelector('#level').getAttribute('scope')).toBe('col');
+      expect(document.querySelector('#readings [scope="diagonal"]')).toBeNull();
+      expect(document.querySelector('#readings #hidden')).toBeNull();
+      expect([...document.querySelectorAll('#readings td')].map(cell => cell.getAttribute('headers'))).toEqual(['level', '', null]);
+      expect(document.querySelector('#another #outside').textContent).toBe('Foreign heading');
+    } finally {
+      page.window.close();
+    }
   });
 
   it('preserves the declared headerless state and each format default for rows without header metadata', async () => {

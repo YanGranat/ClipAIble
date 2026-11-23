@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { preparePdfLayout } from '../../scripts/generation/pdf-layout.js';
+import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
 
 const windows = [];
 function page(markup, naturalWidth = 756) {
@@ -15,9 +16,34 @@ function page(markup, naturalWidth = 756) {
   for (const table of doc.querySelectorAll('table')) {
     table.getBoundingClientRect = () => ({ width: Math.max(756, naturalWidth * parseFloat(win.getComputedStyle(table.querySelector('th,td')).fontSize) / 31) });
   }
-  const prepare = (mode = 'single') => win.eval(`(${preparePdfLayout.toString()})(8.27, ${JSON.stringify(mode)})`);
+  const prepare = (mode = 'single') => win.eval(`(${preparePdfLayout.toString()})(8.27, ${JSON.stringify(mode)}, 11.69, 5)`);
   return { win, doc, prepare };
 }
+
+function figurePage({ precedingEnd = 680, fit = true, heading = false } = {}) {
+  const section = heading ? '<h2>Survey locations</h2><a name="survey-map"></a>' : '';
+  const result = page(`<p>Opening observations.</p>${section}<figure class="article-image"><img alt="Survey map"><figcaption id="map-credit">Survey map and credit.</figcaption></figure><p>Closing observation.</p>`);
+  const { doc } = result;
+  const article = doc.querySelector('.article');
+  const preceding = doc.querySelector('.article-content > p');
+  const figure = doc.querySelector('figure');
+  const image = figure.querySelector('img');
+  const imageHeight = () => parseFloat(image.style.maxHeight) || 460;
+  article.getBoundingClientRect = () => ({ left: 0, top: 0, bottom: 400, width: 756, height: 400 });
+  preceding.getClientRects = () => [{ left: 0, top: 610, bottom: precedingEnd, height: precedingEnd - 610 }];
+  const figureTop = heading ? 30 : 0;
+  const figureColumn = () => fit && imageHeight() <= 1103 - precedingEnd - 35 - figureTop ? 0 : 756;
+  figure.getBoundingClientRect = () => ({ top: figureTop, bottom: figureTop + imageHeight() + 35, height: imageHeight() + 35 });
+  figure.getClientRects = () => [{
+    ...figure.getBoundingClientRect(),
+    left: figureColumn(),
+  }];
+  if (heading) doc.querySelector('h2').getClientRects = () => [{ left: figureColumn(), top: 0, bottom: 24, height: 24 }];
+  image.getBoundingClientRect = () => ({ height: imageHeight() });
+  article.style.color = 'black';
+  return { ...result, article, figure, image };
+}
+
 afterEach(() => windows.splice(0).forEach(win => win.close()));
 
 describe('Final PDF print layout', () => {
@@ -54,10 +80,102 @@ describe('Final PDF print layout', () => {
     await expect(prepare()).rejects.toThrow('print media');
   });
 
+  it('prints loaded table media in its original cells and preserves fragment destinations', async () => {
+    const { doc, prepare } = page([
+      '<p><a href="#reading-media-1">Compare chart</a></p>',
+      '<table><tbody><tr><td><a href="#reading-media-1" id="plot">Image</a> 23%</td>',
+      '<td><a href="#reading-media-1">Image</a></td>',
+      '<td><a href="#reading-media-2">Missing chart</a></td></tr></tbody></table>',
+      '<a name="reading-media-1"></a><figure class="article-image" id="reading-media-1" data-table-media>',
+      '<img alt="Trend"><figcaption>Trend by period</figcaption></figure>',
+      '<figure class="article-image" id="reading-media-2" data-table-media><img alt="Missing chart"></figure>',
+    ].join(''));
+    Object.defineProperty(doc.querySelector('img[alt="Trend"]'), 'naturalWidth', { value: 90 });
+
+    await prepare();
+
+    const [value, duplicate, unavailable] = doc.querySelectorAll('td');
+    expect(value.querySelector('img').alt).toBe('Trend');
+    expect(value.querySelector('#plot')).not.toBeNull();
+    expect(value.querySelector('#reading-media-1 figcaption').textContent).toBe('Trend by period');
+    expect(value.textContent).toContain('23%');
+    expect(duplicate.querySelector('img').alt).toBe('Trend');
+    expect(duplicate.querySelector('figcaption')).toBeNull();
+    expect(unavailable.querySelector('a').textContent).toBe('Missing chart');
+    expect(doc.querySelector('p a').getAttribute('href')).toBe('#reading-media-1');
+    expect(doc.querySelector('.article-content > #reading-media-1')).toBeNull();
+    expect(doc.querySelector('[name="reading-media-1"]')).toBeNull();
+  });
+
+  it('preserves an authored table reference to a standalone appendix figure', async () => {
+    const { doc, prepare } = page([
+      '<table><tbody><tr><td><a href="#reading-media-1">See the appendix map</a></td></tr></tbody></table>',
+      '<p>Appendix commentary.</p>',
+      '<figure class="article-image" id="reading-media-1"><img alt="Survey map"></figure>',
+    ].join(''));
+    Object.defineProperty(doc.querySelector('img'), 'naturalWidth', { value: 650 });
+    await prepare();
+    expect(doc.querySelector('td a[href="#reading-media-1"]').textContent).toBe('See the appendix map');
+    expect(doc.querySelector('.article-content > figure#reading-media-1')).not.toBeNull();
+  });
+
+  it('keeps the table-owned image and authored appendix destination distinct in records', async () => {
+    const html = buildHtmlForPdf([
+      { type: 'table', cellFormat: 'html', headers: ['Appendix', 'Observation'], rows: [[
+        '<a href="#reading-media-1">See the appendix map</a>', '<a href="#reading-media-2">Station chart</a>'
+      ]] },
+      { type: 'image', id: 'reading-media-2', tableMedia: true, src: 'https://example.test/chart.png', alt: 'Station chart' },
+      { type: 'paragraph', text: 'Appendix commentary.' },
+      { type: 'image', id: 'reading-media-1', src: 'https://example.test/map.png', alt: 'Survey map' },
+    ], 'Survey methods', '', '', 'https://example.test/report');
+    const section = JSDOM.fragment(html).querySelector('.article-content');
+    const { doc, prepare } = page(section.innerHTML, 1800);
+    for (const figure of doc.querySelectorAll('figure img')) Object.defineProperty(figure, 'naturalWidth', { value: 650 });
+
+    expect((await prepare()).tableLayouts[0].mode).toBe('records');
+    expect(doc.querySelector('dd a[href="#reading-media-1"]').textContent).toBe('See the appendix map');
+    expect(doc.querySelector('dd #reading-media-2 img').alt).toBe('Station chart');
+    expect(doc.querySelector('.article-content > figure#reading-media-1 img').alt).toBe('Survey map');
+  });
+
   it('includes content extending below the article border box', async () => {
     const { doc, prepare } = page('<p>A complete observation.</p>');
     Object.defineProperty(doc.querySelector('article'), 'scrollHeight', { value: 700 });
     expect((await prepare()).contentHeight).toBe(720);
+  });
+
+  it('only scales a near-fitting figure with its caption and removes measurement styles', async () => {
+    const { doc, article, image, prepare } = figurePage();
+    await prepare('multi');
+    expect(parseFloat(image.style.maxHeight)).toBeGreaterThan(460 * 0.8);
+    expect(parseFloat(image.style.maxHeight)).toBeLessThan(460);
+    expect(doc.getElementById('map-credit').textContent).toBe('Survey map and credit.');
+    expect(article.style.cssText).toBe('color: black;');
+  });
+
+  it('counts a heading across invisible link targets when fitting a figure', async () => {
+    const { doc, image, prepare } = figurePage({ precedingEnd: 650, heading: true });
+    await prepare('multi');
+    expect(image.style.maxHeight).toBe('386px');
+    expect(doc.querySelector('a[name="survey-map"]')).not.toBeNull();
+  });
+
+  it('preserves the original size if the figure needs excessive reduction or still fails to fit', async () => {
+    const large = figurePage({ precedingEnd: 760 });
+    await large.prepare('multi');
+    expect(large.image.style.maxHeight).toBe('');
+
+    const unbreakable = figurePage({ fit: false });
+    await unbreakable.prepare('multi');
+    expect(unbreakable.image.style.maxHeight).toBe('');
+    expect(unbreakable.article.style.cssText).toBe('color: black;');
+  });
+
+  it('preserves figure size in continuous PDF mode', async () => {
+    const continuous = figurePage();
+    await continuous.prepare('single');
+    expect(continuous.image.style.maxHeight).toBe('');
+    expect(continuous.article.style.cssText).toBe('color: black;');
   });
 
   it('fits a moderately wide grid by changing only its cell type size', async () => {

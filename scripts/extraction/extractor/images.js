@@ -191,6 +191,21 @@ export function getSelectedImageNaturalSize(img) {
   };
 }
 
+/** A collapsed decorative layer is not an independent article image. */
+export function isCollapsedImageLayer(img) {
+  if (!img.isConnected || !img.complete || !img.naturalWidth || !img.naturalHeight) return false;
+  if (img.getAttribute('alt')?.trim() !== '' || img.title || img.hasAttribute('aria-label') ||
+      img.hasAttribute('aria-labelledby') || img.closest('a[href]') || !img.closest('figure')) return false;
+  const rect = img.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) return false;
+  const win = img.ownerDocument.defaultView;
+  const style = safeGetComputedStyle(win, img);
+  const collapsed = (rect.width <= 0 && style?.width === '0px') || (rect.height <= 0 && style?.height === '0px');
+  if (!collapsed || !['absolute', 'fixed'].includes(style?.position) || !getSelectedImageNaturalSize(img).matchesSource) return false;
+  return Array.from(img.parentElement?.children || []).some(sibling => sibling !== img && sibling.tagName === 'IMG' &&
+    safeGetComputedStyle(win, sibling)?.position === style.position);
+}
+
 /**
  * Check if image is tracking pixel
  * @param {Window} win - Window object

@@ -1,10 +1,12 @@
 // @ts-check
 
+export const PDF_PAGE_MARGIN_MM = 5;
+
 /** Prepare and measure the final print layout in its owning document. */
-export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
+export async function preparePdfLayout(paperWidthInches, pageMode = 'single', paperHeightInches = 0, pageMarginMm = 5) {
   if (!window.matchMedia('print').matches) throw new Error('PDF layout requires print media.');
   document.documentElement.style.setProperty('--pdf-page-width', `${paperWidthInches}in`);
-  document.documentElement.style.setProperty('--pdf-layout-width', pageMode === 'multi' ? `calc(${paperWidthInches}in - 10mm)` : `${paperWidthInches}in`);
+  document.documentElement.style.setProperty('--pdf-layout-width', pageMode === 'multi' ? `calc(${paperWidthInches}in - ${2 * pageMarginMm}mm)` : `${paperWidthInches}in`);
   if (document.fonts?.ready) await document.fonts.ready;
   const article = document.querySelector('.article') || document.body;
   if (pageMode === 'single') {
@@ -14,7 +16,39 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
       flow.lastElementChild.remove();
     }
   }
+  restoreTableMedia();
   const tableLayouts = [];
+
+  function restoreTableMedia() {
+    const media = new Map();
+    for (const figure of article.querySelectorAll('figure.article-image[data-table-media][id]')) {
+      const image = /** @type {HTMLImageElement | null} */ (figure.querySelector(':scope > img'));
+      if (image?.naturalWidth) media.set(`#${figure.id}`, { figure, image });
+    }
+    if (!media.size) return;
+
+    for (const reference of article.querySelectorAll('th a[href^="#reading-media-"], td a[href^="#reading-media-"]')) {
+      const asset = media.get(reference.getAttribute('href'));
+      if (!asset) continue;
+      const { figure, image } = asset;
+      let inlineMedia = figure;
+      if (figure.classList.contains('table-media')) {
+        inlineMedia = document.createElement('span');
+        inlineMedia.className = 'table-media';
+        inlineMedia.append(image.cloneNode());
+      } else {
+        const oldAnchor = figure.previousElementSibling;
+        if (oldAnchor?.matches('a[name]:empty') && oldAnchor.getAttribute('name') === figure.id) oldAnchor.remove();
+        figure.classList.replace('article-image', 'table-media');
+      }
+      if (reference.id) {
+        const anchor = document.createElement('span');
+        anchor.id = reference.id;
+        reference.before(anchor);
+      }
+      reference.replaceWith(inlineMedia);
+    }
+  }
 
   function projectTable(table) {
     const rows = Array.from(table.rows);
@@ -39,6 +73,8 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
     const columns = grid.reduce((count, row) => Math.max(count, row.length), 0);
     projected.forEach((entry, index) => { entry.cells = [...new Set(grid[index].filter(Boolean))]; });
     const headers = [...headerOwners.values()].filter(owner => owner.cell.tagName === 'TH');
+    const headersById = new Map();
+    for (const { cell } of headers) if (cell.id && !headersById.has(cell.id)) headersById.set(cell.id, cell);
     const groups = [];
     for (const group of Array.from(table.children).filter(element => element.tagName === 'COLGROUP')) {
       const cols = Array.from(group.children).filter(element => element.tagName === 'COL');
@@ -50,8 +86,8 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
       (owner.cell.scope === 'colgroup' && !groups[owner.column]) ||
       (!owner.cell.scope && grid.slice(owner.rowIndex, owner.rowIndex + owner.height).every(row => !row.some(other => other.cell.tagName === 'TD')));
     function headingsFor(principal) {
-      if (principal.cell.hasAttribute('headers')) return [...new Set(principal.cell.getAttribute('headers').trim().split(/\s+/).filter(Boolean)
-        .map(id => table.ownerDocument.getElementById(id)).filter(cell => cell && headerOwners.has(cell) && cell !== principal.cell && (cell.children.length || cell.textContent?.trim())))];
+      if (principal.cell.hasAttribute('headers')) return [...new Set(principal.cell.getAttribute('headers').split(/[\t\n\f\r ]+/)
+        .map(id => headersById.get(id)).filter(cell => cell && cell !== principal.cell && (cell.children.length || cell.textContent?.trim())))];
       const associated = new Set();
       for (let column = principal.column; column < principal.column + principal.width; column++) {
         const opaque = [], visited = new Set();
@@ -76,7 +112,9 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
       });
     }
     const body = projected.filter(entry => entry.row.parentElement !== table.tHead);
-    return { columns, headingsFor, rows: body.length ? body : projected, headersOnly: body.length === 0 };
+    const headCells = [...new Set(projected.filter(entry => entry.row.parentElement === table.tHead)
+      .flatMap(entry => entry.cells.map(owner => owner.cell)))];
+    return { columns, headingsFor, rows: body.length ? body : projected, headCells, headersOnly: body.length === 0 };
   }
 
   for (const table of Array.from(article.querySelectorAll('table'))) {
@@ -112,6 +150,7 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
     records.className = 'pdf-table-records';
     if (table.id) records.id = table.id;
     const emittedIds = new Set();
+    const usedHeadings = new Set();
     function appendCell(target, cell) {
       const copy = document.createElement('span');
       if (cell.classList.contains('table-muted')) copy.className = 'table-muted';
@@ -138,6 +177,7 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
         const value = document.createElement('dd');
         const headings = projection.headersOnly ? [] : projection.headingsFor(owner);
         headings.forEach((heading, index) => {
+          usedHeadings.add(heading);
           if (index) label.appendChild(document.createElement('br'));
           appendCell(label, heading);
         });
@@ -147,11 +187,83 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single') {
       });
       records.append(record);
     });
+    if (!projection.headersOnly) {
+      const unassigned = projection.headCells.filter(cell => !usedHeadings.has(cell) && (cell.id || cell.children.length || cell.textContent?.trim()));
+      if (unassigned.length) {
+        const context = document.createElement('header');
+        context.className = 'pdf-table-context';
+        unassigned.forEach((cell, index) => {
+          if (index) context.appendChild(document.createElement('br'));
+          appendCell(context, cell);
+        });
+        records.prepend(context);
+      }
+    }
     table.replaceWith(records);
     tableLayouts.push({ mode: 'records', columns: projection.columns, scale: 1 });
+  }
+
+  if (pageMode === 'multi' && paperHeightInches > pageMarginMm / 25.4) {
+    fitPageEndFigures((paperHeightInches - pageMarginMm / 25.4) * 96);
   }
 
   const bounds = article.getBoundingClientRect();
   const contentHeight = Math.ceil(Math.max(bounds.bottom, bounds.top + article.scrollHeight)) + 1;
   return { contentWidth: bounds.width, contentHeight, tableLayouts };
+
+  function fitPageEndFigures(printablePageHeight) {
+    if (!(article instanceof HTMLElement)) return;
+    const figures = article.querySelectorAll('.article-content > figure.article-image');
+    if (!figures.length) return;
+    const articleBox = article.getBoundingClientRect();
+    if (!articleBox.width) return;
+    const printStyles = article.style.cssText;
+    const lastFragment = element => Array.from(element?.getClientRects() || []).filter(rect => rect.height > 0).at(-1);
+    const column = rect => Math.round(Math.abs(rect.left - articleBox.left) / articleBox.width);
+    const margin = (element, direction) => parseFloat(getComputedStyle(element)[direction]) || 0;
+
+    // Use page-sized columns to estimate where Chromium can keep a figure together.
+    Object.assign(article.style, {
+      columnWidth: `${articleBox.width}px`, columnGap: '0px', columnFill: 'auto',
+      height: `${printablePageHeight}px`, minHeight: '0', maxHeight: 'none'
+    });
+    try {
+      for (const figure of figures) {
+        const image = /** @type {HTMLImageElement | null} */ (figure.querySelector(':scope > img'));
+        if (!image) continue;
+
+        let start = figure;
+        let previous = start.previousElementSibling;
+        while (previous) {
+          if (lastFragment(previous)) {
+            if (!previous.matches('h1,h2,h3,h4,h5,h6')) break;
+            start = previous;
+          }
+          previous = previous.previousElementSibling;
+        }
+        const previousFragment = lastFragment(previous);
+        const startFragment = lastFragment(start);
+        if (!previousFragment || !startFragment || column(startFragment) !== column(previousFragment) + 1) continue;
+
+        const gap = printablePageHeight - (previousFragment.bottom - articleBox.top);
+        if (gap < printablePageHeight / 5) continue;
+        const imageHeight = image.getBoundingClientRect().height;
+        const figureEnd = figure.getBoundingClientRect().bottom;
+        const before = Math.max(margin(previous, 'marginBottom'), margin(start, 'marginTop'));
+        const groupHeight = figureEnd - startFragment.top;
+        const availableImageHeight = Math.floor(imageHeight - (groupHeight + before - gap) - 2);
+
+        // Keep diagrams readable and retain their caption within the same page.
+        if (availableImageHeight < imageHeight * 0.8 || availableImageHeight >= imageHeight) continue;
+        const oldMaxHeight = image.style.maxHeight;
+        image.style.maxHeight = `${availableImageHeight}px`;
+        const movedStart = lastFragment(start);
+        const movedFigure = lastFragment(figure);
+        if (!movedStart || !movedFigure || column(movedStart) !== column(previousFragment) ||
+            column(movedFigure) !== column(previousFragment)) image.style.maxHeight = oldMaxHeight;
+      }
+    } finally {
+      article.style.cssText = printStyles;
+    }
+  }
 }

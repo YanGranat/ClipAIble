@@ -55,6 +55,22 @@ it('roundtrips every managed display label and keeps reasoning in English', () =
   }
 });
 
+it('offers Gemini 4 Neon on both providers with the supported reasoning levels', () => {
+  const direct = 'gemini-4-neon';
+  const routed = 'google/gemini-4-neon';
+  for (const [provider, model] of [['gemini', direct], ['openrouter', routed]]) {
+    expect(MODEL_CATALOG[provider].find(entry => entry.id === model)?.reasoningEfforts).toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(() => getModelMetadata(provider, `${model} (reasoning: max)`, { strict: true })).toThrow();
+  }
+  expect(getGeminiModelName(`${direct} (reasoning: xhigh)`)).toBe(direct);
+  expect(getGeminiGenerationConfig(`${direct} (reasoning: xhigh)`)).toMatchObject({
+    thinkingConfig: { thinkingLevel: 'xhigh' }
+  });
+  expect(getOpenRouterRequestConfig(`${routed} (reasoning: xhigh)`)).toMatchObject({
+    model: routed, reasoning: { effort: 'xhigh' }
+  });
+});
+
 it('distinguishes a server default from an explicitly fixed effort', () => {
   expect(normalizeModelSelection('openai', 'gpt-6.2-astra (reasoning: medium)')).toBe('gpt-6.2-astra (reasoning: medium)');
   expect(normalizeModelSelection('openai', 'gpt-6.2-sol (reasoning: MEDIUM)')).toBe('gpt-6.2-sol');

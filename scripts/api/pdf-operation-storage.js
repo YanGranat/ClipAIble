@@ -1,5 +1,7 @@
 // @ts-check
 
+export const MAX_PDF_EMBEDDED_IMAGE_BYTES = 64 * 1024 * 1024;
+
 const validId = value => typeof value === 'string' && /^[a-f\d-]{36}$/i.test(value);
 async function transact(operation) {
   const database = await new Promise((resolve, reject) => {

@@ -18,6 +18,8 @@ import { requestPdfFileSelectionViaMessage } from '../api/pdf-selection.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { fetchPdfFile } from '../offscreen/pdf/utils/pdf-fetcher.js';
 import { createPdfError, localizePdfError } from '../utils/pdf-errors.js';
+import { preservePdfFigures } from './pdf-figures.js';
+import { joinPdfMarkdownPages, parsePdfMarkdown } from './pdf-markdown.js';
 
 /**
  * Get PDF data with fallback strategies
@@ -208,12 +210,23 @@ function parseLLMResponse(pageResponse, pageNum) {
 }
 
 /**
+ * Run the PDF extraction policy shared by document export and independent extraction.
+ * @param {import('../types.js').ProcessingData} data
+ * @param {string} pdfUrl
+ */
+export function processPdfDocument(data, pdfUrl) {
+  return data.mode === 'selector' || data.mode === 'extract'
+    ? processPdfPageWithAI(data, pdfUrl)
+    : processPdfPage(data, pdfUrl);
+}
+
+/**
  * Process PDF page - extract content using PDF.js
  * @param {import('../types.js').ProcessingData} data - Processing data
  * @param {string} pdfUrl - Original PDF URL
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
-export async function processPdfPage(data, pdfUrl) {
+async function processPdfPage(data, pdfUrl) {
   const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const { url, tabId } = data;
   
@@ -240,7 +253,8 @@ export async function processPdfPage(data, pdfUrl) {
     
     const requestOptions = { ...getAIRequestOptions(data), processingRunId: data.processingRunId };
     const pdfData = await getPdfDataWithFallback(pdfUrl.split('#')[0], tabId, requestOptions);
-    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, processingRunId: data.processingRunId, onProgress: progressCallback });
+    const preserveImagePages = !data.extractionOnly && ['pdf', 'epub', 'fb2', 'markdown'].includes(data.outputFormat || 'pdf');
+    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, preserveImagePages, onProgress: progressCallback });
     await checkCancellation('PDF extraction');
     
     log(`✅ PDF content extracted: ${result.content?.length || 0} content items`, { 
@@ -273,7 +287,7 @@ export async function processPdfPage(data, pdfUrl) {
  * @param {string} pdfUrl - Original PDF URL
  * @returns {Promise<Object>} {title, author, content, publishDate}
  */
-export async function processPdfPageWithAI(data, pdfUrl) {
+async function processPdfPageWithAI(data, pdfUrl) {
   const { updateState, updateProgress, checkCancellation } = getProcessingCallbacks(data);
   const startTime = Date.now();
   const { url, tabId, apiKey, model } = data;
@@ -301,7 +315,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   
   if (!apiKey) {
     const uiLang = await getUILanguageCached();
-    throw createPdfError(tSync('errorTtsNoApiKey', uiLang), 'errorTtsNoApiKey');
+    throw createPdfError(tSync('errorNoApiKey', uiLang), 'errorNoApiKey');
   }
   const pdfStatusLanguage = await getUILanguageCached();
   const updatePdfStatus = (key, params, progress) => updateState({
@@ -343,7 +357,6 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   const allMarkdownParts = [];
   const messageHistory = [];
   const processedPages = []; // Track successfully processed pages
-  const failedPages = []; // Track failed pages
   
   log('[ClipAIble PDF Processing] === CHAT HISTORY INITIALIZED ===', {
     numPages,
@@ -385,6 +398,7 @@ export async function processPdfPageWithAI(data, pdfUrl) {
 
   updatePdfStatus('statusRenderingPdfPages', { pages: numPages, count: numPages }, 10);
   let rendered;
+  const figures = { items: new Map(), bytes: 0 };
   try {
     rendered = await renderAllPdfPages(cleanPdfUrl, numPages, 2.0, pdfData, {
       ...captureOptions,
@@ -421,8 +435,8 @@ export async function processPdfPageWithAI(data, pdfUrl) {
           { role: 'user', content: userPrompt },
           { role: 'assistant', content: Array.isArray(assistantMessage) ? assistantMessage : pageMarkdown });
       }
-      allMarkdownParts.push({ pageNum, markdown: pageMarkdown, length: pageMarkdown.length,
-        mergeWithPrevious: pageData.mergeWithPrevious });
+      const markdown = await preservePdfFigures(pageMarkdown, imageData, pageNum, figures, checkCancellation);
+      allMarkdownParts.push({ pageNum, markdown, mergeWithPrevious: pageData.mergeWithPrevious });
       processedPages.push(pageNum);
       updatePdfStatus('statusProcessingPdfPage', { page: pageNum, pages: numPages }, 20 + Math.floor(pageNum / numPages * 20));
     }
@@ -436,513 +450,20 @@ export async function processPdfPageWithAI(data, pdfUrl) {
   if (missingPages.length) {
     throw createPdfError(`PDF extraction is incomplete. Failed pages: ${missingPages.join(', ')}.`, 'errorPdfIncomplete', { pages: missingPages.join(', ') });
   }
-  failedPages.length = 0;
+  allMarkdownParts.sort((first, second) => first.pageNum - second.pageNum);
+  const combinedMarkdown = joinPdfMarkdownPages(allMarkdownParts, figures.items);
 
-  // Combine all markdown parts into single markdown text
-  // Sort by page number to ensure correct order
-  allMarkdownParts.sort((a, b) => a.pageNum - b.pageNum);
-  
-  // CRITICAL: Log all markdown parts before combining - FULL TEXT
-  log('=== BEFORE COMBINING PAGES: ALL MARKDOWN PARTS (FULL) ===', {
-    totalParts: allMarkdownParts.length,
-    parts: allMarkdownParts.map((part, idx) => ({
-      index: idx,
-      pageNum: part.pageNum,
-      markdownFull: part.markdown || '',
-      markdownLength: part.markdown?.length || 0,
-      mergeWithPrevious: part.mergeWithPrevious,
-      markdownFirstChars: part.markdown?.substring(0, 200) || null,
-      markdownLastChars: part.markdown && part.markdown.length > 200 ? part.markdown.substring(part.markdown.length - 200) : null
-    }))
-  });
-  
-  // Join pages using merge instructions from LLM
-  let combinedMarkdown = '';
-  for (let i = 0; i < allMarkdownParts.length; i++) {
-    const part = allMarkdownParts[i];
-    if (!part.markdown || !part.markdown.trim().length) {
-      continue; // Skip empty parts
-    }
-    
-    if (i === 0) {
-      // First page - no merge needed
-      combinedMarkdown = part.markdown.trim();
-    } else {
-      // Determine separator based on merge instruction from LLM
-      const mergeType = part.mergeWithPrevious || 'paragraph';
-      let separator = '';
-      
-      switch (mergeType) {
-        case 'direct':
-          // Direct continuation - add space to prevent word merging
-          separator = ' ';
-          break;
-        case 'newline':
-          // New line but same paragraph - single newline
-          separator = '\n';
-          break;
-        case 'paragraph':
-        default:
-          // New paragraph or section - double newline
-          separator = '\n\n';
-          break;
-      }
-      
-      // Add separator and page content
-      combinedMarkdown += separator + part.markdown.trim();
-    }
-  }
-  
-  // CRITICAL: Log combined markdown immediately after combining - FULL TEXT
-  log('=== AFTER COMBINING PAGES: COMBINED MARKDOWN (FULL) ===', {
-    combinedMarkdownFull: combinedMarkdown,
-    combinedMarkdownLength: combinedMarkdown.length,
-    combinedMarkdownFirstChars: combinedMarkdown.substring(0, 500),
-    combinedMarkdownLastChars: combinedMarkdown.length > 500 ? combinedMarkdown.substring(combinedMarkdown.length - 500) : null,
-    totalPages: allMarkdownParts.length
-  });
-  
-  if (!combinedMarkdown.trim()) {
+  if (!combinedMarkdown) {
     const uiLang = await getUILanguageCached();
     throw createPdfError(tSync('errorPdfNoContent', uiLang), 'errorPdfNoContent');
   }
-  
-  // Extract title from first H1 heading (if exists) and remove it from markdown
-  // CRITICAL: If title was extracted from metadata, we MUST remove the duplicate H1 from markdown
-  // Check if title is from metadata (not default/fallback values)
-  const isDefaultTitle = !hasDocumentTitle;
-  const titleFromMetadata = !isDefaultTitle;
-  
-  if (!titleFromMetadata) {
-    // Title not found in metadata, try to extract from first H1
-    // Look for H1 anywhere in the markdown (not just at the start)
-    const firstH1Match = combinedMarkdown.match(/^#\s+(.+?)(?:\n|$)/m);
-    if (firstH1Match && firstH1Match[1]) {
-      const extractedTitle = firstH1Match[1].trim();
-      // Check if it looks like a real title (not a filename, not too short)
-      if (extractedTitle && 
-          extractedTitle.length > 10 && 
-          !extractedTitle.match(/\.pdf$/i) &&
-          !extractedTitle.match(/^\d+[-_]/)) {
-        documentTitle = extractedTitle;
-        log('Extracted title from first H1', { title: documentTitle });
-        
-        // Remove the first H1 from markdown
-        combinedMarkdown = combinedMarkdown.replace(/^#\s+.+?(?:\n|$)/m, '').trim();
-        log('Removed first H1 from markdown');
-      } else {
-        log('First H1 does not look like a real title, keeping default', { 
-          h1Text: extractedTitle,
-          currentTitle: documentTitle 
-        });
-      }
-    } else {
-      log('No H1 found in markdown to extract title from', { currentTitle: documentTitle });
-    }
-  } else {
-    // Title was extracted from metadata - MUST remove duplicate H1 from markdown
-    log('Title extracted from metadata, checking for duplicate H1 in markdown', { title: documentTitle });
-    
-    // Find ALL H1 headings in the markdown and check which one matches the title
-    const h1Matches = [...combinedMarkdown.matchAll(/^#\s+(.+?)(?:\n|$)/gm)];
-    log(`Found ${h1Matches.length} H1 headings in markdown`, { 
-      h1Headings: h1Matches.map(m => m[1].trim()),
-      metadataTitle: documentTitle 
-    });
-    
-    if (h1Matches.length > 0) {
-      const titleLower = documentTitle.toLowerCase().trim();
-      
-      // Find the H1 that best matches the metadata title
-      let bestMatch = null;
-      let bestMatchIndex = -1;
-      
-      for (let i = 0; i < h1Matches.length; i++) {
-        const h1Title = h1Matches[i][1].trim();
-        const h1Lower = h1Title.toLowerCase().trim();
-        
-        // Check if this H1 matches the metadata title
-        if (titleLower === h1Lower) {
-          bestMatch = h1Title;
-          bestMatchIndex = i;
-          break; // Found a match, use it
-        }
-      }
-      
-      if (bestMatch) {
-        // Remove the matching H1 from markdown
-        // We need to remove the specific H1 that matches, not just the first one
-        const lines = combinedMarkdown.split('\n');
-        let removed = false;
-        const newLines = [];
-        let h1Count = 0;
-        
-        for (const line of lines) {
-          const h1Match = line.match(/^#\s+(.+?)$/);
-          if (h1Match) {
-            h1Count++;
-            if (h1Count === bestMatchIndex + 1) {
-              // This is the H1 we want to remove
-              const h1Title = h1Match[1].trim();
-              const h1Lower = h1Title.toLowerCase().trim();
-              if (titleLower === h1Lower) {
-                removed = true;
-                log('Removing duplicate H1 title from markdown', { 
-                  metadataTitle: documentTitle, 
-                  h1Title: h1Title,
-                  h1Index: bestMatchIndex + 1
-                });
-                continue; // Skip this line
-              }
-            }
-          }
-          newLines.push(line);
-        }
-        
-        if (removed) {
-          combinedMarkdown = newLines.join('\n').trim();
-          log('Removed duplicate H1 from markdown');
-          
-          // CRITICAL: Log markdown after removing duplicate H1 - FULL TEXT
-          log('=== AFTER REMOVING DUPLICATE H1: COMBINED MARKDOWN (FULL) ===', {
-            combinedMarkdownFull: combinedMarkdown,
-            combinedMarkdownLength: combinedMarkdown.length,
-            combinedMarkdownFirstChars: combinedMarkdown.substring(0, 500),
-            combinedMarkdownLastChars: combinedMarkdown.length > 500 ? combinedMarkdown.substring(combinedMarkdown.length - 500) : null,
-            removedH1Title: bestMatch,
-            metadataTitle: documentTitle
-          });
-        } else {
-          log('Could not find matching H1 to remove', { 
-            metadataTitle: documentTitle,
-            allH1s: h1Matches.map(m => m[1].trim())
-          });
-        }
-      } else {
-        log('No H1 found that matches metadata title, keeping all H1s', { 
-          metadataTitle: documentTitle, 
-          allH1s: h1Matches.map(m => m[1].trim())
-        });
-      }
-    }
-  }
-  
-  // CRITICAL: Log final combined markdown before parsing - FULL TEXT
-  log('=== FINAL COMBINED MARKDOWN BEFORE PARSING (FULL) ===', {
-    combinedMarkdownFull: combinedMarkdown,
-    combinedMarkdownLength: combinedMarkdown.length,
-    combinedMarkdownFirstChars: combinedMarkdown.substring(0, 500),
-    combinedMarkdownLastChars: combinedMarkdown.length > 500 ? combinedMarkdown.substring(combinedMarkdown.length - 500) : null,
-    documentTitle,
-    documentAuthor,
-    documentPublishDate
-  });
-  
+
+  const document = parsePdfMarkdown(combinedMarkdown, figures.items, documentTitle, hasDocumentTitle);
   updateState({ progress: 40 });
-  
-  // Parse Markdown to extract structured elements for document generation
-  // This allows generating PDF, EPUB, FB2, audio from the Markdown
-  // CRITICAL: Parse BEFORE logging to avoid "Cannot access before initialization" error
-  const parsedElements = parseMarkdownToElements(combinedMarkdown);
-  
-  // Log final metadata status
-  const metadataStatus = {
-    title: documentTitle && documentTitle !== 'Untitled PDF' && documentTitle !== data.title ? 'found' : 'not found',
-    author: documentAuthor && documentAuthor.trim() !== '' ? 'found' : 'not found',
-    date: documentPublishDate && documentPublishDate.trim() !== '' ? 'found' : 'not found'
-  };
-  
-  log(`✅ PDF AI processing complete: ${parsedElements.length} content items extracted from ${numPages} pages`, {
-    title: documentTitle,
-    author: documentAuthor,
-    publishDate: documentPublishDate,
-    metadataStatus,
-    markdownLength: combinedMarkdown.length,
-    totalPages: numPages,
-    processedPages: processedPages.length,
-    failedPages: failedPages.length,
-    markdownPartsCount: allMarkdownParts.length,
-    metadataSearchPages: Math.min(MAX_METADATA_SEARCH_PAGES, numPages)
+  log('PDF AI processing complete', {
+    pageCount: processedPages.length,
+    contentItems: document.content.length,
+    duration: Date.now() - startTime
   });
-  
-  // CRITICAL: Log parsed elements - FULL TEXT
-  log('=== PARSED ELEMENTS FROM MARKDOWN (FULL) ===', {
-    totalElements: parsedElements.length,
-    elements: parsedElements.map((el, idx) => ({
-      index: idx,
-      type: el.type,
-      level: el.level || null,
-      // FULL TEXT - NO TRUNCATION
-      textFull: el.text || el.html || el.src || el.alt || '',
-      textLength: (el.text || el.html || el.src || el.alt || '').length,
-      textFirstChars: (el.text || el.html || el.src || el.alt || '').substring(0, 200),
-      textLastChars: (el.text || el.html || el.src || el.alt || '') && (el.text || el.html || el.src || el.alt || '').length > 200 
-        ? (el.text || el.html || el.src || el.alt || '').substring((el.text || el.html || el.src || el.alt || '').length - 200)
-        : null,
-      hasId: !!el.id,
-      id: el.id || null
-    }))
-  });
-  
-  // Log table elements found
-  const tableElements = parsedElements.filter(e => e.type === 'table');
-  if (tableElements.length > 0) {
-    log(`[PDF Processing] Found ${tableElements.length} table(s) in parsed elements`, {
-      tableCount: tableElements.length,
-      tables: tableElements.map((t, idx) => ({
-        index: idx,
-        rowCount: t.rows?.length || 0,
-        firstRowPreview: t.rows?.[0]?.slice(0, 3).join('|') || 'empty'
-      }))
-    });
-  } else {
-    // Check if markdown contains table syntax
-    const hasTableSyntax = combinedMarkdown.includes('|') && combinedMarkdown.match(/\|[^\n]+\|/);
-    if (hasTableSyntax) {
-      logWarn(`[PDF Processing] Markdown contains table syntax but no tables were parsed`, {
-        markdownPreview: combinedMarkdown.substring(0, 500),
-        tableMatches: combinedMarkdown.match(/\|[^\n]+\|/g)?.slice(0, 5) || []
-      });
-    }
-  }
-  
-  // Return result in standard format
-  const finalResult = {
-    title: documentTitle,
-    author: documentAuthor,
-    content: parsedElements, // Structured elements parsed from Markdown
-    markdown: combinedMarkdown, // Combined markdown text (for direct markdown output)
-    publishDate: documentPublishDate
-  };
-  
-  const duration = Date.now() - startTime;
-  log('[ClipAIble PDF Processing] === FUNCTION EXIT (SUCCESS) ===', {
-    function: 'processPdfPageWithAI',
-    input: {
-      pdfUrl,
-      url,
-      tabId,
-      model,
-      numPages
-    },
-    output: {
-      title: finalResult.title,
-      author: finalResult.author,
-      publishDate: finalResult.publishDate,
-      contentLength: finalResult.content.length,
-      markdownLength: finalResult.markdown.length,
-      markdownPreview: finalResult.markdown.substring(0, 200) + '...',
-      processedPages: processedPages.length,
-      failedPages: failedPages.length,
-      totalPages: numPages
-    },
-    metadataStatus,
-    duration,
-    timestamp: Date.now()
-  });
-  
-
-  return finalResult;
+  return { ...document, author: documentAuthor, publishDate: documentPublishDate };
 }
-
-/**
- * Parse Markdown text into structured elements
- * @param {string} markdown - Markdown text
- * @returns {Array<Object>} Array of content elements
- */
-function parseMarkdownToElements(markdown) {
-  if (!markdown || !markdown.trim()) {
-    return [];
-  }
-  
-  const elements = [];
-  const lines = markdown.split('\n');
-  let currentParagraph = '';
-  let currentList = null;
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    
-    const fence = trimmed.match(/^(`{3,}|~{3,})([^`~]*)$/);
-    if (fence) {
-      if (currentParagraph.trim()) elements.push({ type: 'paragraph', text: currentParagraph.trim() });
-      if (currentList) elements.push(currentList);
-      currentParagraph = ''; currentList = null;
-      const code = [];
-      let j = i + 1;
-      const end = new RegExp('^' + fence[1][0] + '{' + fence[1].length + ',}\\s*$');
-      for (; j < lines.length && !end.test(lines[j].trim()); j++) code.push(lines[j]);
-      elements.push({ type: 'code', format: 'text', text: code.join('\n'), language: fence[2].trim().split(/\s+/)[0] });
-      i = j;
-      continue;
-    }
-
-    // Empty line - flush current paragraph/list
-    if (!trimmed) {
-      if (currentParagraph.trim()) {
-        elements.push({
-          type: 'paragraph',
-          text: currentParagraph.trim()
-        });
-        currentParagraph = '';
-      }
-      if (currentList) {
-        elements.push(currentList);
-        currentList = null;
-      }
-      continue;
-    }
-    
-    // Heading
-    const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
-    if (headingMatch) {
-      // Flush current paragraph/list
-      if (currentParagraph.trim()) {
-        elements.push({
-          type: 'paragraph',
-          text: currentParagraph.trim()
-        });
-        currentParagraph = '';
-      }
-      if (currentList) {
-        elements.push(currentList);
-        currentList = null;
-      }
-      
-      const level = headingMatch[1].length;
-      const text = headingMatch[2].trim();
-      elements.push({
-        type: 'heading',
-        level: level,
-        text: text
-      });
-      continue;
-    }
-    
-    // Table
-    const splitCells = value => value.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '').split(/(?<!\\)\|/).map(cell => cell.trim().replace(/\\\|/g, '|'));
-    const separator = lines[i + 1]?.trim();
-    if (trimmed.includes('|') && separator && splitCells(separator).length === splitCells(trimmed).length && splitCells(separator).every(cell => /^:?-{3,}:?$/.test(cell))) {
-      // Flush current paragraph/list
-      if (currentParagraph.trim()) {
-        elements.push({
-          type: 'paragraph',
-          text: currentParagraph.trim()
-        });
-        currentParagraph = '';
-      }
-      if (currentList) {
-        elements.push(currentList);
-        currentList = null;
-      }
-      
-      // Collect table rows
-      const tableRows = [];
-      let j = i;
-      while (j < lines.length && lines[j].trim().includes('|')) {
-        const rowLine = lines[j].trim();
-        // Skip separator row (contains only dashes, colons, spaces, and pipes)
-        if (!rowLine.match(/^\|[\s\-:]+(\|[\s\-:]+)*\|?$/)) {
-          // Split by | and extract cells, preserving empty cells
-          // Remove leading/trailing | if present, then split
-          let cleanLine = rowLine;
-          if (cleanLine.startsWith('|')) cleanLine = cleanLine.substring(1);
-          if (cleanLine.endsWith('|')) cleanLine = cleanLine.substring(0, cleanLine.length - 1);
-          const cells = splitCells(cleanLine);
-          // Keep row even if some cells are empty (tables can have empty cells)
-          if (cells.length > 0) {
-            tableRows.push(cells); // Store as array directly, not as object with cells property
-          }
-        }
-        j++;
-      }
-      i = j - 1; // Skip processed lines
-      
-      if (tableRows.length > 0) {
-        // First row is typically the header row in Markdown tables
-        // Extract headers and data rows
-        const headers = tableRows[0] || [];
-        const dataRows = tableRows.slice(1);
-        
-        log(`[PDF Processing] Parsed table with ${tableRows.length} rows (${headers.length} headers, ${dataRows.length} data rows)`, {
-          totalRows: tableRows.length,
-          headerCells: headers.length,
-          dataRowCount: dataRows.length,
-          headerPreview: headers.slice(0, 3).join('|'),
-          firstDataRowPreview: dataRows[0]?.slice(0, 3).join('|') || 'none'
-        });
-        
-        elements.push({
-          type: 'table',
-          headers: headers, // Header row as array
-          rows: dataRows, // Data rows as array of arrays
-          hasHeaders: headers.length > 0
-        });
-      } else {
-        logWarn(`[PDF Processing] Table detection failed - no valid rows found`, {
-          line: trimmed.substring(0, 100)
-        });
-      }
-      continue;
-    }
-    
-    // List item (ordered or unordered)
-    const listMatch = trimmed.match(/^(\s*)([-*+]|\d+\.)\s+(.+)$/);
-    if (listMatch) {
-      // Flush current paragraph
-      if (currentParagraph.trim()) {
-        elements.push({
-          type: 'paragraph',
-          text: currentParagraph.trim()
-        });
-        currentParagraph = '';
-      }
-      
-      const indent = listMatch[1].length;
-      const marker = listMatch[2];
-      const itemText = listMatch[3].trim();
-      const isOrdered = /^\d+\.$/.test(marker);
-      
-      // Start new list or add to current
-      if (!currentList || currentList.ordered !== isOrdered) {
-        if (currentList) {
-          elements.push(currentList);
-        }
-        currentList = {
-          type: 'list',
-          ordered: isOrdered,
-          items: [itemText]
-        };
-      } else {
-        currentList.items.push(itemText);
-      }
-      continue;
-    }
-    
-    // Regular paragraph text
-    if (currentList) {
-      elements.push(currentList);
-      currentList = null;
-    }
-    if (currentParagraph) {
-      currentParagraph += ' ';
-    }
-    currentParagraph += trimmed;
-  }
-  
-  // Flush remaining paragraph/list
-  if (currentParagraph.trim()) {
-    elements.push({
-      type: 'paragraph',
-      text: currentParagraph.trim()
-    });
-  }
-  if (currentList) {
-    elements.push(currentList);
-  }
-  
-  return elements;
-}
-
-

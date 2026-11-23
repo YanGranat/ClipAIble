@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createStructurePdf, structureOracle } from '../helpers/pdf-fixture.js';
+import { createInterleavedGraphicsPdf, createStructurePdf, structureOracle } from '../helpers/pdf-fixture.js';
 import { createReadingOrderPdf, readingOrderOracle } from '../helpers/pdf-reading-order.js';
 import { createCapturePagesPdf, capturePageOracle } from '../helpers/pdf-capture-pages.js';
 import { installPdfTestCompatibility } from '../helpers/pdf-test-compatibility.js';
@@ -83,5 +83,28 @@ describe('PDF structure conservation with the packaged parser', () => {
       ['heading', readingOrderOracle.headings[2]], ['paragraph', readingOrderOracle.paragraphs[2].join(' ')]
     ]);
     expect(result.content.map(element => element.pageNum)).toEqual([1, 1, 1, 3, 3, 3, 3]);
+  });
+
+  it('places image-only inserts from a mixed document between the original text pages', async () => {
+    vi.stubGlobal('document', {});
+    const preserveImagePage = vi.fn(async (page, pageNum) => {
+      const content = await page.getOperatorList();
+      const paints = content.fnArray.some(op => [pdfjs.OPS.paintImageXObject, pdfjs.OPS.constructPath].includes(op));
+      return paints ? { type: 'image', pageNum } : null;
+    });
+    const result = await extractPdfContent('https://example.com/survey.pdf', createInterleavedGraphicsPdf().buffer, { preserveImagePage });
+    expect(preserveImagePage.mock.calls.map(([, number]) => number)).toEqual([2, 3, 4]);
+    expect(result.content.map(item => [item.pageNum, item.type])).toEqual([
+      [1, 'paragraph'], [2, 'image'], [3, 'image'], [5, 'paragraph']
+    ]);
+  });
+
+  it('keeps the Automatic no-text error for an entirely graphic document', async () => {
+    vi.stubGlobal('document', {});
+    const preserveImagePage = vi.fn();
+    const bytes = createInterleavedGraphicsPdf({ withText: false }).buffer;
+    await expect(extractPdfContent('https://example.com/survey.pdf', bytes, { preserveImagePage }))
+      .rejects.toMatchObject({ translationKey: 'errorPdfNoTextLayer' });
+    expect(preserveImagePage).not.toHaveBeenCalled();
   });
 });

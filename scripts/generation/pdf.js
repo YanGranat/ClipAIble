@@ -9,6 +9,7 @@ import { escapeAttr, cleanTitle } from '../utils/html.js';
 import { embedImages } from '../utils/images.js';
 import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { putPrintJob, removePrintJob } from '../api/print-storage.js';
+import { downloadBlob } from '../api/blob-download.js';
 import { closeOwnedPrintTab } from '../api/print-lifecycle.js';
 import { getLocaleFromLanguage } from '../utils/config.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
@@ -19,7 +20,7 @@ import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES, isCancelled, getProcessingRunId } from '../state/processing.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { getDefaultModel } from '../utils/model-catalog.js';
-import { preparePdfLayout } from './pdf-layout.js';
+import { PDF_PAGE_MARGIN_MM, preparePdfLayout } from './pdf-layout.js';
 
 
 /**
@@ -440,7 +441,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     
     await chrome.debugger.sendCommand(debuggee, 'Emulation.setEmulatedMedia', { media: 'print' });
     const layoutResult = /** @type {{result?: {value?: {contentHeight?: number}}, exceptionDetails?: unknown}} */ (await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
-      expression: `(${preparePdfLayout.toString()})(${paperWidth}, ${JSON.stringify(pageMode)})`,
+      expression: `(${preparePdfLayout.toString()})(${paperWidth}, ${JSON.stringify(pageMode)}, ${a4Height}, ${PDF_PAGE_MARGIN_MM})`,
       awaitPromise: true,
       returnByValue: true
     }));
@@ -454,135 +455,6 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     } else {
       paperHeight = a4Height;
       log(`A4 mode: ${paperWidth}x${paperHeight} inches`);
-    }
-    
-    // CRITICAL: Before generating PDF, check what's actually in the DOM using Chrome DevTools Protocol
-    // chrome.scripting.executeScript doesn't work on extension pages, so use Runtime.evaluate
-    try {
-      // Enable Runtime domain first
-      await chrome.debugger.sendCommand(debuggee, 'Runtime.enable');
-      
-      log('=== ATTEMPTING DOM CHECK VIA DEVTOOLS PROTOCOL ===', { tabId, timestamp: Date.now() });
-      
-      const domCheckResult = await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
-        expression: `
-          (function() {
-            const firstParagraph = document.querySelector('.article-content p, article p, .article p');
-            if (firstParagraph) {
-              return {
-                textContent: firstParagraph.textContent || '',
-                innerHTML: firstParagraph.innerHTML || '',
-                hasDataOriginalText: firstParagraph.hasAttribute('data-original-text'),
-                dataOriginalText: firstParagraph.getAttribute('data-original-text') || null,
-                hasGtOrig: firstParagraph.hasAttribute('data-gt-orig-display'),
-                gtOrig: firstParagraph.getAttribute('data-gt-orig-display') || null,
-                allAttributes: Array.from(firstParagraph.attributes).map(attr => ({ name: attr.name, value: attr.value }))
-              };
-            }
-            return null;
-          })()
-        `,
-        returnByValue: true
-      });
-      
-      // Type assertion for Chrome DevTools Protocol response
-      /** @type {{result?: {type?: string, value?: any}, exceptionDetails?: any}} */
-      const typedResult = domCheckResult || {};
-      
-      log('=== DOM CHECK RESULT (RAW) ===', { 
-        hasResult: !!domCheckResult,
-        resultKeys: domCheckResult ? Object.keys(domCheckResult) : [],
-        resultType: typedResult.result?.type,
-        hasValue: !!typedResult.result?.value,
-        valueType: typeof typedResult.result?.value,
-        fullResult: domCheckResult
-      });
-      
-      if (typedResult.result) {
-        if (typedResult.result.type === 'object' && typedResult.result.value) {
-          const paraInfo = typedResult.result.value;
-          log('=== DOM CHECK BEFORE Page.printToPDF (via DevTools Protocol) ===', {
-            textContent: paraInfo.textContent,
-            innerHTML: paraInfo.innerHTML,
-            hasDataOriginalText: paraInfo.hasDataOriginalText,
-            dataOriginalText: paraInfo.dataOriginalText,
-            hasGtOrig: paraInfo.hasGtOrig,
-            gtOrig: paraInfo.gtOrig,
-            allAttributes: paraInfo.allAttributes
-          });
-        } else {
-          logWarn('DOM check returned unexpected result type', { 
-            resultType: typedResult.result.type,
-            result: typedResult.result
-          });
-        }
-      } else {
-        logWarn('DOM check returned no result', { domCheckResult });
-      }
-    } catch (domCheckError) {
-      logWarn('Failed to check DOM before PDF generation via DevTools Protocol', { 
-        error: domCheckError.message,
-        errorStack: domCheckError.stack,
-        errorName: domCheckError.name
-      });
-    }
-    
-    // CRITICAL: Try to disable Google Translate before PDF generation
-    // This might help prevent Google Translate from interfering during PDF rendering
-    try {
-      log('=== ATTEMPTING TO DISABLE GOOGLE TRANSLATE VIA DEVTOOLS PROTOCOL ===', { tabId, timestamp: Date.now() });
-      
-      // Try to remove Google Translate widget if it exists
-      await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
-        expression: `
-          (function() {
-            // Remove Google Translate widget
-            const gtWidget = document.querySelector('[id*="google_translate"], [class*="goog-te"], [class*="skiptranslate"]');
-            if (gtWidget) {
-              gtWidget.remove();
-            }
-            
-            // Remove all Google Translate scripts
-            const gtScripts = document.querySelectorAll('script[src*="translate.googleapis.com"], script[src*="translate.google.com"]');
-            gtScripts.forEach(script => script.remove());
-            
-            // Set document.documentElement attributes to prevent translation
-            document.documentElement.setAttribute('translate', 'no');
-            document.documentElement.setAttribute('class', 'notranslate');
-            document.documentElement.setAttribute('data-translate', 'no');
-            
-            // Set body attributes
-            if (document.body) {
-              document.body.setAttribute('translate', 'no');
-              document.body.setAttribute('class', 'notranslate');
-              document.body.setAttribute('data-translate', 'no');
-            }
-            
-            // Add notranslate class to all paragraphs
-            const paragraphs = document.querySelectorAll('p');
-            paragraphs.forEach(p => {
-              p.setAttribute('translate', 'no');
-              p.classList.add('notranslate');
-              p.setAttribute('data-translate', 'no');
-            });
-            
-            return {
-              removedWidget: !!gtWidget,
-              removedScripts: gtScripts.length,
-              paragraphsModified: paragraphs.length
-            };
-          })()
-        `,
-        returnByValue: true
-      });
-      
-      log('=== GOOGLE TRANSLATE DISABLED VIA DEVTOOLS PROTOCOL ===', { timestamp: Date.now() });
-    } catch (disableGtError) {
-      logWarn('Failed to disable Google Translate via DevTools Protocol', { 
-        error: disableGtError.message,
-        errorStack: disableGtError.stack,
-        errorName: disableGtError.name
-      });
     }
     
     // Generate PDF
@@ -605,107 +477,35 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
       generateDocumentOutline: true
     });
     
-    // Type assertion for Chrome DevTools Protocol response
     /** @type {{data?: string}} */
-    const typedPdfResult = result || {};
-    
-    log('PDF generated', { dataLength: typedPdfResult.data?.length || 0 });
-    
-    // Detach debugger
+    const pdf = result || {};
+    const translationKey = 'errorPdfGenerationFailed';
+    const binary = typeof pdf.data === 'string' ? atob(pdf.data) : '';
+    if (!binary.startsWith('%PDF-')) {
+      throw Object.assign(new Error(tSync(translationKey, await getUILanguageCached())), { translationKey });
+    }
+
     await chrome.debugger.detach(debuggee);
     attached = false;
-    log('Debugger detached');
-    
-    // Keep the debugger's base64 in service-worker contexts without object URLs.
-    const pdfData = typedPdfResult.data;
-    const filename = sanitizeFilename(title || 'article') + '.pdf';
-    
-    // Check if processing was cancelled before downloading
-    if (isCancelled(processingRunId)) {
-      log('Processing cancelled, skipping PDF download');
-      throw new Error(tSync('statusCancelled', await getUILanguage()));
-    }
-    
-    log('Downloading PDF...', { filename });
-    
-    // Convert base64 to blob and use object URL when available; fallback to data URL in SW
-    const urlApi = (typeof URL !== 'undefined' && URL.createObjectURL)
-      ? URL
-      : (typeof self !== 'undefined' && self.URL && self.URL.createObjectURL ? self.URL : null);
+    if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
 
-    if (urlApi && urlApi.createObjectURL) {
-      const binary = Uint8Array.from(atob(pdfData), c => c.charCodeAt(0));
-      const blob = new Blob([binary], { type: 'application/pdf' });
-      const objectUrl = urlApi.createObjectURL(blob);
-      try {
-        // Check again before actual download
-        if (isCancelled(processingRunId)) {
-          log('Processing cancelled, skipping PDF download');
-          throw new Error(tSync('statusCancelled', await getUILanguage()));
-        }
-        
-        const downloadId = await chrome.downloads.download({
-          url: objectUrl,
-          filename: filename,
-          saveAs: true
-        });
-        
-        const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
-        log('📊 PDF file generated', {
-          size: `${sizeMB} MB`,
-          sizeBytes: blob.size,
-          downloadId
-        });
-        log('Download started', { downloadId, size: blob.size });
-      } finally {
-        // Revoke URL immediately - Chrome downloads API handles the download asynchronously
-        // The URL is only needed to initiate the download, not to complete it
-        urlApi.revokeObjectURL(objectUrl);
-      }
-    } else {
-      const dataUrl = `data:application/pdf;base64,${pdfData}`;
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    await downloadBlob(new Blob([bytes], { type: 'application/pdf' }), sanitizeFilename(title || 'article') + '.pdf', processingRunId);
 
-      // Check again before actual download
-      if (isCancelled(processingRunId)) {
-        log('Processing cancelled, skipping PDF download');
-        throw new Error(tSync('statusCancelled', await getUILanguage()));
-      }
-
-      const downloadId = await chrome.downloads.download({
-        url: dataUrl,
-        filename: filename,
-        saveAs: true
-      });
-
-      log('Download started (data URL fallback)', { downloadId });
-    }
-    
     if (!isCancelled(processingRunId) && completeProcessing) await completeProcessing();
-
-    // Close the print tab after its processing state has completed.
-    setTimeout(async () => {
-      try {
-        await closeOwnedPrintTab(tabId, ownedJobId);
-        log('Print tab closed');
-      } catch (e) {
-        // Tab might already be closed
-      }
-    }, 1000);
-    
-    log('=== DEBUGGER PDF END ===');
-    
     return { success: true };
-    
+
   } catch (error) {
     logError('Debugger PDF failed', error);
-    await closeOwnedPrintTab(tabId, ownedJobId);
-    
-    if (!isCancelled(processingRunId) && setError) await setError(error.message);
+    if (!isCancelled(processingRunId) && setError) {
+      await setError({ message: error.message, ...getErrorTranslation(error) });
+    }
     throw error;
   } finally {
     if (attached) {
       try { await chrome.debugger.detach(debuggee); } catch {}
     }
+    await closeOwnedPrintTab(tabId, ownedJobId);
   }
 }
 

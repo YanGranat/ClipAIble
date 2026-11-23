@@ -42,11 +42,11 @@ export async function extractContentFromPages(pdf, numPages, metrics, requestOpt
     
     try {
       page = await pdf.getPage(pageNum);
-      const pageElements = await processPage(page, pageNum, metrics);
+      const pageElements = await processPage(page, pageNum, metrics, requestOptions.preserveImagePage);
       log(`[PDF v3] Page ${pageNum} processed - extracted ${pageElements?.length || 0} elements`);
       
       if (pageElements && pageElements.length > 0) {
-        hasTextContent = true;
+        if (pageElements.some(element => element.type !== 'image')) hasTextContent = true;
         allElements.push(...pageElements.filter(element => !isRunningMargin(element, metrics.runningMargins || [])));
         log(`[PDF v3] Page ${pageNum} - added ${pageElements.length} elements, totalElements=${allElements.length}`);
       } else {

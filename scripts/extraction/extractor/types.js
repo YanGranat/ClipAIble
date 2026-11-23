@@ -120,6 +120,7 @@
  * @property {Map<Element, ContentItem>} [readingGraphics] - Captured source graphic owners
  * @property {Map<Element, string[]>} [originalImageLayers] - Original image layer URLs for uncapturable rendered figures
  * @property {Map<Element, string>} [readingMediaIds] - Local references for media within structured blocks
+ * @property {Set<string>} [readingMediaReservations] - Fragment names already owned in the extraction
  * @property {number} [readingMediaCounter] - Allocation sequence for structured-block media
  * @property {Element[]} [featuredMediaRoots] - Source owners of media preceding the selected body
  * @property {Set<string>} addedHeadings - Set of added heading texts (normalized)

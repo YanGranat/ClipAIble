@@ -9,7 +9,7 @@ vi.mock('../../scripts/api/pdf-storage.js', async original => ({ ...(await origi
 
 import { handleGetPdfMetadata, handleRenderAllPdfPages } from '../../scripts/offscreen/message-handlers.js';
 import { getPdfMetadata } from '../../scripts/api/pdf-offscreen.js';
-import { processPdfPage } from '../../scripts/processing/pdf.js';
+import { processPdfDocument } from '../../scripts/processing/pdf.js';
 import { tSync } from '../../scripts/locales.js';
 import { LIMITS } from '../../scripts/offscreen/pdf/constants.js';
 
@@ -81,7 +81,7 @@ describe('PDF error descriptions across contexts', () => {
     const { handleExtractPdf } = await import('../../scripts/offscreen/message-handlers.js');
     chrome.runtime.sendMessage.mockImplementation((message, callback) => { void handleExtractPdf('extract', message.data, payload => callback(JSON.parse(JSON.stringify(payload)))); });
     task.promise = Promise.reject(Object.assign(new Error('Upstream password diagnostic'), { name: 'PasswordException' }));
-    await expect(processPdfPage({ extractionOnly: true, url: 'https://example.com/sample.pdf', tabId: 1 }, 'https://example.com/sample.pdf'))
+    await expect(processPdfDocument({ extractionOnly: true, url: 'https://example.com/sample.pdf', tabId: 1 }, 'https://example.com/sample.pdf'))
       .rejects.toMatchObject({ translationKey: 'errorPdfPasswordProtected', translationParams: {}, message: tSync('errorPdfPasswordProtected', language) });
     expect(task.destroy).toHaveBeenCalledOnce();
   });

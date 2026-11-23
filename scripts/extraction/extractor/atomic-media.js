@@ -12,6 +12,26 @@ function hasReadingContent(fragment) {
   return !!fragment.textContent?.trim() || !!fragment.querySelector('img,svg,canvas');
 }
 
+/** Reserve both authored fragment targets and authored links to unresolved targets. */
+function reservedMediaIds(document) {
+  const reserved = new Set(Array.from(document.querySelectorAll('[id],[name]'))
+    .flatMap(element => [element.id, element.getAttribute('name')]).filter(Boolean));
+  const source = new URL(document.URL);
+  source.hash = '';
+  for (const link of document.querySelectorAll('a[href]')) {
+    const href = link.getAttribute('href').trim();
+    if (!href.includes('#')) continue;
+    try {
+      const target = new URL(href, document.baseURI);
+      const id = decodeURIComponent(target.hash.slice(1));
+      if (!id.startsWith('reading-media-')) continue;
+      target.hash = '';
+      if (href.startsWith('#') || target.href === source.href) reserved.add(id);
+    } catch (_) { }
+  }
+  return reserved;
+}
+
 function replaceLinkedMedia(copy, reference) {
   const link = copy.closest('a[href]');
   if (!link) { copy.replaceWith(reference); return null; }
@@ -46,7 +66,7 @@ function replaceLinkedMedia(copy, reference) {
  * Project admitted media into local references followed by typed image items.
  * @param {Element} originalElement
  * @param {Iterable<Element>} admittedElements
- * @param {{readingGraphics?: Map<Element, ContentItem>, readingMediaIds?: Map<Element, string>, readingMediaCounter?: number, selectionExclusions?: Array<Element|string>}} state
+ * @param {{readingGraphics?: Map<Element, ContentItem>, readingMediaIds?: Map<Element, string>, readingMediaReservations?: Set<string>, readingMediaCounter?: number, selectionExclusions?: Array<Element|string>}} state
  * @param {(source: Element) => ContentItem|null} createImageItem
  * @returns {{clone: Element, copies: Map<Element, Element>, media: Array<{source: Element, item: ContentItem}>}}
  */
@@ -58,8 +78,11 @@ export function projectAtomicMedia(originalElement, admittedElements, state, cre
     (admitted.has(owner) || [...admitted].some(element => owner.contains(element))));
   const candidates = [...new Set([...graphics, ...Array.from(originalElement.querySelectorAll('img')).filter(image => admitted.has(image))])].sort(sourceOrder);
   const owners = candidates.filter(owner => !candidates.some(other => other !== owner && other.contains(owner)));
+  if (!owners.length) return { clone, copies, media: [] };
   state.readingMediaIds ||= new Map();
-  const reserved = new Set([...Array.from(originalElement.ownerDocument.querySelectorAll('[id],[name]')).flatMap(element => [element.id, element.getAttribute('name')]).filter(Boolean), ...state.readingMediaIds.values()]);
+  const reserved = state.readingMediaReservations ||= new Set([
+    ...reservedMediaIds(originalElement.ownerDocument), ...state.readingMediaIds.values()
+  ]);
   const media = [];
   const sourceLinks = new Map();
   for (const owner of owners) {
@@ -109,7 +132,9 @@ export function projectAtomicMedia(originalElement, admittedElements, state, cre
         for (const link of split.links) links.add(link);
       }
     }
-    const image = { ...item, id };
+    const cell = owner.closest('td,th');
+    const tableMedia = originalElement.tagName === 'TABLE' && cell && originalElement.contains(cell);
+    const image = { ...item, id, ...(tableMedia ? { tableMedia: true } : {}) };
     const figure = owner.closest('figure');
     const caption = figure && Array.from(figure.querySelectorAll('figcaption')).find(node => node.closest('figure') === figure);
     const captionCopy = caption && copies.get(caption);

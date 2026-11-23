@@ -28,6 +28,34 @@ afterEach(() => {
 const extractImage = (dom, image) => handleImg(dom.window, image, { processedImages: new Set() }, CONSTANTS, dom.window.location.href);
 
 describe('Loaded placeholders and deferred article images', () => {
+  it.each(['width', 'height'])('does not promote a loaded decorative layer whose used %s is zero', axis => {
+    const { dom, image } = page('alt=""', { source: '/survey.png', width: 640, height: 480 });
+    Object.defineProperty(image, 'complete', { value: true });
+    const peer = image.cloneNode();
+    peer.src = '/overlay.png';
+    peer.style.position = image.style.position = 'absolute';
+    image.after(peer);
+    image.style.width = axis === 'width' ? '0px' : '640px';
+    image.style.height = axis === 'height' ? '0px' : '480px';
+    image.getBoundingClientRect = () => ({ width: parseInt(image.style.width), height: parseInt(image.style.height) });
+    expect(extractImage(dom, image)).toBeNull();
+
+    image.style[axis] = '480px';
+    expect(extractImage(dom, image)?.src).toBe('https://example.test/survey.png');
+  });
+
+  it('retains an authored image with no painted height', () => {
+    const { dom, image } = page('alt="Survey appendices" style="height:0px"', { source: '/survey.png', width: 640, height: 480 });
+    Object.defineProperty(image, 'complete', { value: true });
+    expect(extractImage(dom, image)).toMatchObject({ src: 'https://example.test/survey.png', alt: 'Survey appendices' });
+  });
+
+  it('retains a deferred image whose old placeholder has no painted height', () => {
+    const { dom, image } = page('style="height:0px" data-src="/survey.png"');
+    Object.defineProperty(image, 'complete', { value: true });
+    expect(extractImage(dom, image)?.src).toBe('https://example.test/survey.png');
+  });
+
   it('does not emit a labelled fallback asset and still chooses a real deferred source', () => {
     const { image } = page('aria-label="Image unavailable"', {
       source: 'https://example.test/media/neutral-placeholder.png', width: 160, height: 90

@@ -312,7 +312,12 @@ export function initUI(deps) {
     statusPresentation = { type, text, startTime, translation };
     elements.statusText.removeAttribute('data-i18n');
     elements.statusText.removeAttribute('data-i18n-params');
-    if (translation?.key && currentLanguage) text = formatMessage(translation.key, currentLanguage, translation.params);
+    if (translation?.key && currentLanguage) {
+      const params = translation.formatKey
+        ? { ...translation.params, format: formatMessage(translation.formatKey, currentLanguage) }
+        : translation.params;
+      text = formatMessage(translation.key, currentLanguage, params);
+    }
     elements.statusDot.className = 'status-dot';
     if (type === 'processing') {
       elements.statusDot.classList.add('processing');

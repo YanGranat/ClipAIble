@@ -16,9 +16,9 @@ export const DEFAULT_QWEN_TTS_VOICE = 'longanhuan_v3.1';
 export const GOOGLE_TTS_MODELS = [
   { id: DEFAULT_GOOGLE_TTS_MODEL, name: 'Gemini 3.8 Flash TTS' },
   { id: 'gemini-3.8-flash-lite-tts', name: 'Gemini 3.8 Flash-Lite TTS' },
-  { id: 'gemini-3.1-flash-tts-preview', name: 'Gemini 3.1 Flash TTS Preview' },
-  { id: 'gemini-2.5-pro-preview-tts', name: 'Gemini 2.5 Pro TTS Preview' },
-  { id: 'gemini-2.5-flash-preview-tts', name: 'Gemini 2.5 Flash TTS Preview' }
+  { id: 'gemini-3.1-flash-tts-preview', name: 'Gemini 3.1 Flash TTS Preview', deprecated: true },
+  { id: 'gemini-2.5-pro-preview-tts', name: 'Gemini 2.5 Pro TTS Preview', deprecated: true },
+  { id: 'gemini-2.5-flash-preview-tts', name: 'Gemini 2.5 Flash TTS Preview', deprecated: true }
 ];
 
 export const ELEVENLABS_TTS_MODELS = [
@@ -26,7 +26,7 @@ export const ELEVENLABS_TTS_MODELS = [
   { id: 'eleven_flash_v2_5', name: 'Flash v2.5' },
   { id: 'eleven_v3', name: 'Eleven v3' },
   { id: 'eleven_multilingual_v2', name: 'Multilingual v2' },
-  { id: 'eleven_turbo_v2_5', name: 'Turbo v2.5' }
+  { id: 'eleven_turbo_v2_5', name: 'Turbo v2.5', deprecated: true }
 ];
 
 export const QWEN_TTS_MODELS = [

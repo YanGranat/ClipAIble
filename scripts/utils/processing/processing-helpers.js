@@ -11,12 +11,11 @@ import { removeLargeData } from '../storage/storage.js';
 import { validateAudioApiKeys, validateImageTranslation } from '../validation/validation.js';
 import { detectVideoPlatform } from '../video.js';
 import { processVideoPage } from '../../processing/video.js';
-// processPdfPage and processPdfPageWithAI imported statically (required for service worker)
 import { detectPdfPage, getOriginalPdfUrl } from '../pdf.js';
 import { processWithoutAI, processWithExtractMode, processWithSelectorMode } from '../../processing/modes.js';
 import { handleProcessingResult, handleProcessingError } from './pipeline-helpers.js';
 import { getQuickSaveSettingsKeys, prepareQuickSaveData } from '../../processing/quicksave.js';
-import { processPdfPage, processPdfPageWithAI } from '../../processing/pdf.js';
+import { processPdfDocument } from '../../processing/pdf.js';
 
 /**
  * Validate and initialize processing
@@ -118,15 +117,7 @@ export async function handlePdfPageProcessing(
   
   (async () => {
     try {
-      // Check mode: if 'selector', use AI processing; otherwise use automatic
-      let result;
-      if (data.mode === 'selector') {
-        log('Using AI mode for PDF processing');
-        result = await processPdfPageWithAI(data, pdfUrl);
-      } else {
-        log('Using automatic mode for PDF processing');
-        result = await processPdfPage(data, pdfUrl);
-      }
+      const result = await processPdfDocument(data, pdfUrl);
       
       log('PDF processing complete', { 
         title: result.title, 

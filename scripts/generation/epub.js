@@ -87,7 +87,7 @@ export async function generateEpub(data, updateState) {
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 82 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = normalizeDocumentContent(content, title, sourceUrl);
+  const filteredContent = normalizeDocumentContent(content, title, sourceUrl, { tableCellFragmentTargets: true });
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,

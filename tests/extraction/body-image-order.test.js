@@ -33,6 +33,13 @@ describe('Selected body image ownership and original reading order',()=>{
   expect(result[0].src).toBe('https://example.test/diagram-large.jpg');
   expect(result[0].isFeatured).toBeUndefined();
  });
+ it('retains the leading figure credit without emitting the document title again',async()=>{
+  const outside='<figure id="cover"><figcaption>Artwork credit and source acknowledgments.</figcaption></figure>';
+  const result=await extract(intro+tail,{outside,heroImage:'#cover'});
+  expect(result.map(item=>item.type)).toEqual(['paragraph','paragraph','paragraph']);
+  expect(result[0].text).toBe('Artwork credit and source acknowledgments.');
+  expect(result[0].isFeatured).toBe(true);
+ });
  it('keeps external explicit hero behavior while retaining the body image position',async()=>{
   const result=await extract(intro+image+tail,{outside:'<figure><img id="cover" src="/cover.jpg" width="640" height="400"></figure>',heroImage:'#cover'});
   expect(result.map(item=>item.type)).toEqual(['image','paragraph','image','paragraph']);

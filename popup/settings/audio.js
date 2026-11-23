@@ -32,11 +32,11 @@ export function initAudio(deps) {
     setElementGroupDisplay
   } = deps;
 
-  /** @type {Array<[string, ReadonlyArray<{id: string, name: string}>]>} */
+  /** @type {Array<[string, ReadonlyArray<{id: string, name: string, deprecated?: boolean}>]>} */
   const modelGroups = [['elevenlabsModel', ELEVENLABS_TTS_MODELS], ['googleTtsModel', GOOGLE_TTS_MODELS], ['qwenModel', QWEN_TTS_MODELS]];
   for (const [name, models] of modelGroups) {
     const select = elements[name];
-    if (select) select.replaceChildren(...models.map(model => new Option(model.name, model.id)));
+    if (select) select.replaceChildren(...models.filter(model => !model.deprecated).map(model => new Option(model.name, model.id)));
   }
   let lastVoiceProvider = null;
   let preferredSpeed = null;

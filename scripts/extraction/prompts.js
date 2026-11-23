@@ -584,21 +584,14 @@ CRITICAL RULES - TEXT EXTRACTION (HIGHEST PRIORITY):
    - All formatting (bold, italic, underline) as it appears
    - All punctuation, spacing, and line breaks
 
-6. IMAGES, DIAGRAMS, AND VISUAL ELEMENTS (CRITICAL):
-   - DO NOT attempt to describe or convert images, diagrams, charts, graphs, or visual elements into text
-   - DO NOT try to extract text from images or convert visual content to text
-   - If you see an image, diagram, chart, graph, figure, or any visual element:
-     * Simply note its presence with: [Image: description from caption if available]
-     * OR: [Diagram: description from caption if available]
-     * OR: [Chart: description from caption if available]
-     * OR: [Figure: description from caption if available]
-     * If there's a caption, include ONLY the caption text, not a description of the visual
-     * If there's no caption, use: [Image], [Diagram], [Chart], or [Figure] without description
-   - CRITICAL: Do NOT try to read text from within images or diagrams
-   - CRITICAL: Do NOT attempt to describe what's in the image in detail
-   - CRITICAL: Do NOT try to extract data from charts or graphs - just note their presence
-   - CRITICAL: Visual elements cannot be adequately represented as text - acknowledge them but don't convert them
-   - Only extract text that is actual text content, not text embedded in images
+6. FIGURES:
+   - For each authored illustration, photo, graph, or diagram, insert one line in reading order: [Figure: left, top, right, bottom]
+   - Use integer coordinates from 0 to 1000 relative to the supplied page image. The top-left is 0,0 and the bottom-right is 1000,1000.
+   - If a figure has multiple panels with a shared caption, use one rectangle around all its panels. Preserve their relative positions.
+   - Enclose all parts and labels of the figure. Keep nearby prose, its caption, and separately extracted tables outside the rectangle.
+   - If present, transcribe the original caption as the next line: [Caption] original caption text. Join any wrapped lines into one.
+   - If you cannot locate the figure reliably, use [Figure] on its own line with the same caption format.
+   - Do not create rectangles for page decoration or whole pages. Do not paraphrase figure contents.
 
 MARKDOWN FORMATTING REQUIREMENTS:
 - Headings: Use # for H1, ## for H2, ### for H3, #### for H4, etc.
@@ -665,6 +658,7 @@ TABLES (CRITICAL - DO NOT SKIP):
 - Convert ALL tables to proper Markdown table format
 - Preserve table structure: headers, rows, cells
 - Ensure proper alignment with separator row
+- Keep leading and trailing pipes in every row. Escape literal pipes inside cells as \\|.
 - If table spans multiple pages, continue structure logically
 - CRITICAL: Tables are IMPORTANT content - NEVER skip or omit them
 - CRITICAL: If you see a table on the page, you MUST extract it in Markdown table format
@@ -867,14 +861,7 @@ ${isFirstPage ? 'This is the FIRST page of the document. ' : 'This is page ' + p
   * CRITICAL: If text appears in the same position on multiple pages, it's likely decorative - REMOVE IT
 - Preserve all actual content text exactly as written
 - Preserve all formatting: bold, italic, superscripts, etc.
-- CRITICAL - IMAGES AND VISUAL ELEMENTS:
-  * DO NOT attempt to describe or convert images, diagrams, charts, graphs, figures into text
-  * DO NOT try to extract text from images or convert visual content to text
-  * If you see an image/diagram/chart/figure, note it as [Image], [Diagram], [Chart], or [Figure]
-  * If there's a caption, include ONLY the caption text, not a description of the visual
-  * Do NOT try to read text from within images or describe visual content in detail
-  * Do NOT attempt to extract data from charts or graphs - just note their presence
-  * Visual elements cannot be adequately represented as text - acknowledge them but don't convert them
+- Use the system figure rectangle format on its own line, followed by the original caption if present.
 - CRITICAL - TABLES EXTRACTION:
   - Look carefully for tables on the page - they may appear as structured data with rows and columns
   - If you see a table (data organized in rows and columns), convert it to Markdown table format
@@ -947,12 +934,7 @@ This is a CONTINUATION page. Use previous pages ONLY for heading hierarchy conte
 - Extract ALL content from THIS page exactly as written - do NOT skip or shorten anything
 - Remember: Return ONLY content from THIS page, not from previous pages
 - Remove ALL decorative elements: page numbers, headers/footers, column headers/footers, footer notes, decorative lines, institutional logos, copyright notices in headers/footers, any text in margins
-- CRITICAL - IMAGES AND VISUAL ELEMENTS:
-  * DO NOT attempt to describe or convert images, diagrams, charts, graphs, figures into text
-  * DO NOT try to extract text from images or convert visual content to text
-  * If you see an image/diagram/chart/figure, note it as [Image], [Diagram], [Chart], or [Figure]
-  * If there's a caption, include ONLY the caption text
-  * Do NOT try to read text from within images or describe visual content in detail
+- Use the system figure rectangle format on its own line, followed by the original caption if present.
 
 [PDF Page Image - THIS IS PAGE ${pageNum}]
 

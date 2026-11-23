@@ -3,7 +3,7 @@ import { toSvg } from 'html-to-image';
 import { CONFIG } from '../../utils/config.js';
 import { MAX_IMAGE_BYTES, detectImageMime, imageDataUrlBytes, readImageBytes, imageDataError } from '../../utils/html/image-bytes.js';
 import { isSourceExcluded } from './dom-utils.js';
-import { isPlaceholderUrl } from './images.js';
+import { isCollapsedImageLayer, isPlaceholderUrl } from './images.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const OMIT = 'figcaption,script,style,template,noscript,source,button,input,select,textarea,nav,footer,iframe,video,audio,object,embed,[role="button"],[role="navigation"],[contenteditable="true"]';
@@ -97,6 +97,7 @@ export function getGraphicReadingOwner(element, roots) {
 }
 
 function excluded(element, owner, selectors) {
+  if (element.tagName === 'IMG' && isCollapsedImageLayer(/** @type {HTMLImageElement} */ (element))) return true;
   if (isRenderedPlaceholder(element) || hidden(element, true) || isSourceExcluded(element, selectors)) return true;
   for (let node = element; node && node !== owner; node = node.parentElement) {
     if (node.matches(OMIT)) return true;

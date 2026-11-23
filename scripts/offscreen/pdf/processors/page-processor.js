@@ -18,12 +18,13 @@ import { extractPaintedTables } from '../utils/grid-cells.js';
  * @param {{getTextContent: function(): Promise<{items?: Array<any>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, cleanup: function(): void, commonObjs?: Object}} page - PDF.js page object
  * @param {number} pageNum - Page number
  * @param {{gapThreshold?: number, baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
+ * @param {(page: Object, pageNum: number) => Promise<Object|null>} [preserveImagePage] - Keep a visible page with no text layer
  * @returns {Promise<Array<any>>} Array of extracted elements
  * @throws {Error} If text extraction fails
  * @throws {Error} If page processing fails
  */
 
-export async function processPage(page, pageNum, metrics) {
+export async function processPage(page, pageNum, metrics, preserveImagePage) {
   try {
     const viewport = page.getViewport({ scale: 1.0 });
     
@@ -40,9 +41,9 @@ export async function processPage(page, pageNum, metrics) {
     
     log(`[PDF v3] processPage: Page ${pageNum} - extracted ${textItems.length} text items`);
     
-    if (textItems.length === 0) {
-      logWarn(`[PDF v3] Page ${pageNum} has no text content`);
-      return [];
+    if (!textItems.some(item => typeof item.str === 'string' && item.str.trim())) {
+      const image = await preserveImagePage?.(page, pageNum);
+      return image ? [image] : [];
     }
   
   // Step 1.5: EXTRACT GRAPHICS (lines, rectangles) for table border detection and underline detection

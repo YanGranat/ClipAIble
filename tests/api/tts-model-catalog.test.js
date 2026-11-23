@@ -39,10 +39,12 @@ describe('Gemini synthesis generations', () => {
     expect(requestBody().contents[0].parts).toEqual([{ text: 'An exact article.', speech_metadata: { style: 'Read calmly.' } }]);
     expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Kore' });
   });
-  it('keeps an explicitly selected legacy model and wraps its PCM once', async () => {
+  it.each([
+    'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-preview-tts'
+  ])('keeps a saved %s selection and wraps its PCM once', async model => {
     googleResponse([1, 0, 2, 0], 'audio/L16;rate=22050');
-    const result = new Uint8Array(await google('Article.', 'synthetic-key', { model: 'gemini-2.5-pro-preview-tts', voice: 'Kore', prompt: 'Calmly' }));
-    expect(fetch.mock.calls[0][0]).toContain('gemini-2.5-pro-preview-tts:generateContent');
+    const result = new Uint8Array(await google('Article.', 'synthetic-key', { model, voice: 'Kore', prompt: 'Calmly' }));
+    expect(fetch.mock.calls[0][0]).toContain(`/models/${model}:generateContent`);
     expect(requestBody().contents[0].parts[0].text).toContain('Calmly');
     expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ prebuiltVoiceConfig: { voiceName: 'kore' } });
     expect(new DataView(result.buffer).getUint32(24, true)).toBe(22050);
@@ -71,7 +73,8 @@ describe('ElevenLabs model capabilities', () => {
   it.each([
     [undefined, { stability: 0.5, similarity_boost: 0.8 }],
     ['eleven_v3', { stability: 0.5 }],
-    ['eleven_flash_v2_5', { stability: 0.5, similarity_boost: 0.8, style: 0.3, use_speaker_boost: true, speed: 1.2 }]
+    ['eleven_flash_v2_5', { stability: 0.5, similarity_boost: 0.8, style: 0.3, use_speaker_boost: true, speed: 1.2 }],
+    ['eleven_turbo_v2_5', { stability: 0.5, similarity_boost: 0.8, style: 0.3, use_speaker_boost: true, speed: 1.2 }]
   ])('sends only parameters supported by %s', async (modelId, expected) => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array([1, 2]))));
     await elevenlabs('Article.', 'synthetic-key', { modelId, voiceId: 'saved-custom-voice', stability: 0.5, similarityBoost: 0.8, style: 0.3, speed: 4 });

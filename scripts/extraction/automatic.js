@@ -2690,6 +2690,10 @@ var clipaibleArticleExtractor = (() => {
     return labelled ? graphic : null;
   }
   function excluded(element, owner, selectors) {
+    if (element.tagName === "IMG" && isCollapsedImageLayer(
+      /** @type {HTMLImageElement} */
+      element
+    )) return true;
     if (isRenderedPlaceholder(element) || hidden(element, true) || isSourceExcluded(element, selectors)) return true;
     for (let node = element; node && node !== owner; node = node.parentElement) {
       if (node.matches(OMIT)) return true;
@@ -3854,6 +3858,17 @@ var clipaibleArticleExtractor = (() => {
       height: matches ? img.naturalHeight || 0 : 0,
       matchesSource: matches
     };
+  }
+  function isCollapsedImageLayer(img) {
+    if (!img.isConnected || !img.complete || !img.naturalWidth || !img.naturalHeight) return false;
+    if (img.getAttribute("alt")?.trim() !== "" || img.title || img.hasAttribute("aria-label") || img.hasAttribute("aria-labelledby") || img.closest("a[href]") || !img.closest("figure")) return false;
+    const rect = img.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return false;
+    const win = img.ownerDocument.defaultView;
+    const style = safeGetComputedStyle(win, img);
+    const collapsed = rect.width <= 0 && style?.width === "0px" || rect.height <= 0 && style?.height === "0px";
+    if (!collapsed || !["absolute", "fixed"].includes(style?.position) || !getSelectedImageNaturalSize(img).matchesSource) return false;
+    return Array.from(img.parentElement?.children || []).some((sibling) => sibling !== img && sibling.tagName === "IMG" && safeGetComputedStyle(win, sibling)?.position === style.position);
   }
   function isTrackingPixel(win, img) {
     const selectedSource = extractBestImageUrl(img);
@@ -5242,6 +5257,24 @@ var clipaibleArticleExtractor = (() => {
   function hasReadingContent(fragment) {
     return !!fragment.textContent?.trim() || !!fragment.querySelector("img,svg,canvas");
   }
+  function reservedMediaIds(document2) {
+    const reserved = new Set(Array.from(document2.querySelectorAll("[id],[name]")).flatMap((element) => [element.id, element.getAttribute("name")]).filter(Boolean));
+    const source = new URL(document2.URL);
+    source.hash = "";
+    for (const link of document2.querySelectorAll("a[href]")) {
+      const href = link.getAttribute("href").trim();
+      if (!href.includes("#")) continue;
+      try {
+        const target = new URL(href, document2.baseURI);
+        const id = decodeURIComponent(target.hash.slice(1));
+        if (!id.startsWith("reading-media-")) continue;
+        target.hash = "";
+        if (href.startsWith("#") || target.href === source.href) reserved.add(id);
+      } catch (_) {
+      }
+    }
+    return reserved;
+  }
   function replaceLinkedMedia(copy, reference) {
     const link = copy.closest("a[href]");
     if (!link) {
@@ -5294,8 +5327,12 @@ var clipaibleArticleExtractor = (() => {
     const graphics = [...state.readingGraphics?.keys() || []].filter((owner) => originalElement.contains(owner) && (admitted.has(owner) || [...admitted].some((element) => owner.contains(element))));
     const candidates = [.../* @__PURE__ */ new Set([...graphics, ...Array.from(originalElement.querySelectorAll("img")).filter((image) => admitted.has(image))])].sort(sourceOrder);
     const owners = candidates.filter((owner) => !candidates.some((other) => other !== owner && other.contains(owner)));
+    if (!owners.length) return { clone, copies, media: [] };
     state.readingMediaIds ||= /* @__PURE__ */ new Map();
-    const reserved = /* @__PURE__ */ new Set([...Array.from(originalElement.ownerDocument.querySelectorAll("[id],[name]")).flatMap((element) => [element.id, element.getAttribute("name")]).filter(Boolean), ...state.readingMediaIds.values()]);
+    const reserved = state.readingMediaReservations ||= /* @__PURE__ */ new Set([
+      ...reservedMediaIds(originalElement.ownerDocument),
+      ...state.readingMediaIds.values()
+    ]);
     const media = [];
     const sourceLinks = /* @__PURE__ */ new Map();
     for (const owner of owners) {
@@ -5361,7 +5398,9 @@ var clipaibleArticleExtractor = (() => {
           for (const link of split.links) links.add(link);
         }
       }
-      const image = { ...item, id };
+      const cell = owner.closest("td,th");
+      const tableMedia = originalElement.tagName === "TABLE" && cell && originalElement.contains(cell);
+      const image = { ...item, id, ...tableMedia ? { tableMedia: true } : {} };
       const figure = owner.closest("figure");
       const caption = figure && Array.from(figure.querySelectorAll("figcaption")).find((node) => node.closest("figure") === figure);
       const captionCopy = caption && copies.get(caption);
@@ -5666,7 +5705,8 @@ var clipaibleArticleExtractor = (() => {
       } else if (tagName === "p" || tagName === "figcaption") {
         const item = handleParagraph(win, element, state, constants);
         if (item) {
-          content.push(item);
+          const isLeadingCaption = tagName === "figcaption" && element.closest("figure") && state.titleElement && compareDomOrder(element, state.titleElement) < 0;
+          content.push(isLeadingCaption ? { ...item, isFeatured: true } : item);
           incrementContentType(state.debugInfo, "paragraph");
           processedCount++;
         } else {
@@ -5905,7 +5945,7 @@ var clipaibleArticleExtractor = (() => {
       element
     );
     const src = extractBestImageUrl(img);
-    if (!src) return null;
+    if (!src || isCollapsedImageLayer(img)) return null;
     if (isTrackingPixel(win, img)) return null;
     if (isDecorativeImage(win, img, constants.LOGO_PATTERNS || [])) return null;
     const absoluteSrc = toAbsoluteUrl(src, baseUrl);
@@ -6054,13 +6094,19 @@ var clipaibleArticleExtractor = (() => {
         }
         const visible = !hiddenContent(cell);
         const html = visible ? serializeReadingHtml(cell, excludedSelectors, referenceRoots) : "";
+        const sourceCell = sourceCells.get(cell) || cell;
+        const id2 = visible && sourceCell.id && sourceCell.ownerDocument.getElementById(sourceCell.id) === sourceCell ? sourceCell.id : "";
+        const headers = sourceCell.getAttribute("headers");
+        const scope = cell.tagName === "TH" ? cell.scope : "";
         physicalRows[rowIndex].push({
           column,
           rowSpan: height,
           colSpan: width,
           header: cell.tagName === "TH",
           ...muted(cell) ? { muted: true } : {},
-          ...cell.getAttribute("scope") ? { scope: cell.getAttribute("scope") } : {}
+          ...["row", "col", "rowgroup", "colgroup"].includes(scope) ? { scope } : {},
+          ...id2 ? { id: id2 } : {},
+          ...headers !== null ? { headerIds: headers.split(/[\t\n\f\r ]+/).filter(Boolean) } : {}
         });
         let repeated = html;
         if (width * height > 1 && html) {
@@ -6095,11 +6141,36 @@ var clipaibleArticleExtractor = (() => {
         rowSpan: visibleRows.filter((entry) => entry.index >= index && entry.index < index + cell.rowSpan).length
       }))
     }));
+    const headingIds = new Set(layoutRows.flatMap((row) => row.cells.filter((cell) => cell.header && cell.id).map((cell) => cell.id)));
+    for (const row of layoutRows) for (const cell of row.cells) {
+      if (cell.headerIds) cell.headerIds = [...new Set(cell.headerIds.filter((id2) => headingIds.has(id2) && id2 !== cell.id))];
+    }
+    const columnGroups = [];
+    let unassignedColumns = columns;
+    const groups = (
+      /** @type {HTMLTableColElement[]} */
+      Array.from(table.children).filter((child) => child.tagName === "COLGROUP")
+    );
+    for (const group of groups) {
+      if (!unassignedColumns) break;
+      const cols = (
+        /** @type {HTMLTableColElement[]} */
+        Array.from(group.children).filter((child) => child.tagName === "COL")
+      );
+      const span = cols.length ? cols.reduce((count, col) => count + col.span, 0) : group.span;
+      const assigned = Math.min(span, unassignedColumns);
+      columnGroups.push(assigned);
+      unassignedColumns -= assigned;
+    }
+    const sourceTable = sourceCells.get(table) || table;
+    const id = sourceTable.id && sourceTable.ownerDocument.getElementById(sourceTable.id) === sourceTable ? sourceTable.id : "";
     return {
       type: "table",
       cellFormat: "html",
       hasHeaders,
       layoutRows,
+      ...id ? { id } : {},
+      ...columnGroups.length ? { columnGroups } : {},
       ...hasHeaders ? { headers: rows[0] } : {},
       rows: hasHeaders ? rows.slice(1) : rows
     };

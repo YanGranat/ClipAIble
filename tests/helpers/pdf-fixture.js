@@ -63,6 +63,28 @@ export function createStructurePdf({ italicHeading = false } = {}) {
     `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${image.length} >>\nstream\n${image}\nendstream`,
     `<< /Title (${structureOracle.title}) /Author (${structureOracle.author}) >>`
   ];
+  return encodePdf(objects, 9);
+}
+
+/** Raster and vector inserts between text pages, with a truly blank page. */
+export function createInterleavedGraphicsPdf({ withText = true } = {}) {
+  const page = content => `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 13 0 R >> /XObject << /Im1 14 0 R >> >> /Contents ${content} 0 R >>`;
+  const stream = commands => `<< /Length ${commands.length} >>\nstream\n${commands}\nendstream`;
+  const pixels = 'ff000000ff000000ffffffff>';
+  return encodePdf([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R 9 0 R 11 0 R] /Count 5 >>',
+    page(4), stream(withText ? text('Before the specimen', 30, 240, 17) : ''),
+    page(6), stream('q 64 0 0 64 48 84 cm /Im1 Do Q'),
+    page(8), stream('0.4 0.2 0.7 rg 20 80 120 90 re f'),
+    page(10), stream('q 1 0 0 1 10 10 cm Q'),
+    page(12), stream(withText ? text('After the specimen', 30, 240, 17) : ''),
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${pixels.length} >>\nstream\n${pixels}\nendstream`,
+  ]);
+}
+
+function encodePdf(objects, info) {
   let pdf = '%PDF-1.7\n';
   const offsets = [];
   objects.forEach((object, index) => {
@@ -72,6 +94,7 @@ export function createStructurePdf({ italicHeading = false } = {}) {
   const xref = pdf.length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
   pdf += offsets.map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Info 9 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const metadata = info ? ` /Info ${info} 0 R` : '';
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${metadata} >>\nstartxref\n${xref}\n%%EOF\n`;
   return new TextEncoder().encode(pdf);
 }

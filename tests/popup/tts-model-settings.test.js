@@ -34,6 +34,21 @@ it('uses current defaults and keeps a saved older model and custom voice visible
   expect(elements.googleTtsModel.value).toBe('saved-unknown-model');
 });
 
+it('keeps deprecated speech models out of new choices and restores saved selections', () => {
+  const deprecatedModels = [
+    [elements.googleTtsModel, 'gemini-3.1-flash-tts-preview'],
+    [elements.googleTtsModel, 'gemini-2.5-pro-preview-tts'],
+    [elements.googleTtsModel, 'gemini-2.5-flash-preview-tts'],
+    [elements.elevenlabsModel, 'eleven_turbo_v2_5']
+  ];
+  for (const [select, model] of deprecatedModels) {
+    expect([...select.options].some(option => option.value === model)).toBe(false);
+    restoreTtsSelect(select, model);
+    expect(select.value).toBe(model);
+  }
+  expect(saves).not.toHaveBeenCalled();
+});
+
 it('shows only the selected ElevenLabs model capabilities and preserves inactive values', () => {
   elements.audioProvider.value = 'elevenlabs'; elements.audioSpeed.value = '1.7'; elements.elevenlabsStyle.value = '0.4';
   audio.updateAudioProviderUI();

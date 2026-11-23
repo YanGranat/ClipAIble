@@ -18,14 +18,16 @@ afterEach(() => windows.splice(0).forEach(win => win.close()));
 
 describe('Atomic media projection', () => {
   it('retains each table-cell occurrence and reserves document fragment targets', () => {
-    const { doc, unit, state, project } = page('<div id="reading-media-1"></div><a name="reading-media-2"></a><table><tr><td>Before <img id="authored-image" src="/same.png" alt="First observation"> after.</td><td><img src="/same.png" alt="Second observation"></td></tr></table>');
+    const { doc, unit, state, project } = page('<div id="reading-media-1"></div><a name="reading-media-2"></a><a href="/report#reading-media-3">Missing appendix</a><table><tr><td>Before <img id="authored-image" src="/same.png" alt="First observation"> after.</td><td><img src="/same.png" alt="Second observation"></td></tr></table>');
     const before = doc.documentElement.outerHTML, result = project();
     expect(doc.documentElement.outerHTML).toBe(before);
-    expect(imagesOf(result).map(image => image.id)).toEqual(['reading-media-3', 'reading-media-4']);
+    expect(imagesOf(result).map(({ id, tableMedia }) => ({ id, tableMedia }))).toEqual([
+      { id: 'reading-media-4', tableMedia: true }, { id: 'reading-media-5', tableMedia: true }
+    ]);
     expect(imagesOf(result).map(image => image.src)).toEqual(['/same.png', '/same.png']);
     expect(result.media.map(entry => entry.source)).toEqual([...unit.querySelectorAll('img')]);
     expect([...result.clone.querySelectorAll('td')].map(cell => cell.textContent)).toEqual(['Before First observation after.', 'Second observation']);
-    expect(result.clone.querySelector('#authored-image').getAttribute('href')).toBe('#reading-media-3');
+    expect(result.clone.querySelector('#authored-image').getAttribute('href')).toBe('#reading-media-4');
     expect(result.clone.querySelectorAll('img')).toHaveLength(0);
     expect(imagesOf(project()).map(image => image.id)).toEqual(imagesOf(result).map(image => image.id));
     expect(state.readingMediaIds.size).toBe(2);
@@ -58,7 +60,7 @@ describe('Atomic media projection', () => {
     const item = { type: 'image', isGraphic: true, src: 'data:image/png;base64,AA==', alt: 'Chart labels', caption: 'Observed curve.' };
     state.readingGraphics.set(owner, item);
     const result = project();
-    expect(result.media).toEqual([{ source: owner, item: { ...item, id: 'reading-media-1' } }]);
+    expect(result.media).toEqual([{ source: owner, item: { ...item, id: 'reading-media-1', tableMedia: true } }]);
     expect(item.id).toBeUndefined();
     expect(result.clone.querySelectorAll('a')).toHaveLength(1);
     expect(result.clone.querySelector('a').id).toBe('source-figure');

@@ -1,5 +1,6 @@
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
 import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { PDF_PAGE_MARGIN_MM } from './pdf-layout.js';
 // @ts-check
 // HTML builder for PDF generation
 
@@ -58,7 +59,7 @@ function getLocalization(language) {
  * @returns {string} HTML document
  */
 export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', publishDate = '', language = 'auto', generateToc = false, generateAbstract = false, abstract = '') {
-  content = normalizeDocumentContent(content, title, sourceUrl);
+  content = normalizeDocumentContent(content, title, sourceUrl, { tableCellFragmentTargets: true });
   const headings = content.filter(item => item.type === 'heading').map(item => ({ text: documentPlainText(item, sourceUrl), level: item.level || 2, id: item.id }));
   const h2InContent = content.filter(item => item.type === 'heading' && item.level === 2);
   log('buildHtmlForPdf', { 
@@ -257,7 +258,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
             }
           }
           const altText = (item.alt || '').replace(/<[^>]*>/g, '');
-          return `${anchorTag}<figure class="article-image"${idAttr}>
+          return `${anchorTag}<figure class="article-image"${idAttr}${item.tableMedia ? ' data-table-media' : ''}>
             <img src="${escapeAttr(item.src)}" alt="${escapeAttr(altText)}" data-original-src="${escapeAttr(item.src)}">
             ${caption ? `<figcaption>${caption}</figcaption>` : ''}
           </figure>`;
@@ -582,7 +583,8 @@ export function applyCustomStyles(styles, pageMode, customColors) {
   }
   
   if (pageMode === 'multi') {
-    styles += '\n@media print { @page { margin: 5mm 5mm 0 5mm; } body { padding: 0 !important; } }';
+    const margin = `${PDF_PAGE_MARGIN_MM}mm`;
+    styles += `\n@media print { @page { margin: ${margin} ${margin} 0 ${margin}; } body { padding: 0 !important; } }`;
   }
 
   // Parse font size

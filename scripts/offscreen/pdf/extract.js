@@ -74,7 +74,10 @@ export async function extractPdfContent(url, pdfData = null, requestOptions = {}
     // COMMENTED: console.warn('=== BEFORE_CALLING_EXTRACT_CONTENT ===', beforeCallMsg);
     // COMMENTED: console.log(beforeCallMsg);
     // COMMENTED: log('=== BEFORE_CALLING_EXTRACT_CONTENT === ' + beforeCallMsg, { numPages, hasMetrics: !!metrics, hasGapAnalysis: !!metrics.gapAnalysis });
-    const { elements: allElements } = await phase(extractContentFromPages(pdf, numPages, metrics, { ...requestOptions, onProgress: (page, total) => requestOptions.onProgress?.(page + total, total * 2) }));
+    const preserveImagePage = allLines.length ? requestOptions.preserveImagePage : undefined;
+    const { elements: allElements } = await phase(extractContentFromPages(pdf, numPages, metrics, {
+      ...requestOptions, preserveImagePage, onProgress: (page, total) => requestOptions.onProgress?.(page + total, total * 2)
+    }));
     // COMMENTED: console.log(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
     // COMMENTED: console.error(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });
     // COMMENTED: log(`[PDF v3] === AFTER extractContentFromPages RETURNED === - ${versionMarker}`, { elementsCount: allElements?.length || 0 });

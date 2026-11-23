@@ -15,7 +15,8 @@ vi.mock('../../scripts/api/pdf-storage.js', () => ({
 }));
 
 vi.mock('../../scripts/api/pdf-operation-storage.js', () => ({ beginPdfOperation: vi.fn(async () => {}), removePdfOperation: vi.fn(async () => {}), takePdfOperationBlob: vi.fn() }));
-import { getPdfMetadata, renderAllPdfPages } from '../../scripts/api/pdf-offscreen.js';
+import { extractPdfViaOffscreen, getPdfMetadata, renderAllPdfPages } from '../../scripts/api/pdf-offscreen.js';
+import { beginPdfOperation, removePdfOperation, takePdfOperationBlob } from '../../scripts/api/pdf-operation-storage.js';
 import { savePdfData, removePdfData } from '../../scripts/api/pdf-storage.js';
 const bytes = () => new TextEncoder().encode('%PDF-1.7\nSynthetic bytes').buffer;
 const image = { imageData: 'data:image/jpeg;base64,AQ==', width: 600, height: 800 };
@@ -47,6 +48,52 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('PDF page rendering transport', () => {
+  it('resolves an owned graphic page into content before leaving the extraction boundary', async () => {
+    let id;
+    state.handler = (message, callback) => {
+      expect(message.type).toBe('EXTRACT_PDF');
+      expect(message.data.preserveImagePages).toBe(true);
+      id = message.data.operationId;
+      callback({ success: true, result: { content: [{ type: 'image', pageNum: 2, pdfPageImageRef: `${id}:2` }] } });
+      return true;
+    };
+    takePdfOperationBlob.mockResolvedValueOnce(new Blob([new Uint8Array([1])], { type: 'image/jpeg' }));
+    await expect(extractPdfViaOffscreen('file:///document.pdf', bytes(), { processingRunId: 'a', preserveImagePages: true }))
+      .resolves.toEqual({ content: [{ type: 'image', pageNum: 2, src: 'data:image/jpeg;base64,AQ==' }] });
+    expect(beginPdfOperation).toHaveBeenCalledExactlyOnceWith(id, 'a');
+    expect(takePdfOperationBlob).toHaveBeenCalledExactlyOnceWith(`${id}:2`, 'a');
+    expect(removePdfOperation).toHaveBeenCalledExactlyOnceWith(id);
+  });
+
+  it('rejects a graphic reference from another extraction job without reading it', async () => {
+    let id;
+    state.handler = (message, callback) => {
+      id = message.data.operationId;
+      callback({ success: true, result: { content: [{ type: 'image', pageNum: 2, pdfPageImageRef: `${crypto.randomUUID()}:2` }] } });
+      return true;
+    };
+    await expect(extractPdfViaOffscreen('file:///document.pdf', bytes(), { processingRunId: 'a', preserveImagePages: true }))
+      .rejects.toMatchObject({ translationKey: 'errorPdfRenderFailed' });
+    expect(takePdfOperationBlob).not.toHaveBeenCalled();
+    expect(removePdfOperation).toHaveBeenCalledExactlyOnceWith(id);
+  });
+
+  it('rejects a partial graphic result and cleans the job after an earlier graphic was read', async () => {
+    let id;
+    state.handler = (message, callback) => {
+      id = message.data.operationId;
+      const content = [2, 3].map(pageNum => ({ type: 'image', pageNum, pdfPageImageRef: `${id}:${pageNum}` }));
+      callback({ success: true, result: { content } });
+      return true;
+    };
+    takePdfOperationBlob.mockResolvedValueOnce(new Blob([new Uint8Array([1])], { type: 'image/jpeg' }))
+      .mockResolvedValueOnce(null);
+    await expect(extractPdfViaOffscreen('file:///document.pdf', bytes(), { processingRunId: 'a', preserveImagePages: true }))
+      .rejects.toMatchObject({ translationKey: 'errorPdfRenderFailed' });
+    expect(takePdfOperationBlob.mock.calls).toEqual([[`${id}:2`, 'a'], [`${id}:3`, 'a']]);
+    expect(removePdfOperation).toHaveBeenCalledExactlyOnceWith(id);
+  });
+
   it('reads metadata from the acquired bytes with the same ownership and cleanup contract', async () => {
     state.handler = (message, callback) => {
       expect(message.type).toBe('GET_PDF_METADATA');

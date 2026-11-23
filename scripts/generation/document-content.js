@@ -113,7 +113,8 @@ export function renderTableHtml(item, sourceUrl = '', { xhtml = false, assumeFir
     const html = tableCellHtml(item, value, sourceUrl);
     return xhtml ? serializeXmlInline(html, 'xhtml') : html;
   };
-  const id = item.id ? ` id="${xhtml ? escapeXml(item.id) : escapeHtml(item.id)}"` : '';
+  const escapeAttribute = xhtml ? escapeXml : escapeHtml;
+  const id = item.id ? ` id="${escapeAttribute(item.id)}"` : '';
   const layout = verifiedTableLayout(item);
   if (!layout) {
     const hasHeaders = item.hasHeaders !== false && (assumeFirstRowHeader || item.hasHeaders === true ||
@@ -124,6 +125,11 @@ export function renderTableHtml(item, sourceUrl = '', { xhtml = false, assumeFir
     return `<table${id}>${headers}<tbody>${body}</tbody></table>`;
   }
   let html = `<table${id}>`, previousGroup = '';
+  const groups = Array.isArray(item.columnGroups) ? item.columnGroups : [];
+  if (groups.every(span => Number.isInteger(span) && span > 0) && groups.reduce((width, span) => width + span, 0) <= layout.columns) {
+    html += groups.map(span => `<colgroup span="${span}"></colgroup>`).join('');
+  }
+  const headingIds = new Set(layout.origins.filter(origin => origin.cell.header && typeof origin.cell.id === 'string').map(origin => origin.cell.id));
   const tags = { head: 'thead', body: 'tbody', foot: 'tfoot' };
   for (const [rowIndex, row] of layout.rows.entries()) {
     const group = tags[row.group];
@@ -139,6 +145,8 @@ export function renderTableHtml(item, sourceUrl = '', { xhtml = false, assumeFir
       const cell = owner.cell, tag = cell.header ? 'th' : 'td';
       const attributes = (cell.rowSpan > 1 ? ` rowspan="${cell.rowSpan}"` : '') +
         (cell.colSpan > 1 ? ` colspan="${cell.colSpan}"` : '') + (cell.scope ? ` scope="${cell.scope}"` : '') +
+        (typeof cell.id === 'string' && cell.id ? ` id="${escapeAttribute(cell.id)}"` : '') +
+        (Array.isArray(cell.headerIds) ? ` headers="${escapeAttribute(cell.headerIds.filter(id => headingIds.has(id) && id !== cell.id).join(' '))}"` : '') +
         (cell.muted === true ? ' class="table-muted"' : '');
       html += `<${tag}${attributes}>${render(layout.values[rowIndex][column])}</${tag}>`;
       column += cell.colSpan;
@@ -163,7 +171,7 @@ export function listItemHtml(value, sourceUrl = '') {
 }
 
 /** Project only the fields consumed by document renderers, retaining their source format. */
-function fragmentViews(content, sourceUrl) {
+function fragmentViews(content, sourceUrl, tableCellFragmentTargets) {
   const views = [], blockIds = new Set();
   const addId = value => { if (value) blockIds.add(String(value)); };
   const addView = (rendered, holder, key, html, collect = true) => {
@@ -201,6 +209,10 @@ function fragmentViews(content, sourceUrl) {
       const html = /<[a-z][^>]*>/i.test(item.caption);
       addView(html ? sanitizeHtml(item.caption, sourceUrl) : markdownToHtml(item.caption, sourceUrl), item, 'caption', html, false);
     } else if (item.type === 'table') {
+      if (tableCellFragmentTargets) {
+        addId(item.id);
+        for (const origin of verifiedTableLayout(item)?.origins || []) addId(origin.cell.id);
+      }
       if (literal || item.cellFormat === 'text') continue;
       if (Array.isArray(item.headers)) {
         item.headers = [...item.headers];
@@ -218,7 +230,7 @@ function fragmentViews(content, sourceUrl) {
 }
 
 /** Assign heading identity once, before collecting navigation or rendering content. */
-export function normalizeDocumentContent(content, title = '', sourceUrl = '', { inlineFragmentTargets = true } = {}) {
+export function normalizeDocumentContent(content, title = '', sourceUrl = '', { inlineFragmentTargets = true, tableCellFragmentTargets = false } = {}) {
   let beforeBody = true;
   const ids = new Set();
   const sourceIndices = new Map();
@@ -233,7 +245,7 @@ export function normalizeDocumentContent(content, title = '', sourceUrl = '', { 
   });
   const reserved = new Set();
   {
-    const originalProjection = fragmentViews(originals.map(item => ({ ...item })), sourceUrl);
+    const originalProjection = fragmentViews(originals.map(item => ({ ...item })), sourceUrl, tableCellFragmentTargets);
     for (const id of originalProjection.blockIds) reserved.add(id);
     for (const view of originalProjection.views) for (const id of collectRenderedFragmentIds(view.rendered)) reserved.add(id);
   }
@@ -250,7 +262,7 @@ export function normalizeDocumentContent(content, title = '', sourceUrl = '', { 
     if (!['image', 'subtitle', 'hr', 'divider', 'separator'].includes(item.type)) beforeBody = false;
     return [item];
   });
-  const projection = fragmentViews(normalized, sourceUrl);
+  const projection = fragmentViews(normalized, sourceUrl, tableCellFragmentTargets);
   for (const id of projection.blockIds) reserved.add(id);
   for (const view of projection.views) for (const id of collectRenderedFragmentIds(view.rendered)) reserved.add(id);
   for (const item of normalized) {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { processPdfPageWithAI } from '../../scripts/processing/pdf.js';
+import { processPdfDocument } from '../../scripts/processing/pdf.js';
+import { extractPdfContent } from '../../scripts/extraction/pdf.js';
 import { callAIWithImageAndHistory } from '../../scripts/api/index.js';
 import { getPdfMetadata, renderAllPdfPages, readRenderedPdfPage } from '../../scripts/api/pdf-offscreen.js';
 import { getPdfData } from '../../scripts/api/pdf-storage.js';
@@ -32,7 +33,7 @@ vi.mock('../../scripts/offscreen/pdf/constants.js', async importOriginal => {
 
 const image = { imageData: 'data:image/png;base64,c2FtcGxl', width: 595, height: 842 };
 const pdfBytes = new TextEncoder().encode('%PDF-1.4\nsample').buffer;
-const input = { tabId: 1, apiKey: 'sample-key', model: 'sample-model', provider: 'openrouter', processingRunId: 'd6ebd07b-048e-48fd-8d04-d15032dd7615' };
+const input = { tabId: 1, mode: 'selector', apiKey: 'sample-key', model: 'sample-model', provider: 'openrouter', processingRunId: 'd6ebd07b-048e-48fd-8d04-d15032dd7615' };
 const response = text => ({ result: { text, mergeWithPrevious: 'paragraph', metadata: {} }, assistantMessage: text, userMessage: { role: 'user', content: [{ type: 'text', text: 'Sample page' }] } });
 beforeEach(() => {
   vi.clearAllMocks();
@@ -52,9 +53,28 @@ async function settle(operation) {
 }
 
 describe('PDF pipeline integrity', () => {
+  it.each(['selector', 'extract'])('uses visual extraction for the %s mode', async mode => {
+    extractPdfContent.mockResolvedValue({ title: 'Document', content: [{ type: 'paragraph', text: 'Native text.' }] });
+    await processPdfDocument({ ...input, mode }, 'https://example.org/document.pdf');
+    expect(callAIWithImageAndHistory).toHaveBeenCalledTimes(2);
+    expect(extractPdfContent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ outputFormat: 'pdf' }, true],
+    [{ outputFormat: 'markdown' }, true],
+    [{ outputFormat: 'audio' }, false],
+    [{ outputFormat: 'markdown', extractionOnly: true }, false],
+  ])('uses text-layer extraction with the appropriate visual-page policy for %o', async (options, preserveImagePages) => {
+    extractPdfContent.mockResolvedValue({ title: 'Document', content: [{ type: 'paragraph', text: 'Native text.' }] });
+    await processPdfDocument({ ...input, mode: 'automatic', ...options }, 'https://example.org/document.pdf');
+    expect(extractPdfContent).toHaveBeenCalledWith('https://example.org/document.pdf', pdfBytes,
+      expect.objectContaining({ preserveImagePages }));
+    expect(callAIWithImageAndHistory).not.toHaveBeenCalled();
+  });
   it('reads an allowed local PDF directly without requesting a picker or viewer extraction', async () => {
     vi.stubGlobal('chrome', { ...chrome, extension: { ...chrome.extension, isAllowedFileSchemeAccess: async () => true } });
-    await processPdfPageWithAI(input, 'file:///sample.pdf');
+    await processPdfDocument(input, 'file:///sample.pdf');
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0][0]).toBe('file:///sample.pdf');
     expect(extractPdfDataFromTab).not.toHaveBeenCalled();
@@ -63,7 +83,7 @@ describe('PDF pipeline integrity', () => {
 
   it('retains the local viewer path when file access is denied', async () => {
     vi.stubGlobal('chrome', { ...chrome, extension: { ...chrome.extension, isAllowedFileSchemeAccess: async () => false } });
-    await processPdfPageWithAI(input, 'file:///sample.pdf');
+    await processPdfDocument(input, 'file:///sample.pdf');
     expect(fetch).not.toHaveBeenCalled();
     expect(extractPdfDataFromTab).toHaveBeenCalledExactlyOnceWith('file:///sample.pdf', input.tabId);
   });
@@ -71,7 +91,7 @@ describe('PDF pipeline integrity', () => {
   it('does not turn an oversized allowed local PDF into a picker request', async () => {
     vi.stubGlobal('chrome', { ...chrome, extension: { ...chrome.extension, isAllowedFileSchemeAccess: async () => true } });
     fetch.mockResolvedValue(new Response(pdfBytes, { headers: { 'Content-Length': '65' } }));
-    await expect(processPdfPageWithAI(input, 'file:///sample.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfTooLarge' });
+    await expect(processPdfDocument(input, 'file:///sample.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfTooLarge' });
     expect(extractPdfDataFromTab).not.toHaveBeenCalled();
     expect(callAIWithImageAndHistory).not.toHaveBeenCalled();
   });
@@ -80,12 +100,143 @@ describe('PDF pipeline integrity', () => {
     getPdfMetadata.mockResolvedValue({ numPages: 1, metadata: {} });
     renderAllPdfPages.mockResolvedValue({ operationId: 'sample-operation', pages: [{ pageNum: 1, ref: 'sample-operation:1' }] });
     callAIWithImageAndHistory.mockResolvedValue(response('```js\nconst pipe = "a|b|c";\n```\n\nThe values a | b | c are alternatives.\n\n| Name | Value |\n| --- | --- |\n| A | B |'));
-    const result = await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
     expect(result.content).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'code', language: 'js', text: 'const pipe = "a|b|c";' }),
       expect.objectContaining({ type: 'paragraph', text: 'The values a | b | c are alternatives.' }),
       expect.objectContaining({ type: 'table', headers: ['Name', 'Value'], rows: [['A', 'B']] })
     ]));
+  });
+
+  it('reflows a figure as source pixels with its caption, without moving text across a page boundary', async () => {
+    const draw = vi.fn();
+    const close = vi.fn();
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 600, height: 800, close })));
+    vi.stubGlobal('OffscreenCanvas', class {
+      getContext() { return { drawImage: draw }; }
+      async convertToBlob() { return new Blob(['crop'], { type: 'image/jpeg' }); }
+    });
+    callAIWithImageAndHistory
+      .mockResolvedValueOnce(response('An observation continues.\n\n[Figure: 100, 200, 500, 600]'))
+      .mockResolvedValueOnce({ ...response('Figure 1. Calibration.\n\nAn afterword.'), result: {
+        text: 'Figure 1. Calibration.\n\nAn afterword.', mergeWithPrevious: 'direct', metadata: {}
+      } });
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
+    expect(draw).toHaveBeenCalledExactlyOnceWith(expect.anything(), 60, 160, 240, 320, 0, 0, 240, 320);
+    expect(result.content).toMatchObject([
+      { type: 'paragraph', text: 'An observation continues.' },
+      { type: 'image', src: 'data:image/jpeg;base64,Y3JvcA==' },
+      { type: 'paragraph', text: 'Figure 1. Calibration.' },
+      { type: 'paragraph', text: 'An afterword.' }
+    ]);
+    expect(result.markdown).toContain('[Figure]\n\nFigure 1.');
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('keeps empty boundary cells and does not absorb prose containing a vertical bar into the table', async () => {
+    callAIWithImageAndHistory.mockResolvedValueOnce(response([
+      '| Sample | Value | Review |', '| --- | --- | --- |', '| | 28 | |',
+      '| A | 31 | complete \\| recheck |', 'Compare 28 | 31 before processing.',
+    ].join('\n'))).mockResolvedValueOnce(response(''));
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
+    expect(result.content).toMatchObject([
+      { type: 'table', headers: ['Sample', 'Value', 'Review'], rows: [['', '28', ''], ['A', '31', 'complete | recheck']] },
+      { type: 'paragraph', text: 'Compare 28 | 31 before processing.' },
+    ]);
+  });
+
+  it('preserves a code line matching the PDF metadata title and a repeated H1 later in the body', async () => {
+    callAIWithImageAndHistory.mockResolvedValueOnce(response([
+      '# Moon Landing', '', 'A procedure follows.', '', '~~~sh', '# Moon Landing', 'echo step', '~~~',
+      '', '# Moon Landing', '', 'The second section.',
+    ].join('\n'))).mockResolvedValueOnce(response(''));
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
+    expect(result.content).toMatchObject([
+      { type: 'paragraph', text: 'A procedure follows.' },
+      { type: 'code', text: '# Moon Landing\necho step' },
+      { type: 'heading', text: 'Moon Landing', level: 1 },
+      { type: 'paragraph', text: 'The second section.' },
+    ]);
+  });
+
+  it('never treats a fenced comment or later body heading as the document title', async () => {
+    getPdfMetadata.mockResolvedValue({ numPages: 2, metadata: {} });
+    callAIWithImageAndHistory.mockResolvedValueOnce(response('~~~sh\n# Module setup\necho start\n~~~\n\n# Configuration')).mockResolvedValueOnce(response(''));
+    const result = await processPdfDocument({ ...input, title: 'Reference Manual' }, 'https://example.org/article.pdf');
+    expect(result.title).toBe('Reference Manual');
+    expect(result.content).toMatchObject([
+      { type: 'code', text: '# Module setup\necho start' },
+      { type: 'heading', text: 'Configuration', level: 1 },
+    ]);
+  });
+
+  it.each([
+    ['An introduction.', '| Part | Weight |\n| --- | --- |\n| Main | 32 |', ['paragraph', 'table']],
+    ['| Part | Weight |\n| --- | --- |\n| Main | 32 |', 'That concludes the measurement.', ['table', 'paragraph']],
+    ['The prior section ends here.', '## A new section\n\nFurther measurements.', ['paragraph', 'heading', 'paragraph']],
+  ])('preserves source block boundaries despite an incorrect continuation hint', async (first, second, types) => {
+    callAIWithImageAndHistory.mockResolvedValueOnce(response(first)).mockResolvedValueOnce({
+      ...response(second),
+      result: { text: second, mergeWithPrevious: 'direct', metadata: {} },
+    });
+    const result = await processPdfDocument(input, 'https://example.org/document.pdf');
+    expect(result.content.map(item => item.type)).toEqual(types);
+    if (types.includes('table')) expect(result.content.find(item => item.type === 'table').rows).toEqual([['Main', '32']]);
+  });
+
+  it('keeps authored code and figure captions when a reported rectangle cannot be used', async () => {
+    getPdfMetadata.mockResolvedValue({ numPages: 1, metadata: {} });
+    renderAllPdfPages.mockResolvedValue({ operationId: 'sample-operation', pages: [{ pageNum: 1, ref: 'sample-operation:1' }] });
+    vi.stubGlobal('createImageBitmap', vi.fn());
+    callAIWithImageAndHistory.mockResolvedValue(response(
+      '~~~\n[Figure: 100, 100, 600, 500]\n~~~\n\n[Figure: 0, 0, 1000, 1000]\n[Caption] Figure 1. Original caption.\n\n[Figure: 100, 150, 1010, 300]'
+    ));
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
+    expect(createImageBitmap).not.toHaveBeenCalled();
+    expect(result.content).toMatchObject([
+      { type: 'code', text: '[Figure: 100, 100, 600, 500]' },
+      { type: 'paragraph', text: '[Figure]' },
+      { type: 'paragraph', text: 'Figure 1. Original caption.' },
+      { type: 'paragraph', text: '[Figure]' }
+    ]);
+  });
+
+  it('keeps a same-page caption on the original crop so it paginates with the figure', async () => {
+    getPdfMetadata.mockResolvedValue({ numPages: 1, metadata: {} });
+    renderAllPdfPages.mockResolvedValue({ operationId: 'sample-operation', pages: [{ pageNum: 1, ref: 'sample-operation:1' }] });
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 600, height: 800, close() {} })));
+    vi.stubGlobal('OffscreenCanvas', class {
+      getContext() { return { drawImage() {} }; }
+      async convertToBlob() { return new Blob(['crop'], { type: 'image/jpeg' }); }
+    });
+    callAIWithImageAndHistory.mockResolvedValue(response(
+      '[Figure: 100, 100, 600, 500]\n[Caption] Figure 1. Original caption.\n\nThe next paragraph.'
+    ));
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
+    expect(result.content).toMatchObject([
+      { type: 'image', caption: 'Figure 1. Original caption.' },
+      { type: 'paragraph', text: 'The next paragraph.' }
+    ]);
+    expect(result.markdown).toContain('[Figure]\n\nFigure 1. Original caption.');
+  });
+
+  it('does not bind an authored line resembling an internal figure identifier to an image', async () => {
+    getPdfMetadata.mockResolvedValue({ numPages: 1, metadata: {} });
+    renderAllPdfPages.mockResolvedValue({ operationId: 'sample-operation', pages: [{ pageNum: 1, ref: 'sample-operation:1' }] });
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 600, height: 800, close() {} })));
+    vi.stubGlobal('OffscreenCanvas', class {
+      getContext() { return { drawImage() {} }; }
+      async convertToBlob() { return new Blob(['crop'], { type: 'image/jpeg' }); }
+    });
+    callAIWithImageAndHistory.mockResolvedValue(response(
+      '[[pdf-crop:1:2]]\n\n[Figure: 100, 100, 600, 500]\n[Caption] Original diagram.'
+    ));
+    const result = await processPdfDocument(input, 'https://example.org/document.pdf');
+    expect(result.content).toMatchObject([
+      { type: 'paragraph', text: '[[pdf-crop:1:2]]' },
+      { type: 'image', caption: 'Original diagram.' }
+    ]);
+    expect(result.markdown).toBe('[[pdf-crop:1:2]]\n\n[Figure]\n\nOriginal diagram.');
   });
   it('retains one previous text turn, consumes page references in order, and disposes the result job', async () => {
     getPdfMetadata.mockResolvedValue({ numPages: 3, metadata: { title: 'Document title' } });
@@ -96,7 +247,7 @@ describe('PDF pipeline integrity', () => {
       histories.push(structuredClone(history));
       return response(`Page ${++page} content.`);
     });
-    const result = await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
     expect(renderAllPdfPages).toHaveBeenCalledOnce();
     expect(readRenderedPdfPage.mock.calls.map(([ref]) => ref)).toEqual(['sample-operation:1', 'sample-operation:2', 'sample-operation:3']);
     expect(histories.map(value => value.length)).toEqual([0, 2, 2]);
@@ -111,7 +262,7 @@ describe('PDF pipeline integrity', () => {
     renderAllPdfPages.mockResolvedValue({ operationId: 'sample-operation', pages: [1, 2, 3].map(pageNum => ({ pageNum, ref: `sample-operation:${pageNum}` })) });
     const failure = Object.assign(new Error('Service unavailable'), { status: 503, retryExhausted: true });
     callAIWithImageAndHistory.mockResolvedValueOnce(response('First page.')).mockRejectedValue(failure);
-    await expect(processPdfPageWithAI(input, 'https://example.org/article.pdf')).rejects.toBe(failure);
+    await expect(processPdfDocument(input, 'https://example.org/article.pdf')).rejects.toBe(failure);
     expect(callAIWithImageAndHistory).toHaveBeenCalledTimes(2);
     expect(readRenderedPdfPage).toHaveBeenCalledTimes(2);
     expect(removePdfOperation).toHaveBeenCalledWith('sample-operation');
@@ -121,7 +272,7 @@ describe('PDF pipeline integrity', () => {
   ))('preserves %s without repeating an incompatible PDF request: %s', async (code, url) => {
     vi.useFakeTimers();
     callAIWithImageAndHistory.mockRejectedValue(Object.assign(new Error('The selected model cannot complete this request.'), { code }));
-    const result = await settle(processPdfPageWithAI(input, url));
+    const result = await settle(processPdfDocument(input, url));
     expect(result.error).toMatchObject({ code });
     expect(callAIWithImageAndHistory).toHaveBeenCalledTimes(1);
   });
@@ -136,21 +287,21 @@ describe('PDF pipeline integrity', () => {
       histories.push(structuredClone(history));
       return { ...response('Sample paragraph.'), assistantMessage: signed };
     });
-    await processPdfPageWithAI({ ...input, provider: 'gemini' }, url);
+    await processPdfDocument({ ...input, provider: 'gemini' }, url);
     expect(histories.map(history => history.length)).toEqual([0, 2]);
     expect(histories[1][1]).toEqual({ role: 'assistant', content: signed });
   });
 
   it('preserves an unrelated heading whose length resembles the document title', async () => {
     callAIWithImageAndHistory.mockResolvedValueOnce(response('# Star Systems\n\nSample paragraph.'));
-    const result = await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
     expect(result.title).toBe('Moon Landing');
     expect(result.content.some(item => item.type === 'heading' && item.text === 'Star Systems')).toBe(true);
   });
 
   it('keeps a metadata title even when it equals the tab title', async () => {
     callAIWithImageAndHistory.mockResolvedValueOnce(response('# A chapter heading\n\nSample paragraph.'));
-    const result = await processPdfPageWithAI({ ...input, title: 'Moon Landing' }, 'https://example.org/article.pdf');
+    const result = await processPdfDocument({ ...input, title: 'Moon Landing' }, 'https://example.org/article.pdf');
     expect(result.title).toBe('Moon Landing');
     expect(result.content.some(item => item.type === 'heading' && item.text === 'A chapter heading')).toBe(true);
   });
@@ -158,12 +309,12 @@ describe('PDF pipeline integrity', () => {
   it.each([{}, { text: null }, { text: 7 }, '{broken json'])('rejects malformed page data instead of counting it as a blank page: %j', async malformed => {
     vi.useFakeTimers();
     callAIWithImageAndHistory.mockResolvedValue({ ...response(''), result: malformed });
-    const result = await settle(processPdfPageWithAI(input, 'file:///sample.pdf'));
+    const result = await settle(processPdfDocument(input, 'file:///sample.pdf'));
     expect(result.error).toBeInstanceOf(Error);
   });
 
   it('retains translatable page counts and page ownership in progress updates', async () => {
-    await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    await processPdfDocument(input, 'https://example.org/article.pdf');
     const updates = progressState.update.mock.calls.map(([state]) => state).filter(state => state.statusTranslationKey);
     expect(updates).toEqual(expect.arrayContaining([
       expect.objectContaining({ progress: 10, statusTranslationKey: 'statusRenderingPdfPages', statusTranslationParams: { pages: 2, count: 2 },
@@ -177,14 +328,14 @@ describe('PDF pipeline integrity', () => {
   it.each(['file:///sample.pdf', 'https://example.org/article.pdf'])('rejects incomplete extraction after a page fails: %s', async url => {
     vi.useFakeTimers();
     renderAllPdfPages.mockRejectedValue(Object.assign(new Error('PDF render incomplete'), { translationKey: 'errorPdfIncomplete', translationParams: { pages: '2' } }));
-    const result = await settle(processPdfPageWithAI(input, url));
+    const result = await settle(processPdfDocument(input, url));
     expect(result.error).toMatchObject({ translationKey: 'errorPdfIncomplete', translationParams: { pages: '2' } });
   });
 
   it('stops before AI admission when a complete one-parse render cannot be produced', async () => {
     getPdfMetadata.mockResolvedValue({ numPages: 4, metadata: { title: 'Moon Landing' } });
     renderAllPdfPages.mockRejectedValue(Object.assign(new Error('PDF render incomplete'), { translationKey: 'errorPdfIncomplete', translationParams: { pages: '2, 4' } }));
-    await expect(processPdfPageWithAI(input, 'https://example.org/article.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfIncomplete', translationParams: { pages: '2, 4' } });
+    await expect(processPdfDocument(input, 'https://example.org/article.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfIncomplete', translationParams: { pages: '2, 4' } });
     expect(renderAllPdfPages).toHaveBeenCalledOnce();
     expect(readRenderedPdfPage).not.toHaveBeenCalled();
     expect(callAIWithImageAndHistory).not.toHaveBeenCalled();
@@ -193,7 +344,7 @@ describe('PDF pipeline integrity', () => {
   it('accepts an explicitly empty page without making repeated AI requests', async () => {
     vi.useFakeTimers();
     callAIWithImageAndHistory.mockResolvedValueOnce(response('## Section\n\nSample paragraph.')).mockResolvedValue(response(''));
-    const result = await settle(processPdfPageWithAI(input, 'https://example.org/article.pdf'));
+    const result = await settle(processPdfDocument(input, 'https://example.org/article.pdf'));
     expect(result.error).toBeUndefined();
     expect(callAIWithImageAndHistory).toHaveBeenCalledTimes(2);
     expect(result.value.content.some(item => item.text === 'Sample paragraph.')).toBe(true);
@@ -201,7 +352,7 @@ describe('PDF pipeline integrity', () => {
 
   it('passes the selected provider and operation identity through capture and AI requests', async () => {
     const checkCancelled = vi.fn();
-    await processPdfPageWithAI({ ...input, checkCancelled }, 'https://example.org/article.pdf');
+    await processPdfDocument({ ...input, checkCancelled }, 'https://example.org/article.pdf');
     expect(renderAllPdfPages.mock.calls[0][4]).toMatchObject({ processingRunId: input.processingRunId, checkCancelled });
     expect(callAIWithImageAndHistory.mock.calls[0][7]).toMatchObject({ provider: 'openrouter', checkCancelled });
   });
@@ -209,12 +360,12 @@ describe('PDF pipeline integrity', () => {
   it('rejects an oversized web PDF before reading its body', async () => {
     getPdfData.mockResolvedValue(null);
     vi.stubGlobal('fetch', vi.fn(async () => new Response('%PDF-1.4\nsample', { headers: { 'Content-Length': String(LIMITS.MAX_FILE_SIZE + 1) } })));
-    await expect(processPdfPageWithAI(input, 'https://example.org/article.pdf')).rejects.toThrow(/too large/i);
+    await expect(processPdfDocument(input, 'https://example.org/article.pdf')).rejects.toThrow(/too large/i);
   });
 
   it('applies the same size limit to bytes extracted from a local PDF tab', async () => {
     extractPdfDataFromTab.mockResolvedValue(new TextEncoder().encode('%PDF' + 'x'.repeat(61)).buffer);
-    await expect(processPdfPageWithAI(input, 'file:///sample.pdf')).rejects.toThrow(/too large/i);
+    await expect(processPdfDocument(input, 'file:///sample.pdf')).rejects.toThrow(/too large/i);
     expect(renderAllPdfPages).not.toHaveBeenCalled();
     expect(readRenderedPdfPage).not.toHaveBeenCalled();
     expect(callAIWithImageAndHistory).not.toHaveBeenCalled();
@@ -222,7 +373,7 @@ describe('PDF pipeline integrity', () => {
 
   it('preserves valid page content when optional metadata fields have invalid types', async () => {
     callAIWithImageAndHistory.mockResolvedValue({ ...response('Sample paragraph.'), result: { text: 'Sample paragraph.', metadata: { title: 7, author: {}, date: null } } });
-    const result = await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    const result = await processPdfDocument(input, 'https://example.org/article.pdf');
     expect(result.title).toBe('Moon Landing');
     expect(result.content.some(item => item.text === 'Sample paragraph.')).toBe(true);
     expect(callAIWithImageAndHistory).toHaveBeenCalledTimes(2);
@@ -236,7 +387,7 @@ describe('PDF pipeline integrity', () => {
       historySizes.push(history.length);
       return response(historySizes.length === 2 ? '' : 'Sample paragraph.');
     });
-    await processPdfPageWithAI(input, 'https://example.org/article.pdf');
+    await processPdfDocument(input, 'https://example.org/article.pdf');
     expect(historySizes).toEqual([0, 2, 2]);
   });
 });

@@ -37,9 +37,27 @@ function sendOffscreenMessage(message, callback, admission) {
  * @throws {Error} If no response from offscreen document
  */
 export async function extractPdfViaOffscreen(pdfUrl, pdfData = null, cancellationOptions) {
-  const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData, {}, cancellationOptions,
+  const preserveImagePages = cancellationOptions?.preserveImagePages === true;
+  const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData, { preserveImagePages }, cancellationOptions,
     CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS, true);
-  return response.result;
+  if (!preserveImagePages) return response.result;
+  try {
+    const result = response.result;
+    for (const item of result.content) {
+      if (!item.pdfPageImageRef) continue;
+      if (item.type !== 'image' || !Number.isInteger(item.pageNum) || item.pageNum < 1 ||
+          item.pdfPageImageRef !== `${response.operationId}:${item.pageNum}`) {
+        throw createPdfError('Invalid PDF page image reference', 'errorPdfRenderFailed');
+      }
+      await cancellationOptions.checkCancelled?.();
+      item.src = await readRenderedPdfPage(item.pdfPageImageRef, cancellationOptions.processingRunId);
+      delete item.pdfPageImageRef;
+    }
+    await cancellationOptions.checkCancelled?.();
+    return result;
+  } finally {
+    await removePdfOperation(response.operationId).catch(error => logWarn('PDF result cleanup failed', { error: error.message }));
+  }
 }
 
 /**
@@ -167,7 +185,7 @@ async function requestPdfOperation(type, pdfUrl, pdfData, fields, cancellationOp
   const work = (async () => {
     let workFailure;
     try {
-      if (type === 'RENDER_ALL_PDF_PAGES') {
+      if (type === 'RENDER_ALL_PDF_PAGES' || fields.preserveImagePages) {
         await beginPdfOperation(operationId, cancellationOptions.processingRunId ?? null);
         resultCreated = true;
       }

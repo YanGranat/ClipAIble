@@ -5,7 +5,7 @@
 import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, safeGetComputedStyle, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isRealHeading } from './text-utils.js';
 import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent } from './filters.js';
-import { extractBestImageUrl, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
+import { extractBestImageUrl, isCollapsedImageLayer, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
 import { serializeReadingHtml, processMathElements, encodeOriginalText } from './inline-content.js';
@@ -348,7 +348,9 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     } else if (tagName === 'p' || tagName === 'figcaption') {
       const item = handleParagraph(win, element, state, constants);
       if (item) {
-        content.push(item);
+        const isLeadingCaption = tagName === 'figcaption' && element.closest('figure') && state.titleElement &&
+            compareDomOrder(element, state.titleElement) < 0;
+        content.push(isLeadingCaption ? { ...item, isFeatured: true } : item);
         incrementContentType(state.debugInfo, 'paragraph');
         processedCount++;
       } else {
@@ -672,7 +674,7 @@ export function handleImg(win, element, state, constants, baseUrl) {
 export function createImageItem(win, element, state, constants, baseUrl) {
   const img = /** @type {HTMLImageElement} */ (element);
   const src = extractBestImageUrl(img);
-  if (!src) return null;
+  if (!src || isCollapsedImageLayer(img)) return null;
   
   // Skip tracking pixels and decorative images
   if (isTrackingPixel(win, img)) return null;
@@ -864,9 +866,15 @@ export function handleTable(element, excludedSelectors = [], referenceRoots = nu
       }
       const visible = !hiddenContent(cell);
       const html = visible ? serializeReadingHtml(cell, excludedSelectors, referenceRoots) : '';
+      const sourceCell = sourceCells.get(cell) || cell;
+      const id = visible && sourceCell.id && sourceCell.ownerDocument.getElementById(sourceCell.id) === sourceCell ? sourceCell.id : '';
+      const headers = sourceCell.getAttribute('headers');
+      const scope = cell.tagName === 'TH' ? cell.scope : '';
       physicalRows[rowIndex].push({ column, rowSpan: height, colSpan: width, header: cell.tagName === 'TH',
         ...(muted(cell) ? { muted: true } : {}),
-        ...(cell.getAttribute('scope') ? { scope: cell.getAttribute('scope') } : {}) });
+        ...(['row', 'col', 'rowgroup', 'colgroup'].includes(scope) ? { scope } : {}),
+        ...(id ? { id } : {}),
+        ...(headers !== null ? { headerIds: headers.split(/[\t\n\f\r ]+/).filter(Boolean) } : {}) });
       let repeated = html;
       if (width * height > 1 && html) {
         const template = element.ownerDocument.createElement('template');
@@ -899,7 +907,26 @@ export function handleTable(element, excludedSelectors = [], referenceRoots = nu
     cells: physicalRows[index].map(cell => ({ ...cell,
       rowSpan: visibleRows.filter(entry => entry.index >= index && entry.index < index + cell.rowSpan).length }))
   }));
+  const headingIds = new Set(layoutRows.flatMap(row => row.cells.filter(cell => cell.header && cell.id).map(cell => cell.id)));
+  for (const row of layoutRows) for (const cell of row.cells) {
+    if (cell.headerIds) cell.headerIds = [...new Set(cell.headerIds.filter(id => headingIds.has(id) && id !== cell.id))];
+  }
+  const columnGroups = [];
+  let unassignedColumns = columns;
+  const groups = /** @type {HTMLTableColElement[]} */ (Array.from(table.children).filter(child => child.tagName === 'COLGROUP'));
+  for (const group of groups) {
+    if (!unassignedColumns) break;
+    const cols = /** @type {HTMLTableColElement[]} */ (Array.from(group.children).filter(child => child.tagName === 'COL'));
+    const span = cols.length ? cols.reduce((count, col) => count + col.span, 0) : group.span;
+    const assigned = Math.min(span, unassignedColumns);
+    columnGroups.push(assigned);
+    unassignedColumns -= assigned;
+  }
+  const sourceTable = sourceCells.get(table) || table;
+  const id = sourceTable.id && sourceTable.ownerDocument.getElementById(sourceTable.id) === sourceTable ? sourceTable.id : '';
   return { type: 'table', cellFormat: 'html', hasHeaders, layoutRows,
+    ...(id ? { id } : {}),
+    ...(columnGroups.length ? { columnGroups } : {}),
     ...(hasHeaders ? { headers: rows[0] } : {}), rows: hasHeaders ? rows.slice(1) : rows };
 }
 

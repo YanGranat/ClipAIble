@@ -46,6 +46,6 @@ it.each([
   await render();
 
   expect(setStatus).toHaveBeenCalledExactlyOnceWith('ready', text, null, {
-    key, params: imageTranslationFailureCount ? { format: 'PDF', count: imageTranslationFailureCount } : { format: 'PDF' }
+    key, formatKey: 'formatPdf', params: imageTranslationFailureCount ? { format: 'PDF', count: imageTranslationFailureCount } : { format: 'PDF' }
   });
 });

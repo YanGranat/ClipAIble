@@ -173,7 +173,7 @@ export function initState(deps) {
         const formatLabel = await t(formatKey);
 
         const message = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount);
-        setStatus('ready', await t(message.key, null, message.params), null, message);
+        setStatus('ready', await t(message.key, null, message.params), null, { ...message, formatKey });
         setProgress(0, false); // Hide progress bar immediately
       } else {
         // Processing completed but status not set to "Done!" - show ready state

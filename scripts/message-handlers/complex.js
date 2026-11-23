@@ -7,7 +7,7 @@ import { getUILanguage } from '../locales.js';
 import { startSummaryGeneration } from './summary.js';
 import { startKeyThesesGeneration } from './key-theses.js';
 import { detectPdfPage, getOriginalPdfUrl } from '../utils/pdf.js';
-import { processPdfPageWithAI, processPdfPage } from '../processing/pdf.js';
+import { processPdfDocument } from '../processing/pdf.js';
 import { getProviderFromModel } from '../api/index.js';
 
 function responseOnce(sendResponse) {
@@ -36,7 +36,7 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
     return true;
   }
   const { html, url, title, apiKey, model, mode, useCache, tabId, autoGenerateSummary, autoGenerateKeyTheses, language } = data;
-  const pdfInfo = detectPdfPage(url, url);
+  const pdfInfo = detectPdfPage(url, url, html);
   const isPdf = Boolean(pdfInfo?.isPdf);
   if (!url || !apiKey || !model || (!isPdf && !html)) {
     respond({ error: 'Missing required parameters' });
@@ -71,9 +71,7 @@ export function handleExtractContentOnly(request, sender, sendResponse, processW
       if (isPdf) {
         const pdfUrl = pdfInfo.originalUrl || (tabId ? await getOriginalPdfUrl(tabId) : null) || url;
         checkExtraction();
-        result = mode === 'selector'
-          ? await processPdfPageWithAI(processingData, pdfUrl)
-          : await processPdfPage(processingData, pdfUrl);
+        result = await processPdfDocument(processingData, pdfUrl);
       } else {
         const process = mode === 'automatic' ? processWithoutAI : mode === 'selector' ? processWithSelectorMode : processWithExtractMode;
         result = await process(processingData);

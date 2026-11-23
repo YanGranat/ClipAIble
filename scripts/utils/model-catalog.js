@@ -18,6 +18,7 @@ const OPENAI_REASONING = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']
 const OPENAI_OPTIONAL_REASONING = Object.freeze(['none', ...OPENAI_REASONING]);
 const CLAUDE_REASONING = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 const GEMINI_REASONING = Object.freeze(['low', 'medium', 'high']);
+const GEMINI_EXTENDED_REASONING = Object.freeze([...GEMINI_REASONING, 'xhigh']);
 const DEEPSEEK_REASONING = Object.freeze(['low', 'high', 'max']);
 const GPT51_REASONING = Object.freeze(['none', 'low', 'medium', 'high']);
 const GPT52_REASONING = Object.freeze(['none', 'low', 'medium', 'high', 'xhigh']);
@@ -75,7 +76,8 @@ export const MODEL_CATALOG = Object.freeze({
     model('claude', 'claude-haiku-5-5', { reasoningEfforts: Object.freeze(['none', ...CLAUDE_REASONING]) })
   ]),
   gemini: Object.freeze([
-    model('gemini', 'gemini-4-hydrogen', { reasoningEfforts: Object.freeze([...GEMINI_REASONING, 'xhigh']) }),
+    model('gemini', 'gemini-4-hydrogen', { reasoningEfforts: GEMINI_EXTENDED_REASONING }),
+    model('gemini', 'gemini-4-neon', { reasoningEfforts: GEMINI_EXTENDED_REASONING }),
     model('gemini', 'gemini-4-carbon', { reasoningEfforts: GEMINI_REASONING }),
     model('gemini', 'gemini-4-argon', { reasoningEfforts: GEMINI_REASONING })
   ]),
@@ -94,7 +96,8 @@ export const MODEL_CATALOG = Object.freeze({
     model('openrouter', 'openai/gpt-6.1-sol', { reasoningEffort: 'medium', reasoningEfforts: OPENAI_REASONING }),
     model('openrouter', 'openai/gpt-6.1-terra', { id: 'openai/gpt-6.1-terra-none', reasoningEffort: 'none', reasoningEfforts: OPENAI_OPTIONAL_REASONING }),
     model('openrouter', 'openai/gpt-6-luna', { reasoningEfforts: OPENAI_OPTIONAL_REASONING }),
-    model('openrouter', 'google/gemini-4-hydrogen', { reasoningEfforts: Object.freeze([...GEMINI_REASONING, 'xhigh']) }),
+    model('openrouter', 'google/gemini-4-hydrogen', { reasoningEfforts: GEMINI_EXTENDED_REASONING }),
+    model('openrouter', 'google/gemini-4-neon', { reasoningEfforts: GEMINI_EXTENDED_REASONING }),
     model('openrouter', 'google/gemini-4-carbon', { reasoningEfforts: GEMINI_REASONING }),
     model('openrouter', 'anthropic/claude-sonnet-5.5', { reasoningEfforts: CLAUDE_REASONING }),
     model('openrouter', 'anthropic/claude-fable-5.2', { reasoningEffort: 'high', reasoningEfforts: CLAUDE_REASONING }),

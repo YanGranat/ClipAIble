@@ -1,16 +1,16 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { handleExtractContentOnly } from '../../scripts/message-handlers/complex.js';
 import { generateSummary, generateKeyTheses } from '../../scripts/translation/index.js';
-import { processPdfPageWithAI } from '../../scripts/processing/pdf.js';
+import { processPdfDocument } from '../../scripts/processing/pdf.js';
 import { setError } from '../../scripts/state/processing.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/error-handler.js', async importOriginal => ({ ...(await importOriginal()), handleError: async error => error }));
 vi.mock('../../scripts/state/processing.js', () => ({ getProcessingState: () => ({ isProcessing: true }), setError: vi.fn() }));
 vi.mock('../../scripts/translation/index.js', () => ({ generateSummary: vi.fn(), generateKeyTheses: vi.fn() }));
-vi.mock('../../scripts/processing/pdf.js', () => ({ processPdfPageWithAI: vi.fn(), processPdfPage: vi.fn() }));
+vi.mock('../../scripts/processing/pdf.js', () => ({ processPdfDocument: vi.fn() }));
 vi.mock('../../scripts/api/index.js', () => ({ getProviderFromModel: () => 'openai' }));
-vi.mock('../../scripts/utils/pdf.js', () => ({ detectPdfPage: url => ({ isPdf: url.endsWith('.pdf'), originalUrl: url }), getOriginalPdfUrl: vi.fn() }));
+vi.mock('../../scripts/utils/pdf.js', async importOriginal => ({ ...(await importOriginal()), getOriginalPdfUrl: vi.fn() }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: key => key }));
 vi.mock('../../scripts/background/popup-connection.js', () => ({ isPopupOpen: () => true }));
 vi.mock('../../scripts/background/notifications.js', () => ({ createNotification: vi.fn() }));
@@ -45,12 +45,28 @@ it('shares one extraction between two explicitly requested generation kinds', as
 });
 
 it('starts PDF key theses only when their existing request flag is enabled', async () => {
-  processPdfPageWithAI.mockResolvedValue(result);
+  processPdfDocument.mockResolvedValue(result);
   handleExtractContentOnly({ data: { ...data, url: 'https://example.com/document.pdf', html: '', autoGenerateKeyTheses: true } }, {}, vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn(), vi.fn());
   await vi.waitFor(() => expect(stored.key_theses_text).toBe('Theses'));
-  expect(processPdfPageWithAI).toHaveBeenCalledTimes(1);
-  expect(processPdfPageWithAI.mock.calls[0][0]).toMatchObject({ extractionOnly: true, provider: 'openrouter' });
+  expect(processPdfDocument).toHaveBeenCalledTimes(1);
+  expect(processPdfDocument.mock.calls[0][0]).toMatchObject({ extractionOnly: true, provider: 'openrouter' });
   expect(generateSummary).not.toHaveBeenCalled();
+});
+
+it('shares document PDF routing when independent extraction receives the inline PDF viewer', async () => {
+  const respond = vi.fn();
+  const articleExtract = vi.fn();
+  processPdfDocument.mockResolvedValue(result);
+  const pdfData = {
+    ...data,
+    url: 'https://example.org/file',
+    html: '<link href="chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/pdf_embedder.css">',
+    mode: 'extract'
+  };
+  handleExtractContentOnly({ data: pdfData }, {}, respond, vi.fn(), articleExtract, vi.fn(), vi.fn(), vi.fn());
+  await vi.waitFor(() => expect(respond).toHaveBeenCalledWith({ success: true, result }));
+  expect(processPdfDocument).toHaveBeenCalledWith(expect.objectContaining({ mode: 'extract', extractionOnly: true }), pdfData.url);
+  expect(articleExtract).not.toHaveBeenCalled();
 });
 
 it('returns pure extraction without starting generation', async () => {

@@ -5,6 +5,7 @@ import { startProcessing, cancelProcessing, resetState, getProcessingRunId, getP
 import { translateMetadata } from '../../scripts/translation/index.js';
 import { processImagesInBatches } from '../../scripts/utils/images.js';
 import { putPrintJob, removePrintJob } from '../../scripts/api/print-storage.js';
+import { downloadBlob } from '../../scripts/api/blob-download.js';
 import { chunksToSpeech } from '../../scripts/api/tts.js';
 import { getUILanguage } from '../../scripts/locales.js';
 
@@ -14,6 +15,7 @@ vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () 
 vi.mock('../../scripts/locales.js', async importOriginal => ({ ...await importOriginal(), getUILanguage: vi.fn(async () => 'en'), tSync: vi.fn(key => key) }));
 vi.mock('../../scripts/translation/index.js', () => ({ translateMetadata: vi.fn(async text => text) }));
 vi.mock('../../scripts/api/print-storage.js', () => ({ putPrintJob: vi.fn(async () => {}), removePrintJob: vi.fn(async () => {}), prunePrintJobs: vi.fn(async () => 0) }));
+vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: vi.fn(async () => 1) }));
 vi.mock('../../scripts/api/tts.js', () => ({ chunksToSpeech: vi.fn(async () => new ArrayBuffer(16)), getAudioExtension: vi.fn(() => 'wav') }));
 
 function deferred() {
@@ -32,13 +34,11 @@ async function replaceRun() {
   return beginRun('markdown');
 }
 const result = { title: 'Sample article', content: [{ type: 'paragraph', text: 'Sample content' }] };
-let createObjectURL, revokeObjectURL;
 beforeEach(async () => {
   vi.clearAllMocks();
   global.chrome.storage.local.get.mockResolvedValue({});
   global.chrome.storage.local.set.mockResolvedValue(undefined);
   global.chrome.storage.local.remove.mockResolvedValue(undefined);
-  global.chrome.downloads.download = vi.fn(async () => 1);
   global.chrome.windows = { getCurrent: vi.fn(async () => ({ id: 1 })) };
   global.chrome.tabs.create = vi.fn(async () => ({ id: 12 }));
   global.chrome.tabs.remove = vi.fn(async () => {});
@@ -50,10 +50,8 @@ beforeEach(async () => {
   chunksToSpeech.mockImplementation(async () => new ArrayBuffer(16));
   await cancelProcessing(vi.fn());
   resetState();
-  createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:sample-document');
-  revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
 });
-afterEach(async () => { await cancelProcessing(vi.fn()); createObjectURL?.mockRestore(); revokeObjectURL?.mockRestore(); });
+afterEach(async () => { await cancelProcessing(vi.fn()); });
 
 describe('document processing ownership', () => {
   it('carries the processing identity into Markdown across a delayed locale read', async () => {
@@ -67,7 +65,7 @@ describe('document processing ownership', () => {
     const newRun = await replaceRun();
     pending.resolve('en');
     await outcome;
-    expect(global.chrome.downloads.download).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
     expect(getProcessingRunId()).toBe(newRun);
     expect(getProcessingState().status).toBe('Current operation');
     expect(getProcessingState().progress).toBe(37);
@@ -91,7 +89,7 @@ describe('document processing ownership', () => {
     const newRun = await replaceRun();
     pending.resolve([]);
     await outcome;
-    expect(global.chrome.downloads.download).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
     expect(getProcessingRunId()).toBe(newRun);
     expect(getProcessingState().progress).toBe(37);
   });
@@ -107,7 +105,7 @@ describe('document processing ownership', () => {
     const newRun = await replaceRun();
     pending.resolve(new ArrayBuffer(16));
     await outcome;
-    expect(global.chrome.downloads.download).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
     expect(getProcessingRunId()).toBe(newRun);
     expect(getProcessingState().progress).toBe(37);
   });
@@ -145,7 +143,7 @@ describe('document processing ownership', () => {
     pending.resolve({ data: 'JVBERi0xLjQ=' });
     await outcome;
     expect(global.chrome.debugger.detach).toHaveBeenCalledOnce();
-    expect(global.chrome.downloads.download).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
     expect(fail).not.toHaveBeenCalled();
   });
@@ -176,7 +174,7 @@ describe('document processing ownership', () => {
     await expect(generatePdfWithDebugger(12, 'Sample', 'single', vi.fn(), vi.fn(), run)).rejects.toThrow('prepare the PDF print layout');
     expect(chrome.debugger.detach).toHaveBeenCalledOnce();
     expect(chrome.debugger.sendCommand.mock.calls.some(call => call[1] === 'Page.printToPDF')).toBe(false);
-    expect(chrome.downloads.download).not.toHaveBeenCalled();
+    expect(downloadBlob).not.toHaveBeenCalled();
   });
 
   it('closes only the captured print job after debugger failure', async () => {
@@ -192,15 +190,14 @@ describe('document processing ownership', () => {
     expect(chrome.tabs.remove).toHaveBeenCalledWith(12);
   });
 
-  it('downloads the debugger base64 directly when object URLs are unavailable', async () => {
+  it('hands off the original PDF bytes when the service worker cannot create object URLs', async () => {
     const create = URL.createObjectURL;
     URL.createObjectURL = undefined;
-    const decode = vi.spyOn(globalThis, 'atob');
     try {
       const run = await beginRun('pdf');
       await generatePdfWithDebugger(12, 'Sample', 'multi', vi.fn(), vi.fn(), run);
-      expect(chrome.downloads.download).toHaveBeenCalledWith(expect.objectContaining({ url: 'data:application/pdf;base64,JVBERi0xLjQ=' }));
-      expect(decode).not.toHaveBeenCalled();
-    } finally { URL.createObjectURL = create; decode.mockRestore(); }
+      expect(downloadBlob).toHaveBeenCalledExactlyOnceWith(expect.any(Blob), 'Sample.pdf', run);
+      expect(await downloadBlob.mock.calls[0][0].text()).toBe('%PDF-1.4');
+    } finally { URL.createObjectURL = create; }
   });
 });

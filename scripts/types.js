@@ -9,6 +9,8 @@
  * @property {boolean} header
  * @property {boolean} [muted] - Source cell text is visually distinguished by a muted foreground
  * @property {string} [scope] - HTML table header scope
+ * @property {string} [id] - Exported cell fragment identifier
+ * @property {string[]} [headerIds] - Explicit headers, including an empty override
  */
 
 /**
@@ -33,6 +35,7 @@
  * @property {string} [caption] - Image caption text (for images)
  * @property {boolean} [isFeatured] - Whether the media or its fallback precedes article content
  * @property {boolean} [isGraphic] - Whether image alt text contains authored graphic labels
+ * @property {boolean} [tableMedia] - Image projected from an authored table cell
  * @property {boolean} [translated] - Whether image text was translated (for images)
  * @property {number} [level] - Heading level 1-6 (for headings)
  * @property {string} [language] - Code language (for code blocks)
@@ -43,6 +46,7 @@
  * @property {'html'|'text'|'markdown'} [cellFormat] - Table cell representation; legacy AI cells use Markdown
  * @property {boolean} [hasHeaders] - Whether table has headers (for tables)
  * @property {TableLayoutRow[]} [layoutRows] - Physical ownership of values in headers and rows
+ * @property {number[]} [columnGroups] - Spans of declared table column groups
  * @property {string} [id] - Element ID (for headings with anchors)
  * @property {boolean} [isStandfirst] - Whether text is standfirst (for text blocks)
  * @property {string} [title] - Title text (for infobox_start)
