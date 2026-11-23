@@ -21,11 +21,17 @@ const sourceFiles = [
 const sourceDirectories = [...runtimeDirectories, 'src', 'tests', 'docs', 'third_party/sources'];
 const buildOnlyFiles = new Set(['scripts/apply-extraction-build.js', 'scripts/extraction/extractor/builder.js']);
 const buildOnlyDirectories = ['scripts/extraction/extractor/', 'scripts/extraction/patterns/', 'scripts/extraction/constants/'];
+const localDirectories = new Set(['.git', '.codex', '.claude', '.cursor', '.agent', '.vscode', '.idea', 'node_modules']);
 export const ORT_RUNTIME_FILES = Object.freeze(['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']);
 
 export function isSourceFile(relativePath) {
   const normalized = relativePath.replaceAll('\\', '/');
-  return !['workspace', 'temporary_files', 'node_modules', '.git'].some(directory => normalized === directory || normalized.startsWith(directory + '/')) &&
+  const parts = normalized.toLowerCase().split('/');
+  const filename = parts.at(-1);
+  return parts[0] !== 'workspace' && parts[0] !== 'temporary_files' &&
+    !parts.some(part => localDirectories.has(part)) &&
+    !/^\.env(?:\.|$)/.test(filename) &&
+    !/\.(?:log|pem|key|p12|pfx)$/.test(filename) &&
     !normalized.startsWith('scripts/test/') &&
     !/\.(?:backup|bak)(?:\.|$)/i.test(normalized) &&
     !normalized.endsWith('.map');
@@ -126,7 +132,7 @@ async function createArchive() {
     }
     for (const entry of await fs.readdir(root, { withFileTypes: true })) {
       if (entry.isFile() && /(?:^|[-_.])(?:licenses?|notices?)(?:[-_.]|$)/i.test(entry.name) &&
-          !runtimeFiles.includes(entry.name)) {
+          isRuntimeFile(entry.name) && !runtimeFiles.includes(entry.name)) {
         await fs.copyFile(path.join(root, entry.name), path.join(stagingDirectory, entry.name));
       }
     }

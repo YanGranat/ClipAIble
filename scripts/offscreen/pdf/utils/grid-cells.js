@@ -26,7 +26,8 @@ export function extractPaintedTables(lines, graphics, baseFontSize) {
     for (const line of owned) used.add(line);
     tables.push({ type: 'table', cellFormat: 'text', rows, rowCount: rows.length, columnCount: rows[0].length,
       hasHeaders: grouped[0].some(line => line.isBold), text: rows.map(row => row.join(' ')).join('\n'),
-      lines: owned, pageNum: owned[0].pageNum, minY: Math.min(...owned.map(line => line.y)), maxY: Math.max(...owned.map(line => line.y)) });
+      lines: owned, pageNum: owned[0].pageNum, minY: Math.min(...owned.map(line => line.y)), maxY: Math.max(...owned.map(line => line.y)),
+      paintedBounds: { left: region.x, right: region.x + region.width, top: region.y, bottom: region.y + region.height } });
   }
   const ruled = extractHorizontalTables(lines.filter(line => !used.has(line)), graphics, baseFontSize);
   for (const line of ruled.used) used.add(line);
@@ -153,7 +154,8 @@ function extractHorizontalTables(lines, graphics, baseFontSize) {
     for (const line of owned) used.add(line);
     tables.push({ type: 'table', cellFormat: 'text', rows, hasHeaders: true, rowCount: rows.length, columnCount: denseCount,
       columns: cuts.slice(0, -1), text: rows.map(row => row.join(' ')).join('\n'), lines: owned,
-      pageNum: owned[0].pageNum, minY: rules[0], maxY: rules.at(-1) });
+      pageNum: owned[0].pageNum, minY: rules[0], maxY: rules.at(-1),
+      paintedBounds: { left: band.left, right: band.right, top: rules[0], bottom: rules.at(-1) } });
   }
   return { tables, used };
 }

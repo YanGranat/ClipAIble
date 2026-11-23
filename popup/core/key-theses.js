@@ -3,7 +3,7 @@
 
 import { tSync } from '../../scripts/locales.js';
 import { resolveProviderApiKey } from '../utils/settings-helpers.js';
-import { createGenerationErrorPresenter } from '../utils/generation-status.js';
+import { createGenerationErrorPresenter, createGenerationResultGuard } from '../utils/generation-status.js';
 
 /**
  * Initialize key theses module
@@ -29,6 +29,7 @@ export function initKeyTheses(deps) {
 
   let isPreparing = false;
   const presentGenerationError = createGenerationErrorPresenter('key_theses', showToast, logWarn);
+  const resultGuard = createGenerationResultGuard();
   let currentAttempt = 0;
   let activeGenerationId = null;
 
@@ -121,7 +122,7 @@ export function initKeyTheses(deps) {
         elements.keyThesesText.innerHTML = '';
         elements.keyThesesText.dataset.originalMarkdown = '';
       }
-      await chrome.storage.local.remove([STORAGE_KEYS.KEY_THESES_TEXT, 'key_theses_saved_timestamp']);
+      await resultGuard.clear([STORAGE_KEYS.KEY_THESES_TEXT, 'key_theses_saved_timestamp']);
       log('Key theses closed and cleared');
     } catch (error) {
       logError('Failed to close key theses', error);
@@ -170,6 +171,8 @@ export function initKeyTheses(deps) {
 
   async function checkKeyThesesStatus() {
     if (isPreparing) return;
+    const canShowResult = resultGuard.capture();
+    const attempt = currentAttempt;
     try {
       const storageResult = await chrome.storage.local.get([
         STORAGE_KEYS.KEY_THESES_GENERATING,
@@ -198,13 +201,14 @@ export function initKeyTheses(deps) {
         await setGeneratingView(true);
       } else if (storageResult[STORAGE_KEYS.KEY_THESES_TEXT] && !failed && !isGenerating && elements.keyThesesText && elements.keyThesesContainer) {
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
-        if (doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) return;
+        if (!canShowResult() || attempt !== currentAttempt || doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) return;
 
         const saved = storageResult[STORAGE_KEYS.KEY_THESES_TEXT];
         const currentMarkdown = elements.keyThesesText.dataset.originalMarkdown;
         const containerWasHidden = elements.keyThesesContainer.style.display === 'none';
 
-        if (elements.generateKeyThesesBtn) await setGeneratingView(false);
+        if (elements.generateKeyThesesBtn) await setGeneratingView(false, attempt);
+        if (!canShowResult() || attempt !== currentAttempt) return;
         const keyThesesStr = typeof saved === 'string' ? saved : String(saved || '');
         if (currentMarkdown !== keyThesesStr || containerWasHidden) {
           elements.keyThesesText.dataset.originalMarkdown = keyThesesStr;

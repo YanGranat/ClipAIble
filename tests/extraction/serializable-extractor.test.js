@@ -38,7 +38,7 @@ describe('Serializable article runtime', () => {
 
   const report = 'The survey records the route from the valley to the upper ridge. The observers compared the depth of each channel and marked where the ridge begins. They returned the next morning to confirm their measurements and to inspect the reference markers beside the path. The report gives each result alongside the conditions for interpreting it. The accompanying illustrations identify the points at which the instruments were placed. These independent checks preserve enough context for a second group to understand the account.';
 
-  it('excludes a recommendation collection while preserving the surrounding reading order', async () => {
+  it.each([null, { content: 'article' }])('excludes a recommendation collection while preserving reading order in mode %j', async selectors => {
     const result = await extract(`
       <article><h1>Field report</h1><p>${report}</p><div>
         Direct prose before the cards.
@@ -47,7 +47,7 @@ describe('Serializable article runtime', () => {
           <div><a href="/archive"><h3>Archive item</h3></a><p>Second recommendation summary.</p></div>
         </div></section>
         Direct prose after the cards.
-      </div><p>The measurements end here.</p></article>`, null);
+      </div><p>The measurements end here.</p></article>`, selectors);
     const content = result.content.map(item => item.text).join(' ');
     expect(content).toMatch(/Direct prose before the cards\..*Direct prose after the cards\..*The measurements end here\./s);
     expect(content).not.toMatch(/Related Blog Posts|Customize suggestions|Another report|recommendation summary|Archive item/);
@@ -77,7 +77,9 @@ describe('Serializable article runtime', () => {
     expect(text).not.toMatch(/to receive updates|Monthly reminders|newsletter promotion|Leave a reply|Reply form instructions|publication membership|Privacy Policy/i);
   });
 
-  it.each([true, false])('keeps authored subsections with reading evidence (linked: %s)', async linked => {
+  it.each([
+    [null, true], [null, false], [{ content: 'article' }, true], [{ content: 'article' }, false]
+  ])('keeps authored subsections in mode %j (linked: %s)', async (selectors, linked) => {
     const result = await extract(`
       <article><h1>Field report</h1><p>${report}</p>
         ${linked ? '<p>See <a href="#overview">the comparison below</a>.</p>' : ''}
@@ -86,8 +88,22 @@ describe('Serializable article runtime', () => {
           <div><a href="/first"><h3>First source account</h3></a><p>Observations of the upper ridge.</p></div>
           <div><a href="/second"><h3>Second source account</h3></a><p>Observations of the lower valley.</p></div>
         </section>
-      </article>`, null);
+      </article>`, selectors);
     expect(result.content.map(item => item.text).join(' ')).toMatch(/First source account.*upper ridge.*Second source account.*lower valley/s);
+  });
+
+  it('honors separately selected authored roots without admitting their unselected siblings', async () => {
+    const result = await extract(`
+      <article><h1>Field report</h1><div class="prose"><p>${report}</p></div>
+        <p>Publisher message between the selected sections.</p>
+        <section class="appendix"><h2>Related Stories</h2>
+          <div><a href="/first"><h3>First source account</h3></a><p>Observations of the upper ridge.</p></div>
+          <div><a href="/second"><h3>Second source account</h3></a><p>Observations of the lower valley.</p></div>
+        </section>
+      </article>`, { articleContainer: 'article', content: '.prose, .appendix' });
+    const text = result.content.map(item => item.text).join(' ');
+    expect(text).toMatch(/The survey records.*First source account.*upper ridge.*Second source account.*lower valley/s);
+    expect(text).not.toContain('Publisher message');
   });
 
   it.each([null, { articleContainer: 'article', content: '.prose' }])('preserves an editorial owner inside a mixed layout (%j)', async selectors => {

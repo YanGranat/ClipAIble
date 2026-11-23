@@ -4,7 +4,7 @@
 
 import { tSync } from '../../scripts/locales.js';
 import { resolveProviderApiKey } from '../utils/settings-helpers.js';
-import { createGenerationErrorPresenter } from '../utils/generation-status.js';
+import { createGenerationErrorPresenter, createGenerationResultGuard } from '../utils/generation-status.js';
 
 /**
  * Initialize summary module
@@ -45,6 +45,7 @@ export function initSummary(deps) {
 
   let isPreparing = false;
   const presentGenerationError = createGenerationErrorPresenter('summary', showToast, logWarn);
+  const resultGuard = createGenerationResultGuard();
 
   // Toggle summary expand/collapse
   function toggleSummary() {
@@ -78,7 +79,7 @@ export function initSummary(deps) {
       }
       
       // Clear summary from storage completely
-      await chrome.storage.local.remove([STORAGE_KEYS.SUMMARY_TEXT, 'summary_saved_timestamp']);
+      await resultGuard.clear([STORAGE_KEYS.SUMMARY_TEXT, 'summary_saved_timestamp']);
       
       log('Summary closed and cleared completely');
     } catch (error) {
@@ -148,6 +149,7 @@ export function initSummary(deps) {
   // Check summary generation status from storage AND processingState
   async function checkSummaryStatus() {
     if (isPreparing) return;
+    const canShowResult = resultGuard.capture();
     try {
       // CRITICAL: Summary generation now uses ONLY summary_generating flag
       // It does NOT use processingState to avoid interfering with document generation UI
@@ -197,6 +199,7 @@ export function initSummary(deps) {
         // Summary exists and generation is not in progress - display it
         // CRITICAL: Double-check that generation is not in progress (race condition protection)
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
+        if (!canShowResult() || isPreparing) return;
         if (doubleCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
           // Generation is in progress - don't show summary
           log('checkSummaryStatus: Generation in progress on double-check, skipping summary display');
@@ -218,10 +221,11 @@ export function initSummary(deps) {
         
         // Restore button when summary is ready
         if (elements.generateSummaryBtn) {
-          elements.generateSummaryBtn.disabled = false;
           const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+          if (!canShowResult() || isPreparing) return;
+          elements.generateSummaryBtn.disabled = false;
           elements.generateSummaryBtn.textContent = generateSummaryText;
-        elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
+          elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
         }
         
         // Update content if it changed or container is hidden

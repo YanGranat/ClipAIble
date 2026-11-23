@@ -12,8 +12,8 @@ beforeAll(() => {
 });
 afterEach(() => { documents.splice(0).forEach(dom => dom.window.close()); vi.restoreAllMocks(); });
 
-function page(data, { url = 'https://example.test/report', extra = '' } = {}) {
-  const dom = new JSDOM(`<!doctype html><title>Observation report</title>${extra}<script type="application/ld+json">${JSON.stringify(data)}</script><article><h1>Observation report</h1><p>The report describes independent observations and the complete survey procedure.</p></article>`, { url, runScripts: 'outside-only' });
+function page(data, { url = 'https://example.test/report', extra = '', heading = '<h1>Observation report</h1>' } = {}) {
+  const dom = new JSDOM(`<!doctype html><title>Observation report</title>${extra}<script type="application/ld+json">${JSON.stringify(data)}</script><article>${heading}<p>The report describes independent observations and the complete survey procedure.</p></article>`, { url, runScripts: 'outside-only' });
   documents.push(dom);
   return dom;
 }
@@ -139,9 +139,35 @@ describe('Current structured article metadata', () => {
 
   it.each([
     '<meta property="article:published_time" content="2023-10-08T09:30:00Z">',
-    '<time datetime="2023-10-08T09:30:00Z">8 October 2023</time>'
+    '<time itemprop="datePublished" datetime="2023-10-08T09:30:00Z">8 October 2023</time>',
+    '<meta itemprop="datePublished" content="2023-10-08">'
   ])('preserves native publication metadata precedence: %s', extra => {
     expect(metadata(current, { extra })).toMatchObject({ publishDate: '2023-10-08' });
+  });
+
+  it('uses page-owned publication metadata ahead of an unlabelled date', () => {
+    const extra = '<aside><time datetime="2023-10-08">Related issue</time></aside>';
+    expect(metadata(current, { extra }).publishDate).toBe('2024-04-17');
+    expect(metadata([], { extra }).publishDate).toBe('');
+  });
+
+  it.each([
+    '<header><h1>Observation report</h1><time datetime="2023-10-08">8 October 2023</time></header>',
+    '<h1>Observation report</h1><time datetime="2023-10-08">8 October 2023</time>'
+  ])('recognizes a visible date near the article title when explicit metadata is absent', heading => {
+    expect(metadata([], { heading }).publishDate).toBe('2023-10-08');
+  });
+
+  it.each([
+    ['November 2025', '2025-11'],
+    ['2024-02-29', '2024-02-29'],
+    ['2025-02-31', ''],
+    ['2024-13', ''],
+    ['31st February 2025', ''],
+    ['February 31, 2025', ''],
+    ['31st Jul 2007', '2007-07-31']
+  ])('preserves valid publication-date precision for %s', (datePublished, expected) => {
+    expect(metadata({ ...current, datePublished }).publishDate).toBe(expected);
   });
 
   it('rereads the current document date when reusing selectors on another article', async () => {

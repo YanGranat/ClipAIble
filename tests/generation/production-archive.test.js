@@ -26,6 +26,20 @@ it('excludes local root workspaces while preserving legitimate nested source dir
   expect(isSourceFile('workspace\\artwork.svg')).toBe(false);
 });
 
+it('excludes local configuration, credentials and diagnostics inside packaged directories', () => {
+  for (const filename of [
+    'scripts/.env', 'scripts/.env.local', 'scripts/.env.staging.local',
+    'popup/private.pem', 'print/worker.log', 'scripts/.codex/notes.json',
+    'scripts/.vscode/settings.json', 'tests\\.claude\\settings.local.json',
+    'lib/.git/config', 'popup/node_modules/example/index.js'
+  ]) {
+    expect(isSourceFile(filename), filename).toBe(false);
+    expect(isRuntimeFile(filename), filename).toBe(false);
+  }
+  expect(isSourceFile('scripts/environment.js')).toBe(true);
+  expect(isSourceFile('docs/runtime-notes.md')).toBe(true);
+});
+
 it('retains the generated extractor at runtime and its complete preferred source in the source package', () => {
   expect(isRuntimeFile('scripts/extraction/automatic.js')).toBe(true);
   for (const filename of ['scripts/extraction/extractor/parse.js', 'scripts/extraction/extractor/selectors.js', 'scripts/extraction/patterns/exclusion-patterns.js', 'scripts/extraction/constants/content-thresholds.js', 'scripts/apply-extraction-build.js']) {

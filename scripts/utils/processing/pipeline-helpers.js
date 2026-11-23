@@ -11,11 +11,10 @@ import { log, logError, logWarn } from '../logging.js';
 import { recordSave } from '../../stats/index.js';
 import { completeProcessing, setError } from '../../state/processing.js';
 import { handleError } from '../error-handler.js';
-import { detectContentLanguage, generateSummary, generateAbstract } from '../../translation/index.js';
+import { detectSourceLanguage } from '../../translation/detection.js';
 import { CONFIG } from '../config.js';
 import { isPopupOpen } from '../../background/popup-connection.js';
 import { createNotification } from '../../background/notifications.js';
-import { isTerminalAIResponseError } from '../../api/response-validation.js';
 import { isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
 
 // Cache for UI language to avoid repeated async calls
@@ -581,105 +580,22 @@ export async function detectEffectiveLanguage(
   result,
   detectContentLanguage
 ) {
-  log('🔍 LANGUAGE DETECTION: Starting effective language detection', {
-    requestedLanguage: data.language || 'auto',
-    hasDetectedLanguage: !!result.detectedLanguage,
-    detectedLanguage: result.detectedLanguage,
-    contentItemsCount: result.content?.length || 0,
-    hasApiKey: !!data.apiKey,
-    model: data.model
-  });
-  
-  let effectiveLanguage = data.language || 'auto';
-  if (effectiveLanguage === 'auto') {
-    // Use detected language from automatic extraction if available
-    if (result.detectedLanguage) {
-      effectiveLanguage = result.detectedLanguage;
-      const sourceType = result.detectedLanguage ? 'AI selector extraction' : 'automatic extraction';
-      log('🌍 LANGUAGE DETECTION: Using language from extraction', { 
-        detectedLanguage: effectiveLanguage,
-        source: sourceType,
-        method: 'from extraction result',
-        reason: 'User selected auto, using detected source language'
-      });
-    } else if (result.content && result.content.length > 0 && data.apiKey) {
-      // Fallback to AI detection if API key available
-      // CRITICAL: Only detect from content if result.detectedLanguage is not already set
-      // If it was set before translation, we preserve it (see orchestration.js)
-      // If content was translated, detecting from translated content would give wrong result
-      if (result.detectedLanguage) {
-        log('🌍 LANGUAGE DETECTION: Skipping AI detection (language already set)', {
-          reason: 'result.detectedLanguage already set (from extraction or preserved after translation)',
-          detectedLanguage: result.detectedLanguage,
-          effectiveLanguage: result.detectedLanguage,
-          method: 'using existing detectedLanguage'
-        });
-        effectiveLanguage = result.detectedLanguage;
-      } else {
-        log('🤖 LANGUAGE DETECTION: Calling AI for language detection', {
-          contentItemsCount: result.content.length,
-          model: data.model,
-          warning: 'Content may be translated - detection may give target language instead of source',
-          method: 'AI detection via detectContentLanguage'
-        });
-        try {
-          const detectedLang = await detectContentLanguage(result.content, data.apiKey, data.model, getAIRequestOptions(data));
-          log('🌍 LANGUAGE DETECTION: AI detection result received', {
-            detectedLanguage: detectedLang,
-            method: 'AI detection',
-            model: data.model
-          });
-          if (detectedLang && detectedLang !== 'unknown') {
-            // CRITICAL: Use detected language even if it's 'en' - we need to know the actual language
-            // This is important for abstract generation which needs to know the content language
-            effectiveLanguage = detectedLang;
-            // Also set result.detectedLanguage so it can be used by abstract generation
-            result.detectedLanguage = detectedLang;
-            log('✅ LANGUAGE DETECTION: Using AI-detected language', {
-              effectiveLanguage,
-              method: 'AI detection',
-              storedIn: 'result.detectedLanguage'
-            });
-          } else {
-            log('⚠️ LANGUAGE DETECTION: AI detected invalid language, keeping auto', {
-              detectedLang,
-              effectiveLanguage: 'auto',
-              reason: 'AI returned invalid or unknown language code'
-            });
-          }
-        } catch (error) {
-          logWarn('⚠️ LANGUAGE DETECTION: AI detection failed, skipping', {
-            reason: 'AI detection API call failed',
-            method: 'skipping detection (fallback)',
-            impact: 'Will use default/auto language',
-            error: error.message
-          });
-        }
-      }
-    } else {
-      log('⚠️ LANGUAGE DETECTION: No detection possible, keeping auto', {
-        hasContent: !!result.content,
-        contentLength: result.content?.length || 0,
-        hasApiKey: !!data.apiKey,
-        effectiveLanguage: 'auto',
-        reason: 'No content or API key available for detection'
-      });
+  if (data.language && data.language !== 'auto') return data.language;
+  if (result.detectedLanguage) return result.detectedLanguage;
+  if (!result.content?.length) return 'auto';
+
+  let detectedLanguage;
+  if (data.mode === 'automatic') {
+    detectedLanguage = detectSourceLanguage(result.content);
+  } else if (data.apiKey) {
+    try {
+      detectedLanguage = await detectContentLanguage(result.content, data.apiKey, data.model, getAIRequestOptions(data));
+    } catch (error) {
+      logWarn('Language detection failed', error);
     }
-  } else {
-    log('🌍 LANGUAGE DETECTION: Using user-selected language', {
-      effectiveLanguage,
-      source: 'user selection',
-      method: 'direct user input',
-      reason: 'User explicitly selected target language'
-    });
   }
-  
-  log(`✅ LANGUAGE DETECTION: Complete - effective language: ${effectiveLanguage}`, {
-    effectiveLanguage,
-    requestedLanguage: data.language || 'auto',
-    finalLanguage: effectiveLanguage
-  });
-  
-  return effectiveLanguage;
+  if (!detectedLanguage || detectedLanguage === 'unknown') return 'auto';
+  result.detectedLanguage = detectedLanguage;
+  return detectedLanguage;
 }
 

@@ -163,77 +163,36 @@ export async function processWithoutAI(data, extractFromPageInlined) {
 
   // Check for cached selectors first (if extractFromPageInlined is available and cache is enabled)
   // Use cached selectors if user has enabled cache usage and cached selectors exist
-  let useCachedSelectors = false;
-  let cachedSelectors = null;
-  
+  let cachedEntry = null;
   if (extractFromPageInlined && data.useCache !== false) {
-    try {
-      const cached = await getCachedSelectors(url);
-      if (cached && cached.selectors) {
-        cachedSelectors = cached.selectors;
-        useCachedSelectors = true;
-        log('⚡ Automatic mode: Using cached selectors (improved accuracy)', {
-          domain: url ? new URL(url).hostname : 'unknown',
-          successCount: cached.successCount || 0,
-          willUseSelectors: true
-        });
-        await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
-      }
-    } catch (cacheError) {
-      logWarn('Failed to check cache in automatic mode (non-critical)', cacheError);
-      // Continue with heuristics if cache check fails
-    }
+    cachedEntry = await getCachedSelectors(url);
+    if (cachedEntry) await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
   }
 
   const uiLangExtracting = await getUILanguage();
   const extractingStatus = tSync('statusExtractingContent', uiLangExtracting);
   updateState({ stage: PROCESSING_STAGES.EXTRACTING.id, status: extractingStatus, progress: 5 });
 
-  // Use cached selectors if available and reliable, otherwise use heuristics
   let results;
   let extractedContent = null;
-  
-  if (useCachedSelectors && cachedSelectors && extractFromPageInlined) {
-    // Use cached selectors for better accuracy
-    log('=== processWithoutAI: Using cached selectors ===', {
-      tabId: tabId,
-      url: url,
-      timestamp: Date.now()
-    });
-    
+  if (cachedEntry && extractFromPageInlined) {
     try {
       await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusExtractingFromPage', 5);
-      extractedContent = await extractContentWithSelectors(tabId, cachedSelectors, url, extractFromPageInlined);
-      
-      log('✅ Content extracted using cached selectors', { 
-        title: extractedContent?.title,
-        contentItemsCount: extractedContent?.content?.length || 0
-      });
-      
-      // Mark cache success
-      try {
-        await markCacheSuccess(url);
-      } catch (cacheError) {
-        logWarn('Failed to mark cache success (non-critical)', cacheError);
-      }
-    } catch (selectorError) {
-      logWarn('⚠️ Extraction failed with cached selectors, falling back to heuristics', {
-        error: selectorError?.message,
-        willUseHeuristics: true
-      });
-      // Invalidate cache and fall through to heuristics
-      try {
-        await invalidateCache(url);
-      } catch (invalidateError) {
-        logWarn('Failed to invalidate cache (non-critical)', invalidateError);
-      }
-      useCachedSelectors = false;
-      extractedContent = null;
+      await checkCancellation('cached selector extraction');
+      extractedContent = await extractContentWithSelectors(tabId, cachedEntry.selectors, url, extractFromPageInlined);
+    } catch (error) {
+      await checkCancellation('cached selector recovery');
+      if (error.code === 'SELECTOR_MISS') await invalidateCache(url, cachedEntry);
+      logWarn('Extraction with cached selectors failed; using heuristics', error);
+    }
+    if (extractedContent) {
+      await checkCancellation('cached selector completion');
+      await markCacheSuccess(url, cachedEntry);
     }
   }
-  
-  // If not using cached selectors (or they failed), use heuristics
-  if (!useCachedSelectors || !extractedContent) {
+
+  // If using heuristics, the document itself verifies the saved source URL.
+  if (!extractedContent) {
     log('=== processWithoutAI: Using heuristics (automatic extraction) ===', {
       tabId: tabId,
       url: url,
@@ -456,24 +415,7 @@ export async function processWithoutAI(data, extractFromPageInlined) {
   // Determine which result to use: cached selectors or heuristics
   let result;
   
-  if (useCachedSelectors && extractedContent) {
-    // Use result from cached selectors
-    log('=== processWithoutAI: Using result from cached selectors ===', {
-      hasExtractedContent: !!extractedContent,
-      contentItemsCount: extractedContent?.content?.length || 0,
-      timestamp: Date.now()
-    });
-    
-    if (!extractedContent || !extractedContent.content) {
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('errorNoContentExtracted', uiLang));
-    }
-    
-    if (extractedContent.content.length === 0) {
-      const uiLang = await getUILanguage();
-      throw new Error(tSync('errorContentEmpty', uiLang));
-    }
-    
+  if (extractedContent) {
     result = extractedContent;
   } else {
     // Use result from heuristics
@@ -1106,6 +1048,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     throw new Error('The page changed during processing. Open the intended page and try again.');
   }
 
+  const enableDebugInfo = CONFIG.LOG_LEVEL === 0 && CONFIG.VERBOSE_LOGGING;
   let results;
   try {
     // Execute extraction function directly in the page context
@@ -1115,7 +1058,7 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
       target: { tabId: tabId },
       world: 'MAIN',
       func: extractFromPageInlined,
-      args: [baseUrl, true, selectors]
+      args: [baseUrl, enableDebugInfo, selectors]
     });
     log('Script executed', { 
       resultsLength: results?.length,
@@ -1180,46 +1123,6 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     });
   }
   
-  // Log extraction debug info if available
-  // Note: background.js returns debugInfo as 'debug' property
-  const debugInfo = injectionResult?.debug || injectionResult?.debugInfo;
-  if (debugInfo) {
-    
-    if (debugInfo.extractionDebug) {
-      log('=== EXTRACTION DEBUG INFO ===', {
-        containerSelector: debugInfo.extractionDebug.containerSelector,
-        contentSelector: debugInfo.extractionDebug.contentSelector,
-        containersFound: debugInfo.extractionDebug.containersFound,
-        containerFound: debugInfo.extractionDebug.containerFound,
-        contentElementsFound: debugInfo.extractionDebug.contentElementsFound,
-        strategiesUsed: debugInfo.extractionDebug.strategiesUsed,
-        elementsProcessed: debugInfo.elementsProcessed,
-        elementsExcluded: debugInfo.elementsExcluded,
-        headingCount: debugInfo.headingCount,
-        fallbackBranchReason: debugInfo.extractionDebug.fallbackBranchReason || null
-      });
-      if (debugInfo.extractionDebug.fallbackDetail) {
-        log('=== EXTRACTION FALLBACK DETAIL (for Tilda/div-based pages) ===', debugInfo.extractionDebug.fallbackDetail);
-      }
-      if (debugInfo.extractionLog && debugInfo.extractionLog.length > 0) {
-        log('=== EXTRACTION STEP LOG (count: ' + debugInfo.extractionLog.length + ') ===', { stepCount: debugInfo.extractionLog.length, steps: debugInfo.extractionLog });
-      }
-    } else {
-      logWarn('extractionDebug not available in debugInfo', {
-        hasDebugInfo: !!debugInfo,
-        debugInfoKeys: debugInfo ? Object.keys(debugInfo) : [],
-        hasExtractionDebug: !!(debugInfo && debugInfo.extractionDebug)
-      });
-    }
-  } else {
-    logWarn('debugInfo not available in injectionResult', {
-      hasInjectionResult: !!injectionResult,
-      injectionResultKeys: injectionResult ? Object.keys(injectionResult) : [],
-      hasDebug: !!(injectionResult && injectionResult.debug),
-      hasDebugInfo: !!(injectionResult && injectionResult.debugInfo)
-    });
-  }
-  
   if (injectionResult && 'error' in injectionResult && injectionResult.error) {
     const error = injectionResult.error;
     logError('Script execution error', error);
@@ -1250,146 +1153,13 @@ export async function extractContentWithSelectors(tabId, selectors, baseUrl, ext
     });
   }
 
-  // Log detailed extraction result with full content preview
-  const extractionDetails = {
-    title: injectionResult.title,
-    author: injectionResult.author || 'N/A',
-    publishDate: injectionResult.publishDate || 'N/A',
-    contentItems: injectionResult.content?.length || 0,
-    contentTypes: injectionResult.content ? [...new Set(injectionResult.content.map(item => item?.type).filter(Boolean))] : [],
-    contentByType: injectionResult.content ? injectionResult.content.reduce((acc, item) => {
-      const type = item?.type || 'unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {}) : {},
-    contentPreview: injectionResult.content?.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      level: item.level || null,
-      textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-      textPreview: (item.text || '').replace(/<[^>]+>/g, '').trim().substring(0, 200),
-      hasHtml: !!(item.html && item.html !== item.text),
-      htmlLength: item.html ? item.html.length : 0
-    })) || [],
-    totalTextLength: injectionResult.content ? injectionResult.content.reduce((sum, item) => {
-      const text = (item.text || '').replace(/<[^>]+>/g, '').trim();
-      return sum + text.length;
-    }, 0) : 0,
-    imageCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'image').length : 0,
-    headingCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'heading').length : 0,
-    paragraphCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'paragraph').length : 0,
-    listCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'list').length : 0,
-    quoteCount: injectionResult.content ? injectionResult.content.filter(item => item.type === 'quote').length : 0
-  };
-  
-  log('=== EXTRACTION RESULT (SELECTOR MODE) ===', extractionDetails);
-  
-  // Log full content structure for debugging
-  if (injectionResult.content && injectionResult.content.length > 0) {
-    log('=== EXTRACTED CONTENT FULL STRUCTURE ===', {
-      totalItems: injectionResult.content.length,
-      items: injectionResult.content.map((item, idx) => ({
-        index: idx,
-        type: item.type,
-        level: item.level || null,
-        textLength: (item.text || '').replace(/<[^>]+>/g, '').trim().length,
-        textFull: (item.text || '').replace(/<[^>]+>/g, '').trim(),
-        htmlLength: item.html ? item.html.length : 0,
-        hasImage: item.type === 'image' ? {
-          url: item.url || item.src || 'N/A',
-          alt: item.alt || 'N/A'
-        } : null,
-        listItems: item.type === 'list' && item.items ? {
-          count: item.items.length,
-          ordered: item.ordered || false,
-          itemsPreview: item.items.slice(0, 3).map((li, liIdx) => {
-            let text = '';
-            if (typeof li === 'string') {
-              text = li.substring(0, 100);
-            } else if (typeof li === 'object' && li !== null && 'html' in li) {
-              // Type guard: li is object with html property
-              const liWithHtml = /** @type {{html?: string}} */ (li);
-              text = (liWithHtml.html || '').replace(/<[^>]+>/g, '').trim().substring(0, 100);
-            }
-            return { index: liIdx, text };
-          })
-        } : null
-      }))
+  if (injectionResult.debugInfo) {
+    const { foundElements, filteredElements, processedCount, skippedCount, contentTypes } = injectionResult.debugInfo;
+    logDebug('Selector extraction diagnostics', {
+      foundElements, filteredElements, processedCount, skippedCount, contentTypes
     });
   }
-  
-  // Log subtitle debug info if available
-  if (injectionResult && injectionResult.debug && injectionResult.debug.subtitleDebug) {
-    const subDebug = injectionResult.debug.subtitleDebug;
-    log('=== SUBTITLE EXTRACTION DEBUG ===', {
-      subtitleFound: subDebug.subtitleFound,
-      subtitleText: subDebug.subtitleText,
-      firstHeadingFound: subDebug.firstHeadingFound,
-      firstHeadingIndex: subDebug.firstHeadingIndex,
-      firstHeadingText: subDebug.firstHeadingText,
-      titleInContent: subDebug.titleInContent,
-      titleAdded: subDebug.titleAdded,
-      subtitleInserted: subDebug.subtitleInserted,
-      subtitleInsertIndex: subDebug.subtitleInsertIndex,
-      elementsProcessedBeforeFirstHeading: subDebug.elementsProcessedBeforeFirstHeading,
-      totalContentItemsBeforeInsert: subDebug.totalContentItemsBeforeInsert,
-      articleTitle: injectionResult.title
-    });
-    
-    // Log content before insert with full details
-    if (subDebug.contentBeforeInsert && subDebug.contentBeforeInsert.length > 0) {
-      log('Content BEFORE subtitle insert (first 5 items):');
-      subDebug.contentBeforeInsert.forEach((item, idx) => {
-        log(`  [${item.index}] ${item.type}: "${item.text}"`);
-      });
-    } else {
-      log('Content BEFORE subtitle insert: EMPTY or not logged');
-    }
-    
-    // Log content after insert with full details
-    if (subDebug.contentAfterInsert && subDebug.contentAfterInsert.length > 0) {
-      log('Content AFTER subtitle insert (first 5 items):');
-      subDebug.contentAfterInsert.forEach((item, idx) => {
-        log(`  [${item.index}] ${item.type}: "${item.text}"`);
-      });
-    } else {
-      log('Content AFTER subtitle insert: EMPTY or not logged');
-    }
-    
-    // Log actual final content structure with FULL text (not truncated)
-    const firstItems = injectionResult.content?.slice(0, 10).map((item, idx) => ({
-      index: idx,
-      type: item.type,
-      level: ('level' in item ? item.level : null) || null,
-      text: (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim(),
-      textLength: (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim().length
-    }));
-    log('Final content structure (first 10 items with FULL text):');
-    firstItems?.forEach((item) => {
-      const levelStr = item.level ? ` (level ${item.level})` : '';
-      log(`  [${item.index}] ${item.type}${levelStr}: "${item.text.substring(0, 150)}${item.text.length > 150 ? '...' : ''}" (${item.textLength} chars)`);
-    });
-    
-    // Check if subtitle is actually in the right position
-    const subtitleIndex = injectionResult.content?.findIndex(item => item.type === 'subtitle');
-    const titleIndex = injectionResult.content?.findIndex(item => 
-      item.type === 'heading' && 
-      (('text' in item ? item.text : '') || '').replace(/<[^>]+>/g, '').trim() === injectionResult.title
-    );
-    log('Position check:', {
-      subtitleIndex: subtitleIndex !== undefined ? subtitleIndex : 'NOT FOUND',
-      titleIndex: titleIndex !== undefined ? titleIndex : 'NOT FOUND',
-      expectedSubtitleIndex: titleIndex !== undefined ? titleIndex + 1 : 'N/A',
-      isSubtitleRightAfterTitle: subtitleIndex === titleIndex + 1
-    });
-  } else {
-    log('No subtitle debug info available');
-  }
-  
-  if (injectionResult.content && injectionResult.content.length > 0) {
-    injectionResult.content = filterExtractionNoise(injectionResult.content);
-  }
-  
+
   return injectionResult;
 }
 
@@ -1415,7 +1185,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   // Check cache first (if enabled)
   let selectors;
-  let fromCache = false;
+  let cachedEntry = null;
   const useCache = data.useCache !== false;
 
   if (!useCache) {
@@ -1423,13 +1193,11 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   }
 
   if (useCache) {
-    /** @type {import('../types.js').ExtendedCacheEntry|null} */
-    const cached = await getCachedSelectors(url);
-    if (cached) {
-      selectors = cached.selectors;
-      fromCache = true;
+    cachedEntry = await getCachedSelectors(url);
+    if (cachedEntry) {
+      selectors = cachedEntry.selectors;
       await updateProgress(PROCESSING_STAGES.ANALYZING, 'statusUsingCachedSelectors', 3);
-      log(`💾 Using cached selectors (${cached.successCount || 0} previous successes)`, { url });
+      log(`💾 Using cached selectors (${cachedEntry.successCount || 0} previous successes)`, { url });
     } else {
       log('⏱️ No cached selectors for this domain; requesting from AI (~5s)', { url: url?.slice?.(0, 60) });
     }
@@ -1466,17 +1234,12 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     try {
       extractedContent = await extractContentWithSelectors(tabId, selectors, url, extractFromPageInlined);
       await checkCancellation('selector extraction completion');
-      if (Array.isArray(extractedContent?.content) && extractedContent.content.length === 0) {
-        throw Object.assign(new Error(tSync('errorContentEmpty', uiLang)), {
-          code: 'SELECTOR_MISS', translationKey: 'errorContentEmpty', translationParams: {}, retryable: false
-        });
-      }
       break;
     } catch (error) {
       await checkCancellation('selector recovery');
-      if (fromCache) {
-        await invalidateCache(url);
-        fromCache = false;
+      if (error.code === 'SELECTOR_MISS' && cachedEntry) {
+        await invalidateCache(url, cachedEntry);
+        cachedEntry = null;
       }
       if (error.code === 'SELECTOR_MISS' && selectorAiCalls < 2) {
         repairFeedback = { previousSelectors: selectors };
@@ -1488,20 +1251,12 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
     }
   }
   
-  if (!extractedContent || !extractedContent.content) {
-    if (fromCache) await invalidateCache(url);
-    const uiLang = await getUILanguage();
-    throw new Error(tSync('errorNoContentExtracted', uiLang));
-  }
-  
-  // Cache selectors after successful extraction ONLY
-  // If extraction failed, cache is already invalidated above
   await checkCancellation('selector cache update');
   try {
-    if (!fromCache) {
-      await cacheSelectors(url, selectors);
+    if (cachedEntry) {
+      await markCacheSuccess(url, cachedEntry);
     } else {
-      await markCacheSuccess(url);
+      await cacheSelectors(url, selectors);
     }
   } catch (error) {
     logError('Failed to update cache (non-critical)', error);
@@ -1510,9 +1265,9 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   await updateProgress(PROCESSING_STAGES.EXTRACTING, 'statusProcessingComplete', 8);
   
-  const publishDate = extractedContent.publishDate || (!fromCache && selectors.publishDate) || '';
+  const publishDate = extractedContent.publishDate || (!cachedEntry && selectors.publishDate) || '';
   const finalTitle = extractedContent.title || title;
-  const rawAuthor = extractedContent.author || (!fromCache && selectors.author) || '';
+  const rawAuthor = extractedContent.author || (!cachedEntry && selectors.author) || '';
   
   // CRITICAL: Clean author to remove anonymous/invalid values
   const finalAuthor = cleanAuthor(rawAuthor);
@@ -1524,7 +1279,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   // This approach is site-agnostic and works for all languages (not just "from/by" patterns)
   
   // Extract detected language from selectors (if AI provided it)
-  const detectedLanguage = extractedContent.detectedLanguage || (!fromCache && selectors.detectedLanguage) || null;
+  const detectedLanguage = extractedContent.detectedLanguage || (!cachedEntry && selectors.detectedLanguage) || null;
   
   if (detectedLanguage) {
     log('🌍 LANGUAGE DETECTION: AI selector returned language', { 

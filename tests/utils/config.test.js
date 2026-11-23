@@ -1,9 +1,39 @@
 // Tests for config utility functions
 
-import { describe, it, expect } from 'vitest';
-import { getLocaleFromLanguage, formatDateForDisplay } from '../../scripts/utils/config.js';
+import { execFileSync } from 'node:child_process';
+import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { getExtensionVersion, getLocaleFromLanguage, formatDateForDisplay } from '../../scripts/utils/config.js';
 
 describe('config', () => {
+  describe('getExtensionVersion', () => {
+    it('reads the installed manifest version and agrees with package metadata', () => {
+      const readJson = path => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
+      const manifest = readJson('../../manifest.json');
+      const packageMetadata = readJson('../../package.json');
+      const original = chrome.runtime;
+      chrome.runtime = { ...original, getManifest: vi.fn(() => manifest) };
+      try {
+        expect(getExtensionVersion()).toBe(manifest.version);
+        expect(manifest.version).toBe(packageMetadata.version);
+      } finally {
+        chrome.runtime = original;
+      }
+    });
+
+    it('does not return a version when the manifest cannot be read', () => {
+      const original = chrome.runtime;
+      try {
+        chrome.runtime = {};
+        expect(getExtensionVersion()).toBeNull();
+        chrome.runtime.getManifest = () => { throw new Error('Extension context unavailable'); };
+        expect(getExtensionVersion()).toBeNull();
+      } finally {
+        chrome.runtime = original;
+      }
+    });
+  });
+
   describe('getLocaleFromLanguage', () => {
     it('should return correct locale for common languages', () => {
       expect(getLocaleFromLanguage('ru')).toBe('ru-RU');
@@ -38,6 +68,16 @@ describe('config', () => {
   });
 
   describe('formatDateForDisplay', () => {
+    it('keeps the source calendar day or month in a time zone west of UTC', () => {
+      const moduleUrl = new URL('../../scripts/utils/config.js', import.meta.url).href;
+      const samples = ['2032-03-01', '2032-03', '1st Mar 2032', 'Mar 1, 2032', '2032-03-01T12:00:00Z'];
+      const output = execFileSync(process.execPath, ['--input-type=module', '--eval',
+        `import { formatDateForDisplay } from ${JSON.stringify(moduleUrl)};
+         console.log(JSON.stringify(${JSON.stringify(samples)}.map(value => formatDateForDisplay(value, 'en-US'))));`
+      ], { encoding: 'utf8', env: { ...process.env, TZ: 'America/Los_Angeles' } });
+      expect(JSON.parse(output)).toEqual(['March 1, 2032', 'March 2032', 'March 1, 2032', 'March 1, 2032', 'March 1, 2032']);
+    });
+
     describe('ISO format (YYYY-MM-DD)', () => {
       it('should format full ISO date correctly', () => {
         const result = formatDateForDisplay('2025-12-23', 'en-US');

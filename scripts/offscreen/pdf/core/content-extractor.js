@@ -92,35 +92,6 @@ export async function extractContentFromPages(pdf, numPages, metrics, requestOpt
   
   log(`[PDF v3] Content extracted from all pages - totalElements=${allElements.length}`);
   
-  // CRITICAL: Sort elements to maintain correct reading order for multi-column layouts
-  // Sort by: pageNum (ascending), then columnIndex (ascending), then Y-coordinate (ascending)
-  // This ensures that elements from column 0 come before elements from column 1 on the same page
-  allElements.sort((a, b) => {
-    // First, sort by page number
-    const pageA = a.pageNum || 0;
-    const pageB = b.pageNum || 0;
-    if (pageA !== pageB) {
-      return pageA - pageB;
-    }
-    
-    // Then, sort by column index (if available)
-    // Elements without columnIndex (single-column) should come first (columnIndex = -1 for sorting)
-    const colA = a.columnIndex !== undefined ? a.columnIndex : -1;
-    const colB = b.columnIndex !== undefined ? b.columnIndex : -1;
-    if (colA !== colB) {
-      return colA - colB;
-    }
-    
-    // Finally, sort by Y-coordinate within the same column
-    const yA = (typeof a.minY === 'number' && a.minY !== 0) 
-      ? a.minY 
-      : (a.lines && a.lines.length > 0 ? a.lines[0].y : 0) || 0;
-    const yB = (typeof b.minY === 'number' && b.minY !== 0)
-      ? b.minY
-      : (b.lines && b.lines.length > 0 ? b.lines[0].y : 0) || 0;
-    return yA - yB;
-  });
-  
   // Mark cross-page breaks: set gapAfter marker for last element on each page (except last page)
   // This helps cross-page merging logic identify page boundaries
   for (let i = 0; i < allElements.length; i++) {

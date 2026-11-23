@@ -1,0 +1,21 @@
+import { expect, it } from 'vitest';
+import { processContent } from '../../scripts/offscreen/pdf/core/content-processor.js';
+
+it('preserves the separately determined levels of repeated heading text', () => {
+  const heading = (text, fontSize, pageNum, minY) => ({ type: 'heading', text, fontSize, pageNum, minY });
+  const paragraph = (text, pageNum, minY) => ({ type: 'paragraph', text, fontSize: 12, pageNum, minY });
+  const result = processContent([
+    heading('Overview', 22, 1, 60),
+    paragraph('A paragraph introducing the first section.', 1, 100),
+    heading('Results', 22, 2, 60),
+    paragraph('A paragraph introducing the results section.', 2, 100),
+    heading('Overview', 15, 2, 240),
+    paragraph('A paragraph providing an overview of the results.', 2, 280)
+  ], { baseFontSize: 12 }, { title: 'Research Report' }, 'https://example.org/report.pdf');
+
+  expect(result.elements.filter(element => element.type === 'heading').map(({ text, level }) => ({ text, level }))).toEqual([
+    { text: 'Overview', level: 1 },
+    { text: 'Results', level: 1 },
+    { text: 'Overview', level: 2 }
+  ]);
+});

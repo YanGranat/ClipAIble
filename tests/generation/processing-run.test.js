@@ -79,6 +79,12 @@ describe('document processing ownership', () => {
     if (format === 'pdf') expect(putPrintJob.mock.calls[0][1].html).toContain('Sample Author');
   });
 
+  it('localizes a partial publication date in the prepared PDF document', async () => {
+    const run = await beginRun('pdf');
+    await generatePdf({ ...result, processingRunId: run, publishDate: '2032-03', language: 'en' }, getScopedUpdateState(run));
+    expect(putPrintJob.mock.calls[0][1].html).toContain('March 2032');
+  });
+
   it.each(['epub', 'fb2'])('rejects a late %s image response before initiating a download', async format => {
     const pending = deferred();
     processImagesInBatches.mockReturnValueOnce(pending.promise);

@@ -6,11 +6,21 @@
  * @typedef {import('../types.js').SelectorResult} SelectorResult
  * @typedef {import('../types.js').CacheEntry} CacheEntry
  * @typedef {import('../types.js').ExtendedCacheEntry} ExtendedCacheEntry
+ * @typedef {ExtendedCacheEntry & {revision: symbol}} CachedSelectorObservation
  */
 
 import { log, logWarn, logError } from '../utils/logging.js';
 
 const STORAGE_KEY = 'selector_cache';
+let pendingMutation = Promise.resolve();
+const observedRevisions = new Map();
+
+/** Serialize cache mutations in the background worker. */
+function mutateCache(operation) {
+  const result = pendingMutation.then(operation);
+  pendingMutation = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 /**
  * Keep reusable DOM selectors separate from document metadata.
@@ -58,13 +68,8 @@ function extractDomain(url) {
  * @returns {Promise<Object>}
  */
 async function loadCache() {
-  try {
-    const result = await chrome.storage.local.get([STORAGE_KEY]);
-    return result[STORAGE_KEY] || {};
-  } catch (error) {
-    logWarn('Failed to load selector cache', error);
-    return {};
-  }
+  const result = await chrome.storage.local.get([STORAGE_KEY]);
+  return result[STORAGE_KEY] || {};
 }
 
 /**
@@ -136,9 +141,16 @@ async function isUsingCacheEnabled() {
 /**
  * Get cached selectors for a URL
  * @param {string} url - Page URL
- * @returns {Promise<ExtendedCacheEntry|null>} Cached selectors or null
+ * @returns {Promise<CachedSelectorObservation|null>} Cached selectors or null
  */
-export async function getCachedSelectors(url) {
+export function getCachedSelectors(url) {
+  return mutateCache(() => readCachedSelectors(url)).catch(error => {
+    logWarn('Failed to load selector cache', error);
+    return null;
+  });
+}
+
+async function readCachedSelectors(url) {
   const cacheStartTime = Date.now();
   
   // Check if using cache is enabled
@@ -200,10 +212,13 @@ export async function getCachedSelectors(url) {
     savedTime: '~2-5s (estimated AI call time)'
   });
   
+  const revision = observedRevisions.get(domain) ?? Symbol();
+  observedRevisions.set(domain, revision);
   return {
     selectors,
     timestamp: entry.created || Date.now(),
-    successCount: entry.successCount
+    successCount: entry.successCount,
+    revision
   };
 }
 
@@ -213,7 +228,11 @@ export async function getCachedSelectors(url) {
  * @param {SelectorResult | import('../types.js').CachedSelectors} selectors - Selectors to cache
  * @returns {Promise<void>}
  */
-export async function cacheSelectors(url, selectors) {
+export function cacheSelectors(url, selectors) {
+  return mutateCache(() => storeSelectors(url, selectors));
+}
+
+async function storeSelectors(url, selectors) {
   selectors = normalizeCachedSelectors(selectors);
   const cacheStartTime = Date.now();
   try {
@@ -268,6 +287,7 @@ export async function cacheSelectors(url, selectors) {
     }
     
     await saveCache(cache);
+    observedRevisions.delete(domain);
     const totalDuration = Date.now() - cacheStartTime;
     log('📊 Cache save: completed', { 
       domain,
@@ -283,8 +303,13 @@ export async function cacheSelectors(url, selectors) {
  * Increment success count for cached selectors
  * Call this after successful content extraction
  * @param {string} url - Page URL
+ * @param {CachedSelectorObservation} observed - Entry used by extraction
  */
-export async function markCacheSuccess(url) {
+export function markCacheSuccess(url, observed) {
+  return mutateCache(() => recordCacheSuccess(url, observed));
+}
+
+async function recordCacheSuccess(url, observed) {
   try {
     // Check if caching is enabled (for saving)
     if (!(await isCachingEnabled())) {
@@ -296,14 +321,14 @@ export async function markCacheSuccess(url) {
       log('Cannot mark cache success: missing domain');
       return;
     }
+    if (!observed?.revision || observedRevisions.get(domain) !== observed.revision) return;
     
     const cache = await loadCache();
     const entry = cache[domain];
     
-    if (entry) {
+    if (entry && !entry.invalidated) {
       entry.successCount = (entry.successCount || 0) + 1;
       entry.lastUsed = Date.now();
-      entry.invalidated = false;
       await saveCache(cache);
       log('Cache success recorded', { domain, successCount: entry.successCount });
     } else {
@@ -318,10 +343,17 @@ export async function markCacheSuccess(url) {
 /**
  * Invalidate cache for a domain (call when extraction fails)
  * @param {string} url - Page URL
+ * @param {CachedSelectorObservation} observed - Entry used by extraction
  */
-export async function invalidateCache(url) {
+export function invalidateCache(url, observed) {
+  return mutateCache(() => invalidateCachedSelectors(url, observed)).catch(error => {
+    logWarn('Failed to invalidate selector cache', error);
+  });
+}
+
+async function invalidateCachedSelectors(url, observed) {
   const domain = extractDomain(url);
-  if (!domain) return;
+  if (!domain || !observed?.revision || observedRevisions.get(domain) !== observed.revision) return;
   
   const cache = await loadCache();
   const entry = cache[domain];
@@ -330,6 +362,7 @@ export async function invalidateCache(url) {
     entry.invalidated = true;
     entry.successCount = 0;
     await saveCache(cache);
+    observedRevisions.delete(domain);
     log('Cache invalidated', { domain });
   }
 }
@@ -338,13 +371,18 @@ export async function invalidateCache(url) {
  * Delete specific domain from cache
  * @param {string} domain - Domain to delete
  */
-export async function deleteDomainFromCache(domain) {
+export function deleteDomainFromCache(domain) {
+  return mutateCache(() => removeCachedDomain(domain));
+}
+
+async function removeCachedDomain(domain) {
   if (!domain) return;
   
   const cache = await loadCache();
   if (cache[domain]) {
     delete cache[domain];
     await saveCache(cache);
+    observedRevisions.delete(domain);
     log('Domain deleted from cache', { domain });
   }
 }
@@ -352,9 +390,19 @@ export async function deleteDomainFromCache(domain) {
 /**
  * Clear entire selector cache
  */
-export async function clearSelectorCache() {
-  await chrome.storage.local.remove([STORAGE_KEY]);
-  log('Selector cache cleared');
+export function clearSelectorCache() {
+  return mutateCache(async () => {
+    await chrome.storage.local.remove([STORAGE_KEY]);
+    observedRevisions.clear();
+  });
+}
+
+/** Replace the cache with a validated settings snapshot. */
+export function replaceSelectorCache(cache) {
+  return mutateCache(async () => {
+    await saveCache(cache);
+    observedRevisions.clear();
+  });
 }
 
 /**

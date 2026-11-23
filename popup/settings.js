@@ -424,9 +424,7 @@ export function initSettings(deps) {
         }
       }
       
-      if (result[STORAGE_KEYS.GENERATE_TOC]) {
-        elements.generateToc.checked = result[STORAGE_KEYS.GENERATE_TOC];
-      }
+      elements.generateToc.checked = result[STORAGE_KEYS.GENERATE_TOC] === true;
       
       if (result[STORAGE_KEYS.GENERATE_ABSTRACT] !== undefined) {
         elements.generateAbstract.checked = result[STORAGE_KEYS.GENERATE_ABSTRACT];

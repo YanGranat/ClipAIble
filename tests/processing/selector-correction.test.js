@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM, VirtualConsole } from 'jsdom';
-import { processWithSelectorMode } from '../../scripts/processing/modes.js';
+import { processWithoutAI, processWithSelectorMode } from '../../scripts/processing/modes.js';
 import { extractAutomaticallyInlined } from '../../scripts/extraction/automatic.js';
 import { cacheSelectors, getCachedSelectors } from '../../scripts/cache/selectors.js';
+import { CONFIG } from '../../scripts/utils/config.js';
 
 const mocks = vi.hoisted(() => ({ callAI: vi.fn(), progress: vi.fn() }));
 vi.mock('../../scripts/api/index.js', () => ({ callAI: mocks.callAI, getProviderFromModel: () => 'deepseek' }));
@@ -26,16 +27,17 @@ const html = `<!doctype html><html><head><title>Field report</title></head><body
 const valid = { articleContainer: 'main', content: '.story', title: 'h1', exclude: ['.skip-region'] };
 const conflict = { ...valid, exclude: ['.template-part', '.skip-region'] };
 const data = () => ({ html, url, title: 'Field report', apiKey: 'synthetic-key', model: 'deepseek-flash', provider: 'deepseek', tabId: 7, processingRunId: 'synthetic-processing-owner' });
-let saved, execute, readCount;
+let saved, execute, readCount, sourceHtml;
 const windows = [];
 
 beforeEach(() => {
   saved = {};
   readCount = 0;
+  sourceHtml = html;
   mocks.progress.mockReset().mockResolvedValue();
   mocks.callAI.mockReset().mockResolvedValue(valid);
   execute = vi.fn(async options => {
-    const dom = new JSDOM(html, { url, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
+    const dom = new JSDOM(sourceHtml, { url, runScripts: 'outside-only', virtualConsole: new VirtualConsole() });
     windows.push(dom.window);
     expect(dom.window.document.compatMode).toBe('CSS1Compat');
     dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 600, height: 400 });
@@ -130,11 +132,66 @@ describe('bounded selector correction', () => {
     expect(mocks.callAI.mock.calls[1][1]).toContain(JSON.stringify(excludedLeaves));
   });
 
-  it('corrects a verified result emptied by content-noise filtering', async () => {
-    execute.mockResolvedValueOnce([{ result: { title: 'Field report', content: [{ type: 'heading', level: 2, text: '8' }] } }]);
+  it.each(['h2', 'h2,hr'])('corrects selectors that match headings without reading content: %s', async content => {
+    sourceHtml = html.replace('</h2>', '</h2><hr>');
+    const structuralSelectors = { ...valid, content };
+    mocks.callAI.mockResolvedValueOnce(structuralSelectors).mockResolvedValueOnce(valid);
     assertArticle(await processWithSelectorMode(data(), extractAutomaticallyInlined));
     expect(mocks.callAI).toHaveBeenCalledTimes(2);
     expect(execute).toHaveBeenCalledTimes(2);
+    expect(mocks.callAI.mock.calls[1][1]).toContain(JSON.stringify(structuralSelectors));
+    expect(saved.selector_cache['example.org'].selectors).toEqual(valid);
+  });
+
+  it.each([
+    ['image', '<img src="/diagram.png" width="500" height="350" alt="Sampling diagram">', 'Sampling diagram'],
+    ['table', '<table><tr><th>Sample</th><th>Result</th></tr><tr><td>A</td><td>18</td></tr></table>', 'Result'],
+    ['code', '<pre><code>calculate(sample);</code></pre>', 'calculate(sample);']
+  ])('accepts an article whose only reading content is %s', async (type, body, expected) => {
+    sourceHtml = `<!doctype html><main><article class="story"><h1>Field report</h1>${body}</article></main>`;
+    const result = await processWithSelectorMode({ ...data(), html: sourceHtml }, extractAutomaticallyInlined);
+    expect(result.content.map(item => item.type)).toEqual([type]);
+    expect(JSON.stringify(result.content)).toContain(expected);
+    expect(mocks.callAI).toHaveBeenCalledOnce();
+    expect(saved.selector_cache['example.org'].selectors).toEqual(valid);
+  });
+
+  it('keeps a numeric section and its backlink in Selector and Automatic regardless of cache', async () => {
+    const notes = Array.from({ length: 8 }, (_, index) => `<p>Observation ${index + 1} supplies a separate and complete measurement.</p>`).join('');
+    const body = `<h2 id="sample-18">18</h2><p><a href="#sample-18">Review sample 18</a>. ${ending}</p>${notes}`;
+    sourceHtml = `<!doctype html><main><article class="story"><h1>Field report</h1><p>${intro}</p>${body}</article></main>`;
+    const input = { ...data(), html: sourceHtml };
+    const cold = await processWithoutAI(input, extractAutomaticallyInlined);
+    expect(execute.mock.calls[0][0].args).toHaveLength(2);
+    const selected = await processWithSelectorMode(input, extractAutomaticallyInlined);
+    const warm = await processWithoutAI(input, extractAutomaticallyInlined);
+    expect(execute.mock.calls[2][0].args[2]).toEqual(valid);
+    for (const result of [cold, selected, warm]) {
+      expect(result.content).toContainEqual(expect.objectContaining({ type: 'heading', id: 'sample-18', text: '18' }));
+      expect(result.content.map(item => item.html).join('')).toContain('href="#sample-18"');
+    }
+    expect(mocks.callAI).toHaveBeenCalledOnce();
+  });
+
+  it('does not serialize page diagnostics during normal Selector extraction', async () => {
+    assertArticle(await processWithSelectorMode(data(), extractAutomaticallyInlined));
+    expect(execute.mock.calls[0][0].args[1]).toBe(false);
+    const [{ result }] = await execute.mock.results[0].value;
+    expect(result.debugInfo).toBeNull();
+  });
+
+  it('collects page diagnostics when debug and verbose logging are enabled', async () => {
+    const { LOG_LEVEL, VERBOSE_LOGGING } = CONFIG;
+    CONFIG.LOG_LEVEL = 0;
+    CONFIG.VERBOSE_LOGGING = true;
+    try {
+      assertArticle(await processWithSelectorMode(data(), extractAutomaticallyInlined));
+      expect(execute.mock.calls[0][0].args[1]).toBe(true);
+      const [{ result }] = await execute.mock.results[0].value;
+      expect(result.debugInfo.foundElements).toBeGreaterThan(0);
+    } finally {
+      Object.assign(CONFIG, { LOG_LEVEL, VERBOSE_LOGGING });
+    }
   });
 
   it.each([1, 2])('checks cancellation after extraction %i before further paid calls or cache writes', async attempt => {
@@ -188,6 +245,22 @@ describe('bounded selector correction', () => {
     expect(mocks.callAI).not.toHaveBeenCalled();
   });
 
+  it('does not invalidate selectors saved while an earlier cached DOM attempt is pending', async () => {
+    await cacheSelectors(url, conflict);
+    const run = execute.getMockImplementation();
+    execute.mockImplementationOnce(async options => {
+      const result = await run(options);
+      await cacheSelectors(url, valid);
+      return result;
+    });
+    mocks.callAI.mockResolvedValue(conflict);
+    await expect(processWithSelectorMode(data(), extractAutomaticallyInlined))
+      .rejects.toMatchObject({ code: 'SELECTOR_MISS' });
+    expect(mocks.callAI).toHaveBeenCalledTimes(2);
+    expect((await getCachedSelectors(url)).selectors).toEqual(valid);
+    expect(saved.selector_cache['example.org'].invalidated).toBe(false);
+  });
+
   it('checks cancellation between corrective progress and admission of the next paid request', async () => {
     let cancelled = false;
     const cancellation = new Error('Processing owner is no longer current');
@@ -225,5 +298,6 @@ describe('bounded selector correction', () => {
     expect(mocks.callAI).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
     expect(readCount).toBeGreaterThan(0);
+    expect((await getCachedSelectors(url)).selectors).toEqual(conflict);
   });
 });

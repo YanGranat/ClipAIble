@@ -4,6 +4,19 @@ import { isNativePdfContent, escapeXml, serializeXmlInline } from './xml.js';
 import { filterFigureParagraphs } from './content.js';
 import { collectRenderedFragmentIds, rewriteHtmlFragmentLinks, rewriteMarkdownFragmentLinks } from './source-fragments.js';
 
+/** Return only a local source's filename, omitting its directory and page fragment. */
+export function localDocumentName(sourceUrl) {
+  if (!/^file:/i.test(sourceUrl)) return null;
+  let name;
+  try {
+    name = new URL(sourceUrl).pathname.split('/').at(-1);
+  } catch {
+    return '';
+  }
+  try { return decodeURIComponent(name); }
+  catch { return name; }
+}
+
 export function documentText(item, sourceUrl = '') {
   return renderContentText(isNativePdfContent(item) ? { ...item, format: 'text' } : item, sourceUrl);
 }

@@ -6,7 +6,8 @@ vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, opti
 
 const image = 'data:image/jpeg;base64,/9j/2Q==';
 const history = [{ role: 'user', content: 'Previous page' }, { role: 'assistant', content: '{"page":1}' }];
-const response = (finish = 'stop') => new Response(JSON.stringify({ choices: [{ finish_reason: finish, message: { content: '{"success":true}' } }] }), { status: 200 });
+const response = (finish = 'stop', content = '{"success":true}') =>
+  new Response(JSON.stringify({ choices: [{ finish_reason: finish, message: { content } }] }), { status: 200 });
 const request = () => JSON.parse(fetch.mock.calls.at(-1)[1].body);
 const paths = [
   ['text', (api, model, options) => api.text('System', 'Article', 'synthetic-key', model, true, options)],
@@ -103,5 +104,50 @@ describe('current Grok and OpenRouter model requests', () => {
     await expect(invoke(providers.router, 'openai/gpt-6.1-sol', {})).rejects.toMatchObject({ code: 'AI_RESPONSE_TRUNCATED' });
     fetch.mockResolvedValueOnce(response('length'));
     await expect(invoke(providers.grok, 'grok-4.7', {})).rejects.toMatchObject({ code: 'AI_RESPONSE_TRUNCATED' });
+  });
+
+  it.each(paths)('validates successful, truncated and refused JSON fallback responses for %s', async (kind, invoke) => {
+    const model = 'openai/gpt-6.1-terra-none';
+    for (const [finish, code] of [['stop', null], ['length', 'AI_RESPONSE_TRUNCATED'], ['content_filter', 'AI_RESPONSE_REFUSED']]) {
+      fetch.mockClear();
+      fetch.mockResolvedValueOnce(response('stop', 'Unstructured output')).mockResolvedValueOnce(response(finish));
+      const pending = invoke(providers.router, model, {});
+      if (code) await expect(pending).rejects.toMatchObject({ code, retryable: false });
+      else {
+        const result = await pending;
+        expect(kind === 'history' ? result.result : result).toEqual({ success: true });
+      }
+      expect(fetch).toHaveBeenCalledTimes(2);
+      const firstRequest = JSON.parse(fetch.mock.calls[0][1].body);
+      expect(firstRequest.response_format).toEqual({ type: 'json_object' });
+      expect(request()).toMatchObject({ model: 'openai/gpt-6.1-terra', reasoning: { effort: 'none' }, provider: { require_parameters: true } });
+      expect(request()).not.toHaveProperty('response_format');
+    }
+  });
+
+  it.each(paths)('discards both OpenRouter attempts when %s is cancelled while decoding JSON', async (_, invoke) => {
+    for (const cancelAfter of [1, 2]) {
+      fetch.mockClear();
+      if (cancelAfter === 2) fetch.mockResolvedValueOnce(response('stop', 'Unstructured output'));
+      fetch.mockResolvedValueOnce(response());
+      const cancellation = new Error('Processing replaced');
+      const owner = new AbortController();
+      let parsed = 0;
+      const originalJson = Response.prototype.json;
+      const json = vi.spyOn(Response.prototype, 'json').mockImplementation(async function () {
+        const data = await originalJson.call(this);
+        if (++parsed === cancelAfter) owner.abort(cancellation);
+        return data;
+      });
+      try {
+        const options = cancelAfter === 1
+          ? { checkCancelled: () => owner.signal.throwIfAborted() }
+          : { signal: owner.signal };
+        await expect(invoke(providers.router, 'openai/gpt-6.1-sol', options)).rejects.toBe(cancellation);
+        expect(fetch).toHaveBeenCalledTimes(cancelAfter);
+      } finally {
+        json.mockRestore();
+      }
+    }
   });
 });

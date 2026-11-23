@@ -1,5 +1,27 @@
 // @ts-check
 
+/** Prevent pending status reads from restoring a result dismissed in this popup. */
+export function createGenerationResultGuard() {
+  let dismissal = 0;
+  let pendingRemovals = 0;
+  return {
+    capture() {
+      const initialDismissal = dismissal;
+      const removalPending = pendingRemovals > 0;
+      return () => !removalPending && initialDismissal === dismissal;
+    },
+    async clear(keys) {
+      dismissal++;
+      pendingRemovals++;
+      try {
+        await chrome.storage.local.remove(keys);
+      } finally {
+        pendingRemovals--;
+      }
+    }
+  };
+}
+
 /** Acknowledge an independent generation failure once across popup instances. */
 export function createGenerationErrorPresenter(prefix, showToast, logWarn) {
   let presented = null;

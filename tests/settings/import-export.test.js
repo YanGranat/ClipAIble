@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { exportSettings, importSettings } from '../../scripts/settings/import-export.js';
+import { cacheSelectors, clearSelectorCache, getCachedSelectors, invalidateCache, markCacheSuccess } from '../../scripts/cache/selectors.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/stats/index.js', async importOriginal => ({ ...await importOriginal(), exportStats: vi.fn() }));
-vi.mock('../../scripts/cache/selectors.js', async importOriginal => ({ ...await importOriginal(), getCacheStats: vi.fn() }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en' }));
 vi.mock('../../scripts/locales.js', () => ({ tSync: (key) => key }));
 
@@ -11,12 +11,105 @@ let stored;
 
 beforeEach(() => {
   stored = {};
-  chrome.storage.local.get.mockImplementation(async (keys) => Object.fromEntries(
+  chrome.storage.local.get.mockImplementation(async (keys) => structuredClone(Object.fromEntries(
     keys.filter((key) => Object.hasOwn(stored, key)).map((key) => [key, stored[key]])
-  ));
-  chrome.storage.local.set.mockImplementation(async (values) => { Object.assign(stored, values); });
+  )));
+  chrome.storage.local.set.mockImplementation(async (values) => { Object.assign(stored, structuredClone(values)); });
   chrome.storage.local.remove.mockImplementation(async (keys) => {
     for (const key of keys) delete stored[key];
+  });
+});
+
+async function holdCacheLookupWrite() {
+  let release;
+  const heldWrite = new Promise(resolve => { release = resolve; });
+  let reportWrite;
+  const writeStarted = new Promise(resolve => { reportWrite = resolve; });
+  const set = chrome.storage.local.set.getMockImplementation();
+  chrome.storage.local.set.mockImplementationOnce(async (values) => {
+    reportWrite();
+    await heldWrite;
+    await set(values);
+  });
+  const lookup = getCachedSelectors('https://source.example/article');
+  await writeStarted;
+  return { lookup, release };
+}
+
+describe('selector cache storage transactions', () => {
+  it('retains both domains when two extractions cache their selectors together', async () => {
+    await Promise.all([
+      cacheSelectors('https://source.example/article', { content: 'main' }),
+      cacheSelectors('https://archive.example/article', { content: '.entry' })
+    ]);
+    expect(stored.selector_cache).toMatchObject({
+      'source.example': { selectors: { content: 'main' } },
+      'archive.example': { selectors: { content: '.entry' } }
+    });
+  });
+
+  it('does not restore entries from a lookup that overlaps clearing the cache', async () => {
+    await cacheSelectors('https://source.example/article', { content: 'main' });
+    const { lookup, release } = await holdCacheLookupWrite();
+    const clear = clearSelectorCache();
+    release();
+    await Promise.all([lookup, clear]);
+    expect(stored).not.toHaveProperty('selector_cache');
+  });
+
+  it('keeps an imported snapshot when a previous cache lookup is still recording recency', async () => {
+    stored = { use_selector_cache: true, enable_selector_caching: true };
+    await cacheSelectors('https://source.example/article', { content: 'main' });
+    const { lookup, release } = await holdCacheLookupWrite();
+    const imported = importSettings(JSON.stringify({ settings: {}, selectorCache: {
+      'archive.example': { selectors: { content: '.entry' } }
+    } }), { importCache: true });
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+    } finally {
+      release();
+    }
+    const [, result] = await Promise.all([lookup, imported]);
+    expect(result.cacheImported).toBe(true);
+    expect(Object.keys(stored.selector_cache)).toEqual(['archive.example']);
+  });
+
+  it('keeps existing entries after a read failure and accepts the next write', async () => {
+    await cacheSelectors('https://source.example/article', { content: 'main' });
+    const get = chrome.storage.local.get.getMockImplementation();
+    chrome.storage.local.get.mockImplementation(async (keys) => {
+      if (keys.includes('selector_cache')) throw new Error('Storage read failed');
+      return get(keys);
+    });
+    await cacheSelectors('https://archive.example/article', { content: '.entry' });
+    expect(Object.keys(stored.selector_cache)).toEqual(['source.example']);
+    chrome.storage.local.get.mockImplementation(get);
+    await cacheSelectors('https://archive.example/article', { content: '.entry' });
+    expect(Object.keys(stored.selector_cache)).toEqual(['source.example', 'archive.example']);
+  });
+
+  it.each(['cache write', 'cache clearing', 'settings import'])('ignores late extraction outcomes after %s replaces the observed entry', async replacement => {
+    const url = 'https://source.example/article';
+    const selectors = { content: 'main' };
+    await cacheSelectors(url, selectors);
+    const previous = await getCachedSelectors(url);
+    if (replacement === 'settings import') {
+      const imported = await importSettings(JSON.stringify({ settings: {}, selectorCache: {
+        'source.example': { selectors, successCount: 1 }
+      } }), { importCache: true });
+      expect(imported.cacheImported).toBe(true);
+    } else {
+      if (replacement === 'cache clearing') await clearSelectorCache();
+      await cacheSelectors(url, selectors);
+    }
+    const current = await getCachedSelectors(url);
+    await markCacheSuccess(url, previous);
+    await invalidateCache(url, previous);
+    expect(stored.selector_cache['source.example']).toMatchObject({ successCount: current.successCount, invalidated: false });
+    await markCacheSuccess(url, current);
+    expect(stored.selector_cache['source.example'].successCount).toBe(current.successCount + 1);
+    await invalidateCache(url, current);
+    expect(await getCachedSelectors(url)).toBeNull();
   });
 });
 

@@ -2,8 +2,8 @@
 // Settings import/export module
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { exportStats, normalizeStats } from '../stats/index.js';
-import { getCacheStats, normalizeCachedSelectors } from '../cache/selectors.js';
+import { exportStats, replaceStats } from '../stats/index.js';
+import { normalizeCachedSelectors, replaceSelectorCache } from '../cache/selectors.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
@@ -52,11 +52,6 @@ function normalizeImportedCache(value) {
     cache[domain] = normalized;
   }
   return cache;
-}
-
-// Get current extension version (centralized function)
-function getCurrentVersion() {
-  return getExtensionVersion();
 }
 
 // Settings that can be exported/imported
@@ -152,7 +147,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
     const settings = await chrome.storage.local.get(STORAGE_KEYS_TO_EXPORT);
     
     const exportData = {
-      version: getCurrentVersion(),
+      version: getExtensionVersion() ?? 'unknown',
       exportDate: new Date().toISOString(),
       settings: {}
     };
@@ -181,7 +176,6 @@ export async function exportSettings(includeStats = false, includeCache = false)
     // Add cache if requested
     if (includeCache) {
       try {
-        const cacheStats = await getCacheStats();
         // Get full cache data
         const cacheResult = await chrome.storage.local.get(['selector_cache']);
         if (cacheResult.selector_cache) {
@@ -285,9 +279,9 @@ export async function importSettings(jsonData, options = {}) {
 
     // Validate version compatibility
     const exportVersion = typeof data.version === 'string' && data.version.length <= 100 ? data.version : 'unknown';
-    const currentVersion = getCurrentVersion();
+    const currentVersion = getExtensionVersion();
     
-    if (exportVersion !== 'unknown') {
+    if (currentVersion && exportVersion !== 'unknown') {
       const exportMajor = parseInt(exportVersion.split('.')[0]) || 0;
       const exportMinor = parseInt(exportVersion.split('.')[1]) || 0;
       const currentMajor = parseInt(currentVersion.split('.')[0]) || 0;
@@ -534,7 +528,7 @@ export async function importSettings(jsonData, options = {}) {
     // Import statistics
     if (importStats && data.statistics) {
       try {
-        await chrome.storage.local.set({ extension_stats: normalizeStats(data.statistics) });
+        await replaceStats(data.statistics);
         result.statsImported = true;
         log('Statistics imported');
       } catch (error) {
@@ -562,7 +556,7 @@ export async function importSettings(jsonData, options = {}) {
         
         const cache = normalizeImportedCache(data.selectorCache);
         if (!cache) throw importError('errorImportCacheNotObject', uiLang);
-        await chrome.storage.local.set({ selector_cache: cache });
+        await replaceSelectorCache(cache);
         result.cacheImported = true;
         const domainCount = Object.keys(data.selectorCache).length;
         log('Selector cache imported', { domains: domainCount });

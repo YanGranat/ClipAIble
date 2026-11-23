@@ -5,6 +5,8 @@ import { realtimeWebSocket } from '../helpers/realtime-websocket.js';
 
 const owner = vi.hoisted(() => ({ cancelled: false }));
 const requestTimeout = CONFIG.API_TIMEOUT_MS;
+const outputItem = (id, count = 1) => ({ id, type: 'message', role: 'assistant', status: 'completed',
+  content: Array.from({ length: count }, () => ({ type: 'output_audio' })) });
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ checkCancellation: async () => { if (owner.cancelled) throw new Error('Cancelled'); } }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 
@@ -60,8 +62,8 @@ describe('OpenAI Realtime narration', () => {
   it.each(['failed', 'incomplete', 'cancelled'])('rejects terminal %s status even after audio arrives', async status => {
     vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
       socket.emit({ type: 'response.created', response: { id: 'r' } });
-      socket.emit({ type: 'response.output_audio.delta', response_id: 'r', delta: 'AQA=' });
-      socket.emit({ type: 'response.output_audio.done', response_id: 'r' });
+      socket.audio('delta', 'r', { delta: 'AQA=' });
+      socket.audio('done', 'r');
       socket.emit({ type: 'response.done', response: { id: 'r', status } });
     }));
     await expect(textToSpeech('Article.', 'synthetic-key')).rejects.toMatchObject({ translationKey: 'errorTtsIncomplete' });
@@ -74,9 +76,9 @@ describe('OpenAI Realtime narration', () => {
       socket.emit({ type: 'response.created', response: { id: 'r' } });
       if (fault === 'malformed-json') { socket.emit('{'); return; }
       if (fault === 'close') { socket.onclose(); return; }
-      if (fault !== 'empty') socket.emit({ type: 'response.output_audio.delta', response_id: fault === 'foreign' ? 'other' : 'r',
+      if (fault !== 'empty') socket.audio('delta', fault === 'foreign' ? 'other' : 'r', {
         delta: fault === 'invalid-base64' ? '%' : fault === 'odd' ? 'AQ==' : 'AQA=' });
-      if (fault !== 'missing-audio-end') socket.emit({ type: 'response.output_audio.done', response_id: 'r' });
+      if (fault !== 'missing-audio-end') socket.audio('done', 'r');
       socket.emit({ type: 'response.done', response: { id: 'r', status: 'completed' } });
     }));
     await expect(textToSpeech('Article.', 'synthetic-key')).rejects.toBeInstanceOf(Error);
@@ -87,12 +89,63 @@ describe('OpenAI Realtime narration', () => {
   it('joins PCM samples split across WebSocket messages', async () => {
     vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
       socket.emit({ type: 'response.created', response: { id: 'r' } });
-      for (const delta of ['AQ==', 'AA==']) socket.emit({ type: 'response.output_audio.delta', response_id: 'r', delta });
-      socket.emit({ type: 'response.output_audio.done', response_id: 'r' });
+      for (const delta of ['AQ==', 'AA==']) socket.audio('delta', 'r', { delta });
+      socket.audio('done', 'r');
       socket.emit({ type: 'response.done', response: { id: 'r', status: 'completed' } });
     }));
     const result = await textToSpeech('Article.', 'synthetic-key');
     expect([...new Uint8Array(result).subarray(44)]).toEqual([1, 0]);
+  });
+
+  it('assembles complete audio parts by output and content order', async () => {
+    vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
+      socket.emit({ type: 'response.created', response: { id: 'r' } });
+      const first = { item_id: 'first', output_index: 0, content_index: 0 };
+      const second = { ...first, content_index: 1 };
+      const third = { item_id: 'third', output_index: 1, content_index: 0 };
+      socket.audio('delta', 'r', { ...first, delta: 'AQA=' });
+      socket.audio('done', 'r', first);
+      socket.audio('delta', 'r', { ...third, delta: 'AwA=' });
+      socket.audio('delta', 'r', { ...second, delta: 'AgA=' });
+      socket.audio('done', 'r', third);
+      socket.audio('done', 'r', second);
+      socket.emit({ type: 'response.done', response: {
+        id: 'r', status: 'completed', output: [outputItem('first', 2), outputItem('third')]
+      } });
+    }));
+    const result = await textToSpeech('Article.', 'synthetic-key');
+    expect([...new Uint8Array(result).subarray(44)]).toEqual([1, 0, 2, 0, 3, 0]);
+  });
+
+  it.each(['incomplete second part', 'missing declared part', 'foreign final item'])('rejects %s even when the response reports completion', async fault => {
+    vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
+      socket.emit({ type: 'response.created', response: { id: 'r' } });
+      socket.audio('delta', 'r', { delta: 'AQA=' });
+      if (fault === 'incomplete second part') socket.audio('delta', 'r', { content_index: 1, delta: 'AgA=' });
+      socket.audio('done', 'r');
+      const output = fault === 'foreign final item' ? [outputItem('another-item')] : [outputItem('sample-item', 2)];
+      socket.emit({ type: 'response.done', response: { id: 'r', status: 'completed', output } });
+    }));
+    await expect(textToSpeech('Article.', 'synthetic-key')).rejects.toMatchObject({ translationKey: 'errorTtsIncomplete', retryable: false });
+  });
+
+  it('rejects the end of a different item even when the output indexes match', async () => {
+    vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
+      socket.emit({ type: 'response.created', response: { id: 'r' } });
+      socket.audio('delta', 'r', { delta: 'AQA=' });
+      socket.audio('done', 'r', { item_id: 'another-item' });
+      socket.emit({ type: 'response.done', response: { id: 'r', status: 'completed' } });
+    }));
+    await expect(textToSpeech('Article.', 'synthetic-key')).rejects.toMatchObject({ translationKey: 'errorTtsInvalidAudio', retryable: false });
+  });
+
+  it('reports a stalled credential mint as a timeout without opening a socket', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    const result = textToSpeech('Article.', 'synthetic-key').catch(error => error);
+    await vi.advanceTimersByTimeAsync(CONFIG.API_TIMEOUT_MS);
+    expect(await result).toMatchObject({ name: 'TimeoutError', translationKey: 'errorTtsTimeout', retryable: false });
+    expect(WebSocket.instances).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('cancels a stalled credential request and releases its timers', async () => {

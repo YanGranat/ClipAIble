@@ -159,6 +159,28 @@ describe('Reading ownership', () => {
     expect(JSON.stringify(result.content)).not.toContain('Sign in');
     expect(result.content.some(item => item.id === 'measurement-note')).toBe(true);
   });
+
+  it.each(['aria-describedby', 'aria-controls'])('excludes interface text reached through %s', async attribute => {
+    const result = await extract(`<article><h1>Field report</h1>
+      <p>The recorded value remained stable <button ${attribute}="panel-tip">Options</button>during the second trial.</p>
+      </article><div role="tooltip" hidden><p id="panel-tip">Choose the order of the displayed items.</p></div>`);
+    expect(result.plain).toBe('The recorded value remained stable during the second trial.');
+    expect(result.content.some(item => item.id === 'panel-tip')).toBe(false);
+  });
+
+  it.each([
+    ['aria-describedby="note"', '<p id="note" role="doc-footnote" hidden>'],
+    ['aria-controls="note" data-citation', '<p id="note" hidden>'],
+    ['aria-controls="note"', '<p id="note" popover hidden>'],
+    ['popovertarget="note"', '<p id="note" popover hidden>']
+  ])('keeps authored annotation dependencies for %s', async (reference, target) => {
+    const result = await extract(`<article><h1>Field report</h1>
+      <p>A recorded value <button ${reference}>Analysis note</button> remains available.</p></article>
+      ${target}The independent calibration preceded the second trial.</p>`);
+    expect(result.plain).toContain('The independent calibration preceded the second trial.');
+    expect(result.content.filter(item => item.id === 'note')).toHaveLength(1);
+    expect(result.content.some(item => item.html?.includes('href="#note"'))).toBe(true);
+  });
   it('preserves a closed annotation, its nested citation, and distinct visibility exclusions', async () => {
     const result = await extract(`<style>
       [popover]:not([data-ready]) { visibility:hidden; display:none; }

@@ -519,9 +519,9 @@ export function detectColumns(lines, viewport, metrics = {}) {
  * @param {{baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
  * @param {import('../../../types.js').ProcessLinesFunction} processFunction - Function to process lines (e.g., groupLinesIntoElements)
  * @returns {Array} Processed elements from all columns
- * @param {boolean} [allowProseRecovery] - Whether the page has no painted tables to preserve
+ * @param {"disabled"|"fallback"|"preferred"} [proseRecovery] - Use recovered prose regions as a fallback or before page-wide column detection
  */
-export function processLinesByColumns(lines, viewport, metrics, processFunction, allowProseRecovery = true) {
+export function processLinesByColumns(lines, viewport, metrics, processFunction, proseRecovery = 'fallback') {
   if (!lines || lines.length === 0) {
     return [];
   }
@@ -551,9 +551,11 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction,
   // This assigns each line to a specific column based on:
   // - Horizontal overlap (line X-coordinates within column boundaries)
   // - Vertical proximity (lines close in Y are likely same column)
+  const baseFontSize = metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE;
+  let proseRegions = proseRecovery === 'preferred' ? recoverProseColumnRegions(lines, viewport, baseFontSize) : [];
   let columns;
   try {
-    columns = detectColumns(lines, viewport, metricsWithVisualStructure);
+    columns = proseRegions.length ? proseRegions : detectColumns(lines, viewport, metricsWithVisualStructure);
     // Ensure we have an array
     if (!Array.isArray(columns)) {
       logWarn(`[PDF v3] processLinesByColumns: detectColumns returned non-array`, {
@@ -571,10 +573,10 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction,
     columns = [];
   }
   
-  const proseRegions = columns.length === 0 && allowProseRecovery
-    ? recoverProseColumnRegions(lines, viewport, metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE)
-    : [];
-  if (proseRegions.length) columns = proseRegions;
+  if (columns.length === 0 && proseRecovery === 'fallback') {
+    proseRegions = recoverProseColumnRegions(lines, viewport, baseFontSize);
+    columns = proseRegions;
+  }
 
   // If no columns detected, process all lines together as single column
   if (columns.length === 0) {

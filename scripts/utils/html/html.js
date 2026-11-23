@@ -54,27 +54,6 @@ export function stripHtml(html) {
   return plainText(html);
 }
 
-const TILDA_BLOCK_ID_PREFIX = /\bT[\d\s]*\d\s*(?=\d|[А-Яа-яЁё])/g;
-const TILDA_BLOCK_ID_STANDALONE_TEXT = /(^|\n)\s*T[\d\s]*\d\s*(?=\n|$)/gm;
-/** Leftover single digit when ID was in another node; only 0/6 to avoid stripping "1. Введение" */
-const TILDA_LEFTOVER_DIGIT_TEXT = /(^|\n)\s*[06]\s+(?=\d|[А-Яа-яЁё])/gm;
-
-/**
- * Strip Tilda/CMS block ID artifacts from plain text (safety net for extraction).
- * Single universal pattern for block IDs (T1, T006, T00 6, T220, T22 0, etc.).
- * @param {string} text - Plain text (may contain Tilda block IDs)
- * @returns {string} Text with Tilda IDs stripped
- */
-export function cleanTildaArtifactsFromText(text) {
-  if (!text || typeof text !== 'string') return '';
-  let s = text;
-  s = s.replace(TILDA_BLOCK_ID_PREFIX, '');
-  s = s.replace(TILDA_BLOCK_ID_STANDALONE_TEXT, '$1');
-  s = s.replace(TILDA_LEFTOVER_DIGIT_TEXT, '$1');
-  s = s.replace(/\s{2,}/g, ' ').trim();
-  return s;
-}
-
 /**
  * Decode common HTML entities
  * @param {string} text - Text with entities

@@ -20,6 +20,7 @@ let cachedEncryptionKey = null;
 const decryptedKeyCache = new Map(); // provider:ciphertext -> decryptedKey
 let cacheClearTimeout = null;
 let cacheStartTime = null; // Track when cache was first populated
+let cacheGeneration = 0;
 const CACHE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes - normal timeout
 const MAX_CACHE_TIME_MS = 30 * 60 * 1000; // 30 minutes - maximum time keys can stay in memory
 
@@ -225,6 +226,9 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
     throw new Error('Invalid parameters for getDecryptedKeyCached');
   }
   
+  if (cacheStartTime !== null && Date.now() - cacheStartTime >= MAX_CACHE_TIME_MS) {
+    clearDecryptedKeyCache();
+  }
   const cacheKey = `${provider}:${encryptedKey}`;
   if (decryptedKeyCache.has(cacheKey)) {
     log('Using cached decrypted key', { provider });
@@ -232,9 +236,11 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
   }
   
   // Decrypt and cache
+  const generation = cacheGeneration;
   let decrypted;
   try {
     decrypted = await decryptApiKey(encryptedKey);
+    if (generation !== cacheGeneration) return decrypted;
     
     // Valid decryption - cache the result
     decryptedKeyCache.set(cacheKey, decrypted);
@@ -251,7 +257,7 @@ export async function getDecryptedKeyCached(encryptedKey, provider) {
   } catch (error) {
     // SECURITY: If decryption throws an error, clear cache entry for this key
     logError('Decryption error, clearing cache entry', { provider, error: error.message });
-    decryptedKeyCache.delete(cacheKey);
+    if (generation === cacheGeneration) decryptedKeyCache.delete(cacheKey);
     // Re-throw to let caller handle the error
     throw error;
   }
@@ -273,7 +279,7 @@ function scheduleCacheClear() {
   // Schedule new timeout
   cacheClearTimeout = setTimeout(() => {
     const processingState = getProcessingState();
-    const cacheAge = cacheStartTime ? (Date.now() - cacheStartTime) : 0;
+    const cacheAge = cacheStartTime === null ? 0 : Date.now() - cacheStartTime;
     
     // SECURITY: Force clear cache after maximum time, even if processing is active
     // This prevents keys from staying in memory indefinitely during very long operations
@@ -309,7 +315,7 @@ function scheduleCacheClear() {
       clearDecryptedKeyCache();
     }
     cacheClearTimeout = null;
-  }, CACHE_TIMEOUT_MS);
+  }, Math.min(CACHE_TIMEOUT_MS, Math.max(0, cacheStartTime + MAX_CACHE_TIME_MS - Date.now())));
 }
 
 /**
@@ -320,6 +326,7 @@ function scheduleCacheClear() {
 export function clearDecryptedKeyCache() {
   const cacheSize = decryptedKeyCache.size;
   decryptedKeyCache.clear();
+  cacheGeneration++;
   
   // Reset cache start time
   cacheStartTime = null;

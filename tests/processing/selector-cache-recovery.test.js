@@ -39,7 +39,7 @@ describe('selector template cache', () => {
     const result = await processWithSelectorMode({ url, html: '<article>Current article</article>', title: 'Page', apiKey: 'synthetic-key', model: 'gpt-sample', tabId: 7 }, () => {});
     expect(result).toMatchObject({ author: 'Current Writer', publishDate: '2025-02-04', detectedLanguage: 'fr' });
     expect(mocks.callAI).not.toHaveBeenCalled();
-    expect(execute.mock.calls[0][0].args).toEqual([url, true, { content: '.current', exclude: [] }]);
+    expect(execute.mock.calls[0][0].args).toEqual([url, false, { content: '.current', exclude: [] }]);
   });
 
   it('recovers once from a template miss by requesting selectors for the current page', async () => {

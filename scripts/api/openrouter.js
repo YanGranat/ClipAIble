@@ -13,6 +13,19 @@ import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
 
+/** @param {import('../types.js').AIRequestOptions} requestOptions */
+async function checkResponseOwner(requestOptions) {
+  await requestOptions.checkCancelled?.();
+  requestOptions.signal?.throwIfAborted();
+}
+
+/** Every HTTP success, including a JSON fallback, has the same response checks. */
+async function readOpenRouterResponse(response, requestOptions) {
+  const result = await response.json().finally(() => checkResponseOwner(requestOptions));
+  assertCompleteAIResponse(result, 'openrouter');
+  return result;
+}
+
 /**
  * OpenRouter normalizes provider reasoning controls through its reasoning object.
  * @param {string} model
@@ -152,14 +165,14 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
 
   let result;
   try {
-    result = await response.json();
-    assertCompleteAIResponse(result, 'openrouter');
+    result = await readOpenRouterResponse(response, requestOptions);
     log('OpenRouter response parsed', { 
       id: result.id, 
       model: result.model,
       usage: result.usage 
     });
   } catch (parseError) {
+    await checkResponseOwner(requestOptions);
     if (isApiBoundaryError(parseError)) throw parseError;
     if (parseError.code === 'AI_RESPONSE_TRUNCATED') throw parseError;
     // Normalize error with context for better logging and error tracking
@@ -270,7 +283,7 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
         }
       );
       
-      const retryResult = await retryResponse.json();
+      const retryResult = await readOpenRouterResponse(retryResponse, requestOptions);
       const retryContent = retryResult.choices?.[0]?.message?.content;
       
       if (!retryContent) {
@@ -492,8 +505,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
       );
     }
     
-    const data = await response.json();
-    assertCompleteAIResponse(data, 'openrouter');
+    const data = await readOpenRouterResponse(response, requestOptions);
     const content = data.choices?.[0]?.message?.content;
     if (!content) {
       logError('OpenRouter API response missing content', { data });
@@ -545,7 +557,7 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
             }
           );
           
-          const retryData = await retryResponse.json();
+          const retryData = await readOpenRouterResponse(retryResponse, requestOptions);
           const retryContent = retryData.choices?.[0]?.message?.content;
           
           if (!retryContent) {
@@ -712,8 +724,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       );
     }
     
-    const data = await response.json();
-    assertCompleteAIResponse(data, 'openrouter');
+    const data = await readOpenRouterResponse(response, requestOptions);
     let content = data.choices?.[0]?.message?.content;
     if (!content) {
       logError('OpenRouter API response missing content', { data });
@@ -766,7 +777,7 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
             }
           );
           
-          const retryData = await retryResponse.json();
+          const retryData = await readOpenRouterResponse(retryResponse, requestOptions);
           const retryContent = retryData.choices?.[0]?.message?.content;
           
           if (!retryContent) {

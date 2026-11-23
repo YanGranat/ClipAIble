@@ -6,11 +6,62 @@ import { CONFIG } from '../../../utils/config.js';
 import { processPageItemsToLines } from '../utils/item-transformer.js';
 import { groupLinesIntoElements } from './element-grouper.js';
 import { processLinesByColumns } from '../analyzers/column-detector.js';
+import { calculateLineRight } from '../analyzers/column-detection-helpers.js';
 import { splitTableBlocksFromColumn1 } from './table-block-splitter.js';
 import { mergeColumnElementsIntoTables } from './table-column-merger.js';
 import { extractPageGraphics, detectTableRegionsFromGraphics } from '../utils/graphics-extractor.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { extractPaintedTables } from '../utils/grid-cells.js';
+
+/** Order the elements within one reading region, then let the page concatenate its regions. */
+function orderRegion(elements) {
+  const firstBaseline = element => element.minY || element.lines?.[0]?.y || 0;
+  return elements.sort((a, b) => (a.columnIndex ?? -1) - (b.columnIndex ?? -1) || firstBaseline(a) - firstBaseline(b));
+}
+
+/** Partition only where painted table bounds cover the reading width without shared baselines. */
+function partitionAtPaintedTables(physical, baseFontSize) {
+  if (!physical.tables.length || !physical.remainingLines.length) return null;
+  const lines = physical.remainingLines;
+  let left = Infinity, right = -Infinity;
+  for (const line of lines) {
+    left = Math.min(left, line.x);
+    right = Math.max(right, calculateLineRight(line, baseFontSize));
+  }
+  const orderedTables = [...physical.tables].sort((a, b) => a.paintedBounds.top - b.paintedBounds.top);
+  let previousBottom = -Infinity;
+  let nextLine = 0;
+  const regions = [];
+  for (const table of orderedTables) {
+    const bounds = table.paintedBounds;
+    if (bounds.left > left + baseFontSize || bounds.right < right - baseFontSize || bounds.top <= previousBottom) return null;
+    const firstLine = nextLine;
+    while (nextLine < lines.length && lines[nextLine].y < bounds.top) nextLine++;
+    if (nextLine < lines.length && lines[nextLine].y <= bounds.bottom) return null;
+    regions.push({ lines: lines.slice(firstLine, nextLine), table });
+    previousBottom = bounds.bottom;
+  }
+  regions.push({ lines: lines.slice(nextLine), table: null });
+  return regions;
+}
+
+/** Group lines after reserving the original painted table positions. */
+function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery) {
+  let elements = processLinesByColumns(lines, viewport, metrics, groupLinesIntoElements, proseRecovery);
+  if (!elements.some(element => element.recoveredProseRegion)) {
+    try {
+      elements = splitTableBlocksFromColumn1(elements, metrics);
+    } catch (error) {
+      logWarn(`[PDF v3] Failed to split table blocks from column 1 on page ${pageNum}`, error);
+    }
+    try {
+      elements = mergeColumnElementsIntoTables(elements, metrics);
+    } catch (error) {
+      logWarn(`[PDF v3] Failed to merge column elements into tables on page ${pageNum}`, error);
+    }
+  }
+  return elements;
+}
 
 /**
  * Process a single PDF page and extract elements
@@ -119,82 +170,19 @@ export async function processPage(page, pageNum, metrics, preserveImagePage) {
   }
   
   log(`[PDF v3] Page ${pageNum} processed: ${lines.length} lines`);
-  const physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE);
-  
-  // Step 2: DETERMINE TOP-LEVEL TEXT REGIONS (COLUMNS)
-  // This is the key insight: we need to identify column boundaries FIRST,
-  // before grouping lines into paragraphs within each column
-  // 
-  // Algorithm:
-  // - Analyze visual structure (empty vertical strips) to find column gaps
-  // - Cluster X-coordinates of line starts to identify column positions
-  // - Assign lines to columns based on overlap and vertical proximity
-  //
-  // Step 3: GROUP LINES INTO ELEMENTS (PARAGRAPHS/HEADINGS) WITHIN EACH COLUMN
-  // Only after columns are identified, we group lines into elements
-  // This ensures that paragraph boundaries are detected correctly within each column,
-  // not across columns
-  let pageElements;
-  try {
-    log(`[PDF v3] Page ${pageNum} - Calling processLinesByColumns with ${lines.length} lines`);
-    pageElements = processLinesByColumns(physical.remainingLines, viewport, metrics, groupLinesIntoElements, physical.tables.length === 0);
-    log(`[PDF v3] Page ${pageNum} - processLinesByColumns returned ${pageElements?.length || 0} elements`);
-  } catch (error) {
-    logWarn(`[PDF v3] processLinesByColumns failed for page ${pageNum}`, {
-      error: error.message,
-      stack: error.stack,
-      name: error.name,
-      linesCount: lines.length
-    });
-    // Only log to console in DEBUG mode
-    if (typeof CONFIG !== 'undefined' && CONFIG.LOG_LEVEL === 0) {
-      console.error(`[PDF v3] processLinesByColumns ERROR:`, error);
-    }
-    throw error; // Re-throw to be caught by outer try-catch
-  }
-  
-  // Recovered prose regions supply reading order without changing table ownership.
-  if (!pageElements?.some(element => element.recoveredProseRegion)) {
-    // Step 3.5: SPLIT LARGE BLOCKS FROM COLUMN 1 THAT CONTAIN TABLE ELEMENTS
-    // Column 1 can contain both regular text (headings, paragraphs) and table elements
-    // We need to split these blocks before merging into tables
-    try {
-      pageElements = splitTableBlocksFromColumn1(pageElements, metrics);
-    } catch (error) {
-      logWarn(`[PDF v3] Failed to split table blocks from column 1 on page ${pageNum}`, error);
-      // Continue with original elements
-    }
-
-    // Step 4: MERGE ELEMENTS FROM DIFFERENT COLUMNS INTO TABLES
-    // Elements from different columns that are on the same Y-coordinate are likely table rows
-    try {
-      pageElements = mergeColumnElementsIntoTables(pageElements, metrics);
-    } catch (error) {
-      logWarn(`[PDF v3] Failed to merge column elements into tables on page ${pageNum}`, error);
-      // Continue with elements as-is (without table merging)
-    }
+  const baseFontSize = metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE;
+  const physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], baseFontSize);
+  const regions = partitionAtPaintedTables(physical, baseFontSize);
+  if (!regions) {
+    const elements = classifyReadingRegion(physical.remainingLines, viewport, metrics, pageNum, physical.tables.length ? 'disabled' : 'fallback');
+    return orderRegion(elements.concat(physical.tables));
   }
 
-    // Ensure pageElements is always an array
-    if (!Array.isArray(pageElements)) {
-      logWarn(`[PDF v3] Page ${pageNum}: processLinesByColumns returned non-array, converting to array`, {
-        type: typeof pageElements,
-        value: pageElements
-      });
-      pageElements = pageElements ? [pageElements] : [];
-    }
-    pageElements.push(...physical.tables);
-    
-    log(`[PDF v3] Page ${pageNum} elements extracted: ${pageElements.length} elements`);
-    
-    if (pageElements.length === 0 && lines.length > 0) {
-      logWarn(`[PDF v3] Page ${pageNum}: Lines were processed but no elements were created`, {
-        linesCount: lines.length,
-        metrics: metrics ? { hasGapAnalysis: !!metrics.gapAnalysis } : null
-      });
-    }
-    
-    return pageElements;
+  return regions.flatMap(({ lines, table }) => {
+    const elements = orderRegion(classifyReadingRegion(lines, viewport, metrics, pageNum, 'preferred'));
+    return table ? elements.concat(table) : elements;
+  });
+
   } catch (error) {
     logWarn(`[PDF v3] processPage failed for page ${pageNum}`, {
       error: error.message,

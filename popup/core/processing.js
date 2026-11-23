@@ -69,7 +69,17 @@ export function initProcessing(deps) {
       if (elements.cancelBtn) {
         /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = true;
       }
-      await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
+      const response = await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
+      if (response?.success !== true) {
+        throw Object.assign(new Error(response?.error || 'Cancellation failed'), {
+          translationKey: response?.translationKey,
+          translationParams: response?.translationParams
+        });
+      }
+      if (!response.cancelledRunId) {
+        await checkProcessingState();
+        return;
+      }
       const cancelledText = await t('processingCancelled', undefined);
       showToast(cancelledText, 'success', { key: 'processingCancelled' });
       const readyText = await t('ready', undefined);
@@ -83,13 +93,13 @@ export function initProcessing(deps) {
       if (elements.cancelBtn) {
         elements.cancelBtn.classList.add('hidden');
         elements.cancelBtn.style.display = 'none';
-        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false; // Re-enable for next time
       }
     } catch (error) {
       logError('Error cancelling', error);
-      if (elements.cancelBtn) {
-        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false; // Re-enable on error
-      }
+      const translation = { key: error?.translationKey || 'errorUnknown', params: error?.translationParams || {} };
+      showToast(await t(translation.key, undefined, translation.params), 'error', translation);
+    } finally {
+      /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false;
     }
   }
 

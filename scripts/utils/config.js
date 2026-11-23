@@ -116,12 +116,7 @@ export const CONFIG = {
   LOG_LEVEL: 2,                   // Log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR
   VERBOSE_LOGGING: false,         // Include detailed content diagnostics during development
   MAX_LOG_DATA_SIZE: 100000,       // Maximum size of data object to log (in characters after JSON.stringify), larger objects will be truncated
-  LOG_COLLECTION_MAX_SIZE: 10000, // OPTIMIZED: Maximum number of logs in memory collection (reduced from 50k to 10k to save memory)
-  
-  // Extension version (synchronized with manifest.json)
-  // This is used as fallback if chrome.runtime.getManifest() fails (extremely rare)
-  // CRITICAL: Must be updated when version changes in manifest.json
-  EXTENSION_VERSION: '3.3.10'
+  LOG_COLLECTION_MAX_SIZE: 10000  // Maximum number of logs in memory collection
 };
 
 /**
@@ -434,6 +429,9 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
   
   // Convert language code to locale if needed
   const locale = localeOrLang.includes('-') ? localeOrLang : getLocaleFromLanguage(localeOrLang);
+  const formatCalendarDate = (date, includeDay = true) => date.toLocaleDateString(locale, {
+    timeZone: 'UTC', year: 'numeric', month: 'long', day: includeDay ? 'numeric' : undefined
+  });
   
   // Primary path: ISO format (YYYY-MM-DD, YYYY-MM, or YYYY) - this is what AI should return now
   // Full date: YYYY-MM-DD
@@ -445,7 +443,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
       const day = parseInt(fullDateMatch[3], 10);
       const date = new Date(Date.UTC(year, month, day));
       if (!isNaN(date.getTime())) {
-        return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+        return formatCalendarDate(date);
       }
     } catch (e) {
       // Fallback below
@@ -460,7 +458,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
       const month = parseInt(yearMonthMatch[2], 10) - 1;
       const date = new Date(Date.UTC(year, month, 1));
       if (!isNaN(date.getTime())) {
-        return date.toLocaleDateString(locale, { year: 'numeric', month: 'long' });
+        return formatCalendarDate(date, false);
       }
     } catch (e) {
       // Fallback below
@@ -497,7 +495,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
     const month = monthMap[monthName];
     if (month !== undefined) {
       const date = new Date(Date.UTC(year, month, day));
-      return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+      return formatCalendarDate(date);
     }
   }
   
@@ -524,7 +522,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
     const month = monthMap[monthName];
     if (month !== undefined) {
       const date = new Date(Date.UTC(year, month, day));
-      return date.toLocaleDateString(locale, { year: 'numeric', month: 'long', day: 'numeric' });
+      return formatCalendarDate(date);
     }
   }
   
@@ -543,28 +541,13 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
 }
 
 /**
- * Get extension version from manifest
- * Falls back to CONFIG.EXTENSION_VERSION if manifest is unavailable (extremely rare)
- * @returns {string} Extension version
+ * Read the installed extension version.
+ * @returns {string|null} Version from the manifest when an extension context is available
  */
 export function getExtensionVersion() {
   try {
-    // chrome.runtime.getManifest() is always available in service worker and popup contexts
-    // It always returns an object (never null/undefined) according to Chrome Extension API
-    // manifest.version may be undefined only if manifest.json is corrupted (extremely rare)
-    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
-      const manifest = chrome.runtime.getManifest();
-      if (manifest && manifest.version) {
-        return manifest.version;
-      }
-    }
-  } catch (error) {
-    // Fallback to config constant if getManifest fails (extremely rare edge case)
-    // This can happen if manifest.json is corrupted or extension context is invalid
+    return globalThis.chrome?.runtime?.getManifest?.()?.version || null;
+  } catch {
+    return null;
   }
-  
-  // Fallback to config constant (synchronized with manifest.json)
-  // CRITICAL: CONFIG.EXTENSION_VERSION must be updated when version changes in manifest.json
-  return CONFIG.EXTENSION_VERSION;
 }
-

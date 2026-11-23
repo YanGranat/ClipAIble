@@ -17,7 +17,7 @@ beforeEach(async () => {
   vi.stubGlobal('WebSocket', realtimeWebSocket(socket => {
     if (WebSocket.instances.length > 1) { socket.complete(); return; }
     socket.emit({ type: 'response.created', response: { id: 'r' } });
-    socket.emit({ type: 'response.output_audio.delta', response_id: 'r', delta: 'AQA=' });
+    socket.audio('delta', 'r', { delta: 'AQA=' });
     socket.emit({ type: 'error', error: { code: 'server_error' } });
   }));
 });

@@ -1,4 +1,4 @@
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, flatTableProjection } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
 import { downloadBlob } from '../api/blob-download.js';
 // @ts-check
 // Markdown generation module for ClipAIble extension
@@ -8,7 +8,7 @@ import { downloadBlob } from '../api/blob-download.js';
 // @typedef {import('../types.js').ProcessingState} ProcessingState
 
 import { log, logWarn, logDebug } from '../utils/logging.js';
-import { stripHtml, htmlToMarkdown, cleanTildaArtifactsFromText, escapeAttr } from '../utils/html.js';
+import { stripHtml, htmlToMarkdown, escapeAttr } from '../utils/html.js';
 import { getDocumentLocalization, formatDateForDisplay } from '../utils/config.js';
 import { sanitizeFilename } from '../utils/security.js';
 import { isCancelled } from '../state/processing.js';
@@ -111,11 +111,8 @@ export async function generateMarkdown(data, updateState) {
   const headings = [];
   for (const item of filteredContent) {
     if (item.type === 'heading' && item.level >= 1) {
-      let text = stripHtml(item.text || '');
-      if (text) {
-        text = cleanTildaArtifactsFromText(text);
-        if (text) headings.push({ text, level: item.level });
-      }
+      const text = stripHtml(item.text || '');
+      if (text) headings.push({ text, level: item.level });
     }
   }
   
@@ -176,47 +173,17 @@ export async function generateMarkdown(data, updateState) {
   }
   if (translatedDate) metaItems.push(`**${dateLabel}:** ${translatedDate}`);
   if (sourceUrl) {
-    // Extract only filename from URL (for local files, show just the filename)
-    // Improved regex-based extraction with URL decoding
-    let displaySource = sourceUrl;
-    try {
-      // Try regex extraction first (more reliable for file:// URLs)
-      const match = sourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
-      if (match) {
-        displaySource = decodeURIComponent(match[1]);
-        log('Markdown: Extracted filename from URL', {
-          original: sourceUrl.substring(0, 100),
-          extracted: displaySource
-        });
-      } else {
-        // Fallback to URL parsing
-        if (sourceUrl.startsWith('file://')) {
-          const urlObj = new URL(sourceUrl);
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || sourceUrl);
-        } else {
-          // For http/https URLs, extract filename from path
-          const urlObj = new URL(sourceUrl);
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          const filename = pathParts[pathParts.length - 1];
-          if (filename && filename.toLowerCase().endsWith('.pdf')) {
-            displaySource = decodeURIComponent(filename);
-          }
-        }
-      }
-    } catch (e) {
-      // If URL parsing fails, try simple extraction
-      const parts = sourceUrl.split('/');
-      const lastPart = parts[parts.length - 1].split('?')[0];
-      if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
-        try {
-          displaySource = decodeURIComponent(lastPart);
-        } catch (e2) {
-          displaySource = lastPart;
-        }
+    const localName = localDocumentName(sourceUrl);
+    let displaySource = localName ?? sourceUrl;
+    if (localName === null) {
+      try {
+        const filename = new URL(sourceUrl).pathname.split('/').at(-1);
+        if (filename?.toLowerCase().endsWith('.pdf')) displaySource = decodeURIComponent(filename);
+      } catch {
+        // Keep the web address when there is no usable PDF filename.
       }
     }
-    metaItems.push(`**${sourceLabel}:** ${displaySource}`);
+    if (displaySource) metaItems.push(`**${sourceLabel}:** ${displaySource}`);
   }
   
   if (metaItems.length > 0) {
@@ -252,78 +219,15 @@ export async function generateMarkdown(data, updateState) {
     markdown += '---\n\n';
   }
   
-  // Process content items (skip subtitle - already added)
-  let prevItemType = null;
-  for (let i = 0; i < filteredContent.length; i++) {
-    const item = filteredContent[i];
-    if (item.type === 'subtitle') {
-      continue;
-    }
-    
-    // Add appropriate spacing based on previous item type
-    const itemMarkdown = contentItemToMarkdown(item);
-    if (itemMarkdown) {
-      let cleanedMarkdown = itemMarkdown;
-      
-      // CRITICAL: No extra spacing between consecutive list items
-      // Lists already have proper spacing internally
-      if (prevItemType === 'list' && item.type === 'list') {
-        // Remove leading newlines from consecutive lists
-        cleanedMarkdown = cleanedMarkdown.replace(/^\n+/, '');
-      }
-      
-      // Ensure proper spacing after lists (before non-list items)
-      // CRITICAL: This must come AFTER the consecutive list check
-      if (prevItemType === 'list' && item.type !== 'list') {
-        // List followed by non-list - ensure blank line
-        // Heading already has \n before itself, so we need to add \n to get \n\n (blank line)
-        // Other items need \n before them
-        if (!cleanedMarkdown.startsWith('\n')) {
-          cleanedMarkdown = '\n' + cleanedMarkdown;
-        }
-      }
-      
-      // Ensure proper spacing before lists (if not after heading)
-      if (prevItemType !== 'heading' && prevItemType !== 'list' && item.type === 'list') {
-        // Non-heading, non-list followed by list - ensure blank line
-        if (!cleanedMarkdown.startsWith('\n')) {
-          cleanedMarkdown = '\n' + cleanedMarkdown;
-        }
-      }
-      
-      // FUNDAMENTAL: Adaptive spacing based on content type and context
-      // If previous was same type (e.g., two paragraphs in a row), ensure proper spacing
-      if (prevItemType === item.type && item.type === 'paragraph') {
-        // Two paragraphs in a row - ensure single blank line between them
-        if (!cleanedMarkdown.startsWith('\n')) {
-          cleanedMarkdown = '\n' + cleanedMarkdown;
-        }
-      }
-      
-      // CRITICAL: Remove extra newlines from headings ONLY if they weren't added by list spacing logic
-      // Headings already have \n before and \n\n after, so if previous item ended with \n\n,
-      // we'll get \n\n\n\n. But if previous was list, we need the blank line.
-      // Heading format: \n# Heading\n\n
-      // After list: we add \n, heading has \n, so we get \n\n# Heading\n\n (correct - blank line before heading)
-      if (item.type === 'heading' && prevItemType !== 'list' && cleanedMarkdown.startsWith('\n\n')) {
-        // Remove one leading newline if we have \n\n (heading already has \n before)
-        // But preserve if previous was list (we need blank line after list)
-        cleanedMarkdown = cleanedMarkdown.substring(1);
-      }
-      
-      markdown += cleanedMarkdown;
-      prevItemType = item.type;
-    }
+  // Place blank lines between blocks without rewriting their contents.
+  const blocks = [markdown.trimEnd()];
+  for (const item of filteredContent) {
+    if (item.type === 'subtitle') continue;
+    const body = contentItemToMarkdown(item).replace(/^\n+/, '').trimEnd();
+    if (body) blocks.push(body);
   }
-  
-  // Clean up extra newlines (max 2 consecutive newlines)
-  // IMPROVED: More aggressive cleanup - remove any sequence of 3+ newlines
-  // CRITICAL: Also remove empty lines between content (e.g., \n\n\n becomes \n\n)
-  markdown = markdown.replace(/\n{3,}/g, '\n\n');
-  // Remove empty lines that appear between headings and content
-  markdown = markdown.replace(/\n\n\n+/g, '\n\n');
-  markdown = markdown.trim() + '\n';
-  
+  markdown = blocks.filter(Boolean).join('\n\n') + '\n';
+
   log('Markdown generated', { length: markdown.length });
   
   if (updateState) updateState({ ...formatStatusUpdate('statusSavingFile', await getUILanguage()), progress: 95 });
@@ -705,7 +609,6 @@ function contentItemToMarkdown(item) {
         // Fallback to item text without formatting
         text = documentPlainText(item);
       }
-      text = cleanTildaArtifactsFromText(text);
       if (!text.trim()) return '';
       // Headings: one newline before, one after (will be cleaned up if needed)
       const anchor = item.id ? htmlToMarkdown(`<a id="${escapeAttr(item.id)}"></a>`) + '\n' : '';

@@ -4,6 +4,7 @@ import { initState } from '../../popup/core/state.js';
 import { initSummary } from '../../popup/core/summary.js';
 import { initKeyTheses } from '../../popup/core/key-theses.js';
 import { setupPanelHandlers } from '../../popup/handlers/panels.js';
+import { setupSummaryHandlers } from '../../popup/handlers/summary.js';
 import { setupKeyThesesHandlers } from '../../popup/handlers/key-theses.js';
 import { initUI } from '../../popup/ui.js';
 import { initModels } from '../../popup/settings/models.js';
@@ -19,16 +20,17 @@ beforeEach(() => { document.body.innerHTML = ''; });
 afterEach(() => { vi.useRealTimers(); });
 const noop = () => {};
 
-function generation(initializer, prefix) {
-  document.body.innerHTML = `<button id="generate"></button><section id="container"><div id="content"><div id="text"></div></div></section>`;
+function generation(initializer, prefix, translate = async key => key) {
+  document.body.innerHTML = '<button id="generate"></button><section id="container"><button id="close">Close</button><div id="content"><div id="text"></div></div></section>';
   const elements = {
     [prefix === 'summary' ? 'generateSummaryBtn' : 'generateKeyThesesBtn']: document.querySelector('#generate'),
+    [prefix === 'summary' ? 'summaryCloseBtn' : 'keyThesesCloseBtn']: document.querySelector('#close'),
     [prefix === 'summary' ? 'summaryContainer' : 'keyThesesContainer']: document.querySelector('#container'),
     [prefix === 'summary' ? 'summaryContent' : 'keyThesesContent']: document.querySelector('#content'),
     [prefix === 'summary' ? 'summaryText' : 'keyThesesText']: document.querySelector('#text')
   };
   const showToast = vi.fn();
-  const module = initializer({ elements, STORAGE_KEYS, t: async key => key,
+  const module = initializer({ elements, STORAGE_KEYS, t: translate,
     getUILanguage: async () => 'en', log: noop, logError: noop, logWarn: noop,
     showToast, markdownToHtmlFn: text => text, sanitizeMarkdownHtml: text => text });
   return { module, elements, showToast, check: prefix === 'summary' ? 'checkSummaryStatus' : 'checkKeyThesesStatus' };
@@ -97,6 +99,87 @@ for (const [initializer, prefix] of [[initSummary, 'summary'], [initKeyTheses, '
     await reopened.module[reopened.check]();
     expect(document.querySelector('#text').textContent).toBe('New successful result');
     expect((await chrome.storage.local.get(`${prefix}_text`))[`${prefix}_text`]).toBe('New successful result');
+  });
+}
+
+for (const [initializer, prefix, setup, labelKey] of [
+  [initSummary, 'summary', setupSummaryHandlers, 'generateSummary'],
+  [initKeyTheses, 'key_theses', setupKeyThesesHandlers, 'generateKeyTheses']
+]) {
+  it.each(['storage read', 'button translation'])(`${prefix} stays closed after a pending %s and displays the next result`, async waitingFor => {
+    const textKey = `${prefix}_text`;
+    const timestampKey = `${prefix}_saved_timestamp`;
+    await chrome.storage.local.set({ [textKey]: 'Previous result', [timestampKey]: 100 });
+    let hold = false;
+    let release;
+    let waiting;
+    const pause = new Promise(resolve => { release = resolve; });
+    const suspended = new Promise(resolve => { waiting = resolve; });
+    const translate = async key => {
+      if (hold && waitingFor === 'button translation' && key === labelKey) {
+        waiting();
+        await pause;
+      }
+      return key;
+    };
+    const { module, elements, check } = generation(initializer, prefix, translate);
+    setup({ elements, ...module });
+    await module[check]();
+    expect(document.querySelector('#text').textContent).toBe('Previous result');
+
+    const read = chrome.storage.local.get.getMockImplementation();
+    if (waitingFor === 'storage read') {
+      chrome.storage.local.get.mockImplementation(async keys => {
+        const data = await read(keys);
+        if (keys.length === 1 && keys[0] === `${prefix}_generating`) {
+          waiting();
+          await pause;
+        }
+        return data;
+      });
+    } else {
+      await chrome.storage.local.set({ [textKey]: 'Result awaiting display', [timestampKey]: 150 });
+    }
+    hold = true;
+    const pending = module[check]();
+    await suspended;
+    document.querySelector('#close').click();
+    await vi.waitFor(async () => expect((await read([textKey, timestampKey]))[textKey]).toBeUndefined());
+    hold = false;
+    release();
+    await pending;
+
+    expect(document.querySelector('#container').style.display).toBe('none');
+    expect(document.querySelector('#text').textContent).toBe('');
+    expect(await read([textKey, timestampKey])).toEqual({});
+    await chrome.storage.local.set({ [textKey]: 'Next result', [timestampKey]: 200 });
+    await module[check]();
+    expect(document.querySelector('#text').textContent).toBe('Next result');
+  });
+
+  it(`${prefix} stays closed while removing the dismissed result from storage`, async () => {
+    const textKey = `${prefix}_text`;
+    const timestampKey = `${prefix}_saved_timestamp`;
+    await chrome.storage.local.set({ [textKey]: 'Stored result', [timestampKey]: 100 });
+    let release;
+    const pendingRemoval = new Promise(resolve => { release = resolve; });
+    const remove = chrome.storage.local.remove.getMockImplementation();
+    chrome.storage.local.remove.mockImplementation(async keys => {
+      await pendingRemoval;
+      return remove(keys);
+    });
+
+    const { module, elements, check } = generation(initializer, prefix);
+    setup({ elements, ...module });
+    await module[check]();
+    document.querySelector('#close').click();
+    expect((await chrome.storage.local.get(textKey))[textKey]).toBe('Stored result');
+    await module[check]();
+    release();
+
+    expect(document.querySelector('#container').style.display).toBe('none');
+    expect(document.querySelector('#text').textContent).toBe('');
+    await vi.waitFor(async () => expect((await chrome.storage.local.get(textKey))[textKey]).toBeUndefined());
   });
 }
 

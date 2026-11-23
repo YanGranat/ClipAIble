@@ -438,163 +438,32 @@ export function groupConsecutiveListItems(elements, metrics = {}) {
         
         // Merged - no log needed (too verbose)
       } else {
-        // CRITICAL: Before creating a new list, check if element should be added as nested item
-        // This handles nested lists (e.g., bullet lists nested in ordered lists)
-        if (currentList && isNested && levelDiff > 0) {
-          // Element is nested within current list - add it as nested item
-          const itemText = extractListItemText(
-            element.text || '',
-            element.listPattern || 'bullet'
-          );
-          
-          if (!currentList.items) {
-            currentList.items = [];
-          }
-          
-          const nestedLevel = (currentList.listLevel || 0) + levelDiff;
-          
-          currentList.items.push({
+        // Emit the completed list before starting the next one.
+        if (currentList) {
+          processed.push(currentList);
+        }
+
+        // Start new list
+        const itemText = extractListItemText(
+          element.text || '',
+          element.listPattern || 'bullet'
+        );
+        
+        currentList = {
+          ...element,
+          listLevel: element.listLevel || 0, // Ensure level is set
+          // CRITICAL: Preserve ordered flag for markdown generation
+          ordered: element.ordered !== undefined ? element.ordered : (element.listType === 'ordered'),
+          items: [{
             text: itemText || element.text || '',
             pageNum: element.pageNum,
             columnIndex: element.columnIndex,
             minY: element.minY,
             maxY: element.maxY,
             minX: element.minX,
-            listLevel: nestedLevel,
-            parentIsOrdered: currentList.ordered || currentList.listType === 'ordered',
-            // CRITICAL: Preserve element's own list type (ordered/unordered) for markdown generation
-            isOrdered: element.ordered !== undefined ? element.ordered : (element.listType === 'ordered' || element.listType === 'numbered' || element.listType === 'roman')
-          });
-          
-          // Update list metadata
-          currentList.text = (currentList.text || '') + '\n' + (element.text || '');
-          if (element.pageNum && (!currentList.pageNum || element.pageNum > currentList.pageNum)) {
-            currentList.pageNum = element.pageNum;
-          }
-          if (element.maxY && (!currentList.maxY || element.maxY > currentList.maxY)) {
-            currentList.maxY = element.maxY;
-          }
-          if (element.minY && (!currentList.minY || element.minY < currentList.minY)) {
-            currentList.minY = element.minY;
-          }
-          
-          // Added nested item - no log needed (too verbose)
-          continue; // Skip creating new list
-        }
-        
-        // Check if we should continue a previous ordered list
-        // This handles the case where nested unordered lists appear between ordered list items
-        const elementIsOrdered = elementOrdered;
-        const elementLevel = element.listLevel || 0;
-        
-        // Look for the last ordered list in processed that matches this element's level
-        let previousOrderedList = null;
-        if (elementIsOrdered) {
-          // Check currentList first
-          if (currentList && currentListOrdered && (currentList.listLevel || 0) === elementLevel) {
-            previousOrderedList = currentList;
-          } else {
-            // Check processed lists (reverse order)
-            for (let j = processed.length - 1; j >= 0; j--) {
-              const prevEl = processed[j];
-              if (!sameListColumn(prevEl, element)) break;
-              if (prevEl.type === 'list') {
-                const prevText = (prevEl.text || '').trim();
-                const prevIsOrdered = /^\s*\d+[\.\)]\s+/.test(prevText);
-                const prevOrdered = prevEl.ordered !== undefined ? prevEl.ordered : 
-                                   (prevEl.listType === 'ordered' || prevEl.listType === 'numbered' || prevIsOrdered);
-                const prevLevel = prevEl.listLevel || 0;
-                
-                if (prevOrdered && prevLevel === elementLevel) {
-                  previousOrderedList = prevEl;
-                  break;
-                } else if (prevEl.type !== 'list') {
-                  // Stop searching if we hit a non-list element
-                  break;
-                }
-              } else {
-                // Stop searching if we hit a non-list element
-                break;
-              }
-            }
-          }
-        }
-        
-        if (previousOrderedList && elementIsOrdered) {
-          // Continue the previous ordered list
-          const itemText = extractListItemText(
-            element.text || '',
-            element.listPattern || 'bullet'
-          );
-          
-          if (!previousOrderedList.items) {
-            previousOrderedList.items = [];
-          }
-          
-          previousOrderedList.items.push({
-            text: itemText || element.text || '',
-            pageNum: element.pageNum,
-            columnIndex: element.columnIndex,
-            minY: element.minY,
-            maxY: element.maxY,
-            minX: element.minX,
-            listLevel: elementLevel
-          });
-          
-          // Update list metadata
-          previousOrderedList.text = (previousOrderedList.text || '') + '\n' + (element.text || '');
-          if (element.pageNum && (!previousOrderedList.pageNum || element.pageNum > previousOrderedList.pageNum)) {
-            previousOrderedList.pageNum = element.pageNum;
-          }
-          if (element.maxY && (!previousOrderedList.maxY || element.maxY > previousOrderedList.maxY)) {
-            previousOrderedList.maxY = element.maxY;
-          }
-          if (element.minY && (!previousOrderedList.minY || element.minY < previousOrderedList.minY)) {
-            previousOrderedList.minY = element.minY;
-          }
-          
-          // If previousOrderedList was in processed, we need to update it
-          // If it was currentList, we keep it as currentList
-          if (previousOrderedList !== currentList) {
-            // It was in processed, so we need to remove it and set it as currentList
-            const index = processed.indexOf(previousOrderedList);
-            if (index !== -1) {
-              processed.splice(index, 1);
-            }
-            currentList = previousOrderedList;
-          }
-          
-          log(`[PDF v3] groupConsecutiveListItems: Continued previous ordered list - listType=${previousOrderedList.listType || 'unknown'}, itemCount=${previousOrderedList.items.length}, itemText="${itemText.substring(0, 50)}"`);
-        } else {
-          // Save previous list and start new one
-          if (currentList) {
-            processed.push(currentList);
-          }
-          
-          // Start new list
-          const itemText = extractListItemText(
-            element.text || '',
-            element.listPattern || 'bullet'
-          );
-          
-          currentList = {
-            ...element,
-            listLevel: element.listLevel || 0, // Ensure level is set
-            // CRITICAL: Preserve ordered flag for markdown generation
-            ordered: element.ordered !== undefined ? element.ordered : (element.listType === 'ordered'),
-            items: [{
-              text: itemText || element.text || '',
-              pageNum: element.pageNum,
-              columnIndex: element.columnIndex,
-              minY: element.minY,
-              maxY: element.maxY,
-              minX: element.minX,
-              listLevel: element.listLevel || 0
-            }]
-          };
-          
-          // Started new list - no log needed (too verbose)
-        }
+            listLevel: element.listLevel || 0
+          }]
+        };
       }
     } else {
       // Not a list - save current list if exists and add element

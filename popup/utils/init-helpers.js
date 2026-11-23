@@ -486,26 +486,11 @@ export async function finalizeInitialization(modules, initAllCustomSelects, setC
     // Continue initialization even if startStatePolling fails
   }
   
-  // Load and display version
-  try {
-    const version = getExtensionVersion();
-    const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
-    if (versionElement) {
-      versionElement.textContent = `v${version}`;
-    }
-  } catch (error) {
-    logError('Failed to load version', error);
-    // Fallback: try to get from manifest directly
-    try {
-      const manifest = chrome.runtime.getManifest();
-      const version = manifest?.version || '3.3.10';
-      const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
-      if (versionElement) {
-        versionElement.textContent = `v${version}`;
-      }
-    } catch (fallbackError) {
-      // If all fails, leave the default from HTML.
-    }
+  const version = getExtensionVersion();
+  const versionElement = document.getElementById(ELEMENT_IDS.VERSION_TEXT);
+  if (versionElement && version) {
+    versionElement.textContent = `v${version}`;
+    versionElement.hidden = false;
+    versionElement.parentElement?.querySelector('.popup-footer-separator')?.removeAttribute('hidden');
   }
 }
-

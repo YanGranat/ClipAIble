@@ -105,16 +105,9 @@ export function processContent(elements, metrics, metadata, url, outline = null)
     // Validate hierarchy (ensure H1 > H2 > H3 order)
     const validatedHeadings = validateHeadingHierarchy(headingsWithLevels);
     
-    // Update elements with determined levels
-    const headingMap = new Map();
-    validatedHeadings.forEach(h => {
-      headingMap.set(h.text, h.level);
-    });
-    
-    groupedTableElements.forEach(el => {
-      if (el.type === 'heading' && headingMap.has(el.text)) {
-        el.level = headingMap.get(el.text);
-      }
+    // Validation preserves order. Identical labels may occur at different levels.
+    validatedHeadings.forEach((heading, index) => {
+      headings[index].level = heading.level;
     });
     
     const h1Count = validatedHeadings.filter(h => h.level === 1).length;

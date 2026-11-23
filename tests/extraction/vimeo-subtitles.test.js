@@ -78,6 +78,45 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
     expect((await extractVimeoSubtitles(7)).subtitles).toEqual([{ start: 1, duration: 2, text: 'Player caption.' }]);
   });
 
+  it('keeps actual cue timings from a video element', async () => {
+    delete dom.window.vimeoPlayerConfig;
+    const video = dom.window.document.createElement('video');
+    Object.defineProperty(video, 'textTracks', { value: [{
+      kind: 'captions', mode: 'showing', cues: [{ startTime: 4, endTime: 5.5, text: 'Native caption.' }]
+    }] });
+    dom.window.document.body.append(video);
+    expect((await extractVimeoSubtitles(7)).subtitles).toEqual([{ start: 4, duration: 1.5, text: 'Native caption.' }]);
+  });
+
+  it.each(['player state', 'page script'])('keeps timed captions supplied by the %s fallback', async source => {
+    delete dom.window.vimeoPlayerConfig;
+    const url = 'https://media.example.test/recording.vtt';
+    if (source === 'player state') {
+      dom.window.vimeoData = { video: { textTracks: [{ kind: 'captions', src: url }] } };
+    } else {
+      const script = dom.window.document.createElement('script');
+      script.type = 'application/json';
+      script.textContent = JSON.stringify({ textTracks: [{ src: url }] });
+      dom.window.document.body.append(script);
+    }
+    const result = await track('WEBVTT\n\n00:00:04.000 --> 00:00:05.500\nTracked caption.\n');
+    expect(result.subtitles).toEqual([{ start: 4, duration: 1.5, text: 'Tracked caption.' }]);
+    expect(fetchTrack).toHaveBeenCalledWith(url);
+  });
+
+  it('rejects visible page labels without any caption track or timed cue', async () => {
+    delete dom.window.vimeoPlayerConfig;
+    dom.window.document.body.insertAdjacentHTML('beforeend', `<main>
+      <p class="caption-menu">Playback settings</p>
+      <p class="subtitle-news">Subscribe for updates</p>
+      <p class="caption-accessibility">Accessibility controls</p>
+      <p class="caption-sidebar">Browse recommendations</p>
+      <p class="caption-note">Sign in to comment</p>
+    </main>`);
+    await expect(extractVimeoSubtitles(7)).rejects.toThrow('No subtitles found');
+    expect(fetchTrack).not.toHaveBeenCalled();
+  });
+
   it('preserves the original failure when metadata access throws in MAIN world', async () => {
     Object.defineProperty(dom.window.document, 'title', { get: () => { throw new Error('Metadata unavailable'); } });
     await expect(extractVimeoSubtitles(7)).rejects.toThrow('Metadata unavailable');

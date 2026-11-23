@@ -11,7 +11,7 @@ import { buildHtmlForPdf, applyCustomStyles } from './html-builder.js';
 import { putPrintJob, removePrintJob } from '../api/print-storage.js';
 import { downloadBlob } from '../api/blob-download.js';
 import { closeOwnedPrintTab } from '../api/print-lifecycle.js';
-import { getLocaleFromLanguage } from '../utils/config.js';
+import { formatDateForDisplay } from '../utils/config.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
@@ -91,32 +91,8 @@ export async function generatePdf(data, updateState) {
     throw error;
   }
   
-  // Preserve names and format dates without a separate generation request.
-  let translatedAuthor = author;
-  let formattedDate = publishDate || '';
-  
-  // Format ISO date to readable format before translation
-  if (formattedDate) {
-    const isoMatch = formattedDate.match(/^(\d{4})-(\d{2})-(\d{2})(T|$)/);
-    if (isoMatch) {
-      try {
-        const date = new Date(formattedDate);
-        if (!isNaN(date.getTime())) {
-      /** @type {Intl.DateTimeFormatOptions} */
-      const options = { year: 'numeric', month: 'long', day: 'numeric' };
-      const locale = getLocaleFromLanguage(language);
-      formattedDate = date.toLocaleDateString(locale, options);
-        } else {
-          formattedDate = `${isoMatch[3]} ${isoMatch[2]} ${isoMatch[1]}`;
-        }
-      } catch (e) {
-        formattedDate = `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]}`;
-      }
-    }
-    log('Date pre-formatted from ISO', { original: publishDate, formatted: formattedDate });
-  }
-  
-  translatedAuthor = cleanAuthor(author);
+  const formattedDate = formatDateForDisplay(publishDate, language);
+  const documentAuthor = cleanAuthor(author);
   
   try {
     if (updateState) {
@@ -208,7 +184,7 @@ export async function generatePdf(data, updateState) {
     log('=== CONTENT BEFORE BUILDING HTML ===', {
       contentItemsCount: filteredContent?.length || 0,
       title,
-      author: translatedAuthor,
+      author: documentAuthor,
       date: formattedDate,
       timestamp: Date.now()
     });
@@ -237,7 +213,7 @@ export async function generatePdf(data, updateState) {
     const htmlContent = buildHtmlForPdf(
       filteredContent,
       cleanedTitle,
-      translatedAuthor,
+      documentAuthor,
       styles,
       sourceUrl,
       formattedDate,

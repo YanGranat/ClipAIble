@@ -122,6 +122,20 @@ it('preserves rich script positions while keeping plain and code markup literal'
   expect(content).toEqual(original);
 });
 
+it.each(['code', 'paragraph'])('preserves exact fenced code whitespace in a %s item', async type => {
+  const code = 'let sample = gather();\n\n\n\n    record(sample);\n\n';
+  const fence = '```';
+  const fenced = `${fence}js\n${code}\n${fence}`;
+  const item = type === 'code' ? { type, language: 'js', text: code } : { type, text: fenced };
+  const content = [
+    { type: 'paragraph', text: 'First observation.' },
+    item,
+    { type: 'heading', level: 2, text: 'Final observations', id: 'closing' }
+  ];
+  const output = await generateMarkdown({ title: 'Measurements', content, language: 'en' });
+  expect(output).toBe(`# Measurements\n\nFirst observation.\n\n${fenced}\n\n<a id="closing"></a>\n## Final observations\n`);
+});
+
 it.each([
   [false, [['A', 'B'], ['C', 'D']], '|  |  |\n|---|---|\n| A | B |\n| C | D |'],
   [false, [['A'], ['B', 'C', 'D'], []], '|  |  |  |\n|---|---|---|\n| A |  |  |\n| B | C | D |\n|  |  |  |'],

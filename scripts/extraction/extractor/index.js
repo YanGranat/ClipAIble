@@ -117,7 +117,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         ? { element: selectedSubtitle || null, text: selectedSubtitle ? readArticleMetadataText(selectedSubtitle) : null }
         : extractStandfirst(mainContent);
       const readingRoots = [...new Set([...bodyRoots, ...media.roots, ...(standfirst.element ? [standfirst.element] : [])])];
-      const recommendationRegions = selection ? [] : bodyRoots.flatMap(findRecommendationRegions);
+      const recommendationRegions = bodyRoots.flatMap(findRecommendationRegions);
       const publisherIgnores = bodyRoots.flatMap(root => Array.from(root.querySelectorAll('.instapaper_body .instapaper_ignore')));
       const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions).concat(recommendationRegions, publisherIgnores);
       /** @type {ExtractionState} */
@@ -167,7 +167,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         if (!attempt?.content.length) attempt = alternative;
       }
     }
-    const content = attempt && (selection || attempt.hasReadingContent) ? attempt.content : [];
+    const content = attempt?.hasReadingContent ? attempt.content : [];
 
     // Final content types count
     if (debugInfo) {
@@ -186,7 +186,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       author: metadata.author,
       publishDate: metadata.publishDate,
       detectedLanguage,
-      ...(selection ? { selectorMatched: true } : {}),
+      ...(selection ? { selectorMatched: content.length > 0 } : {}),
       content,
       debugInfo
     };

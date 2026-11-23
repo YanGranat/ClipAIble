@@ -2,9 +2,8 @@ const escape = text => text.replace(/[\\()]/g, '\\$&');
 const text = (value, x, y, size = 12, font = 'F1') =>
   `BT /${font} ${size} Tf 1 0 0 1 ${x} ${y} Tm (${escape(value)}) Tj ET`;
 
-function table(rows, top) {
+function table(rows, top, widths = [150, 180, 174]) {
   const left = 48;
-  const widths = [150, 180, 174];
   const height = 28;
   const commands = [`0.92 g ${left} ${top - height} 504 ${height} re f 0 g`];
   for (let row = 0; row <= rows.length; row++) commands.push(`${left} ${top - row * height} m 552 ${top - row * height} l S`);
@@ -97,4 +96,41 @@ function encodePdf(objects, info) {
   const metadata = info ? ` /Info ${info} 0 R` : '';
   pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R${metadata} >>\nstartxref\n${xref}\n%%EOF\n`;
   return new TextEncoder().encode(pdf);
+}
+
+export const mixedLayoutOracle = {
+  title: 'Field measurements report',
+  introduction: 'A full width introduction explains how all measurements should be interpreted.',
+  conclusion: 'A full width conclusion summarizes independent observations and methods.',
+  rows: [['Measurement', 'Station'], ['17', 'Station A'], ['34', 'Station B']]
+};
+
+export function mixedLayoutLane(region, side, length = 7) {
+  return Array.from({ length }, (_, index) => `${region} ${side} ${index + 1} records the measured level.`);
+}
+
+/** A full-width ruled table between two independently flowing regions. */
+export function createMixedLayoutPdf(lowerRightLength = 7) {
+  const { title, introduction, conclusion, rows } = mixedLayoutOracle;
+  const drawLanes = (region, top, rightLength) => ['Left', 'Right'].flatMap((side, index) =>
+    mixedLayoutLane(region, side, index === 0 ? 7 : rightLength)
+      .map((record, row) => text(record, index === 0 ? 48 : 327, top - row * 14, 11))
+  );
+  const stream = [
+    text(title, 48, 776, 21, 'F2'),
+    text(introduction, 48, 750, 12),
+    ...drawLanes('Upper', 726, 7),
+    table(rows, 510, [242, 262]),
+    ...drawLanes('Lower', 401, lowerRightLength),
+    text(conclusion, 48, 256, 14)
+  ].join('\n');
+  return encodePdf([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+    `<< /Title (${title}) >>`
+  ], 7);
 }

@@ -4,6 +4,27 @@
 
 import { getDocumentReadyMessage } from '../../scripts/locales.js';
 
+function requestProcessingState() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ action: 'getState' }, response => {
+      const transportError = chrome.runtime.lastError;
+      if (transportError) {
+        reject(new Error(transportError.message));
+      } else if (response?.success === false) {
+        resolve({
+          isProcessing: false,
+          error: response.error || 'Unable to read processing state',
+          errorCode: response.errorCode,
+          errorTranslationKey: response.translationKey,
+          errorTranslationParams: response.translationParams
+        });
+      } else {
+        resolve(typeof response?.isProcessing === 'boolean' ? response : null);
+      }
+    });
+  });
+}
+
 /**
  * Initialize state module
  * @param {Object} deps - Dependencies
@@ -189,15 +210,7 @@ export function initState(deps) {
     // IMPROVED: Try both SW and storage in parallel for better reliability
     const [swState, storageState] = await Promise.allSettled([
       // Try to get state from service worker
-      new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage({ action: 'getState' }, (response) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-            return;
-          }
-          resolve(response);
-        });
-      }),
+      requestProcessingState(),
       // Try to get state from storage (fallback)
       chrome.storage.local.get(['processingState']).then(result => result.processingState || null)
     ]);
@@ -361,15 +374,8 @@ export function initState(deps) {
       try {
         // For non-audio, use normal polling
         // Use callback-based API to properly handle lastError
-        const state = await new Promise((resolve, reject) => {
-          chrome.runtime.sendMessage({ action: 'getState' }, (response) => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
-            resolve(response);
-          });
-        });
+        const state = await requestProcessingState();
+        if (!state) throw new Error('Processing state is unavailable');
         
         // Use lightweight comparison instead of JSON.stringify
         const changed = stateChanged(state, lastState);

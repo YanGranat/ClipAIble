@@ -14,6 +14,48 @@ function localizedError(key, language, params = {}) {
   return Object.assign(new Error(tSync(key, language, params)), { translationKey: key, translationParams: params });
 }
 
+function findAudioPart(event, outputs, create) {
+  const { item_id: itemId, output_index: outputIndex, content_index: contentIndex } = event;
+  if (typeof itemId !== 'string' || !itemId || !Number.isSafeInteger(outputIndex) || outputIndex < 0 ||
+      !Number.isSafeInteger(contentIndex) || contentIndex < 0) return null;
+  let output = outputs.get(outputIndex);
+  if (!output && create) {
+    output = { itemId, parts: new Map() };
+    outputs.set(outputIndex, output);
+  }
+  if (output?.itemId !== itemId) return null;
+  let part = output.parts.get(contentIndex);
+  if (!part && create) {
+    part = { chunks: [], bytes: 0, done: false };
+    output.parts.set(contentIndex, part);
+  }
+  return part || null;
+}
+
+/** Check observed parts and reconcile any audio descriptors in the terminal response. */
+function getCompletedAudioParts(outputs, metadata) {
+  const ordered = [];
+  for (const [outputIndex, output] of [...outputs].sort(([a], [b]) => a - b)) {
+    const item = metadata?.[outputIndex];
+    if (metadata?.length && (item?.id !== output.itemId || (item.type && item.type !== 'message') ||
+        (item.role && item.role !== 'assistant') || item.status === 'incomplete' || item.status === 'in_progress')) return null;
+    for (const [contentIndex, part] of [...output.parts].sort(([a], [b]) => a - b)) {
+      const descriptor = item?.content?.[contentIndex];
+      if (!part.done || !part.bytes || part.bytes % 2 || (descriptor?.type && descriptor.type !== 'output_audio')) return null;
+      ordered.push(part);
+    }
+  }
+  if (Array.isArray(metadata)) {
+    for (const [outputIndex, item] of metadata.entries()) {
+      if (!Array.isArray(item?.content)) continue;
+      for (const [contentIndex, descriptor] of item.content.entries()) {
+        if (descriptor?.type === 'output_audio' && !outputs.get(outputIndex)?.parts.has(contentIndex)) return null;
+      }
+    }
+  }
+  return ordered.length ? ordered : null;
+}
+
 export function validateOpenAiVoice(voice = DEFAULT_OPENAI_TTS_VOICE, language = 'en') {
   if (!OPENAI_TTS_VOICES.includes(voice)) {
     throw localizedError('errorOpenaiVoiceUnavailable', language, { voice: String(voice) });
@@ -52,7 +94,9 @@ export async function textToSpeech(text, apiKey, options = {}) {
     }, Math.max(1, deadline - Date.now()), { checkCancelled });
   } catch (error) {
     await checkCancelled();
-    if (error.name === 'AbortError') throw Object.assign(localizedError('errorTtsTimeout', language), { name: 'AbortError' });
+    if (['AbortError', 'TimeoutError'].includes(error.name)) {
+      throw Object.assign(localizedError('errorTtsTimeout', language), { name: error.name, retryable: false });
+    }
     throw Object.assign(localizedError('errorTtsConnectionFailed', language), { status: 503 });
   } finally { clearInterval(authCancellation); }
   await checkCancelled();
@@ -71,9 +115,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
     let settled = false;
     let started = false;
     let responseId;
-    let audioDone = false;
     let totalBytes = 0;
-    const chunks = [];
+    const outputs = new Map();
     let cancellationPending = false;
     let timeout;
     let cancellation;
@@ -87,7 +130,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
         socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
         try { socket.close(); } catch { /* The connection may already be closed. */ }
       }
-      chunks.length = 0;
+      outputs.clear();
       error ? reject(error) : resolve(audio);
     };
     const fail = key => {
@@ -125,9 +168,10 @@ export async function textToSpeech(text, apiKey, options = {}) {
             } }));
           } else if (data.type === 'response.created' && started && !responseId) {
             responseId = data.response?.id;
-            if (!responseId) fail('errorTtsInvalidAudio');
+            if (typeof responseId !== 'string' || !responseId) fail('errorTtsInvalidAudio');
           } else if (data.type === 'response.output_audio.delta') {
-            if (!responseId || data.response_id !== responseId || audioDone || typeof data.delta !== 'string') {
+            const part = responseId && data.response_id === responseId ? findAudioPart(data, outputs, true) : null;
+            if (!part || part.done || typeof data.delta !== 'string') {
               fail('errorTtsInvalidAudio');
               return;
             }
@@ -137,19 +181,26 @@ export async function textToSpeech(text, apiKey, options = {}) {
               return;
             }
             const bytes = Uint8Array.from(decoded, character => character.charCodeAt(0));
-            chunks.push(bytes);
+            part.chunks.push(bytes);
+            part.bytes += bytes.byteLength;
             totalBytes += bytes.byteLength;
           } else if (data.type === 'response.output_audio.done') {
-            if (!responseId || data.response_id !== responseId || audioDone) { fail('errorTtsInvalidAudio'); return; }
-            audioDone = true;
+            const part = responseId && data.response_id === responseId ? findAudioPart(data, outputs, false) : null;
+            if (!part || part.done) { fail('errorTtsInvalidAudio'); return; }
+            part.done = true;
           } else if (data.type === 'response.done') {
-            if (!responseId || data.response?.id !== responseId || data.response.status !== 'completed' || !audioDone || !totalBytes) {
+            const response = data.response;
+            const parts = responseId && response?.id === responseId && response.status === 'completed'
+              ? getCompletedAudioParts(outputs, response.output) : null;
+            if (!parts) {
               fail('errorTtsIncomplete');
               return;
             }
             const pcm = new Uint8Array(totalBytes);
             let offset = 0;
-            for (const chunk of chunks) { pcm.set(chunk, offset); offset += chunk.length; }
+            for (const part of parts) {
+              for (const chunk of part.chunks) { pcm.set(chunk, offset); offset += chunk.length; }
+            }
             finish(null, pcmToWav(pcm.buffer, SAMPLE_RATE));
           } else if (data.type === 'error') {
             const code = data.error?.code;

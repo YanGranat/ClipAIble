@@ -1,6 +1,6 @@
 import { imageDataError } from '../utils/html/image-bytes.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent, localDocumentName } from './document-content.js';
 // @ts-check
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
@@ -288,7 +288,7 @@ function generateContainerXml() {
 function generateContentOpf(bookId, title, author, lang, pubDate, sourceUrl, generateToc) {
   const escapedTitle = escapeXml(title);
   const escapedAuthor = escapeXml(author);
-  const escapedSource = escapeXml(sourceUrl);
+  const escapedSource = escapeXml(localDocumentName(sourceUrl) ?? sourceUrl);
   
   // Content always first, then nav (TOC) if enabled
   const navInSpine = generateToc ? '\n    <itemref idref="nav"/>' : '';
@@ -455,33 +455,9 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   }
   
   if (sourceUrl) {
-    // For local PDF files, show "Source:" label with filename (no link)
-    const isLocalPdf = sourceUrl.startsWith('file://') && sourceUrl.toLowerCase().includes('.pdf');
-    if (isLocalPdf) {
-      // Extract filename from file:// URL
-      let displaySource = sourceUrl;
-      try {
-        const match = sourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
-        if (match) {
-          displaySource = decodeURIComponent(match[1]);
-        } else if (sourceUrl.startsWith('file://')) {
-          const urlObj = new URL(sourceUrl);
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || sourceUrl);
-        }
-      } catch (e) {
-        const parts = sourceUrl.split('/');
-        const lastPart = parts[parts.length - 1].split('?')[0];
-        if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
-          try {
-            displaySource = decodeURIComponent(lastPart);
-          } catch (e2) {
-            displaySource = lastPart;
-          }
-        }
-      }
-      // Show localized "Source:" label with filename (not hardcoded, uses sourceLabel from localization)
-      headerHtml += `\n    <p class="source">${escapeXml(sourceLabel)}: ${escapeXml(displaySource)}</p>`;
+    const localName = localDocumentName(sourceUrl);
+    if (localName !== null) {
+      if (localName) headerHtml += `\n    <p class="source">${escapeXml(sourceLabel)}: ${escapeXml(localName)}</p>`;
     } else {
       // For non-local files, show "Source:" label with link
       headerHtml += `\n    <p class="source">${sanitizeHtmlForXhtml(`<a href="${escapeXml(sourceUrl)}">${escapeXml(sourceLabel)}</a>`, sourceUrl)}</p>`;

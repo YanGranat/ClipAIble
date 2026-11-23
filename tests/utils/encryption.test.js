@@ -135,6 +135,47 @@ describe('decrypted key cache', () => {
     expect(decrypt).toHaveBeenCalledTimes(3);
   });
 
+  it('does not restore a cached key when decryption finishes after a clear', async () => {
+    const encrypted = await encryptApiKey(plaintext);
+    const realDecrypt = webcrypto.subtle.decrypt.bind(webcrypto.subtle);
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const decrypt = vi.spyOn(webcrypto.subtle, 'decrypt').mockImplementationOnce(async (...args) => {
+      await pending;
+      return realDecrypt(...args);
+    });
+    const reading = getDecryptedKeyCached(encrypted, 'openai');
+    try {
+      await vi.waitFor(() => expect(decrypt).toHaveBeenCalledOnce());
+      clearDecryptedKeyCache();
+    } finally {
+      release();
+    }
+    await expect(reading).resolves.toBe(plaintext);
+    await getDecryptedKeyCached(encrypted, 'openai');
+    expect(decrypt).toHaveBeenCalledTimes(2);
+  });
+
+  it('expires the first cached key within the maximum lifetime during continued inserts', async () => {
+    const encrypted = await encryptApiKey(plaintext);
+    const decrypt = vi.spyOn(webcrypto.subtle, 'decrypt');
+    vi.useFakeTimers();
+    try {
+      await getDecryptedKeyCached(encrypted, 'openai');
+      for (const provider of ['claude', 'gemini', 'deepseek']) {
+        await vi.advanceTimersByTimeAsync(9 * 60_000);
+        await getDecryptedKeyCached(encrypted, provider);
+      }
+      expect(decrypt).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      await getDecryptedKeyCached(encrypted, 'openai');
+      expect(decrypt).toHaveBeenCalledTimes(5);
+    } finally {
+      clearDecryptedKeyCache();
+      vi.useRealTimers();
+    }
+  });
+
   it('reads a long unmarked key without mutating stored provider settings', async () => {
     const key = 'a1'.repeat(32);
     expect(await getDecryptedKeyCached(key, 'deepseek')).toBe(key);

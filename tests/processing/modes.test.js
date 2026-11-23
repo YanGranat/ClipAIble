@@ -247,17 +247,15 @@ describe('processing/modes', () => {
 
   describe('processWithSelectorMode', () => {
     it('should process content with selector mode using cached selectors', async () => {
-      const { getCachedSelectors } = await import('../../scripts/cache/selectors.js');
+      const { getCachedSelectors, markCacheSuccess } = await import('../../scripts/cache/selectors.js');
       const cachedSelectors = {
         articleContainer: '.article',
         content: '.article-body',
         title: 'h1'
       };
       
-      getCachedSelectors.mockResolvedValueOnce({
-        selectors: cachedSelectors,
-        successCount: 1
-      });
+      const observed = { selectors: cachedSelectors, successCount: 1, revision: Symbol() };
+      getCachedSelectors.mockResolvedValueOnce(observed);
 
       const mockExtractResult = {
         title: 'Test Title',
@@ -293,13 +291,12 @@ describe('processing/modes', () => {
       expect(result.title).toBe('Test Title');
       expect(result.content).toHaveLength(2);
       expect(getCachedSelectors).toHaveBeenCalledWith('https://example.com');
+      expect(markCacheSuccess).toHaveBeenCalledWith('https://example.com', observed);
     });
 
     it('should process content with selector mode without cache', async () => {
       const { getCachedSelectors } = await import('../../scripts/cache/selectors.js');
       const { callAI } = await import('../../scripts/api/index.js');
-      
-      getCachedSelectors.mockResolvedValueOnce(null);
 
       const mockSelectors = {
         articleContainer: '.article',
@@ -338,6 +335,7 @@ describe('processing/modes', () => {
 
       expect(result.title).toBe('Test Title');
       expect(callAI).toHaveBeenCalled();
+      expect(getCachedSelectors).not.toHaveBeenCalled();
     });
 
     it('should throw error if HTML is missing', async () => {
@@ -379,65 +377,23 @@ describe('processing/modes', () => {
       ).rejects.toThrow('No tab ID');
     });
 
-    it('should invalidate cache if extraction fails with cached selectors', async () => {
+    it('keeps cached selectors when the page script fails independently of the selectors', async () => {
       const { getCachedSelectors, invalidateCache } = await import('../../scripts/cache/selectors.js');
-      
-      // Clear previous calls and reset mocks
-      invalidateCache.mockReset();
-      getCachedSelectors.mockReset();
-      
-      const cachedSelectors = { 
-        articleContainer: '.article', 
-        content: '.content',
-        title: 'h1',
-        author: '',
-        publishDate: ''
-      };
-      // Make sure mock returns the cached selectors
-      getCachedSelectors.mockImplementation(async () => ({
-        selectors: cachedSelectors,
-        successCount: 1
-      }));
+      const selectors = { articleContainer: '.article', content: '.content' };
+      getCachedSelectors.mockResolvedValueOnce({ selectors, successCount: 1, revision: Symbol() });
+      global.chrome.tabs.get.mockResolvedValueOnce({ url: 'https://example.com', id: 1 });
+      global.chrome.scripting.executeScript.mockResolvedValueOnce([{ result: { error: 'Extraction failed' } }]);
 
-      // First call for URL verification in extractContentWithSelectors
-      global.chrome.tabs.get.mockResolvedValueOnce({
+      await expect(processWithSelectorMode({
+        html: '<html>Content</html>',
         url: 'https://example.com',
-        id: 1
-      });
-
-      // Make extractContentWithSelectors throw an error by returning result with error
-      // This will cause extractContentWithSelectors to throw "Script error: Extraction failed"
-      global.chrome.scripting.executeScript.mockResolvedValueOnce([{
-        result: { error: 'Extraction failed' }
-      }]);
-
-      const extractFromPageInlined = vi.fn();
-
-      try {
-        await processWithSelectorMode({
-          html: '<html>Content</html>',
-          url: 'https://example.com',
-          title: 'Title',
-          apiKey: 'key',
-          model: 'gpt-4',
-          tabId: 1,
-          useCache: true
-        }, extractFromPageInlined);
-        // Should not reach here
-        expect.fail('Should have thrown an error');
-      } catch (error) {
-        // Expected error - any error is fine, we just need to verify cache invalidation
-        expect(error).toBeDefined();
-      }
-
-      // Verify getCachedSelectors was called (to ensure cache was checked)
+        title: 'Title',
+        apiKey: 'key',
+        model: 'gpt-4',
+        tabId: 1
+      }, vi.fn())).rejects.toThrow('Script error: Extraction failed');
       expect(getCachedSelectors).toHaveBeenCalledWith('https://example.com');
-      
-      // Verify cache was invalidated when extraction failed with cached selectors
-      // invalidateCache is called inside the catch block when fromCache is true
-      // Note: This test verifies that if cached selectors are used and extraction fails,
-      // the cache is invalidated. If fromCache is not true, invalidateCache won't be called.
-      expect(invalidateCache).toHaveBeenCalledWith('https://example.com');
+      expect(invalidateCache).not.toHaveBeenCalled();
     });
 
     it('should cache selectors after successful extraction', async () => {

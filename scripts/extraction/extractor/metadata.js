@@ -80,56 +80,67 @@ export function getMonthNumber(monthName) {
     'november': '11', 'nov': '11',
     'december': '12', 'dec': '12'
   };
-  return months[monthName.toLowerCase()] || null;
+  const name = monthName.toLowerCase();
+  return Object.hasOwn(months, name) ? months[name] : null;
+}
+
+/** @param {string} date - A complete calendar date in YYYY-MM-DD form. */
+function validatedCalendarDate(date) {
+  const value = new Date(`${date}T00:00:00Z`);
+  return Number.isFinite(value.getTime()) && value.toISOString().slice(0, 10) === date ? date : null;
 }
 
 /**
  * Parse various date formats to ISO format
- * @param {string} dateStr - Date string
+ * @param {string|null} dateStr - Date string
  * @returns {string|null} - ISO date (YYYY-MM-DD, YYYY-MM, or YYYY) or null
  */
 export function parseDateToISO(dateStr) {
-  if (!dateStr) return null;
-  
-  // Already ISO format
-  const isoMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoMatch) return isoMatch[0];
-  const partialIsoMatch = dateStr.match(/^\d{4}(?:-(0[1-9]|1[0-2]))?$/);
-  if (partialIsoMatch) return partialIsoMatch[0];
-  
-  // Try Date object
-  try {
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
+  const input = dateStr?.trim();
+  if (!input) return null;
+
+  const isoMatch = input.match(/^\d{4}-\d{2}-\d{2}(?=$|[Tt\s])/);
+  if (isoMatch) return validatedCalendarDate(isoMatch[0]);
+  if (/^\d{4}(?:-\d{2})?$/.test(input)) {
+    return /^\d{4}(?:-(?:0[1-9]|1[0-2]))?$/.test(input) ? input : null;
+  }
+
+  const namedDate = input.match(/\b(?<day>\d{1,2})(?:st|nd|rd|th)?\s+(?<name>[a-z]+)\s+(?<year>\d{4})\b/i) ||
+    input.match(/\b(?<name>[a-z]+)\s+(?<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?<year>\d{4})\b/i);
+  if (namedDate?.groups) {
+    const { day, name, year } = namedDate.groups;
+    const month = getMonthNumber(name);
+    if (month) return validatedCalendarDate(`${year}-${month}-${day.padStart(2, '0')}`);
+  }
+
+  const monthYear = input.match(/^(?:published\s+(?:in\s+)?)?([a-z]+)\s+(\d{4})$/i);
+  if (monthYear) {
+    const month = getMonthNumber(monthYear[1]);
+    if (month) return `${monthYear[2]}-${month}`;
+  }
+
+  const date = new Date(input);
+  if (!Number.isFinite(date.getTime())) return null;
+  const year = String(date.getFullYear()).padStart(4, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return validatedCalendarDate(`${year}-${month}-${day}`);
+}
+
+/** @param {Document|Element} root @param {string[]} selectors */
+function readPublicationDate(root, selectors) {
+  for (const selector of selectors) {
+    for (const element of root.querySelectorAll(selector)) {
+      const parsed = readDateElement(element);
+      if (parsed) return parsed;
     }
-  } catch (e) { }
-  
-  // Ordinal format: "31st Jul 2007"
-  const ordinalMatch = dateStr.match(/(\d{1,2})(?:st|nd|rd|th)?\s+(\w+)\s+(\d{4})/i);
-  if (ordinalMatch) {
-    const day = ordinalMatch[1].padStart(2, '0');
-    const month = getMonthNumber(ordinalMatch[2]);
-    const year = ordinalMatch[3];
-    if (month) return `${year}-${month}-${day}`;
   }
-  
-  // Month year: "December 2025"
-  const monthYearMatch = dateStr.match(/(\w+)\s+(\d{4})/i);
-  if (monthYearMatch) {
-    const month = getMonthNumber(monthYearMatch[1]);
-    const year = monthYearMatch[2];
-    if (month) return `${year}-${month}`;
-  }
-  
-  // Year only: "2025"
-  const yearMatch = dateStr.match(/^(\d{4})$/);
-  if (yearMatch) return yearMatch[1];
-  
-  return null;
+  return '';
+}
+
+/** @param {Element} element */
+function readDateElement(element) {
+  return parseDateToISO(element.getAttribute('content') || element.getAttribute('datetime') || element.textContent);
 }
 
 /** Read publication metadata from the structured record owned by this page. */
@@ -380,42 +391,25 @@ export function extractMetadata(doc, baseUrl, titleElement = findArticleTitleEle
     }
   }
   
-  // Date extraction
-  const dateSelectors = [
+  metadata.publishDate = readPublicationDate(doc, [
     'meta[property="article:published_time"]',
     'meta[name="datePublished"]',
-    'meta[name="date"]',
     'meta[name="citation_date"]',
-    'time[datetime]',
-    'time[pubdate]',
     '[itemprop="datePublished"]',
-    '.published', '.date', '.meta-date'
-  ];
-  
-  for (const selector of dateSelectors) {
-    try {
-      const element = doc.querySelector(selector);
-      if (element) {
-        let dateValue = '';
-        
-        if (element.tagName === 'META') {
-          dateValue = element.getAttribute('content') || '';
-        } else if (element.tagName === 'TIME') {
-          dateValue = element.getAttribute('datetime') || element.textContent || '';
-        } else {
-          dateValue = (element.textContent || '').trim();
-        }
-        
-        const parsed = parseDateToISO(dateValue);
-        if (parsed) {
-          metadata.publishDate = parsed;
-          break;
-        }
-      }
-    } catch (e) { }
+    'time[pubdate]'
+  ]) || structured.publishDate || readPublicationDate(doc, ['meta[name="date"]']);
+
+  if (!metadata.publishDate) {
+    const article = titleElement?.closest('article, main');
+    const titleHeader = titleElement?.closest('header');
+    const header = article?.contains(titleHeader) ? titleHeader : article?.querySelector(':scope > header');
+    if (header) metadata.publishDate = readPublicationDate(header, ['time[datetime]', '.published', '.date', '.meta-date']);
+    if (!metadata.publishDate && article) {
+      const next = titleElement?.nextElementSibling;
+      metadata.publishDate = (next?.matches('time[datetime],.published,.meta-date') && readDateElement(next)) ||
+        readPublicationDate(article, [':scope > .published', ':scope > .meta-date']);
+    }
   }
-  
-  if (!metadata.publishDate) metadata.publishDate = structured.publishDate;
   return metadata;
 }
 

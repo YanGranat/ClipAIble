@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createInterleavedGraphicsPdf, createStructurePdf, structureOracle } from '../helpers/pdf-fixture.js';
+import { createInterleavedGraphicsPdf, createMixedLayoutPdf, createStructurePdf, mixedLayoutLane, mixedLayoutOracle, structureOracle } from '../helpers/pdf-fixture.js';
 import { createReadingOrderPdf, readingOrderOracle } from '../helpers/pdf-reading-order.js';
 import { createCapturePagesPdf, capturePageOracle } from '../helpers/pdf-capture-pages.js';
 import { installPdfTestCompatibility } from '../helpers/pdf-test-compatibility.js';
@@ -85,6 +85,20 @@ describe('PDF structure conservation with the packaged parser', () => {
     expect(result.content.map(element => element.pageNum)).toEqual([1, 1, 1, 3, 3, 3, 3]);
   });
 
+
+  it.each([7, 9])('keeps the full-width table between independently flowing text regions (%s lower-right lines)', async lowerRightLength => {
+    vi.stubGlobal('document', {});
+    const { title, introduction, conclusion, rows } = mixedLayoutOracle;
+    const result = await extractPdfContent('https://example.test/layout.pdf', createMixedLayoutPdf(lowerRightLength).buffer);
+    const tables = result.content.filter(item => item.type === 'table');
+    expect(tables.map(table => table.rows)).toEqual([rows]);
+    expect(result.title).toBe(title);
+    const text = result.content.map(item => item.text).join(' ').replace(/\s+/g, ' ');
+    expect(text).toBe([
+      title, introduction, ...mixedLayoutLane('Upper', 'Left'), ...mixedLayoutLane('Upper', 'Right'),
+      rows.flat().join(' '), ...mixedLayoutLane('Lower', 'Left'), ...mixedLayoutLane('Lower', 'Right', lowerRightLength), conclusion
+    ].join(' '));
+  });
   it('places image-only inserts from a mixed document between the original text pages', async () => {
     vi.stubGlobal('document', {});
     const preserveImagePage = vi.fn(async (page, pageNum) => {

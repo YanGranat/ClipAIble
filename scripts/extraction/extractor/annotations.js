@@ -3,6 +3,8 @@ import { getDocumentFragmentTarget, isDocumentNoteReference, isSourceExcluded, c
 
 const CONTROL_REGION = 'nav,form,input,select,textarea,[role="menu"],[role="menubar"],[role="listbox"],[role="tablist"],[role="navigation"]';
 const CITATION_REFERENCE = '[role="doc-biblioref"],[epub\\:type~="biblioref"],[rel~="citation"],[data-citation],.cite-ref';
+const NOTE_REGION = '[popover],[role~="doc-footnote"],[role~="doc-endnote"],[epub\\:type~="footnote"],[epub\\:type~="endnote"]';
+const NOTE_REFERENCE = '[role~="doc-noteref"],[epub\\:type~="noteref"],[data-footnote-ref]';
 
 function isAuthoredAnnotation(target) {
   return !!target && !target.matches(CONTROL_REGION) && !target.querySelector(CONTROL_REGION);
@@ -92,6 +94,8 @@ export function getAnnotationTarget(reference) {
     for (const id of (reference.getAttribute(attribute) || '').split(/\s+/).filter(Boolean)) {
       const target = reference.ownerDocument.getElementById(id);
       if (!isAuthoredAnnotation(target) || target.contains(reference)) continue;
+      if (attribute !== 'popovertarget' && !target.closest(NOTE_REGION) &&
+          !reference.matches(`${NOTE_REFERENCE},${CITATION_REFERENCE}`)) continue;
       if (target.textContent?.trim() && (target.matches('p,li,blockquote,pre,[popover]') || target.querySelector('p,li,blockquote,pre'))) return target;
     }
   }

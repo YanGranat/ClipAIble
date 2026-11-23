@@ -45,7 +45,7 @@ function getDefaultStats() {
 }
 
 /** Restore valid stored fields and default malformed optional statistics. */
-export function normalizeStats(value) {
+function normalizeStats(value) {
   const defaults = getDefaultStats();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
   const nonnegative = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -73,9 +73,7 @@ export function normalizeStats(value) {
  */
 export async function loadStats() {
   try {
-    const result = await chrome.storage.local.get([STORAGE_KEY]);
-    const stats = result[STORAGE_KEY];
-    return normalizeStats(stats);
+    return await readStats();
   } catch (error) {
     logError('Failed to load stats', error);
     return getDefaultStats();
@@ -93,6 +91,15 @@ async function saveStats(stats) {
     logError('Failed to save stats', error);
     throw error; // Re-throw to let caller handle it
   }
+}
+
+async function readStats() {
+  const result = await chrome.storage.local.get([STORAGE_KEY]);
+  return normalizeStats(result[STORAGE_KEY]);
+}
+
+export function replaceStats(value) {
+  return mutateStats(() => saveStats(normalizeStats(value)));
 }
 
 /**
@@ -153,7 +160,7 @@ async function recordSaveUnlocked(data) {
     
     log(`📊 Recording statistics: ${format.toUpperCase()} saved`, { title, processingTime: `${(processingTime / 1000).toFixed(1)}s` });
     
-    const stats = await loadStats();
+    const stats = await readStats();
     
     // Update counters
     stats.totalSaved++;
@@ -274,7 +281,7 @@ export async function clearStats() {
 export function deleteHistoryItem(item) {
   return mutateStats(async () => {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return;
-    const stats = await loadStats();
+    const stats = await readStats();
     const fields = ['title', 'url', 'format', 'date', 'domain', 'processingTime'];
     const index = stats.history.findIndex(current => typeof item.id === 'string' && item.id
       ? current.id === item.id

@@ -1,7 +1,7 @@
 import { imageDataError } from '../utils/html/image-bytes.js';
 import { fb2ListParagraphs } from './fb2-list.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, flatTableProjection } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
 // @ts-check
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
@@ -10,7 +10,7 @@ import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listH
 // @typedef {import('../types.js').GenerationData} GenerationData
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { stripHtml, htmlToMarkdown, markdownToHtml, cleanTildaArtifactsFromText, sanitizeHtml } from '../utils/html.js';
+import { stripHtml, htmlToMarkdown, markdownToHtml, sanitizeHtml } from '../utils/html.js';
 import { imageToBase64, processImagesInBatches } from '../utils/images.js';
 import { getDocumentLocalization, getDocumentLanguageTag, formatDateForDisplay, getLocaleFromLanguage, getExtensionVersion } from '../utils/config.js';
 import { getUILanguage, tSync, formatStatusUpdate } from '../locales.js';
@@ -73,8 +73,7 @@ export async function generateFb2(data, updateState) {
   (filteredContent || []).forEach((item, index) => {
     // Log ALL heading items for debugging
     if (item.type === 'heading') {
-      let text = documentPlainText(item, sourceUrl);
-      text = cleanTildaArtifactsFromText(text) || text;
+      const text = documentPlainText(item, sourceUrl);
       allHeadings.push({
         index,
         level: item.level,
@@ -364,6 +363,8 @@ function parseBase64Image(base64) {
  */
 function generateDescription(title, author, lang, pubDate, sourceUrl, docId) {
   const escapedTitle = escapeXml(title);
+  const version = getExtensionVersion();
+  const programUsed = version ? `ClipAIble v${escapeXml(version)}` : 'ClipAIble';
   
   let authorXml = '      <author><nickname/></author>';
   // Only include author if it exists (not empty/anonymous)
@@ -388,7 +389,7 @@ ${authorXml}
       <author>
         <nickname>ClipAIble Extension</nickname>
       </author>
-      <program-used>ClipAIble v${getExtensionVersion()}</program-used>
+      <program-used>${programUsed}</program-used>
       <date value="${new Date().toISOString().split('T')[0]}">${new Date().toISOString().split('T')[0]}</date>
       <id>${docId}</id>
       <version>1.0</version>
@@ -448,34 +449,9 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   
   // Add source URL
   if (sourceUrl) {
-    // For local PDF files, show "Source:" label with filename (no link)
-    const isLocalPdf = sourceUrl.startsWith('file://') && sourceUrl.toLowerCase().includes('.pdf');
-    if (isLocalPdf) {
-      // Extract filename from file:// URL
-      let displaySource = sourceUrl;
-      try {
-        const match = sourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
-        if (match) {
-          displaySource = decodeURIComponent(match[1]);
-        } else if (sourceUrl.startsWith('file://')) {
-          const urlObj = new URL(sourceUrl);
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || sourceUrl);
-        }
-      } catch (e) {
-        const parts = sourceUrl.split('/');
-        const lastPart = parts[parts.length - 1].split('?')[0];
-        if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
-          try {
-            displaySource = decodeURIComponent(lastPart);
-          } catch (e2) {
-            displaySource = lastPart;
-          }
-        }
-      }
-      // Show localized "Source:" label with filename (not hardcoded, uses sourceLabel from localization)
-      bodyContent += `
-      <p>${escapeXml(sourceLabel)}: ${escapeXml(displaySource)}</p>`;
+    const localName = localDocumentName(sourceUrl);
+    if (localName !== null) {
+      if (localName) bodyContent += `\n      <p>${escapeXml(sourceLabel)}: ${escapeXml(localName)}</p>`;
     } else {
       // For non-local files, show "Source:" label with link
       bodyContent += `
@@ -601,8 +577,7 @@ function splitIntoSections(content, headings, sourceUrl = '') {
     
     if (item.type === 'heading') {
       const headingLevel = item.level || 1;
-      let headingText = documentPlainText(item, sourceUrl);
-      headingText = cleanTildaArtifactsFromText(headingText) || headingText;
+      const headingText = documentPlainText(item, sourceUrl);
       
       log('FB2 splitIntoSections: Processing heading', {
         index: i,

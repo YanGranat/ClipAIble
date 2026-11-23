@@ -62,8 +62,8 @@ function flushLogPortQueue() {
     // If still no port, schedule retry
     if (!logPort && logPortQueue.length > 0) {
       logPortFlushTimer = setTimeout(flushLogPortQueue, LOG_PORT_FLUSH_INTERVAL * 2);
+      return;
     }
-    return;
   }
   
   // Mark as flushing to prevent concurrent flushes

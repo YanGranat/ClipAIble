@@ -3,6 +3,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { generateEpub } from '../../scripts/generation/epub.js';
 import { generateFb2 } from '../../scripts/generation/fb2.js';
+import { generateMarkdown } from '../../scripts/generation/markdown.js';
 import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
 import { contentToPlainText, splitTextIntoChunks, AUDIO_CONFIG } from '../../scripts/generation/audio-prep.js';
 import { validateAudioParams } from '../../scripts/generation/audio-helpers.js';
@@ -56,6 +57,51 @@ describe('document content integrity', () => {
     expect(document.querySelector('strong').textContent).toBe('formatted');
     const link = [...document.querySelectorAll('a')].find(a => a.textContent === 'A & B');
     expect(link?.getAttribute('href')).toBe('https://example.org/search?a=1&b=2');
+  });
+
+  it.each([
+    ['Station%20readout.pdf', 'Station readout.pdf'],
+    ['Station%FFreadout.pdf', 'Station%FFreadout.pdf']
+  ])('exports only the basename of a local PDF source: %s', async (encoded, basename) => {
+    const sourceUrl = `file:///C:/ProjectSamples/local-folders/${encoded}#page=4`;
+    const content = [{ type: 'paragraph', format: 'text', text: 'A complete independent description of the measurement.' }];
+    const data = { ...base, sourceUrl, content };
+    const epub = await generateEpub(data);
+    const entries = readZipEntries(await epub.arrayBuffer());
+    const opf = new JSDOM(entries['OEBPS/content.opf'].toString('utf8'), { contentType: 'application/xml' });
+    try {
+      const sources = opf.window.document.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'source');
+      expect([...sources].map(node => node.textContent)).toEqual([basename]);
+    } finally {
+      opf.window.close();
+    }
+    const documents = [
+      buildHtmlForPdf(content, base.title, base.author, '', sourceUrl),
+      await generateMarkdown(data),
+      await (await generateFb2(data)).text(),
+      entries['OEBPS/content.xhtml'].toString('utf8')
+    ];
+    for (const document of documents) expect(document).toContain(basename);
+    for (const text of [...documents, ...Object.values(entries).map(bytes => bytes.toString('utf8'))]) {
+      expect(text).not.toMatch(/file:\/\/|local-folders|#page=4/);
+    }
+  });
+
+  it('preserves a web document source in EPUB metadata and the visible source link', async () => {
+    const sourceUrl = 'https://example.org/report?year=2026&region=east';
+    const content = [{ type: 'paragraph', format: 'text', text: 'The body of the field report.' }];
+    const epub = await generateEpub({ ...base, sourceUrl, content });
+    const bytes = await epub.arrayBuffer();
+    const packageDocument = new JSDOM(epubEntry(bytes, 'OEBPS/content.opf'), { contentType: 'application/xml' });
+    const contentDocument = new JSDOM(epubEntry(bytes, 'OEBPS/content.xhtml'), { contentType: 'application/xml' });
+    try {
+      const sources = packageDocument.window.document.getElementsByTagNameNS('http://purl.org/dc/elements/1.1/', 'source');
+      expect([...sources].map(node => node.textContent)).toEqual([sourceUrl]);
+      expect(contentDocument.window.document.querySelector('.source a').getAttribute('href')).toBe(sourceUrl);
+    } finally {
+      packageDocument.window.close();
+      contentDocument.window.close();
+    }
   });
 
   it('writes valid EPUB XML for source identifiers and strips executable markup', async () => {

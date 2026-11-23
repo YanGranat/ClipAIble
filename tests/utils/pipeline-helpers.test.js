@@ -466,6 +466,18 @@ describe('utils/pipeline-helpers', () => {
       expect(result).toBe('ru');
     });
 
+    it('uses local language detection for Automatic documents even with a configured provider', async () => {
+      const classifyWithProvider = vi.fn(async () => 'de');
+      const extractedPdf = { content: [{ type: 'paragraph', text: 'Документ описывает исходные измерения и повторную проверку результатов.' }] };
+      const result = await detectEffectiveLanguage(
+        { mode: 'automatic', language: 'auto', apiKey: 'sample-configured-key', model: 'test-model' },
+        extractedPdf,
+        classifyWithProvider
+      );
+      expect(result).toBe('ru');
+      expect(classifyWithProvider).not.toHaveBeenCalled();
+    });
+
     it('should keep auto if AI detection fails', async () => {
       const { detectContentLanguage } = await import('../../scripts/translation/index.js');
       detectContentLanguage.mockRejectedValue(new Error('API error'));

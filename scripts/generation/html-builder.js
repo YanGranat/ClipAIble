@@ -1,11 +1,11 @@
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
-import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent, localDocumentName } from './document-content.js';
 import { PDF_PAGE_MARGIN_MM } from './pdf-layout.js';
 // @ts-check
 // HTML builder for PDF generation
 
 import { log, logWarn, logDebug, logError } from '../utils/logging.js';
-import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle, markdownToHtml, cleanTildaArtifactsFromText } from '../utils/html.js';
+import { escapeHtml, escapeAttr, sanitizeHtml, adjustColorBrightness, cleanTitle, markdownToHtml } from '../utils/html.js';
 import { getDocumentLocalization, getLocaleFromLanguage, getDocumentLanguageTag } from '../utils/config.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { handleError } from '../utils/error-handler.js';
@@ -363,33 +363,9 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
     const cleanSourceUrl = sourceUrl.split('#')[0];
     const sourceLabel = l10n.source || 'Source';
     
-    // For local PDF files, show "Source:" label with filename (no link)
-    const isLocalPdf = cleanSourceUrl.startsWith('file://') && cleanSourceUrl.toLowerCase().includes('.pdf');
-    if (isLocalPdf) {
-      // Extract filename from file:// URL
-      let displaySource = cleanSourceUrl;
-      try {
-        const match = cleanSourceUrl.match(/\/([^\/]+\.pdf)(?:\?|$)/i);
-        if (match) {
-          displaySource = decodeURIComponent(match[1]);
-        } else if (cleanSourceUrl.startsWith('file://')) {
-          const urlObj = new URL(cleanSourceUrl);
-          const pathParts = urlObj.pathname.split('/').filter(p => p);
-          displaySource = decodeURIComponent(pathParts[pathParts.length - 1] || cleanSourceUrl);
-        }
-      } catch (e) {
-        const parts = cleanSourceUrl.split('/');
-        const lastPart = parts[parts.length - 1].split('?')[0];
-        if (lastPart && lastPart.toLowerCase().endsWith('.pdf')) {
-          try {
-            displaySource = decodeURIComponent(lastPart);
-          } catch (e2) {
-            displaySource = lastPart;
-          }
-        }
-      }
-      // Show localized "Source:" label with filename (not hardcoded, uses sourceLabel from localization)
-      metaItems.push(`${escapeHtml(sourceLabel)}: ${escapeHtml(displaySource)}`);
+    const localName = localDocumentName(cleanSourceUrl);
+    if (localName !== null) {
+      if (localName) metaItems.push(`${escapeHtml(sourceLabel)}: ${escapeHtml(localName)}`);
     } else {
       // For web pages, show "Source:" label with link (link wraps the label text)
       metaItems.push(`<a href="${escapeAttr(cleanSourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceLabel)}</a>`);

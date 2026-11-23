@@ -38,7 +38,7 @@ export function initStats(deps) {
     const seconds = new Intl.NumberFormat(getLocaleTag(langCode), { style: 'unit', unit: 'second', unitDisplay: 'narrow' });
     // Defer all DOM updates to avoid blocking main thread
     return new Promise((resolve) => {
-      requestAnimationFrame(async () => {
+      requestAnimationFrame(() => {
         if (revision !== historyRevision) { resolve(); return; }
         // Update main counters - batch DOM updates
         const updates = [];
@@ -114,28 +114,19 @@ export function initStats(deps) {
             fragment.appendChild(tempDiv.firstChild);
           }
           
-          // Clear and append in one operation
-          historyContainer.innerHTML = '';
-          historyContainer.appendChild(fragment);
-          
-          // Add delete handlers - defer to avoid blocking
-          setTimeout(() => {
-            historyContainer.querySelectorAll('.history-delete').forEach(btn => {
-              btn.addEventListener('click', async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const index = parseInt(/** @type {HTMLButtonElement} */ (btn).dataset.index || '0');
-                const item = stats.history[index];
-                // Defer async work
-                setTimeout(async () => {
-                  await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', item });
-                  await loadAndDisplayStats();
-                }, 0);
-              });
+          fragment.querySelectorAll('.history-delete').forEach(btn => {
+            const index = Number(/** @type {HTMLButtonElement} */ (btn).dataset.index);
+            const item = stats.history[index];
+            btn.addEventListener('click', async (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', item });
+              await loadAndDisplayStats();
             });
-          }, 0);
+          });
+          historyContainer.replaceChildren(fragment);
         } else {
-          const noDataText = await t('noDataYet');
+          const noDataText = escapeHtml(formatMessage('noDataYet', langCode));
           historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
         }
         
@@ -149,7 +140,7 @@ export function initStats(deps) {
     const langCode = await getUILanguage();
     // Defer all DOM updates to avoid blocking main thread
     return new Promise((resolve) => {
-      requestAnimationFrame(async () => {
+      requestAnimationFrame(() => {
         if (revision !== cacheRevision) { resolve(); return; }
         const domainsEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS);
         if (domainsEl) {
@@ -165,7 +156,7 @@ export function initStats(deps) {
         const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
         if (domainsListEl && Array.isArray(stats.domains)) {
           if (stats.domains.length === 0) {
-            const noCachedDomainsText = await t('noCachedDomains');
+            const noCachedDomainsText = escapeHtml(formatMessage('noCachedDomains', langCode));
             domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
             resolve();
           } else {
@@ -193,32 +184,21 @@ export function initStats(deps) {
               fragment.appendChild(tempDiv.firstChild);
             }
             
-            // Clear and append in one operation
-            domainsListEl.innerHTML = '';
-            domainsListEl.appendChild(fragment);
-            
-            // Add delete handlers - defer to avoid blocking
-            setTimeout(() => {
-              domainsListEl.querySelectorAll('.cache-domain-delete').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const domain = /** @type {HTMLButtonElement} */ (btn).dataset.domain || '';
-                  // Defer async work
-                  setTimeout(async () => {
-                    const langCode = await getUILanguage();
-                    const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
-                    const deleteConfirm = (locale.deleteDomainFromCache || UI_LOCALES.en.deleteDomainFromCache).replace('{domain}', domain);
-                    if (confirm(deleteConfirm)) {
-                      await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
-                      await loadAndDisplayStats();
-                      const domainRemovedText = await t('domainRemovedFromCache');
-                      showToast(domainRemovedText, 'success', { key: 'domainRemovedFromCache' });
-                    }
-                  }, 0);
-                });
+            fragment.querySelectorAll('.cache-domain-delete').forEach(btn => {
+              const domain = /** @type {HTMLButtonElement} */ (btn).dataset.domain || '';
+              btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const deleteConfirm = formatMessage('deleteDomainFromCache', await getUILanguage(), { domain });
+                if (confirm(deleteConfirm)) {
+                  await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
+                  await loadAndDisplayStats();
+                  const domainRemovedText = await t('domainRemovedFromCache');
+                  showToast(domainRemovedText, 'success', { key: 'domainRemovedFromCache' });
+                }
               });
-            }, 0);
+            });
+            domainsListEl.replaceChildren(fragment);
             
             resolve();
           }

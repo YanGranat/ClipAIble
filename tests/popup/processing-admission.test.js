@@ -58,6 +58,29 @@ it('keeps an admitted operation active until its state is polled', async () => {
   expect(toast).not.toHaveBeenCalled();
 });
 
+it('keeps the current controls and shows an error when the worker rejects cancellation', async () => {
+  elements.cancelBtn.classList.remove('hidden');
+  elements.cancelBtn.style.display = 'block';
+  elements.savePdfBtn.disabled = true;
+  chrome.runtime.sendMessage.mockResolvedValue({ success: false, error: 'Background initialization failed', translationKey: 'errorBackgroundInitializationFailed' });
+  await processing.handleCancel();
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ action: 'cancelProcessing' });
+  expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'error', { key: 'errorBackgroundInitializationFailed', params: {} });
+  expect(status).not.toHaveBeenCalled();
+  expect(elements.cancelBtn.disabled).toBe(false);
+  expect(elements.cancelBtn.classList.contains('hidden')).toBe(false);
+  expect(elements.savePdfBtn.disabled).toBe(true);
+});
+
+it('reports cancellation only after the worker confirms a run was cancelled', async () => {
+  chrome.runtime.sendMessage.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: true, cancelledRunId: 'run-id' });
+  await processing.handleCancel();
+  expect(toast).not.toHaveBeenCalled();
+  await processing.handleCancel();
+  expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'success', { key: 'processingCancelled' });
+  expect(status).toHaveBeenCalledWith('ready', expect.any(String), undefined, { key: 'ready' });
+});
+
 it('continues tracking an admitted job when provider selection changes during its acknowledgement', async () => {
   let acknowledge;
   chrome.runtime.sendMessage.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
