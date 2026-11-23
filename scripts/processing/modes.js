@@ -14,7 +14,7 @@ import {
   SELECTOR_SYSTEM_PROMPT,
   buildSelectorUserPrompt
 } from '../extraction/prompts.js';
-import { splitHtmlIntoChunks, mergeChunkContent, removeExtractedMainTitle, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
+import { splitHtmlIntoChunks, mergeChunkContent, prepareExtractedMainTitle, filterExtractionNoise, trimHtmlForAnalysis } from '../extraction/html-utils.js';
 import { cleanTitleFromServiceTokens, stripHtml } from '../utils/html.js';
 import { detectLanguageByCharacters } from '../translation/index.js';
 import { extractAutomaticallyInlined } from '../extraction/automatic.js';
@@ -187,7 +187,8 @@ export async function processWithoutAI(data, extractFromPageInlined) {
     }
     if (extractedContent) {
       await checkCancellation('cached selector completion');
-      await markCacheSuccess(url, cachedEntry);
+      if (extractedContent.selectorRecovered) await invalidateCache(url, cachedEntry);
+      else await markCacheSuccess(url, cachedEntry);
     }
   }
 
@@ -629,6 +630,7 @@ export async function processWithoutAI(data, extractFromPageInlined) {
   
   return {
     title: result.title || title || 'Untitled',
+    ...(result.titleFragmentIds?.length ? { titleFragmentIds: result.titleFragmentIds } : {}),
     author: cleanedAuthor,
     content: result.content,
     publishDate: result.publishDate || '',
@@ -725,7 +727,12 @@ export async function processWithExtractMode(data) {
     result = await processMultipleChunks(chunks, url, title, apiKey, model, data);
   }
   await checkCancellation('extracted content publication');
-  if (Array.isArray(result.content)) result.content = filterExtractionNoise(removeExtractedMainTitle(result.content, result.title || title, html));
+  if (Array.isArray(result.content)) {
+    const prepared = prepareExtractedMainTitle(result.content, result.title || title, html);
+    result.content = filterExtractionNoise(prepared.content);
+    delete result.titleFragmentIds;
+    if (prepared.titleFragmentIds) result.titleFragmentIds = prepared.titleFragmentIds;
+  }
   
   log(`✅ AI Extract mode complete: ${result.content?.length || 0} content items extracted`, { title: result.title });
 
@@ -1253,7 +1260,9 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   await checkCancellation('selector cache update');
   try {
-    if (cachedEntry) {
+    if (extractedContent.selectorRecovered) {
+      if (cachedEntry) await invalidateCache(url, cachedEntry);
+    } else if (cachedEntry) {
       await markCacheSuccess(url, cachedEntry);
     } else {
       await cacheSelectors(url, selectors);
@@ -1302,6 +1311,7 @@ export async function processWithSelectorMode(data, extractFromPageInlined) {
   
   return {
     title: finalTitle,
+    ...(extractedContent.titleFragmentIds?.length ? { titleFragmentIds: extractedContent.titleFragmentIds } : {}),
     author: finalAuthor,
     content: extractedContent.content,
     publishDate: publishDate,

@@ -191,8 +191,8 @@ function fragmentViews(content, sourceUrl, tableCellFragmentTargets) {
     const raw = holder[key];
     if (typeof raw !== 'string') return;
     const mirrorText = key === 'html' && holder.text === raw;
-    views.push({ rendered, collect, write(targetIds) {
-      const value = html ? rewriteHtmlFragmentLinks(raw, sourceUrl, targetIds) : rewriteMarkdownFragmentLinks(raw, sourceUrl, targetIds);
+    views.push({ rendered, collect, write(targetIds, aliases) {
+      const value = html ? rewriteHtmlFragmentLinks(raw, sourceUrl, targetIds, aliases) : rewriteMarkdownFragmentLinks(raw, sourceUrl, targetIds, aliases);
       holder[key] = value;
       if (mirrorText) holder.text = value;
     } });
@@ -242,8 +242,8 @@ function fragmentViews(content, sourceUrl, tableCellFragmentTargets) {
   return { views, blockIds };
 }
 
-/** Assign heading identity once, before collecting navigation or rendering content. */
-export function normalizeDocumentContent(content, title = '', sourceUrl = '', { inlineFragmentTargets = true, tableCellFragmentTargets = false } = {}) {
+/** Assign title and heading identity before collecting navigation or rendering. */
+export function prepareDocumentContent(content, title = '', sourceUrl = '', { titleFragmentIds = [], inlineFragmentTargets = true, tableCellFragmentTargets = false } = {}) {
   let beforeBody = true;
   const ids = new Set();
   const sourceIndices = new Map();
@@ -278,6 +278,20 @@ export function normalizeDocumentContent(content, title = '', sourceUrl = '', { 
   const projection = fragmentViews(normalized, sourceUrl, tableCellFragmentTargets);
   for (const id of projection.blockIds) reserved.add(id);
   for (const view of projection.views) for (const id of collectRenderedFragmentIds(view.rendered)) reserved.add(id);
+  const aliases = new Map();
+  const titleIds = title && Array.isArray(titleFragmentIds) ? titleFragmentIds.filter(id => typeof id === 'string' && id) : [];
+  let titleId;
+  if (titleIds.length) {
+    const preferred = titleIds[0];
+    titleId = preferred;
+    let suffix = 2;
+    while (reserved.has(titleId)) titleId = `${preferred}-${suffix++}`;
+    for (const id of titleIds) {
+      reserved.add(id);
+      aliases.set(id, titleId);
+    }
+    ids.add(titleId);
+  }
   for (const item of normalized) {
     if (item.type !== 'heading') continue;
     const authoredId = String(item.id || '');
@@ -288,9 +302,10 @@ export function normalizeDocumentContent(content, title = '', sourceUrl = '', { 
     ids.add(id); item.id = id;
   }
   const targets = new Set(projection.blockIds);
+  if (titleId) targets.add(titleId);
   for (const view of projection.views) if (view.collect) {
     for (const id of collectRenderedFragmentIds(view.rendered, inlineFragmentTargets)) targets.add(id);
   }
-  for (const view of projection.views) view.write(targets);
-  return normalized;
+  for (const view of projection.views) view.write(targets, aliases);
+  return { content: normalized, titleId };
 }

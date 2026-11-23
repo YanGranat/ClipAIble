@@ -5,7 +5,8 @@ import { initProcessing } from '../../popup/core/processing.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 import { t } from '../../scripts/locales.js';
 
-let elements, processing, status, polling, toast;
+let elements, processing, status, polling, toast, presentedRunId, checkState;
+const admittedRunId = '7b4087e2-6c9d-44e1-874f-52f829d5a179';
 const page = { html: '<article><p>A complete article observation.</p></article>', url: 'https://example.test/observation', title: 'Field observation' };
 beforeEach(() => {
   vi.clearAllMocks();
@@ -18,15 +19,18 @@ beforeEach(() => {
   chrome.storage.local.get.mockResolvedValue({ ui_language: 'en' });
   chrome.tabs.query = vi.fn(async () => [{ id: 5, url: page.url, title: page.title }]);
   chrome.tabs.sendMessage = vi.fn(async () => page);
-  chrome.runtime.sendMessage.mockResolvedValue({ started: true });
+  chrome.runtime.sendMessage.mockResolvedValue({ started: true, processingRunId: admittedRunId });
   status = vi.fn(); polling = vi.fn(); toast = vi.fn();
   const noop = vi.fn();
+  presentedRunId = admittedRunId;
+  checkState = vi.fn(async () => {});
   processing = initProcessing({ elements, t, setStatus: status, setProgress: noop, showToast: toast,
     log: noop, logError: noop, logWarn: noop, stopTimerDisplay: noop, decryptApiKey: async value => value,
-    getProviderFromModel: () => 'claude', startStatePolling: polling, checkProcessingState: async () => {}, stateRefs: {} });
+    getProviderFromModel: () => 'claude', startStatePolling: polling, checkProcessingState: checkState,
+    getPresentedProcessingRunId: () => presentedRunId, stateRefs: {} });
 });
 
-it.each([{ started: false }, undefined, { error: { message: 'Unavailable' } }])('does not report admission for an unsuccessful response: %j', async response => {
+it.each([{ started: false }, undefined, { error: { message: 'Unavailable' } }, { started: true }])('does not report admission for an unconfirmed response: %j', async response => {
   chrome.runtime.sendMessage.mockResolvedValue(response);
   await processing.handleSavePdf();
   expect(polling).not.toHaveBeenCalled();
@@ -64,7 +68,7 @@ it('keeps the current controls and shows an error when the worker rejects cancel
   elements.savePdfBtn.disabled = true;
   chrome.runtime.sendMessage.mockResolvedValue({ success: false, error: 'Background initialization failed', translationKey: 'errorBackgroundInitializationFailed' });
   await processing.handleCancel();
-  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ action: 'cancelProcessing' });
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith({ action: 'cancelProcessing', data: { processingRunId: admittedRunId } });
   expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'error', { key: 'errorBackgroundInitializationFailed', params: {} });
   expect(status).not.toHaveBeenCalled();
   expect(elements.cancelBtn.disabled).toBe(false);
@@ -73,12 +77,27 @@ it('keeps the current controls and shows an error when the worker rejects cancel
 });
 
 it('reports cancellation only after the worker confirms a run was cancelled', async () => {
-  chrome.runtime.sendMessage.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: true, cancelledRunId: 'run-id' });
+  chrome.runtime.sendMessage.mockResolvedValueOnce({ success: true }).mockResolvedValueOnce({ success: true, cancelledRunId: admittedRunId });
   await processing.handleCancel();
   expect(toast).not.toHaveBeenCalled();
   await processing.handleCancel();
   expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'success', { key: 'processingCancelled' });
-  expect(status).toHaveBeenCalledWith('ready', expect.any(String), undefined, { key: 'ready' });
+  expect(checkState).toHaveBeenCalledTimes(2);
+  expect(status).not.toHaveBeenCalled();
+});
+
+it('refreshes instead of changing the new job when the previous cancellation arrives late', async () => {
+  let acknowledge;
+  chrome.runtime.sendMessage.mockImplementationOnce(() => new Promise(resolve => { acknowledge = resolve; }));
+  const cancellation = processing.handleCancel();
+  expect(acknowledge).toBeTypeOf('function');
+  presentedRunId = 'b2f152d6-93ca-4cd9-9cd6-7884cb58a736';
+  checkState.mockResolvedValueOnce({ isProcessing: true, processingRunId: presentedRunId });
+  acknowledge({ success: true, cancelledRunId: admittedRunId });
+  await cancellation;
+  expect(checkState).toHaveBeenCalledOnce();
+  expect(toast).not.toHaveBeenCalled();
+  expect(status).not.toHaveBeenCalled();
 });
 
 it('continues tracking an admitted job when provider selection changes during its acknowledgement', async () => {
@@ -87,7 +106,7 @@ it('continues tracking an admitted job when provider selection changes during it
   const operation = processing.handleSavePdf();
   await vi.waitFor(() => expect(acknowledge).toBeTypeOf('function'), { timeout: 2000 });
   elements.apiProviderSelect.value = 'openai';
-  acknowledge({ started: true });
+  acknowledge({ started: true, processingRunId: admittedRunId });
   await operation;
   expect(polling).toHaveBeenCalledOnce();
   expect(elements.savePdfBtn.disabled).toBe(true);

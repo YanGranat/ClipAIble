@@ -33,6 +33,12 @@ it('keeps the legacy Google key path and validates its absence', async () => {
   expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorImageKeyRequired', translationParams: { provider: 'Google' } }), expect.any(Function), 'sample-run');
 });
 
+it('rejects an unsupported Google edit model before article extraction', async () => {
+  const stop = vi.fn();
+  expect(await validateAndInitializeProcessing({ ...base(), imageTranslationProvider: 'gemini', geminiImageModel: 'constructor' }, stop, vi.fn())).toBe(false);
+  expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorImageModelUnsupported' }), stop, 'sample-run');
+});
+
 it.each([{ outputFormat: 'markdown' }, { outputFormat: 'audio' }, { language: 'auto' }, { translateImages: false }])('skips inactive image settings without rejecting or charging: %s', async inactive => {
   expect(await validateImageTranslation({ ...base(), imageTranslationProvider: 'invalid', ...inactive }, vi.fn())).toBe(true);
   expect(setError).not.toHaveBeenCalled();

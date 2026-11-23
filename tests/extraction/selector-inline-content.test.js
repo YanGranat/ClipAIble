@@ -12,7 +12,8 @@ async function extract(html, baseUrl, selectors = {}) {
   dom.window.console.log = () => {};
   dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({ width: 600, height: 400 });
   const productionExtract = dom.window.eval(`(${inlineSource})`);
-  return productionExtract(baseUrl || dom.window.location.href, true, { articleContainer: 'main', content: 'p,img', title: 'h1', ...selectors });
+  return productionExtract(baseUrl || dom.window.location.href, true, selectors === null ? null :
+    { articleContainer: 'main', content: 'p,img', title: 'h1', ...selectors });
 }
 
 function contentMarkup(result) {
@@ -20,6 +21,40 @@ function contentMarkup(result) {
 }
 
 describe('selector page extraction', () => {
+  it('keeps a floated first letter joined to the word it begins', async () => {
+    const result = await extract('<!doctype html><main><p><span style="display:block;float:left;margin-inline-end:4px">R</span>eading begins with a complete word.</p></main>');
+    const output = JSDOM.fragment(contentMarkup(result));
+    expect(output.querySelector('br')).toBeNull();
+    expect(output.textContent).toBe('Reading begins with a complete word.');
+  });
+
+  it('keeps exactly the selected legacy inline prose with its line breaks and links', async () => {
+    const result = await extract('<!doctype html><main><p>Outside the selected prose.</p><p>Outside the selected wrapper. <font id="reading-flow">The first observation was independent.<br><br>The next observation has <em>emphasis</em> and <a href="./record">a source</a>.</font></p></main>', undefined, { content: '#reading-flow' });
+    expect(result.selectorMatched).toBe(true);
+    expect(result.content).toEqual([{ type: 'paragraph', id: 'reading-flow',
+      text: 'The first observation was independent.<br><br>The next observation has <em>emphasis</em> and <a href="https://example.com/record">a source</a>.',
+      html: 'The first observation was independent.<br><br>The next observation has <em>emphasis</em> and <a href="https://example.com/record">a source</a>.' }]);
+  });
+
+  it('partitions an explicitly chosen custom wrapper around authored blocks and keeps a selected anchor', async () => {
+    const result = await extract('<!doctype html><main><measurement-panel id="explicit-region">Opening observation. <span id="inline-observation">Nested inline narrative.</span><p>Independent parsed paragraph.</p>Closing observation.</measurement-panel><a id="direct-reference" href="./appendix">Read the authored appendix.</a><p>Unselected material.</p></main>', undefined,
+      { content: '#explicit-region,#inline-observation,#direct-reference' });
+    expect(result.selectorMatched).toBe(true);
+    expect(result.content.map(item => item.type)).toEqual(['paragraph', 'paragraph', 'paragraph', 'paragraph']);
+    expect(contentMarkup(result)).toBe('Opening observation. <span id="inline-observation">Nested inline narrative.</span>\nIndependent parsed paragraph.\nClosing observation.\n<a href="https://example.com/appendix">Read the authored appendix.</a>');
+    expect(result.content.map(item => item.id).filter(Boolean)).toEqual(['explicit-region', 'direct-reference']);
+  });
+
+  it('keeps Automatic inline behavior and rejects explicitly selected interface content', async () => {
+    const html = '<!doctype html><main><article><h1>Field report</h1><p>The reading contains <span>an inline observation</span> from the field.</p><p>An independent second paragraph records the source for the conclusion.</p><div inert role="menu"><span class="interface-label">Unrelated inert menu item</span></div><button><span class="interface-label">Unrelated control label</span></button></article></main>';
+    const selected = await extract(html, undefined, { content: '.interface-label' });
+    expect(selected.selectorMatched).toBe(false);
+    expect(selected.content).toEqual([]);
+    const automatic = await extract(html, undefined, null);
+    expect(contentMarkup(automatic).split('an inline observation')).toHaveLength(2);
+    expect(contentMarkup(automatic)).toContain('An independent second paragraph');
+  });
+
   it.each(['articleContainer', 'content', 'title', 'subtitle', 'heroImage', 'toc', 'exclude'])('returns a typed miss for invalid CSS in %s', async field => {
     const selectors = { [field]: field === 'exclude' ? ['p >>'] : 'p >>' };
     const result = await extract('<main><h1>Current article</h1><p>Unselected text must not become a successful result.</p></main>', undefined, selectors);
@@ -46,6 +81,75 @@ describe('selector page extraction', () => {
     const result = await extract(html, undefined, { articleContainer: 'article', content: '.story', heroImage: '.hero img', exclude: ['.site-wrapper', 'figure[data-role="related"]', '.subscription-box'] });
     expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.com/hero.png', 'https://example.com/body.png']);
     expect(JSON.stringify(result.content)).toContain('The field report retains its conclusion.');
+  });
+
+  it('protects an explicitly selected body inside a shared wrapper while excluding actual descendants', async () => {
+    const html = '<!doctype html><title>Field notes</title><main><article><h1>Field notes</h1><div class="reading-layout">' +
+      '<div class="report"><h2 id="observations">Observations <a class="widget" href="#observations">Copy link</a></h2>' +
+      '<p>The report contains an independent first observation.</p>' +
+      '<div class="widget"><p>Unrelated control text.</p></div><p>Last independent observation.</p></div></div></article></main>';
+    const result = await extract(html, undefined, {
+      articleContainer: 'article', content: '.report', exclude: ['article > div:has(.widget)', '.widget']
+    });
+    expect(result.selectorMatched).toBe(true);
+    expect(result.content.find(item => item.id === 'observations')).toMatchObject({ type: 'heading', text: 'Observations' });
+    expect(result.content.filter(item => item.type === 'paragraph').map(item => item.text)).toEqual([
+      'The report contains an independent first observation.', 'Last independent observation.'
+    ]);
+  });
+
+  it('uses the identified publication when stale body selectors only match the cover', async () => {
+    const html = '<!doctype html><title>Field notes</title><main><article><h1>Field notes</h1>' +
+      '<div class="cover"><figure><img src="/field.png" width="700" height="500" alt="Field illustration">' +
+      '<span style="display:block">Photo credit</span></figure></div>' +
+      '<p class="fresh-body">The publication begins with an independent observation.</p>' +
+      '<div class="unrelated"><p>Unrelated recommendation.</p></div>' +
+      '<p class="fresh-body">The publication ends with a second observation.</p></article>' +
+      '<article><h1>Other article</h1><p>A separate publication is outside the reading scope.</p></article></main>';
+    const result = await extract(html, undefined, {
+      articleContainer: 'article:first-of-type', content: '.stale-body,.cover', exclude: ['.unrelated']
+    });
+    expect(result.content.filter(item => item.type === 'paragraph').map(item => item.text)).toEqual(expect.arrayContaining([
+      'The publication begins with an independent observation.', 'The publication ends with a second observation.'
+    ]));
+    expect(result.content.filter(item => item.type === 'image')).toHaveLength(1);
+    expect(contentMarkup(result)).not.toMatch(/Unrelated recommendation|A separate publication/);
+  });
+
+  it('recovers the identified publication after hydration removes every selected body wrapper', async () => {
+    const html = '<!doctype html><title>Field notes</title><article><h1>Field notes</h1>' +
+      '<p>The publication keeps its reading content through hydration.</p>' +
+      '<div class="recommendations"><p>A recommendation is outside the publication.</p></div></article>';
+    const result = await extract(html, undefined, {
+      articleContainer: 'article', title: 'article > h1', content: '[data-render-part="prose"]', exclude: ['.recommendations']
+    });
+    expect(result).toMatchObject({ selectorMatched: true, selectorRecovered: true });
+    expect(contentMarkup(result)).toContain('The publication keeps its reading content through hydration.');
+    expect(contentMarkup(result)).not.toContain('A recommendation');
+  });
+
+  it.each(['has-sidebar', 'no-sidebar', 'with-sidebar', 'without-sidebar'])(
+    'keeps prose within the %s layout while dropping the actual sidebar', async layout => {
+      const html = `<div class="${layout}"><div class="publication"><p>The publication contains an authored observation.</p>` +
+        '<div class="sidebar"><p>A separate sidebar panel.</p></div></div></div>';
+      const result = await extract(html, undefined, { articleContainer: `.${layout}`, content: '.publication' });
+      expect(contentMarkup(result)).toContain('The publication contains an authored observation.');
+      expect(contentMarkup(result)).not.toContain('A separate sidebar panel.');
+    }
+  );
+
+  it('keeps selected prose and authored anchors below a layout with auxiliary components', async () => {
+    const html = '<main><div class="layout-navigation split-sidebar-shell related-records-grid social-region share-tools-frame">' +
+      '<div class="publication"><section id="notes-for-comments"><h2>Notes for comments</h2>' +
+      '<p>The publication retains its commentary policy.</p></section>' +
+      '<section id="tuning-cookie-options"><h2>Cookie options</h2><p>Each option controls compiler behavior.</p></section>' +
+      '<section id="comments"><h2>Comments</h2><p>A visitor message.</p></section>' +
+      '<div class="related-posts"><p>A separate recommendation.</p></div>' +
+      '<div class="menu"><p>Navigation controls.</p></div></div></div></main>';
+    const result = await extract(html, undefined, { articleContainer: 'main', content: '.publication' });
+    expect(contentMarkup(result)).toContain('The publication retains its commentary policy.');
+    expect(contentMarkup(result)).toContain('Each option controls compiler behavior.');
+    expect(contentMarkup(result)).not.toMatch(/A visitor message|A separate recommendation|Navigation controls/);
   });
 
   it.each(['(opens a new tab)', 'opens in a new window'])('omits marked link announcements while preserving authored and mathematical text: %s', async label => {

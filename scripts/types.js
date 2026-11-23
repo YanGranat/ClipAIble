@@ -263,6 +263,7 @@
 /**
  * @typedef {Object} ExtractionResult
  * @property {string} title - Extracted title
+ * @property {string[]} [titleFragmentIds] - Original fragment identifiers owned by the rendered title
  * @property {string} [author] - Extracted author
  * @property {string} [publishDate] - Extracted publish date
  * @property {Array<ContentItem>} content - Extracted content items
@@ -279,6 +280,7 @@
  * @property {AIProvider} [provider] - Selected article provider
  * @property {Array<ContentItem>} content - Content items to generate
  * @property {string} title - Document title
+ * @property {string[]} [titleFragmentIds] - Original fragment identifiers owned by the rendered title
  * @property {string} [author] - Document author
  * @property {string} [sourceUrl] - Source URL
  * @property {string} [publishDate] - Publish date
@@ -350,6 +352,7 @@
  * @property {string} [targetLanguage] - Target language for translation
  * @property {boolean} [translateImages] - Translate images
  * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
+ * @property {string} [geminiImageModel] - Selected Google image editor model ID
  * @property {string|null} [imageApiKey] - Image provider API key
  * @property {string} [pageMode] - PDF page mode ('single'|'multi')
  * @property {string} [fontFamily] - PDF font family
@@ -461,9 +464,11 @@
 
 /**
  * @typedef {Object} TTSProgressData
- * @property {string} [processingRunId] - Document operation identity
- * @property {number} progress - Progress percentage (0-100)
- * @property {string} [status] - Status message
+ * @property {string} processingRunId - Document operation identity
+ * @property {number} sentenceIndex - One-based position of the completed sentence
+ * @property {number} totalSentences - Number of sentences in the synthesis request
+ * @property {number} [progressBase] - Starting percentage for synthesis
+ * @property {number} [progressRange] - Percentage range for synthesis
  * @property {number} [current] - Current chunk number
  * @property {number} [total] - Total chunks
  */
@@ -489,7 +494,7 @@
  *   | { action: 'TTS_PROGRESS', data: TTSProgressData, target?: string, type?: string }
  *   | { action: 'ping', data?: undefined, target?: string, type?: string }
  *   | { action: 'getState', data?: undefined, target?: string, type?: string }
- *   | { action: 'cancelProcessing', data?: undefined, target?: string, type?: string }
+ *   | { action: 'cancelProcessing', data: {processingRunId: string}, target?: string, type?: string }
  *   | { action: 'getStats', data?: undefined, target?: string, type?: string }
  *   | { action: 'clearStats', data?: undefined, target?: string, type?: string }
  *   | { action: 'getCacheStats', data?: undefined, target?: string, type?: string }
@@ -588,8 +593,10 @@
 /**
  * @typedef {Object} InjectionResult
  * @property {boolean} [selectorMatched] - Whether the selected content roots matched
+ * @property {boolean} [selectorRecovered] - Reading content recovered from the selected editorial container
  * @property {string} [detectedLanguage] - Language from the current source page
  * @property {string} title - Extracted title
+ * @property {string[]} [titleFragmentIds] - Original fragment identifiers owned by the rendered title
  * @property {string} [author] - Extracted author
  * @property {Array<ContentItem>} content - Extracted content
  * @property {string} [publishDate] - Publish date
@@ -724,6 +731,7 @@
  * @property {string} [language] - Document language
  * @property {boolean} [translateImages] - Whether to translate images
  * @property {'gemini'|'openai'} [imageTranslationProvider] - Image translation provider
+ * @property {string} [geminiImageModel] - Selected Google image editor model ID
  * @property {string|null} [imageApiKey] - Image provider API key
  * @property {string|null} [googleApiKey] - Google API key for image translation
  * @property {string} [stylePreset] - PDF style preset
@@ -787,6 +795,7 @@
  * @property {AbortSignal} [signal] - Operation cancellation signal
  * @property {() => void} [onRequestStart] - Record admitted provider requests for the operation deadline
  * @property {'gemini'|'openai'} [imageTranslationProvider] - Image editor provider
+ * @property {string} [geminiImageModel] - Selected Google image editor model ID
  * @property {string|null} [imageApiKey] - Selected image provider credential
  * @property {ExportFormat} [outputFormat] - Destination document format
  * @property {'low'|'high'} [imageDetail] - Classifier image detail

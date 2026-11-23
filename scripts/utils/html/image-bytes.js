@@ -32,8 +32,14 @@ export function detectImageMime(bytes) {
   if (ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
   if (ascii(4, 8) === 'ftyp' && /avif|avis/.test(ascii(8, 32))) return 'image/avif';
   if (starts([66, 77])) return 'image/bmp';
-  const prefix = new TextDecoder().decode(bytes.subarray(0, 4096)).replace(/^\uFEFF/, '');
-  if (/^\s*(?:<\?xml[\s\S]*?\?>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!doctype[^>]*>\s*)?<svg(?:\s|>)/i.test(prefix)) return 'image/svg+xml';
+  const comments = /^(?:\s*<!--[\s\S]*?-->)+/;
+  const svgDoctype = /^\s*<!DOCTYPE\s+svg(?:\s+(?:SYSTEM\s+(?:"[^"]*"|'[^']*')|PUBLIC\s+(?:"[^"]*"|'[^']*')\s+(?:"[^"]*"|'[^']*')))?\s*>/;
+  const prefix = new TextDecoder().decode(bytes.subarray(0, 4096))
+    .replace(/^\s*<\?xml[\s\S]*?\?>/, '')
+    .replace(comments, '')
+    .replace(svgDoctype, '')
+    .replace(comments, '');
+  if (/^\s*<svg(?:\s|>)/i.test(prefix)) return 'image/svg+xml';
   throw imageDataError(bytes.length ? 'IMAGE_UNSUPPORTED_TYPE' : 'IMAGE_EMPTY');
 }
 

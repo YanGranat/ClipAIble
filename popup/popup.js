@@ -64,7 +64,7 @@ import { getElement, setElementDisplay, setElementGroupDisplay, setDisplayForIds
 import { markdownToHtml, formatTime, escapeHtml } from './utils/format-helpers.js';
 import { debouncedSaveSettings, saveAudioVoice } from './utils/settings-helpers.js';
 
-import { startTimerDisplay, stopTimerDisplay, updateTimerDisplay } from './utils/timer-helpers.js';
+import { startTimerDisplay, stopTimerDisplay } from './utils/timer-helpers.js';
 
 // Long-lived port to signal to service worker that popup is open.
 // This enables completion notifications when popup is closed.
@@ -301,9 +301,6 @@ function stopTimerDisplayLocal() {
   return stopTimerDisplay(currentStartTimeRef, timerIntervalRef);
 }
 
-function updateTimerDisplayLocal() {
-  return updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements);
-}
 
 function saveAudioVoiceLocal(provider, voice) {
   return saveAudioVoice(provider, voice, audioVoiceMap);
@@ -572,6 +569,7 @@ function initAllCustomSelects() {
     'pageMode',
     'languageSelect',
     'imageTranslationProvider',
+    'geminiImageModel',
     'stylePreset',
     'uiLanguageSelect',
     'themeSelect'

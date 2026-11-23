@@ -3,11 +3,14 @@ import { callClaudeAPI, callClaudeAPIWithImage, callClaudeAPIWithImageAndHistory
 import { callGeminiAPI, callGeminiAPIWithImage, callGeminiAPIWithImageAndHistory, translateImageWithGemini } from '../../scripts/api/gemini.js';
 import { callDeepSeekAPI, callDeepSeekAPIWithImage, callDeepSeekAPIWithImageAndHistory } from '../../scripts/api/deepseek.js';
 import { GEMINI_IMAGE_MODEL, resolveSavedModel } from '../../scripts/utils/model-catalog.js';
+import { translateImages } from '../../scripts/translation/images.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn(), criticalLog: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options = {}) => operation({ signal: new AbortController().signal, deadline: Date.now() + (options.timeoutMs ?? 600000) }) }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: vi.fn(async () => 'en') }));
-vi.mock('../../scripts/utils/encryption.js', () => ({ decryptApiKey: vi.fn(async value => value) }));
+vi.mock('../../scripts/utils/encryption.js', () => ({
+  decryptApiKey: vi.fn(async value => value), getDecryptedKeyCached: vi.fn(async value => value)
+}));
 
 const image = 'data:image/png;base64,c2FtcGxl';
 const key = 'synthetic-key';
@@ -92,6 +95,43 @@ describe('current first-party model requests', () => {
     expect(GEMINI_IMAGE_MODEL).toBe('gemini-3-pro-image');
     expect(fetchMock.mock.calls[0][0]).toContain('/gemini-3-pro-image:generateContent');
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
+  });
+
+  it.each(['gemini-nano-banana-2.1', 'gemini-3.1-flash-lite-image', 'gemini-3-pro-image'])('uses native DeepSeek Flash vision and sends the edit to %s', async geminiImageModel => {
+    const detectionEndpoint = 'https://api.deepseek.com/v1/chat/completions';
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${geminiImageModel}:generateContent`;
+    const fetchMock = vi.fn(async url => {
+      if (url === detectionEndpoint) {
+        return jsonResponse({ choices: [{ finish_reason: 'stop', message: { content: 'yes' } }] });
+      }
+      if (url === geminiEndpoint) {
+        return jsonResponse({ candidates: [{ finishReason: 'STOP', content: { parts: [
+          { thought: true, inlineData: { mimeType: 'image/png', data: 'aW50ZXJuYWw=' } },
+          { inlineData: { mimeType: 'image/png', data: 'ZmluYWw=' } }
+        ] } }] });
+      }
+      throw new Error('Unexpected provider request');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await translateImages([{ type: 'image', src: image }], 'en', 'fr', 'synthetic-article-key', 'synthetic-google-key',
+      'deepseek-flash-no-thinking', undefined, { provider: 'deepseek', imageTranslationProvider: 'gemini', geminiImageModel, checkCancelled: async () => {} });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([detectionEndpoint, geminiEndpoint]);
+    expect(result).toEqual([{ type: 'image', src: 'data:image/png;base64,ZmluYWw=', translated: true }]);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).messages[1].content[1].image_url.url).toBe(image);
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer synthetic-article-key');
+    const [, edit] = fetchMock.mock.calls[1];
+    expect(edit.headers['x-goog-api-key']).toBe('synthetic-google-key');
+    const body = JSON.parse(edit.body);
+    expect(body.generationConfig.responseModalities).toEqual(['TEXT', 'IMAGE']);
+    expect(body.contents[0].parts[0].inline_data).toEqual({ mime_type: 'image/png', data: 'c2FtcGxl' });
+  });
+
+  it('rejects a model outside the Google editor catalog without sending a request', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(translateImageWithGemini(image, 'French', key, { geminiImageModel: 'google-text-only' }))
+      .rejects.toMatchObject({ translationKey: 'errorImageModelUnsupported' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each([

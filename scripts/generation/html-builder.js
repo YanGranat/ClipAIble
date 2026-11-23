@@ -1,5 +1,5 @@
 import { buildTocStructure, renderTocAsHtml } from './toc-builder.js';
-import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent, localDocumentName } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
 import { PDF_PAGE_MARGIN_MM } from './pdf-layout.js';
 // @ts-check
 // HTML builder for PDF generation
@@ -56,10 +56,13 @@ function getLocalization(language) {
  * @param {boolean} generateToc - Whether to generate TOC
  * @param {boolean} generateAbstract - Whether to generate abstract
  * @param {string} abstract - Abstract text
+ * @param {string[]} [titleFragmentIds] - Source targets owned by the document title
  * @returns {string} HTML document
  */
-export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', publishDate = '', language = 'auto', generateToc = false, generateAbstract = false, abstract = '') {
-  content = normalizeDocumentContent(content, title, sourceUrl, { tableCellFragmentTargets: true });
+export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', publishDate = '', language = 'auto', generateToc = false, generateAbstract = false, abstract = '', titleFragmentIds = []) {
+  const prepared = prepareDocumentContent(content, title, sourceUrl, { titleFragmentIds, tableCellFragmentTargets: true });
+  const titleAnchor = prepared.titleId ? ` id="${escapeAttr(prepared.titleId)}"` : '';
+  content = prepared.content;
   const headings = content.filter(item => item.type === 'heading').map(item => ({ text: documentPlainText(item, sourceUrl), level: item.level || 2, id: item.id }));
   const h2InContent = content.filter(item => item.type === 'heading' && item.level === 2);
   log('buildHtmlForPdf', { 
@@ -430,7 +433,7 @@ export function buildHtmlForPdf(content, title, author, styles, sourceUrl = '', 
 <body translate="no" class="notranslate" data-translate="no">
   <article class="article">
     <header class="article-header">
-      <h1 class="article-title">${escapeHtml(cleanedTitle)}</h1>
+      <h1 class="article-title"${titleAnchor}>${escapeHtml(cleanedTitle)}</h1>
       ${subtitleHtml}
       ${metaHtml}
     </header>

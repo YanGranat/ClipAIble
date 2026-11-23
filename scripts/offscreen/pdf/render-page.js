@@ -2,6 +2,7 @@
 import { CONFIG } from '../../utils/config.js';
 import { createPdfError } from '../../utils/pdf-errors.js';
 import { getPdfRenderViewport } from './render-viewport.js';
+import { loadPdfJs } from './utils/pdf-loader.js';
 
 /** Read visible bounds before encoding without keeping a full second pixel buffer. */
 function findVisibleBounds(context, width, height) {
@@ -31,8 +32,9 @@ function findVisibleBounds(context, width, height) {
  * @param {number} scale
  * @param {ReturnType<typeof import('./render-operations.js').startPdfRender>} operation
  * @param {boolean} [trimBlankMargins]
+ * @param {(viewport: any, width: number, height: number) => Promise<any>} [selectRegion]
  */
-export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMargins = false) {
+export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMargins = false, selectRegion) {
   operation.check();
   const { viewport, width, height } = getPdfRenderViewport(page, scale);
   const canvas = document.createElement('canvas');
@@ -44,7 +46,11 @@ export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMa
     canvas.height = height;
     const context = canvas.getContext('2d', { alpha: false, willReadFrequently: trimBlankMargins });
     if (!context) throw createPdfError('PDF canvas is unavailable', 'errorPdfRenderFailed');
-    renderTask = page.render({ canvasContext: context, viewport, intent: 'print', background: '#ffffff' });
+    const renderOptions = selectRegion
+      ? { recordOperations: true, annotationMode: (await loadPdfJs()).AnnotationMode.DISABLE }
+      : {};
+    operation.check();
+    renderTask = page.render({ canvasContext: context, viewport, intent: 'print', background: '#ffffff', ...renderOptions });
     operation.track(renderTask);
     const timeoutMs = pageNum === 1 ? CONFIG.PDF_FIRST_PAGE_RENDER_TIMEOUT_MS : CONFIG.PDF_RENDER_TIMEOUT_MS;
     const renderDeadline = new Promise((_, reject) => {
@@ -53,8 +59,13 @@ export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMa
     await Promise.race([renderTask.promise, renderDeadline]);
     clearTimeout(timeout);
     operation.check();
-    if (trimBlankMargins) {
-      const bounds = findVisibleBounds(context, width, height);
+    const region = selectRegion ? await selectRegion(viewport, width, height) : null;
+    operation.check();
+    if (selectRegion && !region) return null;
+    if (trimBlankMargins || region) {
+      const bounds = region
+        ? { x: region.left, y: region.top, width: region.right - region.left, height: region.bottom - region.top }
+        : findVisibleBounds(context, width, height);
       if (!bounds) return null;
       if (bounds.width !== width || bounds.height !== height) {
         cropped = document.createElement('canvas');
@@ -71,7 +82,7 @@ export async function renderPdfPage(page, pageNum, scale, operation, trimBlankMa
     const blob = await new Promise(resolve => output.toBlob(resolve, 'image/jpeg', 0.92));
     operation.check();
     if (!blob?.size) throw createPdfError('PDF page encoding failed', 'errorPdfRenderFailed');
-    return { blob, width: output.width, height: output.height };
+    return { blob, width: output.width, height: output.height, ...(region ? { region } : {}) };
   } catch (error) {
     try { renderTask?.cancel(); } catch {}
     throw error;

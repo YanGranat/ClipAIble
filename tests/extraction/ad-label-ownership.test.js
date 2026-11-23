@@ -71,4 +71,37 @@ describe('Advertising frame ownership', () => {
     expect(JSON.stringify(result.content)).toContain('const label');
     expect(dom.window.document.body.innerHTML).toBe(before);
   });
+
+  it.each([false, true])('does not interpret CSS utility arguments as region names with automatic=%s', async automatic => {
+    const first = 'The opening describes how observers classified each result. Every record preserved its measurement and the conditions under which the measurement was recorded. The comparison uses a separate reading from the same instrument. Each follow-up reading adds an independent check of the observed response.';
+    const last = 'The closing observation records the same measurement again.';
+    const dom = page('<div id="reading" class="[--spacing:var(--banner-ad-size)]">' +
+      '<p class="max-w-[var(--sidebar-gap)]">' + first + '</p>' +
+      '<div class="advertisement"><p>Unrelated campaign offer.</p></div>' +
+      '<div class="max-w-[var(--player-gap)]">' + last + '</div></div>');
+    dom.window.console.log = () => {};
+    const run = dom.window.eval(serialized.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, automatic ? null : { content: '#reading', title: 'h1' });
+    const prose = result.content.filter(item => item.type === 'paragraph').map(item => item.text);
+    expect(prose).toEqual([first, last]);
+  });
+
+  it('retains the article inside a reading landmark that also owns an interface hook', async () => {
+    const text = 'This observation belongs to the article and is visible during normal reading.';
+    const dom = page('<p>' + text + '</p><div class="modal"><p>Layout modal label.</p></div>' +
+      '<dialog open><p>Native dialog label.</p></dialog>');
+    const document = dom.window.document;
+    document.title = 'Field observations';
+    const article = document.querySelector('article');
+    const main = document.createElement('main');
+    main.className = 'js-modal-enhancement reading-page';
+    article.before(main);
+    main.append(article);
+    // The headline also belongs to the page when its article body is laid out separately.
+    main.before(article.querySelector('h1'));
+    dom.window.console.log = () => {};
+    const run = dom.window.eval(serialized.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: 'article', title: 'h1' });
+    expect(result.content.filter(item => item.type === 'paragraph').map(item => item.text)).toEqual([text]);
+  });
 });

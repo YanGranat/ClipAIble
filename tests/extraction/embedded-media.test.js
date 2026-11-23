@@ -41,6 +41,13 @@ describe('article embedded media', () => {
       .toEqual([{ type: 'paragraph', text: 'Field recording', html: '<a href="https://example.test/media/recording.ogg">Field recording</a>' }]);
   });
 
+  it('uses a short host label for unlabelled media without changing its source address', () => {
+    const src = 'https://media.example.test/archive/recorded-observations/9c23a61a2dc0/measurement.mp4';
+    const [item] = getEmbeddedMediaItems(media('<video src="' + src + '"></video>'));
+    expect(item.text).toBe('media.example.test');
+    expect(item.html).toBe('<a href="' + src + '">media.example.test</a>');
+  });
+
   it('escapes media labels before placing them in link markup', () => {
     const element = media('<iframe src="https://example.test/player"></iframe>');
     element.setAttribute('title', '<img src=x onerror=alert(1)> & "sample"');

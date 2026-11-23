@@ -38,7 +38,9 @@ function sendOffscreenMessage(message, callback, admission) {
  */
 export async function extractPdfViaOffscreen(pdfUrl, pdfData = null, cancellationOptions) {
   const preserveImagePages = cancellationOptions?.preserveImagePages === true;
-  const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData, { preserveImagePages }, cancellationOptions,
+  const preserveOriginalFigures = cancellationOptions?.preserveOriginalFigures === true;
+  const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData,
+    { preserveImagePages, ...(preserveOriginalFigures ? { preserveOriginalFigures } : {}) }, cancellationOptions,
     CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS, true);
   if (!preserveImagePages) return response.result;
   try {

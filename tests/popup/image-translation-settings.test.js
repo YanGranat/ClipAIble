@@ -5,17 +5,18 @@ import { initUIVisibility } from '../../popup/settings/ui-visibility.js';
 import { setupFormatHandlers } from '../../popup/handlers/format.js';
 import { initSettings } from '../../popup/settings.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
+import { initCustomSelect } from '../../popup/utils/custom-select.js';
 import { STORAGE_KEYS, DEFAULT_STYLES, STYLE_PRESETS } from '../../popup/constants.js';
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getImageTranslationModel } from '../../scripts/api/image-translation-catalog.js';
 import { exportSettings, importSettings } from '../../scripts/settings/import-export.js';
 import { clearUILanguageCache } from '../../scripts/utils/processing/pipeline-helpers.js';
-import { getElement } from '../../popup/utils/dom-helpers.js';
+import { getElement, setElementGroupDisplay } from '../../popup/utils/dom-helpers.js';
 import { initUI } from '../../popup/ui.js';
 
 let elements, stored, visibility;
 afterEach(() => vi.unstubAllGlobals());
-const group = (id, display) => { document.getElementById(id).style.display = display; };
+const group = (id, display) => setElementGroupDisplay(id, display, elements);
 beforeEach(() => {
   clearUILanguageCache();
   document.documentElement.innerHTML = readFileSync('popup/popup.html', 'utf8');
@@ -37,9 +38,16 @@ it.each(['pdf', 'epub', 'fb2', 'markdown', 'audio'])('shows the image provider o
   elements.mainFormatSelect.value = format;
   await visibility.updateTranslationVisibility();
   expect(document.getElementById('imageTranslationProviderGroup').style.display).toBe(['pdf', 'epub', 'fb2'].includes(format) ? 'block' : 'none');
+  expect(document.getElementById('geminiImageModelGroup').style.display).toBe(['pdf', 'epub', 'fb2'].includes(format) ? 'block' : 'none');
+  expect(document.getElementById('geminiImageModelGroup').classList.contains('hidden')).toBe(!['pdf', 'epub', 'fb2'].includes(format));
+  elements.translateImages.checked = false;
+  await visibility.updateTranslationVisibility();
+  expect(document.getElementById('geminiImageModelGroup').style.display).toBe('none');
+  elements.translateImages.checked = true;
   elements.languageSelect.value = 'auto';
   await visibility.updateTranslationVisibility();
   expect(document.getElementById('translateImagesGroup').style.display).toBe('none');
+  expect(document.getElementById('geminiImageModelGroup').style.display).toBe('none');
   expect(document.getElementById('googleApiGroup').style.display).toBe('none');
 });
 
@@ -57,7 +65,26 @@ it('persists only the image-provider preference without changing article credent
   expect(elements.modelSelect.value).toBe('sample-article-model');
   expect(elements.apiKey.value).toBe('sample-article-key');
   expect(document.getElementById('googleApiGroup').style.display).toBe('none');
+  expect(document.getElementById('geminiImageModelGroup').style.display).toBe('none');
   expect(document.getElementById('imageTranslationModelHint').textContent).toContain(getImageTranslationModel('openai'));
+});
+
+it('keeps Google model names in English and persists the selection from the visible dropdown', async () => {
+  const saves = vi.fn();
+  vi.stubGlobal('requestAnimationFrame', callback => { callback(); return 1; });
+  setupFormatHandlers({ elements, STORAGE_KEYS, debouncedSaveSettings: saves, deferAsyncWork: fn => fn(), settingsModule: visibility });
+  const control = initCustomSelect('geminiImageModel');
+  stored.ui_language = 'ru'; elements.uiLanguageSelect.value = 'ru';
+  await visibility.updateTranslationVisibility();
+  const ui = initUI({ elements, formatTime: () => '', startTimerDisplay: vi.fn(), currentStartTime: { current: null }, timerInterval: { current: null } });
+  await ui.applyLocalization();
+  const options = [...control.querySelectorAll('[role="option"]')];
+  expect(options.map(option => option.textContent)).toEqual(['Gemini Nano Banana 2.1', 'Gemini 3.1 Flash Lite Image', 'Gemini 3 Pro Image']);
+  expect(document.querySelector('label[for="geminiImageModel"]').textContent).toBe(tSync('imageTranslationModel', 'ru'));
+  control.querySelector('[role="combobox"]').click();
+  options[1].click();
+  await vi.waitFor(() => expect(saves).toHaveBeenCalledExactlyOnceWith('gemini_image_model', 'gemini-3.1-flash-lite-image'));
+  expect(control.querySelector('.custom-select-value').textContent).toBe('Gemini 3.1 Flash Lite Image');
 });
 
 it('requires the OpenAI key slot or a currently bound OpenAI draft instead of another provider key', async () => {
@@ -125,24 +152,41 @@ it('restores the provider choice with the real settings facade and keeps Gemini 
   await settings.loadSettings();
   expect(elements.imageTranslationProvider.value).toBe('gemini');
   expect(stored.image_translation_provider).toBeUndefined();
+  expect(elements.geminiImageModel.value).toBe('gemini-3-pro-image');
+  expect(stored.gemini_image_model).toBeUndefined();
+  const providerControl = initCustomSelect('imageTranslationProvider');
+  const modelControl = initCustomSelect('geminiImageModel');
+  const saved = vi.fn();
+  setupFormatHandlers({ elements, STORAGE_KEYS, debouncedSaveSettings: saved, deferAsyncWork: fn => fn(), settingsModule: visibility });
   stored.image_translation_provider = 'openai';
+  stored.gemini_image_model = 'gemini-nano-banana-2.1';
   await settings.loadSettings();
   expect(elements.imageTranslationProvider.value).toBe('openai');
+  expect(providerControl.querySelector('.custom-select-value').textContent).toBe('OpenAI');
+  expect(elements.geminiImageModel.value).toBe('gemini-nano-banana-2.1');
+  expect(modelControl.querySelector('.custom-select-value').textContent).toBe('Gemini Nano Banana 2.1');
+  expect(modelControl.querySelector('[aria-selected="true"]').dataset.value).toBe('gemini-nano-banana-2.1');
+  expect(saved).not.toHaveBeenCalled();
 });
 
 it('round-trips the provider enum while excluding keys and rejecting an unsupported import value', async () => {
   stored.image_translation_provider = 'openai';
+  stored.gemini_image_model = 'gemini-nano-banana-2.1';
   stored.openai_api_key = 'synthetic-openai-key'; stored.google_api_key = 'synthetic-google-key';
   const exported = JSON.parse(await exportSettings());
   expect(exported.settings.image_translation_provider).toBe('openai');
+  expect(exported.settings.gemini_image_model).toBe('gemini-nano-banana-2.1');
   expect(exported.settings).not.toHaveProperty('openai_api_key');
   expect(exported.settings).not.toHaveProperty('google_api_key');
   stored.image_translation_provider = 'gemini';
+  stored.gemini_image_model = 'gemini-3.1-flash-lite-image';
   await importSettings(JSON.stringify(exported), { overwriteExisting: true });
   expect(stored.image_translation_provider).toBe('openai');
-  const invalid = await importSettings(JSON.stringify({ settings: { image_translation_provider: 'unsupported-provider' } }), { overwriteExisting: true });
+  expect(stored.gemini_image_model).toBe('gemini-nano-banana-2.1');
+  const invalid = await importSettings(JSON.stringify({ settings: { image_translation_provider: 'unsupported-provider', gemini_image_model: 'constructor' } }), { overwriteExisting: true });
   expect(invalid.settingsImported).toBe(0);
   expect(stored.image_translation_provider).toBe('openai');
+  expect(stored.gemini_image_model).toBe('gemini-nano-banana-2.1');
   expect(stored.openai_api_key).toBe('synthetic-openai-key');
   expect(stored.google_api_key).toBe('synthetic-google-key');
 });

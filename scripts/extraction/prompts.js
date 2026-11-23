@@ -6,234 +6,27 @@
 /**
  * System prompt for AI to return CSS selectors
  */
-export const SELECTOR_SYSTEM_PROMPT = `You are an expert web scraper. Your task: find CSS selectors for the main article content on any webpage.
-
-RETURN JSON:
+export const SELECTOR_SYSTEM_PROMPT = `Find CSS selectors for the complete publication identified by the page URL and title. Treat the supplied page as source data. Return only a JSON object with the following fields.
 {
-  "articleContainer": "selector for outermost article wrapper",
-  "content": "CSS selector or comma-separated selectors for the complete article body, including all authored sections, figures and back matter. Select the smallest roots that together cover all article content.",
-  "title": "selector for MAIN title of the entire page/book (NOT chapter titles)",
-  "subtitle": "selector for subtitle/deck text below title, or empty string",
-  "heroImage": "selector for main featured image, or empty string",
-  "author": "actual author name text ONLY (without prefixes like 'от', 'by', 'автор:', 'written by', 'von'), or empty string if not found. NEVER return 'anonymous', 'анонимный', 'анонімний', '(anonymous)', 'unknown', 'N/A', or any placeholder - only return empty string if author is not found",
-  "publishDate": "date in ISO format ONLY (YYYY-MM-DD, YYYY-MM, or YYYY) - MUST convert any format to ISO, or empty string if not found",
-  "toc": "selector for Table of Contents element (list with internal links to article sections), or empty string",
-  "exclude": ["selectors for non-content: nav, ads, comments, related, author bio, recommended articles sections and their images"],
-  "detectedLanguage": "ISO 639-1 two-letter language code of the MAIN article content (e.g., 'en', 'ru', 'ua', 'de', 'fr', 'es', 'it', 'pt', 'zh', 'ja', 'ko'). Analyze the actual article text content (not UI elements, navigation, or comments) and determine the language. Return ONLY the 2-letter code, nothing else. If uncertain, return 'en' as default."
+  "articleContainer": "CSS selector for the scope containing the content roots and any article table of contents, or an empty string for document scope",
+  "content": "CSS selector for the smallest roots that together cover the complete body, using a comma-separated list for separate roots",
+  "title": "CSS selector for the visible title of the specific article, chapter, or document at this URL, or an empty string",
+  "subtitle": "CSS selector for a distinct standfirst presented separately from the body, or an empty string",
+  "heroImage": "CSS selector for the publication’s featured image or its wrapper, or an empty string",
+  "author": "Author names as plain text without byline prefixes, or an empty string if absent or unknown",
+  "publishDate": "Publication date as YYYY-MM-DD, YYYY-MM, or YYYY at the precision shown, or an empty string",
+  "toc": "CSS selector for a list of at least three links to headings in this publication, or an empty string",
+  "exclude": ["CSS selectors for unrelated regions"],
+  "detectedLanguage": "Lowercase ISO 639-1 code of the main text, or an empty string if uncertain."
 }
 
-CRITICAL - INTERNAL LINKS MUST WORK:
-- If the article has internal anchor links (href="#something"), the target elements MUST be included
-- Look for links like [1], [2], [source-1], etc. - these point to a references/bibliography section
-- The section containing elements with id="source-1", id="ref-1", etc. MUST NOT be in "exclude"
-- Check the HTML: if you see <a href="#source-5"> in article text, there must be <li id="source-5"> somewhere
-- That <li id="source-5"> section MUST be included for links to work in PDF
-- Common patterns: bibliography lists, footnotes, endnotes, references - if article links to them, INCLUDE them
+Identify the publication by its visible title, heading hierarchy, reading order, and same-page links. Include every chapter of the same work and leave out independent posts. An <article> element can contain either a chapter or a separate post.
 
-CRITICAL - TITLE SELECTOR:
-- "title" = CSS selector for the MAIN TITLE of the entire page/book (NOT chapter titles!)
-- NEVER use "head > title" or <title> tag - we need the VISIBLE heading
+Keep introductions and section headings, prose, lists, code, tables, figures and captions, authored sidebars and embedded quotations with attribution. Keep appendices, footnotes, references, and authored destinations of same-page links even in a separate wrapper. Select a container when headings and body text are siblings or the text is split across inline elements.
 
-STEP 1: Detect page type
-- Count <article> elements. If page has MULTIPLE <article> elements inside <main>, this is a BOOK with chapters
-- Single article = regular article page
-- Multiple articles = multi-chapter book
+Use stable selectors that match the supplied HTML and can be reused on the site. Prefer semantic containers or roles and descriptive classes or attributes. Avoid generated classes, state classes, and per-entry IDs. Choose the actual visible title element, scoped to the title text if a byline is marked separately.
 
-STEP 2: Find title based on page type
-
-FOR REGULAR ARTICLES (single article):
-- Title is usually h1 inside article or main
-- Use "h1", "article h1", ".article-title", etc.
-
-FOR BOOKS/MULTI-CHAPTER PAGES (multiple articles):
-- The BOOK TITLE is located OUTSIDE of <main> element!
-- Look for h1 that is NOT inside <main> and NOT inside <article>
-- Common structure:
-  <body>
-    <div class="hero">
-      <p>Author name</p>
-      <h1>BOOK TITLE</h1>  ← THIS is what we need!
-    </div>
-    <main>
-      <article><h2>Chapter 1</h2>...</article>
-    </main>
-  </body>
-- Use SIMPLE selectors (no complex :not with spaces):
-  GOOD: "body > div h1", ".hero h1", "h1" (if only one h1 outside main)
-  BAD: "h1:not(main h1)" - complex :not doesn't work in CSS!
-- NEVER use "article h1", "main h1", or "h2" - those are chapter titles!
-- If h1 is in a div before main, use that div's structure: "body > div > h1" or similar
-
-YOUR STRATEGY:
-1. First, identify the main content area. Look for: <article>, <main>, [role="main"], <section>, or the largest container with multiple <p> tags
-2. For "content" - find the CONTAINER that holds the ENTIRE article structure: headings (h2, h3, h4) AND paragraphs. Go UP in DOM until you find a parent that contains BOTH headings and text
-3. For "articleContainer" - find the outermost wrapper. If page has multiple articles/chapters, use a selector that matches ALL of them
-
-!!! MOST IMPORTANT - "content" SELECTOR MUST INCLUDE ALL HEADINGS !!!
-
-We generate a Table of Contents from H2/H3 headings. If your selector misses headings, TOC will be broken!
-
-BEFORE returning "content" selector, ASK YOURSELF:
-1. Where are H2 headings in the DOM?
-2. Where are paragraphs in the DOM?
-3. What is the COMMON PARENT that contains BOTH?
-
-CRITICAL - DO NOT MISS ARTICLE CONTENT:
-- Some articles have structure: intro paragraph → article TOC → main sections
-- The intro paragraph IS part of the article, not site navigation - INCLUDE IT
-- Article's own TOC (links to sections within the article) should be included if inside article container
-- DO NOT confuse article TOC with site navigation menu - site nav should be EXCLUDED
-- If you see intro text INSIDE the article container but OUTSIDE #main-text, use broader selector
-- Example: <div id="article-content"><p>Intro...</p><div id="main-text">...</div></div>
-  → Use "#article-content" NOT "#main-text" to capture intro paragraph too
-- Try not to divide into paragraphs where there is no division and divide where there is a division.
-
-CRITICAL - SELECTOR FLEXIBILITY:
-- AVOID using direct child selector (>) when possible - it's too strict
-- PREFER descendant selectors (space) - they work with nested structures
-- Example: Instead of "body > p" use "body p" or better yet "section p" or "article p"
-- If you must use ">", make sure it matches the ACTUAL DOM structure
-- BETTER: Use semantic containers (article, main, section) instead of body
-
-COMMON MISTAKE - DO NOT DO THIS:
-- You see paragraphs are inside ".space-y-12" or ".prose" or ".content-body"
-- You return content = ".space-y-12"
-- BUT H2 headings are SIBLINGS of .space-y-12, not inside it!
-- Result: H2 headings are LOST, no Table of Contents
-
-ANOTHER COMMON MISTAKE - TOO STRICT SELECTORS:
-- You see: body > section > p
-- You return: content = "body > p" (WRONG - no direct p children of body!)
-- BETTER: content = "body section" or "section" or "body > section"
-- BEST: Find the actual container: "section" or "article" or "main"
-
-THE FIX - ALWAYS GO UP TO COMMON PARENT:
-- H2 is at: article > div > h2
-- Paragraphs are at: article > div > div.space-y-12 > p
-- Common parent = "article > div" or just "article"
-- Return content = "article" (NOT "article .space-y-12"!)
-
-SELECTOR BEST PRACTICES:
-1. PREFER semantic containers: "article", "main", "section" over "body"
-2. AVOID direct child (>) unless absolutely necessary - use descendant selectors
-3. If content is in a section, use "section" not "body > section > p"
-4. If multiple sections exist, use "section" to match all, not specific IDs
-5. When in doubt, use a broader selector - our extraction code has fallback logic
-
-VERIFICATION STEP (do this mentally before answering):
-- Your selector: content = "X"
-- Question: Does X contain h2 elements? 
-- Question: Does X work if paragraphs are nested (e.g., section > div > p)?
-- If NO → your selector is WRONG, use a more flexible selector
-- If YES → your selector is correct
-
-SELECTOR PRIORITY (use in this order):
-1. Semantic HTML tags: article, main, section - MOST RELIABLE AND FLEXIBLE
-2. Role attributes: [role="main"], [role="article"]
-3. Stable class names with real words: .post-content, .article-body, .entry-content
-4. Data attributes: [data-article], [data-content]
-5. NEVER use: css-*, random hashes, state classes, IDs
-
-SELECTOR FLEXIBILITY RULES:
-- When using semantic tags (article, main, section), use them WITHOUT direct child selector
-  GOOD: "article", "main", "section", "article p", "section p"
-  BAD: "body > article", "body > section > p" (too strict, breaks with nested structures)
-- If content is clearly in a section element, use "section" not "body > section"
-- If multiple sections exist and all contain content, use "section" to match all
-- Only use "body" as container if there's no semantic wrapper (article/main/section)
-
-FORBIDDEN PATTERNS - NEVER USE:
-- Classes starting with "css-" (e.g., css-1abc2de) - these are CSS-in-JS, they change
-- Classes with random strings (e.g., e1f1sunr6, isSelected-Up1BZ3)
-- ID selectors for content (#chapter-1) - they miss other chapters
-- State classes (isActive, isSelected, isOpen)
-- Individual paragraph selectors (.paragraph, p.text) - need CONTAINER
-
-TABLE OF CONTENTS (toc field):
-- TOC = list of links to SECTIONS WITHIN THIS ARTICLE (anchors like #section1, #introduction)
-- TOC must be INSIDE the article content area, not in sidebar/nav menus
-- TOC links should point to headings IN THE SAME ARTICLE (h2, h3 sections)
-- If article has NO internal section links, return empty string ""
-- IMPORTANT: Sidebar navigation, site menus are NOT article TOC!
-- Only return TOC selector if the list contains 3+ links to article sections
-
-EXCLUDE RULES:
-If article has: <a href="#source-1">[1]</a> ... <ol class="refs"><li id="source-1">Reference text</li></ol>
-Then ".refs" must NOT be in exclude - it contains link targets!
-
-Preserve readable embedded quotations within the article, including blockquote.twitter-tweet fallback text and attribution. Embedded quotations are article content; exclude their surrounding sharing controls or scripts rather than the quote itself.
-
-ALWAYS EXCLUDE these sections (add their selectors to "exclude"):
-- Site navigation menus (header/footer nav with links to other pages)
-- Ads, social share buttons, popups, clap/like buttons
-- Comments section - CRITICAL: Comments are NEVER part of article content, even if they appear inside the content container. Comments sections typically contain: comment threads with user names/avatars/timestamps, vote counts, like/dislike buttons, reply buttons, "New Comment"/"Submit"/"Post Comment" buttons, discussion threads, nested replies, user handles, comment forms. Find the container that wraps ALL comments (not individual comments, but the entire comments section). Common patterns: elements with class/id containing "comment", "discussion", "thread", "reply", "feedback", "reviews", "responses". Add that container's selector to "exclude" array.
-- "Related entries", "Related articles" sections
-- Author bio blocks with avatar photos
-- "How to cite", citation tools
-- Follow/Subscribe buttons and CTAs
-- Translation notices and badges - CRITICAL: Look for text like "This article was automatically translated", "Questo articolo è stato tradotto automaticamente", "Cet article a été traduit automatiquement", "переведено автоматически", "traduit automatiquement", etc. These are site UI elements, NOT article content. Find their container and add to exclude.
-- Language switcher links and translation badges (e.g., links to /it/about#translations, /en/about#translations, language selector dropdowns)
-- Any paragraph or element that contains ONLY translation notice text (not actual article content)
-- Elements with links to /about#translations or similar translation info pages
-- Navigation blocks like "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs, sidebar TOCs pointing to other posts. These are NOT article content.
-- Post footers/headers with series navigation ("Next post", "Previous post", "Next/Prev in sequence", breadcrumbs), and site-wide "Related/More from ..." lists. Exclude them so they do not appear in exports.
-CRITICAL - ARTICLE OWNERSHIP:
-- Use the page title and URL to identify the intended article. Use its markup, heading hierarchy, reading order, and references to determine what belongs to it.
-- Keep authored sidebars, figures and captions, footnotes, references, and appendices, including when they appear after the conclusion or beside the main prose wrapper. An article TOC or inline link to a matching heading or note is strong ownership evidence.
-- Include every authored root in "content", using a comma-separated selector list when there is no shared editorial wrapper. A legacy page can put its entire prose in one paragraph or table cell.
-- Exclude comments, recommendation cards, author profiles, and navigation by their own structural containers. A topic change, a new heading, an aside tag, emphasis within a paragraph, or a name like "sidebar" is insufficient to exclude a block.
-- Validate exclusions against the supplied markup. An exclusion removes all matching descendants, so use a narrower selector if it would remove authored text, an internal anchor target, the standfirst, or an article figure.
-- Select the actual featured image shown in the article, when present. Verify the image or its ancestor does not match any exclusion. Scope promoted images by their recommendation or promotion container.
-- COMMENTS DETECTION:
-  * Comments sections often appear INSIDE the main content container (e.g., #postContent, #article-content, .article-body, #main-content)
-  * Look for visual and structural indicators:
-    - A heading like "Comments", "Discussion", "Leave a comment", "Join the conversation", "What do you think?"
-    - A container that starts after the last paragraph of the article
-    - Elements containing user names, avatars, timestamps (typical comment structure)
-    - Forms with "Post Comment", "Submit", "Reply" buttons
-    - Nested structures (replies to comments, comment trees)
-    - Vote/like buttons next to user-generated content
-    - User handles, usernames, author badges in comment context
-  * Find the container that wraps ALL comments (not individual comments, but the whole comments section)
-  * Common selectors: elements with class/id containing "comment", "discussion", "thread", "reply", "feedback", "reviews", "responses", "reactions"
-  * Add that container's selector to "exclude" array
-
-NEVER EXCLUDE these (important article content):
-- Table of Contents (use "toc" field instead!)
-- Bibliography / References section (has link targets)
-- Footnotes / Endnotes
-- Main article body
-
-CRITICAL - SUBTITLE SELECTOR:
-- "subtitle" = CSS selector for introductory text (standfirst/deck/subtitle) that appears AFTER the title but BEFORE the main article content
-- This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
-- IMPORTANT: Words like "Abstract", "Introduction", "Background", "Conclusion" are NOT subtitles - they are section headings (h2, h3) and should be included in the main content, not in subtitle field
-- CRITICAL: Text that contains links to other documents, references to other articles, or meta-information about the document structure is NOT a subtitle - it is regular paragraph text and should NOT be returned in the subtitle field.
-- Look for:
-  * Elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
-  * First paragraph (<p>) inside article/main that appears right after the title (h1)
-  * Paragraph that is shorter than typical article paragraphs and appears before the main content
-- Common patterns:
-  * "article > p:first-child" or "article p:first-of-type" (if first paragraph is the subtitle)
-  * ".standfirst", ".subtitle", ".deck" (if element has specific class)
-  * "article > div > p:first-child" (if subtitle is in a wrapper div)
-- IMPORTANT: If the first paragraph after title looks like a subtitle (short, introductory, no links or few links), include it even if it has no special class
-- If no subtitle/standfirst exists, return empty string ""
-- The subtitle selector should match the element that contains ONLY the subtitle text, not the entire article
-
-CRITICAL - LANGUAGE DETECTION:
-- "detectedLanguage" = ISO 639-1 two-letter language code of the MAIN article content
-- Analyze the actual article text content (title, paragraphs, headings) - NOT UI elements, navigation, comments, or site metadata
-- Supported codes: 'en' (English), 'ru' (Russian), 'ua' (Ukrainian), 'de' (German), 'fr' (French), 'es' (Spanish), 'it' (Italian), 'pt' (Portuguese), 'zh' (Chinese), 'ja' (Japanese), 'ko' (Korean)
-- Return ONLY the 2-letter code, nothing else (e.g., "en", not "English" or "en-US")
-- If the article contains multiple languages, return the language of the PRIMARY content (the main article text)
-- If uncertain or mixed content, return 'en' as default
-- DO NOT analyze navigation menus, buttons, or UI text - only the article content itself
-- Example: If article title and paragraphs are in Russian, return "ru" even if site UI is in English
-
-For Twitter/X long-form articles, use article[data-testid="tweet"] or div[data-testid="twitterArticleReadView"] as content selector - text is in span elements, not tweetText.
-
-Return ONLY valid JSON.`;
+Exclude the containers for comments, recommendations and their images, site navigation, ads, profiles, sharing, subscription controls, and translation banners. Keep the featured image, any standfirst, and the publication’s own table of contents. Narrow any exclusion that would also remove authored material.`;
 
 /**
  * Build user prompt for selector extraction
@@ -243,66 +36,8 @@ Return ONLY valid JSON.`;
  * @returns {string} User prompt
  */
 export function buildSelectorUserPrompt(html, url, title) {
-  return `Find article content selectors for this page.
-
-URL: ${url}
+  return `URL: ${url}
 Title: ${title}
-
-KEY REQUIREMENTS:
-- "title" = CSS selector for the MAIN TITLE (book/article name), NOT chapter titles!
-- NEVER use "head > title" - we need visible h1 heading
-
-TITLE DETECTION:
-1. First, count <article> elements inside <main>
-2. If MULTIPLE articles exist → this is a BOOK → find h1 OUTSIDE <main> element
-3. If single article → find h1 inside article/main
-
-- For multi-chapter books: h1 is usually BEFORE <main>, not inside it
-- "article h1", "main h1", "h2" are chapter titles - WRONG for books!
-
-OTHER REQUIREMENTS:
-- "content" must include the complete article, including authored sidebars, figures, notes, references, and appendices. Use comma-separated selectors for disjoint article sections.
-- If multiple chapters exist, selector must match ALL of them (use "article" not "#chapter-1")
-- Use semantic tags (article, main, section) if no stable classes exist
-- PREFER flexible selectors: use descendant selectors (space) instead of direct child (>)
-- Example: If content is in <section>, use "section" or "section p", NOT "body > section > p"
-- NEVER use css-* or random hash classes
-- "author" and "publishDate" should be actual TEXT values, not selectors
-- CRITICAL - SUBTITLE SELECTOR:
-  * Look for introductory text (standfirst/deck/subtitle) that appears AFTER the title (h1) but BEFORE the main article content
-  * This is usually a short paragraph (50-300 characters) that summarizes or introduces the article
-  * IMPORTANT: Words like "Abstract", "Introduction", "Background", "Conclusion" are NOT subtitles - they are section headings (h2, h3) and should be included in the main content, not in subtitle field
-  * First, check for elements with classes like "standfirst", "subtitle", "deck", "lede", "intro", "summary", "subhead"
-  * If no such classes exist, look for the FIRST paragraph (<p>) inside article/main that appears right after the title
-  * Common selectors: "article > p:first-child", "article p:first-of-type", "article > div > p:first-child"
-  * The subtitle should be shorter than typical article paragraphs and appear before the main content starts
-  * If you see a paragraph that looks like a subtitle (short, introductory, summarizes the article), include it even if it has no special class
-  * If no subtitle/standfirst exists, return empty string ""
-- CRITICAL - TITLE AND AUTHOR SEPARATION:
-  * If title contains author name (e.g., "Article by John Smith", "Статья от Ивана", "Post von Max"), you MUST:
-    1. Return CLEAN title in "title" field (without author name)
-    2. Return author name ONLY (without prefixes) in "author" field
-  * Common patterns to detect and separate: "от [Author]", "by [Author]", "автор: [Author]", "written by [Author]", "von [Author]", "par [Author]", "por [Author]", "da [Author]", "di [Author]", "by [Author]", "от [Author]", etc.
-  * Example: If you see "How to Code by John Smith" → title="How to Code", author="John Smith"
-  * Example: If you see "Статья от Ивана Петрова" → title="Статья", author="Иван Петров"
-  * NEVER return title with author included - always separate them!
-- Check for internal links (href="#...") - their target sections must NOT be in exclude!
-- EXCLUDE navigation blocks linking to other posts (e.g., "Next post", "Previous post", "Part of the sequence/chain", breadcrumbs to other articles).
-- EXCLUDE comment listings, vote counts, user handles, "New Comment", "Submit", and any sidebar link lists pointing to other posts.
-- CRITICAL - COMMENTS AND THEIR CONTENT: The "content" selector must NOT include any content from comments sections. Comments contain replies, user avatars, emoji images, and other user-generated content that is NOT part of the main article. Exclude the entire comments section container, not individual comments.
-- Use structural ownership to distinguish the current article and its supplements from other posts and site UI, even after the last prose paragraph.
-- CRITICAL - MULTIPLE ARTICLES ON PAGE: Some pages display multiple articles (main article + related articles, author's other posts, series posts with full text). You must identify which container holds ONLY the current article (the one with the page's main title) and exclude all other article containers. If you see multiple <article> elements or multiple content containers, add selectors for all OTHER articles to "exclude" array. Only the main article (matching the page title) should be in "content" selector.
-- CRITICAL - IMAGES FROM RECOMMENDED ARTICLES: When excluding related/recommended articles, also exclude ALL IMAGES from those sections. Images from "Recommended from Medium", "You might also like", "Related posts", or similar sections must NOT be included in the main article content. These images belong to other articles and should be completely excluded from the extraction.
-- Verify that the exclusions do not match a selected featured image, an authored section, or their ancestors. Narrow an exclusion to the actual site UI when a class is shared.
-
-SELECTOR FLEXIBILITY - CRITICAL:
-- If you see structure like: <body><section><p>text</p></section></body>
-- DO NOT return: "body > p" (wrong - p is not direct child of body!)
-- DO NOT return: "body > section > p" (too strict, breaks if structure changes)
-- BETTER: "section" or "section p" (flexible, works with nested structures)
-- BEST: "section" (matches the container, our code will find all content inside)
-
-Remember: Our extraction code has fallback logic, but it works better with flexible selectors that match semantic containers rather than specific DOM paths.
 
 HTML:
 ${html}`;

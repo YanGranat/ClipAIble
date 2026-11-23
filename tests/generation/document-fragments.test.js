@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { documentText, listHtml, normalizeDocumentContent, tableCellHtml } from '../../scripts/generation/document-content.js';
+import { documentText, listHtml, prepareDocumentContent, tableCellHtml } from '../../scripts/generation/document-content.js';
 import { tokenizeHtml, decodeEntities } from '../../scripts/utils/html/tokenizer.js';
+
+const normalizeDocumentContent = (...args) => prepareDocumentContent(...args).content;
 
 const source = 'https://example.test/report?key=a%26b';
 function hrefs(html) {

@@ -68,14 +68,16 @@ export function initUIVisibility(deps) {
     const active = shouldShowTranslateImages && translateImagesEnabled;
     setElementGroupDisplay('translateImagesGroup', shouldShowTranslateImages ? 'block' : 'none');
     setElementGroupDisplay('imageTranslationProviderGroup', active ? 'block' : 'none');
-    setElementGroupDisplay('googleApiGroup', active && provider === 'gemini' ? 'block' : 'none');
+    const showGoogleSettings = active && provider === 'gemini';
+    setElementGroupDisplay(ELEMENT_IDS.GEMINI_IMAGE_MODEL, showGoogleSettings ? 'block' : 'none');
+    setElementGroupDisplay('googleApiGroup', showGoogleSettings ? 'block' : 'none');
 
     const uiLanguage = await getUILanguage();
     if (!isCurrent()) return;
     const currentLanguage = () => getElement('uiLanguageSelect')?.value || uiLanguage;
     const modelHint = getElement('imageTranslationModelHint');
     if (modelHint) {
-      const model = getImageTranslationModel(provider);
+      const model = provider === 'openai' ? getImageTranslationModel(provider) : null;
       modelHint.hidden = !model;
       modelHint.dataset.i18nParams = JSON.stringify({ model: model || '' });
       modelHint.textContent = model ? tSync('imageTranslationModelHint', currentLanguage(), { model }) : '';

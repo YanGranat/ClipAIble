@@ -1,4 +1,4 @@
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
 import { downloadBlob } from '../api/blob-download.js';
 // @ts-check
 // Markdown generation module for ClipAIble extension
@@ -98,7 +98,7 @@ export async function generateMarkdown(data, updateState) {
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingMarkdown', await getUILanguage()), progress: 85 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  let filteredContent = normalizeDocumentContent(content, title, sourceUrl);
+  let { content: filteredContent, titleId } = prepareDocumentContent(content, title, sourceUrl, { titleFragmentIds: data.titleFragmentIds });
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
@@ -130,6 +130,7 @@ export async function generateMarkdown(data, updateState) {
     // Remove any trailing markdown syntax
     cleanedTitle = cleanedTitle.replace(/\s*#+$/, '').trim();
     // Now add the markdown heading syntax
+    if (titleId) markdown += `<a id="${escapeAttr(titleId)}"></a>\n\n`;
     markdown += `# ${cleanedTitle}\n\n`;
   }
   

@@ -1,7 +1,7 @@
 import { imageDataError } from '../utils/html/image-bytes.js';
 import { fb2ListParagraphs } from './fb2-list.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, normalizeDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
 // @ts-check
 // FB2 (FictionBook 2) generation module for ClipAIble extension
 // FB2 is an XML-based format popular for e-readers in Russian-speaking countries
@@ -54,7 +54,7 @@ export async function generateFb2(data, updateState) {
   } = data;
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = normalizeDocumentContent(content, title, sourceUrl, { inlineFragmentTargets: false });
+  const { content: filteredContent, titleId } = prepareDocumentContent(content, title, sourceUrl, { inlineFragmentTargets: false, titleFragmentIds: data.titleFragmentIds });
   if (filteredContent.length !== (content?.length || 0)) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content?.length || 0,
@@ -170,7 +170,7 @@ export async function generateFb2(data, updateState) {
   let fb2 = `<?xml version="1.0" encoding="UTF-8"?>
 <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
 ${generateDescription(safeTitle, authorParts, langCode, pubDate, sourceUrl, docId)}
-${generateBody(filteredContent, safeTitle, authorParts, generateToc, headings, pubDate, sourceUrl, langCode, generateAbstract, abstract)}
+${generateBody(filteredContent, safeTitle, authorParts, generateToc, headings, pubDate, sourceUrl, langCode, generateAbstract, abstract, titleId)}
 ${generateBinaries(images)}
 </FictionBook>`;
   fb2 = normalizeXmlCharacters(fb2);
@@ -400,7 +400,7 @@ ${authorXml}
 /**
  * Generate FB2 body section
  */
-function generateBody(content, title, author, generateToc, headings, pubDate, sourceUrl, language = 'en', generateAbstract = false, abstract = '') {
+function generateBody(content, title, author, generateToc, headings, pubDate, sourceUrl, language = 'en', generateAbstract = false, abstract = '', titleId = '') {
   const escapedTitle = escapeXml(title);
   const authorName = [author.firstName, author.middleName, author.lastName].filter(Boolean).join(' ');
   
@@ -425,8 +425,9 @@ function generateBody(content, title, author, generateToc, headings, pubDate, so
   }
   
   // Title page section with book title, author, source and date
+  const titleAnchor = titleId ? ` id="${escapeXml(xmlIdentifier(titleId))}"` : '';
   let bodyContent = `  <body>
-    <section>
+    <section${titleAnchor}>
       <title>
         <p>${escapedTitle}</p>
       </title>`;

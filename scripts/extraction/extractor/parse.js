@@ -4,11 +4,11 @@
 
 import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, safeGetComputedStyle, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isRealHeading } from './text-utils.js';
-import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent } from './filters.js';
+import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent, semanticClassNames } from './filters.js';
 import { extractBestImageUrl, isCollapsedImageLayer, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
-import { serializeReadingHtml, processMathElements, encodeOriginalText } from './inline-content.js';
+import { serializeReadingHtml, processMathElements, encodeOriginalText, preserveRangeMathInputs } from './inline-content.js';
 import { CANDIDATE_SELECTOR } from './constants.js';
 import { isReadingOwned, isLayoutTable, isFlowContainer, isReferencedReadingAside } from './reading-context.js';
 import { collectAnnotationTargets, emittedReadingIds, reuseAnnotationCitations } from './annotations.js';
@@ -32,6 +32,23 @@ import { projectAtomicMedia } from './atomic-media.js';
 export function collectCandidateElements(mainContent) {
   return [mainContent, ...Array.from(mainContent.querySelectorAll(CANDIDATE_SELECTOR))]
     .filter(element => element.matches(CANDIDATE_SELECTOR));
+}
+
+/** Project a selected wrapper that the regular parser does not recognize as a block.
+ * @param {Element[]} roots
+ * @returns {Set<Element>}
+ */
+export function collectExplicitFlowRoots(roots) {
+  const selected = new Set(roots);
+  return new Set(roots.filter(root => {
+    if (root.matches(CANDIDATE_SELECTOR) || root.namespaceURI !== 'http://www.w3.org/1999/xhtml' ||
+        !root.ownerDocument.body?.contains(root) ||
+        root.closest(`${INTERFACE_REGIONS},[inert],script,style,template,noscript,input,textarea,select,option,button,[role~="button"],[role~="menu"],[role~="menubar"]`)) return false;
+    for (let parent = root.parentElement; parent; parent = parent.parentElement) {
+      if (selected.has(parent)) return false;
+    }
+    return true;
+  }));
 }
 
 /**
@@ -139,9 +156,11 @@ export function hasFigureBodyText(element) {
  * Partition selected containers around their selected blocks, preserving inline markup.
  * @param {Element[]} elements - Selected elements in DOM order
  * @param {{has(element: Element): boolean}} graphics - Atomic graphic owners
+ * @param {Element[]} readingBoundaries
+ * @param {ReadonlySet<Element>} explicitFlowRoots
  * @returns {Array<{element: Element, container?: Element, owned?: Element[]}>} Ordered parse entries
  */
-export function partitionCandidateElements(elements, graphics = new Map(), readingBoundaries = []) {
+export function partitionCandidateElements(elements, graphics = new Map(), readingBoundaries = [], explicitFlowRoots = new Set()) {
   const selected = new Set(elements);
   const visited = new Set();
   const entries = [];
@@ -160,9 +179,11 @@ export function partitionCandidateElements(elements, graphics = new Map(), readi
       ...readingBoundaries.filter(child => child !== element && element.contains(child))])].sort(compareDomOrder);
     const originalText = element.getAttribute('data-original-text');
     const inlineMedia = element.tagName === 'P' && descendants.some(child => child.matches('img,iframe,video,audio,svg,canvas'));
-    const inlineBoundary = descendants.some(child => readingBoundaries.includes(child));
+    const inlineBoundary = !/^H[1-6]$/.test(element.tagName) && element.tagName !== 'FIGURE' &&
+      descendants.some(child => readingBoundaries.includes(child));
     const richFigure = element.tagName === 'FIGURE' && hasFigureBodyText(element);
-    if ((!isFlowContainer(element) && !inlineMedia && !inlineBoundary && !richFigure) || descendants.length === 0 || originalText?.trim()) {
+    const flowContainer = isFlowContainer(element) || explicitFlowRoots.has(element);
+    if ((!flowContainer && !inlineMedia && !inlineBoundary && !richFigure) || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
       for (const child of Array.from(element.querySelectorAll('*'))) {
         if (selected.has(child)) append(child);
@@ -180,7 +201,8 @@ export function partitionCandidateElements(elements, graphics = new Map(), readi
     range.setStart(element, 0);
     function appendFragment() {
       const fragment = range.cloneContents();
-      if (!(fragment.textContent || '').trim() && !fragment.querySelector('img,math')) return;
+      if (!(fragment.textContent || '').trim() && !fragment.querySelector('img,math,mjx-container')) return;
+      preserveRangeMathInputs(element, range, fragment);
       const wrapper = element.cloneNode(false);
       wrapper.appendChild(fragment);
       const owned = Array.from(element.querySelectorAll('code')).filter(child => range.intersectsNode(child));
@@ -240,10 +262,12 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     ? elements.find(element => element.tagName === 'H1' &&
       normalizeHeadingForDedup(readArticleMetadataText(element)) === state.mainTitleText)
     : null;
-  for (const { element, container, owned } of partitionCandidateElements(elements, graphicOwners, readingBoundaries)) {
+  for (const { element, container, owned } of partitionCandidateElements(elements, graphicOwners, readingBoundaries, state.explicitFlowRoots)) {
     if (consumed.has(element) || (container && consumed.has(container))) continue;
     if (state.captionOwners.has(container || element)) continue;
     const tagName = element.tagName.toLowerCase();
+    if (element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) ||
+        (isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR)))) continue;
     if (tagName === 'h1' && element === state.titleElement && content.every(item =>
       item.type === 'subtitle' || item.type === 'separator' || item.isStandfirst || item.isFeatured ||
       (item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || '')))) continue;
@@ -291,7 +315,8 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
         }
         const figure = container.closest('figure');
         const fragment = figure && !container.closest('figcaption') ? cloneFigureText(element) : element;
-        const html = serializeReadingHtml(fragment, state.selectionExclusions, state.referenceRoots);
+        const html = serializeReadingHtml(fragment, state.selectionExclusions, state.referenceRoots,
+          state.explicitFlowRoots?.has(container) === true);
         if (!html) continue;
         content.push({ type: 'paragraph', text: container.tagName === 'DT' ? `<strong>${html}</strong>` : html,
           html: container.tagName === 'DT' ? `<strong>${html}</strong>` : html,
@@ -442,7 +467,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
         incrementContentType(state.debugInfo, 'table');
         processedCount++;
       }
-    } else if (isFlowContainer(element)) {
+    } else if (isFlowContainer(element) || state.explicitFlowRoots?.has(element)) {
       const item = handleDiv(element, state, constants);
       if (item) {
         content.push(item);
@@ -529,7 +554,7 @@ export function handleHeading(element, state, constants) {
   // Skip if standfirst element
   if (state.standfirstElement && element === state.standfirstElement) return null;
   
-  const rawText = readArticleMetadataText(element);
+  const rawText = readArticleMetadataText(element, state.selectionExclusions);
   const cleanedText = cleanHeadingText(rawText);
   
   // Skip if matches standfirst text
@@ -938,6 +963,7 @@ export function handleTable(element, excludedSelectors = [], referenceRoots = nu
  * @returns {ContentItem|null} - Content item or null
  */
 export function handleDiv(element, state, constants) {
+  const preserveRoot = state.explicitFlowRoots?.has(element) === true;
   // Skip if inside blockquote (handled separately)
   if (element.closest('blockquote')) return null;
   
@@ -949,7 +975,7 @@ export function handleDiv(element, state, constants) {
     const clone = cloneFigureText(element);
     if (!clone.textContent?.trim()) return null;
     const original = getOriginalTextIfTranslated(element);
-    const html = original ? encodeOriginalText(element, original) : serializeReadingHtml(clone, state.selectionExclusions, state.referenceRoots);
+    const html = original ? encodeOriginalText(element, original) : serializeReadingHtml(clone, state.selectionExclusions, state.referenceRoots, preserveRoot);
     return html ? { type: 'paragraph', text: html, html } : null;
   }
   
@@ -962,7 +988,7 @@ export function handleDiv(element, state, constants) {
   if (!text || (!readingOwned && text.length < 10)) return null;
 
   // Skip elements that are clearly not content (buttons, navigation, etc.)
-  const className = String(element.className || '').toLowerCase();
+  const className = semanticClassNames(element);
   const id = (element.id || '').toLowerCase();
 
   // Skip navigation, buttons, icons, etc.
@@ -1046,7 +1072,8 @@ export function handleDiv(element, state, constants) {
 
   // Get original text if translated
   const originalText = getOriginalTextIfTranslated(element);
-  let finalText = originalText ? encodeOriginalText(element, originalText) : serializeReadingHtml(element, state.selectionExclusions, state.referenceRoots);
+  let finalText = originalText ? encodeOriginalText(element, originalText) : serializeReadingHtml(element, state.selectionExclusions, state.referenceRoots, preserveRoot);
+  if (preserveRoot && !finalText) return null;
   if (element.tagName === 'DT') finalText = `<strong>${finalText}</strong>`;
 
   return {

@@ -78,9 +78,23 @@ it('presents a typed saved-key read failure without sending a processing request
 
 it('retains the Gemini image key path and editor choice', async () => {
   elements.imageTranslationProvider.value = 'gemini';
+  elements.geminiImageModel.value = 'gemini-nano-banana-2.1';
   elements.googleApiKey.value = 'synthetic-google-key';
   await processing.handleSavePdf();
-  expect(packet()).toMatchObject({ imageTranslationProvider: 'gemini', imageApiKey: 'synthetic-google-key', googleApiKey: 'synthetic-google-key', translateImages: true });
+  expect(packet()).toMatchObject({ imageTranslationProvider: 'gemini', geminiImageModel: 'gemini-nano-banana-2.1', imageApiKey: 'synthetic-google-key', googleApiKey: 'synthetic-google-key', translateImages: true });
+});
+
+it('captures the selected Google editor before loading the active page', async () => {
+  elements.imageTranslationProvider.value = 'gemini';
+  elements.geminiImageModel.value = 'gemini-3.1-flash-lite-image';
+  elements.googleApiKey.value = 'synthetic-google-key';
+  const readPage = chrome.tabs.sendMessage.getMockImplementation();
+  chrome.tabs.sendMessage.mockImplementation(async (...args) => {
+    elements.geminiImageModel.value = 'gemini-nano-banana-2.1';
+    return readPage(...args);
+  });
+  await processing.handleSavePdf();
+  expect(packet()?.geminiImageModel).toBe('gemini-3.1-flash-lite-image');
 });
 
 it.each(['markdown', 'audio'])('does not request image editing for a hidden %s workflow', async format => {

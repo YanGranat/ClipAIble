@@ -137,6 +137,8 @@ export function initCore(deps) {
     getProviderFromModel,
     startStatePolling: stateModule.startStatePolling,
     checkProcessingState: stateModule.checkProcessingState,
+    getPresentedProcessingRunId: stateModule.getPresentedProcessingRunId,
+    noteProcessingAdmission: stateModule.noteProcessingAdmission,
     stateRefs,
     settingsModule
   });

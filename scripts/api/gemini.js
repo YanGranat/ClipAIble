@@ -13,6 +13,7 @@ import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { handleError } from '../utils/error-handler.js';
 import { GEMINI_IMAGE_MODEL, getDefaultModel, getModelMetadata } from '../utils/model-catalog.js';
+import { isGeminiImageModel } from './image-translation-catalog.js';
 
 export function getGeminiModelName(model) {
   const selectedModel = model || getDefaultModel('gemini');
@@ -203,10 +204,17 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
  * @param {string} imageBase64 - Base64 encoded image
  * @param {string} targetLang - Target language name
  * @param {string} googleApiKey - Google API key
+ * @param {import('../types.js').ImageTranslationOptions} [requestOptions]
  * @returns {Promise<string|null>} Translated image base64 or null
  */
 export async function translateImageWithGemini(imageBase64, targetLang, googleApiKey, requestOptions = {}) {
-  log('translateImageWithGemini', { targetLang, imageLength: imageBase64?.length });
+  const { geminiImageModel = GEMINI_IMAGE_MODEL } = requestOptions;
+  if (!isGeminiImageModel(geminiImageModel)) {
+    throw Object.assign(new Error('Unsupported Google image translation model'), {
+      translationKey: 'errorImageModelUnsupported', translationParams: {}
+    });
+  }
+  log('translateImageWithGemini', { targetLang, model: geminiImageModel, imageLength: imageBase64?.length });
   
   // Decrypt API key before use
   let decryptedKey = googleApiKey;
@@ -238,7 +246,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     const response = await callWithRetry(
       async ({ signal }) => {
         const fetchResponse = await fetchBufferedResponse(
-          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${geminiImageModel}:generateContent`,
           { signal,
             method: 'POST',
             headers: {

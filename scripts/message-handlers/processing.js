@@ -150,10 +150,13 @@ export function handleProcessArticle(request, sender, sendResponse, startArticle
       }
       
       try {
-        sendResponse(result === true ? { started: true } : {
+        const runId = request.data.processingRunId;
+        /** @type {import('../state/processing-messages.js').ProcessingAdmission} */
+        const response = result === true && isValidProcessingRunId(runId) ? { started: true, processingRunId: runId } : {
           started: false, success: false, error: tSync('errorProcessingNotStarted', 'en'),
           translationKey: 'errorProcessingNotStarted', translationParams: {}
-        });
+        };
+        sendResponse(response);
         log('=== handleProcessArticle: Response sent ===', {
           timestamp: Date.now()
         });

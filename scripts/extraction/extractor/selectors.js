@@ -1,7 +1,8 @@
 // @ts-check
 
 import { CANDIDATE_SELECTOR } from './constants.js';
-import { readArticleMetadataText } from './dom-utils.js';
+import { INTERFACE_REGIONS, readArticleMetadataText } from './dom-utils.js';
+import { isEditorialOwner } from './reading-context.js';
 
 export function selectorValues(value) {
   return (Array.isArray(value) ? value : [value]).filter(item => typeof item === 'string' && item.trim());
@@ -13,12 +14,12 @@ export function resolveContentSelection(doc, selectors) {
       for (const selector of selectorValues(selectors[name])) doc.querySelector(selector);
     }
   } catch (error) {
-    if (error?.name === 'SyntaxError') return { matched: false, roots: [], elements: [], exclusions: [], tocRoots: [] };
+    if (error?.name === 'SyntaxError') return { matched: false, containers: [], roots: [], elements: [], exclusions: [], tocRoots: [] };
     throw error;
   }
   const containers = selectorValues(selectors.articleContainer).flatMap(selector => Array.from(doc.querySelectorAll(selector)));
   if (selectorValues(selectors.articleContainer).length && !containers.length) {
-    return { matched: false, roots: [], elements: [], exclusions: [], tocRoots: [] };
+    return { matched: false, containers: [], roots: [], elements: [], exclusions: [], tocRoots: [] };
   }
   const scopes = containers.length ? containers : [doc];
   const queries = selectorValues(selectors.content);
@@ -30,12 +31,17 @@ export function resolveContentSelection(doc, selectors) {
       for (const node of Array.from(scope.querySelectorAll(selector))) roots.add(node);
     }
   }
-  const exclusions = selectorValues(selectors.exclude).flatMap(selector => Array.from(doc.querySelectorAll(selector)))
-    .filter(node => !containers.some(container => node.contains(container)));
-  const containerQueries = selectorValues(selectors.articleContainer);
-  const exclusionSelectors = selectorValues(selectors.exclude).map(selector => containerQueries.length
-    ? `:is(${selector}):not(:is(${containerQueries.join(',')})):not(:has(:is(${containerQueries.join(',')})))`
-    : selector);
+  const rootsList = [...roots];
+  const editorialContainers = containers.filter(isEditorialOwner);
+  const hasBodyWrapper = rootsList.some(root => root.matches('div,section,article') && root.querySelector('p,blockquote,pre,table,ul,ol'));
+  const exclusions = [...new Set(selectorValues(selectors.exclude)
+    .flatMap(selector => Array.from(doc.querySelectorAll(selector))))].filter(node => {
+      if (containers.some(container => node.contains(container))) return false;
+      // A shared layout wrapper should not exclude the entire positive body selection.
+      return !(hasBodyWrapper && !node.closest(INTERFACE_REGIONS) &&
+        editorialContainers.some(container => container.contains(node)) &&
+        rootsList.every(root => node !== root && node.contains(root)));
+    });
   const elements = new Set();
   for (const root of roots) {
     if (root.matches(CANDIDATE_SELECTOR)) elements.add(root);
@@ -44,7 +50,7 @@ export function resolveContentSelection(doc, selectors) {
   const tocRoots = selectorValues(selectors.toc)
     .flatMap(selector => containers.flatMap(container => [...container.querySelectorAll(selector)]))
     .filter(node => !isSelectedContentExcluded(node, exclusions));
-  return { matched: roots.size > 0, roots: [...roots], elements: [...elements], exclusions, exclusionSelectors, tocRoots };
+  return { matched: roots.size > 0, containers: [...new Set(containers)], roots: rootsList, elements: [...elements], exclusions, tocRoots };
 }
 
 export function isSelectedContentExcluded(element, exclusions) {
@@ -55,10 +61,10 @@ export function isSelectedContentExcluded(element, exclusions) {
   });
 }
 
-export function findSelectedTextElement(doc, value) {
+export function findSelectedTextElement(doc, value, exclusions = []) {
   for (const selector of selectorValues(value)) {
     const node = doc.querySelector(selector);
-    if (node && readArticleMetadataText(node)) return node;
+    if (node && readArticleMetadataText(node, exclusions)) return node;
   }
   return null;
 }

@@ -219,6 +219,7 @@ function sourceMainHeadings(html) {
   const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
   const stack = [];
   const headings = [];
+  const seenIds = new Set(), seenNames = new Set();
   let active = null;
   for (const token of tokenizeHtml(html)) {
     const parent = stack.at(-1);
@@ -234,7 +235,7 @@ function sourceMainHeadings(html) {
       const frames = stack.slice(index);
       if (active && frames.some(frame => frame.heading === active)) {
         if (token.name === 'h1' && stack[index].heading === active && !active.invalid) {
-          headings.push(normalizedWitness(stripHtml(active.parts.join(''))));
+          headings.push({ text: normalizedWitness(stripHtml(active.parts.join(''))), fragments: active.fragments });
         }
         active = null;
       } else if (active && !parent?.suppressed) active.parts.push(token.raw);
@@ -248,16 +249,26 @@ function sourceMainHeadings(html) {
       /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!\s*important)?\s*(?:;|$)/i.test(style);
     const suppressed = parent?.suppressed || nonReading.has(token.name) || hidden;
     const isLiteral = parent?.literal || literal.has(token.name);
+    const inert = parent?.inert || ['script', 'style', 'template', 'noscript', 'textarea'].includes(token.name);
     if (token.name === 'plaintext' && !parent?.suppressed) break;
     if (active && /^h[1-6]$/.test(token.name)) active.invalid = true;
     let heading = null;
     if (token.name === 'h1' && !suppressed && !isLiteral) {
       if (active) active.invalid = true;
-      else { heading = { parts: [], invalid: false }; active = heading; }
+      else { heading = { parts: [], fragments: [], invalid: false }; active = heading; }
     } else if (active && !suppressed) active.parts.push(token.raw);
-    if (!voidTags.has(token.name)) stack.push({ name: token.name, suppressed, literal: isLiteral, heading });
+    const id = attrs.get('id'), name = token.name === 'a' && attrs.get('name');
+    if (!inert) {
+      if (active && !suppressed && !isLiteral) {
+        if (id && !seenIds.has(id)) active.fragments.push({ id, named: false });
+        if (name && !seenNames.has(name)) active.fragments.push({ id: name, named: true });
+      }
+      if (id) seenIds.add(id);
+      if (name) seenNames.add(name);
+    }
+    if (!voidTags.has(token.name)) stack.push({ name: token.name, suppressed, literal: isLiteral, inert, heading });
   }
-  return headings;
+  return headings.map(({ text, fragments }) => ({ text, ids: [...new Set(fragments.filter(target => !target.named || !seenIds.has(target.id)).map(target => target.id))] }));
 }
 
 /**
@@ -266,20 +277,26 @@ function sourceMainHeadings(html) {
  * @param {Array<import('../types.js').ContentItem>} content
  * @param {string} title
  * @param {string} sourceHtml
- * @returns {Array<import('../types.js').ContentItem>}
+ * @returns {{content: Array<import('../types.js').ContentItem>, titleFragmentIds?: string[]}}
  */
-export function removeExtractedMainTitle(content, title, sourceHtml) {
+export function prepareExtractedMainTitle(content, title, sourceHtml) {
   const target = normalizedWitness(String(title ?? ''));
-  if (!target || sourceMainHeadings(sourceHtml).filter(value => value === target).length !== 1) return content;
+  const source = target ? sourceMainHeadings(sourceHtml).filter(heading => heading.text === target) : [];
+  if (source.length !== 1) return { content };
   const matches = content.map((item, index) => {
     if (item.type !== 'heading' || item.level !== 1) return -1;
     const value = item.format === 'text' ? item.text ?? '' : stripHtml(item.html ?? item.text ?? '');
     return normalizedWitness(value) === target ? index : -1;
   }).filter(index => index >= 0);
-  // Metadata titles do not serialize an authored fragment ID. Keep that owner.
-  if (matches.length === 1 && (String(content[matches[0]].id ?? '') !== '' ||
-      collectRenderedFragmentIds(renderContentText(content[matches[0]])).size > 0)) return content;
-  return matches.length === 1 ? content.filter((_, index) => index !== matches[0]) : content;
+  if (matches.length > 1) return { content };
+  const titleFragmentIds = source[0].ids;
+  if (titleFragmentIds.length) {
+    return { content: matches.length ? content.filter((_, index) => index !== matches[0]) : content, titleFragmentIds };
+  }
+  // Keep an existing emitted owner when the source has no title targets to move.
+  const heading = content[matches[0]];
+  if (!heading || heading.id || collectRenderedFragmentIds(renderContentText(heading)).size) return { content };
+  return { content: content.filter((_, index) => index !== matches[0]) };
 }
 
 /**

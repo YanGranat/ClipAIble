@@ -9,6 +9,7 @@
 /**
  * @typedef {Object} ExtractionResult
  * @property {string} title - Article title
+ * @property {string[]} [titleFragmentIds] - Original fragment identifiers owned by the rendered title
  * @property {string} author - Article author
  * @property {string} publishDate - Publication date (ISO format)
  * @property {ContentItem[]} content - Extracted content items
@@ -127,10 +128,12 @@
  * @property {Set<string>} [addedParagraphs] - Lazily collected paragraph text keys
  * @property {string} mainTitleText - Main title text (normalized)
  * @property {Element | null} [titleElement] - Source element used for the document title
+ * @property {Element | null} [selectedTitleElement] - Source explicitly selected for the document title
  * @property {Element[]} [tocRoots] - Article contents used to verify section destinations
  * @property {Element|null} standfirstElement - Standfirst element to exclude from parsing
  * @property {string|null} standfirstText - Standfirst text to exclude from parsing
  * @property {Array<Element|string>} [selectionExclusions] - Excluded subtrees for the current extraction
+ * @property {ReadonlySet<Element>} [explicitFlowRoots] - Selected wrappers treated as reading flow
  * @property {Element[]|null} [referenceRoots] - Selected reading scopes that own canonical reference targets
  * @property {ContentItem[]} content - Content items array being built
  * @property {DebugInfo|null} debugInfo - Debug info object

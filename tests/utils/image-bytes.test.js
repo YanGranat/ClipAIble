@@ -18,6 +18,14 @@ describe('image byte admission', () => {
     for (const bytes of [[], [...Buffer.from('<html>Not an image</html>')], [1,2,3]]) expect(() => detectImageMime(new Uint8Array(bytes))).toThrow();
   });
 
+  it('recognizes legacy SVG declarations while requiring an SVG root', () => {
+    const xml = '<?xml version="1.0"?><!-- Drawing -->';
+    const declaration = '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">';
+    const encode = body => new TextEncoder().encode(xml + declaration + '<!-- Title -->' + body);
+    expect(detectImageMime(encode('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).toBe('image/svg+xml');
+    expect(() => detectImageMime(encode('<html></html>'))).toThrow(expect.objectContaining({ code: 'IMAGE_UNSUPPORTED_TYPE' }));
+  });
+
   it('rejects an excessive declared length before consuming bytes', async () => {
     const cancel = vi.fn(async () => {});
     const arrayBuffer = vi.fn();

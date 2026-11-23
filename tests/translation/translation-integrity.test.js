@@ -175,3 +175,22 @@ it('removes only actual id attributes while preserving quoted delimiters and cod
   expect(prompt).toContain('<code>id = 7</code>');
   expect(prompt).not.toContain('id="unit"');
 });
+
+it('restores source IDs, legacy named targets and fragment destinations locally after translation', async () => {
+  const input = '<span id="sample%26" title="a > b">Reading</span><a name="old-marker"></a><a href="#sample%2526">Return</a>';
+  let prompt;
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => {
+    prompt = JSON.parse(init.body).messages[1].content;
+    return reply('<span title="a > b" id="invented">Lecture</span><a name="invented-name"></a><a href="#wrong">Retour</a>');
+  }));
+  const result = await translateText(input, 'French', 'synthetic-key', 'gpt-example', options);
+  expect(prompt).not.toContain('id="sample%26"');
+  expect(prompt).not.toContain('name="old-marker"');
+  expect(result).toBe('<span title="a > b" id="sample%26">Lecture</span><a name="old-marker"></a><a href="#sample%2526">Retour</a>');
+});
+
+it('does not assign a source anchor to a different markup position when the provider changes structure', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => reply('<em id="invented">Lecture</em><span id="also-invented">Retour</span>')));
+  const result = await translateText('<span id="source">Reading</span><span>Return</span>', 'French', 'synthetic-key', 'gpt-example', options);
+  expect(result).toBe('<em>Lecture</em><span>Retour</span>');
+});

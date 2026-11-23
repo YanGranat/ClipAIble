@@ -15,7 +15,7 @@ import {
 } from '../utils/settings-helpers.js';
 import { CONFIG, STYLE_PRESETS } from '../utils/config.js';
 import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL } from '../api/tts-catalog.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled } from '../api/image-translation-catalog.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled, readGeminiImageModel } from '../api/image-translation-catalog.js';
 
 /**
  * Get all settings keys needed for quick save
@@ -35,7 +35,7 @@ export function getQuickSaveSettingsKeys() {
     'elevenlabs_stability', 'elevenlabs_similarity', 'elevenlabs_style', 'elevenlabs_speaker_boost',
     'openai_instructions', 'google_tts_api_key', 'google_tts_model', 'google_tts_voice', 'google_tts_prompt',
     'respeecher_temperature', 'respeecher_repetition_penalty', 'respeecher_top_p',
-    'translate_images', 'google_api_key', 'image_translation_provider'
+    'translate_images', 'google_api_key', 'image_translation_provider', 'gemini_image_model'
   ];
 }
 
@@ -124,6 +124,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     translateImages,
     googleApiKey,
     imageTranslationProvider,
+    ...(translateImages && imageTranslationProvider === 'gemini' ? { geminiImageModel: readGeminiImageModel(settings.gemini_image_model) } : {}),
     imageApiKey,
     stylePreset,
     fontFamily: settings.pdf_font_family || '',

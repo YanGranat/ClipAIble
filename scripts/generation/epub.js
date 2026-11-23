@@ -1,6 +1,6 @@
 import { imageDataError } from '../utils/html/image-bytes.js';
 import { downloadBlob } from '../api/blob-download.js';
-import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, normalizeDocumentContent, localDocumentName } from './document-content.js';
+import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
 // @ts-check
 // EPUB generation module for ClipAIble extension
 // EPUB is a ZIP archive with specific structure
@@ -87,7 +87,7 @@ export async function generateEpub(data, updateState) {
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 82 });
   
   // Filter out paragraph elements that contain <figure> HTML when followed by image
-  const filteredContent = normalizeDocumentContent(content, title, sourceUrl, { tableCellFragmentTargets: true });
+  const { content: filteredContent, titleId } = prepareDocumentContent(content, title, sourceUrl, { tableCellFragmentTargets: true, titleFragmentIds: data.titleFragmentIds });
   if (filteredContent.length !== content.length) {
     log('Filtered figure-in-paragraph duplicates', {
       originalCount: content.length,
@@ -150,7 +150,7 @@ export async function generateEpub(data, updateState) {
   
   // 5. Generate content XHTML (uses _epubSrc for images)
   if (updateState) updateState({ ...formatStatusUpdate('statusGeneratingEpub', await getUILanguage()), progress: 90 });
-  const contentXhtml = generateContentXhtml(filteredContent, safeTitle, safeAuthor, pubDate, sourceUrl, headings, language, generateAbstract, abstract);
+  const contentXhtml = generateContentXhtml(filteredContent, safeTitle, safeAuthor, pubDate, sourceUrl, headings, language, generateAbstract, abstract, titleId);
   zip.file('OEBPS/content.xhtml', normalizeXmlCharacters(contentXhtml));
   
   // 6. Generate TOC navigation (only if more than 1 heading)
@@ -406,7 +406,7 @@ function generateTocNcx(bookId, title, headings, generateToc) {
 /**
  * Generate main content XHTML
  */
-function generateContentXhtml(content, title, author, pubDate, sourceUrl, headings, language = 'en', generateAbstract = false, abstract = '') {
+function generateContentXhtml(content, title, author, pubDate, sourceUrl, headings, language = 'en', generateAbstract = false, abstract = '', titleId = '') {
   const escapedTitle = escapeXml(title);
   const escapedAuthor = escapeXml(author);
   
@@ -433,8 +433,9 @@ function generateContentXhtml(content, title, author, pubDate, sourceUrl, headin
   }
   
   // Build header
+  const titleAnchor = titleId ? ` id="${escapeXml(titleId)}"` : '';
   let headerHtml = `<header class="article-header">
-    <h1>${escapedTitle}</h1>`;
+    <h1${titleAnchor}>${escapedTitle}</h1>`;
   
   // Add subtitle after title, before meta
   if (subtitleHtml) {

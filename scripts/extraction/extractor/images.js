@@ -517,7 +517,7 @@ export function getEmbeddedMediaItems(element) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[character]);
   const description = (element.getAttribute('title') || element.getAttribute('aria-label') || '').trim();
-  const label = description || source.href;
+  const label = description || source.hostname;
   let preview = element.tagName === 'VIDEO' ? safeUrl(element.getAttribute('poster'))?.href : null;
   if (element.tagName === 'IFRAME' && source.hostname === 'datawrapper.dwcdn.net') {
     const chart = source.pathname.match(/^\/([A-Za-z0-9]{5})\/(?:\d+\/?)?$/);

@@ -6,6 +6,7 @@ import { generateEpub } from '../../scripts/generation/epub.js';
 import { generateFb2 } from '../../scripts/generation/fb2.js';
 import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
 import { generateExtractAutomaticallyInlined } from '../../scripts/extraction/extractor/builder.js';
+import { translateContent } from '../../scripts/translation/text.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logDebug: vi.fn(), logWarn: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/images.js', () => ({ imageToBase64: vi.fn(async () => null), processImagesInBatches: vi.fn(async () => []), embedImages: vi.fn(async value => value) }));
@@ -22,17 +23,18 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function render(format, content, generateToc = false) {
-  if (format === 'markdown') return { markdown: await generateMarkdown({ ...base, content, generateToc }) };
+async function render(format, content, generateToc = false, titleFragmentIds = []) {
+  const data = { ...base, content, generateToc, titleFragmentIds };
+  if (format === 'markdown') return { markdown: await generateMarkdown(data) };
   let value, navigation = [];
-  if (format === 'pdf') value = buildHtmlForPdf(content, base.title, base.author, '', sourceUrl, '', 'en', generateToc);
+  if (format === 'pdf') value = buildHtmlForPdf(content, base.title, base.author, '', sourceUrl, '', 'en', generateToc, false, '', titleFragmentIds);
   if (format === 'epub') {
-    const blob = await generateEpub({ ...base, content, generateToc });
+    const blob = await generateEpub(data);
     const entries = readZipEntries(await blob.arrayBuffer());
     value = entries['OEBPS/content.xhtml'].toString('utf8');
     navigation = ['OEBPS/nav.xhtml', 'OEBPS/toc.ncx'].map(path => new JSDOM(entries[path].toString('utf8'), { contentType: 'application/xml' }).window.document);
   }
-  if (format === 'fb2') value = await (await generateFb2({ ...base, content, generateToc })).text();
+  if (format === 'fb2') value = await (await generateFb2(data)).text();
   return { document: new JSDOM(value, { contentType: format === 'pdf' ? 'text/html' : 'application/xml' }).window.document, navigation };
 }
 
@@ -64,6 +66,32 @@ function assertTarget(output, label, id, expectedText) {
 }
 
 describe.each(['pdf', 'markdown', 'epub', 'fb2'])('%s document fragment references', format => {
+  it('binds the source title and its inline targets to a single rendered title destination', async () => {
+    const source = await generateExtractAutomaticallyInlined();
+    const page = new JSDOM('<!doctype html><header><h1 id="guide-cover"><span id="guide%section">Reading guide</span><a name="legacy-cover"></a></h1></header><article><p>An independently authored reading passage remains intact.</p><p><a href="#guide-cover">Cover reference</a> <a href="#guide%25section">Inline reference</a> <a href="#legacy-cover">Legacy reference</a> <a href="#unavailable">Unavailable reference</a></p></article>', { url: sourceUrl, runScripts: 'outside-only' });
+    try {
+      page.window.eval(source.replace('export async function', 'async function') + '\nwindow.extract = extractAutomaticallyInlined;');
+      const result = await page.window.extract(sourceUrl, false, { content: 'article', title: 'header h1 span' });
+      expect(result.error).toBeUndefined();
+      expect(result.titleFragmentIds).toEqual(['guide-cover', 'guide%section', 'legacy-cover']);
+      expect(result.content.some(item => item.type === 'heading')).toBe(false);
+      const output = await render(format, result.content, false, result.titleFragmentIds);
+      for (const label of ['Cover reference', 'Inline reference', 'Legacy reference']) assertTarget(output, label, 'guide-cover', base.title);
+      expect(hrefFor(output, 'Unavailable reference')).toBe(sourceUrl + '#unavailable');
+      const document = output.document || new JSDOM(output.markdown).window.document;
+      expect([...document.querySelectorAll('[id]')].filter(node => node.id === 'guide-cover')).toHaveLength(1);
+    } finally { page.window.close(); }
+  });
+
+  it('keeps the title target distinct from an identically named body identifier', async () => {
+    const content = [{ type: 'paragraph', id: 'guide-cover', text: 'Separate body owner.', format: 'text' },
+      { type: 'paragraph', html: '<a href="#guide-cover">Cover reference</a>' }];
+    const output = await render(format, content, false, ['guide-cover']);
+    assertTarget(output, 'Cover reference', 'guide-cover-2', base.title);
+    const document = output.document || new JSDOM(output.markdown).window.document;
+    expect([...document.querySelectorAll('[id]')].map(node => node.id)).toEqual(['guide-cover-2', 'guide-cover']);
+  });
+
   it('retains the source cell reference to each extracted image occurrence', async () => {
     const source = await generateExtractAutomaticallyInlined();
     const page = new JSDOM('<!doctype html><article><h1>Reading guide</h1><table><caption>Field comparison.</caption><tr><th>Station</th><th>Plot</th></tr><tr><td>North</td><td><img src="/field.png" width="640" height="480" alt="Field plot"></td></tr></table><p>The final observation remains available.</p></article>', { url: sourceUrl, runScripts: 'outside-only' });
@@ -191,6 +219,32 @@ describe.each(['pdf', 'markdown', 'epub', 'fb2'])('%s document fragment referenc
     assertTarget(output, 'Percent ref', 'x%26y', 'Percent target.');
     if (output.document) expect(output.document.querySelectorAll('[onmouseover]')).toHaveLength(0);
   });
+});
+
+it('resolves a translated EPUB reference to the translated title and preserves an inline body target', async () => {
+  const input = { ...base, author: '', titleFragmentIds: ['guide-cover', 'cover-details'], content: [
+    { type: 'paragraph', html: '<a href="#cover-details">Cover reference</a> <a href="#inline-reading">Inline reference</a>' },
+    { type: 'paragraph', html: '<span id="inline-reading">Reading phrase</span>' }
+  ] };
+  vi.stubGlobal('fetch', vi.fn(async (_url, request) => {
+    const prompt = JSON.parse(request.body).messages[1].content;
+    const translated = prompt === base.title ? 'Guide de lecture' : JSON.stringify({ translations: [
+      '<a href="#cover-details">Retour au titre</a> <a href="#inline-reading">Retour au texte</a>',
+      '<span>Phrase de lecture</span>'
+    ] });
+    return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: translated } }] }));
+  }));
+  const translated = await translateContent(input, 'fr', 'synthetic-key', 'gpt-example', undefined, { provider: 'openai' });
+  expect(translated.title).toBe('Guide de lecture');
+  const epub = await generateEpub({ ...translated, language: 'fr' });
+  const entries = readZipEntries(await epub.arrayBuffer());
+  const page = new JSDOM(entries['OEBPS/content.xhtml'].toString('utf8'), { contentType: 'application/xml' });
+  try {
+    const output = { document: page.window.document };
+    assertTarget(output, 'Retour au titre', 'guide-cover', 'Guide de lecture');
+    assertTarget(output, 'Retour au texte', 'inline-reading', 'Phrase de lecture');
+    expect(output.document.querySelectorAll('h1')).toHaveLength(1);
+  } finally { page.window.close(); }
 });
 
 describe.each(['pdf', 'epub', 'fb2'])('%s generated navigation', format => {

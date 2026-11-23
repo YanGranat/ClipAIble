@@ -1,5 +1,24 @@
 // @ts-check
 
+function showSelectedOption(select, options, valueSpan) {
+  const items = [...options.querySelectorAll('.custom-select-option')];
+  const selected = items.find(item => item instanceof HTMLElement && item.dataset.value === select.value);
+  if (!selected) return false;
+  valueSpan.textContent = selected.textContent;
+  for (const item of items) item.classList.toggle('selected', item === selected);
+  return true;
+}
+
+/** Refresh a programmatic selection without dispatching a user change event. */
+export function refreshCustomSelectSelection(select) {
+  const container = select.closest('.custom-select');
+  if (!container) return;
+  const options = container.querySelector('.custom-select-options');
+  const valueSpan = container.querySelector('.custom-select-value');
+  if (options && valueSpan) showSelectedOption(select, options, valueSpan);
+  enhancedSelects.get(container)?.sync();
+}
+
 export function initCustomSelect(selectId, options = {}) {
   const select = document.getElementById(selectId);
   if (!select) return null;
@@ -133,16 +152,7 @@ export function initCustomSelect(selectId, options = {}) {
   // Sync with native select value changes
   select.addEventListener('change', () => {
     if (!(select instanceof HTMLSelectElement)) return;
-    const selectedOption = optionsDiv.querySelector(`[data-value="${select.value}"]`);
-    if (selectedOption instanceof HTMLElement) {
-      valueSpan.textContent = selectedOption.textContent;
-      optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
-        if (opt instanceof HTMLElement) {
-          opt.classList.remove('selected');
-        }
-      });
-      selectedOption.classList.add('selected');
-    } else {
+    if (!showSelectedOption(select, optionsDiv, valueSpan)) {
       // If option not found, repopulate (for dynamic selects)
       populateOptions();
     }

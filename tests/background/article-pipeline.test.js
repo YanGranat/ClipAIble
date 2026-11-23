@@ -80,7 +80,7 @@ it.each([true, false])('checks the source page before video extraction (verifica
   deps.detectVideoPlatform.mockReturnValue({ platform: 'vimeo', videoId: 'synthetic-id' });
   deps.handleVideoPageProcessing = handleVideoPageProcessing;
   start = initOrchestration(deps).startArticleProcessing;
-  expect(await request().reply).toEqual({ started: true });
+  expect(await request().reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   if (verification) {
     await vi.waitFor(() => expect(getProcessingState().errorTranslationKey).toBe('errorSourcePageUnavailable'));
     expect(processVideoPage).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ it.each([
 ])('stops %s before extraction when the active document returned %i', async (mode, responseStatus) => {
   liveArticlePage({ html: '<title>Resource unavailable</title><main>Request could not be completed.</main>', responseStatus });
   const { reply } = request(mode);
-  expect(await reply).toEqual({ started: true });
+  expect(await reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   await vi.waitFor(() => expect(getProcessingState()).toMatchObject({
     isProcessing: false, errorTranslationKey: 'errorSourcePageUnavailable', errorCode: 'validation_error'
   }));
@@ -110,7 +110,7 @@ it.each([
 ])('rejects a %s access shell even when it returns a success status', async (url, html) => {
   liveArticlePage({ html, url });
   const { reply } = request('selector', { url });
-  expect(await reply).toEqual({ started: true });
+  expect(await reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   await vi.waitFor(() => expect(getProcessingState().errorTranslationKey).toBe('errorSourcePageUnavailable'));
   expect(processWithSelectorMode).not.toHaveBeenCalled();
   expect(generate).not.toHaveBeenCalled();
@@ -136,7 +136,7 @@ it.each([
   }]
 ])('continues through %s', async (_title, page) => {
   liveArticlePage(page);
-  expect(await request('automatic').reply).toEqual({ started: true });
+  expect(await request('automatic').reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
   expect(processWithoutAI).toHaveBeenCalledOnce();
 });
@@ -144,7 +144,7 @@ it.each([
 it('does not apply a late source check to a newer processing run', async () => {
   let releaseProbe;
   chrome.scripting.executeScript.mockImplementationOnce(() => new Promise(resolve => { releaseProbe = resolve; }));
-  expect(await request().reply).toEqual({ started: true });
+  expect(await request().reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   await vi.waitFor(() => expect(chrome.scripting.executeScript).toHaveBeenCalledOnce());
   await cancelProcessing(vi.fn());
   await startProcessing(vi.fn());
@@ -160,7 +160,7 @@ it.each([
   ['automatic', processWithoutAI], ['selector', processWithSelectorMode], ['extract', processWithExtractMode]
 ])('runs a %s request through admission, extraction, generation and completion', async (mode, processor) => {
   const { data, reply, sendResponse, inline } = request(mode);
-  expect(await reply).toEqual({ started: true });
+  expect(await reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   await vi.waitFor(() => expect(generate).toHaveBeenCalledOnce());
   await vi.waitFor(() => expect(getProcessingState().isProcessing).toBe(false));
   expect(processor).toHaveBeenCalledOnce();
@@ -186,7 +186,7 @@ it.each(['pdf', 'video'])('routes a %s input before any article extraction mode'
   if (kind === 'pdf') deps.detectPdfPage.mockReturnValue({ isPdf: true, originalUrl: 'https://example.org/document.pdf' });
   else deps.detectVideoPlatform.mockReturnValue({ platform: 'youtube', videoId: 'synthetic-id' });
   const { reply, data } = request('extract');
-  expect(await reply).toEqual({ started: true });
+  expect(await reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   const selected = kind === 'pdf' ? deps.handlePdfPageProcessing : deps.handleVideoPageProcessing;
   expect(selected).toHaveBeenCalledOnce();
   expect(selected.mock.calls[0][0]).toBe(data);
@@ -198,7 +198,7 @@ it('prevents a cancelled translation from generating a document or completing a 
   let release;
   deps.translateContent.mockImplementation(result => new Promise(resolve => { release = () => resolve(result); }));
   const { reply } = request('selector', { language: 'fr', apiKey: 'synthetic-key', model: 'gpt-6.2-sol' });
-  expect(await reply).toEqual({ started: true });
+  expect(await reply).toEqual({ started: true, processingRunId: getProcessingRunId() });
   await vi.waitFor(() => expect(deps.translateContent).toHaveBeenCalledOnce());
   await cancelProcessing(vi.fn());
   await startProcessing(vi.fn());

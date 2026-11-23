@@ -373,7 +373,7 @@ export async function handleTranslation(
     result.content = await translateImages(
       result.content, sourceLang, language, 
       data.apiKey, data.googleApiKey, data.model, updateState, {
-        ...getAIRequestOptions(data), imageTranslationProvider: data.imageTranslationProvider,
+        ...getAIRequestOptions(data), imageTranslationProvider: data.imageTranslationProvider, geminiImageModel: data.geminiImageModel,
         imageApiKey: data.imageApiKey, outputFormat: data.outputFormat
       }
     );

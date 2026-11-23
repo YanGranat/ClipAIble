@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { processWithoutAI, processWithSelectorMode } from '../../scripts/processing/modes.js';
 import { extractAutomaticallyInlined } from '../../scripts/extraction/automatic.js';
+import { SELECTOR_SYSTEM_PROMPT } from '../../scripts/extraction/prompts.js';
 import { cacheSelectors, getCachedSelectors } from '../../scripts/cache/selectors.js';
 import { CONFIG } from '../../scripts/utils/config.js';
 
@@ -62,7 +63,62 @@ function assertArticle(result) {
   expect(text).not.toContain(excluded);
 }
 
+describe('selector request and publication structure', () => {
+  it.each([
+    {
+      title: 'Field atlas',
+      body: '<main><h1>Field atlas</h1><article><p>The opening survey begins with a simple compass measurement.</p><h2>Methods</h2><p>Each location has an independently verified bearing.</p></article></main>',
+      selectors: { title: 'main h1', articleContainer: 'main', content: 'article', exclude: [] },
+      included: ['The opening survey begins', 'Methods', 'Each location has an independently verified bearing'],
+      omitted: [],
+    },
+    {
+      title: 'Harbor survey',
+      body: '<main><article class="survey"><h1>Harbor survey</h1><p>The first observation includes a <a href="#survey-note">detailed note</a> about tidal variation.</p><p>The final shoreline measurement confirms the current estimate.</p></article><section class="notes"><h2>Survey notes</h2><p id="survey-note">Measurements were taken at the same stage of each tide.</p></section><article class="related"><h2>Separate field report</h2><p>This independently published study belongs to a different document.</p></article></main>',
+      selectors: { title: '.survey h1', articleContainer: 'main', content: '.survey, .notes', exclude: ['.related'] },
+      included: ['The first observation includes', 'The final shoreline measurement confirms', 'Measurements were taken at the same stage'],
+      omitted: ['Separate field report', 'This independently published study'],
+    },
+    {
+      title: 'Survey handbook',
+      body: '<main><header><h1 class="work-title">Survey handbook</h1></header><article class="chapter"><h2>Planning the survey</h2><p>The first chapter establishes the sampling schedule and measurement intervals.</p></article><article class="chapter"><h2>Reviewing the measurements</h2><p>The second chapter explains the checks that confirm the final measurements.</p></article><section class="appendix"><h2>Appendix</h2><p>Calibration records accompany each instrument in the final appendix.</p></section><article class="related"><h2>Separate field report</h2><p>This independently published study belongs to a different document.</p></article></main>',
+      selectors: { title: '.work-title', articleContainer: 'main', content: '.chapter, .appendix', exclude: ['.related'] },
+      included: ['Planning the survey', 'The first chapter establishes', 'Reviewing the measurements', 'The second chapter explains', 'Calibration records accompany'],
+      omitted: ['Separate field report', 'This independently published study'],
+    },
+  ])('passes page data to the model and extracts $title in source order', async ({ title, body, selectors, included, omitted }) => {
+    sourceHtml = `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
+    mocks.callAI.mockResolvedValue(selectors);
+
+    const result = await processWithSelectorMode({ ...data(), title, html: sourceHtml }, extractAutomaticallyInlined);
+    expect(mocks.callAI).toHaveBeenCalledOnce();
+    expect(mocks.callAI.mock.calls[0].slice(0, 2)).toEqual([
+      SELECTOR_SYSTEM_PROMPT,
+      `URL: ${url}\nTitle: ${title}\n\nHTML:\n${sourceHtml}`,
+    ]);
+    expect(result.title).toBe(title);
+    const extracted = result.content.map(item => item.text || '').join(' ');
+    let previous = -1;
+    for (const text of included) {
+      const position = extracted.indexOf(text);
+      expect(position, text).toBeGreaterThan(previous);
+      previous = position;
+    }
+    for (const text of omitted) expect(extracted).not.toContain(text);
+  });
+});
+
 describe('bounded selector correction', () => {
+  it.each([false, true])('exports the hydrated article and does not retain stale body selectors (cached: %s)', async cached => {
+    const stale = { articleContainer: 'article', title: 'article h1', content: '[data-document-part="body"]' };
+    sourceHtml = `<!doctype html><title>Field report</title><article><h1>Field report</h1><p>${intro}</p><p>${ending}</p></article>`;
+    if (cached) await cacheSelectors(url, stale);
+    mocks.callAI.mockResolvedValue(stale);
+    assertArticle(await processWithSelectorMode(data(), extractAutomaticallyInlined));
+    expect(mocks.callAI).toHaveBeenCalledTimes(cached ? 0 : 1);
+    expect(await getCachedSelectors(url)).toBeNull();
+  });
+
   it('reanalyzes a fresh no-content result with the same page, model, provider and cancellation owner', async () => {
     const checkCancelled = vi.fn();
     mocks.callAI.mockResolvedValueOnce(conflict).mockResolvedValueOnce(valid);

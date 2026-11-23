@@ -4,7 +4,7 @@
 import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE } from '../../api/tts-catalog.js';
 import { setError, ERROR_CODES } from '../../state/processing.js';
 import { getUILanguage, tSync } from '../../locales.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, getImageTranslationApiKey, isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, getImageTranslationApiKey, isGeminiImageModel, isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
 import { isMaskedKey } from '../encryption.js';
 
 /** Validate image translation settings before article processing. */
@@ -14,6 +14,8 @@ export async function validateImageTranslation(data, stopKeepAlive) {
   let key, params;
   if (!IMAGE_TRANSLATION_PROVIDERS.includes(provider)) {
     key = 'errorImageProviderUnsupported'; params = { provider: String(provider) };
+  } else if (provider === 'gemini' && data.geminiImageModel !== undefined && !isGeminiImageModel(data.geminiImageModel)) {
+    key = 'errorImageModelUnsupported'; params = {};
   } else {
     const apiKey = getImageTranslationApiKey(data);
     if (typeof apiKey === 'string' && apiKey.trim() && !isMaskedKey(apiKey.trim())) return true;

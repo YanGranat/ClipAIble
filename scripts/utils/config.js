@@ -11,7 +11,7 @@ export const CONFIG = {
   // Content processing
   CHUNK_SIZE: 50000,              // Characters per chunk for AI extraction
   CHUNK_OVERLAP: 3000,            // Overlap between chunks to avoid cut-off content
-  MAX_HTML_FOR_ANALYSIS: 450000,  // Max chars to send to AI for selector analysis (reduced to account for system prompt ~17k + user prompt prefix ~5k + API overhead ~3k, total ~475k max)
+  MAX_HTML_FOR_ANALYSIS: 450000,  // Max HTML characters sent for selector analysis
   TRANSLATION_CHUNK_SIZE: 20000,  // Characters per translation batch
   TRANSLATION_BATCH_MAX_FIELDS: 32,
   

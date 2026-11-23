@@ -8,9 +8,9 @@ import { detectGoogleTranslateState, checkFirstParagraph } from './translate.js'
 import { extractMetadata, findArticleTitleElement } from './metadata.js';
 import { findMainContent } from './discover.js';
 import { discoverReadingMedia, extractMetadataImage, hasSourceReadingMedia } from './images.js';
-import { isSourceExcluded, readArticleMetadataText } from './dom-utils.js';
+import { cloneReadingContent, isSourceExcluded, readArticleMetadataText } from './dom-utils.js';
 import { extractStandfirst } from './standfirst.js';
-import { collectCandidateElements, filterCandidateElements, sortElementsInDomOrder, parseElements } from './parse.js';
+import { collectCandidateElements, collectExplicitFlowRoots, filterCandidateElements, sortElementsInDomOrder, parseElements } from './parse.js';
 import { captureReadingGraphics } from './graphics.js';
 import { resolveContentSelection, isSelectedContentExcluded, findSelectedTextElement, selectorValues } from './selectors.js';
 import { findPublisherFormRegions, isExcluded } from './filters.js';
@@ -84,14 +84,24 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     
     // Extract metadata (title, author, date)
     let titleElement = findArticleTitleElement(doc);
+    let selectedTitleElement = null;
     const metadata = extractMetadata(doc, baseUrl, titleElement);
     const selection = selectors ? resolveContentSelection(doc, selectors) : null;
+    const editorialScopes = selection?.containers.filter(isEditorialOwner) || [];
+    const editorialScope = editorialScopes.length === 1 ? editorialScopes[0] : null;
+    let selectorRecovered = false;
     if (selectors) {
-      if (!selection.matched) return { ...metadata, content: [], selectorMatched: false, debugInfo };
-      const selectedTitle = findSelectedTextElement(doc, selectors.title);
+      if (!selection.matched && !editorialScope) return { ...metadata, content: [], selectorMatched: false, debugInfo };
+      const selectedTitle = findSelectedTextElement(doc, selectors.title, selection.exclusions);
+      selectorRecovered = !selection.matched && !!selectedTitle && editorialScope?.contains(selectedTitle) === true;
+      if (!selection.matched && !selectorRecovered) return { ...metadata, content: [], selectorMatched: false, debugInfo };
       if (selectedTitle) {
-        metadata.title = readArticleMetadataText(selectedTitle);
-        titleElement = selectedTitle;
+        metadata.title = readArticleMetadataText(selectedTitle, selection.exclusions);
+        const heading = selectedTitle.closest('h1,h2,h3,h4,h5,h6');
+        const headingTitle = heading ? readArticleMetadataText(heading, selection.exclusions) : '';
+        titleElement = heading && normalizeHeadingForDedup(headingTitle) === normalizeHeadingForDedup(metadata.title)
+          ? heading : selectedTitle;
+        selectedTitleElement = titleElement;
       }
     }
     const language = (doc.documentElement.lang || '').trim().toLowerCase().split(/[-_]/)[0];
@@ -101,7 +111,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     pushDebugLog(debugInfo, 'METADATA_EXTRACTED', metadata);
     
     const socialRoot = selectors ? null : findSocialReadingRoot(baseUrl, doc);
-    const primaryRoot = selection?.roots[0] || socialRoot || findMainContent(win, doc, (el) =>
+    const primaryRoot = (selectorRecovered ? editorialScope : selection?.roots[0]) || socialRoot || findMainContent(win, doc, (el) =>
       isExcluded(win, el, constants, isSemanticReadingScope(el) ? [el] : []));
 
     // Discovery changes roots, while every source occurrence uses the same parser.
@@ -120,23 +130,27 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       const recommendationRegions = bodyRoots.flatMap(findRecommendationRegions);
       const publisherIgnores = bodyRoots.flatMap(root => Array.from(root.querySelectorAll('.instapaper_body .instapaper_ignore')));
       const interfaceRegions = bodyRoots.flatMap(findPublisherFormRegions).concat(recommendationRegions, publisherIgnores);
+      const explicitFlowRoots = selection ? collectExplicitFlowRoots(bodyRoots) : undefined;
       /** @type {ExtractionState} */
       const state = {
         processedImages: new Set(),
         addedHeadings: new Set(),
         mainTitleText,
         titleElement,
+        selectedTitleElement,
         standfirstElement: standfirst.element,
         standfirstText: standfirst.text,
         content: [],
-        selectionExclusions: [...(selection?.exclusionSelectors || []), ...interfaceRegions],
+        selectionExclusions: [...(selection?.exclusions || []), ...interfaceRegions],
+        explicitFlowRoots,
         referenceRoots: readingRoots,
         tocRoots: selection?.tocRoots,
         featuredMediaRoots: media.featuredRoots,
         extractionDeadline,
         debugInfo
       };
-      const allElements = [...new Set([...readingRoots.flatMap(root => collectCandidateElements(root)), ...(standfirst.element ? [standfirst.element] : [])])]
+      const allElements = [...new Set([...readingRoots.flatMap(root => collectCandidateElements(root)),
+        ...(explicitFlowRoots || []), ...(standfirst.element ? [standfirst.element] : [])])]
         .filter(element => (!selection || !isSelectedContentExcluded(element, selection.exclusions)) &&
           !isSourceExcluded(element, interfaceRegions));
       const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots);
@@ -158,7 +172,18 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       return { content, hasReadingContent };
     };
 
-    let attempt = primaryRoot ? await extractReadingRoots(selection?.roots || [primaryRoot]) : null;
+    let attempt = primaryRoot ? await extractReadingRoots(selection?.matched ? selection.roots : [primaryRoot]) : null;
+    if (selectorRecovered && !attempt?.content.some(hasArticleBodyContent)) attempt = null;
+    if (selection?.roots.length && selection.roots.every(root =>
+      !isSelectedContentExcluded(root, selection.exclusions) && isMediaOnlySelectionRoot(root))) {
+      if (editorialScope && !selection.roots.includes(editorialScope)) {
+        const wider = await extractReadingRoots(editorialScopes);
+        if (wider.content.some(hasArticleBodyContent)) {
+          attempt = wider;
+          selectorRecovered = true;
+        }
+      }
+    }
     if (!selection && !attempt?.hasReadingContent && !isEditorialOwner(primaryRoot)) {
       for (const root of findFallbackReadingRoots(win, doc, constants, primaryRoot ? [primaryRoot] : [])) {
         pushDebugLog(debugInfo, 'FALLBACK_READING_ROOT', { tagName: root.tagName, className: root.className });
@@ -168,6 +193,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       }
     }
     const content = attempt?.hasReadingContent ? attempt.content : [];
+    const titleFragmentIds = content.length && metadata.title ? readTitleFragmentIds(titleElement, mainTitleText, selection?.exclusions) : [];
 
     // Final content types count
     if (debugInfo) {
@@ -183,10 +209,12 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     
     return {
       title: metadata.title,
+      ...(titleFragmentIds.length ? { titleFragmentIds } : {}),
       author: metadata.author,
       publishDate: metadata.publishDate,
       detectedLanguage,
       ...(selection ? { selectorMatched: content.length > 0 } : {}),
+      ...(selectorRecovered && content.length ? { selectorRecovered: true } : {}),
       content,
       debugInfo
     };
@@ -210,6 +238,40 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       errorStack: err.stack
     };
   }
+}
+
+/** A title, standfirst or cover alone does not establish that the body was selected. */
+function hasArticleBodyContent(item) {
+  return !item.isFeatured && !item.isStandfirst && !['heading', 'separator', 'subtitle', 'image'].includes(item.type);
+}
+
+/** A cover wrapper may contain its own caption and credit. */
+function isMediaOnlySelectionRoot(root) {
+  const media = 'figure,figcaption,picture,img,video,audio,iframe,svg,canvas';
+  if (root.matches(media)) return true;
+  if (!root.querySelector(media)) return false;
+  const copy = root.cloneNode(true);
+  if (!(copy instanceof root.ownerDocument.defaultView.Element)) return false;
+  for (const child of copy.querySelectorAll(media)) child.remove();
+  return !copy.textContent?.trim();
+}
+
+/** Keep only source-owned targets still present in the readable title. */
+function readTitleFragmentIds(element, titleText, exclusions) {
+  if (!element || isSourceExcluded(element, exclusions)) return [];
+  const heading = element.closest('h1');
+  if (heading && heading !== element && normalizeHeadingForDedup(readArticleMetadataText(heading)) === titleText) element = heading;
+  const copies = new Map();
+  const title = cloneReadingContent(element, exclusions, copies);
+  const document = element.ownerDocument;
+  const ids = new Set();
+  for (const [source, copy] of copies) {
+    if (!title.contains(copy)) continue;
+    if (source.id && document.getElementById(source.id) === source) ids.add(source.id);
+    const name = source.matches('a[name]') ? source.getAttribute('name') : '';
+    if (name && !document.getElementById(name) && [...document.getElementsByName(name)].find(node => node.matches('a')) === source) ids.add(name);
+  }
+  return [...ids];
 }
 
 // Re-export utilities for external use

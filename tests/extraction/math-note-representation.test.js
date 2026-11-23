@@ -22,6 +22,26 @@ function formula(markup, tex = 'x^2') {
 afterEach(() => { documents.splice(0).forEach(dom => dom.window.close()); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('Portable semantic math representation', () => {
+  it('keeps MathJax SVG expressions from the same source nodes in ordinary and partitioned prose', async () => {
+    const rendered = '<mjx-container class="MathJax" jax="SVG"><svg role="img"><g></g></svg></mjx-container>';
+    const dom = page('<div id="notes">A complete first result is ' + rendered + '.<p>The second result is ' + rendered + '.</p>End of observations.</div>');
+    const { document } = dom.window;
+    const [first, second] = document.querySelectorAll('mjx-container');
+    const receipts = [
+      { math: 'x + 42', inputJax: { name: 'TeX' }, typesetRoot: first },
+      { math: 'y = 12', inputJax: { name: 'TeX' }, typesetRoot: second }
+    ];
+    dom.window.MathJax = { startup: { document: {
+      getMathItemsWithin: ([root]) => receipts.filter(item => root.contains(item.typesetRoot))
+    } } };
+    const before = document.body.innerHTML;
+    const run = dom.window.eval(extractor.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: '#notes', title: 'h1' });
+    const output = result.content.map(item => item.html).join(' ');
+    expect(output).toContain('$x + 42$');
+    expect(output).toContain('$y = 12$');
+    expect(document.body.innerHTML).toBe(before);
+  });
   it('keeps powers, grouped bases, variables and indices with semantic inline markup', () => {
     const dom = page(`<p>${formula('<msup><mn>3</mn><mi>k</mi></msup><mo>+</mo><mo>(</mo><mn>1</mn><mo>/</mo><mn>3</mn><msup><mo>)</mo><mi>k</mi></msup><mo>+</mo><msub><mi>x</mi><mi>i</mi></msub>')}</p>`);
     const p = dom.window.document.querySelector('p');

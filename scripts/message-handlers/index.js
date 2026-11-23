@@ -3,7 +3,8 @@
 // Routes incoming messages to appropriate handlers
 
 import { log, logWarn, logError, sanitizeLogData, shouldLogDiagnostic } from '../utils/logging.js';
-import { updateState, getProcessingState, isCancelled, isValidProcessingRunId } from '../state/processing.js';
+import { updateState, getProcessingState, isCancelled } from '../state/processing.js';
+import { readTtsProgress } from '../state/processing-messages.js';
 import { handleError, getErrorTranslation } from '../utils/error-handler.js';
 import { isValidMessageSize } from '../utils/security/security.js';
 import { isTrustedExtensionSender, isYouTubeContentSender } from '../utils/security/message-sender.js';
@@ -518,68 +519,22 @@ export function routeMessage(request, sender, sendResponse, deps) {
     
     // TTS Progress handler (from offscreen.js)
     'TTS_PROGRESS': () => {
-      try {
-        const { sentenceIndex, totalSentences, progressBase = 60, progressRange = 35, processingRunId } = request.data || {};
-        if (!isValidProcessingRunId(processingRunId) || isCancelled(processingRunId)) {
-          sendResponse({ success: true, ignored: true });
-          return true;
-        }
-        
-        // Log only every 5th progress update to reduce log spam
-        if (sentenceIndex % 5 === 0 || sentenceIndex === totalSentences) {
-          log('[ClipAIble] TTS_PROGRESS handler called', {
-            sentenceIndex,
-            totalSentences,
-            progressBase,
-            progressRange
-          });
-        }
-        
-        if (sentenceIndex && totalSentences) {
-          if (totalSentences === 1) {
-            // Single sentence - set progress to 90% immediately
-            updateState({
-              status: 'Generating audio... (1/1 sentences)',
-              progress: 90 // Set to 90% for single sentence
-            }, processingRunId);
-          } else if (totalSentences > 1) {
-            // Multiple sentences - calculate progress: 60-95% range for TTS conversion
-            const estimatedProgress = progressBase + Math.floor(
-              ((sentenceIndex - 1) / totalSentences) * progressRange
-            );
-            
-            // Log progress only every 5th update to reduce log spam
-            if (sentenceIndex % 5 === 0 || sentenceIndex === totalSentences) {
-              log('[ClipAIble] Updating progress state', {
-                sentenceIndex,
-                totalSentences,
-                estimatedProgress,
-                cappedProgress: Math.min(estimatedProgress, 94)
-              });
-            }
-            
-            // Update state with progress (updateState is imported at top of file)
-            updateState({
-              status: `Generating audio... (${sentenceIndex}/${totalSentences} sentences)`,
-              progress: Math.min(estimatedProgress, 94) // Cap at 94% to leave room for final update
-            }, processingRunId);
-          }
-        } else {
-          logWarn('[ClipAIble] TTS_PROGRESS handler: invalid data', {
-            sentenceIndex,
-            totalSentences,
-            hasSentenceIndex: !!sentenceIndex,
-            hasTotalSentences: !!totalSentences
-          });
-        }
-        
-        sendResponse({ success: true });
-        return true;
-      } catch (error) {
-        logWarn('[ClipAIble] Error handling TTS_PROGRESS', error);
-        sendResponse({ success: false, error: error.message, ...getErrorTranslation(error) });
+      const update = readTtsProgress(request.data);
+      if (!update) {
+        sendResponse({ success: false, error: 'Invalid audio progress' });
         return true;
       }
+      const { processingRunId, sentenceIndex, totalSentences, progressBase, progressRange } = update;
+      const state = getProcessingState();
+      const progress = totalSentences === 1 ? 90 :
+        Math.min(progressBase + Math.floor((sentenceIndex - 1) / totalSentences * progressRange), 94);
+      if (!state.isProcessing || state.outputFormat !== 'audio' || isCancelled(processingRunId) || progress < state.progress) {
+        sendResponse({ success: true, ignored: true });
+        return true;
+      }
+      updateState({ status: `Generating audio... (${sentenceIndex}/${totalSentences} sentences)`, progress }, processingRunId);
+      sendResponse({ success: true });
+      return true;
     },
     
   };

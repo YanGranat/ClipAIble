@@ -20,7 +20,7 @@ import { sanitizeFilename } from '../utils/security.js';
 import { PROCESSING_STAGES, isCancelled, getProcessingRunId } from '../state/processing.js';
 import { isAnonymousAuthor, cleanAuthor } from '../utils/author-validator.js';
 import { getDefaultModel } from '../utils/model-catalog.js';
-import { PDF_PAGE_MARGIN_MM, preparePdfLayout } from './pdf-layout.js';
+import { PDF_MAX_SINGLE_PAGE_INCHES, PDF_PAGE_MARGIN_MM, preparePdfLayout } from './pdf-layout.js';
 
 
 /**
@@ -220,7 +220,8 @@ export async function generatePdf(data, updateState) {
       language,
       generateToc,
       generateAbstract,
-      abstract
+      abstract,
+      data.titleFragmentIds
     );
     log('HTML built', { length: htmlContent.length, tocEnabled: generateToc });
 
@@ -416,8 +417,8 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     const a4Height = 11.69;
     
     await chrome.debugger.sendCommand(debuggee, 'Emulation.setEmulatedMedia', { media: 'print' });
-    const layoutResult = /** @type {{result?: {value?: {contentHeight?: number}}, exceptionDetails?: unknown}} */ (await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
-      expression: `(${preparePdfLayout.toString()})(${paperWidth}, ${JSON.stringify(pageMode)}, ${a4Height}, ${PDF_PAGE_MARGIN_MM})`,
+    const layoutResult = /** @type {{result?: {value?: {contentHeight?: number, pageMode?: string}}, exceptionDetails?: unknown}} */ (await chrome.debugger.sendCommand(debuggee, 'Runtime.evaluate', {
+      expression: `(${preparePdfLayout.toString()})(${paperWidth}, ${JSON.stringify(pageMode)}, ${a4Height}, ${PDF_PAGE_MARGIN_MM}, ${PDF_MAX_SINGLE_PAGE_INCHES})`,
       awaitPromise: true,
       returnByValue: true
     }));
@@ -425,7 +426,7 @@ export async function generatePdfWithDebugger(tabId, title, pageMode, completePr
     const layout = layoutResult.result?.value;
     if (!Number.isFinite(layout?.contentHeight) || layout.contentHeight <= 0) throw new Error('Invalid PDF print dimensions.');
     let paperHeight;
-    if (pageMode === 'single') {
+    if (pageMode === 'single' && layout.pageMode !== 'multi') {
       paperHeight = layout.contentHeight / 96;
       log(`Single page: ${paperWidth}x${paperHeight.toFixed(2)} inches`);
     } else {

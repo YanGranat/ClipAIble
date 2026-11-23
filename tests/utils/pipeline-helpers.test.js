@@ -341,6 +341,16 @@ describe('utils/pipeline-helpers', () => {
       expect(text).toHaveBeenCalledOnce();
     });
 
+    it('passes the selected Google image editor separately from the article model', async () => {
+      const content = [{ type: 'image', src: 'data:image/png;base64,c2FtcGxl' }];
+      const images = vi.fn(async value => value), text = vi.fn(async value => value);
+      await handleTranslation({ language: 'fr', outputFormat: 'pdf', translateImages: true, imageTranslationProvider: 'gemini',
+        geminiImageModel: 'gemini-nano-banana-2.1', googleApiKey: 'synthetic-google-key', apiKey: 'synthetic-article-key',
+        provider: 'deepseek', model: 'deepseek-flash-no-thinking' }, { content }, text, images, () => 'en', mocks.mockUpdateState);
+      expect(images).toHaveBeenCalledExactlyOnceWith(content, 'en', 'fr', 'synthetic-article-key', 'synthetic-google-key',
+        'deepseek-flash-no-thinking', expect.any(Function), expect.objectContaining({ geminiImageModel: 'gemini-nano-banana-2.1' }));
+    });
+
     it.each(['markdown', 'audio'])('keeps text translation but omits image editing in %s output', async outputFormat => {
       const images = vi.fn(), text = vi.fn(async value => value);
       await handleTranslation({ language: 'fr', outputFormat, translateImages: true, imageTranslationProvider: 'openai',

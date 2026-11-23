@@ -1,13 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { removeExtractedMainTitle } from '../../scripts/extraction/html-utils.js';
-import { normalizeDocumentContent } from '../../scripts/generation/document-content.js';
+import { prepareExtractedMainTitle } from '../../scripts/extraction/html-utils.js';
+import { prepareDocumentContent } from '../../scripts/generation/document-content.js';
+
+const normalizeDocumentContent = (...args) => prepareDocumentContent(...args).content;
+const removeExtractedMainTitle = (...args) => prepareExtractedMainTitle(...args).content;
 
 const title = 'Independent measurements';
 const heading = () => ({ type: 'heading', level: 1, text: title, html: '<em>Independent</em> measurements' });
 const paragraph = { type: 'paragraph', html: 'An independently authored observation.' };
 
 describe('Source-witnessed extracted title ownership', () => {
+  it('derives title targets from the source even if the response omits the main heading', () => {
+    const html = '<article><h1 id="reading-cover"><span id="measure%26ments">Independent</span> measurements<a name="older-cover"></a><span hidden id="hidden-target">hidden</span></h1><p>Reading text.</p></article>';
+    expect(prepareExtractedMainTitle([paragraph], title, html)).toEqual({ content: [paragraph], titleFragmentIds: ['reading-cover', 'measure%26ments', 'older-cover'] });
+    const content = [{ ...heading(), id: 'model-created' }, paragraph];
+    expect(prepareExtractedMainTitle(content, title, html)).toEqual({ content: [paragraph], titleFragmentIds: ['reading-cover', 'measure%26ments', 'older-cover'] });
+  });
+
   it('removes one actual article H1 even after publisher metadata, preserving every other item', () => {
     const leading = [{ type: 'paragraph', text: 'Published on: April 12, 2031' }, { type: 'paragraph', text: '7 min read' }];
     const later = { type: 'heading', level: 2, text: title };

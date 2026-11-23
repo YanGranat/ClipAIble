@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { preparePdfLayout } from '../../scripts/generation/pdf-layout.js';
+import { PDF_MAX_SINGLE_PAGE_INCHES, preparePdfLayout } from '../../scripts/generation/pdf-layout.js';
 import { buildHtmlForPdf } from '../../scripts/generation/html-builder.js';
 
 const windows = [];
@@ -16,7 +16,7 @@ function page(markup, naturalWidth = 756) {
   for (const table of doc.querySelectorAll('table')) {
     table.getBoundingClientRect = () => ({ width: Math.max(756, naturalWidth * parseFloat(win.getComputedStyle(table.querySelector('th,td')).fontSize) / 31) });
   }
-  const prepare = (mode = 'single') => win.eval(`(${preparePdfLayout.toString()})(8.27, ${JSON.stringify(mode)}, 11.69, 5)`);
+  const prepare = (mode = 'single') => win.eval(`(${preparePdfLayout.toString()})(8.27, ${JSON.stringify(mode)}, 11.69, 5, ${PDF_MAX_SINGLE_PAGE_INCHES})`);
   return { win, doc, prepare };
 }
 
@@ -49,8 +49,28 @@ afterEach(() => windows.splice(0).forEach(win => win.close()));
 describe('Final PDF print layout', () => {
   it('measures the complete article in print media with one rounding pixel', async () => {
     const { doc, prepare } = page('<p>A complete observation.</p>');
-    expect(await prepare()).toMatchObject({ contentWidth: 756, contentHeight: 420, tableLayouts: [] });
+    expect(await prepare()).toMatchObject({ contentWidth: 756, contentHeight: 420, tableLayouts: [], pageMode: 'single' });
     expect(doc.documentElement.style.getPropertyValue('--pdf-page-width')).toBe('8.27in');
+  });
+
+  it('moves padding to A4 page margins before printing content beyond the compatible single-page height', async () => {
+    const { doc, prepare } = page('<p>Opening observation.</p><p id="end">Closing observation.</p>');
+    const article = doc.querySelector('article');
+    Object.defineProperty(article, 'scrollHeight', { value: PDF_MAX_SINGLE_PAGE_INCHES * 96 });
+    expect(await prepare()).toMatchObject({ pageMode: 'multi' });
+    expect(doc.documentElement.style.getPropertyValue('--pdf-layout-width')).toBe('calc(8.27in - 10mm)');
+    expect([...doc.querySelectorAll('style')].at(-1).textContent).toContain('@page { margin: 5mm 5mm 0; }');
+    expect(doc.getElementById('end').textContent).toBe('Closing observation.');
+  });
+
+  it('allows long quotations to start on the current page while keeping short quotations together', async () => {
+    const { doc, prepare } = page('<blockquote>Short quote.</blockquote><blockquote>Long quote.</blockquote>');
+    const [short, long] = doc.querySelectorAll('blockquote');
+    short.getBoundingClientRect = () => ({ height: 120 });
+    long.getBoundingClientRect = () => ({ height: 720 });
+    await prepare('multi');
+    expect(short.style.breakInside).toBe('');
+    expect(long.style.breakInside).toBe('auto');
   });
 
   it('removes only unanchored empty paragraphs at the end of a continuous page', async () => {
@@ -78,6 +98,21 @@ describe('Final PDF print layout', () => {
   it('rejects a screen-media measurement', async () => {
     const { win, prepare } = page(''); win.matchMedia = () => ({ matches: false });
     await expect(prepare()).rejects.toThrow('print media');
+  });
+
+  it('makes source accents legible on the selected print background without recoloring readable text', async () => {
+    const { doc, prepare } = page('<p><span id="low" style="color: #303096">An authored accent.</span> ' +
+      '<span id="high" style="color: #eee">A readable accent.</span></p>');
+    doc.body.style.backgroundColor = '#303030';
+    const low = doc.getElementById('low');
+    const high = doc.getElementById('high');
+    const readableColor = high.style.color;
+    await prepare();
+    const [red, green, blue] = low.style.color.match(/\d+/g).map(Number);
+    expect(red).toBeGreaterThan(125);
+    expect(green).toBe(red);
+    expect(blue).toBeGreaterThan(red);
+    expect(high.style.color).toBe(readableColor);
   });
 
   it('prints loaded table media in its original cells and preserves fragment destinations', async () => {

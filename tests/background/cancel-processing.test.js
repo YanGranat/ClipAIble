@@ -19,11 +19,22 @@ beforeEach(async () => {
 afterEach(async () => { await resetState(); });
 
 describe('processing cancellation delivery', () => {
+  it('keeps a different job active when an earlier popup sends its old run ID', async () => {
+    const activeRunId = getProcessingRunId();
+    cancelOfflineTTSRun.mockResolvedValue(undefined);
+    const respond = vi.fn();
+    handleCancelProcessing({ data: { processingRunId: crypto.randomUUID() } }, {}, respond, vi.fn());
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledOnce());
+    expect(respond).toHaveBeenCalledWith({ success: true });
+    expect(getProcessingState()).toMatchObject({ isProcessing: true, processingRunId: activeRunId });
+    expect(cancelOfflineTTSRun).not.toHaveBeenCalled();
+  });
+
   it('acknowledges cancellation without waiting for the old audio transport', async () => {
     const oldRunId = getProcessingRunId();
     cancelOfflineTTSRun.mockReturnValue(new Promise(() => {}));
     const respond = vi.fn();
-    expect(handleCancelProcessing({}, {}, respond, vi.fn())).toBe(true);
+    expect(handleCancelProcessing({ data: { processingRunId: oldRunId } }, {}, respond, vi.fn())).toBe(true);
     await vi.waitFor(() => expect(respond).toHaveBeenCalledOnce());
     expect(respond).toHaveBeenCalledWith({ success: true, cancelledRunId: oldRunId });
     expect(cancelOfflineTTSRun).toHaveBeenCalledWith(oldRunId);
@@ -35,7 +46,7 @@ describe('processing cancellation delivery', () => {
   it('retains successful cancellation when the offline transport is unavailable', async () => {
     cancelOfflineTTSRun.mockRejectedValue(new Error('Transport unavailable'));
     const respond = vi.fn();
-    handleCancelProcessing({}, {}, respond, vi.fn());
+    handleCancelProcessing({ data: { processingRunId: getProcessingRunId() } }, {}, respond, vi.fn());
     await vi.waitFor(() => expect(respond).toHaveBeenCalledOnce());
     expect(respond.mock.calls[0][0].success).toBe(true);
   });

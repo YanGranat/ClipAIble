@@ -1,17 +1,18 @@
 // @ts-check
+import { isValidProcessingRunId, getProcessingPhase } from '../../scripts/state/processing-messages.js';
 // Processing module
 // Handles PDF saving, cancellation, and content extraction
 
 import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL, getDefaultTtsVoice } from '../../scripts/api/tts-catalog.js';
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, readGeminiImageModel, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
 import { resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helpers.js';
 
 /**
  * Initialize processing module
  * @param {Object} deps - Dependencies
- * @param {Record<string, HTMLElement|null> & Partial<Record<'apiProviderSelect'|'mainFormatSelect'|'outputFormat'|'imageTranslationProvider'|'qwenModel'|'qwenRegion', HTMLSelectElement>> & {qwenWorkspaceId?: HTMLInputElement}} deps.elements - DOM elements
+ * @param {Record<string, HTMLElement|null> & Partial<Record<'apiProviderSelect'|'mainFormatSelect'|'outputFormat'|'imageTranslationProvider'|'geminiImageModel'|'qwenModel'|'qwenRegion', HTMLSelectElement>> & {qwenWorkspaceId?: HTMLInputElement}} deps.elements - DOM elements
  * @param {typeof import('../../scripts/locales.js').t} deps.t - Translation function
  * @param {function(...*): void} deps.logError - Error logging function
  * @param {function(...*): void} deps.log - Log function
@@ -23,7 +24,9 @@ import { resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helper
  * @param {function(string, string): Promise<string>} deps.decryptApiKey - Decrypt API key function
  * @param {function(string): import('../../scripts/types.js').AIProvider} deps.getProviderFromModel - Get provider from model function
  * @param {function(): void} deps.startStatePolling - Start state polling function
- * @param {function(): Promise<void>} deps.checkProcessingState - Check processing state function
+ * @param {() => Promise<import('../../scripts/state/processing-messages.js').ProcessingSnapshot|void>} deps.checkProcessingState - Read the current worker state
+ * @param {() => string|null} [deps.getPresentedProcessingRunId] - Running task currently displayed
+ * @param {() => void} [deps.noteProcessingAdmission] - Discard popup observations made before admission
  * @param {Object} deps.stateRefs - State references object
  * @param {import('../../scripts/types.js').SettingsModule} [deps.settingsModule] - Settings module (optional, for getVoiceIdByIndex)
  * @returns {Object} Processing functions (handleSavePdf, handleCancel, handleGenerateSummary, etc.)
@@ -44,6 +47,8 @@ export function initProcessing(deps) {
     getProviderFromModel,
     startStatePolling,
     checkProcessingState,
+    getPresentedProcessingRunId = () => null,
+    noteProcessingAdmission,
     stateRefs,
     settingsModule
   } = deps;
@@ -58,48 +63,51 @@ export function initProcessing(deps) {
     }
   }
 
-  // Handle Cancel button click
+  let cancellingRunId = null;
+
+  // Cancel the operation displayed when the button was pressed.
   async function handleCancel() {
     if (!elements.cancelBtn) {
       log('Cancel button not found');
       return;
     }
+    const processingRunId = getPresentedProcessingRunId();
+    if (!isValidProcessingRunId(processingRunId)) {
+      await checkProcessingState();
+      return;
+    }
+    if (cancellingRunId === processingRunId) return;
+    cancellingRunId = processingRunId;
+
     try {
-      // Disable button to prevent double-clicks
-      if (elements.cancelBtn) {
-        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = true;
-      }
-      const response = await chrome.runtime.sendMessage({ action: 'cancelProcessing' });
+      /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = true;
+      /** @type {import('../../scripts/state/processing-messages.js').ProcessingCancellation|null} */
+      const response = await chrome.runtime.sendMessage({ action: 'cancelProcessing', data: { processingRunId } });
       if (response?.success !== true) {
         throw Object.assign(new Error(response?.error || 'Cancellation failed'), {
           translationKey: response?.translationKey,
           translationParams: response?.translationParams
         });
       }
-      if (!response.cancelledRunId) {
-        await checkProcessingState();
-        return;
-      }
+      const snapshot = await checkProcessingState();
+      if (response.cancelledRunId !== processingRunId) return;
+      const superseded = () => {
+        const presented = getPresentedProcessingRunId();
+        return (presented && presented !== processingRunId) ||
+          (snapshot && getProcessingPhase(snapshot) === 'running' && snapshot.processingRunId !== processingRunId);
+      };
       const cancelledText = await t('processingCancelled', undefined);
-      showToast(cancelledText, 'success', { key: 'processingCancelled' });
-      const readyText = await t('ready', undefined);
-      setStatus('ready', readyText, undefined, { key: 'ready' });
-      setProgress(0, false);
-      stopTimerDisplay();
-      if (elements.savePdfBtn) {
-        /** @type {HTMLButtonElement} */ (elements.savePdfBtn).disabled = false;
-        elements.savePdfBtn.style.display = 'block';
-      }
-      if (elements.cancelBtn) {
-        elements.cancelBtn.classList.add('hidden');
-        elements.cancelBtn.style.display = 'none';
-      }
+      if (!superseded()) showToast(cancelledText, 'success', { key: 'processingCancelled' });
     } catch (error) {
       logError('Error cancelling', error);
       const translation = { key: error?.translationKey || 'errorUnknown', params: error?.translationParams || {} };
-      showToast(await t(translation.key, undefined, translation.params), 'error', translation);
+      const message = await t(translation.key, undefined, translation.params);
+      if (getPresentedProcessingRunId() === processingRunId) showToast(message, 'error', translation);
     } finally {
-      /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false;
+      if (cancellingRunId === processingRunId) {
+        cancellingRunId = null;
+        /** @type {HTMLButtonElement} */ (elements.cancelBtn).disabled = false;
+      }
     }
   }
 
@@ -272,6 +280,8 @@ export function initProcessing(deps) {
     // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
     const provider = elements.apiProviderSelect ? /** @type {HTMLSelectElement} */ (elements.apiProviderSelect).value : getProviderFromModel(model);
     const apiKeyOwner = elements.apiKey?.dataset.provider;
+    const imageTranslationProvider = elements.imageTranslationProvider?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
+    const geminiImageModel = readGeminiImageModel(elements.geminiImageModel?.value);
     
     log('=== handleSavePdf: Got model and provider ===', {
       model: model,
@@ -550,7 +560,6 @@ export function initProcessing(deps) {
       }
       const outputFormat = elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
       const translateImages = !!(elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto' && supportsImageTranslation(outputFormat));
-      const imageTranslationProvider = elements.imageTranslationProvider?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
       let imageApiKey = translateImages ? googleApiKey : '';
       if (translateImages && imageTranslationProvider === 'openai') {
         const ownsOpenAiDraft = provider === 'openai' && apiKeyOwner === 'openai' &&
@@ -584,6 +593,7 @@ export function initProcessing(deps) {
           provider: provider,
           googleApiKey: googleApiKey,
           imageTranslationProvider,
+          ...(translateImages && imageTranslationProvider === 'gemini' ? { geminiImageModel } : {}),
           imageApiKey,
           model: model,
           mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
@@ -763,7 +773,7 @@ export function initProcessing(deps) {
         throw Object.assign(new Error(friendly.message), friendly);
       }
 
-      if (response?.started !== true || response.success === false || (response.error && typeof response.error !== 'string')) {
+      if (response?.started !== true || !isValidProcessingRunId(response.processingRunId) || response.success === false || (response.error && typeof response.error !== 'string')) {
         const translationKey = response?.translationKey || 'errorProcessingNotStarted';
         const translationParams = response?.translationParams || {};
         throw Object.assign(new Error(response?.error && typeof response.error === 'string' ? response.error : await t(translationKey, translationParams)), { translationKey, translationParams });
@@ -788,6 +798,7 @@ export function initProcessing(deps) {
       }
       admitted = true;
       if (attempt !== latestSaveAttempt) return;
+      noteProcessingAdmission?.();
       
       log('=== handleSavePdf: Processing started successfully ===', {
         timestamp: Date.now()

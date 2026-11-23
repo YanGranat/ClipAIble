@@ -61,6 +61,42 @@ describe('Reading graphic ownership', () => {
     }
   });
 
+  it('keeps the video and caption when a caption glyph is the only vector', async () => {
+    const { win, doc, root, owner } = page('<p>The observers measured the channel before publishing their findings.</p>' +
+      '<figure><video poster="/preview.jpg"><source src="/recording.mp4"></video>' +
+      '<figcaption><svg><path d="M1 1h14v12H1z"/></svg>Recording of the observed current.</figcaption></figure>' +
+      '<p>The last observation was recorded after sunset.</p>');
+    const glyph = doc.querySelector('svg');
+    glyph.getBoundingClientRect = () => ({ width: 31, height: 21 });
+    const before = root.outerHTML;
+    expect(owner('figure')).toBeNull();
+    expect(owner('svg')).toBeNull();
+    expect(getGraphicReadingOwner(glyph, [root, glyph])).toBe(glyph);
+
+    const elements = [...root.querySelectorAll('p,figure,video,figcaption,svg')];
+    const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(), content: [], debugInfo: null };
+    state.readingGraphics = await captureReadingGraphics(win, elements, state, CONSTANTS);
+    expect(state.readingGraphics.size).toBe(0);
+    const items = parseElements(win, elements, state, CONSTANTS, doc.URL);
+    expect(items.map(item => item.type)).toEqual(['paragraph', 'image', 'paragraph', 'paragraph', 'paragraph']);
+    expect(items[1].src).toBe('https://example.test/preview.jpg');
+    expect(items[2].html).toContain('href="https://example.test/recording.mp4"');
+    expect(items[3].html).toContain('Recording of the observed current.');
+    expect(items[4].html).toContain('last observation');
+    expect(root.outerHTML).toBe(before);
+  });
+
+  it.each([
+    ['small figure graphic', '<svg><path/></svg><figcaption>Diagram.</figcaption>', 30, 20],
+    ['named caption graphic', '<figcaption><svg role="img" aria-label="Water profile"><path/></svg>Measured section.</figcaption>', 30, 20],
+    ['caption graphic containing text', '<figcaption><svg><text>Observations</text></svg>Measured section.</figcaption>', 30, 20],
+    ['larger caption graphic', '<figcaption><svg><path/></svg>Measured section.</figcaption>', 156, 92],
+  ])('retains ownership for a %s', (_name, markup, width, height) => {
+    const { doc, owner } = page('<figure>' + markup + '</figure>');
+    doc.querySelector('svg').getBoundingClientRect = () => ({ width, height });
+    expect(owner('svg')).toBe(doc.querySelector('figure'));
+  });
+
   it('admits a reading canvas and requires standalone SVG to be labelled or explicitly selected', () => {
     const { doc, root, owner } = page('<svg><path/></svg><canvas></canvas><svg class="toolbar-icon" role="img" aria-label="Open"><path/></svg>');
     expect(owner('svg')).toBeNull();

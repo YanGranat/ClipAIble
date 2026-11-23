@@ -75,7 +75,13 @@ it.each(['markdown', 'audio'])('does not enable image editing for hidden %s quic
 
 it('preserves default Gemini settings and leaves automatic language images unchanged', async () => {
   await expect(prepare({ extraction_mode: 'automatic', translate_images: true, pdf_language: 'fr', google_api_key: 'synthetic-google-key' }))
-    .resolves.toMatchObject({ imageTranslationProvider: 'gemini', imageApiKey: 'synthetic-google-key', translateImages: true });
+    .resolves.toMatchObject({ imageTranslationProvider: 'gemini', geminiImageModel: 'gemini-3-pro-image', imageApiKey: 'synthetic-google-key', translateImages: true });
   await expect(prepare({ extraction_mode: 'automatic', translate_images: true, pdf_language: 'auto', openai_api_key: 'synthetic-image-key' }))
     .resolves.toMatchObject({ translateImages: false, imageApiKey: null });
+});
+
+it('uses the same stored Google editor selection for quick save as for popup exports', async () => {
+  expect(getQuickSaveSettingsKeys()).toContain('gemini_image_model');
+  const settings = { extraction_mode: 'automatic', translate_images: true, pdf_language: 'fr', google_api_key: 'synthetic-google-key', gemini_image_model: 'gemini-3.1-flash-lite-image' };
+  await expect(prepare(settings)).resolves.toMatchObject({ geminiImageModel: 'gemini-3.1-flash-lite-image' });
 });

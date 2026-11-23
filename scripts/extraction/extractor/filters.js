@@ -8,6 +8,11 @@ import { isEditorialLayoutLabel, isReadingOwned, isReferencedReadingAside } from
 import { getGraphicReadingOwner } from './graphics.js';
 import { getAnnotationTarget } from './annotations.js';
 
+/** Utility arguments are CSS values, not names for interface regions. */
+export function semanticClassNames(element) {
+  return Array.from(element.classList).filter(name => !name.includes('[')).join(' ').toLowerCase();
+}
+
 /** Labels owned by interactive controls are not independent reading blocks. */
 export function isInteractiveControlLabel(element) {
   const label = element.closest('label,[id]');
@@ -40,7 +45,7 @@ export function isIcon(element) {
   const tagName = element.tagName.toLowerCase();
   if (tagName === 'svg') return true;
   
-  const className = String(element.className || '').toLowerCase();
+  const className = semanticClassNames(element);
   const id = (element.id || '').toLowerCase();
   
   // Icon classes
@@ -294,7 +299,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   } = constants;
   
   const tagName = element.tagName.toLowerCase();
-  const className = String(element.className || '').toLowerCase();
+  const className = semanticClassNames(element);
   const id = (element.id || '').toLowerCase();
   
   // Semantic containers (article, main) should be more lenient
@@ -302,6 +307,13 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
   const isImageOrFigure = tagName === 'img' || tagName === 'figure';
   const readingOwned = isReadingOwned(element, readingRoots);
   const authoredHeading = readingOwned && /^h[1-6]$/.test(tagName);
+  const selectedFlows = readingRoots.filter(root => root.contains(element) && root.querySelector('p,pre,table,blockquote'));
+  const layoutRoles = ['nav', 'navigation', 'menu', 'sidebar', 'related', 'social', 'share'];
+  const hasAuthoredAnchor = node => isReadingOwned(node, readingRoots) &&
+    (node.matches('h1,h2,h3,h4,h5,h6') || node.matches('section') &&
+      node.querySelector(':scope > h1,:scope > h2,:scope > h3,:scope > h4,:scope > h5,:scope > h6'));
+  const hasExactRole = (node, role) => node.id.toLowerCase() === role ||
+    Array.from(node.classList).some(name => name.toLowerCase() === role);
   if (element.closest(INTERFACE_REGIONS) || isPublisherLinkAction(element)) return true;
   const control = element.closest('button,[role="button"],input,select,textarea');
   if (control && !getAnnotationTarget(control)) return true;
@@ -459,7 +471,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
     if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) continue;
     if (selectedMedia && excluded === 'overlay') continue;
     const pattern = new RegExp(`\\b${excluded}\\b`);
-    if ((pattern.test(className) || pattern.test(id) ||
+    if ((pattern.test(className) || (id === excluded || pattern.test(id) && !hasAuthoredAnchor(element)) ||
         className === excluded || className.startsWith(excluded + '-') || 
         className.endsWith('-' + excluded)) &&
         !isEditorialLayoutLabel(element, element, excluded) &&
@@ -476,7 +488,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
     
     while (parent && parent !== element.ownerDocument.body && iterations < maxIterations) {
       iterations++;
-      const parentClass = String(parent.className || '').toLowerCase();
+      const parentClass = semanticClassNames(parent);
       const parentId = (parent.id || '').toLowerCase();
       const parentTag = parent.tagName.toLowerCase();
 
@@ -489,9 +501,15 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
           return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
         }
         const escaped = excluded.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`).test(`${parentClass} ${parentId}`) &&
-          !isEditorialLayoutLabel(parent, element, excluded) &&
-          !(excluded === 'sidebar' && isReferencedReadingAside(parent, readingRoots, tocRoots));
+        const role = new RegExp(`(?:^|[\\s_-])${escaped}(?:$|[\\s_-])`);
+        const matchingRole = role.test(parentClass) || parentId === excluded ||
+          (role.test(parentId) && !hasAuthoredAnchor(parent));
+        if (!matchingRole || isEditorialLayoutLabel(parent, element, excluded) ||
+            (excluded === 'sidebar' && isReferencedReadingAside(parent, readingRoots, tocRoots))) return false;
+        const wrapsSelectedFlow = layoutRoles.includes(excluded) && !hasExactRole(parent, excluded) &&
+          !parent.matches('aside,[role~="complementary"],header,[role~="banner"]') &&
+          selectedFlows.some(root => root !== parent && parent.contains(root));
+        return !wrapsSelectedFlow;
       })) return true;
       
       // Clear ad indicators
@@ -518,7 +536,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
  * @returns {boolean} - True if element should be strongly excluded
  */
 export function shouldSkipStronglyExcluded(element) {
-  const className = String(element.className || '').toLowerCase();
+  const className = semanticClassNames(element);
   const id = (element.id || '').toLowerCase();
   
   // Strong exclusion patterns (word boundaries to avoid "lead-article-image")

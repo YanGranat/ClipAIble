@@ -38,9 +38,21 @@ export function isEditorialOwner(element) {
 
 /** Compound layout labels can enclose the editorial owner without owning a panel. */
 export function isEditorialLayoutLabel(region, source, role) {
-  if (role !== 'newsletter' && role !== 'sidebar' && role !== 'header') return false;
+  if (role === 'modal') {
+    if (!isSemanticReadingScope(region) || region.closest(INTERFACE_REGIONS)) return false;
+  } else if (role !== 'newsletter' && role !== 'sidebar' && role !== 'header') return false;
   if (region.matches('aside,[role~="complementary"],header,[role~="banner"]')) return false;
   if (region.id.toLowerCase() === role || Array.from(region.classList).some(name => name.toLowerCase() === role)) return false;
+  if (role === 'sidebar') {
+    // Layout modifiers describe the presence of a lateral region.
+    const labels = [region.id, ...Array.from(region.classList)].filter(name => /(?:^|[-_])sidebar(?:$|[-_])/i.test(name));
+    if (labels.length && labels.every(name => /^(?:has|no|with|without)[-_]sidebar$/i.test(name))) return true;
+  }
+  if (role === 'modal') {
+    const modalLabel = /(?:^|[_-])modal(?:$|[_-])/i;
+    const hooks = Array.from(region.classList).filter(name => modalLabel.test(name));
+    if (!modalLabel.test(region.id) && hooks.length && hooks.every(name => /^js-/i.test(name))) return true;
+  }
   const owner = source.closest(EDITORIAL_CONTAINERS);
   return isEditorialOwner(owner) && (region === owner || (role !== 'newsletter' && region.contains(owner)));
 }

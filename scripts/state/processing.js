@@ -15,6 +15,9 @@ import { isPopupOpen } from '../background/popup-connection.js';
 import { removePrintJob, prunePrintJobs } from '../api/print-storage.js';
 import { closeOwnedPrintTab } from '../api/print-lifecycle.js';
 import { prunePdfOperations } from '../api/pdf-operation-storage.js';
+import { isValidProcessingRunId } from './processing-messages.js';
+
+export { isValidProcessingRunId } from './processing-messages.js';
 
 /**
  * Standard error codes for consistent error handling
@@ -146,10 +149,6 @@ function removeStoredProcessingState(runId = processingRunId) {
 
 export function getProcessingRunId() {
   return processingRunId;
-}
-
-export function isValidProcessingRunId(runId) {
-  return typeof runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId);
 }
 
 export function isCurrentProcessingRun(runId) {
@@ -641,9 +640,11 @@ export function isCancelled(runId) {
 /**
  * Cancel processing
  * @param {import('../types.js').StopKeepAliveFunction} stopKeepAlive - Function to stop keep-alive
- * @returns {Promise<Object>} Success response
+ * @param {string} [expectedRunId] - Operation selected by the caller
+ * @returns {Promise<import('./processing-messages.js').ProcessingCancellation>}
  */
-export async function cancelProcessing(stopKeepAlive) {
+export async function cancelProcessing(stopKeepAlive, expectedRunId) {
+  if (expectedRunId !== undefined && expectedRunId !== processingRunId) return { success: true };
   if (processingState.isProcessing || startingRunId !== null) {
     stopOwnedRequests();
     const cancelledRunId = processingRunId;
@@ -710,15 +711,13 @@ export async function completeProcessing(stopKeepAlive, runId) {
   if (processingController.signal.aborted) return;
   // Force save any pending state before clearing
   await forceSaveState();
-  if (!isCurrentProcessingRun(ownerRunId)) return;
-  if (processingController.signal.aborted) return;
+  const uiLang = await getUILanguage();
+  if (!isCurrentProcessingRun(ownerRunId) || processingController.signal.aborted) return;
   clearProcessingDeadline();
   
   processingState.isProcessing = false;
   processingState.inactivityDeadlineAt = null;
   processingState.progress = 100;
-  const uiLang = await getUILanguage();
-  if (!isCurrentProcessingRun(ownerRunId)) return;
   processingState.status = tSync('statusDone', uiLang);
   processingState.statusTranslationKey = 'statusDone';
   processingState.statusTranslationParams = {};

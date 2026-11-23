@@ -12,6 +12,7 @@ import { mergeColumnElementsIntoTables } from './table-column-merger.js';
 import { extractPageGraphics, detectTableRegionsFromGraphics } from '../utils/graphics-extractor.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { extractPaintedTables } from '../utils/grid-cells.js';
+import { authoredFigureCaption } from '../figure-region.js';
 
 /** Order the elements within one reading region, then let the page concatenate its regions. */
 function orderRegion(elements) {
@@ -70,12 +71,13 @@ function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery)
  * @param {number} pageNum - Page number
  * @param {{gapThreshold?: number, baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
  * @param {(page: Object, pageNum: number) => Promise<Object|null>} [preserveImagePage] - Keep a visible page with no text layer
+ * @param {(page: Object, pageNum: number, textItems: any[], caption: any, tables: any[]) => Promise<any>} [preserveFigure] - Retain a disjoint mixed-page figure
  * @returns {Promise<Array<any>>} Array of extracted elements
  * @throws {Error} If text extraction fails
  * @throws {Error} If page processing fails
  */
 
-export async function processPage(page, pageNum, metrics, preserveImagePage) {
+export async function processPage(page, pageNum, metrics, preserveImagePage, preserveFigure) {
   try {
     const viewport = page.getViewport({ scale: 1.0 });
     
@@ -161,7 +163,7 @@ export async function processPage(page, pageNum, metrics, preserveImagePage) {
   //   using X-coordinate sub-clustering and preliminary columns
   // - Apply font formatting including underline detection using graphics data
   log(`[PDF v3] processPage: Page ${pageNum} - calling processPageItemsToLines with ${textItems.length} items`);
-  const lines = processPageItemsToLines(textItems, viewport, pageNum, metrics, graphicsData, textContent, page.commonObjs);
+  let lines = processPageItemsToLines(textItems, viewport, pageNum, metrics, graphicsData, textContent, page.commonObjs);
   log(`[PDF v3] processPage: Page ${pageNum} - got ${lines.length} lines from processPageItemsToLines`);
   
   if (lines.length === 0) {
@@ -171,17 +173,31 @@ export async function processPage(page, pageNum, metrics, preserveImagePage) {
   
   log(`[PDF v3] Page ${pageNum} processed: ${lines.length} lines`);
   const baseFontSize = metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE;
-  const physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], baseFontSize);
+  let physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], baseFontSize);
+  const caption = preserveFigure ? authoredFigureCaption(textItems, viewport) : null;
+  const figure = caption ? await preserveFigure(page, pageNum, textItems, caption, physical.tables) : null;
+  if (figure) {
+    const remaining = textItems.filter(item => !figure.region.labelSet.has(item));
+    lines = processPageItemsToLines(remaining, viewport, pageNum, metrics, graphicsData,
+      { ...textContent, items: remaining }, page.commonObjs);
+    physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], baseFontSize);
+  }
   const regions = partitionAtPaintedTables(physical, baseFontSize);
+  let result;
   if (!regions) {
     const elements = classifyReadingRegion(physical.remainingLines, viewport, metrics, pageNum, physical.tables.length ? 'disabled' : 'fallback');
-    return orderRegion(elements.concat(physical.tables));
+    result = orderRegion(elements.concat(physical.tables));
+  } else {
+    result = regions.flatMap(({ lines, table }) => {
+      const elements = orderRegion(classifyReadingRegion(lines, viewport, metrics, pageNum, 'preferred'));
+      return table ? elements.concat(table) : elements;
+    });
   }
-
-  return regions.flatMap(({ lines, table }) => {
-    const elements = orderRegion(classifyReadingRegion(lines, viewport, metrics, pageNum, 'preferred'));
-    return table ? elements.concat(table) : elements;
-  });
+  if (figure) {
+    const next = result.findIndex(item => (item.minY ?? item.lines?.[0]?.y ?? Infinity) >= figure.region.sourceTop);
+    result.splice(next < 0 ? result.length : next, 0, figure.image);
+  }
+  return result;
 
   } catch (error) {
     logWarn(`[PDF v3] processPage failed for page ${pageNum}`, {

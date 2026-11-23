@@ -5,6 +5,7 @@
 
 import { log, logError, logWarn } from '../../scripts/utils/logging.js';
 import { getExtensionVersion } from '../../scripts/utils/config.js';
+import { GEMINI_IMAGE_MODELS, readGeminiImageModel } from '../../scripts/api/image-translation-catalog.js';
 import { groupDependencies } from './dependencies.js';
 import { ELEMENT_IDS } from '../constants.js';
 
@@ -91,6 +92,20 @@ export function initializeDOMElements(elements) {
   elements.translateImagesGroup = document.getElementById(ELEMENT_IDS.TRANSLATE_IMAGES_GROUP);
   elements.imageTranslationProvider = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_PROVIDER);
   elements.imageTranslationProviderGroup = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_PROVIDER_GROUP);
+  const geminiImageModel = /** @type {HTMLSelectElement | null} */ (
+    document.querySelector(`select#${ELEMENT_IDS.GEMINI_IMAGE_MODEL}`)
+  );
+  elements.geminiImageModel = geminiImageModel;
+  if (geminiImageModel) {
+    const options = Object.entries(GEMINI_IMAGE_MODELS).map(([id, name]) => {
+      const option = document.createElement('option');
+      option.value = id;
+      option.textContent = name;
+      return option;
+    });
+    geminiImageModel.replaceChildren(...options);
+    geminiImageModel.value = readGeminiImageModel();
+  }
   elements.imageTranslationModelHint = document.getElementById(ELEMENT_IDS.IMAGE_TRANSLATION_MODEL_HINT);
   
   // Find hint element - it's the <p> with class "setting-hint" inside translateImagesGroup

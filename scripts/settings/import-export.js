@@ -8,7 +8,7 @@ import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
 import { DOCUMENT_FONT_FAMILIES, isDocumentColor } from '../utils/styles-validation.js';
-import { IMAGE_TRANSLATION_PROVIDERS } from '../api/image-translation-catalog.js';
+import { GEMINI_IMAGE_MODELS, IMAGE_TRANSLATION_PROVIDERS } from '../api/image-translation-catalog.js';
 
 function importError(key, language, params = {}) {
   return Object.assign(new Error(tSync(key, language, params)), { translationKey: key, translationParams: params });
@@ -77,6 +77,7 @@ const STORAGE_KEYS_TO_EXPORT = [
   'pdf_language',
   'translate_images',
   'image_translation_provider',
+  'gemini_image_model',
   
   // Audio settings
   'audio_provider',
@@ -328,6 +329,7 @@ export async function importSettings(jsonData, options = {}) {
     const VALID_ENUMS = {
       api_provider: ['openai', 'claude', 'gemini', 'grok', 'openrouter', 'deepseek'],
       image_translation_provider: IMAGE_TRANSLATION_PROVIDERS,
+      gemini_image_model: Object.keys(GEMINI_IMAGE_MODELS),
       audio_provider: ['offline', 'openai', 'elevenlabs', 'google', 'qwen', 'respeecher'],
       output_format: ['pdf', 'epub', 'fb2', 'markdown', 'audio'],
       extraction_mode: ['automatic', 'selector', 'extract'],

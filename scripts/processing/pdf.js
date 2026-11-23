@@ -254,7 +254,9 @@ async function processPdfPage(data, pdfUrl) {
     const requestOptions = { ...getAIRequestOptions(data), processingRunId: data.processingRunId };
     const pdfData = await getPdfDataWithFallback(pdfUrl.split('#')[0], tabId, requestOptions);
     const preserveImagePages = !data.extractionOnly && ['pdf', 'epub', 'fb2', 'markdown'].includes(data.outputFormat || 'pdf');
-    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, preserveImagePages, onProgress: progressCallback });
+    const preserveOriginalFigures = !data.extractionOnly && (data.outputFormat || 'pdf') === 'pdf' &&
+      (!data.language || data.language === 'auto');
+    result = await extractPdfContent(pdfUrl, pdfData, { ...requestOptions, preserveImagePages, preserveOriginalFigures, onProgress: progressCallback });
     await checkCancellation('PDF extraction');
     
     log(`✅ PDF content extracted: ${result.content?.length || 0} content items`, { 

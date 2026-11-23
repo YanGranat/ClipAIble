@@ -4,6 +4,45 @@ import { formatMessage } from '../../scripts/locales.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
+it('keeps a newer worker snapshot visible when an earlier request returns late', async () => {
+  const responses = [];
+  chrome.runtime.sendMessage.mockImplementation((_message, callback) => responses.push(callback));
+  chrome.storage.local.get.mockResolvedValue({});
+  const renders = [];
+  vi.stubGlobal('requestAnimationFrame', callback => { renders.push(callback); return 1; });
+  const setStatus = vi.fn();
+  const state = initState({ elements: { savePdfBtn: { style: {} } }, t: async key => key,
+    setStatus, setProgress: vi.fn(), stopTimerDisplay: vi.fn(), stateRefs: {} });
+
+  const oldRead = state.checkProcessingState();
+  const newRead = state.checkProcessingState();
+  expect(responses).toHaveLength(2);
+  responses[1]({ isProcessing: true, status: 'New task', processingRunId: 'b2f152d6-93ca-4cd9-9cd6-7884cb58a736', progress: 5 });
+  await newRead;
+  await renders.shift()();
+  responses[0]({ isProcessing: false, statusTranslationKey: 'statusDone', outputFormat: 'markdown',
+    processingRunId: 'da67f6fa-e34e-4545-8b45-cb33413e3b3a' });
+  await oldRead;
+  for (const render of renders) await render();
+  expect(setStatus).toHaveBeenCalledExactlyOnceWith('processing', 'New task', undefined, null);
+});
+
+it('does not render a previous completion after its translated label is ready', async () => {
+  let translateReady;
+  const setStatus = vi.fn();
+  const savePdfBtn = { style: {} };
+  const state = initState({ elements: { savePdfBtn }, stateRefs: {}, setStatus, setProgress: vi.fn(), stopTimerDisplay: vi.fn(),
+    t: async key => key === 'notificationReady' ? new Promise(resolve => { translateReady = resolve; }) : key });
+  const previous = state.updateUIFromState({ isProcessing: false, statusTranslationKey: 'statusDone', outputFormat: 'pdf' });
+  await vi.waitFor(() => expect(translateReady).toBeTypeOf('function'));
+  await state.updateUIFromState({ isProcessing: true, status: 'New task', progress: 25 });
+  expect(savePdfBtn.disabled).toBe(true);
+  translateReady('Previous file is ready');
+  await previous;
+  expect(savePdfBtn.disabled).toBe(true);
+  expect(setStatus).toHaveBeenCalledExactlyOnceWith('processing', 'New task', undefined, null);
+});
+
 it.each(['initial check', 'polling'])('displays the background initialization error during %s and recovers on a valid response', async phase => {
   vi.useFakeTimers();
   try {

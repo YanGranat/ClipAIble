@@ -43,8 +43,9 @@ describe('Table translation ownership', () => {
     const result = await translateContent(original, 'fr', 'synthetic-key', 'gpt-example', undefined, { provider: 'openai' });
     expect(seen).toEqual(['<span>Group</span>', 'Reading', 'Dawn', 'Dusk', 'North', '11', '19', '23', '29']);
     const translated = result.content[0];
-    expect(translated.headers).toEqual(['Translated <span>Group</span>', 'Translated Reading', 'Translated Reading']);
-    expect(translated.rows[0][0]).toBe(translated.headers[0]);
+    expect(translated.headers).toEqual(['Translated <span id="group-label">Group</span>', 'Translated Reading', 'Translated Reading']);
+    expect(translated.rows[0][0]).toBe('Translated <span>Group</span>');
+    expect(renderTableHtml(translated).match(/id="group-label"/g)).toHaveLength(1);
     expect(translated.rows[2][0]).toBe(translated.rows[1][0]);
     expect(verifiedTableLayout(translated)).not.toBeNull();
     expect(translated.layoutRows).not.toBe(original.content[0].layoutRows);

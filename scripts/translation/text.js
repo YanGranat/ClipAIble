@@ -7,7 +7,8 @@ import { resolveAIProvider } from '../api/index.js';
 import { getDecryptedKeyCached } from '../utils/encryption.js';
 import { callWithRetry } from '../utils/retry.js';
 import { cleanAuthor } from '../utils/author-validator.js';
-import { removeHtmlAttributes, stripHtml } from '../utils/html.js';
+import { stripHtml } from '../utils/html.js';
+import { decodeEntities, escapeText, tokenizeHtml } from '../utils/html/tokenizer.js';
 import { PROCESSING_STAGES } from '../state/processing.js';
 import { getUILanguage, formatStatusUpdate } from '../locales.js';
 import { getClaudeRequestConfig, getClaudeResponseText } from '../api/claude.js';
@@ -31,8 +32,45 @@ function invalidTranslation() {
   });
 }
 
+function sourceFragmentAttribute(token, attribute) {
+  return attribute.name === 'id' || (token.name === 'a' && attribute.name === 'name');
+}
+
+function withSourceFragments(token, original = null) {
+  if (token.type !== 'tag' || token.closing) return token.raw;
+  const originals = original?.attrs || [];
+  const link = original?.name === 'a' && originals.find(attribute => attribute.name === 'href');
+  const fragmentLink = link && decodeEntities(link.value).includes('#') ? link : null;
+  let result = token.raw;
+  for (const attribute of token.attrs.slice().reverse()) {
+    if (sourceFragmentAttribute(token, attribute) || (fragmentLink && attribute.name === 'href')) {
+      result = result.slice(0, attribute.start) + result.slice(attribute.end);
+    }
+  }
+  if (!original) return result;
+  const attributes = new Map();
+  for (const attribute of originals) {
+    if ((sourceFragmentAttribute(original, attribute) || attribute === fragmentLink) && !attributes.has(attribute.name)) {
+      attributes.set(attribute.name, decodeEntities(attribute.value));
+    }
+  }
+  const end = result.endsWith('/>') ? -2 : -1;
+  return result.slice(0, end) + Array.from(attributes, ([name, value]) => ` ${name}="${escapeText(value)}"`).join('') + result.slice(end);
+}
+
 function cleanTranslationHtml(text) {
-  return removeHtmlAttributes(text, ['id']);
+  return tokenizeHtml(text).map(token => withSourceFragments(token)).join('');
+}
+
+/** Anchor identity belongs to the source. Restore it only when the markup still corresponds. */
+function restoreTranslationFragments(text, original) {
+  const sourceTags = tokenizeHtml(original).filter(token => token.type === 'tag');
+  const tokens = tokenizeHtml(text);
+  const translatedTags = tokens.filter(token => token.type === 'tag');
+  const sameStructure = sourceTags.length === translatedTags.length && sourceTags.every((token, index) =>
+    token.name === translatedTags[index].name && token.closing === translatedTags[index].closing);
+  let index = 0;
+  return tokens.map(token => withSourceFragments(token, token.type === 'tag' && sameStructure ? sourceTags[index++] : null)).join('');
 }
 
 /** Preserve selected provider parameters for every translation operation. */
@@ -94,7 +132,7 @@ async function requestTranslation(systemPrompt, userPrompt, apiKey, model, optio
 
 function translateResult(text, original) {
   if (typeof text !== 'string' || !text.trim()) throw invalidTranslation();
-  return text.trim() === NO_TRANSLATION_MARKER ? original : cleanTranslationHtml(text);
+  return text.trim() === NO_TRANSLATION_MARKER ? original : restoreTranslationFragments(text, original);
 }
 
 export async function translateText(text, targetLang, apiKey, model, options = {}) {

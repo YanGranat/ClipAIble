@@ -9,7 +9,8 @@ import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
 import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
 import { resolveStoredModelSelection } from '../scripts/utils/model-catalog.js';
-import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS } from '../scripts/api/image-translation-catalog.js';
+import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, readGeminiImageModel } from '../scripts/api/image-translation-catalog.js';
+import { refreshCustomSelectSelection } from './utils/custom-select.js';
 import { ELEMENT_IDS, STORAGE_KEYS } from './constants.js';
 
 // Import submodules
@@ -142,6 +143,7 @@ export function initSettings(deps) {
         STORAGE_KEYS.LANGUAGE,
         STORAGE_KEYS.STORAGE_TRANSLATE_IMAGES,
         STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER,
+        STORAGE_KEYS.GEMINI_IMAGE_MODEL,
         STORAGE_KEYS.STYLE_PRESET,
         STORAGE_KEYS.FONT_FAMILY,
         STORAGE_KEYS.FONT_SIZE,
@@ -447,6 +449,11 @@ export function initSettings(deps) {
         const savedImageProvider = result[STORAGE_KEYS.IMAGE_TRANSLATION_PROVIDER];
         elements.imageTranslationProvider.value = typeof savedImageProvider === 'string' && IMAGE_TRANSLATION_PROVIDERS.includes(savedImageProvider)
           ? savedImageProvider : DEFAULT_IMAGE_TRANSLATION_PROVIDER;
+        refreshCustomSelectSelection(elements.imageTranslationProvider);
+      }
+      if (elements.geminiImageModel) {
+        elements.geminiImageModel.value = readGeminiImageModel(result[STORAGE_KEYS.GEMINI_IMAGE_MODEL]);
+        refreshCustomSelectSelection(elements.geminiImageModel);
       }
       
       // Load style preset

@@ -1,14 +1,19 @@
 // @ts-check
 
 export const PDF_PAGE_MARGIN_MM = 5;
+// Chromium writes a default PDF user unit of 1/72 inch and readers can limit a page to 14,400 units.
+export const PDF_MAX_SINGLE_PAGE_INCHES = 200;
 
 /** Prepare and measure the final print layout in its owning document. */
-export async function preparePdfLayout(paperWidthInches, pageMode = 'single', paperHeightInches = 0, pageMarginMm = 5) {
+export async function preparePdfLayout(paperWidthInches, pageMode = 'single', paperHeightInches = 0, pageMarginMm = 5,
+  maxSinglePageInches = Infinity) {
   if (!window.matchMedia('print').matches) throw new Error('PDF layout requires print media.');
   document.documentElement.style.setProperty('--pdf-page-width', `${paperWidthInches}in`);
-  document.documentElement.style.setProperty('--pdf-layout-width', pageMode === 'multi' ? `calc(${paperWidthInches}in - ${2 * pageMarginMm}mm)` : `${paperWidthInches}in`);
+  const multiPageWidth = `calc(${paperWidthInches}in - ${2 * pageMarginMm}mm)`;
+  document.documentElement.style.setProperty('--pdf-layout-width', pageMode === 'multi' ? multiPageWidth : `${paperWidthInches}in`);
   if (document.fonts?.ready) await document.fonts.ready;
   const article = document.querySelector('.article') || document.body;
+  fitSourceTextColors();
   if (pageMode === 'single') {
     const flow = article.querySelector('.article-content') ?? article;
     // Empty final paragraphs can create a print fragment after the article.
@@ -18,6 +23,42 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
   }
   restoreTableMedia();
   const tableLayouts = [];
+
+  /** Keep source emphasis readable on the selected print background. */
+  function fitSourceTextColors() {
+    const luminance = rgb => rgb.reduce((sum, channel, index) => {
+      const srgb = channel / 255;
+      return sum + [0.2126, 0.7152, 0.0722][index] *
+        (srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4);
+    }, 0);
+    const contrast = (first, second) => (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+    const rgb = value => {
+      const parts = value.match(/^rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)$/);
+      return parts && (!parts[4] || Number(parts[4]) === 1) ? parts.slice(1, 4).map(Number) : null;
+    };
+    const backdrop = new Map();
+    function background(element) {
+      if (!element) return [255, 255, 255];
+      if (!backdrop.has(element)) backdrop.set(element,
+        rgb(getComputedStyle(element).backgroundColor) || background(element.parentElement));
+      return backdrop.get(element);
+    }
+    for (const element of article.querySelectorAll('.article-content span[style]')) {
+      const span = /** @type {HTMLElement} */ (element);
+      if (!span.style.color) continue;
+      const foreground = rgb(getComputedStyle(span).color);
+      if (!foreground) continue;
+      const backdropLightness = luminance(background(span));
+      if (contrast(luminance(foreground), backdropLightness) >= 4.5) continue;
+      const target = contrast(1, backdropLightness) > contrast(0, backdropLightness) ? 255 : 0;
+      for (let step = 1; step <= 16; step++) {
+        const adjusted = foreground.map(channel => Math.round(channel + (target - channel) * step / 16));
+        if (contrast(luminance(adjusted), backdropLightness) < 4.5) continue;
+        span.style.color = 'rgb(' + adjusted.join(', ') + ')';
+        break;
+      }
+    }
+  }
 
   function restoreTableMedia() {
     const media = new Map();
@@ -203,13 +244,30 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
     tableLayouts.push({ mode: 'records', columns: projection.columns, scale: 1 });
   }
 
+  if (pageMode === 'single' && measureHeight() > maxSinglePageInches * 96) {
+    pageMode = 'multi';
+    // Move the original body padding to page margins without reducing the article's line width.
+    const rules = document.createElement('style');
+    rules.textContent = `@media print { @page { margin: ${pageMarginMm}mm ${pageMarginMm}mm 0; } body { padding: 0 !important; } }`;
+    document.head.append(rules);
+    document.documentElement.style.setProperty('--pdf-layout-width', multiPageWidth);
+  }
   if (pageMode === 'multi' && paperHeightInches > pageMarginMm / 25.4) {
-    fitPageEndFigures((paperHeightInches - pageMarginMm / 25.4) * 96);
+    const printableHeight = (paperHeightInches - pageMarginMm / 25.4) * 96;
+    for (const quote of article.querySelectorAll('.article-content blockquote')) {
+      if (quote instanceof HTMLElement && quote.getBoundingClientRect().height > printableHeight / 2) {
+        quote.style.breakInside = 'auto';
+      }
+    }
+    fitPageEndFigures(printableHeight);
   }
 
-  const bounds = article.getBoundingClientRect();
-  const contentHeight = Math.ceil(Math.max(bounds.bottom, bounds.top + article.scrollHeight)) + 1;
-  return { contentWidth: bounds.width, contentHeight, tableLayouts };
+  return { contentWidth: article.getBoundingClientRect().width, contentHeight: measureHeight(), tableLayouts, pageMode };
+
+  function measureHeight() {
+    const bounds = article.getBoundingClientRect();
+    return Math.ceil(Math.max(bounds.bottom, bounds.top + article.scrollHeight)) + 1;
+  }
 
   function fitPageEndFigures(printablePageHeight) {
     if (!(article instanceof HTMLElement)) return;

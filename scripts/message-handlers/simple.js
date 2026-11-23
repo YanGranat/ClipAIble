@@ -3,8 +3,8 @@
 // Handlers: log, logError, ping, getState, cancelProcessing
 
 import { log, logError, logWarn } from '../utils/logging.js';
-import { getProcessingState } from '../state/processing.js';
-import { cancelProcessing } from '../state/processing.js';
+import { getProcessingState, cancelProcessing } from '../state/processing.js';
+import { getProcessingPhase, isValidProcessingRunId } from '../state/processing-messages.js';
 import { cancelOfflineTTSRun } from '../api/offline-tts-offscreen.js';
 import { getErrorTranslation } from '../utils/error-handler.js';
 
@@ -60,7 +60,8 @@ export function handlePing(request, sender, sendResponse) {
  * Handle getState request
  */
 export function handleGetState(request, sender, sendResponse) {
-  sendResponse(getProcessingState());
+  const state = getProcessingState();
+  sendResponse({ ...state, phase: getProcessingPhase(state) });
   return true;
 }
 
@@ -68,9 +69,14 @@ export function handleGetState(request, sender, sendResponse) {
  * Handle cancelProcessing request
  */
 export function handleCancelProcessing(request, sender, sendResponse, stopKeepAlive) {
+  const runId = request.data?.processingRunId;
+  if (!isValidProcessingRunId(runId)) {
+    sendResponse({ success: false, error: 'Missing or invalid processing run ID' });
+    return true;
+  }
   log('Cancel requested');
-  cancelProcessing(stopKeepAlive).then((result) => {
-    if (result.cancelledRunId) {
+  cancelProcessing(stopKeepAlive, runId).then((result) => {
+    if (result.success && result.cancelledRunId) {
       cancelOfflineTTSRun(result.cancelledRunId).catch((error) => {
         logWarn('Offline TTS cancellation failed', { error: error?.message });
       });

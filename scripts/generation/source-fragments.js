@@ -20,7 +20,7 @@ export function encodeFragmentIdentifier(value) {
 }
 
 /** Resolve document references against actual exported logical identifiers. */
-export function resolveSourceFragment(href, sourceUrl, targetIds) {
+export function resolveSourceFragment(href, sourceUrl, targetIds, aliases = new Map()) {
   if (!sourceUrl || !String(href).includes('#')) return href;
   try {
     const source = new URL(sourceUrl), target = new URL(href, source);
@@ -28,8 +28,8 @@ export function resolveSourceFragment(href, sourceUrl, targetIds) {
     const absolute = target.href;
     const fragment = decodeFragmentIdentifier(target.hash.slice(1));
     source.hash = ''; target.hash = '';
-    const encoded = '#' + encodeFragmentIdentifier(fragment);
-    return source.href === target.href && targetIds.has(fragment) ? encoded : absolute;
+    const localId = aliases.get(fragment) ?? (targetIds.has(fragment) ? fragment : null);
+    return source.href === target.href && localId !== null ? '#' + encodeFragmentIdentifier(localId) : absolute;
   } catch (_) { return href; }
 }
 
@@ -59,7 +59,7 @@ export function collectRenderedFragmentIds(html, inlineFragmentTargets = true) {
 }
 
 /** Rewrite only href attributes, preserving surrounding markup and literal code. */
-export function rewriteHtmlFragmentLinks(html, sourceUrl, targetIds) {
+export function rewriteHtmlFragmentLinks(html, sourceUrl, targetIds, aliases) {
   const literal = [];
   return tokenizeHtml(html).map(token => {
     if (token.type !== 'tag') return token.raw;
@@ -71,13 +71,13 @@ export function rewriteHtmlFragmentLinks(html, sourceUrl, targetIds) {
     if (literal.length || token.closing || token.name !== 'a') return token.raw;
     const attr = token.attrs.find(attr => attr.name === 'href');
     if (!attr) return token.raw;
-    const href = decodeEntities(attr.value), resolved = resolveSourceFragment(href, sourceUrl, targetIds);
+    const href = decodeEntities(attr.value), resolved = resolveSourceFragment(href, sourceUrl, targetIds, aliases);
     return resolved === href ? token.raw : token.raw.slice(0, attr.start) + ` href="${escapeText(resolved)}"` + token.raw.slice(attr.end);
   }).join('');
 }
 
 /** Rewrite Markdown destinations without round-tripping prose or code through HTML. */
-export function rewriteMarkdownFragmentLinks(markdown, sourceUrl, targetIds) {
+export function rewriteMarkdownFragmentLinks(markdown, sourceUrl, targetIds, aliases) {
   const text = String(markdown ?? '');
   const edits = [];
   let fence = null;
@@ -135,7 +135,7 @@ export function rewriteMarkdownFragmentLinks(markdown, sourceUrl, targetIds) {
     }
     const raw = text.slice(start, end);
     const href = decodeEntities(raw.replace(/\\([\u0021-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007e])/g, '$1'));
-    const resolved = resolveSourceFragment(href, sourceUrl, targetIds);
+    const resolved = resolveSourceFragment(href, sourceUrl, targetIds, aliases);
     if (resolved !== href) edits.push({ start, end, value: resolved });
     index = close;
   }

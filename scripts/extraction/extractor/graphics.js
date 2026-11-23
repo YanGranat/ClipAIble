@@ -9,6 +9,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const OMIT = 'figcaption,script,style,template,noscript,source,button,input,select,textarea,nav,footer,iframe,video,audio,object,embed,[role="button"],[role="navigation"],[contenteditable="true"]';
 const DEFINITIONS = 'defs,marker,pattern,linearGradient,radialGradient,clipPath,mask,symbol,title,desc';
 const FAILURE_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=';
+const CAPTION_GLYPH_MAX_SIZE = 48;
 
 function failure() {
   return Object.assign(new Error('The article graphic could not be captured.'), {
@@ -72,6 +73,14 @@ function isDecorativeLinkGraphic(graphic) {
   return !!link?.textContent?.trim() && !(figure && link.contains(figure));
 }
 
+function isCaptionSvgGlyph(graphic, figure) {
+  if (graphic.localName !== 'svg' || graphic.closest('figcaption')?.closest('figure') !== figure) return false;
+  if (graphic.hasAttribute('role') || graphic.hasAttribute('aria-label') || graphic.hasAttribute('aria-labelledby') ||
+      graphic.textContent?.trim() || graphic.querySelector('title,desc,text,image,foreignObject')) return false;
+  const { width, height } = graphic.getBoundingClientRect();
+  return width > 0 && height > 0 && width <= CAPTION_GLYPH_MAX_SIZE && height <= CAPTION_GLYPH_MAX_SIZE;
+}
+
 /** Identify a graphic by its reading scope and semantic ownership. */
 export function getGraphicReadingOwner(element, roots) {
   if (!element || !roots?.some(root => root === element || root.contains(element))) return null;
@@ -81,7 +90,7 @@ export function getGraphicReadingOwner(element, roots) {
   if ((!figure && !graphic) || isDecorativeLinkGraphic(graphic) || controls(element) || hidden(element, true)) return null;
   if (figure && roots.some(root => root === figure || root.contains(figure))) {
     const graphics = Array.from(figure.querySelectorAll('svg,canvas')).filter(node => node.closest('figure') === figure &&
-      !isDecorativeLinkGraphic(node) && !controls(node) && !hidden(node, true));
+      !isCaptionSvgGlyph(node, figure) && !isDecorativeLinkGraphic(node) && !controls(node) && !hidden(node, true));
     const layered = hasLayeredImages(figure);
     if (graphics.length || layered) {
       const mixed = !!figure.querySelector('figure') || Array.from(figure.querySelectorAll('p,table,img,blockquote,pre,ul,ol')).some(node =>

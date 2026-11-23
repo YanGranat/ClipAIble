@@ -74,6 +74,33 @@ describe('Heading source positions', () => {
     expect(headings(result.content)).toEqual(expected);
   });
 
+  it('moves the exact selected title and its targets without deleting independent headings', async () => {
+    const win = page('<section id="chapter"><h2 id="edition"><span id="label">Field Report</span> <a class="heading-control" href="#edition">Copy head link</a></h2>' +
+      prose + '<h3 id="method">Method <a href="#method">\u00b6</a></h3><h2 id="repeat">Field Report</h2></section>');
+    const run = await generatedRunner(win);
+    const result = await run(win.location.href, false, {
+      articleContainer: 'article', content: '#chapter', title: '#label', exclude: ['.heading-control']
+    });
+    expect(result.title).toBe('Field Report');
+    expect(result.titleFragmentIds).toEqual(['edition', 'label']);
+    expect(headings(result.content)).toEqual([
+      { id: 'method', text: 'Method', level: 3, format: 'text' },
+      { id: 'repeat', text: 'Field Report', level: 2, format: 'text' }
+    ]);
+  });
+
+  it('does not emit a selected plain title block twice', async () => {
+    const win = page('<div id="publication">Field Report</div>' + prose + '<p>Field Report is an example name.</p>');
+    const run = await generatedRunner(win);
+    const result = await run(win.location.href, false, { content: 'article', title: '#publication' });
+    expect(result.title).toBe('Field Report');
+    expect(result.titleFragmentIds).toEqual(['publication']);
+    expect(result.content.map(item => item.text)).toEqual([
+      'The first observation records a complete independent measurement.',
+      'Field Report is an example name.'
+    ]);
+  });
+
   it('deduplicates the same Draft heading node without collapsing another source heading', async () => {
     const win = page(`<div data-testid="twitterArticleReadView"><div data-offset-key="a"><h1 class="longform-header-one" id="cover">${title}</h1></div><div data-offset-key="b">An independent body paragraph precedes the return.</div><div data-offset-key="c"><h2 class="longform-header-two" id="method">${title}</h2></div><div data-offset-key="d"><h2 class="longform-header-two" id="repeat">${title}</h2></div></div>`, 'https://x.com/i/article/123');
     expect(headings((await runExtraction(win.location.href)).content)).toEqual([expected[0], expected[2]]);

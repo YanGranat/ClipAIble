@@ -47,6 +47,20 @@ it('reports an interrupted save as an error instead of completing the run', asyn
   expect(setError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Download interrupted' }));
 });
 
+it('uses A4 when the prepared single-page document exceeds the PDF page limit', async () => {
+  chrome.debugger.sendCommand.mockImplementation(async (_, method) => {
+    if (method === 'Runtime.evaluate') return { result: { value: { contentHeight: 24000, pageMode: 'multi' } } };
+    if (method === 'Page.printToPDF') return { data: btoa(pdfBytes) };
+    return {};
+  });
+  downloadBlob.mockResolvedValueOnce(12);
+  const complete = vi.fn();
+  await generatePdfWithDebugger(1, 'Research notes', 'single', complete, vi.fn(), runId);
+  expect(chrome.debugger.sendCommand).toHaveBeenCalledWith({ tabId: 1 }, 'Page.printToPDF',
+    expect.objectContaining({ paperWidth: 8.27, paperHeight: 11.69, scale: 1 }));
+  expect(complete).toHaveBeenCalledOnce();
+});
+
 it('does not download or complete a run after Chromium returns no PDF payload', async () => {
   chrome.debugger.sendCommand.mockImplementation(async (_, method) =>
     method === 'Runtime.evaluate' ? { result: { value: { contentHeight: 1200 } } } : {});

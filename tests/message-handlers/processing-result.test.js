@@ -18,8 +18,12 @@ describe('processing admission responses', () => {
     expect(response.error).toBeTruthy();
   });
   it('retains a successful admission response', async () => {
-    const response = await new Promise(resolve => handleProcessArticle({ data: {} }, {}, resolve, async () => true, vi.fn()));
-    expect(response).toEqual({ started: true });
+    const processingRunId = crypto.randomUUID();
+    const response = await new Promise(resolve => handleProcessArticle({ data: {} }, {}, resolve, async data => {
+      data.processingRunId = processingRunId;
+      return true;
+    }, vi.fn()));
+    expect(response).toEqual({ started: true, processingRunId });
   });
   it('returns a translation identity when rejecting an oversized trusted request', () => {
     const send = vi.fn();
@@ -35,4 +39,29 @@ describe('processing admission responses', () => {
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ started: false, success: false, translationKey: 'errorProcessingNotStarted' }));
     expect(start).not.toHaveBeenCalled();
   });
+});
+
+it('rejects malformed offscreen progress and ignores a late update after download completion', async () => {
+  mocks.sizeValid = true;
+  const sender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+  const reply = (action, data) => new Promise(resolve => routeMessage({ action, data }, sender, resolve, {}));
+  await state.resetState();
+  try {
+    expect(await state.startProcessing()).toBe(true);
+    const processingRunId = state.getProcessingRunId();
+    state.updateState({ outputFormat: 'audio', progress: 60 }, processingRunId);
+    const progress = { processingRunId, totalSentences: 4, sentenceIndex: 4 };
+    expect(await reply('TTS_PROGRESS', { ...progress, sentenceIndex: 5 })).toMatchObject({ success: false });
+    expect(state.getProcessingState().progress).toBe(60);
+    expect(await reply('TTS_PROGRESS', progress)).toMatchObject({ success: true });
+    expect(state.getProcessingState().progress).toBe(86);
+    await reply('TTS_PROGRESS', { ...progress, sentenceIndex: 2 });
+    expect(state.getProcessingState().progress).toBe(86);
+    expect(state.getProcessingState().status).toContain('(4/4 sentences)');
+    await state.completeProcessing(undefined, processingRunId);
+    await reply('TTS_PROGRESS', progress);
+    expect(await reply('getState')).toMatchObject({ processingRunId, phase: 'complete', progress: 100 });
+  } finally {
+    await state.resetState();
+  }
 });

@@ -3,7 +3,16 @@
 // Handles processing state polling, UI updates, and stage mapping
 
 import { getDocumentReadyMessage } from '../../scripts/locales.js';
+import { getProcessingPhase, readProcessingSnapshot } from '../../scripts/state/processing-messages.js';
 
+/** @typedef {import('../../scripts/state/processing-messages.js').ProcessingSnapshot} ProcessingSnapshot */
+
+const STAGE_MESSAGES = {
+  starting: 'stageStarting', analyzing: 'stageAnalyzing', extracting: 'stageExtracting', translating: 'stageTranslating',
+  loading_images: 'stageLoadingImages', generating: 'stageGenerating', complete: 'stageComplete'
+};
+
+/** @returns {Promise<ProcessingSnapshot|null>} */
 function requestProcessingState() {
   return new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({ action: 'getState' }, response => {
@@ -19,7 +28,7 @@ function requestProcessingState() {
           errorTranslationParams: response.translationParams
         });
       } else {
-        resolve(typeof response?.isProcessing === 'boolean' ? response : null);
+        resolve(readProcessingSnapshot(response));
       }
     });
   });
@@ -59,154 +68,87 @@ export function initState(deps) {
   } = deps;
 
   async function mapStageLabel(stageId) {
-    switch (stageId) {
-      case 'starting': return await t('stageStarting');
-      case 'analyzing': return await t('stageAnalyzing');
-      case 'extracting': return await t('stageExtracting');
-      case 'translating': return await t('stageTranslating');
-      case 'loading_images': return await t('stageLoadingImages');
-      case 'generating': return await t('stageGenerating');
-      case 'complete': return await t('stageComplete');
-      default: return null;
-    }
+    const key = STAGE_MESSAGES[stageId];
+    return key ? t(key) : null;
   }
 
-  // Update UI based on processing state
-  async function updateUIFromState(state) {
-    if (!state) return;
-    
-    // Simple update - no special handling for audio format
-    const stageKeys = { starting: 'stageStarting', analyzing: 'stageAnalyzing', extracting: 'stageExtracting', translating: 'stageTranslating', loading_images: 'stageLoadingImages', generating: 'stageGenerating', complete: 'stageComplete' };
-    const key = state.statusTranslationKey || stageKeys[state.currentStage];
-    const translation = key ? { key, params: state.statusTranslationParams || {} } : null;
-    const statusText = translation ? await t(key, null, translation.params) : state.status;
-    await performUIUpdate(state, statusText, translation);
+  let renderRevision = 0;
+  let readRevision = 0;
+  let acceptedRead = 0;
+  /** @type {string|null} */
+  let presentedRunId = null;
+  /** @type {ProcessingSnapshot|null} */
+  let lastScheduledState = null;
+
+  /** @param {ProcessingSnapshot} state */
+  async function preparePresentation(state) {
+    const phase = state.phase ?? getProcessingPhase(state);
+    if (phase === 'running') {
+      const key = state.statusTranslationKey || STAGE_MESSAGES[state.currentStage];
+      if (key) {
+        const params = state.statusTranslationParams || {};
+        return { kind: 'processing', text: await t(key, null, params), translation: { key, params } };
+      }
+      return { kind: 'processing', text: state.status, translation: null };
+    }
+
+    if (phase === 'failed') {
+      const cancelledText = state.phase === undefined ? await t('statusCancelled') : null;
+      if (!cancelledText || !state.error?.includes(cancelledText)) {
+        const errorKeys = {
+          auth_error: 'errorAuth', rate_limit: 'errorRateLimit', timeout: 'errorTimeout', network_error: 'errorNetwork',
+          parse_error: 'errorParse', provider_error: 'errorProvider', validation_error: 'errorValidation', unknown_error: 'errorUnknown'
+        };
+        const key = state.errorTranslationKey || errorKeys[state.errorCode];
+        const translation = key ? (state.errorTranslationKey ? { key, params: state.errorTranslationParams || {} } : { key }) : null;
+        const text = translation ? await t(key, null, translation.params).catch(() => state.error) : state.error;
+        return { kind: 'error', text, translation };
+      }
+    }
+
+    if (phase === 'complete' || (phase === 'idle' && !state.phase && state.status && state.status === await t('statusDone'))) {
+      const format = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value;
+      const formats = { epub: 'formatEpub', fb2: 'formatFb2', markdown: 'formatMarkdown', audio: 'formatAudio' };
+      const formatKey = formats[format] || 'formatPdf';
+      const message = getDocumentReadyMessage(await t(formatKey), state.imageTranslationFailureCount);
+      return { kind: 'ready', text: await t(message.key, null, message.params), translation: { ...message, formatKey } };
+    }
+    return { kind: 'ready', text: await t('ready'), translation: { key: 'ready' } };
   }
-  
-  // Perform actual UI updates
-  async function performUIUpdate(state, statusText, translation) {
-    if (state.isProcessing) {
-      // Use startTime from background (persists across popup reopens)
-      if (state.startTime) {
-        if (stateRefs.currentStartTime?.current !== state.startTime || !stateRefs.timerInterval?.current) {
-          startTimerDisplay(state.startTime);
-        }
-      }
-      
-      // Simple UI update - no special handling needed (guard missing elements)
-      if (elements.savePdfBtn) {
-        elements.savePdfBtn.disabled = true;
-        elements.savePdfBtn.style.display = 'none';
-      }
-      if (elements.cancelBtn) {
-        elements.cancelBtn.classList.remove('hidden');
-        elements.cancelBtn.style.display = 'block';
-        elements.cancelBtn.disabled = false;
-      }
-      setStatus('processing', statusText, state.startTime || stateRefs.currentStartTime?.current, translation);
-      setProgress(state.progress);
-    } else if (state.error || state.isCancelled) {
-      // Check if error is actually a cancellation - don't show as error
-      // Use localized statusCancelled value for comparison
-      const statusCancelledText = await t('statusCancelled');
-      const isCancelled = state.isCancelled || 
-                         (state.error && state.error.includes(statusCancelledText));
-      
-      if (isCancelled) {
-        // Treat cancellation as ready state, not error
-        stopTimerDisplay();
-        if (elements.savePdfBtn) {
-          elements.savePdfBtn.disabled = false;
-          elements.savePdfBtn.style.display = 'block';
-        }
-        if (elements.cancelBtn) {
-          elements.cancelBtn.classList.add('hidden');
-          elements.cancelBtn.style.display = 'none';
-        }
-        const readyText = await t('ready');
-        setStatus('ready', readyText, null, { key: 'ready' });
-        setProgress(0, false);
-      } else {
-        // Real error - show as error
-        stopTimerDisplay();
-        if (elements.savePdfBtn) {
-          elements.savePdfBtn.disabled = false;
-          elements.savePdfBtn.style.display = 'block';
-        }
-        if (elements.cancelBtn) {
-          elements.cancelBtn.classList.add('hidden');
-          elements.cancelBtn.style.display = 'none';
-        }
-        // Use localized error message if errorCode is available
-        let errorMessage = state.error;
-        /** @type {import('../../scripts/types.js').LocalizedMessage | null} */
-        let errorTranslation = state.errorTranslationKey
-          ? { key: state.errorTranslationKey, params: state.errorTranslationParams || {} }
-          : null;
-        if (errorTranslation) {
-          errorMessage = await t(errorTranslation.key, null, errorTranslation.params);
-        } else if (state.errorCode) {
-          const errorKeyMap = {
-            'auth_error': 'errorAuth',
-            'rate_limit': 'errorRateLimit',
-            'timeout': 'errorTimeout',
-            'network_error': 'errorNetwork',
-            'parse_error': 'errorParse',
-            'provider_error': 'errorProvider',
-            'validation_error': 'errorValidation',
-            'unknown_error': 'errorUnknown'
-          };
-          const errorKey = errorKeyMap[state.errorCode];
-          if (errorKey) {
-            errorTranslation = { key: errorKey };
-            errorMessage = await t(errorKey).catch(() => state.error || 'Unknown error');
-          }
-        }
-        setStatus('error', errorMessage, null, errorTranslation);
-        setProgress(0, false);
+
+  /** @param {ProcessingSnapshot} state @param {number} revision */
+  async function updateUIFromState(state, revision = ++renderRevision) {
+    if (!state) return;
+    const presentation = await preparePresentation(state);
+    if (revision !== renderRevision) return;
+
+    const isProcessing = presentation.kind === 'processing';
+    presentedRunId = isProcessing ? state.processingRunId ?? null : null;
+    if (isProcessing) {
+      if (state.startTime && (stateRefs.currentStartTime?.current !== state.startTime || !stateRefs.timerInterval?.current)) {
+        startTimerDisplay(state.startTime);
       }
     } else {
-      // Processing complete (isProcessing === false) - update UI to ready state
-      // CRITICAL: Check status for "Done!" or check if processing just completed
-      // Use localized statusDone value for comparison
-      const statusDoneText = await t('statusDone');
-      const isDone = state.status === statusDoneText || (!state.isProcessing && !state.error);
-      
       stopTimerDisplay();
-      elements.savePdfBtn.disabled = false;
-      elements.savePdfBtn.style.display = 'block';
-      if (elements.cancelBtn) {
-        elements.cancelBtn.classList.add('hidden');
-        elements.cancelBtn.style.display = 'none';
-      }
-      
-      if (isDone && (state.statusTranslationKey === 'statusDone' || state.status === statusDoneText)) {
-        // Get saved format from state or current selection
-        const savedFormat = state.outputFormat || elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
-        const formatKeyMap = {
-          pdf: 'formatPdf',
-          epub: 'formatEpub',
-          fb2: 'formatFb2',
-          markdown: 'formatMarkdown',
-          audio: 'formatAudio'
-        };
-        const formatKey = formatKeyMap[savedFormat] || 'formatPdf';
-        const formatLabel = await t(formatKey);
-
-        const message = getDocumentReadyMessage(formatLabel, state.imageTranslationFailureCount);
-        setStatus('ready', await t(message.key, null, message.params), null, { ...message, formatKey });
-        setProgress(0, false); // Hide progress bar immediately
-      } else {
-        // Processing completed but status not set to "Done!" - show ready state
-        const readyText = await t('ready');
-        setStatus('ready', readyText, null, { key: 'ready' });
-        setProgress(0, false);
-      }
     }
+    if (elements.savePdfBtn) {
+      elements.savePdfBtn.disabled = isProcessing;
+      elements.savePdfBtn.style.display = isProcessing ? 'none' : 'block';
+    }
+    if (elements.cancelBtn) {
+      elements.cancelBtn.classList.toggle('hidden', !isProcessing);
+      elements.cancelBtn.style.display = isProcessing ? 'block' : 'none';
+      if (isProcessing) elements.cancelBtn.disabled = false;
+    }
+    setStatus(presentation.kind, presentation.text, isProcessing ? state.startTime || stateRefs.currentStartTime?.current : null,
+      presentation.translation);
+    if (isProcessing) setProgress(state.progress ?? 0);
+    else setProgress(0, false);
   }
 
   // Check processing state
   async function checkProcessingState() {
+    const read = ++readRevision;
     // IMPROVED: Try both SW and storage in parallel for better reliability
     const [swState, storageState] = await Promise.allSettled([
       // Try to get state from service worker
@@ -217,8 +159,8 @@ export function initState(deps) {
     
     // Prefer SW state if available
     if (swState.status === 'fulfilled' && swState.value) {
-      scheduleUIUpdate(swState.value);
-      return;
+      scheduleUIUpdate(swState.value, read);
+      return lastScheduledState;
     }
     
     // CRITICAL: Don't show old state from storage after extension reload
@@ -275,8 +217,8 @@ export function initState(deps) {
           timeSinceUpdate,
           status: savedState.status
         });
-        scheduleUIUpdate(savedState);
-        return;
+        scheduleUIUpdate(readProcessingSnapshot(savedState), read, true);
+        return lastScheduledState;
       }
     }
     
@@ -297,6 +239,8 @@ export function initState(deps) {
     // Compare only critical fields that affect UI
     return (
       newState.isProcessing !== oldState.isProcessing ||
+      newState.processingRunId !== oldState.processingRunId ||
+      newState.phase !== oldState.phase ||
       newState.progress !== oldState.progress ||
       newState.status !== oldState.status ||
       newState.currentStage !== oldState.currentStage ||
@@ -313,31 +257,34 @@ export function initState(deps) {
     );
   }
 
-  // Simple UI update scheduler - no complex optimizations needed
   let pendingUIUpdate = null;
-  let lastScheduledState = null;
+  let pollingGeneration = 0;
+  let scheduledRenderRevision = 0;
 
-  // Schedule UI update with simple debounce
-  function scheduleUIUpdate(state) {
-    // Store latest state
+  /** @param {ProcessingSnapshot|null} state @param {number} read @param {boolean} fromStorage */
+  function scheduleUIUpdate(state, read, fromStorage = false) {
+    if (!state || read < acceptedRead) return;
+    if (fromStorage && lastScheduledState && (!lastScheduledState.isProcessing ||
+        state.processingRunId !== lastScheduledState.processingRunId ||
+        (state.progress ?? 0) < (lastScheduledState.progress ?? 0))) return;
+    acceptedRead = read;
     lastScheduledState = state;
+    scheduledRenderRevision = ++renderRevision;
     
-    // If update already scheduled, skip (will use latest state)
-    if (pendingUIUpdate) {
-      return;
-    }
+    if (pendingUIUpdate !== null) return;
     
     // Schedule via requestAnimationFrame for smooth DOM updates
     pendingUIUpdate = requestAnimationFrame(async () => {
       pendingUIUpdate = null;
       if (lastScheduledState) {
-        await updateUIFromState(lastScheduledState);
+        await updateUIFromState(lastScheduledState, scheduledRenderRevision);
       }
     });
   }
 
   // Start polling for state updates
   function startStatePolling() {
+    const generation = ++pollingGeneration;
     // Clear existing timeout
     if (stateRefs.statePollingTimeout.current) {
       clearTimeout(stateRefs.statePollingTimeout.current);
@@ -351,7 +298,7 @@ export function initState(deps) {
     
     async function poll() {
       // Prevent concurrent calls
-      if (isPolling) {
+      if (isPolling || generation !== pollingGeneration) {
         return;
       }
       
@@ -371,22 +318,23 @@ export function initState(deps) {
       }
       
       isPolling = true;
+      const read = ++readRevision;
       try {
         // For non-audio, use normal polling
         // Use callback-based API to properly handle lastError
         const state = await requestProcessingState();
+        if (generation !== pollingGeneration) return;
         if (!state) throw new Error('Processing state is unavailable');
         
         // Use lightweight comparison instead of JSON.stringify
-        const changed = stateChanged(state, lastState);
+        const changed = stateChanged(state, lastScheduledState);
         
         if (changed) {
           // State changed - reset adaptive polling
           noChangeCount = 0;
           
           // Schedule UI update with debounce and RAF
-          scheduleUIUpdate(state);
-          lastState = state;
+          scheduleUIUpdate(state, read);
           
           // Simple polling interval - no special handling for audio
           if (state.isProcessing) {
@@ -395,6 +343,7 @@ export function initState(deps) {
             pollInterval = 500; // 500ms after completion to quickly update UI
           }
         } else {
+          acceptedRead = Math.max(acceptedRead, read);
           // State didn't change - use standard interval
           noChangeCount++;
           if (state.isProcessing) {
@@ -403,6 +352,7 @@ export function initState(deps) {
             pollInterval = 2000; // 2s for idle state
           }
         }
+        lastState = lastScheduledState;
         
         failedAttempts = 0;
         
@@ -410,6 +360,7 @@ export function initState(deps) {
         if (checkKeyThesesStatus) await checkKeyThesesStatus();
 
       } catch (error) {
+        if (generation !== pollingGeneration) return;
         failedAttempts++;
         const errorMsg = error.message || String(error);
         
@@ -422,6 +373,7 @@ export function initState(deps) {
           // IMPROVED: Try storage immediately on connection error (SW likely restarted)
           try {
             const stored = await chrome.storage.local.get(['processingState']);
+            if (generation !== pollingGeneration) return;
             if (stored.processingState) {
               /** @type {{isProcessing?: boolean, lastUpdate?: number, [key: string]: any}} */
               const savedState = stored.processingState;
@@ -433,7 +385,7 @@ export function initState(deps) {
                     timeSinceUpdate,
                     status: savedState.status
                   });
-                  scheduleUIUpdate(savedState);
+                  scheduleUIUpdate(readProcessingSnapshot(savedState), read, true);
                   // Continue polling with longer interval to check if SW recovers
                   pollInterval = 5000; // 5 seconds
                   isPolling = false;
@@ -457,6 +409,7 @@ export function initState(deps) {
         if (failedAttempts >= 1) {
           try {
             const stored = await chrome.storage.local.get(['processingState']);
+            if (generation !== pollingGeneration) return;
             if (stored.processingState) {
               /** @type {{isProcessing?: boolean, lastUpdate?: number, [key: string]: any}} */
               const savedState = stored.processingState;
@@ -468,7 +421,7 @@ export function initState(deps) {
                     timeSinceUpdate,
                     status: savedState.status
                   });
-                  scheduleUIUpdate(savedState);
+                  scheduleUIUpdate(readProcessingSnapshot(savedState), read, true);
                 }
               }
             }
@@ -496,7 +449,7 @@ export function initState(deps) {
       }
       
       // Schedule next poll
-      stateRefs.statePollingTimeout.current = setTimeout(poll, pollInterval);
+      if (generation === pollingGeneration) stateRefs.statePollingTimeout.current = setTimeout(poll, pollInterval);
     }
     
     poll();
@@ -506,6 +459,13 @@ export function initState(deps) {
     checkProcessingState,
     startStatePolling,
     updateUIFromState,
+    getPresentedProcessingRunId: () => presentedRunId,
+    noteProcessingAdmission() {
+      acceptedRead = ++readRevision;
+      renderRevision++;
+      lastScheduledState = null;
+      presentedRunId = null;
+    },
     mapStageLabel
   };
 }

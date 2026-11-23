@@ -109,6 +109,7 @@ export const ELEMENT_IDS = {
   TRANSLATE_IMAGES_GROUP: 'translateImagesGroup',
   IMAGE_TRANSLATION_PROVIDER: 'imageTranslationProvider',
   IMAGE_TRANSLATION_PROVIDER_GROUP: 'imageTranslationProviderGroup',
+  GEMINI_IMAGE_MODEL: 'geminiImageModel',
   IMAGE_TRANSLATION_MODEL_HINT: 'imageTranslationModelHint',
 
   // Styles
@@ -260,6 +261,7 @@ export const STORAGE_KEYS = {
   LANGUAGE: 'pdf_language',
   STORAGE_TRANSLATE_IMAGES: 'translate_images',
   IMAGE_TRANSLATION_PROVIDER: 'image_translation_provider',
+  GEMINI_IMAGE_MODEL: 'gemini_image_model',
 
   // Styles
   STYLE_PRESET: 'pdf_style_preset',

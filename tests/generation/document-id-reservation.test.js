@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { JSDOM } from 'jsdom';
-import { normalizeDocumentContent } from '../../scripts/generation/document-content.js';
+import { prepareDocumentContent } from '../../scripts/generation/document-content.js';
+
+const normalizeDocumentContent = (...args) => prepareDocumentContent(...args).content;
 
 const sourceUrl = 'https://example.org/article?key=a%26b';
 const title = 'Independent observations';

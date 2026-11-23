@@ -78,6 +78,7 @@ export class DocumentGeneratorFactory {
       ...(data.processingRunId === undefined ? {} : { processingRunId: data.processingRunId }),
       content: result.content,
       title: result.title,
+      titleFragmentIds: result.titleFragmentIds,
       author: result.author || '',
       sourceUrl: data.url,
       publishDate: result.publishDate || '',

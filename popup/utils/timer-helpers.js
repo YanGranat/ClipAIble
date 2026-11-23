@@ -27,7 +27,7 @@ export function startTimerDisplay(startTime, currentStartTimeRef, timerIntervalR
   
   currentStartTimeRef.current = startTime;
   // Update immediately, then set interval
-  updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements);
+  updateTimerDisplay(currentStartTimeRef, elements);
   
   timerIntervalRef.current = setInterval(() => {
     // Safety check: clear interval if elements are no longer available
@@ -38,7 +38,7 @@ export function startTimerDisplay(startTime, currentStartTimeRef, timerIntervalR
       }
       return;
     }
-    updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements);
+    updateTimerDisplay(currentStartTimeRef, elements);
   }, 1000);
   
   log('Timer started', { startTime, currentStartTime: currentStartTimeRef.current });
@@ -60,29 +60,10 @@ export function stopTimerDisplay(currentStartTimeRef, timerIntervalRef) {
 /**
  * Update timer display in status text
  * @param {Object} currentStartTimeRef - Reference object for current start time
- * @param {Object} timerIntervalRef - Reference object for timer interval
  * @param {Object} elements - DOM elements object
  */
-export function updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements) {
-  if (!currentStartTimeRef.current) {
-    // CRITICAL: Defer getState call to avoid blocking user interactions
-    // Use setTimeout to yield to event loop before making the call
-    setTimeout(() => {
-      // Use callback-based API to properly handle lastError
-      chrome.runtime.sendMessage({ action: 'getState' }, (response) => {
-        // CRITICAL: Check chrome.runtime.lastError to prevent "Unchecked runtime.lastError" spam
-        if (chrome.runtime.lastError) {
-          // Silently ignore - "Could not establish connection" is expected when receiver is closed
-          return;
-        }
-        if (response && response.isProcessing && response.startTime) {
-          currentStartTimeRef.current = response.startTime;
-          updateTimerDisplay(currentStartTimeRef, timerIntervalRef, elements); // Retry after setting startTime
-        }
-      });
-    }, 0);
-    return;
-  }
+function updateTimerDisplay(currentStartTimeRef, elements) {
+  if (!currentStartTimeRef.current) return;
   const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
   const timerSpan = document.getElementById(ELEMENT_IDS.TIMER_DISPLAY);
   if (timerSpan) {

@@ -227,6 +227,9 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     }
     if (!original.matches('span,a,button,b,i,em,strong,small,sup,sub') ||
         original.closest('pre,code,math,mjx-container,.MathJax,.katex')) continue;
+    const adjacentText = original.nextSibling?.textContent || '';
+    if (/^(?:left|right|inline-start|inline-end)$/.test(style?.float || '') &&
+        /^\p{L}\p{M}*$/u.test(original.textContent || '') && /^[\p{L}\p{N}]/u.test(adjacentText)) continue;
     const parentStyle = original.parentElement && original.ownerDocument.defaultView?.getComputedStyle(original.parentElement);
     if (['block', 'flex', 'grid', 'table', 'table-row'].includes(style?.display) ||
         ['flex', 'grid'].includes(parentStyle?.display)) {
@@ -300,13 +303,13 @@ export function cloneWithoutRepeatedNoteTooltips(element, referenceRoots = null,
 }
 
 /** Read metadata without hidden announcements or separately owned reference markers. */
-export function readArticleMetadataText(element) {
+export function readArticleMetadataText(element, exclusions = []) {
   if (!element) return '';
   for (let node = element; node; node = node.parentElement) {
     const style = node.ownerDocument.defaultView?.getComputedStyle(node);
     if (style?.display === 'none' || (!style && node.hasAttribute('hidden'))) return '';
   }
-  const clone = cloneWithoutRepeatedNoteTooltips(element);
+  const clone = cloneWithoutRepeatedNoteTooltips(element, null, exclusions);
   for (const control of Array.from(clone.querySelectorAll('.mw-editsection'))) {
     if (!control.closest('pre,code,math,mjx-container,.MathJax,.katex')) control.remove();
   }
@@ -314,7 +317,10 @@ export function readArticleMetadataText(element) {
     if (!node.closest('math, .MathJax, .katex, mjx-container')) node.remove();
   }
   for (const reference of Array.from(clone.querySelectorAll('a[href]'))) {
-    if (reference.textContent?.trim() === '#' && getDocumentFragmentTarget(reference) === element &&
+    const marker = reference.textContent?.trim();
+    const target = /^[#\u00b6\u00a7]$/u.test(marker || '') ? getDocumentFragmentTarget(reference) : null;
+    if (target && (target === element || (target.contains(element) &&
+        target.querySelector('h1,h2,h3,h4,h5,h6') === element)) &&
         !reference.closest('pre,code,math,mjx-container,.MathJax,.katex')) {
       reference.remove();
       continue;
