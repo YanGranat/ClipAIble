@@ -341,6 +341,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
     try {
       const voicesUrl = RESPEECHER_CONFIG.VOICES_URL_UA;
       const voicesResponse = await fetchBufferedResponse(voicesUrl, {
+        signal: options.signal,
         method: 'GET',
         headers: {
           'X-API-Key': apiKey.trim()
@@ -358,6 +359,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
         }
       }
     } catch (error) {
+      options.signal?.throwIfAborted();
+      await checkCancellation('Respeecher voice list', options.processingRunId);
       logWarn('Voice list fetch failed for Ukrainian endpoint, using defaults', { error: error.message });
     }
   }
@@ -366,7 +369,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   
   try {
     response = await callWithRetry(
-      async () => {
+      async ({ signal }) => {
         await checkCancellation('Respeecher TTS request', options.processingRunId);
         
           try {
@@ -381,6 +384,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
           
           // Method: X-API-Key header (as required by OpenAPI spec)
           let fetchResponse = await fetchBufferedResponse(apiUrl, {
+            signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -465,12 +469,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
         }
       },
       {
+        signal: options.signal,
+        checkCancelled: () => checkCancellation('Respeecher TTS retry', options.processingRunId),
         onRetry: (attempt, delay) => {
           log(`Respeecher API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
       }
     );
   } catch (fetchError) {
+    options.signal?.throwIfAborted();
     await checkCancellation('Respeecher TTS response', options.processingRunId);
     if (fetchError.name === 'AbortError') {
       throw await handleTimeoutError('Respeecher');

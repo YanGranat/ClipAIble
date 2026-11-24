@@ -21,20 +21,24 @@ const sourceFiles = [
 const sourceDirectories = [...runtimeDirectories, 'src', 'tests', 'docs', 'third_party/sources'];
 const buildOnlyFiles = new Set(['scripts/apply-extraction-build.js', 'scripts/extraction/extractor/builder.js']);
 const buildOnlyDirectories = ['scripts/extraction/extractor/', 'scripts/extraction/patterns/', 'scripts/extraction/constants/'];
-const localDirectories = new Set(['.git', '.codex', '.claude', '.cursor', '.agent', '.vscode', '.idea', 'node_modules']);
+const localDirectories = new Set([
+  '.git', '.codex', '.claude', '.cursor', '.agent', '.vscode', '.idea', 'node_modules',
+  'temporary_files', '.cache', '.vitest', '.test-results', 'coverage', 'test-pdfs'
+]);
 export const ORT_RUNTIME_FILES = Object.freeze(['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']);
 
 export function isSourceFile(relativePath) {
   const normalized = relativePath.replaceAll('\\', '/');
   const parts = normalized.toLowerCase().split('/');
   const filename = parts.at(-1);
-  return parts[0] !== 'workspace' && parts[0] !== 'temporary_files' &&
+  return parts[0] !== 'workspace' &&
     !parts.some(part => localDirectories.has(part)) &&
     !/^\.env(?:\.|$)/.test(filename) &&
-    !/\.(?:log|pem|key|p12|pfx)$/.test(filename) &&
+    !/\.(?:log|pem|key|p12|pfx|tmp|temp|zip|crx|map)$/.test(filename) &&
+    !/^temp_.*\.(?:js|txt)$/.test(filename) &&
+    !filename.endsWith('.test.pdf') &&
     !normalized.startsWith('scripts/test/') &&
-    !/\.(?:backup|bak)(?:\.|$)/i.test(normalized) &&
-    !normalized.endsWith('.map');
+    !/\.(?:backup|bak)(?:\.|$)/i.test(normalized);
 }
 
 export function isRuntimeFile(relativePath) {

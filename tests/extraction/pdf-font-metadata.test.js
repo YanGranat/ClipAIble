@@ -36,6 +36,16 @@ describe('PDF font metadata', () => {
     expect(mapping.get('Helvetica')).toMatchObject({ realFontName: 'sans-serif', fontWeight: null });
   });
 
+  it('recognizes the PostScript Times-Bold alias without treating medium italic faces as bold', () => {
+    const names = new Map([
+      ['g_d0_f1', { name: 'AAAAAA+NimbusRomNo9L-Medi' }],
+      ['g_d0_f2', { name: 'AAAAAA+URWChanceryL-MediItal' }]
+    ]);
+    const output = extractFontNameMapping(textContent, 1, names);
+    expect(output.get('g_d0_f1').fontWeight).toBe('bold');
+    expect(output.get('g_d0_f2')).toMatchObject({ fontWeight: null, fontStyle: 'italic' });
+  });
+
   it.each(['Regu', 'Regular', 'Roman', 'ReguItal'])('keeps a long ordinary %s run normal among short mathematical fragments', suffix => {
     const items = [
       { str: 'An ordinary paragraph continues across the complete width of the page.', fontName: 'text', transform: [10, 0, 0, 10, 10, 700], width: 430, height: 10 },

@@ -4,34 +4,63 @@ import { cleanLatexFormula } from './text-utils.js';
 import { isIcon, isInteractiveControlLabel, isSubscriptionFormContent } from './filters.js';
 import { materializeAnnotationReferences } from './annotations.js';
 
+const MATHML = 'http://www.w3.org/1998/Math/MathML';
+const MATH_TOKENS = ['mi', 'mn', 'mo', 'mtext'];
+const MATH_GROUPS = ['math', 'semantics', 'mrow', 'msup', 'msub'];
+const MATH_LAYOUT = ['mfrac', 'msqrt', 'msubsup', 'mspace', 'mtable', 'mtr', 'mtd'];
+
+/** MathML semantics has one presentation branch. Annotations are alternate forms. */
+function presentationChildren(element) {
+  const children = Array.from(element.children);
+  if (element.localName !== 'semantics') return children;
+  return children.slice(0, 1).filter(child => child.namespaceURI === MATHML &&
+    !['annotation', 'annotation-xml'].includes(child.localName));
+}
+
 /** Render a validated presentation MathML subset with portable inline elements. */
-export function renderSimpleMathMl(math, outputDocument = math.ownerDocument) {
+export function renderSimpleMathMl(math, outputDocument = math.ownerDocument, allowLinearLayout = false) {
   try {
     function render(element) {
-      if (element.namespaceURI !== 'http://www.w3.org/1998/Math/MathML') return null;
+      if (element.namespaceURI !== MATHML) return null;
       const tag = element.localName;
-      if (!['math', 'mrow', 'mi', 'mn', 'mo', 'msup', 'msub'].includes(tag)) return null;
+      if (!MATH_TOKENS.includes(tag) && !MATH_GROUPS.includes(tag) && !(allowLinearLayout && MATH_LAYOUT.includes(tag))) return null;
       for (const attribute of Array.from(element.attributes)) {
-        if (attribute.name === 'class' || (tag === 'math' && attribute.name === 'xmlns')) continue;
+        if (attribute.name === 'class' || attribute.name.startsWith('data-semantic-') || attribute.name === 'data-speech-node') continue;
+        if (tag === 'math' && (attribute.name === 'xmlns' || attribute.name === 'display' && /^(inline|block)$/.test(attribute.value))) continue;
         if (tag === 'mo' && attribute.name === 'stretchy' && /^(true|false)$/.test(attribute.value)) continue;
+        if (allowLinearLayout && (
+          tag === 'mspace' && ['width', 'height', 'depth'].includes(attribute.name) ||
+          ['mtable', 'mtd', 'mtr'].includes(tag) && ['columnalign', 'rowalign', 'columnspacing', 'rowspacing'].includes(attribute.name)
+        )) continue;
         return null;
       }
-      if (['mi', 'mn', 'mo'].includes(tag)) {
-        if (Array.from(element.childNodes).some(node => node.nodeType !== 3) || !element.textContent?.trim()) return null;
+      if (MATH_TOKENS.includes(tag)) {
+        if (Array.from(element.childNodes).some(node => node.nodeType !== 3) || !element.textContent) return null;
         return outputDocument.createTextNode(element.textContent);
       }
+      if (tag === 'mspace') return element.childNodes.length ? null : outputDocument.createTextNode(' ');
       if (Array.from(element.childNodes).some(node => node.nodeType !== 1 && (node.nodeType !== 3 || node.textContent?.trim()))) return null;
-      const children = Array.from(element.children);
-      if (!children.length || (['msup', 'msub'].includes(tag) && children.length !== 2)) return null;
+      const children = presentationChildren(element);
+      if (!children.length || (['msup', 'msub', 'mfrac'].includes(tag) && children.length !== 2) ||
+          (tag === 'msubsup' && children.length !== 3)) return null;
       const parts = children.map(render);
       if (parts.some(part => !part)) return null;
       const result = outputDocument.createDocumentFragment();
-      if (tag === 'msup' || tag === 'msub') {
-        result.appendChild(parts[0]);
-        const script = outputDocument.createElement(tag === 'msup' ? 'sup' : 'sub');
-        script.appendChild(parts[1]);
-        result.appendChild(script);
-      } else for (const part of parts) result.appendChild(part);
+      const scripted = (name, content) => {
+        const node = outputDocument.createElement(name);
+        node.append(content);
+        return node;
+      };
+      if (tag === 'msup') result.append(parts[0], scripted('sup', parts[1]));
+      else if (tag === 'msub') result.append(parts[0], scripted('sub', parts[1]));
+      else if (tag === 'msubsup') result.append(parts[0], scripted('sub', parts[1]), scripted('sup', parts[2]));
+      else if (tag === 'mfrac') result.append('(', parts[0], ')/(', parts[1], ')');
+      else if (tag === 'msqrt') result.append('√(', ...parts, ')');
+      else parts.forEach((part, index) => {
+        if (index && tag === 'mtable') result.append(outputDocument.createElement('br'));
+        if (index && tag === 'mtr') result.append(' ');
+        result.append(part);
+      });
       return result;
     }
     if (math.localName !== 'math') return null;
@@ -39,6 +68,14 @@ export function renderSimpleMathMl(math, outputDocument = math.ownerDocument) {
   } catch (_) {
     return null;
   }
+}
+
+/** Use one expression even when its presentation cannot be projected as rich text. */
+function presentationMathText(element) {
+  if (element.namespaceURI !== MATHML || ['annotation', 'annotation-xml'].includes(element.localName)) return '';
+  if (element.localName === 'semantics') return presentationChildren(element).map(presentationMathText).join('');
+  return Array.from(element.childNodes, child =>
+    child.nodeType === 3 ? child.textContent : child.nodeType === 1 ? presentationMathText(child) : '').join('');
 }
 
 /**
@@ -91,7 +128,7 @@ export function processMathElements(container, runtimeInputs = new Map()) {
         if (!parsed.querySelector('parsererror')) semanticMath = parsed.documentElement;
       }
     }
-    const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument) : null;
+    const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument, !latex) : null;
     if (rendered) {
       const wrapper = container.ownerDocument.createElement('span');
       wrapper.className = 'math';
@@ -103,7 +140,10 @@ export function processMathElements(container, runtimeInputs = new Map()) {
       const textNode = container.ownerDocument.createTextNode(` $${cleanedLatex}$ `);
       mathEl.replaceWith(textNode);
     } else {
-      mathEl.replaceWith(container.ownerDocument.createTextNode(mathEl.textContent || ''));
+      const presentation = semanticMath?.namespaceURI === MATHML
+        ? presentationMathText(semanticMath)
+        : mathEl.querySelector('mjx-math,.katex-html')?.textContent ?? mathEl.textContent;
+      mathEl.replaceWith(container.ownerDocument.createTextNode(presentation || ''));
     }
   }
 }
@@ -128,6 +168,14 @@ function getRenderedMathInputs(root) {
     }
   } catch { /* Continue with the portable markup. */ }
   return inputs;
+}
+
+/** Carry runtime notation through clone-based list, quote, or table projection. */
+export function preserveClonedMathInputs(root, copies) {
+  for (const [original, tex] of getRenderedMathInputs(root)) {
+    const copy = copies.get(original);
+    if (copy) clonedMathInputs.set(copy, tex);
+  }
 }
 
 /** Associate rendered math with its source before a flow wrapper is detached. */

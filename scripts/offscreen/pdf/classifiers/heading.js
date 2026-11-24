@@ -12,7 +12,7 @@ import {
   ELEMENT_DECISION,
   DEFAULT_METRICS
 } from '../constants.js';
-import { CAPITAL_START_PATTERN, LOWERCASE_START_PATTERN } from '../utils/regex-patterns.js';
+import { CAPITAL_START_PATTERN, LOWERCASE_START_PATTERN, SECTION_NUMBER_PATTERN } from '../utils/regex-patterns.js';
 
 /**
  * Validate and clamp font size values
@@ -477,6 +477,16 @@ export function classifyHeading(element, metrics) {
     nextIsList: element.nextIsList || false,
     structure: element.structure
   };
+
+  const text = String(element.text || '').trim();
+  const section = text.match(SECTION_NUMBER_PATTERN);
+  const title = section?.[1] && text.slice(section[0].length).trim();
+  if (element.type !== 'list' && title && /^\p{L}/u.test(title) && !/[.!?]$/.test(title) &&
+      text.length < HEADING_THRESHOLDS.MAX_HEADING_LENGTH && element.lines?.length &&
+      element.lines.every(line => line.y === element.lines[0].y && line.isBold) &&
+      (element.gapAfter == null || element.gapAfter >= element.fontSize)) {
+    return { type: 'heading', confidence: 1, algorithm: 'numbered-section', details: { numbering: section[0] } };
+  }
   
   // Calculate heading score
   const scoreResult = calculateHeadingScore(element, metrics, context);

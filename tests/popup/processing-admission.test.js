@@ -2,8 +2,11 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { initProcessing } from '../../popup/core/processing.js';
+import { initSummary } from '../../popup/core/summary.js';
+import { initKeyTheses } from '../../popup/core/key-theses.js';
+import { STORAGE_KEYS } from '../../popup/constants.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
-import { t } from '../../scripts/locales.js';
+import { getUILanguage, t } from '../../scripts/locales.js';
 
 let elements, processing, status, polling, toast, presentedRunId, checkState;
 const admittedRunId = '7b4087e2-6c9d-44e1-874f-52f829d5a179';
@@ -59,6 +62,36 @@ it('keeps an admitted operation active until its state is polled', async () => {
   await processing.handleSavePdf();
   expect(polling).toHaveBeenCalledOnce();
   expect(elements.savePdfBtn.disabled).toBe(true);
+  expect(toast).not.toHaveBeenCalled();
+});
+
+it.each(['export', 'summary', 'key theses'])('does not start %s with the previous provider model during a provider switch', async kind => {
+  elements.modeSelect.value = 'selector';
+  elements.apiProviderSelect.value = 'gemini';
+  elements.modelSelect.replaceChildren(new Option('Old Claude model', 'claude-example'));
+  elements.modelSelect.dataset.provider = 'claude';
+  chrome.storage.local.get.mockResolvedValue({ ui_language: 'en', gemini_api_key: 'synthetic-gemini-key' });
+  const deps = { elements, STORAGE_KEYS, t, getUILanguage, showToast: toast, log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(),
+    decryptApiKey: async value => value, detectVideoPlatform: () => null };
+  if (kind === 'export') await processing.handleSavePdf();
+  else if (kind === 'summary') await initSummary(deps).handleGenerateSummary();
+  else await initKeyTheses(deps).handleGenerateKeyTheses();
+  expect(chrome.tabs.query).not.toHaveBeenCalled();
+  expect(chrome.runtime.sendMessage).not.toHaveBeenCalled();
+  expect(toast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'error', { key: 'errorProviderModelsLoading' });
+});
+
+it.each(['markdown', 'audio'])('admits automatic local %s without forwarding a foreign model while switching providers', async outputFormat => {
+  elements.mainFormatSelect.value = outputFormat;
+  elements.audioProvider.value = 'offline';
+  elements.languageSelect.value = 'auto';
+  elements.generateAbstract.checked = false;
+  elements.apiProviderSelect.value = 'gemini';
+  elements.modelSelect.replaceChildren(new Option('Old Claude model', 'claude-example'));
+  elements.modelSelect.dataset.provider = 'claude';
+  await processing.handleSavePdf();
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ action: 'processArticle',
+    data: expect.objectContaining({ provider: 'gemini', model: '', apiKey: '', outputFormat, mode: 'automatic', language: 'auto' }) }));
   expect(toast).not.toHaveBeenCalled();
 });
 

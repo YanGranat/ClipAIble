@@ -498,7 +498,8 @@ export const TEXT_FORMATTING = {
   FORMAT_BOLD_ITALIC: 'bold-italic',
   
   // Regex patterns for font name detection
-  BOLD_FONT_PATTERN: /bold|black|heavy|demi|semi/i,
+  // The PostScript name NimbusRomNo9L-Medi is the Times-Bold face.
+  BOLD_FONT_PATTERN: /bold|black|heavy|demi|semi|(?:^|\+)NimbusRomNo9L-Medi(?:Ital)?$/i,
   ITALIC_FONT_PATTERN: /italic|oblique/i,
   
   // Contextual formatting thresholds

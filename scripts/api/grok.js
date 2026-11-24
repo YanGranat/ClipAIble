@@ -87,6 +87,8 @@ export async function callGrokAPI(systemPrompt, userPrompt, apiKey, model, jsonR
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         onRetry: (attempt, delay) => {
           log(`Grok API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
@@ -363,6 +365,8 @@ export async function callGrokAPIWithImage(systemPrompt, userPrompt, imageData, 
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         onRetry: (attempt, delay) => {
           log(`Grok API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
@@ -613,6 +617,8 @@ export async function callGrokAPIWithImageAndHistory(systemPrompt, userPrompt, i
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         onRetry: (attempt, delay) => {
           log(`Grok API retry attempt ${attempt}, waiting ${delay}ms...`);
         }

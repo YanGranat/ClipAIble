@@ -6,7 +6,7 @@ import { textToSpeech as openaiTTS } from '../../scripts/api/openai-tts.js';
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/api/openai-tts.js', () => ({ textToSpeech: vi.fn() }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ clearDecryptedKeyCache: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (fn) => fn() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 }) }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: (key) => key }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en', checkCancellation: async (_context, runId) => { if (isCancelled(runId)) throw new Error('Cancelled'); } }));
 vi.mock('../../scripts/generation/audio-prep.js', () => ({ AUDIO_CONFIG: { DEFAULT_VOICE: 'nova', DEFAULT_SPEED: 1, VOICES: ['nova'], MIN_SPEED: 0.25, MAX_SPEED: 4, TTS_MAX_INPUT: 4096 } }));

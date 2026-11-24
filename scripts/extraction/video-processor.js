@@ -4,8 +4,6 @@
 import { callAI } from '../api/index.js';
 import { log, logError } from '../utils/logging.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
-import { callWithRetry } from '../utils/retry.js';
-import { CONFIG } from '../utils/config.js';
 
 /**
  * System prompt for subtitle processing
@@ -122,7 +120,7 @@ Remember:
  * @param {string} apiKey - API key
  * @param {string} model - Model name
  * @param {string} [processingRunId] - Processing run owner
- * @param {{provider?: string, checkCancelled?: function(): void}} [requestOptions] - Provider and cancellation checks
+ * @param {import('../types.js').AIRequestOptions} [requestOptions] - Provider and cancellation checks
  * @returns {Promise<Array>} Processed content items
  */
 async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingRunId, requestOptions) {
@@ -165,7 +163,7 @@ async function processSubtitlesSingleChunk(subtitles, apiKey, model, processingR
  * @param {string} apiKey - API key
  * @param {string} model - Model name
  * @param {string} [processingRunId] - Processing run owner
- * @param {{provider?: string, checkCancelled?: function(): void}} [requestOptions] - Provider and cancellation checks
+ * @param {import('../types.js').AIRequestOptions} [requestOptions] - Provider and cancellation checks
  * @returns {Promise<Array>} Processed content items (only new chunk, not previous)
  */
 async function processSubtitlesWithContext(subtitles, previousContent, apiKey, model, processingRunId, requestOptions) {
@@ -240,7 +238,7 @@ Remember:
  * @param {string} model - Model name
  * @param {import('../types.js').ProgressCallbackFunction} [progressCallback] - Optional callback for progress updates (current, total)
  * @param {string} [processingRunId] - Processing run owner
- * @param {{provider?: string, checkCancelled?: function(): void}} [requestOptions] - Provider and cancellation checks
+ * @param {import('../types.js').AIRequestOptions} [requestOptions] - Provider and cancellation checks
  * @returns {Promise<Array>} Processed content items
  */
 export async function processSubtitlesWithAI(subtitles, apiKey, model, progressCallback = null, processingRunId, requestOptions) {
@@ -304,36 +302,12 @@ export async function processSubtitlesWithAI(subtitles, apiKey, model, progressC
       progressCallback(i, chunks.length);
     }
     
-    // CRITICAL: Use centralized retry logic for each chunk to handle transient errors
     let chunkContent;
     try {
-      chunkContent = await callWithRetry(
-        async () => {
-          await checkCancellation('subtitle retry', processingRunId);
-          if (i === 0) {
-            // First chunk: normal processing
-            return await processSubtitlesSingleChunk(chunk, apiKey, model, processingRunId, requestOptions);
-          } else {
-            // Subsequent chunks: process with context
-            return await processSubtitlesWithContext(
-              chunk, 
-              previousContent, 
-              apiKey, 
-              model,
-              processingRunId,
-              requestOptions
-            );
-          }
-        },
-        {
-          maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
-          delays: CONFIG.RETRY_DELAYS,
-          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
-          onRetry: (attempt, delay) => {
-            log(`Retrying chunk ${i + 1} after ${delay}ms delay (attempt ${attempt}/${CONFIG.RETRY_MAX_ATTEMPTS + 1})`);
-          }
-        }
-      );
+      // The provider owns the retry deadline for each request.
+      chunkContent = i === 0
+        ? await processSubtitlesSingleChunk(chunk, apiKey, model, processingRunId, requestOptions)
+        : await processSubtitlesWithContext(chunk, previousContent, apiKey, model, processingRunId, requestOptions);
       await checkCancellation('subtitle chunk result', processingRunId);
     } catch (error) {
       logError(`Failed to process subtitle chunk ${i + 1}/${chunks.length}`, error);

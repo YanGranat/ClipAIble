@@ -142,11 +142,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
   
   try {
     response = await callWithRetry(
-      async () => {
+      async ({ signal }) => {
         await checkCancellation('Qwen TTS request', options.processingRunId);
         
         try {
           const fetchResponse = await fetchBufferedResponse(apiUrl, {
+            signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -166,12 +167,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
         }
       },
       {
+        signal: options.signal,
+        checkCancelled: () => checkCancellation('Qwen TTS retry', options.processingRunId),
         onRetry: (attempt, delay) => {
           log(`Qwen TTS API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
       }
     );
   } catch (fetchError) {
+    options.signal?.throwIfAborted();
     await checkCancellation('Qwen TTS response', options.processingRunId);
     if (fetchError.name === 'AbortError') {
       throw await handleTimeoutError('Qwen TTS');
@@ -216,12 +220,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
       }
       
       try {
-        const audioResponse = await fetchBufferedResponse(audioData.url, {}, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
+        const audioResponse = await fetchBufferedResponse(audioData.url, { signal: options.signal }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
         if (!audioResponse.ok) {
           throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
         }
         audioBuffer = await audioResponse.arrayBuffer();
       } catch (e) {
+        options.signal?.throwIfAborted();
+        await checkCancellation('Qwen audio download', options.processingRunId);
         logError('Failed to fetch audio from URL', e);
         throw new Error(`Failed to download audio: ${e.message}`);
       }
@@ -250,12 +256,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
     }
     
     try {
-      const audioResponse = await fetchBufferedResponse(responseData.output.audio_url, {}, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
+      const audioResponse = await fetchBufferedResponse(responseData.output.audio_url, { signal: options.signal }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Qwen audio download', options.processingRunId) });
       if (!audioResponse.ok) {
         throw new Error(`Failed to fetch audio: ${audioResponse.status}`);
       }
       audioBuffer = await audioResponse.arrayBuffer();
     } catch (e) {
+      options.signal?.throwIfAborted();
+      await checkCancellation('Qwen audio download', options.processingRunId);
       logError('Failed to fetch audio from audio_url', e);
       throw new Error(`Failed to download audio: ${e.message}`);
     }

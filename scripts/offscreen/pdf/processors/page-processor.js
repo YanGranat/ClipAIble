@@ -67,11 +67,11 @@ function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery)
 /**
  * Process a single PDF page and extract elements
  * Supports multi-column layouts by detecting columns and processing each separately
- * @param {{getTextContent: function(): Promise<{items?: Array<any>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, cleanup: function(): void, commonObjs?: Object}} page - PDF.js page object
+ * @param {{getTextContent: function(): Promise<{items?: Array<any>, styles?: Record<string, {ascent?: number}>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, cleanup: function(): void, commonObjs?: Object}} page - PDF.js page object
  * @param {number} pageNum - Page number
  * @param {{gapThreshold?: number, baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
  * @param {(page: Object, pageNum: number) => Promise<Object|null>} [preserveImagePage] - Keep a visible page with no text layer
- * @param {(page: Object, pageNum: number, textItems: any[], caption: any, tables: any[]) => Promise<any>} [preserveFigure] - Retain a disjoint mixed-page figure
+ * @param {(page: Object, pageNum: number, textItems: any[], caption: any, tables: any[], captionAscent?: number) => Promise<any>} [preserveFigure] - Retain a disjoint mixed-page figure
  * @returns {Promise<Array<any>>} Array of extracted elements
  * @throws {Error} If text extraction fails
  * @throws {Error} If page processing fails
@@ -175,7 +175,8 @@ export async function processPage(page, pageNum, metrics, preserveImagePage, pre
   const baseFontSize = metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE;
   let physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], baseFontSize);
   const caption = preserveFigure ? authoredFigureCaption(textItems, viewport) : null;
-  const figure = caption ? await preserveFigure(page, pageNum, textItems, caption, physical.tables) : null;
+  const captionAscent = caption && textContent.styles?.[caption.fontName]?.ascent;
+  const figure = caption ? await preserveFigure(page, pageNum, textItems, caption, physical.tables, captionAscent) : null;
   if (figure) {
     const remaining = textItems.filter(item => !figure.region.labelSet.has(item));
     lines = processPageItemsToLines(remaining, viewport, pageNum, metrics, graphicsData,

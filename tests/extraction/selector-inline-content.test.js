@@ -21,11 +21,51 @@ function contentMarkup(result) {
 }
 
 describe('selector page extraction', () => {
+  it.each([false, true])('preserves the image inside a captioned figure control with table=%s', async table => {
+    const figure = '<figure><button><img src="/specimen.png" width="600" height="400" alt="Sample profile">Open larger image</button>' +
+      '<figcaption>Measured profile.</figcaption><button><img src="/close.png">Close</button></figure>';
+    const body = table ? '<table><tr><th>Image</th></tr><tr><td>' + figure + '</td></tr></table>' : figure;
+    const result = await extract('<!doctype html><main><article><h1>Field measurements</h1><p>Body observation.</p>' +
+      body + '<button><img src="/menu.png">Open menu</button></article></main>', undefined, { content: 'article' });
+    expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.com/specimen.png']);
+    if (table) expect(result.content.find(item => item.type === 'table').rows[0][0]).toContain('href="#reading-media-');
+    else expect(result.content.find(item => item.type === 'image').caption).toBe('Measured profile.');
+    expect(JSON.stringify(result.content)).not.toMatch(/Open larger image|Open menu|>Close|close.png|menu.png/);
+  });
+
+  it('keeps only the explicitly selected illustrated specimen from a complementary region', async () => {
+    const html = '<!doctype html><main><article><h1>Field measurements</h1><p>Body observation.</p></article>' +
+      '<div class="sidebar"><aside id="sidebar-gallery"><div class="specimen"><img src="/section.png" alt="Sample cross section" width="640" height="400">' +
+      '<h4>Sample cross section</h4><p>An etched line appears near the center.</p><p class="interface-control">Image controls.</p></div>' +
+      '<figure><img src="/unrelated.png" width="640" height="400"><figcaption>Unrelated recommendation.</figcaption></figure>' +
+      '<nav><img src="/control.png" width="640" height="400"></nav>' +
+      '<div data-component="ad"><img src="/campaign.png" width="640" height="400"></div></aside></div></main>';
+    const selectors = { content: 'article,.specimen', heroImage: '.specimen,nav img,[data-component="ad"] img', exclude: ['.interface-control'] };
+    const result = await extract(html, undefined, selectors);
+    expect(result.content).toEqual([
+      expect.objectContaining({ type: 'paragraph', text: 'Body observation.' }),
+      expect.objectContaining({ type: 'image', src: 'https://example.com/section.png', caption: 'Sample cross section<br>An etched line appears near the center.' })
+    ]);
+    const excluded = await extract(html, undefined, { ...selectors, content: 'article', exclude: ['.specimen'] });
+    expect(excluded.content.filter(item => item.type === 'image')).toEqual([]);
+  });
+
   it('keeps a floated first letter joined to the word it begins', async () => {
     const result = await extract('<!doctype html><main><p><span style="display:block;float:left;margin-inline-end:4px">R</span>eading begins with a complete word.</p></main>');
     const output = JSDOM.fragment(contentMarkup(result));
     expect(output.querySelector('br')).toBeNull();
     expect(output.textContent).toBe('Reading begins with a complete word.');
+  });
+
+  it('keeps title code inline and emits independently authored code blocks once', async () => {
+    const result = await extract('<!doctype html><main><article><h1><code>measure</code> and <em><code>reset</code></em></h1>' +
+      '<p>Invoke <code>measure</code> after the initial check.</p><pre><code>reset</code></pre>' +
+      '<section><h2>Independent sample</h2><pre><code>measure</code></pre></section>' +
+      '</article><code id="standalone">record(value)</code></main>', undefined, { content: 'article,#standalone' });
+    expect(result.title).toBe('measure and reset');
+    expect(result.content.map(item => item.type)).toEqual(['paragraph', 'code', 'heading', 'code', 'code']);
+    expect(result.content[0].html).toContain('<code>measure</code>');
+    expect(result.content.filter(item => item.type === 'code').map(item => item.text)).toEqual(['reset', 'measure', 'record(value)']);
   });
 
   it('keeps exactly the selected legacy inline prose with its line breaks and links', async () => {
@@ -46,7 +86,8 @@ describe('selector page extraction', () => {
   });
 
   it('keeps Automatic inline behavior and rejects explicitly selected interface content', async () => {
-    const html = '<!doctype html><main><article><h1>Field report</h1><p>The reading contains <span>an inline observation</span> from the field.</p><p>An independent second paragraph records the source for the conclusion.</p><div inert role="menu"><span class="interface-label">Unrelated inert menu item</span></div><button><span class="interface-label">Unrelated control label</span></button></article></main>';
+    const report = 'Every report includes a dated measurement and the instrument readings that support it. '.repeat(7);
+    const html = '<!doctype html><main><article><h1>Field report</h1><p>The reading contains <span>an inline observation</span> from the field.</p><p>An independent second paragraph records the source for the conclusion. ' + report + '</p><div inert role="menu"><span class="interface-label">Unrelated inert menu item</span></div><button><span class="interface-label">Unrelated control label</span></button></article></main>';
     const selected = await extract(html, undefined, { content: '.interface-label' });
     expect(selected.selectorMatched).toBe(false);
     expect(selected.content).toEqual([]);
@@ -191,6 +232,13 @@ describe('selector page extraction', () => {
     const urls = ['https://first.example/Photo.png', 'https://second.example/Photo.png', 'https://first.example/photo.png'];
     const result = await extract(`<main>${urls.map(url => `<img src="${url}" width="200" height="200">`).join('')}</main>`);
     expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(urls);
+  });
+
+  it('keeps inline text contiguous around a linked external indicator', async () => {
+    const result = await extract('<main><h1>Technical report</h1><p>These measurements follow the <a href="https://reference.example/" data-extlink>original method</a><svg width="20" height="14" data-extlink-placement="after" role="img" aria-label="External link"><title>External link</title><circle cx="7" cy="7" r="6"></circle></svg> (revised for the second edition).</p></main>', undefined, { content: 'main', title: 'h1' });
+    expect(result.content.map(item => item.type)).toEqual(['paragraph']);
+    expect(contentMarkup(result)).toContain('<a href="https://reference.example/" data-extlink="">original method</a> (revised for the second edition).');
+    expect(contentMarkup(result)).not.toContain('External link');
   });
 
   const before = 'Before the figure: calibration improves measurements.';

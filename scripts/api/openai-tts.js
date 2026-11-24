@@ -66,7 +66,11 @@ export function validateOpenAiVoice(voice = DEFAULT_OPENAI_TTS_VOICE, language =
 /** Generate a complete, independently owned PCM/WAVE narration response. */
 export async function textToSpeech(text, apiKey, options = {}) {
   const language = await getUILanguage();
-  const checkCancelled = () => checkCancellation('OpenAI speech', options.processingRunId);
+  const checkCancelled = async () => {
+    options.signal?.throwIfAborted();
+    await checkCancellation('OpenAI speech', options.processingRunId);
+    options.signal?.throwIfAborted();
+  };
   await checkCancelled();
   if (typeof text !== 'string' || !text.length) throw localizedError('errorTtsNoText', language);
   if (text.length > OPENAI_TTS_MAX_INPUT) {
@@ -84,13 +88,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
     tools: [], max_output_tokens: 'inf', tracing: null, truncation: 'disabled'
   };
   const deadline = Date.now() + CONFIG.API_TIMEOUT_MS;
-  const controller = new AbortController();
-  const authCancellation = setInterval(() => { checkCancelled().catch(error => controller.abort(error)); }, 250);
   let response;
   try {
     response = await fetchBufferedResponse('https://api.openai.com/v1/realtime/client_secrets', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: 60 }, session }), signal: controller.signal
+    body: JSON.stringify({ expires_after: { anchor: 'created_at', seconds: 60 }, session }), signal: options.signal
     }, Math.max(1, deadline - Date.now()), { checkCancelled });
   } catch (error) {
     await checkCancelled();
@@ -98,7 +100,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
       throw Object.assign(localizedError('errorTtsTimeout', language), { name: error.name, retryable: false });
     }
     throw Object.assign(localizedError('errorTtsConnectionFailed', language), { status: 503 });
-  } finally { clearInterval(authCancellation); }
+  }
   await checkCancelled();
   if (!response.ok) {
     const error = Object.assign(localizedError('errorTtsApiError', language, { status: response.status }), { status: response.status, response });
@@ -120,12 +122,14 @@ export async function textToSpeech(text, apiKey, options = {}) {
     let cancellationPending = false;
     let timeout;
     let cancellation;
+    const aborted = () => finish(options.signal.reason instanceof Error ? options.signal.reason : new DOMException('Request cancelled', 'AbortError'));
     const finish = (error, audio) => {
       if (settled) return;
       settled = true;
-      if (error && started) error.retryable = false;
+      if (error && started && !options.signal?.aborted) error.retryable = false;
       clearTimeout(timeout);
       clearInterval(cancellation);
+      options.signal?.removeEventListener('abort', aborted);
       if (socket) {
         socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
         try { socket.close(); } catch { /* The connection may already be closed. */ }
@@ -146,6 +150,8 @@ export async function textToSpeech(text, apiKey, options = {}) {
     };
     timeout = setTimeout(() => finish(Object.assign(localizedError('errorTtsTimeout', language), { name: 'AbortError' })), Math.max(1, deadline - Date.now()));
     cancellation = setInterval(checkOwner, 250);
+    options.signal?.addEventListener('abort', aborted, { once: true });
+    if (options.signal?.aborted) { aborted(); return; }
     try {
       socket = new WebSocket(`wss://api.openai.com/v1/realtime?model=${OPENAI_TTS_MODEL}`, ['realtime', `openai-insecure-api-key.${credentials.value}`]);
       socket.onerror = () => fail('errorTtsConnectionFailed');

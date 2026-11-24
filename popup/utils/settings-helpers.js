@@ -12,6 +12,12 @@ import { STORAGE_KEYS } from '../constants.js';
 const callbackTimers = new Map();
 const revisions = new Map();
 
+/** A provider switch can leave the previous provider's model rendered until storage is read. */
+export function isProviderModelReady(select, provider) {
+  const owner = select?.dataset?.provider;
+  return !owner || owner === provider;
+}
+
 /** Use an unsaved draft immediately and retain ciphertext for an unchanged mask. */
 export function readApiKeyDraft(input) {
   if (!input) return null;

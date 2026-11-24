@@ -19,7 +19,7 @@ it('excludes local root workspaces while preserving legitimate nested source dir
     expect(isRuntimeFile(filename)).toBe(false);
     expect(isSourceFile(filename)).toBe(false);
   }
-  for (const filename of ['scripts/workspace/module.js', 'src/temporary_files/fixture.js', 'tests/workspace/example.test.js', 'scripts/workspace-helper.js']) {
+  for (const filename of ['scripts/workspace/module.js', 'tests/workspace/example.test.js', 'scripts/workspace-helper.js']) {
     expect(isRuntimeFile(filename)).toBe(true);
     expect(isSourceFile(filename)).toBe(true);
   }
@@ -31,7 +31,9 @@ it('excludes local configuration, credentials and diagnostics inside packaged di
     'scripts/.env', 'scripts/.env.local', 'scripts/.env.staging.local',
     'popup/private.pem', 'print/worker.log', 'scripts/.codex/notes.json',
     'scripts/.vscode/settings.json', 'tests\\.claude\\settings.local.json',
-    'lib/.git/config', 'popup/node_modules/example/index.js'
+    'lib/.git/config', 'popup/node_modules/example/index.js',
+    'scripts/temporary_files/input.txt', 'popup/.cache/profile.json', 'print/session.tmp',
+    'scripts/trace.zip', 'tests/temp_content.txt', 'docs/rendered.test.pdf'
   ]) {
     expect(isSourceFile(filename), filename).toBe(false);
     expect(isRuntimeFile(filename), filename).toBe(false);

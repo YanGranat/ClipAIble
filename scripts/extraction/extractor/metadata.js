@@ -341,9 +341,9 @@ export function extractMetadata(doc, baseUrl, titleElement = findArticleTitleEle
     try {
       const elements = Array.from(doc.querySelectorAll(selector));
       if (selector === 'meta[name="citation_author"]') {
-        const names = elements.map(element => (element.getAttribute('content') || '').trim())
+        const names = elements.map(element => (element.getAttribute('content') || '').normalize('NFC').replace(/\s+/g, ' ').trim())
           .filter(name => name && !/^https?:/i.test(name) && name.length < 100);
-        if (names.length) { metadata.author = names.join(', '); break; }
+        if (names.length) { metadata.author = [...new Set(names)].join(', '); break; }
       }
       for (const element of elements) {
         if (element.tagName !== 'META' && !isArticleAuthorCandidate(element)) continue;

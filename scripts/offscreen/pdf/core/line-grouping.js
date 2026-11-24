@@ -86,6 +86,21 @@ export function iterItemsToLines(items, xTolerance = 3, yTolerance = 3, prelimin
   
   // Sort lines by Y (top to bottom)
   lines.sort((a, b) => a.y - b.y);
+  // Canonicalize only fragments that are already on the same physical baseline.
+  // Keep other measured positions intact for gap and table analysis.
+  for (let start = 0; start < lines.length;) {
+    const baseline = lines[start].y;
+    let end = start + 1;
+    while (end < lines.length && lines[end].y - baseline <= 1e-6) end++;
+    if (end - start > 1) {
+      const fragments = lines.slice(start, end).sort((a, b) => a.x - b.x);
+      for (let index = 0; index < fragments.length; index++) {
+        fragments[index].y = baseline;
+        lines[start + index] = fragments[index];
+      }
+    }
+    start = end;
+  }
   
   // Log summary instead of all lines
   log(`[PDF v3] iterItemsToLines: Complete - totalLines=${lines.length}, yClusters=${yClusters.length}, subClusters=${totalSubClusters}, firstLines=[${lines.slice(0, 3).map(l => `"${(l.text || '').substring(0, 40)}"`).join(', ')}]`);

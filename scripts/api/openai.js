@@ -168,6 +168,8 @@ export async function callOpenAI(systemPrompt, userPrompt, apiKey, model, jsonRe
         }
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         onRetry: (attempt, delay) => {
           log(`OpenAI API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
@@ -388,6 +390,8 @@ export async function callOpenAIWithImage(systemPrompt, userPrompt, imageData, a
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
@@ -608,6 +612,8 @@ export async function callOpenAIWithImageAndHistory(systemPrompt, userPrompt, im
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES

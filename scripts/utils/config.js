@@ -412,12 +412,11 @@ export function getLocaleFromLanguage(langCode) {
   return Object.hasOwn(localeMap, langCode) ? localeMap[langCode] : 'en-US';
 }
 
-/**
- * Format ISO date string to readable format
- * @param {string} dateStr - Date string (ISO or other format)
- * @param {string} localeOrLang - Locale (e.g., 'ru-RU') or language code (e.g., 'ru')
- * @returns {string} Formatted date string
- */
+const ENGLISH_MONTHS = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4,
+  jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11
+};
 /**
  * Format date for display in target locale
  * @param {string} dateStr - Date string (preferably ISO format YYYY-MM-DD, YYYY-MM, or YYYY, but supports legacy formats)
@@ -425,44 +424,28 @@ export function getLocaleFromLanguage(langCode) {
  * @returns {string} Formatted date string
  */
 export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
-  if (!dateStr) return '';
+  if (typeof dateStr !== 'string' || !dateStr) return '';
   
   // Convert language code to locale if needed
   const locale = localeOrLang.includes('-') ? localeOrLang : getLocaleFromLanguage(localeOrLang);
-  const formatCalendarDate = (date, includeDay = true) => date.toLocaleDateString(locale, {
-    timeZone: 'UTC', year: 'numeric', month: 'long', day: includeDay ? 'numeric' : undefined
-  });
+  const formatCalendarDate = (year, month, day = 1, includeDay = true) => {
+    const date = new Date(0);
+    date.setUTCFullYear(year, month, day);
+    if (year < 1 || date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return dateStr;
+    return date.toLocaleDateString(locale, { timeZone: 'UTC', year: 'numeric', month: 'long', day: includeDay ? 'numeric' : undefined });
+  };
   
   // Primary path: ISO format (YYYY-MM-DD, YYYY-MM, or YYYY) - this is what AI should return now
   // Full date: YYYY-MM-DD
   const fullDateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})(T|$)/);
   if (fullDateMatch) {
-    try {
-      const year = parseInt(fullDateMatch[1], 10);
-      const month = parseInt(fullDateMatch[2], 10) - 1; // JS months are 0-indexed
-      const day = parseInt(fullDateMatch[3], 10);
-      const date = new Date(Date.UTC(year, month, day));
-      if (!isNaN(date.getTime())) {
-        return formatCalendarDate(date);
-      }
-    } catch (e) {
-      // Fallback below
-    }
+    return formatCalendarDate(Number(fullDateMatch[1]), Number(fullDateMatch[2]) - 1, Number(fullDateMatch[3]));
   }
   
   // Year and month: YYYY-MM
   const yearMonthMatch = dateStr.match(/^(\d{4})-(\d{2})$/);
   if (yearMonthMatch) {
-    try {
-      const year = parseInt(yearMonthMatch[1], 10);
-      const month = parseInt(yearMonthMatch[2], 10) - 1;
-      const date = new Date(Date.UTC(year, month, 1));
-      if (!isNaN(date.getTime())) {
-        return formatCalendarDate(date, false);
-      }
-    } catch (e) {
-      // Fallback below
-    }
+    return formatCalendarDate(Number(yearMonthMatch[1]), Number(yearMonthMatch[2]) - 1, 1, false);
   }
   
   // Year only: YYYY
@@ -478,25 +461,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
     const day = parseInt(ordinalMatch[1], 10);
     const monthName = ordinalMatch[3].toLowerCase();
     const year = parseInt(ordinalMatch[4], 10);
-    const monthMap = {
-      jan: 0, january: 0,
-      feb: 1, february: 1,
-      mar: 2, march: 2,
-      apr: 3, april: 3,
-      may: 4,
-      jun: 5, june: 5,
-      jul: 6, july: 6,
-      aug: 7, august: 7,
-      sep: 8, sept: 8, september: 8,
-      oct: 9, october: 9,
-      nov: 10, november: 10,
-      dec: 11, december: 11
-    };
-    const month = monthMap[monthName];
-    if (month !== undefined) {
-      const date = new Date(Date.UTC(year, month, day));
-      return formatCalendarDate(date);
-    }
+    if (Object.hasOwn(ENGLISH_MONTHS, monthName)) return formatCalendarDate(year, ENGLISH_MONTHS[monthName], day);
   }
   
   // Legacy support: Try format without ordinals (e.g., "Dec 8, 2025")
@@ -505,25 +470,7 @@ export function formatDateForDisplay(dateStr, localeOrLang = 'en-US') {
     const monthName = shortMatch[1].toLowerCase();
     const day = parseInt(shortMatch[2], 10);
     const year = parseInt(shortMatch[3], 10);
-    const monthMap = {
-      jan: 0, january: 0,
-      feb: 1, february: 1,
-      mar: 2, march: 2,
-      apr: 3, april: 3,
-      may: 4,
-      jun: 5, june: 5,
-      jul: 6, july: 6,
-      aug: 7, august: 7,
-      sep: 8, sept: 8, september: 8,
-      oct: 9, october: 9,
-      nov: 10, november: 10,
-      dec: 11, december: 11
-    };
-    const month = monthMap[monthName];
-    if (month !== undefined) {
-      const date = new Date(Date.UTC(year, month, day));
-      return formatCalendarDate(date);
-    }
+    if (Object.hasOwn(ENGLISH_MONTHS, monthName)) return formatCalendarDate(year, ENGLISH_MONTHS[monthName], day);
   }
   
   // Fallback: Try native Date parsing

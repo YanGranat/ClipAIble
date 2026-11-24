@@ -157,11 +157,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
     log('Sending TTS request to ElevenLabs...');
     
     response = await callWithRetry(
-      async () => {
+      async ({ signal }) => {
         await checkCancellation('ElevenLabs TTS request', options.processingRunId);
         
         try {
           const fetchResponse = await fetchBufferedResponse(url, {
+            signal,
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -196,12 +197,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
         }
       },
       {
+        signal: options.signal,
+        checkCancelled: () => checkCancellation('ElevenLabs TTS retry', options.processingRunId),
         onRetry: (attempt, delay) => {
           log(`ElevenLabs TTS API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
       }
     );
   } catch (fetchError) {
+    options.signal?.throwIfAborted();
     await checkCancellation('ElevenLabs TTS response', options.processingRunId);
     if (fetchError.name === 'AbortError') {
       throw await handleTimeoutError('ElevenLabs');

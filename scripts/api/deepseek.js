@@ -254,6 +254,8 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
           return result;
         },
         {
+          signal: options.signal,
+          checkCancelled: options.checkCancelled,
           onRetry: (attempt, delay) => {
             log(`DeepSeek API retry attempt ${attempt}, waiting ${delay}ms...`, {
               attempt: attempt,
@@ -1187,8 +1189,10 @@ export async function callDeepSeekAPI(systemPrompt, userPrompt, apiKey, model, j
       try {
         // Retry the request without response_format
         const retryResponse = await callWithRetry(
-          async () => makeRequest(false, false),
+          ({ signal }) => makeRequest(false, false, signal),
           {
+            signal: options.signal,
+            checkCancelled: options.checkCancelled,
             onRetry: (attempt, delay) => {
               log(`DeepSeek API retry attempt ${attempt}, waiting ${delay}ms...`);
             }
@@ -1407,6 +1411,8 @@ export async function callDeepSeekAPIWithImage(systemPrompt, userPrompt, imageDa
         }
       },
       {
+        signal: options.signal,
+        checkCancelled: options.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
@@ -1637,6 +1643,8 @@ export async function callDeepSeekAPIWithImageAndHistory(systemPrompt, userPromp
         }
       },
       {
+        signal: options.signal,
+        checkCancelled: options.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES

@@ -290,7 +290,7 @@ function addPanelSkipControls(panel, label, regions) {
  * @param {string[]} constants.COURSE_AD_PATTERNS - Course ad patterns
  * @returns {boolean} - True if element should be excluded
  */
-export function isExcluded(win, element, constants, readingRoots = [], tocRoots = []) {
+export function isExcluded(win, element, constants, readingRoots = [], tocRoots = [], selectedIllustration = false) {
   const {
     EXCLUDED_CLASSES,
     PAYWALL_CLASSES,
@@ -316,9 +316,17 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
     Array.from(node.classList).some(name => name.toLowerCase() === role);
   if (element.closest(INTERFACE_REGIONS) || isPublisherLinkAction(element)) return true;
   const control = element.closest('button,[role="button"],input,select,textarea');
-  if (control && !getAnnotationTarget(control)) return true;
+  if (control && !getAnnotationTarget(control)) {
+    const figure = element.closest('figure');
+    const authoredImage = tagName === 'img' && readingOwned && control.matches('button,[role="button"]') &&
+      element.getAttribute('alt')?.trim() &&
+      figure?.contains(control) && !element.closest('figcaption') &&
+      Array.from(figure.querySelectorAll('figcaption')).some(caption => caption.closest('figure') === figure && caption.textContent?.trim());
+    if (!authoredImage) return true;
+  }
   const selectedMedia = readingRoots.some(root => root.matches('figure,img,picture,svg,canvas') &&
     (root === element || root.contains(element)));
+  const illustrationAside = selectedIllustration ? element.closest('aside,[role~="complementary"]') : null;
   const selectedInline = readingRoots.some(root => root.matches('p,span,div') &&
     !root.querySelector('article,section,p,table,ul,ol,figure,form') && (root === element || root.contains(element)));
   for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
@@ -497,6 +505,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
       if (EXCLUDED_CLASSES.some(excluded => {
         if ((authoredHeading || selectedMedia || selectedInline) && ['header', 'article-section-title'].includes(excluded)) return false;
         if (selectedMedia && excluded === 'overlay') return false;
+        if (excluded === 'sidebar' && illustrationAside && parent.contains(illustrationAside)) return false;
         if (excluded === 'next' || excluded === 'prev' || excluded === 'previous') {
           return parentClass.split(/\s+/).includes(excluded) || parentId === excluded;
         }
@@ -518,7 +527,7 @@ export function isExcluded(win, element, constants, readingRoots = [], tocRoots 
         indicator.test(parentClass) || indicator.test(parentId)
       );
       
-      if (isClearAd || (parentTag === 'aside' && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element))) {
+      if (isClearAd || (parentTag === 'aside' && parent !== illustrationAside && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element))) {
         return true;
       }
       

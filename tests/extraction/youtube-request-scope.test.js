@@ -167,6 +167,31 @@ describe('YouTube subtitle request ownership', () => {
     expect(storage['pendingSubtitles-other-request']).toBeDefined();
   });
 
+  it.each([false, true])('settles a native injection error with or without an owned fallback: %s', async hasFallback => {
+    const before = chrome.scripting.executeScript.getMockImplementation();
+    let report;
+    chrome.scripting.executeScript.mockImplementation(options => {
+      if (options.func.name !== 'extractYouTubeSubtitlesInlined') return before(options);
+      requests.push(options);
+      return new Promise(resolve => { report = resolve; });
+    });
+    const current = await start(1);
+    const requestId = current.request.args[6];
+    if (hasFallback) {
+      const element = dom.window.document.createElement('div');
+      element.id = `ClipAIblePendingSubtitles-${requestId}`;
+      element.setAttribute('data-subtitles', JSON.stringify({
+        requestId, timestamp: Date.now(), subtitles: [{ text: 'Owned fallback' }]
+      }));
+      dom.window.document.body.append(element);
+    }
+    report([{ error: { message: 'Invocation could not complete' } }]);
+    if (hasFallback) await expect(current.promise).resolves.toMatchObject({ subtitles: [{ text: 'Owned fallback' }] });
+    else await expect(current.promise).rejects.toThrow('Subtitle extraction failed: Invocation could not complete');
+    expect(listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('serializes the MAIN producer and delivers through the actual content bridge', async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     dom.window.setTimeout = globalThis.setTimeout;

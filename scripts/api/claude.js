@@ -91,6 +91,8 @@ export async function callClaudeAPI(systemPrompt, userPrompt, apiKey, model, jso
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         onRetry: (attempt, delay) => {
           log(`Claude API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
@@ -249,6 +251,8 @@ export async function callClaudeAPIWithImage(systemPrompt, userPrompt, imageData
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
@@ -359,6 +363,8 @@ export async function callClaudeAPIWithImageAndHistory(systemPrompt, userPrompt,
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES

@@ -271,10 +271,10 @@ export async function handleExtractPdf(messageId, data, sendResponse) {
     const rendered = await renderPdfPage(page, pageNum, 2, operation, true);
     return rendered ? await preserveRenderedPdfPage(rendered.blob, pageNum) : null;
   } : undefined;
-  const preserveFigure = data.preserveOriginalFigures ? async (page, pageNum, textItems, caption, tables) => {
+  const preserveFigure = data.preserveOriginalFigures ? async (page, pageNum, textItems, caption, tables, captionAscent) => {
     try {
       const rendered = await renderPdfPage(page, pageNum, 2, operation, false,
-        (viewport, width, height) => findFigureRegion(page, textItems, caption, tables, viewport, width, height, operation));
+        (viewport, width, height) => findFigureRegion(page, textItems, caption, tables, viewport, width, height, operation, captionAscent));
       if (!rendered?.region) return null;
       const image = await preserveRenderedPdfPage(rendered.blob, pageNum);
       return { image, region: rendered.region };

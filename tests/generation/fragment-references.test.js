@@ -83,6 +83,18 @@ describe.each(['pdf', 'markdown', 'epub', 'fb2'])('%s document fragment referenc
     } finally { page.window.close(); }
   });
 
+  it('routes inline source destinations through their rendered section heading', async () => {
+    const source = await generateExtractAutomaticallyInlined();
+    const page = new JSDOM('<!doctype html><main><h1>Field guide</h1><p>A detailed comparison: <a href="#Scope_Limits">Scope reference</a> and <a href="#legacy-scope">Earlier reference</a>.</p><h2><a id="Scope_Limits"><strong>Scope limits</strong></a><a name="legacy-scope"></a></h2><p>Subsequent sections report independently collected measurements.</p></main>', { url: sourceUrl, runScripts: 'outside-only' });
+    try {
+      page.window.eval(source.replace('export async function', 'async function') + '\nwindow.extract = extractAutomaticallyInlined;');
+      const result = await page.window.extract(sourceUrl, false, { content: 'main', title: 'h1' });
+      expect(result.content).toContainEqual(expect.objectContaining({ type: 'heading', id: 'Scope_Limits', sourceFragmentIds: ['Scope_Limits', 'legacy-scope'] }));
+      const output = await render(format, result.content);
+      for (const label of ['Scope reference', 'Earlier reference']) assertTarget(output, label, 'Scope_Limits', 'Scope limits');
+    } finally { page.window.close(); }
+  });
+
   it('keeps the title target distinct from an identically named body identifier', async () => {
     const content = [{ type: 'paragraph', id: 'guide-cover', text: 'Separate body owner.', format: 'text' },
       { type: 'paragraph', html: '<a href="#guide-cover">Cover reference</a>' }];

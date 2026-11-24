@@ -7,12 +7,12 @@ import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_ELEVENLABS_TTS_MODEL, DEFAULT_QWEN_TT
 import { getUILanguage, t, tSync } from '../../scripts/locales.js';
 import { getUserFriendlyError, getUserFriendlyErrorDescriptor, createUserFriendlyError } from '../../scripts/utils/error-messages.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, readGeminiImageModel, supportsImageTranslation } from '../../scripts/api/image-translation-catalog.js';
-import { resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helpers.js';
+import { isProviderModelReady, resolveProviderApiKey, readApiKeyDraft } from '../utils/settings-helpers.js';
 
 /**
  * Initialize processing module
  * @param {Object} deps - Dependencies
- * @param {Record<string, HTMLElement|null> & Partial<Record<'apiProviderSelect'|'mainFormatSelect'|'outputFormat'|'imageTranslationProvider'|'geminiImageModel'|'qwenModel'|'qwenRegion', HTMLSelectElement>> & {qwenWorkspaceId?: HTMLInputElement}} deps.elements - DOM elements
+ * @param {Record<string, HTMLElement|null> & Partial<Record<'apiProviderSelect'|'mainFormatSelect'|'outputFormat'|'imageTranslationProvider'|'geminiImageModel'|'qwenModel'|'qwenRegion'|'audioProvider'|'languageSelect'|'modeSelect', HTMLSelectElement>> & Partial<Record<'qwenWorkspaceId'|'generateAbstract'|'translateImages', HTMLInputElement>>} deps.elements - DOM elements
  * @param {typeof import('../../scripts/locales.js').t} deps.t - Translation function
  * @param {function(...*): void} deps.logError - Error logging function
  * @param {function(...*): void} deps.log - Log function
@@ -276,9 +276,22 @@ export function initProcessing(deps) {
       timestamp: Date.now()
     });
     
-    const model = elements.modelSelect ? /** @type {HTMLSelectElement} */ (elements.modelSelect).value : '';
+    const visibleModel = elements.modelSelect ? /** @type {HTMLSelectElement} */ (elements.modelSelect).value : '';
     // Use selected provider from dropdown, fallback to model-based detection for backward compatibility
-    const provider = elements.apiProviderSelect ? /** @type {HTMLSelectElement} */ (elements.apiProviderSelect).value : getProviderFromModel(model);
+    const provider = elements.apiProviderSelect ? /** @type {HTMLSelectElement} */ (elements.apiProviderSelect).value : getProviderFromModel(visibleModel);
+    const mode = elements.modeSelect?.value || '';
+    const outputFormat = elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
+    const language = elements.languageSelect?.value || 'auto';
+    const generateAbstract = Boolean(elements.generateAbstract?.checked);
+    const audioProvider = elements.audioProvider?.value || 'openai';
+    const modelReady = isProviderModelReady(elements.modelSelect, provider);
+    const modelRequired = mode !== 'automatic' || language !== 'auto' ||
+      (outputFormat === 'audio' ? audioProvider !== 'offline' : generateAbstract);
+    if (!modelReady && modelRequired) {
+      showToast(await t('errorProviderModelsLoading'), 'error', { key: 'errorProviderModelsLoading' });
+      return;
+    }
+    const model = modelReady ? visibleModel : '';
     const apiKeyOwner = elements.apiKey?.dataset.provider;
     const imageTranslationProvider = elements.imageTranslationProvider?.value || DEFAULT_IMAGE_TRANSLATION_PROVIDER;
     const geminiImageModel = readGeminiImageModel(elements.geminiImageModel?.value);
@@ -292,10 +305,9 @@ export function initProcessing(deps) {
     // Get the appropriate API key based on selected provider
     try {
       const currentProvider = () => attempt === latestSaveAttempt && (!elements.apiProviderSelect || elements.apiProviderSelect.value === provider);
-      const apiKey = await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t);
+      const apiKey = modelReady ? await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t) : '';
       if (!currentProvider()) return;
       // Check API key only if not using automatic mode
-      const mode = elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '';
       if (mode !== 'automatic' && !apiKey) {
         const providerName = provider === 'openai' ? 'OpenAI' : provider === 'claude' ? 'Claude' : provider === 'gemini' ? 'Gemini' : provider === 'grok' ? 'Grok' : provider === 'openrouter' ? 'OpenRouter' : provider === 'deepseek' ? 'DeepSeek' : 'AI';
         showToast(await t(`pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey`, undefined), 'error', { key: `pleaseEnter${providerName === 'OpenAI' ? 'OpenAi' : providerName}ApiKey` });
@@ -558,8 +570,7 @@ export function initProcessing(deps) {
           googleApiKey = '';
         }
       }
-      const outputFormat = elements.mainFormatSelect?.value || elements.outputFormat?.value || 'pdf';
-      const translateImages = !!(elements.translateImages && /** @type {HTMLInputElement} */ (elements.translateImages).checked && elements.languageSelect && /** @type {HTMLSelectElement} */ (elements.languageSelect).value !== 'auto' && supportsImageTranslation(outputFormat));
+      const translateImages = Boolean(elements.translateImages?.checked && language !== 'auto' && supportsImageTranslation(outputFormat));
       let imageApiKey = translateImages ? googleApiKey : '';
       if (translateImages && imageTranslationProvider === 'openai') {
         const ownsOpenAiDraft = provider === 'openai' && apiKeyOwner === 'openai' &&
@@ -571,8 +582,8 @@ export function initProcessing(deps) {
       }
 
       log('=== handleSavePdf: About to send processArticle message ===', {
-        mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
-        outputFormat: elements.mainFormatSelect ? /** @type {HTMLSelectElement} */ (elements.mainFormatSelect).value : (elements.outputFormat ? /** @type {HTMLSelectElement} */ (elements.outputFormat).value : 'pdf'),
+        mode,
+        outputFormat,
         hasApiKey: !!apiKey,
         hasTabId: !!tab.id,
         tabId: tab.id,
@@ -596,13 +607,13 @@ export function initProcessing(deps) {
           ...(translateImages && imageTranslationProvider === 'gemini' ? { geminiImageModel } : {}),
           imageApiKey,
           model: model,
-          mode: elements.modeSelect ? /** @type {HTMLSelectElement} */ (elements.modeSelect).value : '',
+          mode,
           useCache: elements.useCache ? /** @type {HTMLInputElement} */ (elements.useCache).checked : false,
           outputFormat,
           generateToc: elements.generateToc ? /** @type {HTMLInputElement} */ (elements.generateToc).checked : false,
-          generateAbstract: elements.generateAbstract ? /** @type {HTMLInputElement} */ (elements.generateAbstract).checked : false,
+          generateAbstract,
           pageMode: elements.pageMode ? /** @type {HTMLSelectElement} */ (elements.pageMode).value : 'single',
-          language: elements.languageSelect ? /** @type {HTMLSelectElement} */ (elements.languageSelect).value : 'auto',
+          language,
           translateImages: translateImages,
           fontFamily: elements.fontFamily ? /** @type {HTMLSelectElement} */ (elements.fontFamily).value : 'Arial',
           fontSize: elements.fontSize ? /** @type {HTMLSelectElement} */ (elements.fontSize).value : '12pt',
@@ -613,11 +624,11 @@ export function initProcessing(deps) {
           stylePreset: elements.stylePreset ? /** @type {HTMLSelectElement} */ (elements.stylePreset).value : 'dark',
           tabId: tab.id,
           // Audio settings
-          audioProvider: elements.audioProvider ? /** @type {HTMLSelectElement} */ (elements.audioProvider).value : 'openai',
+          audioProvider,
           // CRITICAL: Get actual voice ID, not index
           // If audioVoice.value is a number (index), get the actual value from options
           audioVoice: (() => {
-            const provider = elements.audioProvider ? /** @type {HTMLSelectElement} */ (elements.audioProvider).value : 'openai';
+            const provider = audioProvider;
             if (!elements.audioVoice) {
               logWarn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
                 timestamp: Date.now(),

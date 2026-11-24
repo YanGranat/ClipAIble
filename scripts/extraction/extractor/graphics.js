@@ -2,7 +2,7 @@
 import { toSvg } from 'html-to-image';
 import { CONFIG } from '../../utils/config.js';
 import { MAX_IMAGE_BYTES, detectImageMime, imageDataUrlBytes, readImageBytes, imageDataError } from '../../utils/html/image-bytes.js';
-import { isSourceExcluded } from './dom-utils.js';
+import { isExternalLinkAdornment, isSourceExcluded } from './dom-utils.js';
 import { isCollapsedImageLayer, isPlaceholderUrl } from './images.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -66,6 +66,7 @@ function hasLayeredImages(figure) {
 }
 
 function isDecorativeLinkGraphic(graphic) {
+  if (graphic && isExternalLinkAdornment(graphic)) return true;
   if (graphic?.tagName.toLowerCase() !== 'svg' || graphic.getAttribute('aria-hidden') !== 'true' ||
       graphic.textContent?.trim() || graphic.hasAttribute('aria-label') || graphic.hasAttribute('aria-labelledby')) return false;
   const link = graphic.closest('a[href]');

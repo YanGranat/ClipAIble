@@ -1,5 +1,6 @@
 // @ts-check
 import { cloneReadingContent, isSourceExcluded } from './dom-utils.js';
+import { preserveClonedMathInputs } from './inline-content.js';
 
 /** @typedef {import('./types.js').ContentItem} ContentItem */
 
@@ -73,6 +74,7 @@ function replaceLinkedMedia(copy, reference) {
 export function projectAtomicMedia(originalElement, admittedElements, state, createImageItem) {
   const copies = new Map();
   const clone = /** @type {Element} */ (cloneReadingContent(originalElement, state.selectionExclusions || [], copies));
+  preserveClonedMathInputs(originalElement, copies);
   const admitted = new Set(admittedElements);
   const graphics = [...(state.readingGraphics?.keys() || [])].filter(owner => originalElement.contains(owner) &&
     (admitted.has(owner) || [...admitted].some(element => owner.contains(element))));
@@ -125,7 +127,10 @@ export function projectAtomicMedia(originalElement, admittedElements, state, cre
         insertion.append(' ', link);
       }
     } else {
-      const split = replaceLinkedMedia(copy, reference);
+      const control = copy.closest('button,[role="button"]');
+      let split = null;
+      if (control && clone.contains(control) && control !== clone) control.replaceWith(reference);
+      else split = replaceLinkedMedia(copy, reference);
       if (sourceLink && split) {
         if (!sourceLinks.has(sourceLink)) sourceLinks.set(sourceLink, new Set());
         const links = sourceLinks.get(sourceLink); links.delete(split.removed);

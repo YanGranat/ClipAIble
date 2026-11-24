@@ -6,11 +6,10 @@ import { textToSpeech as openaiTTS } from './openai-tts.js';
 // Supports OpenAI, ElevenLabs, Qwen3-TTS-Flash, Respeecher, Google Cloud TTS, and Piper TTS (offline) providers
 
 import { log, logError, logDebug, logWarn } from '../utils/logging.js';
-import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { AUDIO_CONFIG } from '../generation/audio-prep.js';
 import { DEFAULT_GOOGLE_TTS_MODEL, getDefaultTtsVoice } from './tts-catalog.js';
-import { PROCESSING_STAGES, getScopedUpdateState, markProcessingRequestStarted } from '../state/processing.js';
+import { PROCESSING_STAGES, getProcessingSignal, getScopedUpdateState, markProcessingRequestStarted } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { getUILanguageCached, checkCancellation } from '../utils/pipeline-helpers.js';
 
@@ -87,6 +86,7 @@ log('[ClipAIble TTS] TTS module initialized with all providers', {
  */
 export async function textToSpeech(text, apiKey, options = {}) {
   await checkCancellation('TTS request', options.processingRunId);
+  options = { ...options, signal: options.signal ?? (options.processingRunId === undefined ? undefined : getProcessingSignal(options.processingRunId)) };
   const entryTime = Date.now();
   const { provider = 'openai' } = options;
   if (!['openai', 'elevenlabs', 'qwen', 'respeecher', 'google', 'offline'].includes(provider)) {
@@ -170,7 +170,12 @@ export async function textToSpeech(text, apiKey, options = {}) {
 
 /** Convert text to speech using OpenAI Realtime audio. */
 async function textToSpeechOpenAI(text, apiKey, options = {}) {
-  return callWithRetry(() => openaiTTS(text, apiKey, options), {
+  return callWithRetry(({ signal }) => {
+    markProcessingRequestStarted(options.processingRunId);
+    return openaiTTS(text, apiKey, { ...options, signal });
+  }, {
+    signal: options.signal ?? (options.processingRunId === undefined ? undefined : getProcessingSignal(options.processingRunId)),
+    checkCancelled: () => checkCancellation('OpenAI TTS retry', options.processingRunId),
     shouldRetry: error => error.retryable === false ? false : undefined,
     onRetry: (attempt, delay) => log(`TTS API retry attempt ${attempt}, waiting ${delay}ms...`)
   });
@@ -264,6 +269,7 @@ async function textToSpeechElevenLabs(text, apiKey, options = {}) {
     similarityBoost: elevenlabsSimilarity,
     style: elevenlabsStyle,
     useSpeakerBoost: elevenlabsSpeakerBoost,
+    signal: options.signal,
     processingRunId: options.processingRunId
   });
 }
@@ -315,6 +321,7 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
     respeecherTemperature,
     respeecherRepetitionPenalty,
     respeecherTopP,
+    signal: options.signal,
     processingRunId: options.processingRunId
   });
 }
@@ -347,7 +354,7 @@ async function textToSpeechGoogle(text, apiKey, options = {}) {
   
   // Google TTS always returns WAV format (24kHz, 16-bit, mono)
   // Speed is not supported by API
-  return googleTTS(text, apiKey, { voice, prompt: finalPrompt, model: finalModel, processingRunId: options.processingRunId });
+  return googleTTS(text, apiKey, { voice, prompt: finalPrompt, model: finalModel, signal: options.signal, processingRunId: options.processingRunId });
 }
 
 /**
@@ -640,13 +647,7 @@ export async function chunksToSpeech(chunks, apiKey, options = {}, updateState =
       const chunk = expandedChunks[i];
       if (provider !== 'openai') markProcessingRequestStarted(options.processingRunId);
       const audioBuffer = provider === 'openai'
-        ? await callWithRetry(async () => {
-          await checkCancellation('TTS retry', options.processingRunId);
-          markProcessingRequestStarted(options.processingRunId);
-          return openaiTTS(chunk.text, apiKey, options);
-        }, { maxRetries: CONFIG.RETRY_MAX_ATTEMPTS, delays: CONFIG.RETRY_DELAYS,
-          retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES,
-          signal: options.signal, shouldRetry: error => error.retryable === false ? false : undefined })
+        ? await textToSpeechOpenAI(chunk.text, apiKey, options)
         : await textToSpeech(chunk.text, apiKey, options);
       await checkCancellation('TTS response', options.processingRunId);
       markProcessingRequestStarted(options.processingRunId);

@@ -43,6 +43,20 @@ afterEach(() => {
 });
 
 describe('Heading source positions', () => {
+  it('binds the leading declared body title and publication banner to one title destination', async () => {
+    const win = page('<section id="edition"><h2 data-type="document-title" id="chapter-title">Field Report</h2>' +
+      prose + '<h3 id="separate">Field Report</h3></section>');
+    const body = win.document.querySelector('#edition');
+    const banner = win.document.createElement('h1');
+    banner.id = 'banner-title';
+    banner.textContent = 'Field Report';
+    body.before(banner);
+    const run = await generatedRunner(win);
+    const result = await run(win.location.href, false, { content: '#edition', title: '#banner-title' });
+    expect(result.titleFragmentIds).toEqual(['banner-title', 'chapter-title']);
+    expect(headings(result.content)).toEqual([{ id: 'separate', text: 'Field Report', level: 3, format: 'text' }]);
+  });
+
   it('preserves repeated body headings and fragment targets in the serialized extractor', async () => {
     const win = page(markup);
     const run = await generatedRunner(win);

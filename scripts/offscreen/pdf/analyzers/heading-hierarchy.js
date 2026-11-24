@@ -5,6 +5,7 @@
 import { log, logWarn } from '../../../utils/logging.js';
 import { FONT_SIZE_THRESHOLDS, HEADING_THRESHOLDS, ELEMENT_DECISION } from '../constants.js';
 import { calculateAverage } from '../utils/array-helpers.js';
+import { SECTION_NUMBER_PATTERN } from '../utils/regex-patterns.js';
 
 /**
  * Validate font size values
@@ -289,16 +290,14 @@ export function extractNumberingLevel(text) {
   }
   
   const trimmed = text.trim();
-  const numberingMatch = trimmed.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?[\.\)]\s*/);
+  const numberingMatch = trimmed.match(SECTION_NUMBER_PATTERN);
   
   if (!numberingMatch) {
     return null;
   }
   
   // Calculate depth: "1." = 1, "2.1." = 2, "2.1.1." = 3
-  const depth = (numberingMatch[1] ? 1 : 0) + 
-                (numberingMatch[2] ? 1 : 0) + 
-                (numberingMatch[3] ? 1 : 0);
+  const depth = numberingMatch[1]?.split('.').length ?? 1;
   
   // CRITICAL: "1." is NEVER H1, always H2
   // depth=1 → H2, depth=2 → H3, depth=3 → H4, etc.

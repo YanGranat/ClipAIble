@@ -280,26 +280,22 @@ function analyzeGapDistribution(gaps) {
  * @returns {Object} Gap analysis results
  */
 export function analyzeGaps(lines) {
+  const defaultAnalysis = {
+    normalGapMax: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD,
+    paragraphGapMin: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD * 1.33,
+    mean: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD,
+    gapDistribution: {},
+    documentType: 'unknown',
+    isHomogeneousSpacing: false
+  };
   // Validate input
   if (!lines || !Array.isArray(lines)) {
     log('[PDF v3] analyzeGaps: Invalid lines input, using defaults');
-    return {
-      normalGapMax: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD,
-      paragraphGapMin: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD * 1.33, // ~24 (18 * 1.33)
-      gapDistribution: {},
-      documentType: 'unknown',
-      isHomogeneousSpacing: false
-    };
+    return defaultAnalysis;
   }
   
   if (lines.length < 2) {
-    return {
-      normalGapMax: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD,
-      paragraphGapMin: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD * 1.33, // ~24 (18 * 1.33)
-      gapDistribution: {},
-      documentType: 'unknown',
-      isHomogeneousSpacing: false
-    };
+    return defaultAnalysis;
   }
   
   // Collect all gaps between consecutive lines on the same page
@@ -392,13 +388,7 @@ export function analyzeGaps(lines) {
   }
   
   if (gaps.length === 0) {
-    return {
-      normalGapMax: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD,
-      paragraphGapMin: DEFAULT_METRICS.PARAGRAPH_GAP_THRESHOLD * 1.33, // ~24 (18 * 1.33)
-      gapDistribution: {},
-      documentType: 'unknown',
-      isHomogeneousSpacing: false
-    };
+    return defaultAnalysis;
   }
   
   // Analyze gap distribution to determine document type and thresholds

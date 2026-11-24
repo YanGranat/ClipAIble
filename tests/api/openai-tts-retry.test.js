@@ -44,6 +44,33 @@ it('applies one retry budget to temporary failures before generation is admitted
   expect(WebSocket.instances).toHaveLength(0);
 });
 
+it.each(['openai', 'google', 'elevenlabs', 'qwen', 'respeecher'])('cancels pending %s speech retries without waiting for Retry-After', async provider => {
+  vi.useFakeTimers();
+  const owner = new AbortController();
+  const reason = new DOMException('Operation cancelled', 'AbortError');
+  const schedule = vi.spyOn(globalThis, 'setTimeout');
+  const request = vi.fn(async () => new Response('{}', { status: 503, headers: { 'Retry-After': '20' } }));
+  vi.stubGlobal('fetch', request);
+  let outcome;
+  const pending = textToSpeech('Article.', 'synthetic-key', {
+    provider, signal: owner.signal, processingRunId: getProcessingRunId(), language: 'en', qwenWorkspaceId: 'sample-workspace'
+  }).then(value => { outcome = { value }; }, error => { outcome = { error }; });
+  try {
+    await vi.waitFor(() => expect(schedule.mock.calls.some(([, delay]) => delay >= 20000 && delay <= 24000)).toBe(true));
+    expect(request).toHaveBeenCalledOnce();
+    owner.abort(reason);
+    await vi.advanceTimersByTimeAsync(75);
+    expect(outcome?.error).toMatchObject({ name: 'AbortError' });
+    expect(request).toHaveBeenCalledOnce();
+  } finally {
+    owner.abort(reason);
+    await vi.advanceTimersByTimeAsync(25000);
+    await pending;
+    schedule.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
 it.each(['unknown', '__proto__', 'constructor'])('rejects unsupported provider %s without sending a key to another provider', async provider => {
   await expect(textToSpeech('Article.', 'synthetic-key', { provider })).rejects.toMatchObject({ translationKey: 'errorUnknownAudioProvider', translationParams: { provider } });
   expect(fetch).not.toHaveBeenCalled();

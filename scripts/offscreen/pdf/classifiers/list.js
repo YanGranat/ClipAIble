@@ -3,7 +3,7 @@
 // Enhanced with list type detection (ordered/unordered), nesting level, and marker extraction
 
 import { log } from '../utils/logging.js';
-import { LIST_ITEM_START_PATTERN, LIST_ITEM_PATTERNS } from '../utils/regex-patterns.js';
+import { FIGURE_CAPTION_PATTERN, LIST_ITEM_START_PATTERN, LIST_ITEM_PATTERNS } from '../utils/regex-patterns.js';
 
 // Patterns for detecting list types
 const ORDERED_LIST_PATTERN = /^[\s]*(\d+)[\.\)]\s+/u;
@@ -298,6 +298,9 @@ export function classifyList(element, context = {}) {
   }
   
   const text = element.text || '';
+  if (FIGURE_CAPTION_PATTERN.test(text.trim())) {
+    return { type: 'not-list', confidence: 0, algorithm: 'figure-caption', details: {} };
+  }
   const listInfo = extractListInfo(text);
   
   const results = [

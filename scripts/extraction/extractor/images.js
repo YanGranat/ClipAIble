@@ -321,9 +321,10 @@ export function isDecorativeImage(win, img, logoPatterns) {
  * @param {HTMLImageElement} img - Image element
  * @param {WeakSet<Element>|null} [captionOwners] - Captions consumed by this image choice
  * @param {Array<Element|string>} [excludedElements] - Excluded source subtrees or selectors
+ * @param {Element|null} [selectedIllustration] - Explicitly selected single-image group
  * @returns {string} - Portable inline caption HTML or empty string
  */
-export function getImageCaption(img, captionOwners = null, excludedElements = []) {
+export function getImageCaption(img, captionOwners = null, excludedElements = [], selectedIllustration = null) {
   const captionText = element => serializeReadingHtml(element, excludedElements);
   const excluded = element => excludedElements.some(rule => {
     try { return typeof rule === 'string' ? !!element.closest(rule) : rule.contains(element); }
@@ -378,6 +379,17 @@ export function getImageCaption(img, captionOwners = null, excludedElements = []
       }
     }
   }
+
+  if (!figure && selectedIllustration && selectedIllustration !== img) {
+    const captions = Array.from(selectedIllustration.children).filter(node =>
+      node.matches('figcaption,p,h2,h3,h4,h5,h6') && compareDomOrder(img, node) < 0 && readable(node));
+    const parts = captions.map(node => {
+      const html = captionText(node);
+      if (html) captionOwners?.add(node);
+      return html;
+    }).filter(Boolean);
+    if (parts.length) return parts.join('<br>');
+  }
   
   return '';
 }
@@ -423,6 +435,7 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
   const mediaSelector = 'figure,img,picture,svg,canvas,video,audio,iframe';
   const mediaRoots = new Set();
   const featuredRoots = new Set();
+  const selectedIllustrations = new Map();
   const ownerOf = element => element.closest('figure') || element.closest('picture') || element;
   const insideBody = element => bodyRoots.some(root => root.contains(element));
   const before = (left, right) => left !== right && !left.contains(right) && compareDomOrder(left, right) < 0;
@@ -477,15 +490,25 @@ export function discoverReadingMedia(bodyRoots, selectedHeroes = []) {
   }
   for (const selected of selectedHeroes) {
     // An ancestor selector cannot expand the article into page-wide reading content.
-    if (!selected.matches(mediaSelector) && bodyRoots.some(root => selected === root || selected.contains(root))) continue;
+    if (!selected.matches(mediaSelector) && bodyRoots.some(root => root !== selected && selected.contains(root))) continue;
     const elements = [...(selected.matches(mediaSelector) ? [selected] : []), ...Array.from(selected.querySelectorAll(mediaSelector))];
+    const images = elements.filter(element => element.tagName === 'IMG');
+    const complementary = selected.closest('aside,[role~="complementary"]');
+    if (complementary && selected !== complementary &&
+        (selected.matches('img,figure,picture') || images.length === 1)) {
+      for (const image of images) {
+        selectedIllustrations.set(image, selected);
+        const owner = ownerOf(image);
+        if (owner !== image && complementary.contains(owner)) selectedIllustrations.set(owner, selected);
+      }
+    }
     for (const element of elements) {
       const media = ownerOf(element);
       mediaRoots.add(media);
       if (!insideBody(media) && !bodyRoots.some(root => media.contains(root))) featuredRoots.add(media);
     }
   }
-  return { roots: [...mediaRoots], featuredRoots: [...featuredRoots] };
+  return { roots: [...mediaRoots], featuredRoots: [...featuredRoots], selectedIllustrations };
 }
 
 /** Failed or excluded source media must not be replaced with an unrelated metadata cover. */

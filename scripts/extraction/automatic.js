@@ -315,6 +315,13 @@ var clipaibleArticleExtractor = (() => {
 
   // scripts/extraction/extractor/dom-utils.js
   var INTERFACE_REGIONS = 'nav,footer,dialog,[role~="navigation"],[role~="dialog"],[role~="alertdialog"],[aria-modal="true"]';
+  function isExternalLinkAdornment(element) {
+    const svg = element.closest("svg[data-extlink-placement]");
+    if (!svg) return false;
+    const placement = svg.getAttribute("data-extlink-placement");
+    const link = placement === "after" ? svg.previousElementSibling : placement === "before" ? svg.nextElementSibling : null;
+    return link?.matches("a[href][data-extlink]") === true;
+  }
   function isPublisherLinkAction(element) {
     const link = element.closest("a[href]");
     if (!link) return false;
@@ -395,7 +402,7 @@ var clipaibleArticleExtractor = (() => {
     copyMap?.set(element, clone);
     const excluded2 = (node) => {
       const region = node.closest(INTERFACE_REGIONS);
-      return region && !(disclosed && region === element) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
+      return region && !(disclosed && region === element) || isExternalLinkAdornment(node) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
     };
     if (excluded2(element)) {
       clone.replaceChildren();
@@ -453,6 +460,20 @@ var clipaibleArticleExtractor = (() => {
       }
     }
     return clone;
+  }
+  function readSourceFragmentIds(element, exclusions = []) {
+    if (!element || isSourceExcluded(element, exclusions)) return [];
+    const copies = /* @__PURE__ */ new Map();
+    const root = cloneReadingContent(element, exclusions, copies);
+    const document2 = element.ownerDocument;
+    const ids = /* @__PURE__ */ new Set();
+    for (const [source, copy] of copies) {
+      if (!root.contains(copy)) continue;
+      if (source.id && document2.getElementById(source.id) === source) ids.add(source.id);
+      const name = source.matches("a[name]") ? source.getAttribute("name") : "";
+      if (name && !document2.getElementById(name) && [...document2.getElementsByName(name)].find((node) => node.matches("a")) === source) ids.add(name);
+    }
+    return [...ids];
   }
   function getDocumentFragmentTarget(element) {
     const href = element.getAttribute("href");
@@ -837,9 +858,9 @@ var clipaibleArticleExtractor = (() => {
       try {
         const elements = Array.from(doc.querySelectorAll(selector));
         if (selector === 'meta[name="citation_author"]') {
-          const names = elements.map((element) => (element.getAttribute("content") || "").trim()).filter((name) => name && !/^https?:/i.test(name) && name.length < 100);
+          const names = elements.map((element) => (element.getAttribute("content") || "").normalize("NFC").replace(/\s+/g, " ").trim()).filter((name) => name && !/^https?:/i.test(name) && name.length < 100);
           if (names.length) {
-            metadata.author = names.join(", ");
+            metadata.author = [...new Set(names)].join(", ");
             break;
           }
         }
@@ -2672,6 +2693,7 @@ var clipaibleArticleExtractor = (() => {
     });
   }
   function isDecorativeLinkGraphic(graphic) {
+    if (graphic && isExternalLinkAdornment(graphic)) return true;
     if (graphic?.tagName.toLowerCase() !== "svg" || graphic.getAttribute("aria-hidden") !== "true" || graphic.textContent?.trim() || graphic.hasAttribute("aria-label") || graphic.hasAttribute("aria-labelledby")) return false;
     const link = graphic.closest("a[href]");
     const figure = graphic.closest("figure");
@@ -3399,7 +3421,7 @@ var clipaibleArticleExtractor = (() => {
       }
     }
   }
-  function isExcluded(win, element, constants, readingRoots = [], tocRoots = []) {
+  function isExcluded(win, element, constants, readingRoots = [], tocRoots = [], selectedIllustration = false) {
     const {
       EXCLUDED_CLASSES: EXCLUDED_CLASSES2,
       PAYWALL_CLASSES: PAYWALL_CLASSES2,
@@ -3419,8 +3441,13 @@ var clipaibleArticleExtractor = (() => {
     const hasExactRole = (node, role2) => node.id.toLowerCase() === role2 || Array.from(node.classList).some((name) => name.toLowerCase() === role2);
     if (element.closest(INTERFACE_REGIONS) || isPublisherLinkAction(element)) return true;
     const control = element.closest('button,[role="button"],input,select,textarea');
-    if (control && !getAnnotationTarget(control)) return true;
+    if (control && !getAnnotationTarget(control)) {
+      const figure = element.closest("figure");
+      const authoredImage = tagName === "img" && readingOwned && control.matches('button,[role="button"]') && element.getAttribute("alt")?.trim() && figure?.contains(control) && !element.closest("figcaption") && Array.from(figure.querySelectorAll("figcaption")).some((caption) => caption.closest("figure") === figure && caption.textContent?.trim());
+      if (!authoredImage) return true;
+    }
     const selectedMedia = readingRoots.some((root) => root.matches("figure,img,picture,svg,canvas") && (root === element || root.contains(element)));
+    const illustrationAside = selectedIllustration ? element.closest('aside,[role~="complementary"]') : null;
     const selectedInline = readingRoots.some((root) => root.matches("p,span,div") && !root.querySelector("article,section,p,table,ul,ol,figure,form") && (root === element || root.contains(element)));
     for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
       const ancestorStyle = safeGetComputedStyle(win, ancestor);
@@ -3537,6 +3564,7 @@ var clipaibleArticleExtractor = (() => {
         if (EXCLUDED_CLASSES2.some((excluded2) => {
           if ((authoredHeading || selectedMedia || selectedInline) && ["header", "article-section-title"].includes(excluded2)) return false;
           if (selectedMedia && excluded2 === "overlay") return false;
+          if (excluded2 === "sidebar" && illustrationAside && parent.contains(illustrationAside)) return false;
           if (excluded2 === "next" || excluded2 === "prev" || excluded2 === "previous") {
             return parentClass.split(/\s+/).includes(excluded2) || parentId === excluded2;
           }
@@ -3551,7 +3579,7 @@ var clipaibleArticleExtractor = (() => {
         const isClearAd = clearAdIndicators.some(
           (indicator) => indicator.test(parentClass) || indicator.test(parentId)
         );
-        if (isClearAd || parentTag === "aside" && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element)) {
+        if (isClearAd || parentTag === "aside" && parent !== illustrationAside && !isReadingOwned(parent, readingRoots) && !isArticleContentFigure(win, element)) {
           return true;
         }
         parent = parent.parentElement;
@@ -3572,33 +3600,54 @@ var clipaibleArticleExtractor = (() => {
   }
 
   // scripts/extraction/extractor/inline-content.js
-  function renderSimpleMathMl(math, outputDocument = math.ownerDocument) {
+  var MATHML = "http://www.w3.org/1998/Math/MathML";
+  var MATH_TOKENS = ["mi", "mn", "mo", "mtext"];
+  var MATH_GROUPS = ["math", "semantics", "mrow", "msup", "msub"];
+  var MATH_LAYOUT = ["mfrac", "msqrt", "msubsup", "mspace", "mtable", "mtr", "mtd"];
+  function presentationChildren(element) {
+    const children = Array.from(element.children);
+    if (element.localName !== "semantics") return children;
+    return children.slice(0, 1).filter((child) => child.namespaceURI === MATHML && !["annotation", "annotation-xml"].includes(child.localName));
+  }
+  function renderSimpleMathMl(math, outputDocument = math.ownerDocument, allowLinearLayout = false) {
     try {
       let render = function(element) {
-        if (element.namespaceURI !== "http://www.w3.org/1998/Math/MathML") return null;
+        if (element.namespaceURI !== MATHML) return null;
         const tag = element.localName;
-        if (!["math", "mrow", "mi", "mn", "mo", "msup", "msub"].includes(tag)) return null;
+        if (!MATH_TOKENS.includes(tag) && !MATH_GROUPS.includes(tag) && !(allowLinearLayout && MATH_LAYOUT.includes(tag))) return null;
         for (const attribute of Array.from(element.attributes)) {
-          if (attribute.name === "class" || tag === "math" && attribute.name === "xmlns") continue;
+          if (attribute.name === "class" || attribute.name.startsWith("data-semantic-") || attribute.name === "data-speech-node") continue;
+          if (tag === "math" && (attribute.name === "xmlns" || attribute.name === "display" && /^(inline|block)$/.test(attribute.value))) continue;
           if (tag === "mo" && attribute.name === "stretchy" && /^(true|false)$/.test(attribute.value)) continue;
+          if (allowLinearLayout && (tag === "mspace" && ["width", "height", "depth"].includes(attribute.name) || ["mtable", "mtd", "mtr"].includes(tag) && ["columnalign", "rowalign", "columnspacing", "rowspacing"].includes(attribute.name))) continue;
           return null;
         }
-        if (["mi", "mn", "mo"].includes(tag)) {
-          if (Array.from(element.childNodes).some((node) => node.nodeType !== 3) || !element.textContent?.trim()) return null;
+        if (MATH_TOKENS.includes(tag)) {
+          if (Array.from(element.childNodes).some((node) => node.nodeType !== 3) || !element.textContent) return null;
           return outputDocument.createTextNode(element.textContent);
         }
+        if (tag === "mspace") return element.childNodes.length ? null : outputDocument.createTextNode(" ");
         if (Array.from(element.childNodes).some((node) => node.nodeType !== 1 && (node.nodeType !== 3 || node.textContent?.trim()))) return null;
-        const children = Array.from(element.children);
-        if (!children.length || ["msup", "msub"].includes(tag) && children.length !== 2) return null;
+        const children = presentationChildren(element);
+        if (!children.length || ["msup", "msub", "mfrac"].includes(tag) && children.length !== 2 || tag === "msubsup" && children.length !== 3) return null;
         const parts = children.map(render);
         if (parts.some((part) => !part)) return null;
         const result = outputDocument.createDocumentFragment();
-        if (tag === "msup" || tag === "msub") {
-          result.appendChild(parts[0]);
-          const script = outputDocument.createElement(tag === "msup" ? "sup" : "sub");
-          script.appendChild(parts[1]);
-          result.appendChild(script);
-        } else for (const part of parts) result.appendChild(part);
+        const scripted = (name, content) => {
+          const node = outputDocument.createElement(name);
+          node.append(content);
+          return node;
+        };
+        if (tag === "msup") result.append(parts[0], scripted("sup", parts[1]));
+        else if (tag === "msub") result.append(parts[0], scripted("sub", parts[1]));
+        else if (tag === "msubsup") result.append(parts[0], scripted("sub", parts[1]), scripted("sup", parts[2]));
+        else if (tag === "mfrac") result.append("(", parts[0], ")/(", parts[1], ")");
+        else if (tag === "msqrt") result.append("√(", ...parts, ")");
+        else parts.forEach((part, index) => {
+          if (index && tag === "mtable") result.append(outputDocument.createElement("br"));
+          if (index && tag === "mtr") result.append(" ");
+          result.append(part);
+        });
         return result;
       };
       if (math.localName !== "math") return null;
@@ -3606,6 +3655,11 @@ var clipaibleArticleExtractor = (() => {
     } catch (_) {
       return null;
     }
+  }
+  function presentationMathText(element) {
+    if (element.namespaceURI !== MATHML || ["annotation", "annotation-xml"].includes(element.localName)) return "";
+    if (element.localName === "semantics") return presentationChildren(element).map(presentationMathText).join("");
+    return Array.from(element.childNodes, (child) => child.nodeType === 3 ? child.textContent : child.nodeType === 1 ? presentationMathText(child) : "").join("");
   }
   function processMathElements(container, runtimeInputs = /* @__PURE__ */ new Map()) {
     const mathElements = container.querySelectorAll(".mwe-math-element, .mathjax, .MathJax, .MathJax_Display, .latex, .katex, mjx-container, math");
@@ -3641,7 +3695,7 @@ var clipaibleArticleExtractor = (() => {
           if (!parsed.querySelector("parsererror")) semanticMath = parsed.documentElement;
         }
       }
-      const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument) : null;
+      const rendered = semanticMath ? renderSimpleMathMl(semanticMath, container.ownerDocument, !latex) : null;
       if (rendered) {
         const wrapper = container.ownerDocument.createElement("span");
         wrapper.className = "math";
@@ -3652,7 +3706,8 @@ var clipaibleArticleExtractor = (() => {
         const textNode = container.ownerDocument.createTextNode(` $${cleanedLatex}$ `);
         mathEl.replaceWith(textNode);
       } else {
-        mathEl.replaceWith(container.ownerDocument.createTextNode(mathEl.textContent || ""));
+        const presentation = semanticMath?.namespaceURI === MATHML ? presentationMathText(semanticMath) : mathEl.querySelector("mjx-math,.katex-html")?.textContent ?? mathEl.textContent;
+        mathEl.replaceWith(container.ownerDocument.createTextNode(presentation || ""));
       }
     }
   }
@@ -3679,6 +3734,12 @@ var clipaibleArticleExtractor = (() => {
     } catch {
     }
     return inputs;
+  }
+  function preserveClonedMathInputs(root, copies) {
+    for (const [original, tex] of getRenderedMathInputs(root)) {
+      const copy = copies.get(original);
+      if (copy) clonedMathInputs.set(copy, tex);
+    }
   }
   function preserveRangeMathInputs(root, range, fragment) {
     const rendered = Array.from(fragment.querySelectorAll("mjx-container"));
@@ -4010,7 +4071,7 @@ var clipaibleArticleExtractor = (() => {
     }
     return false;
   }
-  function getImageCaption(img, captionOwners = null, excludedElements = []) {
+  function getImageCaption(img, captionOwners = null, excludedElements = [], selectedIllustration = null) {
     const captionText = (element) => serializeReadingHtml(element, excludedElements);
     const excluded2 = (element) => excludedElements.some((rule) => {
       try {
@@ -4068,6 +4129,15 @@ var clipaibleArticleExtractor = (() => {
         }
       }
     }
+    if (!figure && selectedIllustration && selectedIllustration !== img) {
+      const captions = Array.from(selectedIllustration.children).filter((node) => node.matches("figcaption,p,h2,h3,h4,h5,h6") && compareDomOrder(img, node) < 0 && readable(node));
+      const parts = captions.map((node) => {
+        const html = captionText(node);
+        if (html) captionOwners?.add(node);
+        return html;
+      }).filter(Boolean);
+      if (parts.length) return parts.join("<br>");
+    }
     return "";
   }
   function extractMetadataImage(doc, baseUrl, logoPatterns) {
@@ -4098,6 +4168,7 @@ var clipaibleArticleExtractor = (() => {
     const mediaSelector = "figure,img,picture,svg,canvas,video,audio,iframe";
     const mediaRoots = /* @__PURE__ */ new Set();
     const featuredRoots = /* @__PURE__ */ new Set();
+    const selectedIllustrations = /* @__PURE__ */ new Map();
     const ownerOf = (element) => element.closest("figure") || element.closest("picture") || element;
     const insideBody = (element) => bodyRoots.some((root) => root.contains(element));
     const before = (left, right) => left !== right && !left.contains(right) && compareDomOrder(left, right) < 0;
@@ -4149,15 +4220,24 @@ var clipaibleArticleExtractor = (() => {
       }
     }
     for (const selected of selectedHeroes) {
-      if (!selected.matches(mediaSelector) && bodyRoots.some((root) => selected === root || selected.contains(root))) continue;
+      if (!selected.matches(mediaSelector) && bodyRoots.some((root) => root !== selected && selected.contains(root))) continue;
       const elements = [...selected.matches(mediaSelector) ? [selected] : [], ...Array.from(selected.querySelectorAll(mediaSelector))];
+      const images = elements.filter((element) => element.tagName === "IMG");
+      const complementary = selected.closest('aside,[role~="complementary"]');
+      if (complementary && selected !== complementary && (selected.matches("img,figure,picture") || images.length === 1)) {
+        for (const image of images) {
+          selectedIllustrations.set(image, selected);
+          const owner = ownerOf(image);
+          if (owner !== image && complementary.contains(owner)) selectedIllustrations.set(owner, selected);
+        }
+      }
       for (const element of elements) {
         const media = ownerOf(element);
         mediaRoots.add(media);
         if (!insideBody(media) && !bodyRoots.some((root) => media.contains(root))) featuredRoots.add(media);
       }
     }
-    return { roots: [...mediaRoots], featuredRoots: [...featuredRoots] };
+    return { roots: [...mediaRoots], featuredRoots: [...featuredRoots], selectedIllustrations };
   }
   function hasSourceReadingMedia(roots, logoPatterns = []) {
     const selector = "img,svg,canvas,video,audio,iframe";
@@ -5393,6 +5473,7 @@ var clipaibleArticleExtractor = (() => {
       /** @type {Element} */
       cloneReadingContent(originalElement, state.selectionExclusions || [], copies)
     );
+    preserveClonedMathInputs(originalElement, copies);
     const admitted = new Set(admittedElements);
     const graphics = [...state.readingGraphics?.keys() || []].filter((owner) => originalElement.contains(owner) && (admitted.has(owner) || [...admitted].some((element) => owner.contains(element))));
     const candidates = [.../* @__PURE__ */ new Set([...graphics, ...Array.from(originalElement.querySelectorAll("img")).filter((image) => admitted.has(image))])].sort(sourceOrder);
@@ -5460,7 +5541,10 @@ var clipaibleArticleExtractor = (() => {
           insertion.append(" ", link);
         }
       } else {
-        const split = replaceLinkedMedia(copy, reference);
+        const control = copy.closest('button,[role="button"]');
+        let split = null;
+        if (control && clone.contains(control) && control !== clone) control.replaceWith(reference);
+        else split = replaceLinkedMedia(copy, reference);
         if (sourceLink && split) {
           if (!sourceLinks.has(sourceLink)) sourceLinks.set(sourceLink, /* @__PURE__ */ new Set());
           const links = sourceLinks.get(sourceLink);
@@ -5503,13 +5587,13 @@ var clipaibleArticleExtractor = (() => {
       return true;
     }));
   }
-  function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = []) {
+  function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = [], selectedIllustrations = /* @__PURE__ */ new Map()) {
     let excludedImageCount = 0;
     let excludedByType = {};
     const filteredElements = allElements.filter((el) => {
       const tagName = el.tagName.toLowerCase();
       const isImageOrFigure = tagName === "img" || tagName === "figure";
-      if (isExcluded(win, el, constants, readingRoots, tocRoots)) {
+      if (isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
         if (isImageOrFigure) {
           excludedImageCount++;
         } else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -5571,16 +5655,20 @@ var clipaibleArticleExtractor = (() => {
     return references;
   }
   function cloneFigureText(element) {
+    const copies = /* @__PURE__ */ new Map();
     const clone = (
       /** @type {Element} */
-      cloneReadingContent(element)
+      cloneReadingContent(element, [], copies)
     );
-    for (const media of Array.from(clone.querySelectorAll("img,iframe,svg,canvas,video,audio,nav,footer"))) media.remove();
+    preserveClonedMathInputs(element, copies);
+    for (const media of Array.from(clone.querySelectorAll("img,iframe,svg,canvas,video,audio,nav,footer"))) {
+      if (!media.closest("math,mjx-container,.MathJax,.katex")) media.remove();
+    }
     return clone;
   }
   function hasFigureBodyText(element) {
     const clone = cloneFigureText(element);
-    for (const caption of Array.from(clone.querySelectorAll("figcaption"))) caption.remove();
+    for (const auxiliary of Array.from(clone.querySelectorAll('figcaption,button,[role="button"]'))) auxiliary.remove();
     return !!clone.textContent?.trim();
   }
   function partitionCandidateElements(elements, graphics = /* @__PURE__ */ new Map(), readingBoundaries = [], explicitFlowRoots = /* @__PURE__ */ new Set()) {
@@ -5666,7 +5754,7 @@ var clipaibleArticleExtractor = (() => {
         element
       );
       if (!image.closest("figure") && extractBestImageUrl(image) && !isTrackingPixel(win, image) && !isDecorativeImage(win, image, constants.LOGO_PATTERNS || [])) {
-        getImageCaption(image, state.captionOwners, state.selectionExclusions);
+        getImageCaption(image, state.captionOwners, state.selectionExclusions, state.selectedIllustrations?.get(image));
       }
     }
     const readingBoundaries = (state.selectionExclusions || []).filter((rule) => typeof rule !== "string");
@@ -5677,8 +5765,12 @@ var clipaibleArticleExtractor = (() => {
       if (consumed.has(element) || container && consumed.has(container)) continue;
       if (state.captionOwners.has(container || element)) continue;
       const tagName = element.tagName.toLowerCase();
-      if (element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) || isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR))) continue;
-      if (tagName === "h1" && element === state.titleElement && content.every((item) => item.type === "subtitle" || item.type === "separator" || item.isStandfirst || item.isFeatured || item.type === "paragraph" && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || ""))) continue;
+      const selectedTitle = element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) || isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR));
+      const inferredTitle = tagName === "h1" && element === state.titleElement && content.every((item) => item.type === "subtitle" || item.type === "separator" || item.isStandfirst || item.isFeatured || item.type === "paragraph" && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || ""));
+      if (selectedTitle || inferredTitle) {
+        for (const child of Array.from(element.querySelectorAll("*"))) consumed.add(child);
+        continue;
+      }
       if (shouldSkipStronglyExcluded(container || element)) {
         skippedCount++;
         continue;
@@ -5816,7 +5908,7 @@ var clipaibleArticleExtractor = (() => {
           }
           continue;
         }
-        const mixedContent = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr,iframe,video,audio")).some((child) => !child.closest("figcaption"));
+        const mixedContent = Array.from(element.querySelectorAll("h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr,iframe,video,audio")).some((child) => !child.closest('figcaption,button,[role="button"]'));
         if (mixedContent) continue;
         const images = [];
         for (const image of Array.from(element.querySelectorAll("img")).filter((image2) => image2.closest("figure") === element && elements.includes(image2))) {
@@ -5971,12 +6063,15 @@ var clipaibleArticleExtractor = (() => {
     const level = parseInt(element.tagName.charAt(1));
     const aside = element.closest('aside[id],[role~="complementary"][id]');
     const sectionId = aside?.querySelector("h2,h3,h4,h5,h6") === element && isReferencedReadingAside(aside, state.referenceRoots, state.tocRoots) ? aside.id : void 0;
+    const sourceIds = readSourceFragmentIds(element, state.selectionExclusions);
+    if (sectionId && !sourceIds.includes(sectionId)) sourceIds.push(sectionId);
     return {
       type: "heading",
       level,
       text: cleanedText,
       format: "text",
-      id: element.id || sectionId
+      id: sourceIds[0],
+      ...sourceIds.length > 1 ? { sourceFragmentIds: sourceIds } : {}
     };
   }
   function handleParagraph(win, element, state, constants) {
@@ -6023,7 +6118,8 @@ var clipaibleArticleExtractor = (() => {
       /** @type {HTMLImageElement} */
       element,
       state.captionOwners,
-      state.selectionExclusions
+      state.selectionExclusions,
+      state.selectedIllustrations?.get(element)
     );
     return item;
   }
@@ -6096,10 +6192,7 @@ var clipaibleArticleExtractor = (() => {
     const children = Array.from(element.querySelectorAll("li")).filter((li) => li.closest("ul, ol") === element);
     const generatedCounterMatches = element.tagName === "OL" && !element.hasAttribute("reversed") && (!element.hasAttribute("start") || element.getAttribute("start")?.trim() === "1") && children.every((li) => !li.hasAttribute("value"));
     const items = children.map((li, index) => {
-      const clone = (
-        /** @type {Element} */
-        cloneReadingContent(li)
-      );
+      let exclusions = excludedSelectors;
       const leading = Array.from(li.childNodes).find((node) => node.nodeType !== 8 && (node.nodeType !== 3 || node.textContent?.trim()));
       if (generatedCounterMatches && leading?.nodeType === 1 && /** @type {Element} */
       leading.tagName === "SUP" && leading.textContent?.trim() === String(index + 1) && li.id) {
@@ -6110,14 +6203,9 @@ var clipaibleArticleExtractor = (() => {
           const references = target.matches("a[href]") ? [target] : Array.from(target.querySelectorAll("a[href]"));
           return references.some((reference) => reference.textContent?.trim() === label && getDocumentFragmentTarget(reference) === li);
         });
-        if (reciprocal) {
-          const copy = Array.from(clone.childNodes).find((node) => node.nodeType !== 8 && (node.nodeType !== 3 || node.textContent?.trim()));
-          if (copy?.nodeType === 1 && /** @type {Element} */
-          copy.tagName === "SUP" && copy.textContent?.trim() === label) copy.remove();
-        }
+        if (reciprocal) exclusions = [...excludedSelectors, leading];
       }
-      processMathElements(clone);
-      return { html: serializeReadingHtml(clone, excludedSelectors, referenceRoots), ...li.id ? { id: li.id } : {} };
+      return { html: serializeReadingHtml(li, exclusions, referenceRoots), ...li.id ? { id: li.id } : {} };
     }).filter((item) => item.html.length > 0);
     if (items.length === 0) return null;
     return {
@@ -6497,6 +6585,7 @@ var clipaibleArticleExtractor = (() => {
       const primaryRoot = (selectorRecovered ? editorialScope : selection?.roots[0]) || socialRoot || findMainContent(win, doc, (el) => isExcluded(win, el, constants, isSemanticReadingScope(el) ? [el] : []));
       const extractReadingRoots = async (bodyRoots) => {
         const mainContent = bodyRoots[0];
+        const bodyTitle = readLeadingDeclaredTitle(mainContent, titleElement, mainTitleText, selection?.exclusions);
         const selectedHeroes = selectorValues(selectors?.heroImage).flatMap((selector) => Array.from(doc.querySelectorAll(selector)));
         const media = discoverReadingMedia(bodyRoots, selectedHeroes);
         const selectedSubtitle = selectorValues(selectors?.subtitle).flatMap((selector) => Array.from(doc.querySelectorAll(selector))).find((element) => !isSelectedContentExcluded(element, selection.exclusions));
@@ -6511,7 +6600,7 @@ var clipaibleArticleExtractor = (() => {
           addedHeadings: /* @__PURE__ */ new Set(),
           mainTitleText,
           titleElement,
-          selectedTitleElement,
+          selectedTitleElement: bodyTitle || selectedTitleElement,
           standfirstElement: standfirst.element,
           standfirstText: standfirst.text,
           content: [],
@@ -6520,6 +6609,7 @@ var clipaibleArticleExtractor = (() => {
           referenceRoots: readingRoots,
           tocRoots: selection?.tocRoots,
           featuredMediaRoots: media.featuredRoots,
+          selectedIllustrations: media.selectedIllustrations,
           extractionDeadline,
           debugInfo
         };
@@ -6528,7 +6618,7 @@ var clipaibleArticleExtractor = (() => {
           ...explicitFlowRoots || [],
           ...standfirst.element ? [standfirst.element] : []
         ])].filter((element) => (!selection || !isSelectedContentExcluded(element, selection.exclusions)) && !isSourceExcluded(element, interfaceRegions));
-        const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots);
+        const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots, media.selectedIllustrations);
         const sortedElements = sortElementsInDomOrder(filteredElements);
         if (debugInfo) {
           debugInfo.foundElements = allElements.length;
@@ -6546,7 +6636,7 @@ var clipaibleArticleExtractor = (() => {
           const image = extractMetadataImage(doc, baseUrl, constants.LOGO_PATTERNS);
           if (image) content2.unshift({ type: "image", ...image, isFeatured: true });
         }
-        return { content: content2, hasReadingContent: hasReadingContent2 };
+        return { content: content2, hasReadingContent: hasReadingContent2, bodyTitle };
       };
       let attempt = primaryRoot ? await extractReadingRoots(selection?.matched ? selection.roots : [primaryRoot]) : null;
       if (selectorRecovered && !attempt?.content.some(hasArticleBodyContent)) attempt = null;
@@ -6571,7 +6661,9 @@ var clipaibleArticleExtractor = (() => {
         }
       }
       const content = attempt?.hasReadingContent ? attempt.content : [];
-      const titleFragmentIds = content.length && metadata.title ? readTitleFragmentIds(titleElement, mainTitleText, selection?.exclusions) : [];
+      const titleFragmentIds = content.length && metadata.title ? [...new Set(
+        [titleElement, attempt?.bodyTitle].flatMap((element) => readTitleFragmentIds(element, mainTitleText, selection?.exclusions))
+      )] : [];
       if (debugInfo) {
         const contentTypes = {};
         for (const item of content) {
@@ -6620,21 +6712,24 @@ var clipaibleArticleExtractor = (() => {
     for (const child of copy.querySelectorAll(media)) child.remove();
     return !copy.textContent?.trim();
   }
+  function readLeadingDeclaredTitle(root, outerTitle, titleText, exclusions) {
+    if (!root || !outerTitle || !titleText || root.contains(outerTitle)) return null;
+    for (let owner = root; owner?.matches("article,main,section,div,header"); owner = owner.firstElementChild) {
+      const heading = owner.firstElementChild;
+      if (!heading) break;
+      for (let node = owner.firstChild; node && node !== heading; node = node.nextSibling) {
+        if (node.nodeType === 3 && node.textContent?.trim()) return null;
+      }
+      if (!heading.matches("h1,h2,h3,h4,h5,h6")) continue;
+      return heading.matches('[itemprop~="headline"],[data-type="document-title"]') && normalizeHeadingForDedup(readArticleMetadataText(heading, exclusions)) === titleText ? heading : null;
+    }
+    return null;
+  }
   function readTitleFragmentIds(element, titleText, exclusions) {
     if (!element || isSourceExcluded(element, exclusions)) return [];
     const heading = element.closest("h1");
     if (heading && heading !== element && normalizeHeadingForDedup(readArticleMetadataText(heading)) === titleText) element = heading;
-    const copies = /* @__PURE__ */ new Map();
-    const title = cloneReadingContent(element, exclusions, copies);
-    const document2 = element.ownerDocument;
-    const ids = /* @__PURE__ */ new Set();
-    for (const [source, copy] of copies) {
-      if (!title.contains(copy)) continue;
-      if (source.id && document2.getElementById(source.id) === source) ids.add(source.id);
-      const name = source.matches("a[name]") ? source.getAttribute("name") : "";
-      if (name && !document2.getElementById(name) && [...document2.getElementsByName(name)].find((node) => node.matches("a")) === source) ids.add(name);
-    }
-    return [...ids];
+    return readSourceFragmentIds(element, exclusions);
   }
   return __toCommonJS(extractor_entry_exports);
 })();

@@ -6,6 +6,8 @@
 export const SENTENCE_END_PATTERN = /[.!?]\s*$/;
 export const CAPITAL_START_PATTERN = /^\p{Lu}/u;
 export const LOWERCASE_START_PATTERN = /^\p{Ll}/u;
+export const SECTION_NUMBER_PATTERN = /^(?:(\d+(?:\.\d+)+)[.)]?|(\d+)[.)])(?=\s+\S|$)/;
+export const FIGURE_CAPTION_PATTERN = /^(?:figure|fig\.|abbildung|figura|illustration)\s+\d+[a-z]?\s*[.|:\u2013\u2014]\s+\S/iu;
 export const PUNCTUATION_END_PATTERN = /[,;:—–-]\s*$/;
 export const HYPHEN_END_PATTERN = /[-—–]\s*$/;
 

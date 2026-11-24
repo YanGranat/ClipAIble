@@ -12,7 +12,7 @@ vi.mock('../../scripts/api/blob-download.js', () => ({ downloadBlob: async (blob
   finally { URL.revokeObjectURL(url); }
 } }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 }) }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', async importOriginal => ({ ...await importOriginal(), getUILanguageCached: async () => 'en', checkCancellation: async () => {} }));
 vi.mock('../../scripts/utils/api-key-manager.js', () => ({ TTSApiKeyManager: { getDecryptedKey: async () => 'synthetic-tts-key' } }));
 vi.mock('../../scripts/utils/security/encryption.js', async importOriginal => ({ ...await importOriginal(), decryptApiKey: async key => key }));

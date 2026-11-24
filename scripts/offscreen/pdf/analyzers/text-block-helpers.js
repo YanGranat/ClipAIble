@@ -4,6 +4,7 @@
 import { log } from '../../../utils/logging.js';
 import { DEFAULT_METRICS } from '../constants.js';
 import { isColumnGap } from './visual-structure-analyzer.js';
+import { SECTION_NUMBER_PATTERN } from '../utils/regex-patterns.js';
 
 /**
  * Check if a gap indicates a block boundary (large empty space)
@@ -19,6 +20,8 @@ export function checkBlockBoundary(effectiveGap, gapAnalysis, currentBlock, curr
   const { normalGapMax, paragraphGapMin, mean } = gapAnalysis;
   const avgFontSize = current.fontSize || 12;
   const baseFontSize = metrics.baseFontSize || gapAnalysis.baseFontSize || 12;
+  if (next?.isBold && effectiveGap >= baseFontSize * 1.5 &&
+      next.text?.trim().match(SECTION_NUMBER_PATTERN)?.[1]) return true;
   
   // Check multiple conditions for block boundary
   const check1 = effectiveGap >= paragraphGapMin;

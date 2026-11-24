@@ -5,7 +5,7 @@ import { textToSpeech as respeecher } from '../../scripts/api/respeecher.js';
 import { textToSpeech as google } from '../../scripts/api/google-tts.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (fn) => fn() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 }) }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ checkCancellation: async () => {} }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: (key) => `${key}: {provider} {error}` }));
 

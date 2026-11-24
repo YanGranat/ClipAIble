@@ -5,6 +5,15 @@
 /** Regions that own interface text independently of the surrounding article. */
 export const INTERFACE_REGIONS = 'nav,footer,dialog,[role~="navigation"],[role~="dialog"],[role~="alertdialog"],[aria-modal="true"]';
 
+/** Identify an inline graphic explicitly attached to a neighboring link. */
+export function isExternalLinkAdornment(element) {
+  const svg = element.closest('svg[data-extlink-placement]');
+  if (!svg) return false;
+  const placement = svg.getAttribute('data-extlink-placement');
+  const link = placement === 'after' ? svg.previousElementSibling : placement === 'before' ? svg.nextElementSibling : null;
+  return link?.matches('a[href][data-extlink]') === true;
+}
+
 /** Identify controls that share the current article or follow its publisher. */
 export function isPublisherLinkAction(element) {
   const link = element.closest('a[href]');
@@ -186,7 +195,8 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
   copyMap?.set(element, clone);
   const excluded = node => {
     const region = node.closest(INTERFACE_REGIONS);
-    return (region && !(disclosed && region === element)) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
+    return (region && !(disclosed && region === element)) || isExternalLinkAdornment(node) ||
+      isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
   };
   if (excluded(element)) { clone.replaceChildren(); return clone; }
   const originals = Array.from(element.querySelectorAll('*'));
@@ -241,6 +251,22 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     }
   }
   return clone;
+}
+
+/** Read source destinations owned by a rendered title or heading. */
+export function readSourceFragmentIds(element, exclusions = []) {
+  if (!element || isSourceExcluded(element, exclusions)) return [];
+  const copies = new Map();
+  const root = cloneReadingContent(element, exclusions, copies);
+  const document = element.ownerDocument;
+  const ids = new Set();
+  for (const [source, copy] of copies) {
+    if (!root.contains(copy)) continue;
+    if (source.id && document.getElementById(source.id) === source) ids.add(source.id);
+    const name = source.matches('a[name]') ? source.getAttribute('name') : '';
+    if (name && !document.getElementById(name) && [...document.getElementsByName(name)].find(node => node.matches('a')) === source) ids.add(name);
+  }
+  return [...ids];
 }
 
 /** Resolve an internal fragment against its source document. */

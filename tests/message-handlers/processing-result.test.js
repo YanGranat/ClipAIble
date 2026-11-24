@@ -57,10 +57,30 @@ it('rejects malformed offscreen progress and ignores a late update after downloa
     expect(state.getProcessingState().progress).toBe(86);
     await reply('TTS_PROGRESS', { ...progress, sentenceIndex: 2 });
     expect(state.getProcessingState().progress).toBe(86);
-    expect(state.getProcessingState().status).toContain('(4/4 sentences)');
+    expect(state.getProcessingState()).toMatchObject({ statusTranslationKey: 'statusGeneratingAudioChunks',
+      statusTranslationParams: { current: 4, total: 4 } });
     await state.completeProcessing(undefined, processingRunId);
     await reply('TTS_PROGRESS', progress);
     expect(await reply('getState')).toMatchObject({ processingRunId, phase: 'complete', progress: 100 });
+  } finally {
+    await state.resetState();
+  }
+});
+
+it('keeps the latest offscreen speech segment when two updates round to the same percentage', async () => {
+  mocks.sizeValid = true;
+  const sender = { id: chrome.runtime.id, url: chrome.runtime.getURL('offscreen.html') };
+  await state.resetState();
+  try {
+    expect(await state.startProcessing()).toBe(true);
+    const processingRunId = state.getProcessingRunId();
+    state.updateState({ outputFormat: 'audio', progress: 60 }, processingRunId);
+    const sendProgress = sentenceIndex => new Promise(resolve => routeMessage({ action: 'TTS_PROGRESS',
+      data: { processingRunId, totalSentences: 200, sentenceIndex } }, sender, resolve, {}));
+    expect(await sendProgress(4)).toEqual({ success: true });
+    expect(await sendProgress(2)).toEqual({ success: true, ignored: true });
+    expect(state.getProcessingState()).toMatchObject({ progress: 60, statusTranslationKey: 'statusGeneratingAudioChunks',
+      statusTranslationParams: { current: 4, total: 200 } });
   } finally {
     await state.resetState();
   }

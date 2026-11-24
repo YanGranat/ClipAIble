@@ -528,11 +528,16 @@ export function routeMessage(request, sender, sendResponse, deps) {
       const state = getProcessingState();
       const progress = totalSentences === 1 ? 90 :
         Math.min(progressBase + Math.floor((sentenceIndex - 1) / totalSentences * progressRange), 94);
-      if (!state.isProcessing || state.outputFormat !== 'audio' || isCancelled(processingRunId) || progress < state.progress) {
+      const statusTranslationKey = 'statusGeneratingAudioChunks';
+      const statusTranslationParams = { current: sentenceIndex, total: totalSentences };
+      const previous = state.statusTranslationKey === statusTranslationKey ? state.statusTranslationParams : null;
+      if (!state.isProcessing || state.outputFormat !== 'audio' || isCancelled(processingRunId) || progress < state.progress ||
+          (previous?.total === totalSentences && previous.current >= sentenceIndex)) {
         sendResponse({ success: true, ignored: true });
         return true;
       }
-      updateState({ status: `Generating audio... (${sentenceIndex}/${totalSentences} sentences)`, progress }, processingRunId);
+      updateState({ status: tSync(statusTranslationKey, 'en', statusTranslationParams), statusTranslationKey,
+        statusTranslationParams, progress }, processingRunId);
       sendResponse({ success: true });
       return true;
     },

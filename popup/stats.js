@@ -18,6 +18,24 @@ export function getSafeHistoryUrl(value) {
   }
 }
 
+/** Reports success only after the worker confirms the storage mutation. */
+export async function mutateStatistics(request, refresh, showToast, successKey) {
+  let response;
+  try {
+    response = await chrome.runtime.sendMessage(request);
+  } catch (error) {
+    logError('Statistics mutation failed', error);
+  }
+  if (response?.success !== true) {
+    const key = response?.translationKey || 'errorUnknown';
+    const translation = response?.translationParams ? { key, params: response.translationParams } : { key };
+    showToast(await t(key, undefined, translation.params), 'error', translation);
+    return;
+  }
+  await refresh();
+  if (successKey) showToast(await t(successKey), 'success', { key: successKey });
+}
+
 /**
  * Initialize stats module with dependencies
  * @param {Object} deps - Dependencies object
@@ -29,6 +47,7 @@ export function initStats(deps) {
 
   let historyRevision = 0;
   let cacheRevision = 0;
+  let loadRevision = 0;
 
   async function displayStats(stats) {
     const revision = ++historyRevision;
@@ -120,8 +139,7 @@ export function initStats(deps) {
             btn.addEventListener('click', async (event) => {
               event.preventDefault();
               event.stopPropagation();
-              await chrome.runtime.sendMessage({ action: 'deleteHistoryItem', item });
-              await loadAndDisplayStats();
+              await mutateStatistics({ action: 'deleteHistoryItem', item }, loadAndDisplayStats, showToast);
             });
           });
           historyContainer.replaceChildren(fragment);
@@ -191,10 +209,7 @@ export function initStats(deps) {
                 event.stopPropagation();
                 const deleteConfirm = formatMessage('deleteDomainFromCache', await getUILanguage(), { domain });
                 if (confirm(deleteConfirm)) {
-                  await chrome.runtime.sendMessage({ action: 'deleteDomainFromCache', domain });
-                  await loadAndDisplayStats();
-                  const domainRemovedText = await t('domainRemovedFromCache');
-                  showToast(domainRemovedText, 'success', { key: 'domainRemovedFromCache' });
+                  await mutateStatistics({ action: 'deleteDomainFromCache', domain }, loadAndDisplayStats, showToast, 'domainRemovedFromCache');
                 }
               });
             });
@@ -210,22 +225,16 @@ export function initStats(deps) {
   }
 
   async function loadAndDisplayStats() {
-    try {
-      const [statsResponse, cacheResponse] = await Promise.all([
-        chrome.runtime.sendMessage({ action: 'getStats' }),
-        chrome.runtime.sendMessage({ action: 'getCacheStats' })
-      ]);
-      
-      if (statsResponse && statsResponse.stats) {
-        await displayStats(statsResponse.stats);
+    const revision = ++loadRevision;
+    const read = async (action, display) => {
+      try {
+        const response = await chrome.runtime.sendMessage({ action });
+        if (revision === loadRevision && response?.stats) await display(response.stats);
+      } catch (error) {
+        logError('Failed to load stats', { action, error });
       }
-      
-      if (cacheResponse && cacheResponse.stats) {
-        await displayCacheStats(cacheResponse.stats);
-      }
-    } catch (error) {
-      logError('Failed to load stats', error);
-    }
+    };
+    await Promise.all([read('getStats', displayStats), read('getCacheStats', displayCacheStats)]);
   }
 
   return {

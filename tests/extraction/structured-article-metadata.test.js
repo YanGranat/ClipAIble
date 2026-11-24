@@ -41,8 +41,8 @@ describe('Current structured article metadata', () => {
     expect(metadata(current, { extra }).author).toBe('Morgan Example');
   });
 
-  it('retains every repeated scholarly author metadata value without including institutions', () => {
-    const extra = '<meta name="citation_author" content="Morgan Example"><meta name="citation_author_institution" content="Survey Institute"><meta name="citation_author" content="Casey Example">';
+  it('retains scholarly author order without duplicate names or institutions', () => {
+    const extra = '<meta name="citation_author" content="Morgan Example"><meta name="citation_author_institution" content="Survey Institute"><meta name="citation_author" content="Casey Example"><meta name="citation_author" content="  Morgan   Example ">';
     expect(metadata(current, { extra })).toMatchObject({ author: 'Morgan Example, Casey Example' });
   });
 

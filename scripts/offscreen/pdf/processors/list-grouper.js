@@ -3,7 +3,7 @@
 // Handles different list types (ordered/unordered), nesting levels, and cross-page merging
 
 import { log } from '../utils/logging.js';
-import { LIST_ITEM_START_PATTERN, LIST_ITEM_PATTERNS } from '../utils/regex-patterns.js';
+import { LIST_ITEM_START_PATTERN } from '../utils/regex-patterns.js';
 import { validateArrayInput } from '../utils/array-helpers.js';
 
 function sameListColumn(first, second) {
@@ -114,8 +114,6 @@ function shouldGroupLists(list1, list2, context = {}) {
   // Check text patterns first (most reliable)
   const list1IsOrdered = /^\s*\d+[\.\)]\s+/.test(list1Text);
   const list2IsOrdered = /^\s*\d+[\.\)]\s+/.test(list2Text);
-  const list1IsBullet = LIST_ITEM_START_PATTERN.test(list1Text);
-  const list2IsBullet = LIST_ITEM_START_PATTERN.test(list2Text);
   
   // Determine ordered/unordered status from both flags and patterns
   const list1Ordered = list1.ordered !== undefined ? list1.ordered : 
@@ -129,16 +127,7 @@ function shouldGroupLists(list1, list2, context = {}) {
     return false;
   }
   
-  // Same type - group only if same level
-  if (list1Level === list2Level) {
-    // Same type and level - group them
-    return true;
-  } else {
-    // Different levels - don't group (nested lists)
-    return false;
-  }
-  
-  return false;
+  return list1Level === list2Level;
 }
 
 /**
@@ -187,130 +176,6 @@ function extractListItemText(text, pattern) {
  * @param {{baseFontSize?: number, [key: string]: any}} metrics - PDF metrics (for baseFontSize)
  * @returns {Array} Processed elements with grouped lists
  */
-/**
- * Check if element is ordered list
- * @param {{type?: string, text?: string, ordered?: boolean, listType?: string, [key: string]: any}} element - List element
- * @returns {boolean} True if ordered
- */
-function isOrderedList(element) {
-  if (element.ordered !== undefined) return element.ordered;
-  if (element.listType === 'ordered' || element.listType === 'numbered' || element.listType === 'roman') {
-    return true;
-  }
-  const text = (element.text || '').trim();
-  return /^\s*\d+[\.\)]\s+/.test(text);
-}
-
-/**
- * Check if element is nested within current list based on X-coordinate
- * @param {{type?: string, text?: string, [key: string]: any}} element - Element to check
- * @param {{type?: string, items?: Array<any>, [key: string]: any}} currentList - Current list
- * @param {number} baseFontSize - Base font size for threshold calculation
- * @returns {Object} { isNested, levelDiff }
- */
-function checkNesting(element, currentList, baseFontSize) {
-  const isNested = element.minX !== undefined && currentList?.minX !== undefined && 
-                   element.minX > currentList.minX;
-  
-  if (!isNested) {
-    return { isNested: false, levelDiff: 0 };
-  }
-  
-  const indentThreshold = Math.max(baseFontSize * 0.15, 10);
-  const xDiff = element.minX - (currentList?.minX || 0);
-  const levelDiff = xDiff > indentThreshold ? Math.floor(xDiff / indentThreshold) : 0;
-  
-  return { isNested, levelDiff };
-}
-
-/**
- * Determine if element should be merged with current list
- * @param {{type?: string, text?: string, [key: string]: any}} element - Element to check
- * @param {{type?: string, items?: Array<any>, [key: string]: any}} currentList - Current list
- * @param {{previousElements?: Array<any>, baseFontSize?: number, [key: string]: any}} context - Context with previousElements and baseFontSize
- * @returns {boolean} Should merge
- */
-function shouldMergeWithCurrentList(element, currentList, context) {
-  if (!currentList) return false;
-  
-  const { baseFontSize } = context;
-  const currentListOrdered = isOrderedList(currentList);
-  const elementOrdered = isOrderedList(element);
-  
-  // Check nesting
-  const { isNested, levelDiff } = checkNesting(element, currentList, baseFontSize);
-  
-  // Check if should merge
-  return (
-    shouldGroupLists(currentList, element, context) ||
-    (isNested && levelDiff > 0) ||
-    (currentListOrdered && elementOrdered && 
-     (element.listLevel || 0) === (currentList.listLevel || 0))
-  );
-}
-
-/**
- * Add item to current list
- * @param {{items?: Array<any>, [key: string]: any}} currentList - Current list
- * @param {{type?: string, text?: string, [key: string]: any}} element - Element to add
- * @param {string} itemText - Extracted item text
- * @param {number} actualLevel - Calculated nesting level
- */
-function addItemToList(currentList, element, itemText, actualLevel) {
-  if (!currentList.items) {
-    currentList.items = [];
-  }
-  
-  currentList.items.push({
-    text: itemText || element.text || '',
-    pageNum: element.pageNum,
-    columnIndex: element.columnIndex,
-    minY: element.minY,
-    maxY: element.maxY,
-    minX: element.minX,
-    listLevel: actualLevel,
-    parentIsOrdered: currentList.ordered || currentList.listType === 'ordered',
-    isOrdered: element.ordered !== undefined ? element.ordered : 
-               (element.listType === 'ordered' || element.listType === 'numbered' || element.listType === 'roman')
-  });
-  
-  // Update list metadata
-  currentList.text = (currentList.text || '') + '\n' + (element.text || '');
-  if (element.pageNum && (!currentList.pageNum || element.pageNum > currentList.pageNum)) {
-    currentList.pageNum = element.pageNum;
-  }
-  if (element.maxY && (!currentList.maxY || element.maxY > currentList.maxY)) {
-    currentList.maxY = element.maxY;
-  }
-  if (element.minY && (!currentList.minY || element.minY < currentList.minY)) {
-    currentList.minY = element.minY;
-  }
-}
-
-/**
- * Create new list element from single element
- * @param {{type?: string, text?: string, ordered?: boolean, listType?: string, [key: string]: any}} element - List element
- * @param {string} itemText - Extracted item text
- * @returns {Object} New list element
- */
-function createNewList(element, itemText) {
-  return {
-    ...element,
-    listLevel: element.listLevel || 0,
-    ordered: element.ordered !== undefined ? element.ordered : (element.listType === 'ordered'),
-    items: [{
-      text: itemText || element.text || '',
-      pageNum: element.pageNum,
-      columnIndex: element.columnIndex,
-      minY: element.minY,
-      maxY: element.maxY,
-      minX: element.minX,
-      listLevel: element.listLevel || 0,
-      isOrdered: element.ordered || element.listType === 'ordered'
-    }]
-  };
-}
-
 export function groupConsecutiveListItems(elements, metrics = {}) {
   // Validate input using utility
   const elementsError = validateArrayInput(elements, 'elements');

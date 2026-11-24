@@ -266,7 +266,9 @@ export async function preparePdfLayout(paperWidthInches, pageMode = 'single', pa
 
   function measureHeight() {
     const bounds = article.getBoundingClientRect();
-    return Math.ceil(Math.max(bounds.bottom, bounds.top + article.scrollHeight)) + 1;
+    // Collapsed margins can extend the document beyond the article's own box.
+    const documentBottom = document.documentElement.getBoundingClientRect().bottom;
+    return Math.ceil(Math.max(documentBottom, bounds.bottom, bounds.top + article.scrollHeight)) + 1;
   }
 
   function fitPageEndFigures(printablePageHeight) {

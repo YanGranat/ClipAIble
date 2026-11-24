@@ -8,7 +8,7 @@ import { detectGoogleTranslateState, checkFirstParagraph } from './translate.js'
 import { extractMetadata, findArticleTitleElement } from './metadata.js';
 import { findMainContent } from './discover.js';
 import { discoverReadingMedia, extractMetadataImage, hasSourceReadingMedia } from './images.js';
-import { cloneReadingContent, isSourceExcluded, readArticleMetadataText } from './dom-utils.js';
+import { isSourceExcluded, readArticleMetadataText, readSourceFragmentIds } from './dom-utils.js';
 import { extractStandfirst } from './standfirst.js';
 import { collectCandidateElements, collectExplicitFlowRoots, filterCandidateElements, sortElementsInDomOrder, parseElements } from './parse.js';
 import { captureReadingGraphics } from './graphics.js';
@@ -117,6 +117,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
     // Discovery changes roots, while every source occurrence uses the same parser.
     const extractReadingRoots = async bodyRoots => {
       const mainContent = bodyRoots[0];
+      const bodyTitle = readLeadingDeclaredTitle(mainContent, titleElement, mainTitleText, selection?.exclusions);
       const selectedHeroes = selectorValues(selectors?.heroImage)
         .flatMap(selector => Array.from(doc.querySelectorAll(selector)));
       const media = discoverReadingMedia(bodyRoots, selectedHeroes);
@@ -137,7 +138,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         addedHeadings: new Set(),
         mainTitleText,
         titleElement,
-        selectedTitleElement,
+        selectedTitleElement: bodyTitle || selectedTitleElement,
         standfirstElement: standfirst.element,
         standfirstText: standfirst.text,
         content: [],
@@ -146,6 +147,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         referenceRoots: readingRoots,
         tocRoots: selection?.tocRoots,
         featuredMediaRoots: media.featuredRoots,
+        selectedIllustrations: media.selectedIllustrations,
         extractionDeadline,
         debugInfo
       };
@@ -153,7 +155,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         ...(explicitFlowRoots || []), ...(standfirst.element ? [standfirst.element] : [])])]
         .filter(element => (!selection || !isSelectedContentExcluded(element, selection.exclusions)) &&
           !isSourceExcluded(element, interfaceRegions));
-      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots);
+      const filteredElements = filterCandidateElements(win, allElements, constants, debugInfo, readingRoots, state.tocRoots, media.selectedIllustrations);
       const sortedElements = sortElementsInDomOrder(filteredElements);
       if (debugInfo) {
         debugInfo.foundElements = allElements.length;
@@ -169,7 +171,7 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
         const image = extractMetadataImage(doc, baseUrl, constants.LOGO_PATTERNS);
         if (image) content.unshift({ type: 'image', ...image, isFeatured: true });
       }
-      return { content, hasReadingContent };
+      return { content, hasReadingContent, bodyTitle };
     };
 
     let attempt = primaryRoot ? await extractReadingRoots(selection?.matched ? selection.roots : [primaryRoot]) : null;
@@ -193,7 +195,9 @@ export async function runExtraction(baseUrl, enableDebugInfo = false, selectors 
       }
     }
     const content = attempt?.hasReadingContent ? attempt.content : [];
-    const titleFragmentIds = content.length && metadata.title ? readTitleFragmentIds(titleElement, mainTitleText, selection?.exclusions) : [];
+    const titleFragmentIds = content.length && metadata.title ? [...new Set(
+      [titleElement, attempt?.bodyTitle].flatMap(element => readTitleFragmentIds(element, mainTitleText, selection?.exclusions))
+    )] : [];
 
     // Final content types count
     if (debugInfo) {
@@ -257,21 +261,26 @@ function isMediaOnlySelectionRoot(root) {
 }
 
 /** Keep only source-owned targets still present in the readable title. */
+function readLeadingDeclaredTitle(root, outerTitle, titleText, exclusions) {
+  if (!root || !outerTitle || !titleText || root.contains(outerTitle)) return null;
+  for (let owner = root; owner?.matches('article,main,section,div,header'); owner = owner.firstElementChild) {
+    const heading = owner.firstElementChild;
+    if (!heading) break;
+    for (let node = owner.firstChild; node && node !== heading; node = node.nextSibling) {
+      if (node.nodeType === 3 && node.textContent?.trim()) return null;
+    }
+    if (!heading.matches('h1,h2,h3,h4,h5,h6')) continue;
+    return heading.matches('[itemprop~="headline"],[data-type="document-title"]') &&
+      normalizeHeadingForDedup(readArticleMetadataText(heading, exclusions)) === titleText ? heading : null;
+  }
+  return null;
+}
+
 function readTitleFragmentIds(element, titleText, exclusions) {
   if (!element || isSourceExcluded(element, exclusions)) return [];
   const heading = element.closest('h1');
   if (heading && heading !== element && normalizeHeadingForDedup(readArticleMetadataText(heading)) === titleText) element = heading;
-  const copies = new Map();
-  const title = cloneReadingContent(element, exclusions, copies);
-  const document = element.ownerDocument;
-  const ids = new Set();
-  for (const [source, copy] of copies) {
-    if (!title.contains(copy)) continue;
-    if (source.id && document.getElementById(source.id) === source) ids.add(source.id);
-    const name = source.matches('a[name]') ? source.getAttribute('name') : '';
-    if (name && !document.getElementById(name) && [...document.getElementsByName(name)].find(node => node.matches('a')) === source) ids.add(name);
-  }
-  return [...ids];
+  return readSourceFragmentIds(element, exclusions);
 }
 
 // Re-export utilities for external use

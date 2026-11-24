@@ -1,6 +1,7 @@
 // @ts-check
 // Panel handlers (settings, stats, import/export)
 import { formatMessage } from '../../scripts/locales.js';
+import { mutateStatistics } from '../stats.js';
 
 /**
  * Setup panel toggle and action handlers
@@ -129,10 +130,7 @@ export function setupPanelHandlers(deps) {
       const locale = UI_LOCALES[langCode] || UI_LOCALES.en;
       const clearStatsConfirm = locale.clearAllStatisticsConfirm || UI_LOCALES.en.clearAllStatisticsConfirm;
       if (confirm(clearStatsConfirm)) {
-        await chrome.runtime.sendMessage({ action: 'clearStats' });
-        await loadAndDisplayStats();
-        const locale = await t('statisticsCleared');
-        showToast(locale, 'success', { key: 'statisticsCleared' });
+        await mutateStatistics({ action: 'clearStats' }, loadAndDisplayStats, showToast, 'statisticsCleared');
       }
     });
   }
@@ -149,10 +147,7 @@ export function setupPanelHandlers(deps) {
           const clearCacheConfirm = locale.clearSelectorCacheConfirm || UI_LOCALES.en.clearSelectorCacheConfirm;
           if (confirm(clearCacheConfirm)) {
             deferAsyncWork(async () => {
-              await chrome.runtime.sendMessage({ action: 'clearSelectorCache' });
-              await loadAndDisplayStats();
-              const locale = await t('cacheCleared');
-              showToast(locale, 'success', { key: 'cacheCleared' });
+              await mutateStatistics({ action: 'clearSelectorCache' }, loadAndDisplayStats, showToast, 'cacheCleared');
             });
           }
         });

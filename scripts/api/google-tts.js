@@ -188,12 +188,13 @@ export async function textToSpeech(text, apiKey, options = {}) {
     
     try {
       response = await callWithRetry(
-        async () => {
+        async ({ signal }) => {
           await checkCancellation('Google TTS request', options.processingRunId);
           
           try {
             // Generative Language API: API key via x-goog-api-key header
             const fetchResponse = await fetchBufferedResponse(endpointUrl, {
+              signal,
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
@@ -241,12 +242,15 @@ export async function textToSpeech(text, apiKey, options = {}) {
           }
         },
         {
+          signal: options.signal,
+          checkCancelled: () => checkCancellation('Google TTS retry', options.processingRunId),
           onRetry: (attempt, delay) => {
             log(`Google Gemini TTS API retry attempt ${attempt}, waiting ${delay}ms...`);
           }
         }
       );
     } catch (fetchError) {
+      options.signal?.throwIfAborted();
       await checkCancellation('Google TTS response', options.processingRunId);
       if (fetchError.name === 'AbortError') {
         throw await handleTimeoutError('Google Gemini TTS');

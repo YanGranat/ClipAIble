@@ -124,6 +124,7 @@
  * @property {Set<string>} [readingMediaReservations] - Fragment names already owned in the extraction
  * @property {number} [readingMediaCounter] - Allocation sequence for structured-block media
  * @property {Element[]} [featuredMediaRoots] - Source owners of media preceding the selected body
+ * @property {Map<Element, Element>} [selectedIllustrations] - Explicitly selected media mapped to its caption group
  * @property {Set<string>} addedHeadings - Set of added heading texts (normalized)
  * @property {Set<string>} [addedParagraphs] - Lazily collected paragraph text keys
  * @property {string} mainTitleText - Main title text (normalized)

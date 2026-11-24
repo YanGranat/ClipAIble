@@ -4,6 +4,7 @@
 // Also extracts fontWeight and fontStyle if available
 
 import { log, criticalLog } from '../../../utils/logging.js';
+import { TEXT_FORMATTING } from '../constants.js';
 
 /**
  * Font information extracted from textContent.styles
@@ -193,7 +194,7 @@ export function extractFontNameMapping(textContent, pageNum, fontObjects = null)
           if (finalFontName && typeof finalFontName === 'string') {
             // Extract formatting from font name if not already found
             // Many PDFs encode formatting in font name (e.g., "Helvetica-Bold", "Arial-Italic")
-            if (!fontWeight && /bold|black|heavy|demi|semi/i.test(finalFontName)) {
+            if (!fontWeight && TEXT_FORMATTING.BOLD_FONT_PATTERN.test(finalFontName)) {
               fontWeight = 'bold';
               log(`[PDF v3] extractFontNameMapping: Page ${pageNum} - Detected BOLD from font name: "${finalFontName}"`);
             }
@@ -204,7 +205,7 @@ export function extractFontNameMapping(textContent, pageNum, fontObjects = null)
             }
             
             // Also check internal font name (sometimes it contains formatting info)
-            if (!fontWeight && /bold|black|heavy|demi|semi/i.test(internalFontName)) {
+            if (!fontWeight && TEXT_FORMATTING.BOLD_FONT_PATTERN.test(internalFontName)) {
               fontWeight = 'bold';
               log(`[PDF v3] extractFontNameMapping: Page ${pageNum} - Detected BOLD from internal font name: "${internalFontName}"`);
             }

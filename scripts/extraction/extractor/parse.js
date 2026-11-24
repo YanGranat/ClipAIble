@@ -2,13 +2,13 @@
 // Main DOM parser for extraction
 // Converts DOM elements to content items
 
-import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, safeGetComputedStyle, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
+import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, readSourceFragmentIds, safeGetComputedStyle, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isRealHeading } from './text-utils.js';
 import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent, semanticClassNames } from './filters.js';
 import { extractBestImageUrl, isCollapsedImageLayer, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
 import { getOriginalTextIfTranslated } from './translate.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
-import { serializeReadingHtml, processMathElements, encodeOriginalText, preserveRangeMathInputs } from './inline-content.js';
+import { serializeReadingHtml, encodeOriginalText, preserveClonedMathInputs, preserveRangeMathInputs } from './inline-content.js';
 import { CANDIDATE_SELECTOR } from './constants.js';
 import { isReadingOwned, isLayoutTable, isFlowContainer, isReferencedReadingAside } from './reading-context.js';
 import { collectAnnotationTargets, emittedReadingIds, reuseAnnotationCitations } from './annotations.js';
@@ -59,7 +59,7 @@ export function collectExplicitFlowRoots(roots) {
  * @param {DebugInfo|null} debugInfo - Debug info
  * @returns {Element[]} - Filtered elements
  */
-export function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = []) {
+export function filterCandidateElements(win, allElements, constants, debugInfo, readingRoots = [], tocRoots = [], selectedIllustrations = new Map()) {
   let excludedImageCount = 0;
   let excludedByType = {};
   
@@ -67,7 +67,7 @@ export function filterCandidateElements(win, allElements, constants, debugInfo, 
     const tagName = el.tagName.toLowerCase();
     const isImageOrFigure = tagName === 'img' || tagName === 'figure';
     
-    if (isExcluded(win, el, constants, readingRoots, tocRoots)) {
+    if (isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
       if (isImageOrFigure) {
         excludedImageCount++;
         // Debug log for excluded images/figures
@@ -140,15 +140,19 @@ function graphicReferences(owner, state, constants, win, baseUrl) {
 
 /** Clone figure text without its controls or hidden presentation content. */
 export function cloneFigureText(element) {
-  const clone = /** @type {Element} */ (cloneReadingContent(element));
-  for (const media of Array.from(clone.querySelectorAll('img,iframe,svg,canvas,video,audio,nav,footer'))) media.remove();
+  const copies = new Map();
+  const clone = /** @type {Element} */ (cloneReadingContent(element, [], copies));
+  preserveClonedMathInputs(element, copies);
+  for (const media of Array.from(clone.querySelectorAll('img,iframe,svg,canvas,video,audio,nav,footer'))) {
+    if (!media.closest('math,mjx-container,.MathJax,.katex')) media.remove();
+  }
   return clone;
 }
 
 /** Distinguish figure body text from an image's caption and presentation controls. */
 export function hasFigureBodyText(element) {
   const clone = cloneFigureText(element);
-  for (const caption of Array.from(clone.querySelectorAll('figcaption'))) caption.remove();
+  for (const auxiliary of Array.from(clone.querySelectorAll('figcaption,button,[role="button"]'))) auxiliary.remove();
   return !!clone.textContent?.trim();
 }
 
@@ -249,7 +253,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     const image = /** @type {HTMLImageElement} */ (element);
     if (!image.closest('figure') && extractBestImageUrl(image) &&
         !isTrackingPixel(win, image) && !isDecorativeImage(win, image, constants.LOGO_PATTERNS || [])) {
-      getImageCaption(image, state.captionOwners, state.selectionExclusions);
+      getImageCaption(image, state.captionOwners, state.selectionExclusions, state.selectedIllustrations?.get(image));
     }
   }
   
@@ -266,11 +270,15 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     if (consumed.has(element) || (container && consumed.has(container))) continue;
     if (state.captionOwners.has(container || element)) continue;
     const tagName = element.tagName.toLowerCase();
-    if (element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) ||
-        (isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR)))) continue;
-    if (tagName === 'h1' && element === state.titleElement && content.every(item =>
+    const selectedTitle = element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) ||
+      isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR));
+    const inferredTitle = tagName === 'h1' && element === state.titleElement && content.every(item =>
       item.type === 'subtitle' || item.type === 'separator' || item.isStandfirst || item.isFeatured ||
-      (item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || '')))) continue;
+      item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || ''));
+    if (selectedTitle || inferredTitle) {
+      for (const child of Array.from(element.querySelectorAll('*'))) consumed.add(child);
+      continue;
+    }
     
     // Strong exclusion check (ad/sponsor patterns)
     if (shouldSkipStronglyExcluded(container || element)) {
@@ -399,7 +407,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
         continue;
       }
       const mixedContent = Array.from(element.querySelectorAll('h1,h2,h3,h4,h5,h6,p,table,pre,code,blockquote,ul,ol,hr,iframe,video,audio'))
-        .some(child => !child.closest('figcaption'));
+        .some(child => !child.closest('figcaption,button,[role="button"]'));
       if (mixedContent) continue;
       const images = [];
       for (const image of Array.from(element.querySelectorAll('img')).filter(image =>
@@ -592,12 +600,15 @@ export function handleHeading(element, state, constants) {
   const aside = element.closest('aside[id],[role~="complementary"][id]');
   const sectionId = aside?.querySelector('h2,h3,h4,h5,h6') === element &&
     isReferencedReadingAside(aside, state.referenceRoots, state.tocRoots) ? aside.id : undefined;
+  const sourceIds = readSourceFragmentIds(element, state.selectionExclusions);
+  if (sectionId && !sourceIds.includes(sectionId)) sourceIds.push(sectionId);
   return {
     type: 'heading',
     level,
     text: cleanedText,
     format: 'text',
-    id: element.id || sectionId
+    id: sourceIds[0],
+    ...(sourceIds.length > 1 ? { sourceFragmentIds: sourceIds } : {})
   };
 }
 
@@ -692,7 +703,7 @@ export function handleParagraph(win, element, state, constants) {
  */
 export function handleImg(win, element, state, constants, baseUrl) {
   const item = createImageItem(win, element, state, constants, baseUrl);
-  if (item && !element.closest('figure')) item.caption = getImageCaption(/** @type {HTMLImageElement} */ (element), state.captionOwners, state.selectionExclusions);
+  if (item && !element.closest('figure')) item.caption = getImageCaption(/** @type {HTMLImageElement} */ (element), state.captionOwners, state.selectionExclusions, state.selectedIllustrations?.get(element));
   return item;
 }
 
@@ -799,8 +810,7 @@ export function handleList(element, excludedSelectors = [], referenceRoots = nul
     children.every(li => !li.hasAttribute('value'));
   const items = children
     .map((li, index) => {
-      // Clone and process math elements
-      const clone = /** @type {Element} */ (cloneReadingContent(li));
+      let exclusions = excludedSelectors;
       const leading = Array.from(li.childNodes).find(node => node.nodeType !== 8 && (node.nodeType !== 3 || node.textContent?.trim()));
       if (generatedCounterMatches && leading?.nodeType === 1 && /** @type {Element} */ (leading).tagName === 'SUP' &&
           leading.textContent?.trim() === String(index + 1) && li.id) {
@@ -811,13 +821,9 @@ export function handleList(element, excludedSelectors = [], referenceRoots = nul
           const references = target.matches('a[href]') ? [target] : Array.from(target.querySelectorAll('a[href]'));
           return references.some(reference => reference.textContent?.trim() === label && getDocumentFragmentTarget(reference) === li);
         });
-        if (reciprocal) {
-          const copy = Array.from(clone.childNodes).find(node => node.nodeType !== 8 && (node.nodeType !== 3 || node.textContent?.trim()));
-          if (copy?.nodeType === 1 && /** @type {Element} */ (copy).tagName === 'SUP' && copy.textContent?.trim() === label) copy.remove();
-        }
+        if (reciprocal) exclusions = [...excludedSelectors, leading];
       }
-      processMathElements(clone);
-      return { html: serializeReadingHtml(clone, excludedSelectors, referenceRoots), ...(li.id ? { id: li.id } : {}) };
+      return { html: serializeReadingHtml(li, exclusions, referenceRoots), ...(li.id ? { id: li.id } : {}) };
     })
     .filter(item => item.html.length > 0);
 

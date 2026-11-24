@@ -3,7 +3,7 @@ import { authoredFigureCaption, findFigureRegion } from '../../scripts/offscreen
 
 const pdfOperators = vi.hoisted(() => ({
   OPS: { constructPath: 1, stroke: 2, closeStroke: 3, fill: 4, eoFill: 5,
-    fillStroke: 6, eoFillStroke: 7, closeFillStroke: 8, closeEOFillStroke: 9 },
+    fillStroke: 6, eoFillStroke: 7, closeFillStroke: 8, closeEOFillStroke: 9, paintImageXObject: 10, paintInlineImageXObject: 11 },
   AnnotationMode: { DISABLE: 0 }
 }));
 
@@ -49,6 +49,19 @@ function region(source, { tables = [], extra = [] } = {}) {
     viewport, width, height, { check() {} });
 }
 
+function rasterPage(rectangles) {
+  return {
+    recordedBBoxes: {
+      length: rectangles.length, isEmpty: () => false,
+      minX: index => rectangles[index][0] / width, minY: index => rectangles[index][1] / height,
+      maxX: index => rectangles[index][2] / width, maxY: index => rectangles[index][3] / height
+    },
+    getOperatorList: vi.fn(async () => ({
+      fnArray: rectangles.map(() => pdfOperators.OPS.paintImageXObject), argsArray: []
+    }))
+  };
+}
+
 describe('Native PDF figure ownership', () => {
   it('preserves one painted region and claims only its labels, including one beyond the paint edge', async () => {
     const source = specimen();
@@ -91,5 +104,29 @@ describe('Native PDF figure ownership', () => {
   it('rejects both ruled lines and narrowly bounded decoration even with a caption-like witness', async () => {
     expect(await region(specimen({ curve: false }))).toBeNull();
     expect(await region(specimen({ right: 215 }))).toBeNull();
+  });
+
+  it('keeps two raster panels and their labels together under one caption', async () => {
+    const page = rasterPage([[115, 140, 241, 320], [294, 127, 455, 353]]);
+    const caption = span('Figure 4: Comparison of two reference samples', 70, 365, 402);
+    const labels = [span('Control', 150, 130, 40), span('Reference', 342, 119, 55)];
+    const outside = span('Description following the panels.', 56, 399, 190);
+    const figure = await findFigureRegion(page, [...labels, caption, outside], caption, [], viewport, width, height, { check() {} }, 0.7);
+    expect(figure).toMatchObject({ top: expect.any(Number), bottom: 356 });
+    expect(figure.top).toBeLessThan(116);
+    expect(figure.left).toBeLessThan(115);
+    expect(figure.right).toBeGreaterThan(455);
+    expect([...figure.labelSet]).toEqual(labels);
+  });
+
+  it('removes neither ordinary text nor table cells to crop a raster image', async () => {
+    const caption = span('Figure 4: Comparison of two reference samples', 70, 365, 402);
+    const page = rasterPage([[100, 128, 400, 348]]);
+    const test = (raster, text, tables = []) => findFigureRegion(raster, [caption, ...text], caption, tables, viewport, width, height, { check() {} });
+    expect(await test(page, [])).toMatchObject({ labelSet: new Set() });
+    expect(await test(page, [], [{ paintedBounds: { left: 77, top: 221, right: 510, bottom: 280 } }])).toBeNull();
+    expect(await test(page, [span('Ordinary text beside the image is part of the article.', 416, 200, 175)])).toBeNull();
+    expect(await test(rasterPage([[0, 0, width, height]]), [])).toBeNull();
+    expect(await test(rasterPage([[140, 120, 164, 144]]), [])).toBeNull();
   });
 });

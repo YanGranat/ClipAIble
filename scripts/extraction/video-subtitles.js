@@ -337,53 +337,6 @@ export async function extractYouTubeSubtitles(tabId, targetLanguage = 'auto', de
       
       logDebug('[YouTube subtitles] Script finished, no immediate result; waiting for message or storage/DOM');
 
-      if (results[0] && 'error' in results[0] && results[0].error && !resolved) {
-        log('[YouTube subtitles] Handling execution error path (results[0].error)');
-        // CRITICAL: Check DOM before reject
-        (async () => {
-          try {
-            const domResult = await chrome.scripting.executeScript({
-              target: { tabId },
-              world: 'MAIN',
-              func: readPendingYouTubeSubtitlesInlined,
-                args: [requestId]
-            });
-            
-            if (domResult?.[0]?.result && !resolved) {
-              const domData = domResult[0].result;
-              const age = Date.now() - (domData.timestamp || 0);
-              if (age < 30000 && domData.subtitles && domData.subtitles.length > 0) {
-                resolved = true;
-                cleanup();
-                
-                resolve({
-                  subtitles: domData.subtitles,
-                  metadata: domData.metadata || {}
-                });
-                return;
-              }
-            }
-          } catch (domError) {
-            // Ignore DOM check errors
-          }
-          
-          // If DOM is empty - reject
-          if (!resolved) {
-            resolved = true;
-            cleanup();
-            /** @type {any} */
-            const errorObj = (results[0] && 'error' in results[0] ? results[0].error : null);
-            logError('Subtitle extraction script execution error (from results)', {
-              error: errorObj,
-              errorMessage: errorObj?.message || String(errorObj),
-              errorStack: errorObj?.stack
-            });
-            reject(new Error(`Subtitle extraction failed: ${errorObj?.message || errorObj}`));
-          }
-        })();
-        return;
-      }
-      
       // CRITICAL: Immediate DOM fallback check (if Extension context invalidated, data may already be in DOM)
       // This speeds up data retrieval when Extension context is invalidated
       (async () => {

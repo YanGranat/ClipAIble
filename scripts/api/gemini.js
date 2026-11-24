@@ -110,6 +110,8 @@ export async function callGeminiAPI(systemPrompt, userPrompt, apiKey, model, jso
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         onRetry: (attempt, delay) => {
           log(`Gemini API retry attempt ${attempt}, waiting ${delay}ms...`);
         }
@@ -278,6 +280,8 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
         return fetchResponse;
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES
@@ -290,6 +294,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     // So if we get here, response should be ok
     const data = await response.json();
     await requestOptions.checkCancelled?.();
+    requestOptions.signal?.throwIfAborted();
     assertCompleteAIResponse(data, 'gemini');
     
     // Log full response structure for debugging when image generation fails
@@ -339,6 +344,7 @@ If there are diagrams, charts, infographics, or labels - translate those too.`;
     return null;
   } catch (error) {
     await requestOptions.checkCancelled?.();
+    requestOptions.signal?.throwIfAborted();
     logError('translateImageWithGemini failed', {
       error: error.message,
       status: error.status,
@@ -452,6 +458,8 @@ async function requestGeminiImage(systemPrompt, userPrompt, imageData, apiKey, m
 
       },
       {
+        signal: requestOptions.signal,
+        checkCancelled: requestOptions.checkCancelled,
         maxRetries: CONFIG.RETRY_MAX_ATTEMPTS,
         delays: CONFIG.RETRY_DELAYS,
         retryableStatusCodes: CONFIG.RETRYABLE_STATUS_CODES

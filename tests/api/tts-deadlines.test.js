@@ -6,7 +6,9 @@ import { textToSpeech as respeecher, getVoicesFromAPI } from '../../scripts/api/
 import { textToSpeech as google } from '../../scripts/api/google-tts.js';
 import { CONFIG } from '../../scripts/utils/config.js';
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
+vi.mock('../../scripts/utils/retry.js', () => ({
+  callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 })
+}));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ getUILanguageCached: async () => 'en', checkCancellation: async () => {} }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: key => key }));
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });

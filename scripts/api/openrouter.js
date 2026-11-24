@@ -117,6 +117,8 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
         response = await callWithRetry(
           ({ signal }) => makeRequest(true, signal),
           {
+            signal: requestOptions.signal,
+            checkCancelled: requestOptions.checkCancelled,
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
             }
@@ -135,6 +137,8 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
           response = await callWithRetry(
             ({ signal }) => makeRequest(false, signal),
             {
+              signal: requestOptions.signal,
+              checkCancelled: requestOptions.checkCancelled,
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
               }
@@ -149,6 +153,8 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       response = await callWithRetry(
         ({ signal }) => makeRequest(false, signal),
         {
+          signal: requestOptions.signal,
+          checkCancelled: requestOptions.checkCancelled,
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
           }
@@ -277,6 +283,8 @@ export async function callOpenRouterAPI(systemPrompt, userPrompt, apiKey, model,
       const retryResponse = await callWithRetry(
         ({ signal }) => makeRequest(false, signal),
         {
+          signal: requestOptions.signal,
+          checkCancelled: requestOptions.checkCancelled,
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
           }
@@ -466,6 +474,8 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
         response = await callWithRetry(
           ({ signal }) => makeRequest(true, signal),
           {
+            signal: requestOptions.signal,
+            checkCancelled: requestOptions.checkCancelled,
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
             }
@@ -484,6 +494,8 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           response = await callWithRetry(
             ({ signal }) => makeRequest(false, signal),
             {
+              signal: requestOptions.signal,
+              checkCancelled: requestOptions.checkCancelled,
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
               }
@@ -498,6 +510,8 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
       response = await callWithRetry(
         ({ signal }) => makeRequest(false, signal),
         {
+          signal: requestOptions.signal,
+          checkCancelled: requestOptions.checkCancelled,
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
           }
@@ -551,6 +565,8 @@ export async function callOpenRouterAPIWithImage(systemPrompt, userPrompt, image
           const retryResponse = await callWithRetry(
             ({ signal }) => makeRequest(false, signal),
             {
+              signal: requestOptions.signal,
+              checkCancelled: requestOptions.checkCancelled,
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
               }
@@ -685,6 +701,8 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
         response = await callWithRetry(
           ({ signal }) => makeRequest(true, signal),
           {
+            signal: requestOptions.signal,
+            checkCancelled: requestOptions.checkCancelled,
             onRetry: (attempt, delay) => {
               log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
             }
@@ -703,6 +721,8 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
           response = await callWithRetry(
             ({ signal }) => makeRequest(false, signal),
             {
+              signal: requestOptions.signal,
+              checkCancelled: requestOptions.checkCancelled,
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
               }
@@ -717,6 +737,8 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
       response = await callWithRetry(
         ({ signal }) => makeRequest(false, signal),
         {
+          signal: requestOptions.signal,
+          checkCancelled: requestOptions.checkCancelled,
           onRetry: (attempt, delay) => {
             log(`OpenRouter API retry attempt ${attempt}, waiting ${delay}ms...`);
           }
@@ -771,6 +793,8 @@ export async function callOpenRouterAPIWithImageAndHistory(systemPrompt, userPro
           const retryResponse = await callWithRetry(
             ({ signal }) => makeRequest(false, signal),
             {
+              signal: requestOptions.signal,
+              checkCancelled: requestOptions.checkCancelled,
               onRetry: (attempt, delay) => {
                 log(`OpenRouter API retry attempt ${attempt} (without response_format), waiting ${delay}ms...`);
               }

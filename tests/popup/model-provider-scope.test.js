@@ -92,4 +92,32 @@ describe('provider ownership of model actions', () => {
     await vi.waitFor(() => expect(elements.modelSelect.value).toBe('claude-sonnet-5-5'));
     expect(stored.model_by_provider.claude).toBe('claude-sonnet-5-5');
   });
+
+  it('keeps the newest settings when earlier renders return after switching back to the same provider', async () => {
+    await models.updateModelList();
+    const waiting = [];
+    const read = chrome.storage.local.get.getMockImplementation();
+    chrome.storage.local.get.mockImplementation(async keys => {
+      const snapshot = await read(keys);
+      if (keys.includes(STORAGE_KEYS.CUSTOM_MODELS) && waiting.length < 2) {
+        await new Promise(resolve => waiting.push(resolve));
+      }
+      return snapshot;
+    });
+    const first = models.updateModelList();
+    await vi.waitFor(() => expect(waiting).toHaveLength(1));
+    elements.apiProviderSelect.value = 'claude'; stored.api_provider = 'claude';
+    const second = models.updateModelList();
+    await vi.waitFor(() => expect(waiting).toHaveLength(2));
+    elements.apiProviderSelect.value = 'openai'; stored.api_provider = 'openai';
+    stored.custom_models = { openai: ['sample-latest-model'] };
+    stored.model_by_provider.openai = 'sample-latest-model';
+    await models.updateModelList();
+    expect(elements.modelSelect.value).toBe('sample-latest-model');
+    waiting[1](); waiting[0]();
+    await Promise.all([first, second]);
+    expect(elements.modelSelect.dataset.provider).toBe('openai');
+    expect(elements.modelSelect.value).toBe('sample-latest-model');
+    expect(stored.model_by_provider.openai).toBe('sample-latest-model');
+  });
 });

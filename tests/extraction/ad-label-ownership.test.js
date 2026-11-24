@@ -73,7 +73,7 @@ describe('Advertising frame ownership', () => {
   });
 
   it.each([false, true])('does not interpret CSS utility arguments as region names with automatic=%s', async automatic => {
-    const first = 'The opening describes how observers classified each result. Every record preserved its measurement and the conditions under which the measurement was recorded. The comparison uses a separate reading from the same instrument. Each follow-up reading adds an independent check of the observed response.';
+    const first = 'The opening describes how observers classified each result. Every record preserved its measurement and the conditions under which the measurement was recorded. The comparison uses a separate reading from the same instrument. Each follow-up reading adds an independent check of the observed response. The recorded temperature and the location of the sensor are available for every observation. The following section compares the readings from separately calibrated sensors under the same conditions.';
     const last = 'The closing observation records the same measurement again.';
     const dom = page('<div id="reading" class="[--spacing:var(--banner-ad-size)]">' +
       '<p class="max-w-[var(--sidebar-gap)]">' + first + '</p>' +

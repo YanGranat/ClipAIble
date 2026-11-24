@@ -110,4 +110,38 @@ describe('statistics rendering', () => {
     expect(chrome.runtime.sendMessage.mock.calls.map(([packet]) => packet).filter(packet => packet.action === 'deleteDomainFromCache'))
       .toEqual([{ action: 'deleteDomainFromCache', domain: 'shown.example' }]);
   });
+
+  it.each(['worker error', 'transport error'])('does not report a cache deletion success after a %s', async kind => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    chrome.runtime.sendMessage.mockClear();
+    chrome.runtime.sendMessage.mockImplementation(() => kind === 'transport error'
+      ? Promise.reject(new Error('Message channel closed'))
+      : Promise.resolve({ error: 'Unable to update storage' }));
+    const showToast = vi.fn();
+    const stats = initStats({ showToast });
+    await stats.displayCacheStats({ domains: [{ domain: 'shown.example' }] });
+
+    document.querySelector('.cache-domain-delete').click();
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'error', { key: 'errorUnknown' }));
+    expect(chrome.runtime.sendMessage).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('.cache-domain-delete').dataset.domain).toBe('shown.example');
+  });
+
+  it('keeps refreshed history and cache when an earlier worker read finishes last', async () => {
+    let release;
+    const staleCache = new Promise(resolve => { release = resolve; });
+    const history = title => ({ history: [{ title, url: 'https://example.org/article' }] });
+    chrome.runtime.sendMessage.mockReset()
+      .mockResolvedValueOnce({ stats: history('Earlier item') })
+      .mockReturnValueOnce(staleCache)
+      .mockResolvedValueOnce({ stats: history('Updated item') })
+      .mockResolvedValueOnce({ stats: { domains: [{ domain: 'updated.example' }] } });
+    const stats = initStats({ showToast: vi.fn() });
+    const earlier = stats.loadAndDisplayStats();
+    await stats.loadAndDisplayStats();
+    release({ stats: { domains: [{ domain: 'earlier.example' }] } });
+    await earlier;
+    expect(document.querySelector('.history-title').textContent).toBe('Updated item');
+    expect(document.querySelector('.cache-domain-delete').dataset.domain).toBe('updated.example');
+  });
 });

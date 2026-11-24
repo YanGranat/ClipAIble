@@ -3,7 +3,7 @@
 // Handles summary generation, display, and user interactions
 
 import { tSync } from '../../scripts/locales.js';
-import { resolveProviderApiKey } from '../utils/settings-helpers.js';
+import { isProviderModelReady, resolveProviderApiKey } from '../utils/settings-helpers.js';
 import { createGenerationErrorPresenter, createGenerationResultGuard } from '../utils/generation-status.js';
 
 /**
@@ -339,6 +339,10 @@ export function initSummary(deps) {
     let apiKey = null;
     const model = elements.modelSelect.value;
     const provider = elements.apiProviderSelect?.value || getProviderFromModel(model);
+    if (!isProviderModelReady(elements.modelSelect, provider)) {
+      showToast(await t('errorProviderModelsLoading'), 'error', { key: 'errorProviderModelsLoading' });
+      return;
+    }
     const currentProvider = () => !elements.apiProviderSelect || elements.apiProviderSelect.value === provider;
 
     isPreparing = true;

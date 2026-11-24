@@ -8,7 +8,7 @@ import { getVoiceFromSettings } from '../../scripts/utils/storage/settings-helpe
 import { textToSpeech, chunksToSpeech } from '../../scripts/api/tts.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: operation => operation() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 }) }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({ checkCancellation: async () => {}, getUILanguageCached: async () => 'en' }));
 afterEach(() => vi.unstubAllGlobals());
 

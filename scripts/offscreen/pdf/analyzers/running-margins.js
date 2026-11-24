@@ -1,5 +1,5 @@
 // @ts-check
-/** Identify repeated, isolated small-print lines at page edges. */
+/** Identify repeated running text and folios at page edges. */
 export function findRunningMargins(lines, pageCount, baseFontSize) {
   if (pageCount < 3) return [];
   const groups = new Map();
@@ -16,13 +16,14 @@ export function findRunningMargins(lines, pageCount, baseFontSize) {
       const height = line.items?.[0]?.viewportHeight;
       const font = line.fontSize || line.items?.[0]?.fontSize;
       const text = String(line.text || '').trim();
-      if (!height || !font || font >= baseFontSize || !text) continue;
-      const edge = line.y < height * 0.05 ? 'top' : line.y > height * 0.95 ? 'bottom' : null;
+      if (!height || !font || !text) continue;
+      const number = /^\d+$/.test(text);
+      if (number ? Number(text) !== pageNum : font >= baseFontSize) continue;
+      // A baseline near the edge can belong to a folio in the same size as the body.
+      const edge = line.y < height * 0.05 ? 'top' : line.y + (number ? font / 2 : 0) > height * 0.95 ? 'bottom' : null;
       if (!edge) continue;
       const neighbor = edge === 'top' ? sorted[1] : sorted.at(-2);
       if (!neighbor || Math.abs(neighbor.y - line.y) < baseFontSize * 2) continue;
-      const number = /^\d+$/.test(text);
-      if (number && Number(text) !== pageNum) continue;
       const key = `${edge}:${number ? '<page>' : text}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push({ pageNum, text, y: line.y, fontSize: font });

@@ -1,9 +1,8 @@
 // @ts-check
 import { loadPdfJs } from './utils/pdf-loader.js';
+import { FIGURE_CAPTION_PATTERN } from './utils/regex-patterns.js';
 
-const CAPTION = /^(?:figure|fig\.|abbildung|figura|illustration)\s+\d+[a-z]?\s*[.|:\u2013\u2014]\s+\S/iu;
-
-function locateText(item, viewport) {
+function locateText(item, viewport, ascent = 1) {
   const matrix = item.transform;
   if (!matrix || !Number.isFinite(item.width) || !Number.isFinite(item.height)) return null;
   const [a, b, c, d, x, y] = matrix;
@@ -12,7 +11,7 @@ function locateText(item, viewport) {
   if (!h || !v || item.height <= 0 || item.width <= 0) return null;
   const advance = [a * item.width / h, b * item.width / h];
   const rise = [c * item.height / v, d * item.height / v];
-  const points = [0,1].flatMap(end => [-0.16,1].map(top =>
+  const points = [0,1].flatMap(end => [-0.16,ascent].map(top =>
     viewport.convertToViewportPoint(x + advance[0]*end + rise[0]*top, y + advance[1]*end + rise[1]*top)));
   const left = Math.min(...points.map(point => point[0]));
   const right = Math.max(...points.map(point => point[0]));
@@ -28,7 +27,7 @@ function locateText(item, viewport) {
 export function authoredFigureCaption(textItems, viewport) {
   if (viewport.rotation) return null;
   const captions = textItems
-    .filter(item => CAPTION.test((item.str || '').trim()))
+    .filter(item => FIGURE_CAPTION_PATTERN.test((item.str || '').trim()))
     .map(item => locateText(item, viewport))
     .filter(Boolean);
   return captions.length === 1 && captions[0].horizontal ? captions[0].item : null;
@@ -68,11 +67,45 @@ function containsProseColumn(items, width, lineHeight) {
   return false;
 }
 
+function boundingArea(boxes) {
+  return boxes.reduce((area, box) => ({
+    left: Math.min(area.left, box.left), top: Math.min(area.top, box.top),
+    right: Math.max(area.right, box.right), bottom: Math.max(area.bottom, box.bottom)
+  }));
+}
+
+function findVectorArea(paths, bins, caption, width, height) {
+  const band = caption.height;
+  const supportedBins = [...bins.entries()].filter(([, size]) => size >= 2).map(([bin]) => bin).sort((a, b) => a - b);
+  const lastBin = supportedBins.pop();
+  if (lastBin === undefined || caption.top / band - lastBin > 4) return null;
+  let firstBin = lastBin;
+  for (const bin of supportedBins.reverse()) {
+    if (firstBin - bin > 2) break;
+    firstBin = bin;
+  }
+  const ownedPaths = paths.filter(path => path.bin >= firstBin && path.bin <= lastBin);
+  if (ownedPaths.length < 25 || ownedPaths.length > 12000 || ownedPaths.filter(path => path.nonGrid).length < 3) return null;
+  const area = boundingArea(ownedPaths);
+  if (area.right - area.left < width * 0.72 || area.bottom - area.top < band * 8 ||
+      area.top > height * 0.25 || caption.left < area.left - 3 * band || caption.left > area.right) return null;
+  return area;
+}
+
+/** Bind painted raster panels to a shared caption and their nearest overlapping band. */
+function findRasterArea(images, caption) {
+  const overlapsCaption = image => image.left < caption.right && image.right > caption.left;
+  const candidates = images.filter(overlapsCaption).sort((a, b) => b.bottom - a.bottom);
+  const nearest = candidates[0];
+  if (!nearest || caption.top - nearest.bottom > caption.height * 4) return null;
+  return boundingArea(candidates.filter(image => image.top < nearest.bottom && image.bottom > nearest.top));
+}
+
 /**
- * Keep one disjoint full reading-width vector region preceding its caption.
+ * Keep one disjoint figure region preceding its caption.
  * The page renderer owns the operator bounds after clipping and transformations.
  */
-export async function findFigureRegion(page, textItems, captionItem, paintedTables, viewport, width, height, operation) {
+export async function findFigureRegion(page, textItems, captionItem, paintedTables, viewport, width, height, operation, captionAscent = 1) {
   const boxes = page.recordedBBoxes;
   if (!boxes) return null;
   const caption = locateText(captionItem, viewport);
@@ -83,58 +116,58 @@ export async function findFigureRegion(page, textItems, captionItem, paintedTabl
   const operators = await page.getOperatorList({ intent: 'print', annotationMode: AnnotationMode.DISABLE });
   operation.check();
   const paths = [];
+  const images = [];
   const bins = new Map();
   const band = caption.height;
   const figureLimit = Math.floor(caption.top - band * 0.12);
+  const rasterCaption = captionAscent > 0 && captionAscent <= 1 ? locateText(captionItem, viewport, captionAscent) : caption;
+  const rasterLimit = Math.floor(rasterCaption.top - band * 0.12);
+  const rasterOps = new Set([OPS.paintImageXObject, OPS.paintInlineImageXObject]);
   const count = Math.min(operators.fnArray.length, boxes.length);
   if (count > 100000) return null;
   for (let index = 0; index < count; index++) {
-    if (operators.fnArray[index] !== OPS.constructPath || boxes.isEmpty(index)) continue;
-    const [paint, pathsArgs] = operators.argsArray[index] || [];
-    if (![OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill, OPS.fillStroke,
-      OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(paint)) continue;
+    const op = operators.fnArray[index];
+    const raster = rasterOps.has(op);
+    if ((!raster && op !== OPS.constructPath) || boxes.isEmpty(index)) continue;
     const left = boxes.minX(index) * width;
     const top = boxes.minY(index) * height;
     const right = boxes.maxX(index) * width;
     const bottom = boxes.maxY(index) * height;
-    if (!Number.isFinite(left+top+right+bottom) || left < 0 || top < 0 || right > width || bottom > figureLimit ||
-        right <= left || bottom <= top || (right-left) * (bottom-top) > width*height/8) continue;
+    if (!Number.isFinite(left + top + right + bottom) || left < 0 || top < 0 || right > width ||
+        right <= left || bottom <= top) continue;
+    const area = (right - left) * (bottom - top);
+    if (raster) {
+      if (bottom <= rasterLimit && right - left >= 2 * band && bottom - top >= 2 * band && area < width * height / 2) {
+        images.push({ left, top, right, bottom });
+      }
+      continue;
+    }
+    if (bottom > figureLimit || area > width * height / 8) continue;
+    const [paint, pathsArgs] = operators.argsArray[index] || [];
+    if (![OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill, OPS.fillStroke,
+      OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(paint)) continue;
     const bin = Math.floor((top + bottom) / (2 * band));
     bins.set(bin, (bins.get(bin) || 0) + 1);
     paths.push({ left, top, right, bottom, bin, nonGrid: hasNonGridPath(pathsArgs?.[0] || []) });
   }
 
-  const supportedBins = [...bins.entries()].filter(([, size]) => size >= 2).map(([bin]) => bin).sort((a,b) => a-b);
-  const lastBin = supportedBins.pop();
-  if (lastBin === undefined || caption.top / band - lastBin > 4) return null;
-  let firstBin = lastBin;
-  for (const bin of supportedBins.reverse()) {
-    if (firstBin - bin > 2) break;
-    firstBin = bin;
-  }
-  const ownedPaths = paths.filter(path => path.bin >= firstBin && path.bin <= lastBin);
-  if (ownedPaths.length < 25 || ownedPaths.length > 12000 || ownedPaths.filter(path => path.nonGrid).length < 3) return null;
-  const area = {
-    left: Math.min(...ownedPaths.map(path => path.left)),
-    top: Math.min(...ownedPaths.map(path => path.top)),
-    right: Math.max(...ownedPaths.map(path => path.right)),
-    bottom: Math.max(...ownedPaths.map(path => path.bottom))
-  };
-  if (area.right - area.left < width*0.72 || area.bottom - area.top < band*8 ||
-      area.top > height*0.25 || caption.left < area.left - 3*band || caption.left > area.right) return null;
+  const vector = findVectorArea(paths, bins, caption, width, height);
+  const area = vector || findRasterArea(images, rasterCaption);
+  if (!area) return null;
+  const bottomLimit = vector ? figureLimit : rasterLimit;
 
   const crop = {
     left: Math.max(0, area.left-band),
     top: Math.max(0, area.top-band),
     right: Math.min(width, area.right+band),
-    bottom: Math.min(figureLimit, area.bottom+band)
+    bottom: Math.min(bottomLimit, area.bottom+band)
   };
   const all = textItems.filter(item => item.str?.trim()).map(item => locateText(item, viewport));
   if (all.some(item => !item)) return null;
   const labels = all.filter(item => item.top < crop.bottom && item.bottom > crop.top && item.item !== captionItem);
   const hasUnownedLabels = labels.some(label => label.right-label.left > width*0.38 ||
-      label.left < area.left-3*band || label.right > area.right+3*band || label.bottom > figureLimit);
-  if (!labels.length || labels.length > 4096 || hasUnownedLabels || containsProseColumn(labels, width, band)) return null;
+      label.left < area.left-3*band || label.right > area.right+3*band || label.bottom > bottomLimit);
+  if ((vector && !labels.length) || labels.length > 4096 || hasUnownedLabels || containsProseColumn(labels, width, band)) return null;
   crop.left = Math.max(0, Math.floor(Math.min(crop.left, ...labels.map(label => label.left-band))));
   crop.right = Math.min(width, Math.ceil(Math.max(crop.right, ...labels.map(label => label.right+band))));
   crop.top = Math.max(0, Math.floor(Math.min(crop.top, ...labels.map(label => label.top-band))));

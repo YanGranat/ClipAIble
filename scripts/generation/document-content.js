@@ -278,6 +278,9 @@ export function prepareDocumentContent(content, title = '', sourceUrl = '', { ti
   const projection = fragmentViews(normalized, sourceUrl, tableCellFragmentTargets);
   for (const id of projection.blockIds) reserved.add(id);
   for (const view of projection.views) for (const id of collectRenderedFragmentIds(view.rendered)) reserved.add(id);
+  const headingSources = new Map(normalized.filter(item => item.type === 'heading').map(item =>
+    [item, Array.isArray(item.sourceFragmentIds) ? item.sourceFragmentIds.filter(id => typeof id === 'string' && id) : []]));
+  for (const sourceIds of headingSources.values()) for (const id of sourceIds) reserved.add(id);
   const aliases = new Map();
   const titleIds = title && Array.isArray(titleFragmentIds) ? titleFragmentIds.filter(id => typeof id === 'string' && id) : [];
   let titleId;
@@ -300,6 +303,9 @@ export function prepareDocumentContent(content, title = '', sourceUrl = '', { ti
     let suffix = 2;
     while (ids.has(id) || (id !== authoredId && reserved.has(id))) id = `${base}-${suffix++}`;
     ids.add(id); item.id = id;
+    for (const sourceId of headingSources.get(item) || []) {
+      if (!aliases.has(sourceId)) aliases.set(sourceId, id);
+    }
   }
   const targets = new Set(projection.blockIds);
   if (titleId) targets.add(titleId);

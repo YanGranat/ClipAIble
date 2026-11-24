@@ -53,6 +53,13 @@ describe('Final PDF print layout', () => {
     expect(doc.documentElement.style.getPropertyValue('--pdf-page-width')).toBe('8.27in');
   });
 
+  it('includes the document box when margins extend past the article', async () => {
+    const { doc, prepare } = page('<p>A complete observation.</p>');
+    doc.documentElement.getBoundingClientRect = () => ({ bottom: 436.6 });
+    Object.defineProperty(doc.documentElement, 'scrollHeight', { value: 850 });
+    expect(await prepare()).toMatchObject({ contentHeight: 438, pageMode: 'single' });
+  });
+
   it('moves padding to A4 page margins before printing content beyond the compatible single-page height', async () => {
     const { doc, prepare } = page('<p>Opening observation.</p><p id="end">Closing observation.</p>');
     const article = doc.querySelector('article');

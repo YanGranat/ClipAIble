@@ -16,6 +16,7 @@ import {
 import {
   SENTENCE_END_PATTERN,
   CAPITAL_START_PATTERN,
+  FIGURE_CAPTION_PATTERN,
   LIST_ITEM_PATTERNS
 } from '../utils/regex-patterns.js';
 import { analyzePageBreakContext } from '../utils/page-break-context.js';
@@ -36,6 +37,7 @@ export function shouldMergeParagraphs(prevPara, currentPara, metrics = {}) {
   const currentText = currentPara.text || '';
   
   if (!prevText || !currentText) return false;
+  if (FIGURE_CAPTION_PATTERN.test(prevText.trim()) || FIGURE_CAPTION_PATTERN.test(currentText.trim())) return false;
   
   const prevPage = prevPara.endPageNum || prevPara.pageNum;
   const prevColumn = prevPara.endColumnIndex ?? prevPara.columnIndex;

@@ -598,7 +598,7 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction,
         stack: error.stack,
         linesCount: lines.length
       });
-      return [];
+      throw error;
     }
   }
   
@@ -671,7 +671,7 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction,
         stack: error.stack,
         linesCount: column.lines.length
       });
-      columnElements = [];
+      throw error;
     }
     
     // Add column index to elements for tracking

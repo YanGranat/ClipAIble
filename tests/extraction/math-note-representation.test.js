@@ -57,6 +57,38 @@ describe('Portable semantic math representation', () => {
     expect(p.outerHTML).toBe(before);
   });
 
+  it('projects one presentation expression from an enriched MathML renderer without TeX', async () => {
+    const formula = '<mjx-container class="MathJax"><mjx-math aria-hidden="true">visual copy</mjx-math>' +
+      '<mjx-assistive-mml><math display="inline"><semantics><mrow data-semantic-type="infixop">' +
+      '<msubsup><mi>q</mi><mi>i</mi><mn>2</mn></msubsup><mo>=</mo><mfrac><mi>a</mi><msqrt><mi>b</mi></msqrt></mfrac>' +
+      '</mrow><annotation-xml encoding="MathML-Content"><mtext>alternate copy</mtext></annotation-xml>' +
+      '</semantics></math></mjx-assistive-mml></mjx-container>';
+    const dom = page(`<p>First reading: ${formula}.</p><p>Repeated observation: ${formula}.</p>`);
+    const run = dom.window.eval(extractor.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: 'article', title: 'h1' });
+    const output = result.content.filter(item => item.type === 'paragraph').map(item => item.html);
+    expect(output).toEqual([
+      'First reading: <span class="math">q<sub>i</sub><sup>2</sup>=(a)/(√(b))</span>.',
+      'Repeated observation: <span class="math">q<sub>i</sub><sup>2</sup>=(a)/(√(b))</span>.'
+    ]);
+  });
+
+  it('keeps runtime notation when the canonical parser clones a list, quotation, or table', async () => {
+    const rendered = '<mjx-container class="MathJax" jax="SVG"><svg role="img"><g></g></svg></mjx-container>';
+    const dom = page('<ul><li>List ' + rendered + '</li></ul><blockquote>Quote ' + rendered +
+      '</blockquote><table><tr><th>Value</th></tr><tr><td>Table ' + rendered + '</td></tr></table>');
+    const { document } = dom.window;
+    const inputs = Array.from(document.querySelectorAll('mjx-container'), (typesetRoot, index) => ({
+      math: 't_' + (index + 1), inputJax: { name: 'TeX' }, typesetRoot
+    }));
+    dom.window.MathJax = { startup: { document: { getMathItemsWithin: ([root]) => inputs.filter(item => root.contains(item.typesetRoot)) } } };
+    const run = dom.window.eval(extractor.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: 'article', title: 'h1' });
+    expect(result.content.find(item => item.type === 'list').items[0].html).toContain('$t_1$');
+    expect(result.content.find(item => item.type === 'quote').text).toContain('$t_2$');
+    expect(result.content.find(item => item.type === 'table').rows[0][0]).toContain('$t_3$');
+  });
+
   it('recovers authoritative data-mathml when the assistive subtree is absent', () => {
     const dom = page('<p><span class="MathJax" id="formula-Frame"></span><script id="formula" type="math/tex">q_2</script></p>');
     const p = dom.window.document.querySelector('p');

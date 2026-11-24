@@ -7,7 +7,7 @@ import { CONFIG } from '../../scripts/utils/config.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), logDebug: vi.fn() }));
 vi.mock('../../scripts/utils/encryption.js', () => ({ clearDecryptedKeyCache: vi.fn() }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: fn => fn() }));
+vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 }) }));
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', tSync: key => key }));
 vi.mock('../../scripts/background/notifications.js', () => ({ createNotification: vi.fn() }));
 vi.mock('../../scripts/background/popup-connection.js', () => ({ isPopupOpen: () => false }));

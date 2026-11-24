@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const dependencies = vi.hoisted(() => ({ activeRun: 'current', callAI: vi.fn(), callWithRetry: vi.fn() }));
+const dependencies = vi.hoisted(() => ({ activeRun: 'current', callAI: vi.fn() }));
 vi.mock('../../scripts/api/index.js', () => ({ callAI: dependencies.callAI }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
@@ -8,8 +8,6 @@ vi.mock('../../scripts/utils/pipeline-helpers.js', () => ({
     if (runId && runId !== dependencies.activeRun) throw new Error('Cancelled');
   }
 }));
-vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: dependencies.callWithRetry }));
-vi.mock('../../scripts/utils/config.js', () => ({ CONFIG: { RETRY_MAX_ATTEMPTS: 2 } }));
 
 import { processSubtitlesWithAI } from '../../scripts/extraction/video-processor.js';
 
@@ -18,7 +16,6 @@ describe('Subtitle processing run ownership', () => {
     vi.clearAllMocks();
     dependencies.activeRun = 'current';
     dependencies.callAI.mockResolvedValue({ content: [{ type: 'paragraph', text: 'Sample text' }] });
-    dependencies.callWithRetry.mockImplementation(async fn => await fn());
   });
 
   it('does not begin an obsolete single-chunk request', async () => {
@@ -44,15 +41,13 @@ describe('Subtitle processing run ownership', () => {
   });
 
   it('does not retry an obsolete paid request', async () => {
-    dependencies.callAI.mockRejectedValueOnce(new Error('Network failure'));
-    dependencies.callWithRetry.mockImplementationOnce(async fn => {
-      try { return await fn(); } catch {
-        dependencies.activeRun = 'replacement';
-        return await fn();
-      }
+    const cause = Object.assign(new DOMException('Cancelled', 'AbortError'), { retryable: false });
+    dependencies.callAI.mockImplementationOnce(async () => {
+      dependencies.activeRun = 'replacement';
+      throw cause;
     });
     await expect(processSubtitlesWithAI(Array.from({ length: 501 }, () => ({ text: 'Sample text' })), 'placeholder', 'model', null, 'current'))
-      .rejects.toThrow('Cancelled');
+      .rejects.toBe(cause);
     expect(dependencies.callAI).toHaveBeenCalledOnce();
   });
 
@@ -69,6 +64,7 @@ describe('Subtitle processing run ownership', () => {
     dependencies.callAI.mockRejectedValueOnce(cause);
     const subtitles = Array.from({ length: 501 }, () => ({ text: 'Sample text' }));
     await expect(processSubtitlesWithAI(subtitles, 'placeholder', 'model', null, 'current')).rejects.toBe(cause);
+    expect(dependencies.callAI).toHaveBeenCalledOnce();
   });
 
   it.each([1, 501])('preserves explicit provider and cancellation options for every chunk (%s)', async count => {

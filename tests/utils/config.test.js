@@ -181,10 +181,13 @@ describe('config', () => {
         expect(result).toBe(invalid);
       });
 
-      it('should handle invalid dates gracefully', () => {
-        const result = formatDateForDisplay('2025-13-45', 'en-US');
-        // Should attempt fallback parsing
-        expect(result).toBeTruthy();
+      it.each(['2025-13-45', '2025-02-29', '2025-00', '31st Apr 2025', 'April 31, 2025'])('does not invent a different date for %s', input => {
+        expect(formatDateForDisplay(input, 'en-US')).toBe(input);
+      });
+
+      it('formats actual leap days and does not shift a two-digit year by 1900', () => {
+        expect(formatDateForDisplay('2024-02-29')).toBe('February 29, 2024');
+        expect(formatDateForDisplay('0099-10-03')).toBe('October 3, 99');
       });
     });
 

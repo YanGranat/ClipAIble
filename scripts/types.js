@@ -48,6 +48,7 @@
  * @property {TableLayoutRow[]} [layoutRows] - Physical ownership of values in headers and rows
  * @property {number[]} [columnGroups] - Spans of declared table column groups
  * @property {string} [id] - Element ID (for headings with anchors)
+ * @property {string[]} [sourceFragmentIds] - Additional source destinations owned by a heading
  * @property {boolean} [isStandfirst] - Whether text is standfirst (for text blocks)
  * @property {string} [title] - Title text (for infobox_start)
  * @property {Array<{items?: Array<{str?: string, x?: number, width?: number, isBold?: boolean, isItalic?: boolean, isUnderlined?: boolean, underlinedRanges?: Array<{startIndex: number, endIndex: number}>, fontSize?: number, fontName?: string}>, text?: string, isBold?: boolean, isItalic?: boolean, isUnderlined?: boolean}>} [lines] - Lines with formatting fragments (for paragraphs and headings with detailed formatting)
