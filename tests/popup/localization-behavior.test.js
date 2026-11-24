@@ -4,9 +4,11 @@ import { initUI } from '../../popup/ui.js';
 import { UI_LOCALES, tSync, formatMessage, getLocaleTag } from '../../scripts/locales.js';
 import { t } from '../../scripts/locales.js';
 import { initKeyTheses } from '../../popup/core/key-theses.js';
+import { initSummary } from '../../popup/core/summary.js';
+import { STORAGE_KEYS } from '../../popup/constants.js';
 import { initState } from '../../popup/core/state.js';
 import { formatRelativeDate } from '../../popup/utils/format-helpers.js';
-import { formatModelLabel } from '../../scripts/utils/model-catalog.js';
+import { formatModelLabel, normalizeModelSelection } from '../../scripts/utils/model-catalog.js';
 
 let language;
 let ui;
@@ -193,5 +195,68 @@ describe('translation parameters and language tags', () => {
     const translate = (key, params) => tSync(key, 'ru', params);
     expect(formatModelLabel('openai', 'gpt-6.1-sol-high', translate)).toBe('gpt-6.1-sol (reasoning: high)');
     expect(formatModelLabel('openai', 'sample-model-high', translate)).toBe('sample-model-high');
+  });
+
+  it.each(Object.keys(UI_LOCALES))('round-trips the same API ID and reasoning annotation in %s', locale => {
+    const translate = (key, params) => tSync(key, locale, params);
+    const selection = 'example-vendor/custom-model (reasoning: xhigh)';
+    const label = formatModelLabel('openrouter', selection, translate);
+    expect(label).toBe(selection);
+    expect(normalizeModelSelection('openrouter', label, translate)).toBe(selection);
+    expect(translate('addModelPrompt')).toContain('(reasoning: high)');
+    expect(translate('errorModelReasoningInvalid')).toContain('(reasoning: high)');
+  });
+});
+
+describe('independent generation errors', () => {
+  const cases = [
+    ['summary', 'Summary', initSummary],
+    ['key claims', 'KeyTheses', initKeyTheses]
+  ];
+
+  function prepareGeneration(suffix, init, isVideo, failure) {
+    const url = isVideo ? 'https://www.youtube.com/watch?v=sample-video' : 'https://example.test/observations';
+    const article = { url, title: 'River observations', html: '<main><h1>River observations</h1><p>Water slows near the bank.</p></main>' };
+    Object.assign(elements, {
+      [`generate${suffix}Btn`]: document.createElement('button'),
+      [suffix === 'Summary' ? 'summaryContainer' : 'keyThesesContainer']: document.createElement('section'),
+      modelSelect: { value: 'sample-model', dataset: { provider: 'openai' } },
+      apiProviderSelect: { value: 'openai' },
+      apiKey: { value: 'synthetic-key', dataset: { provider: 'openai' } },
+      modeSelect: { value: 'selector' },
+      useCache: { checked: false }
+    });
+    chrome.tabs = { query: vi.fn(async () => [{ id: 1, url, title: article.title }]), sendMessage: vi.fn(async () => ({ success: true })) };
+    chrome.scripting = { executeScript: vi.fn(async () => [{ result: article }]) };
+    chrome.runtime = { sendMessage: vi.fn(async ({ action }) => action === 'extractYouTubeSubtitlesForSummary'
+      ? { success: true, result: { subtitles: [{ text: 'Water slows near the bank.' }] } }
+      : failure) };
+    const deps = { elements, STORAGE_KEYS, t, getUILanguage: async () => language, log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(),
+      showToast: ui.showToast, detectVideoPlatform: () => isVideo ? { platform: 'youtube' } : null };
+    return init(deps)[`handleGenerate${suffix}`]();
+  }
+
+  for (const [name, suffix, init] of cases) {
+    it.each([false, true])(`retains a typed ${name} failure after language changes (video=%s)`, async video => {
+      language = 'ru';
+      await ui.applyLocalization();
+      await prepareGeneration(suffix, init, video, { error: 'Synthetic diagnostics', translationKey: 'errorApiError', translationParams: { status: 503 } });
+      const toast = document.querySelector('.toast');
+      expect(toast.dataset.i18n).toBe('errorApiError');
+      expect(toast.textContent).toBe(tSync('errorApiError', 'ru', { status: 503 }));
+      language = 'ua';
+      await ui.applyLocalization();
+      expect(toast.textContent).toBe(tSync('errorApiError', 'ua', { status: 503 }));
+      expect(toast.textContent).not.toContain('Synthetic diagnostics');
+    });
+  }
+
+  it('uses a key-claims error instead of a summary error when generation is not admitted', async () => {
+    language = 'ru';
+    await ui.applyLocalization();
+    await prepareGeneration('KeyTheses', initKeyTheses, true, { started: false });
+    const toast = document.querySelector('.toast');
+    expect(toast.dataset.i18n).toBe('keyThesesGenerationError');
+    expect(toast.textContent).toBe(tSync('keyThesesGenerationError', 'ru'));
   });
 });

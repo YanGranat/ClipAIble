@@ -2,7 +2,7 @@
 
 ## Runtime
 
-ClipAIble is a Manifest V3 Chrome extension for Chrome 116 or newer. It uses native ES modules and a background service worker.
+ClipAIble is a Manifest V3 Chrome extension with native ES modules and a background service worker. Its manifest sets Chrome 116 as the minimum version.
 
 - `scripts/background.js` coordinates requests, processing state, and downloads.
 - `popup/` contains the toolbar interface and settings.
@@ -20,12 +20,14 @@ The processing pipeline validates the request, acquires the source content, extr
 For web articles:
 
 - **Automatic** uses local heuristics and available cached selectors.
-- **AI Selector** asks the selected AI provider for CSS selectors, then extracts the matching content locally.
+- **AI Selector** uses cached CSS selectors when available and enabled. Otherwise, it asks the selected AI provider for selectors. ClipAIble extracts the matching content locally.
 - **AI Extract** asks the provider to produce structured content from page HTML, using chunks for large inputs.
 
-For PDFs, Automatic parses the text layer and layout with PDF.js. AI modes render pages with PDF.js and send them to an image-capable AI model. Local PDFs are read directly when Chrome file access is allowed; otherwise the popup requests the matching file. See the [PDF module](../scripts/offscreen/pdf/README.md).
+For PDFs, Automatic parses the text layer and layout with PDF.js. AI modes render pages with PDF.js and send them to an image-capable AI model. To open a local PDF, ClipAIble tries direct file access if Chrome allows it, then tries to read the PDF from the active tab before requesting the matching file in the popup. See the [PDF module](../scripts/offscreen/pdf/README.md).
 
-Supported video pages supply subtitles, which the AI pipeline turns into an article. The output generators create PDF, EPUB, FB2, Markdown, or audio.
+YouTube and Vimeo exports use the selected article AI provider to turn available subtitles into an article, regardless of the extraction mode. The output generators create PDF, EPUB, FB2, Markdown, or audio.
+
+The PDF generator measures the rendered document in the print tab. If **Single long page** would exceed the 200-inch PDF page height limit, it exports the document on A4 pages.
 
 `scripts/state/processing.js` owns document progress, cancellation, and terminal state. Each document operation has a `processingRunId`; asynchronous updates must still belong to that operation. After a service worker restart, startup restores progress, reconciles interrupted work, and cleans owned temporary resources. Summary and key-claim generation have separate job owners.
 
@@ -45,7 +47,7 @@ PDF.js text items also retain line and font information used by native PDF extra
 
 The text AI adapters support OpenAI, Anthropic, Google Gemini, xAI Grok, OpenRouter, and DeepSeek. `scripts/utils/model-catalog.js` holds model IDs, labels, capabilities, defaults, and saved-model migrations. Request adapters apply provider-specific parameters and validate responses.
 
-Image translation has its own Gemini or OpenAI provider setting. The model bindings and supported output formats are defined in `scripts/api/image-translation-catalog.js`. Image editing credentials are selected independently of the article provider.
+Image translation is available for PDF, EPUB, and FB2 when a target language is selected. With Google Gemini, the selected article model detects text in images and the chosen **Image model** edits them with a Google AI API key. With OpenAI, dedicated OpenAI models handle both steps with the OpenAI API key. Model bindings and supported output formats are defined in `scripts/api/image-translation-catalog.js`.
 
 Audio supports OpenAI, ElevenLabs, Google Gemini, Qwen, Respeecher, and local Piper. Model and voice capabilities determine the available controls. Cloud narration preparation can use the selected text AI service before synthesis; Piper preparation and synthesis run locally after a voice model has been downloaded.
 
@@ -61,7 +63,7 @@ API keys are encrypted with AES-256-GCM using the installation key. Legacy encry
 
 ## Build and tests
 
-Use a Node.js version accepted by `package.json`:
+In a source checkout, use a Node.js version accepted by `package.json`:
 
 ```sh
 npm ci
@@ -77,4 +79,4 @@ For local development, `npm run build:offscreen:watch` and `npm run build:worker
 npm run package:production
 ```
 
-The packager builds the extension and writes the runtime ZIP and matching `-sources.zip` under `workspace/releases/`. A custom output ZIP path can be passed after `--`. The source archive includes the build inputs and third-party source kits; see [Third-party source](../third_party/sources/README.md). Test commands are documented in [tests/README.md](../tests/README.md).
+The packager builds the extension and writes the runtime ZIP and matching `-sources.zip` under `workspace/releases/`. Pass a custom output ZIP path after `--`. The source archive includes the build inputs and [third-party source kits](https://github.com/YanGranat/ClipAIble/blob/main/third_party/sources/README.md). See the [test commands](https://github.com/YanGranat/ClipAIble/blob/main/tests/README.md).

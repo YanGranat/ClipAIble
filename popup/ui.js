@@ -343,10 +343,8 @@ export function initUI(deps) {
   function setProgress(percent, show = true) {
     if (show) {
       elements.progressContainer.classList.remove('hidden');
-      elements.progressContainer.style.display = 'block';
     } else {
       elements.progressContainer.classList.add('hidden');
-      elements.progressContainer.style.display = 'none';
     }
     elements.progressBar.style.width = `${percent}%`;
     elements.progressText.textContent = `${Math.round(percent)}%`;

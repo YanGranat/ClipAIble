@@ -1,9 +1,8 @@
 // @ts-check
 // Key theses management module (mirrors summary.js)
 
-import { tSync } from '../../scripts/locales.js';
 import { isProviderModelReady, resolveProviderApiKey } from '../utils/settings-helpers.js';
-import { createGenerationErrorPresenter, createGenerationResultGuard } from '../utils/generation-status.js';
+import { createGenerationErrorPresenter, createGenerationResponseError, createGenerationResultGuard, describeGenerationError } from '../utils/generation-status.js';
 
 /**
  * Initialize key theses module
@@ -302,7 +301,9 @@ export function initKeyTheses(deps) {
             action: 'extractYouTubeSubtitlesForSummary',
             data: { tabId: tab.id }
           }), attempt);
-          if (extractResponse?.error) throw new Error(extractResponse.error);
+          if (!extractResponse || extractResponse.error || extractResponse.success === false) {
+            throw createGenerationResponseError(extractResponse, 'errorSubtitleProcessingFailed');
+          }
           const subtitlesData = extractResponse?.result;
           if (!subtitlesData?.subtitles?.length) {
 
@@ -315,7 +316,9 @@ export function initKeyTheses(deps) {
           if (attempt !== currentAttempt) return;
           logError('YouTube key theses extraction failed', err);
 
-          showToast((await awaitAttempt(t('errorSubtitleProcessingFailed'), attempt)) || 'Failed to process subtitles', 'error', { key: 'errorSubtitleProcessingFailed' });
+          const translation = describeGenerationError(err, 'errorSubtitleProcessingFailed');
+          const message = await awaitAttempt(t(translation.key, undefined, translation.params), attempt);
+          showToast(message, 'error', translation);
           await awaitAttempt(setGeneratingView(false, attempt), attempt);
           return;
         }
@@ -336,8 +339,7 @@ export function initKeyTheses(deps) {
           action: 'generateKeyTheses',
           data: { contentItems, apiKey, model, provider, url: currentUrl, language: thesesLanguage, title: articleTitle }
         }), attempt);
-        if (response?.error) throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
-        if (!response?.started) throw new Error(tSync('errorSummaryGenerationFailed', await awaitAttempt(getUILanguage(), attempt)));
+        if (response?.error || !response?.started) throw createGenerationResponseError(response, 'keyThesesGenerationError');
 
         return;
       }
@@ -393,15 +395,17 @@ export function initKeyTheses(deps) {
           language: thesesLanguage
         }
       }), attempt);
-      if (chrome.runtime.lastError) throw new Error(chrome.runtime.lastError.message);
-      if (!extractResponse) throw new Error(tSync('errorNoResponseFromBackground', await awaitAttempt(getUILanguage(), attempt)));
+      if (chrome.runtime.lastError) throw createGenerationResponseError({ error: chrome.runtime.lastError.message }, 'errorNoResponseFromBackground');
+      if (!extractResponse) throw createGenerationResponseError(null, 'errorNoResponseFromBackground');
       if (extractResponse.cancelled) {
 
         await awaitAttempt(setGeneratingView(false, attempt), attempt);
         showToast(await awaitAttempt(t('processingCancelled'), attempt) || 'Cancelled', 'success', { key: 'processingCancelled' });
         return;
       }
-      if (extractResponse.error) throw new Error(extractResponse.error);
+      if (extractResponse.error || extractResponse.success === false) {
+        throw createGenerationResponseError(extractResponse, 'errorContentExtractionFailed');
+      }
       if (extractResponse.success && extractResponse.extracting === true) {
 
         return;
@@ -420,14 +424,15 @@ export function initKeyTheses(deps) {
         action: 'generateKeyTheses',
         data: { contentItems, apiKey, model, provider, url: currentUrl, language: thesesLanguage, title: articleTitle }
       }), attempt);
-      if (response?.error) throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
-      if (!response?.started) throw new Error(tSync('errorSummaryGenerationFailed', await awaitAttempt(getUILanguage(), attempt)));
+      if (response?.error || !response?.started) throw createGenerationResponseError(response, 'keyThesesGenerationError');
 
     } catch (error) {
       if (attempt !== currentAttempt) return;
       logError('Error generating key theses', error);
 
-      showToast(error?.message || (await awaitAttempt(t('keyThesesGenerationError'), attempt)) || 'Error generating key theses', 'error', error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : (!error.message ? { key: 'keyThesesGenerationError' } : null));
+      const translation = describeGenerationError(error, 'keyThesesGenerationError');
+      const message = await awaitAttempt(t(translation.key, undefined, translation.params), attempt);
+      showToast(message, 'error', translation);
       await awaitAttempt(setGeneratingView(false, attempt), attempt);
     } finally {
       if (attempt === currentAttempt) {

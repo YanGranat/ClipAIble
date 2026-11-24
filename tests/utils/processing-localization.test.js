@@ -2,6 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { clearUILanguageCache, getUILanguageCached, handleProcessingError, updateProgress } from '../../scripts/utils/processing/pipeline-helpers.js';
 import { getProcessingRunId, getProcessingState, resetState, startProcessing, updateState, PROCESSING_STAGES } from '../../scripts/state/processing.js';
 import { handleError, createErrorHandler, withErrorHandling } from '../../scripts/utils/error-handler.js';
+import { prepareContentForAudio } from '../../scripts/generation/audio-prep.js';
+import { tSync } from '../../scripts/locales.js';
 
 const storageChanges = vi.hoisted(() => {
   const listeners = [];
@@ -73,4 +75,17 @@ it('keeps the error descriptor through the processing boundary and serialized st
   expect(state).toMatchObject({ isProcessing: false, errorTranslationKey: 'errorOpenaiVoiceUnavailable', errorTranslationParams: { voice: 'nova' }, statusTranslationKey: 'statusError' });
   const saved = chrome.storage.local.set.mock.calls.map(([value]) => value.processingState).filter(Boolean).at(-1);
   expect(saved).toMatchObject({ errorTranslationKey: 'errorOpenaiVoiceUnavailable', errorTranslationParams: { voice: 'nova' } });
+});
+
+it('reports missing narration text even when the source contained an image', async () => {
+  chrome.storage.local.get.mockResolvedValue({ ui_language: 'de' });
+  await startProcessing(vi.fn());
+  const document = [{ type: 'image', src: 'https://example.test/figure.png' }];
+  await expect(prepareContentForAudio(document, '', '', '', 'de', vi.fn(), 'offline', getProcessingRunId()))
+    .rejects.toMatchObject({ translationKey: 'errorNoContentToConvert', message: tSync('errorNoContentToConvert', 'de') });
+});
+
+it('keeps a narration splitting error separate from page extraction', async () => {
+  const localized = await handleError(new Error('Unable to split narration'), { errorType: 'splitError', createUserMessage: true, logError: false });
+  expect(localized).toMatchObject({ translationKey: 'errorFailedToPrepareContent', userMessage: tSync('errorFailedToPrepareContent', 'en') });
 });

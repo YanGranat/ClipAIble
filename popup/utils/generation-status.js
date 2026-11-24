@@ -1,5 +1,18 @@
 // @ts-check
 
+/** Read a localized error identity carried by a failed command or background response. */
+export function describeGenerationError(error, fallbackKey) {
+  const ownKey = typeof error?.translationKey === 'string' && error.translationKey;
+  return { key: ownKey || fallbackKey, params: ownKey ? error.translationParams || {} : {} };
+}
+
+export function createGenerationResponseError(response, fallbackKey) {
+  const { key, params } = describeGenerationError(response, fallbackKey);
+  return Object.assign(new Error(typeof response?.error === 'string' ? response.error : ''), {
+    translationKey: key, translationParams: params
+  });
+}
+
 /** Prevent pending status reads from restoring a result dismissed in this popup. */
 export function createGenerationResultGuard() {
   let dismissal = 0;

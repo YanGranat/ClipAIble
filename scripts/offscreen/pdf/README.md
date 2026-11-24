@@ -23,7 +23,7 @@ Service worker callers use `scripts/api/pdf-offscreen.js`:
 5. Classifies and merges headings, paragraphs, lists, tables, and other content.
 6. Returns the document title, author, publication date, and structured content.
 
-Native extraction uses the PDF text layer. Rendered-page AI processing is a separate path for interpreting page images.
+Native extraction uses the PDF text layer. It can preserve visual-only pages as images when the document contains a text layer on other pages. For PDFs without a text layer, use an AI mode with a model that accepts images.
 
 ## Main modules
 
@@ -42,4 +42,4 @@ PDF requests carry an operation ID and, for document workflows, a `processingRun
 
 PDF.js documents, loading tasks, and render tasks are disposed or cancelled by their owning operation. Page errors propagate to the caller; an incomplete document is not returned as a successful extraction. Rendering progress and terminal errors carry localized message descriptors.
 
-Build the extension before running the PDF tests; the resource tests check generated bundles as well as source modules. See [test commands](../../../tests/README.md).
+In a source checkout, run `npm run build` before the [tests](https://github.com/YanGranat/ClipAIble/blob/main/tests/README.md). Resource tests check generated bundles as well as source modules.

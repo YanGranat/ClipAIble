@@ -31,8 +31,8 @@ const ERROR_KEYS = {
     'noContentToGenerateFb2': 'errorNoContentToGenerateFb2',
     'preparationError': 'errorFailedToPrepareContent',
     'emptyResultError': 'errorAudioEmptyResult',
-    'noTextError': 'errorNoContentExtracted', // Fallback for audio-prep
-    'splitError': 'errorContentExtractionFailed', // Fallback for audio-prep
+    'noTextError': 'errorNoContentToConvert',
+    'splitError': 'errorFailedToPrepareContent',
     'stylesLoadError': 'errorPdfGenerationFailed', // Fallback for PDF styles
     'storageError': 'errorPdfGenerationFailed', // Fallback for PDF storage
     'tabCreationError': 'errorTabNotFound', // Fallback for PDF tab creation

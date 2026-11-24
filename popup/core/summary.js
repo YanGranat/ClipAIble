@@ -2,9 +2,8 @@
 // Summary management module
 // Handles summary generation, display, and user interactions
 
-import { tSync } from '../../scripts/locales.js';
 import { isProviderModelReady, resolveProviderApiKey } from '../utils/settings-helpers.js';
-import { createGenerationErrorPresenter, createGenerationResultGuard } from '../utils/generation-status.js';
+import { createGenerationErrorPresenter, createGenerationResponseError, createGenerationResultGuard, describeGenerationError } from '../utils/generation-status.js';
 
 /**
  * Initialize summary module
@@ -471,8 +470,8 @@ export function initSummary(deps) {
               data: { tabId: tab.id }
             });
             
-            if (extractResponse.error) {
-              throw new Error(extractResponse.error);
+            if (!extractResponse || extractResponse.error || extractResponse.success === false) {
+              throw createGenerationResponseError(extractResponse, 'errorSubtitleProcessingFailed');
             }
             
             const subtitlesData = extractResponse.result;
@@ -542,13 +541,8 @@ export function initSummary(deps) {
                 error: response?.error 
               });
               
-              if (response?.error) {
-                throw Object.assign(new Error(response.error), { translationKey: response.translationKey, translationParams: response.translationParams || {} });
-              }
-              
-              if (!response?.started) {
-                const uiLang = await getUILanguage();
-                throw new Error(tSync('errorSummaryGenerationFailed', uiLang));
+              if (response?.error || !response?.started) {
+                throw createGenerationResponseError(response, 'errorSummaryGenerationFailed');
               }
               
               // CRITICAL: Generation started in background - exit and let checkSummaryStatus handle completion
@@ -558,8 +552,8 @@ export function initSummary(deps) {
             } catch (sendError) {
               logError('Failed to send generateSummary message for YouTube', sendError);
 
-              const errorText = await t('summaryGenerationError') || 'Error starting summary generation';
-              showToast(errorText, 'error', { key: 'summaryGenerationError' });
+              const translation = describeGenerationError(sendError, 'summaryGenerationError');
+              showToast(await t(translation.key, undefined, translation.params), 'error', translation);
               elements.generateSummaryBtn.disabled = false;
               const generateSummaryText = await t('generateSummary') || 'Generate Summary';
               elements.generateSummaryBtn.textContent = generateSummaryText;
@@ -569,8 +563,8 @@ export function initSummary(deps) {
           } catch (error) {
             logError('Failed to extract/process YouTube subtitles', error);
 
-            const errorText = await t('errorSubtitleProcessingFailed') || 'Failed to process subtitles';
-            showToast(errorText, 'error', { key: 'errorSubtitleProcessingFailed' });
+            const translation = describeGenerationError(error, 'errorSubtitleProcessingFailed');
+            showToast(await t(translation.key, undefined, translation.params), 'error', translation);
             elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
             elements.generateSummaryBtn.textContent = generateSummaryText;
@@ -700,7 +694,7 @@ export function initSummary(deps) {
             // Check for chrome.runtime.lastError
             if (chrome.runtime.lastError) {
               logError('extractContentOnly sendMessage error', chrome.runtime.lastError);
-              throw new Error(chrome.runtime.lastError.message || 'Failed to communicate with background script');
+              throw createGenerationResponseError({ error: chrome.runtime.lastError.message }, 'errorNoResponseFromBackground');
             }
             
             log('extractContentOnly response received', {
@@ -734,7 +728,7 @@ export function initSummary(deps) {
           // Check for chrome.runtime.lastError AFTER await (it might be set after async operation)
           if (chrome.runtime.lastError) {
             logError('extractContentOnly chrome.runtime.lastError after await', chrome.runtime.lastError);
-            throw new Error(chrome.runtime.lastError.message || 'Failed to communicate with background script');
+            throw createGenerationResponseError({ error: chrome.runtime.lastError.message }, 'errorNoResponseFromBackground');
           }
           
           if (!extractResponse) {
@@ -742,13 +736,12 @@ export function initSummary(deps) {
               lastError: chrome.runtime.lastError?.message,
               responseType: typeof extractResponse
             });
-            const uiLang = await getUILanguage();
-            throw new Error(tSync('errorNoResponseFromBackground', uiLang));
+            throw createGenerationResponseError(null, 'errorNoResponseFromBackground');
           }
           
-          if (extractResponse.error) {
+          if (extractResponse.error || extractResponse.success === false) {
             logError('extractContentOnly returned error', extractResponse.error);
-            throw new Error(extractResponse.error);
+            throw createGenerationResponseError(extractResponse, 'errorContentExtractionFailed');
           }
           
           // CRITICAL: If extracting: true, background is handling extraction asynchronously
@@ -815,17 +808,8 @@ export function initSummary(deps) {
     } catch (error) {
       logError('Error generating summary', error);
 
-      // Show user-friendly error message
-      let errorText;
-      if (error.message && error.message.includes('Required UI elements not found')) {
-        errorText = await t('uiElementsNotFound') || 'Required UI elements not found. Please refresh the page.';
-      } else if (error.message) {
-        errorText = error.message;
-      } else {
-        errorText = await t('summaryGenerationError') || 'Error generating summary';
-      }
-      
-      showToast(errorText, 'error', error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : (!error.message ? { key: 'summaryGenerationError' } : null));
+      const translation = describeGenerationError(error, 'summaryGenerationError');
+      showToast(await t(translation.key, undefined, translation.params), 'error', translation);
       
       // Restore button
       if (elements.generateSummaryBtn) {

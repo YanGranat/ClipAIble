@@ -92,7 +92,9 @@
           <span class="status-text" id="statusText" role="status" aria-live="polite" data-i18n="ready">Ready</span>
         </div>
         <div class="progress-container hidden" id="progressContainer">
-          <div class="progress-bar" id="progressBar"></div>
+          <div class="progress-track">
+            <div class="progress-bar" id="progressBar"></div>
+          </div>
           <span class="progress-text" id="progressText">0%</span>
         </div>
       </section>
@@ -574,9 +576,7 @@
           <div class="input-group">
             <input 
               type="password" 
-              id="googleApiKey" 
-              data-i18n-placeholder="pleaseEnterApiKey"
-              placeholder="Enter API key"
+              id="googleApiKey"
               autocomplete="off"
             >
             <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">

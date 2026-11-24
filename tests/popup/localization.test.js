@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { UI_LOCALES, getUILanguage, t, tSync } from '../../scripts/locales.js';
+import { UI_LOCALES, getLocaleTag, getUILanguage, t, tSync } from '../../scripts/locales.js';
 
 beforeEach(() => {
   vi.stubGlobal('chrome', { storage: { local: { get: vi.fn(async () => ({})), set: vi.fn() } }, i18n: { getUILanguage: vi.fn(() => 'en') } });
@@ -39,6 +39,30 @@ describe('localization fallback', () => {
   it('returns the identifier for an unknown translation key', async () => {
     expect(tSync('unknown_translation_key', 'en')).toBe('unknown_translation_key');
     await expect(t('unknown_translation_key', 'de')).resolves.toBe('unknown_translation_key');
+  });
+});
+
+describe('built-in dictionary contracts', () => {
+  const reference = Object.keys(UI_LOCALES.en).sort();
+  const pluralSuffix = /_(?:zero|one|two|few|many|other)$/;
+  const pluralKeys = new Set(reference.filter(key => pluralSuffix.test(key)).map(key => key.replace(pluralSuffix, '')));
+  const parameters = text => [...new Set([...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]))].sort();
+
+  it.each(Object.keys(UI_LOCALES))('has complete keys, substitution fields and plural forms for %s', language => {
+    const dictionary = UI_LOCALES[language];
+    expect(Object.keys(dictionary).sort()).toEqual(reference);
+    for (const key of reference) {
+      expect(dictionary[key], `${language}:${key}`).toBeTruthy();
+      expect(parameters(dictionary[key]), `${language}:${key}`).toEqual(parameters(UI_LOCALES.en[key]));
+    }
+    const choices = new Intl.PluralRules(getLocaleTag(language)).resolvedOptions().pluralCategories;
+    for (const key of pluralKeys) for (const choice of choices) {
+      expect(dictionary[`${key}_${choice}`], `${language}:${key}_${choice}`).toBeTruthy();
+    }
+  });
+
+  it.each(Object.keys(UI_LOCALES))('keeps empty extraction errors mode-neutral in %s', language => {
+    expect(tSync('errorNoContentExtracted', language)).not.toContain('AI Extract');
   });
 });
 
