@@ -59,7 +59,7 @@
             <button type="button" id="modelSelectTrigger" class="model-select-trigger" role="combobox" aria-haspopup="grid" aria-expanded="false" aria-controls="customModelOptions" aria-labelledby="modelSelectLabel">
               <span id="modelSelectValue" class="model-select-value"></span>
             </button>
-            <button id="addModelBtn" class="btn-icon" data-i18n-title="addModel" title="Add Model">
+            <button id="addModelBtn" class="btn-icon" data-i18n-title="addModel" data-i18n-aria-label="addModel" aria-label="Add model" title="Add Model">
               <span class="plus-icon">+</span>
             </button>
           </div>
@@ -77,7 +77,7 @@
               placeholder="sk-..."
               autocomplete="off"
             >
-            <button id="toggleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+            <button id="toggleApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
           </div>
@@ -91,7 +91,7 @@
           <span class="status-dot"></span>
           <span class="status-text" id="statusText" role="status" aria-live="polite" data-i18n="ready">Ready</span>
         </div>
-        <div class="progress-container hidden" id="progressContainer">
+        <div class="progress-container hidden" id="progressContainer" role="progressbar" data-i18n-aria-label="processing" aria-label="Processing" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div class="progress-track">
             <div class="progress-bar" id="progressBar"></div>
           </div>
@@ -103,11 +103,11 @@
       <section class="section action-section">
         <div class="save-action-group">
           <button id="savePdfBtn" class="btn btn-primary">
-            <span class="btn-icon-left" id="saveIcon">📄</span>
+            <span class="btn-icon-left" aria-hidden="true" id="saveIcon">📄</span>
             <span id="saveText" data-i18n="save">Save</span>
           </button>
           <button id="cancelBtn" class="btn btn-danger hidden">
-            <span class="btn-icon-left">✕</span>
+            <span class="btn-icon-left" aria-hidden="true">✕</span>
             <span data-i18n="cancel">Cancel</span>
           </button>
           <select id="mainFormatSelect" class="format-select" data-i18n-title="outputFormat" title="Output format">
@@ -125,13 +125,13 @@
       <div id="summaryContainer" class="summary-container hidden">
         <div class="summary-header">
           <button id="summaryToggle" class="summary-toggle">
-            <span class="summary-toggle-icon">▶</span>
+            <span class="summary-toggle-icon" aria-hidden="true">▶</span>
             <span data-i18n="summary">Summary</span>
           </button>
           <div class="summary-actions">
-            <button id="summaryCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" title="Copy">📋</button>
-            <button id="summaryDownloadBtn" class="btn-icon btn-icon-small" data-i18n-title="download" title="Download">💾</button>
-            <button id="summaryCloseBtn" class="btn-icon btn-icon-small" data-i18n-title="close" title="Close">✕</button>
+            <button id="summaryCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" data-i18n-aria-label="copy" aria-label="Copy" title="Copy">📋</button>
+            <button id="summaryDownloadBtn" class="btn-icon btn-icon-small" data-i18n-title="download" data-i18n-aria-label="download" aria-label="Download" title="Download">💾</button>
+            <button id="summaryCloseBtn" class="btn-icon btn-icon-small" data-i18n-title="close" data-i18n-aria-label="close" aria-label="Close" title="Close">✕</button>
           </div>
         </div>
         <div id="summaryContent" class="summary-content">
@@ -144,13 +144,13 @@
       <div id="keyThesesContainer" class="summary-container hidden">
         <div class="summary-header">
           <button id="keyThesesToggle" class="summary-toggle">
-            <span class="summary-toggle-icon">▶</span>
+            <span class="summary-toggle-icon" aria-hidden="true">▶</span>
             <span data-i18n="keyTheses">Key claims</span>
           </button>
           <div class="summary-actions">
-            <button id="keyThesesCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" title="Copy">📋</button>
-            <button id="keyThesesDownloadBtn" class="btn-icon btn-icon-small" data-i18n-title="download" title="Download">💾</button>
-            <button id="keyThesesCloseBtn" class="btn-icon btn-icon-small" data-i18n-title="close" title="Close">✕</button>
+            <button id="keyThesesCopyBtn" class="btn-icon btn-icon-small" data-i18n-title="copy" data-i18n-aria-label="copy" aria-label="Copy" title="Copy">📋</button>
+            <button id="keyThesesDownloadBtn" class="btn-icon btn-icon-small" data-i18n-title="download" data-i18n-aria-label="download" aria-label="Download" title="Download">💾</button>
+            <button id="keyThesesCloseBtn" class="btn-icon btn-icon-small" data-i18n-title="close" data-i18n-aria-label="close" aria-label="Close" title="Close">✕</button>
           </div>
         </div>
         <div id="keyThesesContent" class="summary-content">
@@ -169,18 +169,18 @@
       </section>
 
       <!-- Stats Panel (Hidden by default) -->
-      <section class="section stats-panel" id="statsPanel" inert aria-hidden="true">
+      <section class="section stats-panel" id="statsPanel" inert aria-hidden="true" aria-busy="true">
         <div class="stats-content">
           <div class="stats-header">
           <h3 data-i18n="statistics">Statistics</h3>
         </div>
         <div class="stats-grid">
           <div class="stat-card stat-total">
-            <div class="stat-value" id="statTotal">0</div>
+            <div class="stat-value" id="statTotal">—</div>
             <div class="stat-label" data-i18n="totalSaved">Total Saved</div>
           </div>
           <div class="stat-card stat-month">
-            <div class="stat-value" id="statMonth">0</div>
+            <div class="stat-value" id="statMonth">—</div>
             <div class="stat-label" data-i18n="thisMonth">This month</div>
           </div>
         </div>
@@ -191,27 +191,27 @@
             <div class="format-stat">
               <span class="format-icon">📄</span>
               <span class="format-name" data-i18n="formatPdf">PDF</span>
-              <span class="format-count" id="formatPdf">0</span>
+              <span class="format-count" id="formatPdf">—</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">📚</span>
               <span class="format-name" data-i18n="formatEpub">EPUB</span>
-              <span class="format-count" id="formatEpub">0</span>
+              <span class="format-count" id="formatEpub">—</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">📖</span>
               <span class="format-name" data-i18n="formatFb2">FB2</span>
-              <span class="format-count" id="formatFb2">0</span>
+              <span class="format-count" id="formatFb2">—</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">📝</span>
               <span class="format-name" data-i18n="formatMarkdown">MD</span>
-              <span class="format-count" id="formatMarkdown">0</span>
+              <span class="format-count" id="formatMarkdown">—</span>
             </div>
             <div class="format-stat">
               <span class="format-icon">🔊</span>
               <span class="format-name" data-i18n="formatAudio">Audio</span>
-              <span class="format-count" id="formatAudio">0</span>
+              <span class="format-count" id="formatAudio">—</span>
             </div>
           </div>
         </div>
@@ -219,7 +219,7 @@
         <div class="stats-section">
           <div class="stats-section-title" data-i18n="recentHistory">Recent history</div>
           <div class="stats-history" id="statsHistory">
-            <div class="stats-empty" data-i18n="noDataYet">No data yet</div>
+            <div class="stats-empty" role="status" data-i18n="loadingPage">Loading...</div>
           </div>
         </div>
         
@@ -246,11 +246,11 @@
           </div>
           <div class="cache-info">
             <span class="cache-stat">
-              <span class="cache-value" id="cacheDomains">0</span> <span data-i18n="domainsCached">domains cached</span>
+              <span class="cache-value" id="cacheDomains">—</span> <span data-i18n="domainsCached">domains cached</span>
             </span>
           </div>
           <div class="cache-domains-list" id="cacheDomainsList">
-            <div class="stats-empty" data-i18n="noCachedDomains">No cached domains</div>
+            <div class="stats-empty" role="status" data-i18n="loadingPage">Loading...</div>
           </div>
         </div>
         
@@ -308,7 +308,7 @@
               placeholder="Enter ElevenLabs API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+            <button type="button" id="toggleElevenlabsApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveElevenlabsApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -325,7 +325,7 @@
               placeholder="Enter Qwen API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleQwenApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+            <button type="button" id="toggleQwenApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveQwenApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -360,7 +360,7 @@
               placeholder="Enter Respeecher API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleRespeecherApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+            <button type="button" id="toggleRespeecherApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveRespeecherApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -408,7 +408,7 @@
               placeholder="Enter Google TTS API key"
               autocomplete="off"
             >
-            <button type="button" id="toggleGoogleTtsApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+            <button type="button" id="toggleGoogleTtsApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveGoogleTtsApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -579,7 +579,7 @@
               id="googleApiKey"
               autocomplete="off"
             >
-            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" title="Show/Hide">
+            <button id="toggleGoogleApiKey" class="btn-icon" data-i18n-title="showHide" data-i18n-aria-label="showHide" aria-label="Show or hide API key" title="Show/Hide">
               <span class="eye-icon">👁</span>
             </button>
             <button type="button" id="saveGoogleApiKey" class="btn btn-small" data-i18n="save">Save</button>
@@ -642,7 +642,7 @@
               </div>
             </div>
             <input type="hidden" id="fontFamily" value="">
-            <button class="btn-reset-inline" data-reset="fontFamily" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="fontFamily" data-i18n-title="resetToDefaultTitle" data-i18n-aria-label="resetToDefaultTitle" aria-label="Reset to default" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
@@ -650,7 +650,7 @@
           <div class="input-with-reset">
             <input type="text" id="fontSize" placeholder="31" class="text-input text-input-short" value="31">
             <span class="input-suffix">px</span>
-            <button class="btn-reset-inline" data-reset="fontSize" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="fontSize" data-i18n-title="resetToDefaultTitle" data-i18n-aria-label="resetToDefaultTitle" aria-label="Reset to default" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
@@ -658,7 +658,7 @@
           <div class="color-row">
             <input type="color" id="bgColor" value="#303030" title="Background color picker" data-i18n-title="pdfBackgroundColor" data-i18n-aria-label="pdfBackgroundColor">
             <input type="text" id="bgColorText" value="#303030" maxlength="7" class="color-hex-input" title="Background color hex code" data-i18n-title="pdfBackgroundColor" data-i18n-aria-label="pdfBackgroundColor">
-            <button class="btn-reset-inline" data-reset="bgColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="bgColor" data-i18n-title="resetToDefaultTitle" data-i18n-aria-label="resetToDefaultTitle" aria-label="Reset to default" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
@@ -666,7 +666,7 @@
           <div class="color-row">
             <input type="color" id="textColor" value="#b9b9b9" title="Text color picker" data-i18n-title="pdfTextColor" data-i18n-aria-label="pdfTextColor">
             <input type="text" id="textColorText" value="#b9b9b9" maxlength="7" class="color-hex-input" title="Text color hex code" data-i18n-title="pdfTextColor" data-i18n-aria-label="pdfTextColor">
-            <button class="btn-reset-inline" data-reset="textColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="textColor" data-i18n-title="resetToDefaultTitle" data-i18n-aria-label="resetToDefaultTitle" aria-label="Reset to default" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
@@ -674,7 +674,7 @@
           <div class="color-row">
             <input type="color" id="headingColor" value="#cfcfcf" title="Heading color picker" data-i18n-title="pdfHeadingColor" data-i18n-aria-label="pdfHeadingColor">
             <input type="text" id="headingColorText" value="#cfcfcf" maxlength="7" class="color-hex-input" title="Heading color hex code" data-i18n-title="pdfHeadingColor" data-i18n-aria-label="pdfHeadingColor">
-            <button class="btn-reset-inline" data-reset="headingColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="headingColor" data-i18n-title="resetToDefaultTitle" data-i18n-aria-label="resetToDefaultTitle" aria-label="Reset to default" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="setting-item">
@@ -682,7 +682,7 @@
           <div class="color-row">
             <input type="color" id="linkColor" value="#6cacff" title="Link color picker" data-i18n-title="pdfLinkColor" data-i18n-aria-label="pdfLinkColor">
             <input type="text" id="linkColorText" value="#6cacff" maxlength="7" class="color-hex-input" title="Link color hex code" data-i18n-title="pdfLinkColor" data-i18n-aria-label="pdfLinkColor">
-            <button class="btn-reset-inline" data-reset="linkColor" data-i18n-title="resetToDefaultTitle" title="Reset to default">↺</button>
+            <button class="btn-reset-inline" data-reset="linkColor" data-i18n-title="resetToDefaultTitle" data-i18n-aria-label="resetToDefaultTitle" aria-label="Reset to default" title="Reset to default">↺</button>
           </div>
         </div>
         <div class="settings-divider"></div>
@@ -729,6 +729,32 @@
         <button id="pdfFileSelectionModalOk" class="btn btn-primary" data-i18n="ok">OK</button>
       </div>
     </div>
+  </div>
+
+  <div id="settingsTransferModal" class="modal-overlay hidden">
+    <form id="settingsTransferForm" class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="settingsTransferTitle"></h3>
+      </div>
+      <div class="modal-body">
+        <label class="checkbox-label margin-bottom-12">
+          <input type="checkbox" id="settingsTransferStatistics">
+          <span class="checkbox-text"></span>
+        </label>
+        <label class="checkbox-label margin-bottom-12">
+          <input type="checkbox" id="settingsTransferCache">
+          <span class="checkbox-text"></span>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="settingsTransferOverwrite">
+          <span class="checkbox-text"></span>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="settingsTransferCancel" class="btn btn-secondary" data-i18n="cancel">Cancel</button>
+        <button type="submit" id="settingsTransferConfirm" class="btn btn-primary"></button>
+      </div>
+    </form>
   </div>
 
   <script src="popup.js" type="module"></script>

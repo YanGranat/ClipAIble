@@ -2457,6 +2457,10 @@ body[data-theme="light"] .stat-total .stat-value {
   color: var(--accent-primary);
 }
 
+body[data-theme="light"] .stat-month .stat-value {
+  color: #18794e;
+}
+
 body[data-theme="light"] .stat-label {
   color: var(--text-muted);
 }
@@ -2468,7 +2472,7 @@ body[data-theme="light"] .stat-label {
 
 .stats-section-title {
   font-size: 11px;
-  color: #666;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 8px;
@@ -2477,7 +2481,6 @@ body[data-theme="light"] .stat-label {
 }
 
 body[data-theme="light"] .stats-section-title {
-  color: var(--text-muted);
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -2593,30 +2596,18 @@ body[data-theme="light"] .history-title {
 
 .history-meta {
   display: flex;
-  gap: 8px;
-  color: #666;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  color: var(--text-secondary);
   font-size: 10px;
+}
+
+.history-domain {
+  overflow-wrap: anywhere;
 }
 
 .history-format {
   text-transform: uppercase;
-  color: #888;
-}
-
-.history-time {
-  color: #555;
-}
-
-body[data-theme="light"] .history-meta {
-  color: var(--text-muted);
-}
-
-body[data-theme="light"] .history-format {
-  color: var(--text-muted);
-}
-
-body[data-theme="light"] .history-time {
-  color: var(--text-muted);
 }
 
 .history-delete {
@@ -2648,16 +2639,11 @@ body[data-theme="light"] .history-delete:hover {
 
 /* Empty State */
 .stats-empty {
-  color: #555;
+  color: var(--text-secondary);
   font-size: 12px;
   text-align: center;
   padding: 12px;
   font-style: italic;
-}
-
-/* Stats Footer */
-body[data-theme="light"] .stats-empty {
-  color: var(--text-muted);
 }
 
 /* Cache Info */
@@ -3013,6 +2999,7 @@ body[data-theme="light"] .modal-dialog {
   border-radius: 6px;
   font-size: 12px;
   z-index: 1000;
+  pointer-events: none;
   animation: fadeInUp 0.3s ease;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }

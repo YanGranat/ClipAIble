@@ -31,15 +31,16 @@ export function initKeyTheses(deps) {
   const resultGuard = createGenerationResultGuard();
   let currentAttempt = 0;
   let activeGenerationId = null;
+  let latestStatusRead = 0;
 
   /** Set button to generating state (text + red cancel X) or back to normal. Button stays enabled so clicks on X are received. */
-  async function setGeneratingView(isGenerating, attempt) {
-    if (attempt !== undefined && attempt !== currentAttempt) return;
+  async function setGeneratingView(isGenerating, attempt, canPresent = () => true) {
+    if (!canPresent() || (attempt !== undefined && attempt !== currentAttempt)) return;
     if (!elements.generateKeyThesesBtn) return;
     if (isGenerating) {
       const generatingText = await t('generatingKeyTheses') || 'Generating key theses...';
       const cancelTitle = await t('cancel') || 'Cancel';
-      if (attempt !== undefined && attempt !== currentAttempt) return;
+      if (!canPresent() || (attempt !== undefined && attempt !== currentAttempt)) return;
       elements.generateKeyThesesBtn.classList.add('key-theses-generating');
       elements.generateKeyThesesBtn.disabled = false;
       elements.generateKeyThesesBtn.removeAttribute('data-i18n');
@@ -52,7 +53,7 @@ export function initKeyTheses(deps) {
       elements.generateKeyThesesBtn.removeAttribute('data-i18n-aria-label');
       elements.generateKeyThesesBtn.disabled = false;
       const label = await t('generateKeyTheses') || 'Key theses';
-      if (attempt !== undefined && attempt !== currentAttempt) return;
+      if (!canPresent() || (attempt !== undefined && attempt !== currentAttempt)) return;
       elements.generateKeyThesesBtn.textContent = label;
       elements.generateKeyThesesBtn.dataset.i18n = 'generateKeyTheses';
     }
@@ -172,6 +173,8 @@ export function initKeyTheses(deps) {
     if (isPreparing) return;
     const canShowResult = resultGuard.capture();
     const attempt = currentAttempt;
+    const read = ++latestStatusRead;
+    const isCurrent = () => read === latestStatusRead && attempt === currentAttempt && !isPreparing;
     try {
       const storageResult = await chrome.storage.local.get([
         STORAGE_KEYS.KEY_THESES_GENERATING,
@@ -183,10 +186,11 @@ export function initKeyTheses(deps) {
         'key_theses_error_translation',
         'key_theses_error_seen'
       ]);
+      if (!isCurrent()) return;
       const isGenerating = storageResult[STORAGE_KEYS.KEY_THESES_GENERATING];
       activeGenerationId = isGenerating ? storageResult.key_theses_generation_id || null : null;
       const failed = await presentGenerationError(storageResult);
-      if (failed === null) return;
+      if (failed === null || !isCurrent()) return;
       if (failed && elements.keyThesesContainer) {
         elements.keyThesesContainer.classList.add('hidden');
         elements.keyThesesContainer.style.display = 'none';
@@ -197,17 +201,17 @@ export function initKeyTheses(deps) {
       }
 
       if (isGenerating && elements.generateKeyThesesBtn) {
-        await setGeneratingView(true);
+        await setGeneratingView(true, attempt, isCurrent);
       } else if (storageResult[STORAGE_KEYS.KEY_THESES_TEXT] && !failed && !isGenerating && elements.keyThesesText && elements.keyThesesContainer) {
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
-        if (!canShowResult() || attempt !== currentAttempt || doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) return;
+        if (!canShowResult() || !isCurrent() || doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) return;
 
         const saved = storageResult[STORAGE_KEYS.KEY_THESES_TEXT];
         const currentMarkdown = elements.keyThesesText.dataset.originalMarkdown;
         const containerWasHidden = elements.keyThesesContainer.style.display === 'none';
 
-        if (elements.generateKeyThesesBtn) await setGeneratingView(false, attempt);
-        if (!canShowResult() || attempt !== currentAttempt) return;
+        if (elements.generateKeyThesesBtn) await setGeneratingView(false, attempt, isCurrent);
+        if (!canShowResult() || !isCurrent()) return;
         const keyThesesStr = typeof saved === 'string' ? saved : String(saved || '');
         if (currentMarkdown !== keyThesesStr || containerWasHidden) {
           elements.keyThesesText.dataset.originalMarkdown = keyThesesStr;
@@ -222,12 +226,14 @@ export function initKeyTheses(deps) {
         }
       } else if (!isGenerating && elements.generateKeyThesesBtn) {
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.KEY_THESES_GENERATING]);
-        if (!doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) await setGeneratingView(false);
-        else await setGeneratingView(true);
+        if (!isCurrent()) return;
+        if (!doubleCheck[STORAGE_KEYS.KEY_THESES_GENERATING]) await setGeneratingView(false, attempt, isCurrent);
+        else await setGeneratingView(true, attempt, isCurrent);
       }
     } catch (error) {
+      if (!isCurrent()) return;
       logWarn('Error checking key theses status', error);
-      if (elements.generateKeyThesesBtn) await setGeneratingView(false);
+      if (elements.generateKeyThesesBtn) await setGeneratingView(false, attempt, isCurrent);
     }
   }
 

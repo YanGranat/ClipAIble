@@ -7,7 +7,6 @@ import { decryptApiKey, maskApiKey } from '../scripts/utils/encryption.js';
 import { t, tSync, getUILanguage, UI_LOCALES } from '../scripts/locales.js';
 import { log, logError, logWarn } from '../scripts/utils/logging.js';
 import { CONFIG } from '../scripts/utils/config.js';
-import { sanitizeMarkdownHtml } from '../scripts/utils/html.js';
 import { resolveStoredModelSelection } from '../scripts/utils/model-catalog.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, readGeminiImageModel } from '../scripts/api/image-translation-catalog.js';
 import { refreshCustomSelectSelection } from './utils/custom-select.js';
@@ -36,7 +35,6 @@ import { initUIVisibility } from './settings/ui-visibility.js';
  * @param {Function} deps.setElementGroupDisplay - Set element group display helper
  * @param {Function} deps.setDisplayForIds - Set display for IDs helper
  * @param {Function} deps.applyTheme - Apply theme function
- * @param {Function} deps.markdownToHtml - Markdown to HTML converter
  * @param {Object} deps.audioVoiceMap - Audio voice map reference
  * @param {function(string, string?=): Promise<string>} deps.t - Translation function (second parameter is optional)
  * @param {function(): Promise<string>} deps.getUILanguage - Get UI language function
@@ -56,7 +54,6 @@ export function initSettings(deps) {
     setElementGroupDisplay,
     setDisplayForIds,
     applyTheme,
-    markdownToHtml,
     audioVoiceMap,
     t, // Translation function for localization (async)
     getUILanguage // Get UI language function for tSync
@@ -181,10 +178,6 @@ export function initSettings(deps) {
         STORAGE_KEYS.AUDIO_VOICE,
         STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP,
         STORAGE_KEYS.AUDIO_SPEED,
-        STORAGE_KEYS.SUMMARY_TEXT,
-        STORAGE_KEYS.SUMMARY_GENERATING,
-        STORAGE_KEYS.KEY_THESES_TEXT,
-        STORAGE_KEYS.KEY_THESES_GENERATING
       ]);
       
       log('loadSettings: settings retrieved from storage', { 
@@ -960,60 +953,6 @@ export function initSettings(deps) {
       log('loadSettings: applying theme');
       applyTheme();
       
-      // Step 8: Restore summary if it exists or check if generation is in progress
-      if (result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.generateSummaryBtn) {
-        // Summary generation was in progress - show status
-        const generatingText = await t('generatingSummary') || 'Generating summary...';
-        elements.generateSummaryBtn.textContent = generatingText;
-        elements.generateSummaryBtn.disabled = true;
-        
-        // CRITICAL: Don't automatically restore summary here
-        // Summary will be handled by checkSummaryStatus polling
-        // This prevents showing stale summary after extension reload
-        log('loadSettings: Summary generation in progress - will be handled by checkSummaryStatus polling');
-      }
-      
-      // Restore completed summary text while the background owns generation status.
-      if (result[STORAGE_KEYS.SUMMARY_TEXT] && !result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryText && elements.summaryContainer) {
-        const savedSummary = String(result[STORAGE_KEYS.SUMMARY_TEXT]);
-        elements.summaryText.dataset.originalMarkdown = savedSummary;
-        const htmlSummary = markdownToHtml(savedSummary);
-        // SECURITY: Sanitize HTML to prevent XSS attacks from AI-generated content
-        const sanitizedHtml = sanitizeMarkdownHtml(htmlSummary);
-        elements.summaryText.innerHTML = sanitizedHtml;
-        // CRITICAL: Remove 'hidden' class AND set display to 'block' to ensure visibility
-        elements.summaryContainer.classList.remove('hidden');
-        elements.summaryContainer.style.display = 'block';
-        log('loadSettings: Summary restored from storage', {
-          summaryLength: savedSummary.length,
-          containerDisplay: elements.summaryContainer.style.display,
-          hasHiddenClass: elements.summaryContainer.classList.contains('hidden')
-        });
-      } else if (!result[STORAGE_KEYS.SUMMARY_GENERATING] && elements.summaryContainer) {
-        elements.summaryContainer.classList.add('hidden');
-        elements.summaryContainer.style.display = 'none';
-        log('loadSettings: No summary to restore');
-      }
-
-      if (result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.generateKeyThesesBtn) {
-        const generatingText = await t('generatingKeyTheses') || 'Generating key theses...';
-        const cancelTitle = await t('cancel') || 'Cancel';
-        const esc = (s) => { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
-        elements.generateKeyThesesBtn.classList.add('key-theses-generating');
-        elements.generateKeyThesesBtn.disabled = false;
-        elements.generateKeyThesesBtn.innerHTML = `<span class="key-theses-generating-text">${esc(generatingText)}</span><span class="key-theses-cancel" role="button" tabindex="0" title="${esc(cancelTitle)}">✕</span>`;
-      }
-      if (result[STORAGE_KEYS.KEY_THESES_TEXT] && !result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.keyThesesText && elements.keyThesesContainer) {
-        const savedTheses = String(result[STORAGE_KEYS.KEY_THESES_TEXT]);
-        elements.keyThesesText.dataset.originalMarkdown = savedTheses;
-        elements.keyThesesText.innerHTML = sanitizeMarkdownHtml(markdownToHtml(savedTheses));
-        elements.keyThesesContainer.classList.remove('hidden');
-        elements.keyThesesContainer.style.display = 'block';
-      } else if (!result[STORAGE_KEYS.KEY_THESES_GENERATING] && elements.keyThesesContainer) {
-        elements.keyThesesContainer.classList.add('hidden');
-        elements.keyThesesContainer.style.display = 'none';
-      }
-
       log('loadSettings: completed successfully');
     } catch (error) {
       logError('CRITICAL: loadSettings() failed', error);

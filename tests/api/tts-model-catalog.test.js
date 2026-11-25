@@ -141,7 +141,8 @@ describe('Qwen workspace synthesis', () => {
     [{}, /workspace/], [{ qwenWorkspaceId: 'https://example.com/' }, /workspace/],
     [{ qwenWorkspaceId: 'sample-workspace', qwenRegion: 'unknown' }, /region/],
     [{ qwenModel: 'qwen3-tts-flash-2025-11-27' }, /retired/],
-    [{ qwenWorkspaceId: 'sample-workspace', voice: 'Elias' }, /3.1 voice/]
+    [{ qwenWorkspaceId: 'sample-workspace', voice: 'Elias' }, /3.1 voice/],
+    [{ qwenModel: 'qwen3-tts-flash', voice: 'longanhuan_v3.1' }, /voice supported by the selected/]
   ])('rejects incompatible setup before sending a request: %s', async (options, error) => {
     vi.stubGlobal('fetch', vi.fn());
     await expect(qwen('Article.', 'synthetic-key', options)).rejects.toThrow(error);
@@ -153,6 +154,13 @@ describe('Qwen workspace synthesis', () => {
     await qwen('Article.', 'synthetic-key', { qwenModel: 'qwen3-tts-flash', voice: 'Elias', language: 'en' });
     expect(fetch.mock.calls[0][0]).toBe('https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation');
     expect(requestBody().input).toEqual({ text: 'Article.', voice: 'Elias', language_type: 'English' });
+  });
+  it.each(['qwen-audio-3.1-tts-flash', 'qwen3-tts-flash'])('preserves a provider-defined voice for %s', async qwenModel => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ output: { audio: { url: 'https://example.com/audio.wav' } } })))
+      .mockResolvedValueOnce(new Response(wav())));
+    const voice = 'sample-custom-voice';
+    await qwen('Article.', 'synthetic-key', { qwenModel, qwenWorkspaceId: 'sample-workspace', voice });
+    expect(requestBody().input.voice).toBe(voice);
   });
 });
 

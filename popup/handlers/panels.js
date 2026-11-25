@@ -2,6 +2,69 @@
 // Panel handlers (settings, stats, import/export)
 import { formatMessage } from '../../scripts/locales.js';
 import { mutateStatistics } from '../stats.js';
+import { activateModalDialog } from '../utils/dom-helpers.js';
+
+/** @returns {Promise<{includeStats: boolean, includeCache: boolean, overwriteExisting: boolean}|null>} */
+function reviewSettingsTransfer(mode, origin, language, onAbort, available = { statistics: true, cache: true }) {
+  const modal = document.getElementById('settingsTransferModal');
+  const form = document.getElementById('settingsTransferForm');
+  const cancel = document.getElementById('settingsTransferCancel');
+  const confirmButton = document.getElementById('settingsTransferConfirm');
+  const title = document.getElementById('settingsTransferTitle');
+  const statistics = document.getElementById('settingsTransferStatistics');
+  const cache = document.getElementById('settingsTransferCache');
+  const overwrite = document.getElementById('settingsTransferOverwrite');
+  if (!modal || !form || !cancel || !confirmButton || !title ||
+      !(statistics instanceof HTMLInputElement) || !(cache instanceof HTMLInputElement) ||
+      !(overwrite instanceof HTMLInputElement)) return Promise.resolve(null);
+  const isImport = mode === 'import';
+  const bind = (element, key) => {
+    element.dataset.i18n = key;
+    element.textContent = formatMessage(key, language);
+  };
+  const toggleOption = (input, shown, key) => {
+    input.checked = false;
+    input.disabled = !shown;
+    input.closest('label').classList.toggle('hidden', !shown);
+    bind(input.nextElementSibling, key);
+  };
+  const action = isImport ? 'importSettings' : 'exportSettings';
+  bind(title, action);
+  bind(confirmButton, action);
+  bind(cancel, 'cancel');
+  toggleOption(statistics, available.statistics, isImport ? 'includeStatisticsInImport' : 'includeStatisticsInExport');
+  toggleOption(cache, available.cache, isImport ? 'includeSelectorCacheInImport' : 'includeSelectorCacheInExport');
+  toggleOption(overwrite, isImport, 'overwriteExistingSettings');
+
+  return new Promise(resolve => {
+    origin.focus({ preventScroll: true });
+    let releaseFocus = () => {};
+    const finish = choices => {
+      modal.classList.add('hidden');
+      cancel.removeEventListener('click', onCancel);
+      form.removeEventListener('submit', onSubmit);
+      modal.removeEventListener('click', onOverlayClick);
+      releaseFocus();
+      if (!choices) onAbort();
+      resolve(choices);
+    };
+    const onCancel = () => finish(null);
+    const onOverlayClick = event => { if (event.target === modal) onCancel(); };
+    const onSubmit = event => {
+      event.preventDefault();
+      finish({
+        includeStats: !statistics.disabled && statistics.checked,
+        includeCache: !cache.disabled && cache.checked,
+        overwriteExisting: !overwrite.disabled && overwrite.checked
+      });
+    };
+    cancel.addEventListener('click', onCancel);
+    form.addEventListener('submit', onSubmit);
+    modal.addEventListener('click', onOverlayClick);
+    modal.classList.remove('hidden');
+    releaseFocus = activateModalDialog(modal, onCancel, cancel);
+  });
+}
 
 /**
  * Setup panel toggle and action handlers
@@ -34,6 +97,12 @@ export function setupPanelHandlers(deps) {
   } = deps;
 
   const scheduler = typeof self !== 'undefined' && 'scheduler' in self ? self.scheduler : undefined;
+  let transferOwner = null;
+  function releaseTransfer(owner, fileInput) {
+    if (transferOwner !== owner) return;
+    if (fileInput) fileInput.value = '';
+    transferOwner = null;
+  }
 
   for (const [button, panel] of [[elements.toggleSettings, elements.settingsPanel], [elements.toggleStats, elements.statsPanel]]) {
     if (!button || !panel) continue;
@@ -112,11 +181,9 @@ export function setupPanelHandlers(deps) {
               }
             });
             
-            setTimeout(() => {
-              loadAndDisplayStats().catch((error) => {
-                logError('Failed to load stats', error);
-              });
-            }, 100);
+            loadAndDisplayStats().catch((error) => {
+              logError('Failed to load stats', error);
+            });
           }
         }, 0);
       });
@@ -158,12 +225,14 @@ export function setupPanelHandlers(deps) {
   // Export settings button
   if (elements.exportSettingsBtn) {
     elements.exportSettingsBtn.addEventListener('click', async () => {
+      if (transferOwner) return;
+      const owner = {};
+      transferOwner = owner;
       try {
-        const includeStatsText = await t('includeStatisticsInExport');
-        const includeCacheText = await t('includeSelectorCacheInExport');
-        
-        const includeStats = window.confirm(includeStatsText || 'Include statistics in export?');
-        const includeCache = window.confirm(includeCacheText || 'Include selector cache in export?');
+        const choices = await reviewSettingsTransfer('export', elements.exportSettingsBtn, await getUILanguage(),
+          () => releaseTransfer(owner, null));
+        if (!choices) return;
+        const { includeStats, includeCache } = choices;
         
         elements.exportSettingsBtn.disabled = true;
         const exportingText = await t('exporting');
@@ -200,10 +269,12 @@ export function setupPanelHandlers(deps) {
         const descriptor = error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsExportFailed', params: { error: error.message } };
         showToast(formatMessage(descriptor.key, await getUILanguage(), descriptor.params), 'error', descriptor);
       } finally {
-        elements.exportSettingsBtn.disabled = false;
-        const exportSettingsText = await t('exportSettings');
-        elements.exportSettingsBtn.textContent = exportSettingsText;
-        elements.exportSettingsBtn.dataset.i18n = 'exportSettings';
+        if (transferOwner === owner && elements.exportSettingsBtn.disabled) {
+          elements.exportSettingsBtn.disabled = false;
+          elements.exportSettingsBtn.textContent = await t('exportSettings');
+          elements.exportSettingsBtn.dataset.i18n = 'exportSettings';
+        }
+        releaseTransfer(owner, null);
       }
     });
   }
@@ -211,12 +282,14 @@ export function setupPanelHandlers(deps) {
   // Import settings button
   if (elements.importSettingsBtn && elements.importFileInput) {
     elements.importSettingsBtn.addEventListener('click', () => {
-      elements.importFileInput.click();
+      if (!transferOwner) elements.importFileInput.click();
     });
 
     elements.importFileInput.addEventListener('change', async (e) => {
       const file = e.target.files[0];
-      if (!file) return;
+      if (!file || transferOwner) return;
+      const owner = {};
+      transferOwner = owner;
       
       try {
         const text = await new Promise((resolve, reject) => {
@@ -235,20 +308,18 @@ export function setupPanelHandlers(deps) {
         let data;
         try { data = JSON.parse(text); }
         catch { throw Object.assign(new Error(await t('errorImportJsonParseFailed')), { translationKey: 'errorImportJsonParseFailed' }); }
-        if (!data.settings) {
+        if (!data?.settings) {
           const { t, getUILanguage } = await import('../../scripts/locales.js');
           const uiLang = await getUILanguage();
           const errorMsg = await t('errorImportMissingSettings');
           throw Object.assign(new Error(errorMsg), { translationKey: 'errorImportMissingSettings' });
         }
         
-        const importStatsText = await t('includeStatisticsInImport');
-        const importCacheText = await t('includeSelectorCacheInImport');
-        const overwriteText = await t('overwriteExistingSettings');
-        
-        const importStats = data.statistics && window.confirm(importStatsText || 'Import statistics (if present)?');
-        const importCache = data.selectorCache && window.confirm(importCacheText || 'Import selector cache (if present)?');
-        const overwriteExisting = window.confirm(overwriteText || 'Overwrite existing settings?');
+        const choices = await reviewSettingsTransfer('import', elements.importSettingsBtn, await getUILanguage(),
+          () => releaseTransfer(owner, elements.importFileInput),
+          { statistics: Boolean(data.statistics), cache: Boolean(data.selectorCache) });
+        if (!choices) return;
+        const { includeStats: importStats, includeCache: importCache, overwriteExisting } = choices;
         
         elements.importSettingsBtn.disabled = true;
         const importingText = await t('importing');
@@ -328,11 +399,12 @@ export function setupPanelHandlers(deps) {
         const descriptor = error.translationKey ? { key: error.translationKey, params: error.translationParams || {} } : { key: 'errorSettingsImportFailed', params: { error: error.message } };
         showToast(formatMessage(descriptor.key, await getUILanguage(), descriptor.params), 'error', descriptor);
       } finally {
-        elements.importSettingsBtn.disabled = false;
-        const importSettingsText = await t('importSettings');
-        elements.importSettingsBtn.textContent = importSettingsText;
-        elements.importSettingsBtn.dataset.i18n = 'importSettings';
-        elements.importFileInput.value = '';
+        if (transferOwner === owner && elements.importSettingsBtn.disabled) {
+          elements.importSettingsBtn.disabled = false;
+          elements.importSettingsBtn.textContent = await t('importSettings');
+          elements.importSettingsBtn.dataset.i18n = 'importSettings';
+        }
+        releaseTransfer(owner, elements.importFileInput);
       }
     });
   }

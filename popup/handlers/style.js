@@ -1,5 +1,6 @@
 // @ts-check
 import { enhanceCustomSelect } from '../utils/custom-select.js';
+import { PALETTE_STORAGE_KEYS, saveVisibleCustomPalette } from '../settings/styles.js';
 // Style handlers (presets, fonts, colors, reset buttons)
 
 /**
@@ -23,34 +24,30 @@ export function setupStyleHandlers(deps) {
     logError,
     settingsModule
   } = deps;
+  let paletteRevision = 0;
 
   // Style preset handler
   if (elements.stylePreset) {
     elements.stylePreset.addEventListener('change', async () => {
       const preset = elements.stylePreset.value;
+      const revision = ++paletteRevision;
+      const colors = preset !== 'custom' && STYLE_PRESETS[preset];
+      if (colors) {
+        // The next export or edit must see the new palette even while storage is pending.
+        for (const field of Object.keys(PALETTE_STORAGE_KEYS)) {
+          elements[field].value = colors[field];
+          elements[`${field}Text`].value = colors[field];
+        }
+      }
       
       try {
         await chrome.storage.local.set({ [STORAGE_KEYS.STYLE_PRESET]: preset });
       } catch (error) {
         logError('Failed to save style preset', error);
       }
+      if (revision !== paletteRevision || elements.stylePreset.value !== preset) return;
       
-      if (preset !== 'custom' && STYLE_PRESETS[preset]) {
-        // Apply preset colors to UI only (don't save to storage to preserve custom user settings)
-        const colors = STYLE_PRESETS[preset];
-
-        elements.bgColor.value = colors.bgColor;
-        elements.bgColorText.value = colors.bgColor;
-        elements.textColor.value = colors.textColor;
-        elements.textColorText.value = colors.textColor;
-        elements.headingColor.value = colors.headingColor;
-        elements.headingColorText.value = colors.headingColor;
-        elements.linkColor.value = colors.linkColor;
-        elements.linkColorText.value = colors.linkColor;
-
-        // Note: We don't save preset colors to storage anymore to preserve user's custom settings
-        // When switching back to 'custom', the else block below will load the user's saved custom colors
-      } else if (preset === 'custom') {
+      if (preset === 'custom') {
         // Load custom user colors from dedicated storage keys and apply to UI
         try {
           const result = await chrome.storage.local.get([
@@ -59,6 +56,7 @@ export function setupStyleHandlers(deps) {
             STORAGE_KEYS.CUSTOM_HEADING_COLOR,
             STORAGE_KEYS.CUSTOM_LINK_COLOR
           ]);
+          if (revision !== paletteRevision || elements.stylePreset.value !== preset) return;
 
           // Apply custom colors (or defaults if none exist)
           if (result[STORAGE_KEYS.CUSTOM_BG_COLOR]) {
@@ -208,97 +206,28 @@ export function setupStyleHandlers(deps) {
     });
   }
 
-  // Helper to switch to custom preset when colors are changed manually
-  function setPresetToCustom() {
-    if (elements.stylePreset && elements.stylePreset.value !== 'custom') {
-      elements.stylePreset.value = 'custom';
-      chrome.storage.local.set({ [STORAGE_KEYS.STYLE_PRESET]: 'custom' });
-    }
+  function saveCustomPalette() {
+    paletteRevision++;
+    void saveVisibleCustomPalette(elements, STORAGE_KEYS).catch(error => logError('Failed to save custom palette', error));
   }
 
-
-  // Color handlers - sync picker and text input
-  if (elements.bgColor) {
-    elements.bgColor.addEventListener('input', () => {
-      if (elements.bgColorText) elements.bgColorText.value = elements.bgColor.value;
+  for (const field of Object.keys(PALETTE_STORAGE_KEYS)) {
+    const picker = elements[field];
+    const text = elements[`${field}Text`];
+    if (!picker || !text) continue;
+    picker.addEventListener('input', () => { text.value = picker.value; });
+    picker.addEventListener('change', () => {
+      text.value = picker.value;
+      saveCustomPalette();
     });
-    elements.bgColor.addEventListener('change', () => {
-      setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_BG_COLOR, elements.bgColor.value);
-    });
-  }
-  if (elements.bgColorText) {
-    elements.bgColorText.addEventListener('change', () => {
-      if (/^#[0-9A-Fa-f]{6}$/.test(elements.bgColorText.value)) {
-        elements.bgColor.value = elements.bgColorText.value;
-        setPresetToCustom();
-        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_BG_COLOR, elements.bgColorText.value);
-      } else {
-        if (elements.bgColor) elements.bgColorText.value = elements.bgColor.value;
+    text.addEventListener('change', () => {
+      if (!/^#[0-9A-Fa-f]{6}$/.test(text.value)) {
+        text.value = picker.value;
+        return;
       }
-    });
-  }
-
-  if (elements.textColor) {
-    elements.textColor.addEventListener('input', () => {
-      if (elements.textColorText) elements.textColorText.value = elements.textColor.value;
-    });
-    elements.textColor.addEventListener('change', () => {
-      setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_TEXT_COLOR, elements.textColor.value);
-    });
-  }
-  if (elements.textColorText) {
-    elements.textColorText.addEventListener('change', () => {
-      if (/^#[0-9A-Fa-f]{6}$/.test(elements.textColorText.value)) {
-        elements.textColor.value = elements.textColorText.value;
-        setPresetToCustom();
-        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_TEXT_COLOR, elements.textColorText.value);
-      } else {
-        if (elements.textColor) elements.textColorText.value = elements.textColor.value;
-      }
-    });
-  }
-
-  if (elements.headingColor) {
-    elements.headingColor.addEventListener('input', () => {
-      if (elements.headingColorText) elements.headingColorText.value = elements.headingColor.value;
-    });
-    elements.headingColor.addEventListener('change', () => {
-      setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_HEADING_COLOR, elements.headingColor.value);
-    });
-  }
-  if (elements.headingColorText) {
-    elements.headingColorText.addEventListener('change', () => {
-      if (/^#[0-9A-Fa-f]{6}$/.test(elements.headingColorText.value)) {
-        elements.headingColor.value = elements.headingColorText.value;
-        setPresetToCustom();
-        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_HEADING_COLOR, elements.headingColorText.value);
-      } else {
-        if (elements.headingColor) elements.headingColorText.value = elements.headingColor.value;
-      }
-    });
-  }
-
-  if (elements.linkColor) {
-    elements.linkColor.addEventListener('input', () => {
-      if (elements.linkColorText) elements.linkColorText.value = elements.linkColor.value;
-    });
-    elements.linkColor.addEventListener('change', () => {
-      setPresetToCustom();
-      debouncedSaveSettings(STORAGE_KEYS.CUSTOM_LINK_COLOR, elements.linkColor.value);
-    });
-  }
-  if (elements.linkColorText) {
-    elements.linkColorText.addEventListener('change', () => {
-      if (/^#[0-9A-Fa-f]{6}$/.test(elements.linkColorText.value)) {
-        elements.linkColor.value = elements.linkColorText.value;
-        setPresetToCustom();
-        debouncedSaveSettings(STORAGE_KEYS.CUSTOM_LINK_COLOR, elements.linkColorText.value);
-      } else {
-        if (elements.linkColor) elements.linkColorText.value = elements.linkColor.value;
-      }
+      picker.value = text.value;
+      text.value = picker.value;
+      saveCustomPalette();
     });
   }
 
@@ -306,6 +235,7 @@ export function setupStyleHandlers(deps) {
   document.querySelectorAll('.btn-reset-inline').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.preventDefault();
+      paletteRevision++;
       const resetType = btn instanceof HTMLElement ? btn.dataset.reset : null;
       deferAsyncWork(async () => {
         if (settingsModule) {
@@ -319,6 +249,7 @@ export function setupStyleHandlers(deps) {
   if (elements.resetStylesBtn) {
     elements.resetStylesBtn.addEventListener('click', async (e) => {
       e.preventDefault();
+      paletteRevision++;
       deferAsyncWork(async () => {
         if (settingsModule) {
           await settingsModule.resetAllStyles();

@@ -43,6 +43,7 @@ export function initSummary(deps) {
   } = deps;
 
   let isPreparing = false;
+  let latestStatusRead = 0;
   const presentGenerationError = createGenerationErrorPresenter('summary', showToast, logWarn);
   const resultGuard = createGenerationResultGuard();
 
@@ -65,6 +66,7 @@ export function initSummary(deps) {
   // Close summary
   async function closeSummary() {
     if (!elements.summaryContainer) return;
+    latestStatusRead++;
     
     try {
       // Hide summary container - add 'hidden' class AND set display to 'none'
@@ -149,6 +151,8 @@ export function initSummary(deps) {
   async function checkSummaryStatus() {
     if (isPreparing) return;
     const canShowResult = resultGuard.capture();
+    const read = ++latestStatusRead;
+    const isCurrent = () => read === latestStatusRead && !isPreparing;
     try {
       // CRITICAL: Summary generation now uses ONLY summary_generating flag
       // It does NOT use processingState to avoid interfering with document generation UI
@@ -162,6 +166,7 @@ export function initSummary(deps) {
         'summary_generation_id',
         'summary_error_seen'
       ]);
+      if (!isCurrent()) return;
       
       const summaryTextFromStorage = storageResult[STORAGE_KEYS.SUMMARY_TEXT];
       const summaryTextLength = typeof summaryTextFromStorage === 'string' ? summaryTextFromStorage.length : 0;
@@ -176,7 +181,7 @@ export function initSummary(deps) {
       
       const isSummaryGenerating = storageResult[STORAGE_KEYS.SUMMARY_GENERATING];
       const failed = await presentGenerationError(storageResult);
-      if (failed === null) return;
+      if (failed === null || !isCurrent()) return;
       if (failed && elements.summaryContainer) {
         elements.summaryContainer.classList.add('hidden');
         elements.summaryContainer.style.display = 'none';
@@ -190,6 +195,7 @@ export function initSummary(deps) {
       if (isSummaryGenerating && elements.generateSummaryBtn) {
         // Summary generation is in progress - show status
         const generatingText = await t('generatingSummary') || 'Generating summary...';
+        if (!isCurrent()) return;
         elements.generateSummaryBtn.textContent = generatingText;
         elements.generateSummaryBtn.dataset.i18n = 'generatingSummary';
         elements.generateSummaryBtn.disabled = true;
@@ -198,7 +204,7 @@ export function initSummary(deps) {
         // Summary exists and generation is not in progress - display it
         // CRITICAL: Double-check that generation is not in progress (race condition protection)
         const doubleCheck = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
-        if (!canShowResult() || isPreparing) return;
+        if (!canShowResult() || !isCurrent()) return;
         if (doubleCheck[STORAGE_KEYS.SUMMARY_GENERATING]) {
           // Generation is in progress - don't show summary
           log('checkSummaryStatus: Generation in progress on double-check, skipping summary display');
@@ -221,7 +227,7 @@ export function initSummary(deps) {
         // Restore button when summary is ready
         if (elements.generateSummaryBtn) {
           const generateSummaryText = await t('generateSummary') || 'Generate Summary';
-          if (!canShowResult() || isPreparing) return;
+          if (!canShowResult() || !isCurrent()) return;
           elements.generateSummaryBtn.disabled = false;
           elements.generateSummaryBtn.textContent = generateSummaryText;
           elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
@@ -280,17 +286,20 @@ export function initSummary(deps) {
           const doubleCheckStorage = await chrome.storage.local.get([STORAGE_KEYS.SUMMARY_GENERATING]);
           
           const doubleCheckGenerating = doubleCheckStorage[STORAGE_KEYS.SUMMARY_GENERATING];
+          if (!isCurrent()) return;
           
           if (!doubleCheckGenerating) {
-            elements.generateSummaryBtn.disabled = false;
             const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+            if (!isCurrent()) return;
+            elements.generateSummaryBtn.disabled = false;
             elements.generateSummaryBtn.textContent = generateSummaryText;
         elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
             log('checkSummaryStatus: No generation in progress - button enabled');
           } else {
             // Flag was set between checks - keep button disabled
-            elements.generateSummaryBtn.disabled = true;
             const generatingText = await t('generatingSummary') || 'Generating summary...';
+            if (!isCurrent()) return;
+            elements.generateSummaryBtn.disabled = true;
             elements.generateSummaryBtn.textContent = generatingText;
         elements.generateSummaryBtn.dataset.i18n = 'generatingSummary';
             log('checkSummaryStatus: Generation flag found on double-check - button kept disabled');
@@ -298,11 +307,13 @@ export function initSummary(deps) {
         }
       }
     } catch (error) {
+      if (!isCurrent()) return;
       logWarn('Error checking summary status', error);
       // On error, ensure button is enabled
       if (elements.generateSummaryBtn) {
-        elements.generateSummaryBtn.disabled = false;
         const generateSummaryText = await t('generateSummary') || 'Generate Summary';
+        if (!isCurrent()) return;
+        elements.generateSummaryBtn.disabled = false;
         elements.generateSummaryBtn.textContent = generateSummaryText;
         elements.generateSummaryBtn.dataset.i18n = 'generateSummary';
       }
@@ -344,6 +355,7 @@ export function initSummary(deps) {
     }
     const currentProvider = () => !elements.apiProviderSelect || elements.apiProviderSelect.value === provider;
 
+    latestStatusRead++;
     isPreparing = true;
     try {
       apiKey = await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t);

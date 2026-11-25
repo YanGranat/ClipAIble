@@ -9,13 +9,14 @@ import { updateState, getProcessingState } from '../../state/processing.js';
 import { PROCESSING_STAGES } from '../../state/processing.js';
 import { log, logError, logWarn } from '../logging.js';
 import { recordSave } from '../../stats/index.js';
-import { completeProcessing, setError } from '../../state/processing.js';
+import { completeProcessing, setError, cancelProcessing } from '../../state/processing.js';
 import { handleError } from '../error-handler.js';
 import { detectSourceLanguage } from '../../translation/detection.js';
 import { CONFIG } from '../config.js';
 import { isPopupOpen } from '../../background/popup-connection.js';
 import { createNotification } from '../../background/notifications.js';
 import { isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
+import { isPdfSelectionCancelled } from '../pdf-errors.js';
 
 // Cache for UI language to avoid repeated async calls
 let cachedUILang = null;
@@ -267,6 +268,10 @@ export async function handleProcessingResult(data, result, stopKeepAlive, proces
  */
 export async function handleProcessingError(error, data, stopKeepAlive, errorContext = {}) {
   if (isCancelled(data.processingRunId)) return;
+  if (isPdfSelectionCancelled(error)) {
+    if (data.processingRunId) await cancelProcessing(stopKeepAlive, data.processingRunId);
+    return;
+  }
   logError('Processing failed', {
     error: error?.message || String(error),
     errorStack: error?.stack,

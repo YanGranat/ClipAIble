@@ -4,6 +4,8 @@
 import { saveApiKeySettings } from '../../scripts/utils/encryption.js';
 import { isApiKeyToken } from '../utils/api-key-validation.js';
 
+const keySaves = new WeakMap();
+
 /**
  * Generic function to save TTS API key
  * @param {Object} config - Configuration
@@ -34,11 +36,17 @@ async function saveTtsApiKey(config) {
     keyName
   } = config;
 
-  const key = input.value.trim();
+  const field = keySaves.get(input) || { requested: 0, accepted: 0 };
+  keySaves.set(input, field);
+  const revision = ++field.requested;
+  const draft = input.value;
+  const type = input.type;
+  const previousCiphertext = input.dataset.encrypted;
+  const key = draft.trim();
   if (!key) {
     const inputKeyName = keyName === 'Respeecher' ? 'Respecher' : keyName;
     const pleaseEnterKeyText = await t(`pleaseEnter${inputKeyName}ApiKey`);
-    showToast(pleaseEnterKeyText, 'error', { key: `pleaseEnter${inputKeyName}ApiKey` });
+    if (revision === field.requested) showToast(pleaseEnterKeyText, 'error', { key: `pleaseEnter${inputKeyName}ApiKey` });
     return;
   }
   
@@ -48,33 +56,38 @@ async function saveTtsApiKey(config) {
   
   if (!/^[\x20-\x7E]+$/.test(key)) {
     const invalidKeyText = await t('invalidKeyFormat');
-    showToast(invalidKeyText, 'error', { key: 'invalidKeyFormat' });
+    if (revision === field.requested) showToast(invalidKeyText, 'error', { key: 'invalidKeyFormat' });
     return;
   }
   
   if (validateKey && !await validateKey(key)) {
     return;
   }
-  
+  if (revision < field.accepted) return;
+  field.accepted = revision;
+
   try {
     const encrypted = await encryptApiKey(key);
+    if (revision !== field.accepted) return;
     await saveApiKeySettings({ [storageKey]: encrypted });
-    input.value = maskApiKey(key);
-    input.type = 'password';
-    input.dataset.encrypted = encrypted;
-    if (toggleButton) {
-      const eyeIcon = toggleButton.querySelector('.eye-icon');
-      if (eyeIcon) {
-        eyeIcon.textContent = '👁';
+    if (revision !== field.accepted) return;
+    if (input.value === draft && input.type === type && input.dataset.encrypted === previousCiphertext) {
+      input.value = maskApiKey(key);
+      input.type = 'password';
+      input.dataset.encrypted = encrypted;
+      delete input.dataset.decrypted;
+      if (toggleButton) {
+        const eyeIcon = toggleButton.querySelector('.eye-icon');
+        if (eyeIcon) eyeIcon.textContent = '👁';
       }
     }
     const savedKeyName = keyName === 'GoogleTts' ? 'googleTts' : keyName.toLowerCase();
     const keySavedText = await t(`${savedKeyName}KeySaved`);
-    showToast(keySavedText, 'success', { key: `${savedKeyName}KeySaved` });
+    if (revision === field.requested) showToast(keySavedText, 'success', { key: `${savedKeyName}KeySaved` });
   } catch (error) {
     logError(`Failed to save ${keyName} API key`, error);
     const failedToSaveText = await t('failedToSave');
-    showToast(failedToSaveText, 'error', { key: 'failedToSave' });
+    if (revision === field.requested) showToast(failedToSaveText, 'error', { key: 'failedToSave' });
   }
 }
 

@@ -326,7 +326,7 @@ export function initUI(deps) {
       const elapsed = effectiveStartTime ? Math.floor((Date.now() - effectiveStartTime) / 1000) : 0;
       // SECURITY: Escape status text to prevent XSS attacks
       const escapedText = escapeHtml(text);
-      elements.statusText.innerHTML = `${escapedText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+      elements.statusText.innerHTML = `${escapedText} <span id="timerDisplay" class="timer" aria-hidden="true">${formatTime(elapsed)}</span>`;
       // Ensure timer is running if we have a startTime
       if (effectiveStartTime && !timerInterval.current) {
         startTimerDisplay(effectiveStartTime);
@@ -347,7 +347,9 @@ export function initUI(deps) {
       elements.progressContainer.classList.add('hidden');
     }
     elements.progressBar.style.width = `${percent}%`;
-    elements.progressText.textContent = `${Math.round(percent)}%`;
+    const progress = Math.round(percent);
+    elements.progressText.textContent = `${progress}%`;
+    elements.progressContainer.setAttribute('aria-valuenow', String(progress));
   }
 
   // Show toast notification

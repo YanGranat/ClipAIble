@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { initSettings } from '../../popup/settings.js';
+import { initSummary } from '../../popup/core/summary.js';
 import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 import { DEFAULT_STYLES, STORAGE_KEYS, STYLE_PRESETS } from '../../popup/constants.js';
 import { setupPanelHandlers } from '../../popup/handlers/panels.js';
@@ -57,6 +58,9 @@ describe('settings load generation ownership', () => {
       await settings.loadSettings();
       expect(stored.summary_generating).toBe(true);
       expect(stored.summary_generation_id).toBe('new-job');
+      expect(elements.generateSummaryBtn.disabled).toBe(false);
+      await initSummary({ elements, STORAGE_KEYS, t: async key => key,
+        log: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), showToast: vi.fn() }).checkSummaryStatus();
       expect(elements.generateSummaryBtn.disabled).toBe(true);
       expect(elements.uiLanguageSelect.value).toBe('de');
       expect(chrome.storage.local.set.mock.calls.every(([updates]) => !('summary_generating' in updates))).toBe(true);
@@ -81,7 +85,7 @@ it.each([false, null])('refreshes a checked table-of-contents control when an im
     expect(elements.generateToc.checked).toBe(true);
     vi.stubGlobal('FileReader', dom.window.FileReader);
     vi.stubGlobal('MutationObserver', dom.window.MutationObserver);
-    dom.window.confirm = vi.fn(() => true);
+    vi.stubGlobal('HTMLInputElement', dom.window.HTMLInputElement);
     chrome.runtime.sendMessage.mockImplementation(async message => ({ success: true, result: await importSettings(message.jsonData, message.options) }));
     const loadAndDisplayStats = vi.fn(async () => {});
     const logError = vi.fn();
@@ -90,6 +94,9 @@ it.each([false, null])('refreshes a checked table-of-contents control when an im
     const file = new dom.window.File([JSON.stringify({ settings: { generate_toc: value } })], 'settings.json');
     Object.defineProperty(elements.importFileInput, 'files', { value: [file] });
     elements.importFileInput.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    await vi.waitFor(() => expect(document.getElementById('settingsTransferModal').classList.contains('hidden')).toBe(false));
+    document.getElementById('settingsTransferOverwrite').checked = true;
+    document.getElementById('settingsTransferConfirm').click();
     await vi.waitFor(() => expect(loadAndDisplayStats).toHaveBeenCalledOnce());
     expect(logError).not.toHaveBeenCalled();
     expect((await chrome.storage.local.get(['generate_toc'])).generate_toc).toBe(value ?? undefined);

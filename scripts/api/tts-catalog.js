@@ -92,6 +92,12 @@ export function isQwenAudioModel(model) {
   return model === 'qwen-audio-3.1-tts-flash' || model === 'qwen-audio-3.1-tts-plus';
 }
 
+/** Reject only catalog voices known to belong to the other model family. */
+export function isQwenVoiceCompatible(model, voice) {
+  const incompatibleVoices = isQwenAudioModel(model) ? QWEN_LEGACY_VOICES : QWEN_AUDIO_VOICES;
+  return !incompatibleVoices.some(entry => entry.id === voice);
+}
+
 export function getElevenLabsCapabilities(model) {
   if (model === 'eleven_v4' || model === 'eleven_v4_turbo') {
     return { similarity: true, style: false, speakerBoost: false, speed: false };

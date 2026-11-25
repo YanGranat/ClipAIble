@@ -312,7 +312,6 @@ export function initializeModules(rawDeps) {
     setElementGroupDisplay,
     setDisplayForIds,
     applyTheme,
-    markdownToHtml,
     audioVoiceMap: { current: audioVoiceMap },
     t,
     getUILanguage

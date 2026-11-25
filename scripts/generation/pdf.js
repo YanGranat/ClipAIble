@@ -317,7 +317,7 @@ export async function generatePdf(data, updateState) {
     
     if (updateState) updateState({ ...formatStatusUpdate('statusOpeningPdfGenerator', await getUILanguage()), progress: 95 });
     
-    // Open print page
+    // Keep the source tab and toolbar popup active while the print page renders.
     const printPageUrl = `${chrome.runtime.getURL('print/print.html')}?job=${encodeURIComponent(printJobId)}`;
     log('Opening print page', { url: printPageUrl });
     
@@ -326,7 +326,7 @@ export async function generatePdf(data, updateState) {
       if (isCancelled(processingRunId)) throw new Error('Processing cancelled');
       tab = await chrome.tabs.create({
         url: printPageUrl,
-        active: true,
+        active: false,
         windowId: currentWindow.id
       });
       printTabId = tab.id;

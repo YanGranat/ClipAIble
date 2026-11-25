@@ -35,4 +35,17 @@ describe('API key settings storage', () => {
     expect(navigator.locks.request).not.toHaveBeenCalled();
     expect(chrome.storage.local.set).not.toHaveBeenCalled();
   });
+
+  it('reports a rejected save without clearing the editable draft', async () => {
+    const key = 'sk-synthetic-settings-key';
+    const apiKey = { value: key, dataset: { provider: 'openai' } };
+    const showToast = vi.fn();
+    const settings = initApiKeys({ elements: { apiProviderSelect: { value: 'openai' }, apiKey }, STORAGE_KEYS, showToast });
+    chrome.storage.local.set.mockRejectedValueOnce(new Error('Storage is unavailable'));
+
+    await expect(settings.saveApiKey()).resolves.toBeUndefined();
+
+    expect(apiKey.value).toBe(key);
+    expect(showToast).toHaveBeenCalledExactlyOnceWith('failedToSave', 'error', { key: 'failedToSave' });
+  });
 });

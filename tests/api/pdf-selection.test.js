@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { requestPdfFileSelectionViaMessage } from '../../scripts/api/pdf-selection.js';
 import { beginPdfOperation, takePdfOperationBlob, removePdfOperation } from '../../scripts/api/pdf-operation-storage.js';
+import { isPdfSelectionCancelled, localizePdfError } from '../../scripts/utils/pdf-errors.js';
 vi.mock('../../scripts/api/pdf-operation-storage.js', () => ({ beginPdfOperation: vi.fn(), takePdfOperationBlob: vi.fn(), removePdfOperation: vi.fn() }));
 const bytes = new TextEncoder().encode('%PDF-1.7\nSample').buffer;
 beforeEach(() => {
@@ -25,6 +26,24 @@ it('rejects an unrelated reference without consuming its bytes', async () => {
   chrome.runtime.sendMessage.mockImplementation((_message, reply) => reply({ success: true, ref: '00000000-0000-4000-8000-000000000099:0' }));
   await expect(requestPdfFileSelectionViaMessage('file:///sample.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfDataUnavailable' });
   expect(takePdfOperationBlob).not.toHaveBeenCalled();
+});
+
+it('retains explicit picker dismissal as a typed cancellation through localization', async () => {
+  chrome.runtime.sendMessage.mockImplementation((_message, reply) => reply({ success: true, cancelled: true }));
+  const error = await requestPdfFileSelectionViaMessage('file:///sample.pdf').catch(value => value);
+  expect(isPdfSelectionCancelled(error)).toBe(true);
+  expect(isPdfSelectionCancelled(await localizePdfError(error))).toBe(true);
+  expect(error).toMatchObject({ translationKey: 'statusCancelled' });
+  expect(takePdfOperationBlob).not.toHaveBeenCalled();
+  expect(removePdfOperation).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([undefined, { success: false, error: 'File selection unavailable' }, { success: false, cancelled: true }])('keeps unavailable selection failures visible: %j', async response => {
+  chrome.runtime.sendMessage.mockImplementation((_message, reply) => reply(response));
+  const error = await requestPdfFileSelectionViaMessage('file:///sample.pdf').catch(value => value);
+  expect(isPdfSelectionCancelled(error)).toBe(false);
+  expect(error).toMatchObject({ translationKey: 'errorPdfDataUnavailable' });
 });
 
 it('cancels an unanswered OS picker and removes a late-created request', async () => {

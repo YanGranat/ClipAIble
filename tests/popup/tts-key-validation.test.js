@@ -47,4 +47,51 @@ describe('Google TTS key validation', () => {
     expect(deps.elements.googleTtsApiKey.type).toBe('password');
     expect(deps.showToast).toHaveBeenCalledWith('googleTtsKeySaved', 'success', { key: 'googleTtsKeySaved' });
   });
+
+  it('acknowledges the saved value without replacing a new draft entered during storage', async () => {
+    const input = deps.elements.googleTtsApiKey;
+    input.value = 'synthetic-first-key';
+    input.type = 'text';
+    let releaseStorage;
+    chrome.storage.local.set.mockImplementation(() => new Promise(resolve => { releaseStorage = resolve; }));
+    const pending = save();
+    await vi.waitFor(() => expect(releaseStorage).toBeTypeOf('function'));
+    input.value = 'synthetic-next-draft';
+    releaseStorage();
+    await pending;
+    expect(chrome.storage.local.set).toHaveBeenCalledWith({ google_tts_api_key: 'encrypted-key' });
+    expect(input.value).toBe('synthetic-next-draft');
+    expect(input.type).toBe('text');
+    expect(input.dataset.encrypted).toBeUndefined();
+    expect(deps.showToast).toHaveBeenCalledWith('googleTtsKeySaved', 'success', { key: 'googleTtsKeySaved' });
+  });
+
+  it('does not overwrite a newer accepted key if an earlier encryption finishes later', async () => {
+    const input = deps.elements.googleTtsApiKey;
+    let releaseOld;
+    deps.encryptApiKey.mockImplementationOnce(() => new Promise(resolve => { releaseOld = resolve; }))
+      .mockResolvedValueOnce('next-ciphertext');
+    input.value = 'synthetic-first-key';
+    const earlier = save();
+    await vi.waitFor(() => expect(releaseOld).toBeTypeOf('function'));
+    input.value = 'synthetic-next-key';
+    await save();
+    releaseOld('earlier-ciphertext');
+    await earlier;
+    expect(chrome.storage.local.set).toHaveBeenCalledExactlyOnceWith({ google_tts_api_key: 'next-ciphertext' });
+    expect(input.dataset.encrypted).toBe('next-ciphertext');
+    expect(deps.showToast).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an editable key and shows a localized failure when storage rejects the save', async () => {
+    const input = deps.elements.googleTtsApiKey;
+    input.value = 'synthetic-next-draft';
+    input.type = 'text';
+    chrome.storage.local.set.mockRejectedValue(new Error('Storage unavailable'));
+    await save();
+    expect(input.value).toBe('synthetic-next-draft');
+    expect(input.type).toBe('text');
+    expect(input.dataset.encrypted).toBeUndefined();
+    expect(deps.showToast).toHaveBeenCalledExactlyOnceWith('failedToSave', 'error', { key: 'failedToSave' });
+  });
 });

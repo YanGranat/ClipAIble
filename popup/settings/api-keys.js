@@ -222,7 +222,13 @@ export function initApiKeys(deps) {
     }
     
     if (elements.apiProviderSelect?.value !== provider || elements.apiKey.dataset.provider !== provider) return;
-    await saveApiKeySettings(keysToSave, keysToRemove);
+    try {
+      await saveApiKeySettings(keysToSave, keysToRemove);
+    } catch (error) {
+      logError('Failed to save API key', error);
+      showToast(await t('failedToSave'), 'error', { key: 'failedToSave' });
+      return;
+    }
     
     const apiKeysSavedText = await t('apiKeysSaved');
     showToast(apiKeysSavedText, 'success', { key: 'apiKeysSaved' });

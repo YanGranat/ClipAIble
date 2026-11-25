@@ -8,7 +8,7 @@ import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
-import { DEFAULT_QWEN_TTS_MODEL, DEFAULT_QWEN_TTS_VOICE, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getQwenTtsEndpoint, isQwenAudioModel } from './tts-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, DEFAULT_QWEN_TTS_VOICE, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getQwenTtsEndpoint, isQwenAudioModel, isQwenVoiceCompatible } from './tts-catalog.js';
 import { isValidExternalUrl } from '../utils/security.js';
 
 /**
@@ -107,14 +107,11 @@ export async function textToSpeech(text, apiKey, options = {}) {
     throw new Error('API key appears to be masked. Please re-enter your DashScope API key.');
   }
   
-  // Validate voice - use default if invalid
   const modernModel = isQwenAudioModel(qwenModel);
   const apiUrl = getQwenTtsEndpoint(qwenModel, qwenWorkspaceId, qwenRegion);
-  if (modernModel && QWEN_CONFIG.LEGACY_VOICES.some(v => v.id === voice)) {
-    throw new Error('Select a Qwen Audio 3.1 voice in audio settings.');
-  }
-  if (!modernModel && QWEN_AUDIO_VOICES.some(v => v.id === voice)) {
-    throw new Error('Select a voice supported by the selected Qwen TTS model in audio settings.');
+  if (!isQwenVoiceCompatible(qwenModel, voice)) {
+    throw new Error(modernModel ? 'Select a Qwen Audio 3.1 voice in audio settings.'
+      : 'Select a voice supported by the selected Qwen TTS model in audio settings.');
   }
   const validVoice = voice;
   

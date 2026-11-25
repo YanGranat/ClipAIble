@@ -3,7 +3,29 @@
 // Handles style presets, colors, fonts reset
 
 import { t } from '../../scripts/locales.js';
-import { ELEMENT_IDS, STORAGE_KEYS, DEFAULT_STYLES } from '../constants.js';
+import { refreshCustomSelectSelection } from '../utils/custom-select.js';
+
+export const PALETTE_STORAGE_KEYS = Object.freeze({
+  bgColor: 'CUSTOM_BG_COLOR',
+  textColor: 'CUSTOM_TEXT_COLOR',
+  headingColor: 'CUSTOM_HEADING_COLOR',
+  linkColor: 'CUSTOM_LINK_COLOR'
+});
+
+function showStylePreset(select, preset) {
+  select.value = preset;
+  refreshCustomSelectSelection(select);
+}
+
+/** Store the same palette that the popup uses for its immediate export. */
+export async function saveVisibleCustomPalette(elements, storageKeys) {
+  const update = { [storageKeys.STYLE_PRESET]: 'custom' };
+  for (const [field, key] of Object.entries(PALETTE_STORAGE_KEYS)) {
+    update[storageKeys[key]] = elements[field].value;
+  }
+  showStylePreset(elements.stylePreset, 'custom');
+  await chrome.storage.local.set(update);
+}
 
 /**
  * Initialize styles module
@@ -35,19 +57,9 @@ export function initStyles(deps) {
       case 'textColor':
       case 'headingColor':
       case 'linkColor':
-        const colorKeys = {
-          bgColor: STORAGE_KEYS.CUSTOM_BG_COLOR,
-          textColor: STORAGE_KEYS.CUSTOM_TEXT_COLOR,
-          headingColor: STORAGE_KEYS.CUSTOM_HEADING_COLOR,
-          linkColor: STORAGE_KEYS.CUSTOM_LINK_COLOR
-        };
         elements[type].value = DEFAULT_STYLES[type];
         elements[`${type}Text`].value = DEFAULT_STYLES[type];
-        elements.stylePreset.value = 'custom';
-        await chrome.storage.local.set({
-          [colorKeys[type]]: DEFAULT_STYLES[type],
-          [STORAGE_KEYS.STYLE_PRESET]: 'custom'
-        });
+        await saveVisibleCustomPalette(elements, STORAGE_KEYS);
         break;
     }
     const resetText = await t('resetToDefault');
@@ -69,19 +81,7 @@ export function initStyles(deps) {
     elements.linkColorText.value = DEFAULT_STYLES.linkColor;
     
     // Reset style preset to dark (default)
-    elements.stylePreset.value = 'dark';
-    const stylePresetContainer = document.getElementById(ELEMENT_IDS.STYLE_PRESET_CONTAINER);
-    if (stylePresetContainer) {
-      const valueSpan = stylePresetContainer.querySelector('.custom-select-value');
-      const selectedOption = stylePresetContainer.querySelector('[data-value="dark"]');
-      if (valueSpan && selectedOption) {
-        valueSpan.textContent = selectedOption.textContent;
-        stylePresetContainer.querySelectorAll('.custom-select-option').forEach(opt => {
-          opt.classList.remove('selected');
-        });
-        selectedOption.classList.add('selected');
-      }
-    }
+    showStylePreset(elements.stylePreset, 'dark');
     
     await chrome.storage.local.remove([STORAGE_KEYS.FONT_FAMILY]);
     await chrome.storage.local.set({

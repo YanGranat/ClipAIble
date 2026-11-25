@@ -11,7 +11,7 @@ describe('statistics rendering', () => {
   let dom;
 
   beforeEach(() => {
-    dom = new JSDOM('<div id="statsHistory"></div><div id="cacheDomainsList"></div>');
+    dom = new JSDOM('<section id="statsPanel"><div id="statTotal">—</div><section><h3 class="stats-section-title">Recent history</h3><div id="statsHistory"></div></section><div id="cacheDomainsList"></div></section>');
     vi.stubGlobal('window', dom.window);
     vi.stubGlobal('document', dom.window.document);
     vi.stubGlobal('requestAnimationFrame', callback => { callback(); return 1; });
@@ -143,5 +143,35 @@ describe('statistics rendering', () => {
     await earlier;
     expect(document.querySelector('.history-title').textContent).toBe('Updated item');
     expect(document.querySelector('.cache-domain-delete').dataset.domain).toBe('updated.example');
+  });
+
+  it('distinguishes an outstanding statistics read, a failure, and an actual empty cache', async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    chrome.runtime.sendMessage.mockImplementation(({ action }) => action === 'getStats'
+      ? pending : Promise.resolve({ stats: { domains: [{ domain: 'old.example', invalidated: true }] } }));
+    const stats = initStats({ showToast: vi.fn() });
+    const load = stats.loadAndDisplayStats();
+    const panel = document.getElementById('statsPanel');
+    expect(panel.getAttribute('aria-busy')).toBe('true');
+    expect(document.getElementById('statTotal').textContent).toBe('—');
+    release(null);
+    await load;
+    expect(panel.getAttribute('aria-busy')).toBe('false');
+    expect(document.querySelector('#statsHistory [data-i18n]').dataset.i18n).toBe('errorUnknown');
+    expect(document.querySelector('#cacheDomainsList [data-i18n]').dataset.i18n).toBe('noCachedDomains');
+  });
+
+  it('keeps the same focused action across a reorder and advances focus when the row disappears', async () => {
+    const stats = initStats({ showToast: vi.fn() });
+    const row = id => ({ id, title: id, url: 'https://example.test/' + id, date: 10 });
+    await stats.displayStats({ history: [row('alpha'), row('beta')] });
+    document.querySelector('[data-entry="beta"] button').focus();
+    await stats.displayStats({ history: [row('beta'), row('alpha')] });
+    expect(document.activeElement.closest('.history-item').dataset.entry).toBe('beta');
+    await stats.displayStats({ history: [row('alpha')] });
+    expect(document.activeElement.closest('.history-item').dataset.entry).toBe('alpha');
+    await stats.displayStats({ history: [] });
+    expect(document.activeElement.textContent).toBe('Recent history');
   });
 });

@@ -2,7 +2,7 @@
 import { beginPdfOperation, takePdfOperationBlob, removePdfOperation } from './pdf-operation-storage.js';
 import { CONFIG } from '../utils/config.js';
 import { LIMITS } from '../offscreen/pdf/constants.js';
-import { createPdfError } from '../utils/pdf-errors.js';
+import { createPdfError, createPdfSelectionCancelledError } from '../utils/pdf-errors.js';
 import { validatePdfData } from './pdf-storage.js';
 import { logWarn } from '../utils/logging.js';
 
@@ -34,7 +34,7 @@ export async function requestPdfFileSelectionViaMessage(expectedPdfUrl, options 
       });
     });
     await check();
-    if (response?.cancelled) return null;
+    if (response?.success === true && response.cancelled === true) throw createPdfSelectionCancelledError();
     if (!response?.success || response.ref !== `${operationId}:0`) {
       throw createPdfError(response?.error || 'PDF file selection unavailable', response?.translationKey || 'errorPdfDataUnavailable', response?.translationParams || {});
     }

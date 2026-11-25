@@ -36,6 +36,36 @@ export async function mutateStatistics(request, refresh, showToast, successKey) 
   if (successKey) showToast(await t(successKey), 'success', { key: successKey });
 }
 
+function replaceRows(container, content, selector) {
+  const focused = document.activeElement;
+  const previousRow = container.contains(focused) ? focused.closest(selector) : null;
+  const index = previousRow ? [...container.querySelectorAll(selector)].indexOf(previousRow) : -1;
+  container.replaceChildren(content);
+  if (!previousRow) return;
+  const rows = [...container.querySelectorAll(selector)];
+  const row = rows.find(item => item.getAttribute('data-entry') === previousRow.getAttribute('data-entry')) ||
+    rows[Math.min(index, rows.length - 1)];
+  const target = row?.querySelector(focused.matches('a') ? 'a' : 'button');
+  if (target) {
+    target.focus();
+    return;
+  }
+  const heading = container.parentElement?.querySelector('.stats-section-title');
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus();
+  }
+}
+
+function showListMessage(container, selector, key, language) {
+  const message = document.createElement('div');
+  message.className = 'stats-empty';
+  message.dataset.i18n = key;
+  message.setAttribute('role', 'status');
+  message.textContent = formatMessage(key, language);
+  replaceRows(container, message, selector);
+}
+
 /**
  * Initialize stats module with dependencies
  * @param {Object} deps - Dependencies object
@@ -48,6 +78,8 @@ export function initStats(deps) {
   let historyRevision = 0;
   let cacheRevision = 0;
   let loadRevision = 0;
+  let historyLoaded = false;
+  let cacheLoaded = false;
 
   async function displayStats(stats) {
     const revision = ++historyRevision;
@@ -59,6 +91,7 @@ export function initStats(deps) {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
         if (revision !== historyRevision) { resolve(); return; }
+        historyLoaded = true;
         // Update main counters - batch DOM updates
         const updates = [];
         updates.push(() => {
@@ -112,8 +145,9 @@ export function initStats(deps) {
             const date = new Date(item.date);
             const dateStr = formatRelativeDate(date, langCode);
             const timeStr = item.processingTime > 0 ? seconds.format(Math.round(item.processingTime / 1000)) : '';
+            const entry = item.id || JSON.stringify([item.url, item.date, item.format]);
             return `
-              <div class="history-item" data-index="${index}" data-url="${escapeHtml(item.url || '')}">
+              <div class="history-item" data-index="${index}" data-entry="${escapeHtml(entry)}" data-url="${escapeHtml(item.url || '')}">
                 <a href="${escapeHtml(getSafeHistoryUrl(item.url))}" class="history-link" target="_blank" rel="noopener" title="${escapeHtml(openOriginalArticleText)}">
                   <div class="history-title">${escapeHtml(item.title)}</div>
                   <div class="history-meta">
@@ -142,10 +176,9 @@ export function initStats(deps) {
               await mutateStatistics({ action: 'deleteHistoryItem', item }, loadAndDisplayStats, showToast);
             });
           });
-          historyContainer.replaceChildren(fragment);
+          replaceRows(historyContainer, fragment, '.history-item');
         } else {
-          const noDataText = escapeHtml(formatMessage('noDataYet', langCode));
-          historyContainer.innerHTML = `<div class="stats-empty" data-i18n="noDataYet">${noDataText}</div>`;
+          showListMessage(historyContainer, '.history-item', 'noDataYet', langCode);
         }
         
         resolve();
@@ -160,6 +193,7 @@ export function initStats(deps) {
     return new Promise((resolve) => {
       requestAnimationFrame(() => {
         if (revision !== cacheRevision) { resolve(); return; }
+        cacheLoaded = true;
         const domainsEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS);
         if (domainsEl) {
           domainsEl.textContent = new Intl.NumberFormat(getLocaleTag(langCode)).format(stats.validDomains || 0);
@@ -172,22 +206,21 @@ export function initStats(deps) {
         
         // Display cached domains list
         const domainsListEl = document.getElementById(ELEMENT_IDS.CACHE_DOMAINS_LIST);
-        if (domainsListEl && Array.isArray(stats.domains)) {
-          if (stats.domains.length === 0) {
-            const noCachedDomainsText = escapeHtml(formatMessage('noCachedDomains', langCode));
-            domainsListEl.innerHTML = `<div class="stats-empty" data-i18n="noCachedDomains">${noCachedDomainsText}</div>`;
+        if (domainsListEl) {
+          const domains = Array.isArray(stats.domains) ? stats.domains.filter(item => item && !item.invalidated) : [];
+          if (domains.length === 0) {
+            showListMessage(domainsListEl, '.cache-domain-item', 'noCachedDomains', langCode);
             resolve();
           } else {
             // Use DocumentFragment for better performance
             const fragment = document.createDocumentFragment();
             const tempDiv = document.createElement('div');
             
-            tempDiv.innerHTML = stats.domains.map(item => {
+            tempDiv.innerHTML = domains.map(item => {
               if (!item || typeof item !== 'object') return '';
-              if (item.invalidated) return ''; // Skip invalidated domains
               
               return `
-                <div class="cache-domain-item">
+                <div class="cache-domain-item" data-entry="${escapeHtml(item.domain)}">
                   <span class="cache-domain-name" title="${escapeHtml(item.domain)}">${escapeHtml(item.domain)}</span>
                   <div class="cache-domain-meta">
                     <span>${escapeHtml(formatRelativeDate(item.lastUsed, langCode))}</span>
@@ -213,7 +246,7 @@ export function initStats(deps) {
                 }
               });
             });
-            domainsListEl.replaceChildren(fragment);
+            replaceRows(domainsListEl, fragment, '.cache-domain-item');
             
             resolve();
           }
@@ -226,15 +259,32 @@ export function initStats(deps) {
 
   async function loadAndDisplayStats() {
     const revision = ++loadRevision;
-    const read = async (action, display) => {
+    const panel = document.getElementById(ELEMENT_IDS.STATS_PANEL);
+    panel?.setAttribute('aria-busy', 'true');
+    const read = async (action, display, id, selector, loaded) => {
       try {
         const response = await chrome.runtime.sendMessage({ action });
-        if (revision === loadRevision && response?.stats) await display(response.stats);
+        if (revision !== loadRevision) return;
+        if (response?.stats) {
+          await display(response.stats);
+          return;
+        }
       } catch (error) {
         logError('Failed to load stats', { action, error });
       }
+      const language = await getUILanguage();
+      if (revision !== loadRevision || loaded()) return;
+      const container = document.getElementById(id);
+      if (container) showListMessage(container, selector, 'errorUnknown', language);
     };
-    await Promise.all([read('getStats', displayStats), read('getCacheStats', displayCacheStats)]);
+    try {
+      await Promise.all([
+        read('getStats', displayStats, ELEMENT_IDS.STATS_HISTORY, '.history-item', () => historyLoaded),
+        read('getCacheStats', displayCacheStats, ELEMENT_IDS.CACHE_DOMAINS_LIST, '.cache-domain-item', () => cacheLoaded)
+      ]);
+    } finally {
+      if (revision === loadRevision) panel?.setAttribute('aria-busy', 'false');
+    }
   }
 
   return {

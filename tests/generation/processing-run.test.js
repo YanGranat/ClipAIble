@@ -134,6 +134,7 @@ describe('document processing ownership', () => {
     expect(removePrintJob).toHaveBeenCalledWith(oldKey);
     expect(removePrintJob).not.toHaveBeenCalledWith(newKey);
     expect(global.chrome.tabs.create).toHaveBeenCalledOnce();
+    expect(global.chrome.tabs.create).toHaveBeenCalledWith(expect.objectContaining({ active: false }));
     expect(global.chrome.tabs.create.mock.calls[0][0].url).toContain(`job=${newKey}`);
   });
 

@@ -35,11 +35,35 @@ describe('custom select keyboard behavior', () => {
     expect(change).not.toHaveBeenCalled();
     option.dispatchEvent(new dom.window.MouseEvent('mouseup', { bubbles: true, button: 0 }));
     option.click();
+    expect(select.value).toBe('p');
     await flush();
     expect(select.value).toBe('p');
     expect(change).toHaveBeenCalledOnce();
     expect(document.activeElement).toBe(trigger);
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('does not repaint or replace a new selection after the choices are rebuilt', async () => {
+    trigger.click();
+    document.querySelector('#choiceOptions [data-value="p"]').click();
+    select.innerHTML = '<option value="fresh">Fresh choice</option><option value="another">Another choice</option>';
+    select.value = 'fresh';
+    change.mockClear();
+    await flush();
+    expect(select.value).toBe('fresh');
+    expect(document.getElementById('choiceValue').textContent).toBe('Fresh choice');
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  it('rejects an obsolete choice before the rendered list observes native changes', async () => {
+    trigger.click();
+    const removed = document.querySelector('#choiceOptions [data-value="p"]');
+    select.querySelector('[value="p"]').remove();
+    removed.click();
+    await flush();
+    expect(select.value).toBe('');
+    expect(document.getElementById('choiceValue').textContent).toBe('Default');
+    expect(change).not.toHaveBeenCalled();
   });
 
   it('retains focus and selection when a disabled option is pressed', async () => {
@@ -77,12 +101,19 @@ describe('custom select keyboard behavior', () => {
   });
 
   it('exposes a labeled focusable combobox and options', () => {
+    const listbox = document.getElementById(trigger.getAttribute('aria-controls'));
     expect(trigger.getAttribute('role')).toBe('combobox');
     expect(trigger.tabIndex).toBe(0);
     expect(trigger.getAttribute('aria-labelledby')).toBe(document.querySelector('label').id);
-    expect(document.getElementById(trigger.getAttribute('aria-controls')).getAttribute('role')).toBe('listbox');
+    expect(listbox.getAttribute('role')).toBe('listbox');
     expect(document.querySelectorAll('[role="option"]')).toHaveLength(5);
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    expect(listbox.getAttribute('aria-hidden')).toBe('true');
+    expect(listbox.hasAttribute('inert')).toBe(true);
+    expect(trigger.querySelector('.custom-select-arrow').getAttribute('aria-hidden')).toBe('true');
+    key('ArrowDown');
+    expect(listbox.getAttribute('aria-hidden')).toBe('false');
+    expect(listbox.hasAttribute('inert')).toBe(false);
   });
 
   it('opens, navigates past disabled options, and commits through the existing change event', async () => {
@@ -117,6 +148,21 @@ describe('custom select keyboard behavior', () => {
     trigger.dispatchEvent(event); await flush();
     expect(event.defaultPrevented).toBe(false);
     expect(select.value).toBe('g');
+  });
+
+  it('reveals the active item again after the open menu reaches its full height', () => {
+    const listbox = document.getElementById('choiceOptions');
+    key('End');
+    const item = document.getElementById(trigger.getAttribute('aria-activedescendant'));
+    item.scrollIntoView = vi.fn();
+    const transition = propertyName => Object.defineProperty(new Event('transitionend', { bubbles: true }), 'propertyName', { value: propertyName });
+    listbox.dispatchEvent(transition('opacity'));
+    expect(item.scrollIntoView).not.toHaveBeenCalled();
+    listbox.dispatchEvent(transition('max-height'));
+    expect(item.scrollIntoView).toHaveBeenCalledExactlyOnceWith({ block: 'nearest', inline: 'nearest' });
+    key('Escape');
+    listbox.dispatchEvent(transition('max-height'));
+    expect(item.scrollIntoView).toHaveBeenCalledOnce();
   });
 
   it('synchronizes dynamic options and external dismissal', async () => {

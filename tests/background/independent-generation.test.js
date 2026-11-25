@@ -3,6 +3,7 @@ import { startSummaryGeneration } from '../../scripts/message-handlers/summary.j
 import { startKeyThesesGeneration, requestCancelKeyThesesGeneration } from '../../scripts/message-handlers/key-theses.js';
 import { generateSummary, generateKeyTheses } from '../../scripts/translation/index.js';
 import { handleError } from '../../scripts/utils/error-handler.js';
+import { createPdfSelectionCancelledError } from '../../scripts/utils/pdf-errors.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logWarn: vi.fn() }));
 vi.mock('../../scripts/utils/error-handler.js', async importOriginal => ({ ...(await importOriginal()), handleError: vi.fn(async error => error) }));
@@ -24,6 +25,15 @@ beforeEach(() => {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe('independent generation ownership', () => {
+  it.each([['summary', startSummaryGeneration, generateSummary], ['key theses', startKeyThesesGeneration, generateKeyTheses]])('ends %s quietly after explicit PDF picker dismissal', async (_kind, start, generate) => {
+    const result = await start({ ...data, getContent: async () => { throw createPdfSelectionCancelledError(); } }, vi.fn(), vi.fn());
+    const prefix = _kind === 'summary' ? 'summary' : 'key_theses';
+    expect(result).toEqual({ cancelled: true });
+    expect(stored[`${prefix}_generating`]).toBe(false);
+    expect(stored[`${prefix}_error`]).toBeNull();
+    expect(generate).not.toHaveBeenCalled();
+    expect(handleError).not.toHaveBeenCalled();
+  });
   it.each([
     ['summary', startSummaryGeneration, generateSummary, { summary: 'Summary' }],
     ['key theses', startKeyThesesGeneration, generateKeyTheses, { keyTheses: 'Theses' }]

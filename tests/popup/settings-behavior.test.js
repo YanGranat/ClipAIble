@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { initUI } from '../../popup/ui.js';
 import { initStyles } from '../../popup/settings/styles.js';
 import { initializeModules } from '../../popup/utils/init-helpers.js';
-import { DEFAULT_STYLES, STORAGE_KEYS } from '../../popup/constants.js';
+import { DEFAULT_STYLES, STORAGE_KEYS, STYLE_PRESETS } from '../../popup/constants.js';
 
 vi.mock('../../scripts/locales.js', () => ({ getUILanguage: async () => 'en', t: async key => key, UI_LOCALES: { en: {} } }));
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logError: vi.fn(), logWarn: vi.fn() }));
@@ -39,7 +39,11 @@ describe('popup settings behavior', () => {
     it(`persists the reset ${type} in the custom palette`, async () => {
       const store = { [key]: '#123456', pdf_style_preset: 'light', unrelated: 'kept' };
       chrome.storage.local.set = vi.fn(async values => Object.assign(store, values));
-      const elements = { [type]: {}, [`${type}Text`]: {}, stylePreset: {} };
+      const stylePreset = document.createElement('select');
+      stylePreset.innerHTML = '<option value="light">Light</option><option value="custom">Custom</option>';
+      const elements = { [`${type}Text`]: {}, stylePreset,
+        ...Object.fromEntries(['bgColor', 'textColor', 'headingColor', 'linkColor']
+          .map(field => [field, { value: STYLE_PRESETS.light[field] }])) };
       const styles = initStyles({ elements, STORAGE_KEYS, DEFAULT_STYLES, showToast: vi.fn(), setCustomSelectValue: vi.fn() });
       await styles.resetStyleSetting(type);
       expect(elements[type].value).toBe(DEFAULT_STYLES[type]);

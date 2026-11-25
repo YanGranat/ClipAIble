@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { initAudio, restoreTtsSelect } from '../../popup/settings/audio.js';
 import { STORAGE_KEYS } from '../../popup/constants.js';
 import { setupAudioHandlers } from '../../popup/handlers/audio.js';
+import { debouncedSaveSettings } from '../../popup/utils/settings-helpers.js';
+import { CONFIG } from '../../scripts/utils/config.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ logWarn: vi.fn() }));
 let dom, elements, audio, saves, voices;
@@ -16,7 +18,7 @@ beforeEach(() => {
   audio = initAudio({ elements, STORAGE_KEYS, debouncedSaveSettings: saves, audioVoiceMap: voices,
     getElement: id => elements[id], setElementGroupDisplay: (id, display) => { elements[id].style.display = display; } });
 });
-afterEach(() => { dom.window.close(); vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); dom.window.close(); vi.unstubAllGlobals(); });
 
 it('uses current defaults and keeps a saved older model and custom voice visible', () => {
   expect(elements.googleTtsModel.value).toBe('gemini-3.8-flash-tts');
@@ -75,9 +77,29 @@ it('shows workspace configuration for Qwen 3.1 and retains a saved legacy voice 
   expect(elements.qwenWorkspaceGroup.style.display).toBe('flex');
   voices.current.qwen = 'Elias'; audio.updateAudioProviderUI();
   expect(elements.audioVoice.value).toBe('Elias');
+  expect(elements.audioVoice.selectedOptions[0].disabled).toBe(true);
+  expect(elements.audioVoice.selectedOptions[0].dataset.i18n).toBe('voiceUnavailable');
+  expect(audio.getVoiceIdByIndex('qwen', elements.audioVoice.selectedIndex)).toBeNull();
   elements.qwenModel.value = 'qwen3-tts-flash'; audio.updateAudioProviderUI();
   expect(elements.qwenWorkspaceGroup.style.display).toBe('none');
   expect(elements.audioVoice.value).toBe('Elias');
+  expect(elements.audioVoice.selectedOptions[0].disabled).toBe(false);
+  expect(voices.current.qwen).toBe('Elias');
+});
+
+it.each(['longanhuan_v3.1', 'sample-custom-voice'])('does not silently replace the saved Qwen voice %s on a model change', voice => {
+  voices.current.qwen = voice;
+  elements.audioProvider.value = 'qwen'; audio.updateAudioProviderUI();
+  expect(elements.audioVoice.selectedOptions[0].disabled).toBe(false);
+  elements.qwenModel.value = 'qwen3-tts-flash'; audio.updateAudioProviderUI();
+  expect(elements.audioVoice.value).toBe(voice);
+  expect(elements.audioVoice.selectedOptions[0].disabled).toBe(voice === 'longanhuan_v3.1');
+  expect([...elements.audioVoice.options].some(option => option.value === 'Elias' && !option.disabled)).toBe(true);
+  expect(voices.current.qwen).toBe(voice);
+  expect(saves).not.toHaveBeenCalled();
+  elements.qwenModel.value = 'qwen-audio-3.1-tts-flash'; audio.updateAudioProviderUI();
+  expect(elements.audioVoice.value).toBe(voice);
+  expect(elements.audioVoice.selectedOptions[0].disabled).toBe(false);
 });
 
 it('restores provider-specific choices across switches and migrates only the invalid French alias', () => {
@@ -118,4 +140,30 @@ it('persists Qwen setup fields and updates model capabilities through the regist
   expect(elements.audioSpeedGroup.style.display).toBe('flex');
   elements.elevenlabsModel.value = 'eleven_v4'; elements.elevenlabsModel.dispatchEvent(new dom.window.Event('change'));
   expect(elements.audioSpeedGroup.style.display).toBe('none');
+});
+
+it('keeps another provider’s saved voice when the picker is used during a provider switch', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  voices.current.openai = 'marin';
+  voices.current.elevenlabs = 'saved-custom-voice';
+  const stored = { [STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP]: { current: { ...voices.current } } };
+  chrome.storage.local.set.mockImplementation(async patch => Object.assign(stored, structuredClone(patch)));
+  const realAudio = initAudio({ elements, STORAGE_KEYS, debouncedSaveSettings, audioVoiceMap: voices,
+    getElement: id => elements[id], setElementGroupDisplay: (id, display) => { elements[id].style.display = display; } });
+  setupAudioHandlers({ elements, STORAGE_KEYS, debouncedSaveSettings, settingsModule: realAudio, log: vi.fn(), logWarn: vi.fn(), logError: vi.fn() });
+  elements.audioProvider.value = 'openai';
+  realAudio.updateAudioProviderUI();
+  expect(elements.audioVoice.value).toBe('marin');
+
+  elements.audioProvider.value = 'elevenlabs';
+  elements.audioProvider.dispatchEvent(new dom.window.Event('change'));
+  // Select this row only if it is still presented after the provider edit.
+  if ([...elements.audioVoice.options].some(option => option.value === 'cedar')) {
+    elements.audioVoice.value = 'cedar';
+    elements.audioVoice.dispatchEvent(new dom.window.Event('change'));
+  }
+  await vi.advanceTimersByTimeAsync(CONFIG.UI_DEBOUNCE_DELAY + 1);
+  expect(stored[STORAGE_KEYS.AUDIO_PROVIDER]).toBe('elevenlabs');
+  expect(stored[STORAGE_KEYS.STORAGE_AUDIO_VOICE_MAP].current).toEqual({ openai: 'marin', elevenlabs: 'saved-custom-voice' });
+  expect(elements.audioVoice.value).toBe('saved-custom-voice');
 });

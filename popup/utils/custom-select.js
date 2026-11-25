@@ -41,7 +41,6 @@ export function initCustomSelect(selectId, options = {}) {
 
   const arrow = document.createElement('span');
   arrow.className = 'custom-select-arrow';
-  arrow.textContent = '▾';
 
   trigger.appendChild(valueSpan);
   trigger.appendChild(arrow);
@@ -109,42 +108,18 @@ export function initCustomSelect(selectId, options = {}) {
   });
 
   optionsDiv.addEventListener('click', (e) => {
-    // Defer all work to avoid blocking main thread
-    setTimeout(() => {
-      const target = e.target;
-      if (!(target instanceof HTMLElement)) return;
-      const option = target.closest('.custom-select-option');
-      if (!(option instanceof HTMLElement)) return;
+    if (!(e.target instanceof HTMLElement) || !(select instanceof HTMLSelectElement) || select.disabled) return;
+    const option = e.target.closest('.custom-select-option');
+    if (!(option instanceof HTMLElement) || !optionsDiv.contains(option)) return;
+    const choice = Array.from(select.options).find(item => item.value === option.dataset.value);
+    const group = choice?.closest('optgroup');
+    if (!choice || choice.disabled || choice.hidden || group?.disabled || group?.hidden) return;
 
-      const value = option.dataset.value;
-      if (value === undefined) return;
-
-      // Defer DOM updates to requestAnimationFrame
-      requestAnimationFrame(() => {
-        // Update native select
-        if (select instanceof HTMLSelectElement) {
-          select.value = value;
-        }
-        select.dispatchEvent(new Event('change', { bubbles: true }));
-
-        // Update display
-        valueSpan.textContent = option.textContent;
-
-        // Update selected state
-        optionsDiv.querySelectorAll('.custom-select-option').forEach(opt => {
-          opt.classList.remove('selected');
-        });
-        option.classList.add('selected');
-
-        // Close dropdown
-        container.classList.remove('open');
-
-        // Call custom callback if provided
-        if (options.onChange) {
-          options.onChange(value);
-        }
-      });
-    }, 0);
+    // Commit against the native list before a provider or locale can replace its choices.
+    select.selectedIndex = choice.index;
+    container.classList.remove('open');
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    options.onChange?.(choice.value);
   }, { passive: true });
 
   // Close dropdown when clicking outside (handled globally for all selects)
@@ -206,6 +181,7 @@ export function enhanceCustomSelect(select, container = select?.closest('.custom
   trigger.setAttribute('role', 'combobox');
   trigger.setAttribute('aria-haspopup', 'listbox');
   trigger.setAttribute('aria-controls', listbox.id);
+  trigger.querySelector('.custom-select-arrow')?.setAttribute('aria-hidden', 'true');
   listbox.setAttribute('role', 'listbox');
   select.setAttribute('aria-hidden', 'true');
   select.tabIndex = -1;
@@ -214,7 +190,8 @@ export function enhanceCustomSelect(select, container = select?.closest('.custom
     const all = items();
     const isDisabled = index => {
       const native = select.options?.[index];
-      return Boolean(native?.disabled || native?.parentElement?.disabled || native?.hidden);
+      const group = native?.closest('optgroup');
+      return Boolean(native?.disabled || native?.hidden || group?.disabled || group?.hidden);
     };
     if (isOpen()) {
       active = all.findIndex((item, index) => item.dataset.value === activeValue && !isDisabled(index));
@@ -228,6 +205,8 @@ export function enhanceCustomSelect(select, container = select?.closest('.custom
     trigger.tabIndex = select.disabled ? -1 : 0;
     trigger.setAttribute('aria-disabled', String(Boolean(select.disabled)));
     trigger.setAttribute('aria-expanded', String(isOpen()));
+    listbox.setAttribute('aria-hidden', String(!isOpen()));
+    listbox.toggleAttribute('inert', !isOpen());
     if (!label) trigger.setAttribute('aria-label', select.getAttribute('aria-label') || select.title || select.id);
     all.forEach((item, index) => {
       item.id ||= `${select.id}Option${index}`;
@@ -283,6 +262,11 @@ export function enhanceCustomSelect(select, container = select?.closest('.custom
     const item = event.target.closest('.custom-select-option');
     if (item?.getAttribute('aria-disabled') === 'true') { event.preventDefault(); event.stopImmediatePropagation(); }
   }, true);
+  listbox.addEventListener('transitionend', event => {
+    if (event.target !== listbox || event.propertyName !== 'max-height' || !isOpen()) return;
+    // The expanded menu can extend below the popup even when its active row is scrolled into the list.
+    items()[active]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+  });
   trigger.addEventListener('keydown', event => {
     if (select.disabled || event.ctrlKey || event.metaKey) return;
     const { key } = event;
@@ -331,7 +315,7 @@ export function enhanceCustomSelect(select, container = select?.closest('.custom
   const observer = new MutationObserver(sync);
   observer.observe(container, { attributes: true, attributeFilter: ['class'] });
   observer.observe(listbox, { childList: true, subtree: true, characterData: true });
-  observer.observe(select, { attributes: true, attributeFilter: ['disabled', 'title', 'aria-label'], childList: true, subtree: true });
+  observer.observe(select, { attributes: true, attributeFilter: ['disabled', 'hidden', 'title', 'aria-label'], childList: true, subtree: true });
   sync();
   const controller = { sync, close };
   enhancedSelects.set(container, controller);

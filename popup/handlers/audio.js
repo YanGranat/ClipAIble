@@ -26,12 +26,8 @@ export function setupAudioHandlers(deps) {
   // Audio provider handler
   if (elements.audioProvider) {
     elements.audioProvider.addEventListener('change', () => {
-      debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value, () => {
-        if (settingsModule) {
-          settingsModule.updateVoiceList(elements.audioProvider.value);
-          settingsModule.updateAudioProviderUI();
-        }
-      });
+      debouncedSaveSettings(STORAGE_KEYS.AUDIO_PROVIDER, elements.audioProvider.value);
+      settingsModule?.updateAudioProviderUI();
     });
   }
 
@@ -42,6 +38,7 @@ export function setupAudioHandlers(deps) {
       const selectedIndex = elements.audioVoice.selectedIndex;
       const selectedOption = elements.audioVoice.options[selectedIndex];
       const selectedValue = elements.audioVoice.value;
+      if (!selectedOption || selectedOption.disabled || !selectedValue || elements.audioVoice.dataset.provider !== provider) return;
       
       log('[ClipAIble Handlers] ===== AUDIO VOICE CHANGE EVENT =====', {
         timestamp: Date.now(),

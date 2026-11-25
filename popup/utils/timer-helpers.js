@@ -77,7 +77,7 @@ function updateTimerDisplay(currentStartTimeRef, elements) {
       const elapsed = Math.floor((Date.now() - currentStartTimeRef.current) / 1000);
       // SECURITY: Escape status text to prevent XSS attacks
       const escapedStatusText = escapeHtmlUtil(statusText);
-      elements.statusText.innerHTML = `${escapedStatusText} <span id="timerDisplay" class="timer">${formatTime(elapsed)}</span>`;
+      elements.statusText.innerHTML = `${escapedStatusText} <span id="timerDisplay" class="timer" aria-hidden="true">${formatTime(elapsed)}</span>`;
     }
   }
 }

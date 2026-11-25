@@ -269,6 +269,17 @@ export function initProcessing(deps) {
   // Handle Save PDF button click
   async function handleSavePdf() {
     const attempt = ++latestSaveAttempt;
+    const settings = Object.fromEntries(Object.entries(elements).map(([key, element]) => {
+      if (!element || !('value' in element)) return [key, null];
+      const input = /** @type {HTMLInputElement & HTMLSelectElement} */ (element);
+      return [key, { value: input.value, checked: input.checked, disabled: input.disabled,
+        dataset: { ...input.dataset }, selectedIndex: input.selectedIndex,
+        options: input.options ? Array.from(input.options, option => ({ value: option.value,
+          textContent: option.textContent, dataset: { ...option.dataset }, disabled: option.disabled ||
+            (option.parentElement?.tagName === 'OPTGROUP' && /** @type {HTMLOptGroupElement} */ (option.parentElement).disabled) })) : [] }];
+    }));
+    const voiceIdByIndex = settings.audioVoice && /^\d+$/.test(settings.audioVoice.value)
+      ? settingsModule?.getVoiceIdByIndex?.(settings.audioProvider?.value || 'openai', settings.audioVoice.selectedIndex) : null;
     let preparing = false;
     let admitted = false;
     let failed = false;
@@ -284,6 +295,12 @@ export function initProcessing(deps) {
     const language = elements.languageSelect?.value || 'auto';
     const generateAbstract = Boolean(elements.generateAbstract?.checked);
     const audioProvider = elements.audioProvider?.value || 'openai';
+    const selectedVoice = settings.audioVoice?.options[settings.audioVoice.selectedIndex];
+    if (outputFormat === 'audio' && settings.audioVoice &&
+        ((settings.audioVoice.dataset.provider && settings.audioVoice.dataset.provider !== audioProvider) || selectedVoice?.disabled)) {
+      showToast(await t('selectNarratorVoice'), 'error', { key: 'selectNarratorVoice' });
+      return;
+    }
     const modelReady = isProviderModelReady(elements.modelSelect, provider);
     const modelRequired = mode !== 'automatic' || language !== 'auto' ||
       (outputFormat === 'audio' ? audioProvider !== 'offline' : generateAbstract);
@@ -305,7 +322,7 @@ export function initProcessing(deps) {
     // Get the appropriate API key based on selected provider
     try {
       const currentProvider = () => attempt === latestSaveAttempt && (!elements.apiProviderSelect || elements.apiProviderSelect.value === provider);
-      const apiKey = modelReady ? await resolveProviderApiKey(elements.apiKey, provider, decryptApiKey, t) : '';
+      const apiKey = modelReady ? await resolveProviderApiKey(settings.apiKey, provider, decryptApiKey, t) : '';
       if (!currentProvider()) return;
       // Check API key only if not using automatic mode
       if (mode !== 'automatic' && !apiKey) {
@@ -559,22 +576,21 @@ export function initProcessing(deps) {
       }
 
       // Get Google API key if needed
-      let googleApiKey = elements.googleApiKey ? /** @type {HTMLInputElement} */ (elements.googleApiKey).value.trim() : '';
+      let googleApiKey = settings.googleApiKey?.value.trim() || '';
       // If masked, decrypt the encrypted version from dataset
-      if (googleApiKey.startsWith('****') && elements.googleApiKey && elements.googleApiKey.dataset.encrypted) {
+      if (googleApiKey.startsWith('****') && settings.googleApiKey?.dataset.encrypted) {
         try {
-          googleApiKey = await decryptApiKey(elements.googleApiKey.dataset.encrypted, 'google');
+          googleApiKey = await decryptApiKey(settings.googleApiKey.dataset.encrypted, 'google');
         } catch (error) {
           logError('Failed to decrypt Google API key', error);
           // Continue without Google API key if decryption fails
           googleApiKey = '';
         }
       }
-      const translateImages = Boolean(elements.translateImages?.checked && language !== 'auto' && supportsImageTranslation(outputFormat));
+      const translateImages = Boolean(settings.translateImages?.checked && language !== 'auto' && supportsImageTranslation(outputFormat));
       let imageApiKey = translateImages ? googleApiKey : '';
       if (translateImages && imageTranslationProvider === 'openai') {
-        const ownsOpenAiDraft = provider === 'openai' && apiKeyOwner === 'openai' &&
-          elements.apiProviderSelect?.value === 'openai' && elements.apiKey?.dataset.provider === 'openai';
+        const ownsOpenAiDraft = provider === 'openai' && apiKeyOwner === 'openai';
         if (ownsOpenAiDraft) imageApiKey = apiKey;
         else {
           imageApiKey = await readStoredApiKey('openai_api_key');
@@ -608,20 +624,20 @@ export function initProcessing(deps) {
           imageApiKey,
           model: model,
           mode,
-          useCache: elements.useCache ? /** @type {HTMLInputElement} */ (elements.useCache).checked : false,
+          useCache: settings.useCache ? settings.useCache.checked : false,
           outputFormat,
-          generateToc: elements.generateToc ? /** @type {HTMLInputElement} */ (elements.generateToc).checked : false,
+          generateToc: settings.generateToc ? settings.generateToc.checked : false,
           generateAbstract,
-          pageMode: elements.pageMode ? /** @type {HTMLSelectElement} */ (elements.pageMode).value : 'single',
+          pageMode: settings.pageMode ? settings.pageMode.value : 'single',
           language,
           translateImages: translateImages,
-          fontFamily: elements.fontFamily ? /** @type {HTMLSelectElement} */ (elements.fontFamily).value : 'Arial',
-          fontSize: elements.fontSize ? /** @type {HTMLSelectElement} */ (elements.fontSize).value : '12pt',
-          bgColor: elements.bgColor ? /** @type {HTMLInputElement} */ (elements.bgColor).value : '#ffffff',
-          textColor: elements.textColor ? /** @type {HTMLInputElement} */ (elements.textColor).value : '#000000',
-          headingColor: elements.headingColor ? /** @type {HTMLInputElement} */ (elements.headingColor).value : '#000000',
-          linkColor: elements.linkColor ? /** @type {HTMLInputElement} */ (elements.linkColor).value : '#0066cc',
-          stylePreset: elements.stylePreset ? /** @type {HTMLSelectElement} */ (elements.stylePreset).value : 'dark',
+          fontFamily: settings.fontFamily ? settings.fontFamily.value : 'Arial',
+          fontSize: settings.fontSize ? settings.fontSize.value : '12pt',
+          bgColor: settings.bgColor ? settings.bgColor.value : '#ffffff',
+          textColor: settings.textColor ? settings.textColor.value : '#000000',
+          headingColor: settings.headingColor ? settings.headingColor.value : '#000000',
+          linkColor: settings.linkColor ? settings.linkColor.value : '#0066cc',
+          stylePreset: settings.stylePreset ? settings.stylePreset.value : 'dark',
           tabId: tab.id,
           // Audio settings
           audioProvider,
@@ -629,7 +645,7 @@ export function initProcessing(deps) {
           // If audioVoice.value is a number (index), get the actual value from options
           audioVoice: (() => {
             const provider = audioProvider;
-            if (!elements.audioVoice) {
+            if (!settings.audioVoice) {
               logWarn('[ClipAIble Processing] ===== NO AUDIO VOICE ELEMENT =====', {
                 timestamp: Date.now(),
                 provider,
@@ -637,7 +653,7 @@ export function initProcessing(deps) {
               });
               return getDefaultTtsVoice('openai');
             }
-            const audioVoiceEl = /** @type {HTMLSelectElement} */ (elements.audioVoice);
+            const audioVoiceEl = settings.audioVoice;
             const voiceValue = audioVoiceEl.value;
             const selectedIndex = audioVoiceEl.selectedIndex;
             const selectedOption = audioVoiceEl.options[selectedIndex];
@@ -685,7 +701,7 @@ export function initProcessing(deps) {
               }
               // Priority 3: Use getVoiceIdByIndex if value is an index
               else if (selectedOption.value && /^\d+$/.test(String(selectedOption.value)) && settingsModule && settingsModule.getVoiceIdByIndex) {
-                const voiceIdFromCache = settingsModule.getVoiceIdByIndex(provider, selectedIndex);
+                const voiceIdFromCache = voiceIdByIndex;
                 if (voiceIdFromCache && (voiceIdFromCache.includes('_') || voiceIdFromCache.includes('-') || provider !== 'offline')) {
                   finalVoice = voiceIdFromCache;
                   log('[ClipAIble Processing] ===== USING getVoiceIdByIndex =====', {
@@ -713,7 +729,7 @@ export function initProcessing(deps) {
             
             // Final fallback: use default
             if (!finalVoice) {
-              finalVoice = getDefaultTtsVoice(provider, elements.qwenModel?.value);
+              finalVoice = getDefaultTtsVoice(provider, settings.qwenModel?.value);
               logWarn('[ClipAIble Processing] ===== USING DEFAULT VOICE =====', {
                 timestamp: Date.now(),
                 provider,
@@ -733,29 +749,29 @@ export function initProcessing(deps) {
             });
             return finalVoice;
           })(),
-          audioSpeed: parseFloat(elements.audioSpeed ? /** @type {HTMLInputElement} */ (elements.audioSpeed).value : '1.0'),
+          audioSpeed: parseFloat(settings.audioSpeed ? settings.audioSpeed.value : '1.0'),
           audioFormat: 'mp3',
-          elevenlabsApiKey: readApiKeyDraft(elements.elevenlabsApiKey),
-          elevenlabsModel: elements.elevenlabsModel ? /** @type {HTMLSelectElement} */ (elements.elevenlabsModel).value : DEFAULT_ELEVENLABS_TTS_MODEL,
-          elevenlabsFormat: elements.elevenlabsFormat ? /** @type {HTMLSelectElement} */ (elements.elevenlabsFormat).value : 'mp3_44100_192',
-          elevenlabsStability: elements.elevenlabsStability ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStability).value) : 0.5,
-          elevenlabsSimilarity: elements.elevenlabsSimilarity ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsSimilarity).value) : 0.75,
-          elevenlabsStyle: elements.elevenlabsStyle ? parseFloat(/** @type {HTMLInputElement} */ (elements.elevenlabsStyle).value) : 0.0,
-          elevenlabsSpeakerBoost: elements.elevenlabsSpeakerBoost ? /** @type {HTMLInputElement} */ (elements.elevenlabsSpeakerBoost).checked : true,
-          openaiInstructions: elements.openaiInstructions ? /** @type {HTMLTextAreaElement} */ (elements.openaiInstructions).value.trim() : null,
-          googleTtsModel: elements.googleTtsModel ? /** @type {HTMLSelectElement} */ (elements.googleTtsModel).value : DEFAULT_GOOGLE_TTS_MODEL,
-          googleTtsVoice: elements.googleTtsVoice ? /** @type {HTMLSelectElement} */ (elements.googleTtsVoice).value : 'Callirrhoe',
-          googleTtsPrompt: elements.googleTtsPrompt ? /** @type {HTMLInputElement} */ (elements.googleTtsPrompt).value.trim() : null,
-          respeecherTemperature: elements.respeecherTemperature ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTemperature).value) : 1.0,
-          respeecherRepetitionPenalty: elements.respeecherRepetitionPenalty ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherRepetitionPenalty).value) : 1.0,
-          respeecherTopP: elements.respeecherTopP ? parseFloat(/** @type {HTMLInputElement} */ (elements.respeecherTopP).value) : 1.0,
-          googleTtsApiKey: readApiKeyDraft(elements.googleTtsApiKey),
-          geminiApiKey: elements.geminiApiKey?.dataset.encrypted || null,
-          qwenApiKey: readApiKeyDraft(elements.qwenApiKey),
-          qwenModel: elements.qwenModel?.value || DEFAULT_QWEN_TTS_MODEL,
-          qwenWorkspaceId: elements.qwenWorkspaceId?.value.trim() || '',
-          qwenRegion: elements.qwenRegion?.value || 'singapore',
-          respeecherApiKey: readApiKeyDraft(elements.respeecherApiKey)
+          elevenlabsApiKey: readApiKeyDraft(settings.elevenlabsApiKey),
+          elevenlabsModel: settings.elevenlabsModel ? settings.elevenlabsModel.value : DEFAULT_ELEVENLABS_TTS_MODEL,
+          elevenlabsFormat: settings.elevenlabsFormat ? settings.elevenlabsFormat.value : 'mp3_44100_192',
+          elevenlabsStability: settings.elevenlabsStability ? parseFloat(settings.elevenlabsStability.value) : 0.5,
+          elevenlabsSimilarity: settings.elevenlabsSimilarity ? parseFloat(settings.elevenlabsSimilarity.value) : 0.75,
+          elevenlabsStyle: settings.elevenlabsStyle ? parseFloat(settings.elevenlabsStyle.value) : 0.0,
+          elevenlabsSpeakerBoost: settings.elevenlabsSpeakerBoost ? settings.elevenlabsSpeakerBoost.checked : true,
+          openaiInstructions: settings.openaiInstructions ? settings.openaiInstructions.value.trim() : null,
+          googleTtsModel: settings.googleTtsModel ? settings.googleTtsModel.value : DEFAULT_GOOGLE_TTS_MODEL,
+          googleTtsVoice: settings.googleTtsVoice ? settings.googleTtsVoice.value : 'Callirrhoe',
+          googleTtsPrompt: settings.googleTtsPrompt ? settings.googleTtsPrompt.value.trim() : null,
+          respeecherTemperature: settings.respeecherTemperature ? parseFloat(settings.respeecherTemperature.value) : 1.0,
+          respeecherRepetitionPenalty: settings.respeecherRepetitionPenalty ? parseFloat(settings.respeecherRepetitionPenalty.value) : 1.0,
+          respeecherTopP: settings.respeecherTopP ? parseFloat(settings.respeecherTopP.value) : 1.0,
+          googleTtsApiKey: readApiKeyDraft(settings.googleTtsApiKey),
+          geminiApiKey: settings.geminiApiKey?.dataset.encrypted || null,
+          qwenApiKey: readApiKeyDraft(settings.qwenApiKey),
+          qwenModel: settings.qwenModel?.value || DEFAULT_QWEN_TTS_MODEL,
+          qwenWorkspaceId: settings.qwenWorkspaceId?.value.trim() || '',
+          qwenRegion: settings.qwenRegion?.value || 'singapore',
+          respeecherApiKey: readApiKeyDraft(settings.respeecherApiKey)
         }
       });
       

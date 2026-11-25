@@ -7,6 +7,7 @@ import { getProcessingState } from '../state/processing.js';
 import { getUILanguage, tSync } from '../locales.js';
 import { isPopupOpen } from '../background/popup-connection.js';
 import { createNotification } from '../background/notifications.js';
+import { isPdfSelectionCancelled } from '../utils/pdf-errors.js';
 
 /**
  * @param {{prefix: string, label: string, generate: Function, timeoutMs: number,
@@ -102,6 +103,10 @@ export function createGenerationTask({ prefix, label, generate, timeoutMs, notif
       }
       return result;
     } catch (error) {
+      if (isPdfSelectionCancelled(error)) {
+        job.cancelled = true;
+        return { cancelled: true };
+      }
       if (error?.cancelledGeneration || owner !== job) return { cancelled: true };
       job.cancelled = true;
       const normalized = await handleError(error, {
