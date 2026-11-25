@@ -42,7 +42,8 @@ export async function extractContentFromPages(pdf, numPages, metrics, requestOpt
     
     try {
       page = await pdf.getPage(pageNum);
-      const pageElements = await processPage(page, pageNum, metrics, requestOptions.preserveImagePage, requestOptions.preserveFigure);
+      const pageElements = await processPage(page, pageNum, metrics, requestOptions.preserveImagePage,
+        requestOptions.preserveFigure, requestOptions.preserveEquations);
       log(`[PDF v3] Page ${pageNum} processed - extracted ${pageElements?.length || 0} elements`);
       
       if (pageElements && pageElements.length > 0) {

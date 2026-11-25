@@ -10,7 +10,7 @@ import { loadPdfDocument } from './pdf/core/pdf-loader.js';
 import { createPdfError, pdfFailurePayload } from '../utils/pdf-errors.js';
 import { startPdfRender, cancelPdfRender } from './pdf/render-operations.js';
 import { getPdfData } from '../api/pdf-storage.js';
-import { renderPdfPage } from './pdf/render-page.js';
+import { renderPdfPage, renderPdfEquationRegions } from './pdf/render-page.js';
 import { findFigureRegion } from './pdf/figure-region.js';
 import { MAX_PDF_EMBEDDED_IMAGE_BYTES, putPdfOperationBlob } from '../api/pdf-operation-storage.js';
 
@@ -248,7 +248,7 @@ export function handlePing(messageId, sendResponse) {
 /**
  * Handle EXTRACT_PDF message
  * @param {string} messageId - Message ID for logging
- * @param {{pdfUrl: string, operationId?: string, processingRunId?: string, pdfDataRef?: string, preserveImagePages?: boolean, preserveOriginalFigures?: boolean}} data - Owned extraction request
+ * @param {{pdfUrl: string, operationId?: string, processingRunId?: string, pdfDataRef?: string, preserveImagePages?: boolean, preserveOriginalFigures?: boolean, preserveOriginalEquations?: boolean}} data - Owned extraction request
  * @param {function(import('../types.js').MessageResponse): void} sendResponse - Response function
  * @returns {Promise<void>}
  * @throws {Error} If PDF extraction fails
@@ -257,15 +257,17 @@ export function handlePing(messageId, sendResponse) {
 export async function handleExtractPdf(messageId, data, sendResponse) {
   const operation = startPdfRender(data.operationId);
   let imageBytes = 0;
-  async function preserveRenderedPdfPage(blob, pageNum) {
+  async function preserveRenderedPdfPage(blob, pageNum, regionIndex = 0) {
     if (imageBytes + blob.size > MAX_PDF_EMBEDDED_IMAGE_BYTES) {
       throw createPdfError('PDF page images exceed the export limit', 'errorPdfRenderFailed');
     }
-    const pdfPageImageRef = await putPdfOperationBlob(data.operationId, data.processingRunId ?? null, pageNum, blob);
+    const pdfPageImageRef = regionIndex
+      ? await putPdfOperationBlob(data.operationId, data.processingRunId ?? null, pageNum, blob, 'render', regionIndex)
+      : await putPdfOperationBlob(data.operationId, data.processingRunId ?? null, pageNum, blob);
     operation.check();
     if (!pdfPageImageRef) throw createPdfError('PDF render operation was released', 'statusCancelled');
     imageBytes += blob.size;
-    return { type: 'image', pageNum, pdfPageImageRef };
+    return { type: 'image', pageNum, pdfPageImageRef, ...(regionIndex ? { pdfPageImageRegion: regionIndex } : {}) };
   }
   const preserveImagePage = data.preserveImagePages ? async (page, pageNum) => {
     const rendered = await renderPdfPage(page, pageNum, 2, operation, true);
@@ -284,6 +286,21 @@ export async function handleExtractPdf(messageId, data, sendResponse) {
       return null;
     }
   } : undefined;
+  const preserveEquations = data.preserveImagePages && data.preserveOriginalEquations ? async (page, pageNum, crops) => {
+    try {
+      const rendered = await renderPdfEquationRegions(page, pageNum, operation, crops);
+      const images = [];
+      for (const [index, image] of rendered.entries()) {
+        if (!image || imageBytes + image.blob.size > MAX_PDF_EMBEDDED_IMAGE_BYTES) images.push(null);
+        else images.push(await preserveRenderedPdfPage(image.blob, pageNum, index + 1));
+      }
+      return images;
+    } catch (error) {
+      operation.check();
+      logError('[PDF] Could not preserve equations', { pageNum, error: error.message });
+      return [];
+    }
+  } : undefined;
   let payload;
   try {
     operation.check();
@@ -294,7 +311,8 @@ export async function handleExtractPdf(messageId, data, sendResponse) {
       if (!(pdfData instanceof ArrayBuffer)) throw createPdfError('PDF data is unavailable', 'errorPdfDataUnavailable');
     }
     operation.check();
-    const result = await extractPdfContent(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check, preserveImagePage, preserveFigure,
+    const result = await extractPdfContent(data.pdfUrl, pdfData, { signal: operation.signal, checkCancelled: operation.check,
+      preserveImagePage, preserveFigure, preserveEquations,
       onProgress: (current, total) => reportPdfProgress(data, current, total) });
     operation.check();
     const { metrics: _metrics, ...documentResult } = result;

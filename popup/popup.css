@@ -2515,12 +2515,14 @@ body[data-theme="light"] .format-stat {
   font-size: 10px;
   color: #888;
   margin-bottom: 2px;
+  text-align: center;
 }
 
 .format-count {
   font-size: 14px;
   font-weight: 600;
   color: #e8e8e8;
+  margin-top: auto;
 }
 
 body[data-theme="light"] .format-name {
@@ -2991,8 +2993,11 @@ body[data-theme="light"] .modal-dialog {
 .toast {
   position: fixed;
   bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+  inset-inline: var(--spacing-xxl);
+  width: fit-content;
+  max-width: calc(100% - 2 * var(--spacing-xxl));
+  margin-inline: auto;
+  overflow-wrap: anywhere;
   background: rgba(0, 0, 0, 0.9);
   color: #fff;
   padding: 10px 16px;
@@ -3026,11 +3031,11 @@ body[data-theme="light"] .toast {
 @keyframes fadeInUp {
   from {
     opacity: 0;
-    transform: translate(-50%, 10px);
+    transform: translateY(10px);
   }
   to {
     opacity: 1;
-    transform: translate(-50%, 0);
+    transform: translateY(0);
   }
 }
 

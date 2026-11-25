@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createInterleavedGraphicsPdf, createMixedLayoutPdf, createStructurePdf, mixedLayoutLane, mixedLayoutOracle, structureOracle } from '../helpers/pdf-fixture.js';
 import { createReadingOrderPdf, readingOrderOracle } from '../helpers/pdf-reading-order.js';
 import { createCapturePagesPdf, capturePageOracle } from '../helpers/pdf-capture-pages.js';
+import { createDisplayEquationPdf, equationOracle } from '../helpers/pdf-display-equation.js';
 import { installPdfTestCompatibility } from '../helpers/pdf-test-compatibility.js';
 
 let pdfjs;
@@ -25,6 +26,55 @@ async function extract(options) {
 }
 
 describe('PDF structure conservation with the packaged parser', () => {
+  it('keeps two stacked equations in their reading lane and falls back to original fragments on a rejected crop', async () => {
+    vi.stubGlobal('document', {});
+    const input = createDisplayEquationPdf();
+    const preserveEquations = vi.fn(async (_page, pageNum, crops) => crops.map((_crop, index) => ({
+      type: 'image', pageNum, pdfPageImageRef: `operation:${pageNum}:${index + 1}`
+    })));
+    const result = await extractPdfContent('https://example.test/formulas.pdf', input.buffer, { preserveEquations });
+    expect(preserveEquations).toHaveBeenCalledExactlyOnceWith(expect.anything(), 1, [expect.any(Object), expect.any(Object)]);
+    expect(preserveEquations.mock.calls[0][2][0].right).toBeGreaterThan(247);
+    const readingOrder = result.content.map(item => item.type === 'image' ? item.pdfPageImageRef : item.text).join('\n');
+    const checkpoints = [equationOracle.first, 'operation:1:1', equationOracle.middle, 'operation:1:2', equationOracle.last, equationOracle.right];
+    const cursor = checkpoints.map(token => readingOrder.indexOf(token));
+    expect(cursor.every((index, position) => index >= 0 && (!position || index > cursor[position - 1])), readingOrder).toBe(true);
+    expect(readingOrder).not.toMatch(/9\.84|2\.37|\(3\)/);
+    expect(readingOrder).toContain('The signed record');
+    expect(readingOrder).toMatch(/interval 6\. ?2/);
+
+    const partial = await extractPdfContent('https://example.test/formulas.pdf', input.buffer, {
+      preserveEquations: async () => [null, { type: 'image', pageNum: 1, pdfPageImageRef: 'operation:1:2' }]
+    });
+    const partialReading = partial.content.map(item => item.text || item.pdfPageImageRef).join('\n');
+    expect(partialReading).toContain('9.84');
+    expect(partialReading).toContain('12.6');
+    expect(partialReading).toContain('(3)');
+    expect(partialReading).toContain('operation:1:2');
+    expect(partialReading).not.toContain('2.37');
+  });
+
+  it('retains actual tagged equations and short body text that shares an equation band', async () => {
+    vi.stubGlobal('document', {});
+    const tagged = createDisplayEquationPdf({ tagged: true });
+    const task = pdfjs.getDocument({ data: tagged.slice(), isEvalSupported: false });
+    try {
+      const page = await (await task.promise).getPage(1);
+      expect(await page.getStructTree()).not.toBeNull();
+    } finally { await task.destroy(); }
+
+    const preserveEquations = vi.fn(async () => []);
+    const result = await extractPdfContent('https://example.test/tagged.pdf', tagged.buffer, { preserveEquations });
+    expect(preserveEquations).not.toHaveBeenCalled();
+    expect(result.content.map(element => element.text).join(' ')).toMatch(/9\.84.*12\.6.*2\.37.*8\.5/);
+
+    const crowded = createDisplayEquationPdf({ withTextLine: true });
+    const mixed = await extractPdfContent('https://example.test/mixed-formulas.pdf', crowded.buffer, { preserveEquations });
+    expect(preserveEquations).toHaveBeenCalledExactlyOnceWith(expect.anything(), 1, [expect.any(Object)]);
+    const text = mixed.content.map(element => element.text).join(' ');
+    expect(text).toContain('Additional counts are logged.');
+    expect(text).toContain('9.84');
+  });
   it('preserves mixed page dimensions, table records and final-page text', async () => {
     const task = pdfjs.getDocument({ data: createCapturePagesPdf(), isEvalSupported: false });
     const pdf = await task.promise;

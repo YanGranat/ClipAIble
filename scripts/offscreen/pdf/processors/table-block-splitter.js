@@ -35,8 +35,8 @@ export function splitTableBlocksFromColumn1(elements, metrics = {}) {
   log(`[PDF v3] splitTableBlocksFromColumn1: Parameters - baseFontSize=${baseFontSize}, yTolerance=${yTolerance.toFixed(2)}`);
   
   // Find all elements from other columns (not Column 0)
-  const otherColumnElements = elements.filter(el => 
-    el.columnIndex !== undefined && el.columnIndex !== 0
+  const otherColumnElements = elements.filter(el =>
+    el.type !== 'image' && el.columnIndex !== undefined && el.columnIndex !== 0
   );
   
   log(`[PDF v3] splitTableBlocksFromColumn1: Found ${otherColumnElements.length} elements from other columns (not Column 0)`, {

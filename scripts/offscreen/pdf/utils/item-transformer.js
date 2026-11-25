@@ -49,6 +49,7 @@ export function transformTextItems(textItems, viewport, pageNum) {
         width: itemWidth,
         widthHeightRatio: widthHeightRatio,
         viewportHeight: viewport.height, // Store viewport height for underline detection
+        viewportWidth: viewport.width,
         pageNum,
         // CRITICAL: Store PDF native coordinates for comparison with graphics coordinates
         pdfX: pdfX,

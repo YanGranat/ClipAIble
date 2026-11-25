@@ -597,7 +597,7 @@ export function applyCustomStyles(styles, pageMode, customColors) {
   const quoteBorderAdjust = isLight ? -15 : 30;
   const quoteBackground = adjustColorBrightness(bgColor, quoteBackgroundAdjust);
   const quoteBorder = adjustColorBrightness(bgColor, quoteBorderAdjust);
-  const codeBackground = adjustColorBrightness(bgColor, -10);
+  const codeBackground = adjustColorBrightness(bgColor, isLight ? -10 : 10);
   
   const fontFamilyStyle = fontFamily ? `font-family: "${fontFamily}", sans-serif !important;` : '';
   const customStyles = `
@@ -633,7 +633,8 @@ blockquote {
   border-left-color: ${quoteBorder} !important;
   color: ${textColor} !important;
 }
-pre, code { background-color: ${codeBackground} !important; }
+pre, code { background-color: ${codeBackground} !important; color: ${textColor} !important; }
+pre code { background-color: transparent !important; }
 .article { background-color: ${bgColor} !important; }
 .infobox { background-color: ${quoteBackground} !important; border-color: ${quoteBorder} !important; }
 .table-of-contents {

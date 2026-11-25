@@ -72,6 +72,14 @@ describe('sanitizeHtml', () => {
     expect(result).toContain('<a');
   });
 
+  it('retains short chart swatches without carrying unrelated layout rules', () => {
+    const mark = '<span style="display:inline-block; width:2em; height:0px; border-top:2px dashed blue; margin-left:400px">&nbsp;</span>';
+    const rendered = sanitizeHtml('Trend ' + mark);
+    expect(rendered).toContain('width: 2em; height: 0; border-top: 2px dashed blue');
+    expect(rendered).not.toContain('margin-left');
+    expect(sanitizeHtml(mark.replace('2em', '200em'))).not.toContain('border-top');
+  });
+
   it('should add target="_blank" to external links', () => {
     const html = '<a href="https://example.com">Link</a>';
     const result = sanitizeHtml(html, 'https://other.com');

@@ -9,7 +9,9 @@ describe('Video URL routing', () => {
     ['https://www.youtube.com/embed/sample-video', 'youtube', 'sample-video'],
     ['https://www.youtube.com/live/sample-video', 'youtube', 'sample-video'],
     ['https://youtu.be/sample-video?t=10', 'youtube', 'sample-video'],
-    ['https://vimeo.com/123456789/private-token', 'vimeo', '123456789']
+    ['https://vimeo.com/123456789/private-token', 'vimeo', '123456789'],
+    ['https://player.vimeo.com/video/638421?texttrack=en', 'vimeo', '638421'],
+    ['https://player.vimeo.com/video/638421/', 'vimeo', '638421']
   ])('routes the supported video URL %s', (url, platform, videoId) => {
     expect(detectVideoPlatform(url)).toEqual({ platform, videoId });
     expect(isVideoPage(url)).toBe(true);
@@ -27,6 +29,10 @@ describe('Video URL routing', () => {
     'https://example.com/youtube.com/watch?v=sample-video',
     'https://youtu.be/',
     'https://vimeo.com/123abc',
+    'https://player.vimeo.com/api/demo',
+    'https://player.vimeo.com/video/638421/config',
+    'https://player.vimeo.com/video/bad-id',
+    'https://player.vimeo.com.evil.example/video/638421',
     'file:///youtube.com/watch?v=sample-video',
     'invalid', '', null
   ])('keeps a non-video URL on the article route: %s', url => {

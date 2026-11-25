@@ -2,7 +2,7 @@
 // Main DOM parser for extraction
 // Converts DOM elements to content items
 
-import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, readSourceFragmentIds, safeGetComputedStyle, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
+import { compareDomOrder, toAbsoluteUrl, normalizeImageUrl, cloneReadingContent, getDocumentFragmentTarget, readArticleMetadataText, readSourceFragmentIds, safeGetComputedStyle, isElementVisible, isSourceExcluded, INTERFACE_REGIONS } from './dom-utils.js';
 import { cleanHeadingText, stripObjMarkers, normalizeHeadingForDedup, isRealHeading } from './text-utils.js';
 import { isIcon, isExcluded, isNavigationParagraph, shouldSkipStronglyExcluded, isSubscriptionFormContent, semanticClassNames } from './filters.js';
 import { extractBestImageUrl, isCollapsedImageLayer, isTrackingPixel, isDecorativeImage, getImageCaption, getEmbeddedMediaItems } from './images.js';
@@ -30,8 +30,17 @@ import { projectAtomicMedia } from './atomic-media.js';
  * @returns {Element[]} - Array of candidate elements
  */
 export function collectCandidateElements(mainContent) {
-  return [mainContent, ...Array.from(mainContent.querySelectorAll(CANDIDATE_SELECTOR))]
-    .filter(element => element.matches(CANDIDATE_SELECTOR));
+  return [mainContent, ...Array.from(mainContent.querySelectorAll('*'))]
+    .filter(element => element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length);
+}
+
+/** Read published literal examples from open components without copying their controls. */
+function visibleShadowCode(host) {
+  if (!host.shadowRoot || host.closest('table,pre,code,[hidden],[inert]') || host.querySelector('pre')) return [];
+  const win = host.ownerDocument.defaultView;
+  return Array.from(host.shadowRoot.querySelectorAll('pre:has(> code)')).filter(pre =>
+    !pre.closest('pre pre,[hidden],[inert],form,[role="dialog"],[contenteditable]:not([contenteditable="false"])') &&
+    !!pre.textContent.trim() && isElementVisible(win, pre));
 }
 
 /** Project a selected wrapper that the regular parser does not recognize as a block.
@@ -167,6 +176,7 @@ export function hasFigureBodyText(element) {
 export function partitionCandidateElements(elements, graphics = new Map(), readingBoundaries = [], explicitFlowRoots = new Set()) {
   const selected = new Set(elements);
   const visited = new Set();
+  const shadowHosts = elements.filter(element => element.shadowRoot && visibleShadowCode(element).length);
   const entries = [];
   const blockSelector = CANDIDATE_SELECTOR.split(',').filter(tag => tag !== 'code').concat(INTERFACE_REGIONS).join(',');
   function append(element) {
@@ -179,7 +189,7 @@ export function partitionCandidateElements(elements, graphics = new Map(), readi
     }
     const blockDescendants = Array.from(element.querySelectorAll(blockSelector)).filter(child =>
       !child.matches('svg,canvas') || graphics.has(child));
-    const descendants = [...new Set([...blockDescendants,
+    const descendants = [...new Set([...blockDescendants, ...shadowHosts.filter(host => host !== element && element.contains(host)),
       ...readingBoundaries.filter(child => child !== element && element.contains(child))])].sort(compareDomOrder);
     const originalText = element.getAttribute('data-original-text');
     const inlineMedia = element.tagName === 'P' && descendants.some(child => child.matches('img,iframe,video,audio,svg,canvas'));
@@ -245,6 +255,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
   const consumed = new Set();
   state.captionOwners ||= new WeakSet();
   for (const [owner, graphic] of state.readingGraphics || []) {
+    if (graphic.type !== 'image') continue;
     const caption = Array.from(owner.querySelectorAll('figcaption')).find(node => node.closest('figure') === owner);
     if (caption) graphic.caption = serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots);
   }
@@ -286,6 +297,18 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
       continue;
     }
 
+    const shadowCode = visibleShadowCode(element);
+    if (shadowCode.length) {
+      for (const [index, source] of shadowCode.entries()) {
+        const item = handleCode(source);
+        if (!item) continue;
+        content.push({ ...item, ...(index === 0 && element.id ? { id: element.id } : {}) });
+        incrementContentType(state.debugInfo, 'code');
+        processedCount++;
+      }
+      continue;
+    }
+
     if (element === state.standfirstElement) {
       const html = serializeReadingHtml(element, state.selectionExclusions, state.referenceRoots);
       if (html) content.push({ type: 'subtitle', text: html, html, isStandfirst: true,
@@ -299,7 +322,9 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     if (graphic || originalLayers) {
       const caption = Array.from(element.querySelectorAll('figcaption')).find(node => node.closest('figure') === element);
       const captionHtml = caption ? serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots) : '';
-      if (graphic) {
+      if (graphic && graphic.type !== 'image') {
+        content.push(graphic);
+      } else if (graphic) {
         content.push({ ...graphic, ...(element.id ? { id: element.id } : {}),
           ...(caption ? { caption: captionHtml } : {}),
           ...(state.featuredMediaRoots?.some(root => root === element || root.contains(element)) ? { isFeatured: true } : {}) });
@@ -311,7 +336,7 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
       }
       content.push(...graphicReferences(element, state, constants, win, baseUrl));
       for (const child of Array.from(element.querySelectorAll('*'))) consumed.add(child);
-      incrementContentType(state.debugInfo, graphic ? 'image' : 'paragraph');
+      incrementContentType(state.debugInfo, graphic?.type === 'image' ? 'image' : 'paragraph');
       processedCount++;
       continue;
     }
@@ -774,7 +799,7 @@ export function handleCode(element) {
   
   // Try to detect language from class
   const className = element.className || '';
-  const languageMatch = className.match(/language-(\w+)/);
+  const languageMatch = className.match(/(?:^|\s)(?:language-|brush:\s*)([\w+-]+)/);
   const language = languageMatch ? languageMatch[1] : '';
   
   return {

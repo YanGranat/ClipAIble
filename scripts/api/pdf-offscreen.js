@@ -39,21 +39,26 @@ function sendOffscreenMessage(message, callback, admission) {
 export async function extractPdfViaOffscreen(pdfUrl, pdfData = null, cancellationOptions) {
   const preserveImagePages = cancellationOptions?.preserveImagePages === true;
   const preserveOriginalFigures = cancellationOptions?.preserveOriginalFigures === true;
+  const preserveOriginalEquations = cancellationOptions?.preserveOriginalEquations === true;
   const response = await requestPdfOperation('EXTRACT_PDF', pdfUrl, pdfData,
-    { preserveImagePages, ...(preserveOriginalFigures ? { preserveOriginalFigures } : {}) }, cancellationOptions,
+    { preserveImagePages, ...(preserveOriginalFigures ? { preserveOriginalFigures } : {}),
+      ...(preserveOriginalEquations ? { preserveOriginalEquations } : {}) }, cancellationOptions,
     CONFIG.PROCESSING_INACTIVITY_TIMEOUT_MS, true);
   if (!preserveImagePages) return response.result;
   try {
     const result = response.result;
     for (const item of result.content) {
       if (!item.pdfPageImageRef) continue;
+      const region = item.pdfPageImageRegion ?? 0;
       if (item.type !== 'image' || !Number.isInteger(item.pageNum) || item.pageNum < 1 ||
-          item.pdfPageImageRef !== `${response.operationId}:${item.pageNum}`) {
+          !Number.isInteger(region) || region < 0 ||
+          item.pdfPageImageRef !== `${response.operationId}:${item.pageNum}${region ? `:${region}` : ''}`) {
         throw createPdfError('Invalid PDF page image reference', 'errorPdfRenderFailed');
       }
       await cancellationOptions.checkCancelled?.();
       item.src = await readRenderedPdfPage(item.pdfPageImageRef, cancellationOptions.processingRunId);
       delete item.pdfPageImageRef;
+      delete item.pdfPageImageRegion;
     }
     await cancellationOptions.checkCancelled?.();
     return result;

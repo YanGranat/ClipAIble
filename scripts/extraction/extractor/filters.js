@@ -4,7 +4,7 @@
 
 import { compareDomOrder, getDocumentFragmentTarget, safeGetComputedStyle, safeClosest, INTERFACE_REGIONS, isPublisherLinkAction } from './dom-utils.js';
 import { isArticleContentFigure } from './discover.js';
-import { isEditorialLayoutLabel, isReadingOwned, isReferencedReadingAside } from './reading-context.js';
+import { isDocumentHeadline, isEditorialLayoutLabel, isReadingOwned, isReferencedReadingAside } from './reading-context.js';
 import { getGraphicReadingOwner } from './graphics.js';
 import { getAnnotationTarget } from './annotations.js';
 
@@ -179,6 +179,7 @@ export function isSubscriptionFormContent(element) {
 const PANEL_HEADING = 'h2,h3,h4,h5,h6';
 const FORM_CONTROL = 'button,input[type="submit"],[role="button"]';
 const SUBSCRIBE_PROMPT = /^(?:subscribe|sign[\s-]*up)\b/i;
+const NEWSLETTER_INVITATION = /^(?:(?:subscribe|sign[\s-]*up)\s+(?:to|for)|join)\s+(?:(?:our|the)\s+)?(?:\S+\s+){0,2}(?:newsletter|mailing list)\b/i;
 const PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
 const SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
 const PROTECTED_READING = 'article,main,[role~="article"],[role~="main"],[itemprop~="articleBody"],.instapaper_body,h1,table,pre,blockquote,math';
@@ -200,7 +201,7 @@ function findSignupBanner(sibling, linkedTargets) {
     /\b(?:promotional banner|newsletter (?:banner|sign[\s-]*up))\b/i.test(image.getAttribute('alt') || '')) ? figure : null;
 }
 
-/** Locate independently owned subscription and comment controls before projecting article content. */
+/** Locate independently owned publisher controls before projecting article content. */
 export function findPublisherFormRegions(root) {
   const regions = new Set();
   const linkedTargets = new Set(Array.from(root.querySelectorAll('a[href*="#"]'), getDocumentFragmentTarget));
@@ -258,7 +259,66 @@ export function findPublisherFormRegions(root) {
       if (!isSingleChildBlock(block.parentElement) || linkedTargets.has(block.parentElement)) break;
     }
   }
+  for (const region of findPublisherWidgets(root, linkedTargets)) regions.add(region);
   return [...regions];
+}
+
+function findPublisherWidgets(root, linkedTargets) {
+  const regions = [];
+  const ownsFragment = element => linkedTargets.has(element) ||
+    [...linkedTargets].some(target => target && element.contains(target));
+  const normalize = text => (text || '').trim().replace(/\s+/g, ' ');
+
+  // Standalone newsletter links can open a signup form on a separate origin.
+  for (const link of root.querySelectorAll('a[href]')) {
+    if (!NEWSLETTER_INVITATION.test(normalize(link.textContent)) ||
+        link.closest('p,blockquote,pre,figure,figcaption,form')) continue;
+    for (let panel = link.parentElement; panel && panel !== root; panel = panel.parentElement) {
+      if (panel.matches(PROTECTED_READING) || panel.querySelector(PROTECTED_READING) || ownsFragment(panel)) break;
+      if (panel.querySelectorAll('a[href]').length !== 1) break;
+      const headings = Array.from(panel.querySelectorAll(PANEL_HEADING));
+      const descriptions = Array.from(panel.querySelectorAll('p'));
+      if (headings.length > 1 || descriptions.length > 1) break;
+      if (headings.length !== 1 || descriptions.length !== 1 ||
+          !NEWSLETTER_INVITATION.test(normalize(descriptions[0].textContent)) ||
+          panel.querySelector('img,picture,video,canvas,ul,ol,dl,form,input,textarea')) continue;
+      const labels = [headings[0], descriptions[0], link];
+      const walker = panel.ownerDocument.createTreeWalker(panel, panel.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
+      let hasOtherText = false;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (normalize(node.textContent) && !labels.some(label => label.contains(node))) {
+          hasOtherText = true;
+          break;
+        }
+      }
+      if (!hasOtherText) regions.push(panel);
+      break;
+    }
+  }
+
+  // Drop the counter, retaining neighboring author and publication-date fields.
+  for (const counter of root.querySelectorAll('[data-view-count],[data-view-counter]')) {
+    if (counter.closest('p,blockquote,pre,figure,figcaption') || counter.querySelector(PROTECTED_READING) || ownsFragment(counter)) continue;
+    const count = normalize(counter.textContent);
+    if (/^\p{N}[\p{N}.,\s]*(?:(?:page\s+)?views?)?$/iu.test(count) &&
+        (counter.closest('[data-view-counter-url]') || /\bviews?\b/i.test(count + ' ' + counter.getAttribute('aria-label')))) {
+      regions.push(counter);
+    }
+  }
+
+  const headline = Array.from(root.querySelectorAll('h1')).find(isDocumentHeadline);
+  if (!headline) return regions;
+  // Taxonomy links preceding the headline are category navigation, not body references.
+  for (const link of root.querySelectorAll('a[href]')) {
+    if (compareDomOrder(link, headline) >= 0 || link.closest('p,blockquote,pre,figure,figcaption') || ownsFragment(link)) continue;
+    if (link.matches('[rel~="tag"]')) { regions.push(link); continue; }
+    if (!/^\[\s*[^\[\]]+\s*\]$/.test(normalize(link.textContent))) continue;
+    try {
+      const href = new URL(link.getAttribute('href'), link.baseURI);
+      if (href.origin === new URL(root.ownerDocument.URL).origin && /(?:^|\/)search\/?$/i.test(href.pathname) && href.search) regions.push(link);
+    } catch { /* Ignore a malformed category link. */ }
+  }
+  return regions;
 }
 
 /** Drop a skip link and its marker when they explicitly surround a removed panel. */

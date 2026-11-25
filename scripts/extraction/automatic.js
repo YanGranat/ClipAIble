@@ -323,8 +323,13 @@ var clipaibleArticleExtractor = (() => {
     return link?.matches("a[href][data-extlink]") === true;
   }
   function isPublisherLinkAction(element) {
+    const sectionEdit = element.closest(".mw-editsection");
+    if (sectionEdit?.querySelector("a[href]") && !sectionEdit.closest("pre,code,math")) return true;
     const link = element.closest("a[href]");
     if (!link) return false;
+    const caption = link.closest("figcaption");
+    const actionLabel = (node) => Array.from(node.classList).some((name) => /^(?:image|media)[-_]download(?:[-_](?:link|button))?$/i.test(name));
+    if (caption?.closest("figure")?.querySelector("img,picture") && (actionLabel(link) || link.parentElement !== caption && actionLabel(link.parentElement))) return true;
     const doc = link.ownerDocument;
     try {
       const target = new URL(link.getAttribute("href"), doc.baseURI);
@@ -380,6 +385,15 @@ var clipaibleArticleExtractor = (() => {
       return null;
     }
   }
+  function isElementVisible(win, element) {
+    const style = safeGetComputedStyle(win, element);
+    if (!style) return true;
+    if (style.display === "none") return false;
+    if (style.visibility === "hidden") return false;
+    const rect = element.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return false;
+    return true;
+  }
   function safeClosest(element, selector) {
     try {
       return element.closest(selector);
@@ -396,6 +410,30 @@ var clipaibleArticleExtractor = (() => {
         return true;
       }
     });
+  }
+  function readLazyMathPair(source, excluded2) {
+    const math = source.firstElementChild;
+    if (!source.matches("span") || source.children.length !== 1 || math.localName !== "math" || math.namespaceURI !== "http://www.w3.org/1998/Math/MathML" || !math.textContent?.trim() || Array.from(source.childNodes).some((node) => node !== math && (node.nodeType !== 3 || node.textContent?.trim()))) return null;
+    const renderer = source.nextElementSibling;
+    const placeholder = renderer?.firstElementChild;
+    if (!renderer?.matches("mjx-container") || renderer.children.length !== 1 || !placeholder?.matches("mjx-lazy[data-mjx-lazy]") || placeholder.children.length !== 0 || renderer.textContent?.trim() || renderer.closest("pre,code,[hidden]") || excluded2(renderer) || [math, ...math.querySelectorAll("*")].some(excluded2)) return null;
+    const win = renderer.ownerDocument.defaultView;
+    const style = win && safeGetComputedStyle(win, renderer);
+    if (style?.display === "none" || ["hidden", "collapse"].includes(style?.visibility)) return null;
+    for (let node = source.nextSibling; node !== renderer; node = node.nextSibling) {
+      if (node.nodeType !== 3 || node.textContent?.trim()) return null;
+    }
+    return { renderer };
+  }
+  function isHiddenMathSource(source, style) {
+    if (!source.matches("span") || source.firstElementChild?.localName !== "math") return false;
+    if (style?.display === "none" || /** @type {HTMLElement} */
+    source.style.display === "none" || source.hasAttribute("hidden")) return true;
+    if (style?.position !== "absolute" && style?.position !== "fixed") return false;
+    const clipped = /^rect\(0px,0px,0px,0px\)$/u.test((style.clip || "").replace(/\s/gu, "")) || style.clipPath === "inset(50%)" || [style.overflowX, style.overflowY].every((value) => /^(?:hidden|clip)$/u.test(value));
+    if (!clipped) return false;
+    const { width, height } = source.getBoundingClientRect();
+    return width > 0 && width <= 1 && height > 0 && height <= 1;
   }
   function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
     const clone = element.cloneNode(true);
@@ -424,6 +462,15 @@ var clipaibleArticleExtractor = (() => {
       }
       const literal = original.closest("pre,code,math,mjx-container,.MathJax,.katex");
       const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
+      if (!literal && isHiddenMathSource(original, style)) {
+        const pair = readLazyMathPair(original, excluded2);
+        const rendererCopy = pair && copies[originals.indexOf(pair.renderer, index + 1)];
+        if (rendererCopy) {
+          rendererCopy.replaceChildren(copy.firstElementChild);
+          copy.remove();
+          continue;
+        }
+      }
       if (!literal && (original.matches("script,style,template,noscript,input,select,textarea") || style?.display === "none" || !style && original.hasAttribute("hidden"))) {
         copy.remove();
         continue;
@@ -945,16 +992,19 @@ var clipaibleArticleExtractor = (() => {
   function ownHeadings(element) {
     return Array.from(element.querySelectorAll("h1")).filter((heading) => heading.closest(EDITORIAL_CONTAINERS) === element && !heading.closest(INTERFACE_REGIONS));
   }
+  function isDocumentHeadline(heading) {
+    if (!heading || heading.closest(INTERFACE_REGIONS)) return false;
+    const doc = heading.ownerDocument;
+    const label = normalizedLabel(heading.textContent);
+    const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute("content")].map(normalizedLabel);
+    return !!label && titles.some((title) => title === label || [" | ", " — ", " – ", " - "].some((separator) => title.startsWith(label + separator)));
+  }
   function isEditorialOwner(element) {
     if (!element?.matches(EDITORIAL_CONTAINERS) || element.closest(INTERFACE_REGIONS)) return false;
     if (element.matches(DECLARED_BODY)) return true;
     const doc = element.ownerDocument;
     const headings = ownHeadings(element);
-    const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute("content")].map(normalizedLabel);
-    if (headings.some((heading) => {
-      const label = normalizedLabel(heading.textContent);
-      return !!label && titles.some((title) => title === label || [" | ", " — ", " – ", " - "].some((separator) => title.startsWith(label + separator)));
-    })) return true;
+    if (headings.some(isDocumentHeadline)) return true;
     if (headings.length !== 1 || !normalizedLabel(headings[0].textContent) || doc.querySelector('meta[property="og:type"]')?.getAttribute("content")?.toLowerCase() !== "article") return false;
     return !Array.from(doc.querySelectorAll('article,[role~="article"]')).some((other) => other !== element && ownHeadings(other).some((heading) => normalizedLabel(heading.textContent)));
   }
@@ -962,11 +1012,15 @@ var clipaibleArticleExtractor = (() => {
     if (role === "modal") {
       if (!isSemanticReadingScope(region) || region.closest(INTERFACE_REGIONS)) return false;
     } else if (role !== "newsletter" && role !== "sidebar" && role !== "header") return false;
-    if (region.matches('aside,[role~="complementary"],header,[role~="banner"]')) return false;
+    if (region.matches('aside,[role~="complementary"],[role~="banner"]')) return false;
+    if (role === "header" && region.closest('main,[role~="main"],article,[role~="article"]') && Array.from(region.querySelectorAll("h1")).some(isDocumentHeadline)) {
+      return true;
+    }
+    if (region.matches("header")) return false;
     if (region.id.toLowerCase() === role || Array.from(region.classList).some((name) => name.toLowerCase() === role)) return false;
     if (role === "sidebar") {
       const labels = [region.id, ...Array.from(region.classList)].filter((name) => /(?:^|[-_])sidebar(?:$|[-_])/i.test(name));
-      if (labels.length && labels.every((name) => /^(?:has|no|with|without)[-_]sidebar$/i.test(name))) return true;
+      if (labels.length && labels.every((name) => /^(?:has|no|non|with|without)[-_]sidebar(?:[-_](?:content|layout|body|main))?$/i.test(name))) return true;
     }
     if (role === "modal") {
       const modalLabel = /(?:^|[_-])modal(?:$|[_-])/i;
@@ -987,6 +1041,24 @@ var clipaibleArticleExtractor = (() => {
   }
   function isReadingOwned(element, roots = []) {
     return (roots || []).some((root) => root.contains(element));
+  }
+  function linkedArticlePreview(element) {
+    if (!element.matches('article,[role~="article"]') || isEditorialOwner(element) || element.querySelector('article,[role~="article"],table,pre,blockquote,math')) return null;
+    const doc = element.ownerDocument;
+    const body = Array.from(element.querySelectorAll("p")).filter((node) => !node.closest("figcaption,header,footer") && normalizedLabel(node.textContent).length >= 60);
+    if (body.length > 1 || body.some((node) => normalizedLabel(node.textContent).length >= 260)) return null;
+    const actions = Array.from(element.querySelectorAll("a[href]")).filter((link) => !link.closest("nav,figcaption,p") && !!normalizedLabel(link.textContent));
+    const title = element.querySelector(HEADINGS);
+    const tail = actions.at(-1);
+    const action = actions.find((link) => link.matches('[rel~="bookmark"]') || title?.contains(link) || title && link.contains(title)) || (actions.length === 1 || tail && title && title.compareDocumentPosition(tail) & title.DOCUMENT_POSITION_FOLLOWING ? tail : null);
+    if (!action) return null;
+    try {
+      const url = new URL(action.getAttribute("href"), doc.baseURI);
+      const page = new URL(doc.URL);
+      return /^https?:$/.test(url.protocol) && (url.origin !== page.origin || url.pathname !== page.pathname) ? url.href : null;
+    } catch {
+      return null;
+    }
   }
   function findRecommendationRegions(root) {
     const regions = [];
@@ -1018,12 +1090,30 @@ var clipaibleArticleExtractor = (() => {
         break;
       }
     }
-    return regions;
+    const previews = Array.from(root.querySelectorAll('article,[role~="article"]'), (element) => ({ element, href: linkedArticlePreview(element) })).filter(({ element, href }) => href && !Array.from(linkedTargets).some((target) => target && element.contains(target)));
+    const previewOwners = new Set(previews.map(({ element }) => element));
+    for (const { element } of previews) {
+      let collection = null;
+      for (let region = element.parentElement; region && region !== root; region = region.parentElement) {
+        if (linkedTargets.has(region)) break;
+        const cards = previews.filter((card) => region.contains(card.element));
+        if (new Set(cards.map((card) => card.href)).size < 2) continue;
+        const labels = Array.from(region.querySelectorAll(HEADINGS)).filter((node) => !cards.some((card) => card.element.contains(node)));
+        if (labels.length > 1 || labels.some((node) => node.tagName === "H1" || linkedTargets.has(node)) || !containsOnlyCardText(region, labels[0], cards.map((card) => card.element), previewOwners)) break;
+        collection = region;
+      }
+      if (collection) regions.push(collection);
+    }
+    return [...new Set(regions)];
   }
-  function containsOnlyCardText(region, label, cards) {
+  function containsOnlyCardText(region, label, cards, previewOwners = null) {
     const walker = region.ownerDocument.createTreeWalker(region, region.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.textContent?.trim() || label.contains(node) || node.parentElement?.closest('script,style,template,noscript,button,[role="button"]')) continue;
+      if (!node.textContent?.trim() || label?.contains(node) || node.parentElement?.closest('script,style,template,noscript,button,[role="button"]')) continue;
+      if (previewOwners) {
+        if (!previewOwners.has(node.parentElement?.closest('article,[role~="article"]'))) return false;
+        continue;
+      }
       let count = 0;
       for (let owner = node.parentElement; owner && owner !== region && count === 0; owner = owner.parentElement) {
         count = cards.filter((card) => owner.contains(card)).length;
@@ -1509,6 +1599,9 @@ var clipaibleArticleExtractor = (() => {
   }
   function findMainContent(win, doc, isExcluded2, debugInfo, pushDebugLog2) {
     const confirmedOwner = Array.from(doc.querySelectorAll(EDITORIAL_CONTAINERS)).find((element) => isEditorialOwner(element) && !isExcluded2(element));
+    const main = Array.from(doc.querySelectorAll('main,[role~="main"]')).find((element) => !isExcluded2(element) && safeGetComputedStyle(win, element)?.display !== "none" && Array.from(element.querySelectorAll("h1")).some(isDocumentHeadline)) || doc.querySelector("main");
+    const mainOwnsProse = main && Array.from(main.querySelectorAll("p")).filter((paragraph) => !paragraph.closest('article,[role~="article"],figure') && !isOutsideArticleBody(paragraph, main) && (paragraph.textContent || "").trim().length >= 60).length >= 2 && Array.from(main.querySelectorAll("h1")).some(isDocumentHeadline);
+    const isForeignPreview = (element) => mainOwnsProse && !!linkedArticlePreview(element);
     const spaSelectors = [
       "#root",
       "#app",
@@ -1524,7 +1617,7 @@ var clipaibleArticleExtractor = (() => {
         if (spaRoot) {
           const spaText = (spaRoot.textContent || "").trim();
           if (spaText.length >= 500) {
-            const specificContent = spaRoot.querySelector('article, main, [role="main"], .article-content, .post-content');
+            const specificContent = Array.from(spaRoot.querySelectorAll('article, main, [role="main"], .article-content, .post-content')).find((element) => !isForeignPreview(element));
             if (specificContent && (specificContent.textContent || "").trim().length >= 500) {
               if (!isExcluded2(specificContent)) return specificContent;
             }
@@ -1536,7 +1629,7 @@ var clipaibleArticleExtractor = (() => {
       } catch (e) {
       }
     }
-    const article = confirmedOwner || Array.from(doc.querySelectorAll("article")).filter((element) => (element.textContent || "").trim().length > 500 && !element.closest("aside, .related, .related-stories, .sidebar, .comments, nav, footer") && !isExcluded2(element) && safeGetComputedStyle(win, element)?.display !== "none").sort((a, b) => calculateContentScore(win, b) - calculateContentScore(win, a))[0];
+    const article = confirmedOwner || Array.from(doc.querySelectorAll("article")).filter((element) => (element.textContent || "").trim().length > 500 && !isForeignPreview(element) && !element.closest("aside, .related, .related-stories, .sidebar, .comments, nav, footer") && !isExcluded2(element) && safeGetComputedStyle(win, element)?.display !== "none").sort((a, b) => calculateContentScore(win, b) - calculateContentScore(win, a))[0];
     if (article) {
       const articleText = (article.textContent || "").trim();
       if (confirmedOwner || articleText.length > 500) {
@@ -1570,7 +1663,6 @@ var clipaibleArticleExtractor = (() => {
         }
       }
     }
-    const main = doc.querySelector("main");
     const hostname = win.location?.hostname || "";
     if (hostname.includes("wikipedia.org") || hostname.includes("wikimedia.org")) {
       const parserOutputs = Array.from(doc.querySelectorAll(".mw-parser-output"));
@@ -2769,6 +2861,32 @@ var clipaibleArticleExtractor = (() => {
     const doc = element.ownerDocument;
     return (element.getAttribute("aria-label") || (element.getAttribute("aria-labelledby") || "").split(/\s+/).map((id) => doc.getElementById(id)?.textContent || "").join(" ") || element.querySelector("title")?.textContent || "").trim();
   }
+  function hasCanvasPixels(context, canvas, deadline) {
+    for (let top = 0; top < canvas.height; top += 64) {
+      if (Date.now() >= deadline) throw imageDataError("IMAGE_TIMEOUT");
+      const pixels = context.getImageData(0, top, canvas.width, Math.min(64, canvas.height - top)).data;
+      for (let index = 3; index < pixels.length; index += 4) {
+        if (pixels[index] !== 0) return true;
+      }
+    }
+    return false;
+  }
+  function unreadableCanvasReference(owner, roots, text) {
+    const doc = owner.ownerDocument;
+    const link = doc.createElement("a");
+    const target = owner.closest("[id]");
+    if (target?.id && roots.some((root) => root === target || root.contains(target))) {
+      const url = new URL(doc.URL);
+      if (["https:", "http:"].includes(url.protocol) && !url.username && !url.password) {
+        url.hash = encodeURIComponent(target.id);
+        link.href = url.href;
+      }
+    }
+    if (!link.hasAttribute("href") && !text) return null;
+    link.textContent = text || "Open original graphic";
+    const html = link.hasAttribute("href") ? link.outerHTML : link.innerHTML;
+    return { type: "paragraph", text: html, html };
+  }
   function localReference(value, doc) {
     try {
       const url = new URL(value, doc.baseURI), source = new URL(doc.URL);
@@ -2880,14 +2998,27 @@ var clipaibleArticleExtractor = (() => {
         if (!context) throw failure();
         const backdrop = [];
         for (let node = owner; node; node = node.parentElement) backdrop.push(win.getComputedStyle(node).backgroundColor);
-        context.fillStyle = "white";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        for (const color of backdrop.reverse()) {
-          context.fillStyle = color;
+        if (owner.tagName === "CANVAS") {
+          context.drawImage(owner, 0, 0, canvas.width, canvas.height);
+          if (!hasCanvasPixels(context, canvas, deadline)) {
+            const reference = unreadableCanvasReference(owner, roots, alt);
+            if (reference) result.set(owner, reference);
+            continue;
+          }
+          context.globalCompositeOperation = "destination-over";
+          for (const color of backdrop) {
+            context.fillStyle = color;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+          }
+          context.fillStyle = "white";
           context.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        if (owner.tagName === "CANVAS") context.drawImage(owner, 0, 0, canvas.width, canvas.height);
-        else {
+        } else {
+          context.fillStyle = "white";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          for (const color of backdrop.reverse()) {
+            context.fillStyle = color;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+          }
           const clone = owner.cloneNode(true), copies = [clone, ...Array.from(clone.querySelectorAll("*"))];
           const definitions = doc.createElementNS(SVG_NS, "svg");
           definitions.setAttribute("width", "0");
@@ -3340,6 +3471,7 @@ var clipaibleArticleExtractor = (() => {
   var PANEL_HEADING = "h2,h3,h4,h5,h6";
   var FORM_CONTROL = 'button,input[type="submit"],[role="button"]';
   var SUBSCRIBE_PROMPT = /^(?:subscribe|sign[\s-]*up)\b/i;
+  var NEWSLETTER_INVITATION = /^(?:(?:subscribe|sign[\s-]*up)\s+(?:to|for)|join)\s+(?:(?:our|the)\s+)?(?:\S+\s+){0,2}(?:newsletter|mailing list)\b/i;
   var PANEL_PROMPT = /^(?:subscribe|sign[\s-]*up) (?:to|for) [^.!?:]{1,100}$/i;
   var SUBSCRIPTION_PANEL = /^(?:newsletter|subscription)(?: (?:promotion|sign[\s-]*up|form))?$/i;
   var PROTECTED_READING = 'article,main,[role~="article"],[role~="main"],[itemprop~="articleBody"],.instapaper_body,h1,table,pre,blockquote,math';
@@ -3405,7 +3537,58 @@ var clipaibleArticleExtractor = (() => {
         if (!isSingleChildBlock(block.parentElement) || linkedTargets.has(block.parentElement)) break;
       }
     }
+    for (const region of findPublisherWidgets(root, linkedTargets)) regions.add(region);
     return [...regions];
+  }
+  function findPublisherWidgets(root, linkedTargets) {
+    const regions = [];
+    const ownsFragment = (element) => linkedTargets.has(element) || [...linkedTargets].some((target) => target && element.contains(target));
+    const normalize = (text) => (text || "").trim().replace(/\s+/g, " ");
+    for (const link of root.querySelectorAll("a[href]")) {
+      if (!NEWSLETTER_INVITATION.test(normalize(link.textContent)) || link.closest("p,blockquote,pre,figure,figcaption,form")) continue;
+      for (let panel = link.parentElement; panel && panel !== root; panel = panel.parentElement) {
+        if (panel.matches(PROTECTED_READING) || panel.querySelector(PROTECTED_READING) || ownsFragment(panel)) break;
+        if (panel.querySelectorAll("a[href]").length !== 1) break;
+        const headings = Array.from(panel.querySelectorAll(PANEL_HEADING));
+        const descriptions = Array.from(panel.querySelectorAll("p"));
+        if (headings.length > 1 || descriptions.length > 1) break;
+        if (headings.length !== 1 || descriptions.length !== 1 || !NEWSLETTER_INVITATION.test(normalize(descriptions[0].textContent)) || panel.querySelector("img,picture,video,canvas,ul,ol,dl,form,input,textarea")) continue;
+        const labels = [headings[0], descriptions[0], link];
+        const walker = panel.ownerDocument.createTreeWalker(panel, panel.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
+        let hasOtherText = false;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (normalize(node.textContent) && !labels.some((label) => label.contains(node))) {
+            hasOtherText = true;
+            break;
+          }
+        }
+        if (!hasOtherText) regions.push(panel);
+        break;
+      }
+    }
+    for (const counter of root.querySelectorAll("[data-view-count],[data-view-counter]")) {
+      if (counter.closest("p,blockquote,pre,figure,figcaption") || counter.querySelector(PROTECTED_READING) || ownsFragment(counter)) continue;
+      const count = normalize(counter.textContent);
+      if (new RegExp("^\\p{N}[\\p{N}.,\\s]*(?:(?:page\\s+)?views?)?$", "iu").test(count) && (counter.closest("[data-view-counter-url]") || /\bviews?\b/i.test(count + " " + counter.getAttribute("aria-label")))) {
+        regions.push(counter);
+      }
+    }
+    const headline = Array.from(root.querySelectorAll("h1")).find(isDocumentHeadline);
+    if (!headline) return regions;
+    for (const link of root.querySelectorAll("a[href]")) {
+      if (compareDomOrder(link, headline) >= 0 || link.closest("p,blockquote,pre,figure,figcaption") || ownsFragment(link)) continue;
+      if (link.matches('[rel~="tag"]')) {
+        regions.push(link);
+        continue;
+      }
+      if (!/^\[\s*[^\[\]]+\s*\]$/.test(normalize(link.textContent))) continue;
+      try {
+        const href = new URL(link.getAttribute("href"), link.baseURI);
+        if (href.origin === new URL(root.ownerDocument.URL).origin && /(?:^|\/)search\/?$/i.test(href.pathname) && href.search) regions.push(link);
+      } catch {
+      }
+    }
+    return regions;
   }
   function addPanelSkipControls(panel, label, regions) {
     const wrapper = panel.closest("figure,section");
@@ -5575,7 +5758,12 @@ var clipaibleArticleExtractor = (() => {
 
   // scripts/extraction/extractor/parse.js
   function collectCandidateElements(mainContent) {
-    return [mainContent, ...Array.from(mainContent.querySelectorAll(CANDIDATE_SELECTOR))].filter((element) => element.matches(CANDIDATE_SELECTOR));
+    return [mainContent, ...Array.from(mainContent.querySelectorAll("*"))].filter((element) => element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length);
+  }
+  function visibleShadowCode(host) {
+    if (!host.shadowRoot || host.closest("table,pre,code,[hidden],[inert]") || host.querySelector("pre")) return [];
+    const win = host.ownerDocument.defaultView;
+    return Array.from(host.shadowRoot.querySelectorAll("pre:has(> code)")).filter((pre) => !pre.closest('pre pre,[hidden],[inert],form,[role="dialog"],[contenteditable]:not([contenteditable="false"])') && !!pre.textContent.trim() && isElementVisible(win, pre));
   }
   function collectExplicitFlowRoots(roots) {
     const selected = new Set(roots);
@@ -5674,6 +5862,7 @@ var clipaibleArticleExtractor = (() => {
   function partitionCandidateElements(elements, graphics = /* @__PURE__ */ new Map(), readingBoundaries = [], explicitFlowRoots = /* @__PURE__ */ new Set()) {
     const selected = new Set(elements);
     const visited = /* @__PURE__ */ new Set();
+    const shadowHosts = elements.filter((element) => element.shadowRoot && visibleShadowCode(element).length);
     const entries = [];
     const blockSelector = CANDIDATE_SELECTOR.split(",").filter((tag) => tag !== "code").concat(INTERFACE_REGIONS).join(",");
     function append(element) {
@@ -5687,6 +5876,7 @@ var clipaibleArticleExtractor = (() => {
       const blockDescendants = Array.from(element.querySelectorAll(blockSelector)).filter((child) => !child.matches("svg,canvas") || graphics.has(child));
       const descendants = [.../* @__PURE__ */ new Set([
         ...blockDescendants,
+        ...shadowHosts.filter((host) => host !== element && element.contains(host)),
         ...readingBoundaries.filter((child) => child !== element && element.contains(child))
       ])].sort(compareDomOrder);
       const originalText = element.getAttribute("data-original-text");
@@ -5744,6 +5934,7 @@ var clipaibleArticleExtractor = (() => {
     const consumed = /* @__PURE__ */ new Set();
     state.captionOwners ||= /* @__PURE__ */ new WeakSet();
     for (const [owner, graphic] of state.readingGraphics || []) {
+      if (graphic.type !== "image") continue;
       const caption = Array.from(owner.querySelectorAll("figcaption")).find((node) => node.closest("figure") === owner);
       if (caption) graphic.caption = serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots);
     }
@@ -5775,6 +5966,17 @@ var clipaibleArticleExtractor = (() => {
         skippedCount++;
         continue;
       }
+      const shadowCode = visibleShadowCode(element);
+      if (shadowCode.length) {
+        for (const [index, source] of shadowCode.entries()) {
+          const item = handleCode(source);
+          if (!item) continue;
+          content.push({ ...item, ...index === 0 && element.id ? { id: element.id } : {} });
+          incrementContentType(state.debugInfo, "code");
+          processedCount++;
+        }
+        continue;
+      }
       if (element === state.standfirstElement) {
         const html = serializeReadingHtml(element, state.selectionExclusions, state.referenceRoots);
         if (html) content.push({
@@ -5792,7 +5994,9 @@ var clipaibleArticleExtractor = (() => {
       if (graphic || originalLayers) {
         const caption = Array.from(element.querySelectorAll("figcaption")).find((node) => node.closest("figure") === element);
         const captionHtml = caption ? serializeReadingHtml(caption, state.selectionExclusions, state.referenceRoots) : "";
-        if (graphic) {
+        if (graphic && graphic.type !== "image") {
+          content.push(graphic);
+        } else if (graphic) {
           content.push({
             ...graphic,
             ...element.id ? { id: element.id } : {},
@@ -5812,7 +6016,7 @@ var clipaibleArticleExtractor = (() => {
         }
         content.push(...graphicReferences(element, state, constants, win, baseUrl));
         for (const child of Array.from(element.querySelectorAll("*"))) consumed.add(child);
-        incrementContentType(state.debugInfo, graphic ? "image" : "paragraph");
+        incrementContentType(state.debugInfo, graphic?.type === "image" ? "image" : "paragraph");
         processedCount++;
         continue;
       }
@@ -6173,7 +6377,7 @@ var clipaibleArticleExtractor = (() => {
     }
     if (!text) return null;
     const className = element.className || "";
-    const languageMatch = className.match(/language-(\w+)/);
+    const languageMatch = className.match(/(?:^|\s)(?:language-|brush:\s*)([\w+-]+)/);
     const language = languageMatch ? languageMatch[1] : "";
     return {
       type: "code",

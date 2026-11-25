@@ -26,6 +26,53 @@ function track(text) {
   return extractVimeoSubtitles(7);
 }
 
+function installPublishedTrack(outcome = 'load') {
+  const { document, HTMLTrackElement, Event } = dom.window;
+  const video = document.createElement('video');
+  video.crossOrigin = 'anonymous';
+  const source = document.createElement('track');
+  source.kind = 'subtitles';
+  source.srclang = 'fr';
+  source.src = 'https://media.example.test/captions.vtt';
+  const sourceTrack = { kind: source.kind, language: source.srclang, mode: 'disabled', cues: null };
+  const existing = {
+    kind: 'captions', language: 'en', mode: 'showing',
+    cues: [{ startTime: 2, endTime: 3, text: 'Other language.' }]
+  };
+  Object.defineProperty(source, 'track', { value: sourceTrack });
+  Object.defineProperty(video, 'textTracks', { configurable: true, value: [existing, sourceTrack] });
+  video.append(source);
+  document.body.append(video);
+  const create = document.createElement.bind(document);
+  const added = [];
+  vi.spyOn(document, 'createElement').mockImplementation((tag, ...args) => {
+    const el = create(tag, ...args);
+    if (tag !== 'track') return el;
+    let mode = 'disabled';
+    let readyState = HTMLTrackElement.NONE;
+    const mediaTrack = {
+      cues: null,
+      get mode() { return mode; },
+      set mode(value) {
+        mode = value;
+        if (value !== 'hidden') return;
+        added.push({ element: el, parent: el.parentElement, connected: el.isConnected, src: el.src, kind: el.kind });
+        queueMicrotask(() => {
+          readyState = outcome === 'load' ? HTMLTrackElement.LOADED : HTMLTrackElement.ERROR;
+          const text = document.createDocumentFragment();
+          text.append('A < B\nsecond line.');
+          mediaTrack.cues = outcome === 'load' ? [{ startTime: 2.75, endTime: 4.25, getCueAsHTML: () => text }] : null;
+          el.dispatchEvent(new Event(outcome));
+        });
+      }
+    };
+    Object.defineProperty(el, 'readyState', { get: () => readyState });
+    Object.defineProperty(el, 'track', { value: mediaTrack });
+    return el;
+  });
+  return { added, existing, sourceTrack, source };
+}
+
 describe('Vimeo MAIN-world subtitle extraction', () => {
   it('executes the serialized production function and keeps cue text and timing', async () => {
     const result = await track('WEBVTT\n\n00:00:01.250 --> 00:00:03.500 align:start\n<v Narrator>First line\n<b>Second line</b>\n');
@@ -88,6 +135,37 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
     expect((await extractVimeoSubtitles(7)).subtitles).toEqual([{ start: 4, duration: 1.5, text: 'Native caption.' }]);
   });
 
+  it('loads the requested published track without changing what the video shows', async () => {
+    delete dom.window.vimeoPlayerConfig;
+    const { added, existing, sourceTrack, source } = installPublishedTrack();
+    expect((await extractVimeoSubtitles(7, 'fr')).subtitles).toEqual([
+      { start: 2.75, duration: 1.5, text: 'A < B second line.' }
+    ]);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ connected: false, src: source.src, kind: source.kind });
+    expect(added[0].parent.crossOrigin).toBe('anonymous');
+    expect(added[0].element.parentElement).toBeNull();
+    expect(existing.mode).toBe('showing');
+    expect(sourceTrack.mode).toBe('disabled');
+    expect(fetchTrack).not.toHaveBeenCalled();
+  });
+
+  it('reports unavailable captions without treating chapters or controls as transcript', async () => {
+    delete dom.window.vimeoPlayerConfig;
+    const { added, existing, sourceTrack, source } = installPublishedTrack('error');
+    Object.defineProperty(source.parentElement, 'textTracks', { value: [
+      { kind: 'chapters', mode: 'hidden', cues: [{ startTime: 1, endTime: 2, text: 'Chapter marker.' }] },
+      sourceTrack
+    ] });
+    dom.window.document.body.insertAdjacentHTML('beforeend', '<button>Transcript settings</button>');
+    await expect(extractVimeoSubtitles(7)).rejects.toThrow('No subtitles found');
+    expect(added).toHaveLength(1);
+    expect(added[0].element.parentElement).toBeNull();
+    expect(sourceTrack.mode).toBe('disabled');
+    expect(existing.mode).toBe('showing');
+    expect(fetchTrack).not.toHaveBeenCalled();
+  });
+
   it.each(['player state', 'page script'])('keeps timed captions supplied by the %s fallback', async source => {
     delete dom.window.vimeoPlayerConfig;
     const url = 'https://media.example.test/recording.vtt';
@@ -114,6 +192,19 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
       <p class="caption-note">Sign in to comment</p>
     </main>`);
     await expect(extractVimeoSubtitles(7)).rejects.toThrow('No subtitles found');
+    expect(fetchTrack).not.toHaveBeenCalled();
+  });
+
+  it('rejects timed chapter and unrelated page assets when no captions are declared', async () => {
+    dom.window.vimeoPlayerConfig.video.textTracks = [
+      { kind: 'chapters', src: 'https://media.example.test/chapters.vtt' }
+    ];
+    dom.window.document.body.insertAdjacentHTML('beforeend', `<video>
+      <track kind="chapters" src="https://media.example.test/chapters.vtt">
+    </video><script type="application/json">
+      {"previewTrack":"https://media.example.test/other-recording.vtt"}
+    </script>`);
+    await expect(track('WEBVTT\n\n00:00:04.000 --> 00:00:05.500\nA chapter.\n')).rejects.toThrow('No subtitles found');
     expect(fetchTrack).not.toHaveBeenCalled();
   });
 

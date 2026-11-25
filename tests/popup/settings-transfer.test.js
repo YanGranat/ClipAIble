@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { setupPanelHandlers } from '../../popup/handlers/panels.js';
 import { tSync, UI_LOCALES } from '../../scripts/locales.js';
 
-let elements, send, review, confirm, cancel, nativeConfirm;
+let elements, send, review, confirm, cancel, nativeConfirm, showToast;
 const jsonData = JSON.stringify({ settings: { output_format: 'markdown' }, statistics: {}, selectorCache: {} });
 
 beforeEach(() => {
@@ -19,17 +19,22 @@ beforeEach(() => {
   send = vi.fn(async ({ action }) => action === 'exportSettings' ? { data: jsonData } : {
     result: { settingsImported: 0, settingsSkipped: 1, warnings: [], errors: [] }
   });
+  showToast = vi.fn();
   vi.stubGlobal('chrome', { runtime: { sendMessage: send } });
   setupPanelHandlers({ elements, t: async key => tSync(key, 'de'), getUILanguage: async () => 'de', UI_LOCALES,
-    log: vi.fn(), logError: vi.fn(), logWarn: vi.fn(), showToast: vi.fn(), loadAndDisplayStats: vi.fn(), deferAsyncWork: vi.fn() });
+    log: vi.fn(), logError: vi.fn(), logWarn: vi.fn(), showToast, loadAndDisplayStats: vi.fn(), deferAsyncWork: vi.fn() });
 });
 
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function openImport(data = jsonData) {
+function selectImportFile(data) {
   const file = new File([data], 'settings.json', { type: 'application/json' });
   Object.defineProperty(elements.importFileInput, 'files', { configurable: true, value: [file] });
   elements.importFileInput.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+async function openImport(data = jsonData) {
+  selectImportFile(data);
   await vi.waitFor(() => {
     expect(send).not.toHaveBeenCalled();
     expect(review.classList.contains('hidden')).toBe(false);
@@ -65,6 +70,20 @@ it('omits unavailable import data instead of showing an empty choice', async () 
   expect(elements.settingsTransferStatistics.disabled).toBe(true);
   expect(elements.settingsTransferCache.disabled).toBe(true);
   expect(elements.settingsTransferOverwrite.disabled).toBe(false);
+  cancel.click();
+  expect(send).not.toHaveBeenCalled();
+});
+
+it('shows localized recovery guidance for an unreadable file and accepts the next selection', async () => {
+  const key = 'errorImportJsonParseFailed';
+  selectImportFile('not JSON');
+  await vi.waitFor(() => {
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(tSync(key, 'de'), 'error', { key, params: {} });
+    expect(review.classList.contains('hidden')).toBe(true);
+  });
+  await openImport();
+  expect(elements.settingsTransferStatistics.checked).toBe(false);
+  expect(elements.settingsTransferCache.checked).toBe(false);
   cancel.click();
   expect(send).not.toHaveBeenCalled();
 });

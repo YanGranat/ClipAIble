@@ -103,6 +103,18 @@ function safeColor(value) {
   return /^(?:black|#000|#000000|rgb\(\s*0\s*,\s*0\s*,\s*0\s*\))$/i.test(color) ? 'inherit' : color;
 }
 
+/** A short inline rule may carry a chart legend. Rebuild only the visual mark. */
+function safeInlineRule(declarations) {
+  const property = name => declarations.match(new RegExp('(?:^|;)\\s*' + name + '\\s*:\\s*([^;]+)', 'i'))?.[1].trim() || '';
+  if (property('display').toLowerCase() !== 'inline-block' || !/^0(?:px|em)?$/i.test(property('height'))) return '';
+  const width = /^(\d+(?:\.\d+)?)(em|px)$/i.exec(property('width'));
+  if (!width || +width[1] <= 0 || +width[1] > (width[2].toLowerCase() === 'em' ? 4 : 80)) return '';
+  const border = /^([1-4]px)\s+(solid|dotted|dashed)\s*(.+)$/i.exec(property('border-top'));
+  const color = border && safeColor(border[3]);
+  if (!color) return '';
+  return `display: inline-block; vertical-align: middle; width: ${+width[1]}${width[2].toLowerCase()}; height: 0; border-top: ${border[1]} ${border[2]} ${color === 'inherit' ? 'currentColor' : color}`;
+}
+
 export function renderRich(value, sourceUrl = '', options = {}, block = false) {
   const allowed = block ? BLOCK : INLINE;
   const stack = [];
@@ -151,7 +163,9 @@ export function renderRich(value, sourceUrl = '', options = {}, block = false) {
         attrs.push(`class="${escapeText(value)}"`);
       } else if ((name === 'color' || name === 'style') && tag === 'span') {
         const color = safeColor(name === 'color' ? attr.value : value.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i)?.[1] ?? '');
-        if (color && !attrs.some(attr => attr.startsWith('style='))) attrs.push(`style="color: ${escapeText(color)}"`);
+        const rule = name === 'style' && !literal.length ? safeInlineRule(value) : '';
+        const styles = [color && `color: ${color}`, rule].filter(Boolean).join('; ');
+        if (styles && !attrs.some(attr => attr.startsWith('style='))) attrs.push(`style="${escapeText(styles)}"`);
       } else if (block && ['colspan', 'rowspan'].includes(name) && ['td', 'th'].includes(tag) && /^[1-9]\d{0,2}$/.test(value)) {
         attrs.push(`${name}="${value}"`);
       } else if (block && name === 'start' && tag === 'ol' && /^-?\d{1,8}$/.test(value)) {

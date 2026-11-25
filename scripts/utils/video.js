@@ -22,6 +22,9 @@ export function detectVideoPlatform(url) {
     } else if (host === 'vimeo.com' || host === 'www.vimeo.com') {
       videoId = parsed.pathname.match(/^\/(\d+)(?:\/|$)/)?.[1];
       return videoId ? { platform: 'vimeo', videoId } : null;
+    } else if (host === 'player.vimeo.com') {
+      videoId = parsed.pathname.match(/^\/video\/(\d+)\/?$/)?.[1];
+      return videoId ? { platform: 'vimeo', videoId } : null;
     }
     return videoId && /^[\w-]+$/.test(videoId) ? { platform: 'youtube', videoId } : null;
   } catch {

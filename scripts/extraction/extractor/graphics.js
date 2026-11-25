@@ -148,6 +148,34 @@ function graphicLabel(element) {
   return (element.getAttribute('aria-label') || (element.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => doc.getElementById(id)?.textContent || '').join(' ') || element.querySelector('title')?.textContent || '').trim();
 }
 
+function hasCanvasPixels(context, canvas, deadline) {
+  for (let top = 0; top < canvas.height; top += 64) {
+    if (Date.now() >= deadline) throw imageDataError('IMAGE_TIMEOUT');
+    const pixels = context.getImageData(0, top, canvas.width, Math.min(64, canvas.height - top)).data;
+    for (let index = 3; index < pixels.length; index += 4) {
+      if (pixels[index] !== 0) return true;
+    }
+  }
+  return false;
+}
+
+function unreadableCanvasReference(owner, roots, text) {
+  const doc = owner.ownerDocument;
+  const link = doc.createElement('a');
+  const target = owner.closest('[id]');
+  if (target?.id && roots.some(root => root === target || root.contains(target))) {
+    const url = new URL(doc.URL);
+    if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password) {
+      url.hash = encodeURIComponent(target.id);
+      link.href = url.href;
+    }
+  }
+  if (!link.hasAttribute('href') && !text) return null;
+  link.textContent = text || 'Open original graphic';
+  const html = link.hasAttribute('href') ? link.outerHTML : link.innerHTML;
+  return { type: 'paragraph', text: html, html };
+}
+
 function localReference(value, doc) {
   try {
     const url = new URL(value, doc.baseURI), source = new URL(doc.URL);
@@ -250,10 +278,19 @@ export async function captureReadingGraphics(win, elements, state, constants) {
       if (!context) throw failure();
       const backdrop = [];
       for (let node = owner; node; node = node.parentElement) backdrop.push(win.getComputedStyle(node).backgroundColor);
-      context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
-      for (const color of backdrop.reverse()) { context.fillStyle = color; context.fillRect(0, 0, canvas.width, canvas.height); }
-      if (owner.tagName === 'CANVAS') context.drawImage(owner, 0, 0, canvas.width, canvas.height);
-      else {
+      if (owner.tagName === 'CANVAS') {
+        context.drawImage(owner, 0, 0, canvas.width, canvas.height);
+        if (!hasCanvasPixels(context, canvas, deadline)) {
+          const reference = unreadableCanvasReference(owner, roots, alt);
+          if (reference) result.set(owner, reference);
+          continue;
+        }
+        context.globalCompositeOperation = 'destination-over';
+        for (const color of backdrop) { context.fillStyle = color; context.fillRect(0, 0, canvas.width, canvas.height); }
+        context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+      } else {
+        context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+        for (const color of backdrop.reverse()) { context.fillStyle = color; context.fillRect(0, 0, canvas.width, canvas.height); }
         const clone = owner.cloneNode(true), copies = [clone, ...Array.from(clone.querySelectorAll('*'))];
         const definitions = doc.createElementNS(SVG_NS, 'svg');
         definitions.setAttribute('width', '0'); definitions.setAttribute('height', '0');

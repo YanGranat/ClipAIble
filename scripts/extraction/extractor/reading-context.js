@@ -18,18 +18,23 @@ function ownHeadings(element) {
     heading.closest(EDITORIAL_CONTAINERS) === element && !heading.closest(INTERFACE_REGIONS));
 }
 
+/** A page headline identifies reading content even without an ARTICLE wrapper. */
+export function isDocumentHeadline(heading) {
+  if (!heading || heading.closest(INTERFACE_REGIONS)) return false;
+  const doc = heading.ownerDocument;
+  const label = normalizedLabel(heading.textContent);
+  const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute('content')].map(normalizedLabel);
+  return !!label && titles.some(title => title === label ||
+    [' | ', ' — ', ' – ', ' - '].some(separator => title.startsWith(label + separator)));
+}
+
 /** Identify the scope of the document headline or a declared article body. */
 export function isEditorialOwner(element) {
   if (!element?.matches(EDITORIAL_CONTAINERS) || element.closest(INTERFACE_REGIONS)) return false;
   if (element.matches(DECLARED_BODY)) return true;
   const doc = element.ownerDocument;
   const headings = ownHeadings(element);
-  const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute('content')].map(normalizedLabel);
-  if (headings.some(heading => {
-    const label = normalizedLabel(heading.textContent);
-    return !!label && titles.some(title => title === label ||
-      [' | ', ' — ', ' – ', ' - '].some(separator => title.startsWith(label + separator)));
-  })) return true;
+  if (headings.some(isDocumentHeadline)) return true;
   if (headings.length !== 1 || !normalizedLabel(headings[0].textContent) ||
       doc.querySelector('meta[property="og:type"]')?.getAttribute('content')?.toLowerCase() !== 'article') return false;
   return !Array.from(doc.querySelectorAll('article,[role~="article"]')).some(other =>
@@ -41,12 +46,18 @@ export function isEditorialLayoutLabel(region, source, role) {
   if (role === 'modal') {
     if (!isSemanticReadingScope(region) || region.closest(INTERFACE_REGIONS)) return false;
   } else if (role !== 'newsletter' && role !== 'sidebar' && role !== 'header') return false;
-  if (region.matches('aside,[role~="complementary"],header,[role~="banner"]')) return false;
+  if (region.matches('aside,[role~="complementary"],[role~="banner"]')) return false;
+  if (role === 'header' && region.closest('main,[role~="main"],article,[role~="article"]') &&
+      Array.from(region.querySelectorAll('h1')).some(isDocumentHeadline)) {
+    return true;
+  }
+  if (region.matches('header')) return false;
   if (region.id.toLowerCase() === role || Array.from(region.classList).some(name => name.toLowerCase() === role)) return false;
   if (role === 'sidebar') {
     // Layout modifiers describe the presence of a lateral region.
     const labels = [region.id, ...Array.from(region.classList)].filter(name => /(?:^|[-_])sidebar(?:$|[-_])/i.test(name));
-    if (labels.length && labels.every(name => /^(?:has|no|with|without)[-_]sidebar$/i.test(name))) return true;
+    if (labels.length && labels.every(name =>
+      /^(?:has|no|non|with|without)[-_]sidebar(?:[-_](?:content|layout|body|main))?$/i.test(name))) return true;
   }
   if (role === 'modal') {
     const modalLabel = /(?:^|[_-])modal(?:$|[_-])/i;
@@ -73,6 +84,28 @@ export function isReferencedReadingAside(element, roots, tocRoots = []) {
 /** Every admitted reading scope owns its nested authored content. */
 export function isReadingOwned(element, roots = []) {
   return (roots || []).some(root => root.contains(element));
+}
+
+/** An article card points to a different document instead of owning its own body. */
+export function linkedArticlePreview(element) {
+  if (!element.matches('article,[role~="article"]') || isEditorialOwner(element) ||
+      element.querySelector('article,[role~="article"],table,pre,blockquote,math')) return null;
+  const doc = element.ownerDocument;
+  const body = Array.from(element.querySelectorAll('p')).filter(node =>
+    !node.closest('figcaption,header,footer') && normalizedLabel(node.textContent).length >= 60);
+  if (body.length > 1 || body.some(node => normalizedLabel(node.textContent).length >= 260)) return null;
+  const actions = Array.from(element.querySelectorAll('a[href]')).filter(link =>
+    !link.closest('nav,figcaption,p') && !!normalizedLabel(link.textContent));
+  const title = element.querySelector(HEADINGS);
+  const tail = actions.at(-1);
+  const action = actions.find(link => link.matches('[rel~="bookmark"]') || title?.contains(link) || (title && link.contains(title))) ||
+    (actions.length === 1 || (tail && title && (title.compareDocumentPosition(tail) & title.DOCUMENT_POSITION_FOLLOWING)) ? tail : null);
+  if (!action) return null;
+  try {
+    const url = new URL(action.getAttribute('href'), doc.baseURI);
+    const page = new URL(doc.URL);
+    return /^https?:$/.test(url.protocol) && (url.origin !== page.origin || url.pathname !== page.pathname) ? url.href : null;
+  } catch { return null; }
 }
 
 /** Find independent navigation collections by their heading and linked card structure. */
@@ -105,15 +138,37 @@ export function findRecommendationRegions(root) {
       break;
     }
   }
-  return regions;
+  const previews = Array.from(root.querySelectorAll('article,[role~="article"]'), element =>
+    ({ element, href: linkedArticlePreview(element) })).filter(({ element, href }) =>
+    href && !Array.from(linkedTargets).some(target => target && element.contains(target)));
+  const previewOwners = new Set(previews.map(({ element }) => element));
+  for (const { element } of previews) {
+    let collection = null;
+    for (let region = element.parentElement; region && region !== root; region = region.parentElement) {
+      if (linkedTargets.has(region)) break;
+      const cards = previews.filter(card => region.contains(card.element));
+      if (new Set(cards.map(card => card.href)).size < 2) continue;
+      const labels = Array.from(region.querySelectorAll(HEADINGS)).filter(node =>
+        !cards.some(card => card.element.contains(node)));
+      if (labels.length > 1 || labels.some(node => node.tagName === 'H1' || linkedTargets.has(node)) ||
+          !containsOnlyCardText(region, labels[0], cards.map(card => card.element), previewOwners)) break;
+      collection = region;
+    }
+    if (collection) regions.push(collection);
+  }
+  return [...new Set(regions)];
 }
 
 /** Every non-label text node must belong to a single linked card. */
-function containsOnlyCardText(region, label, cards) {
+function containsOnlyCardText(region, label, cards, previewOwners = null) {
   const walker = region.ownerDocument.createTreeWalker(region, region.ownerDocument.defaultView.NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (!node.textContent?.trim() || label.contains(node) ||
+    if (!node.textContent?.trim() || label?.contains(node) ||
         node.parentElement?.closest('script,style,template,noscript,button,[role="button"]')) continue;
+    if (previewOwners) {
+      if (!previewOwners.has(node.parentElement?.closest('article,[role~="article"]'))) return false;
+      continue;
+    }
     let count = 0;
     for (let owner = node.parentElement; owner && owner !== region && count === 0; owner = owner.parentElement) {
       count = cards.filter(card => owner.contains(card)).length;

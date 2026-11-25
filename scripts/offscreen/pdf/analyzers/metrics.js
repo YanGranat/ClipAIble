@@ -29,16 +29,22 @@ export function analyzePdfMetrics(items, numPages) {
     numPages = 1;
   }
   
-  // Font size analysis
-  const fontSizes = items.map(item => item.fontSize || 0).filter(s => s > 0 && isFinite(s));
-  fontSizes.sort((a, b) => a - b);
-  
-  // Base font size (mode - most frequent)
+  // Weigh printed characters, not PDF text operations, which may split labels
+  // and indices glyph by glyph while emitting whole lines of body text at once.
+  const fontSizes = items
+    .filter(item => Number.isFinite(item.fontSize) && item.fontSize > 0)
+    .map(item => ({
+      size: item.fontSize,
+      weight: Math.max(1, typeof item.str === 'string' ? item.str.replace(/\s+/gu, '').length : 0)
+    }))
+    .sort((a, b) => a.size - b.size);
   const fontSizeCounts = new Map();
-  fontSizes.forEach(s => {
-    const rounded = Math.round(s * 2) / 2; // Round to 0.5
-    fontSizeCounts.set(rounded, (fontSizeCounts.get(rounded) || 0) + 1);
-  });
+  let totalWeight = 0;
+  for (const { size, weight } of fontSizes) {
+    const rounded = Math.round(size * 2) / 2 || size;
+    fontSizeCounts.set(rounded, (fontSizeCounts.get(rounded) || 0) + weight);
+    totalWeight += weight;
+  }
   
   let baseFontSize = DEFAULT_METRICS.BASE_FONT_SIZE;
   let maxCount = 0;
@@ -49,9 +55,15 @@ export function analyzePdfMetrics(items, numPages) {
     }
   });
   
-  const medianFontSize = fontSizes.length > 0 
-    ? fontSizes[Math.floor(fontSizes.length / 2)] 
-    : baseFontSize;
+  let medianFontSize = baseFontSize;
+  let cumulativeWeight = 0;
+  for (const { size, weight } of fontSizes) {
+    cumulativeWeight += weight;
+    if (cumulativeWeight > totalWeight / 2) {
+      medianFontSize = size;
+      break;
+    }
+  }
   
   // Spacing analysis
   const yCoords = items.map(item => item.y || 0).filter(y => y > 0 && isFinite(y));

@@ -153,8 +153,8 @@ export function mergeColumnElementsIntoTables(elements, metrics = {}) {
     
     // Find all elements that have columnIndex (from multi-column layout) OR are table-fragments
     // CRITICAL: table-fragment elements don't have columnIndex but are from Column 0
-    const columnElements = pageElements.filter(el => 
-      el.columnIndex !== undefined || el.type === 'table-fragment'
+    const columnElements = pageElements.filter(el =>
+      el.type !== 'image' && (el.columnIndex !== undefined || el.type === 'table-fragment')
     );
     
     // CRITICAL: Log all elements that are NOT in columnElements (might be missing from table detection)

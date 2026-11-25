@@ -3,7 +3,7 @@
 // Finds the main content container using multiple strategies
 
 import { safeGetComputedStyle, INTERFACE_REGIONS } from './dom-utils.js';
-import { EDITORIAL_CONTAINERS, isEditorialOwner } from './reading-context.js';
+import { EDITORIAL_CONTAINERS, isEditorialOwner, isDocumentHeadline, linkedArticlePreview } from './reading-context.js';
 
 /**
  * Recognize a captioned illustration embedded in an article's prose body.
@@ -386,6 +386,14 @@ export function hasSubstantialContent(element) {
 export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   const confirmedOwner = Array.from(doc.querySelectorAll(EDITORIAL_CONTAINERS))
     .find(element => isEditorialOwner(element) && !isExcluded(element));
+  const main = Array.from(doc.querySelectorAll('main,[role~="main"]')).find(element => !isExcluded(element) &&
+    safeGetComputedStyle(win, element)?.display !== 'none' &&
+    Array.from(element.querySelectorAll('h1')).some(isDocumentHeadline)) || doc.querySelector('main');
+  const mainOwnsProse = main && Array.from(main.querySelectorAll('p')).filter(paragraph =>
+    !paragraph.closest('article,[role~="article"],figure') && !isOutsideArticleBody(paragraph, main) &&
+    (paragraph.textContent || '').trim().length >= 60).length >= 2 &&
+    Array.from(main.querySelectorAll('h1')).some(isDocumentHeadline);
+  const isForeignPreview = element => mainOwnsProse && !!linkedArticlePreview(element);
   // Strategy 0: SPA root containers
   const spaSelectors = [
     '#root', '#app', '#__next', '[data-reactroot]', '[ng-app]',
@@ -398,7 +406,8 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
       if (spaRoot) {
         const spaText = (spaRoot.textContent || '').trim();
         if (spaText.length >= 500) {
-          const specificContent = spaRoot.querySelector('article, main, [role="main"], .article-content, .post-content');
+          const specificContent = Array.from(spaRoot.querySelectorAll('article, main, [role="main"], .article-content, .post-content'))
+            .find(element => !isForeignPreview(element));
           if (specificContent && (specificContent.textContent || '').trim().length >= 500) {
             if (!isExcluded(specificContent)) return specificContent;
           }
@@ -413,6 +422,7 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
   // Strategy 1: Semantic HTML5
   const article = confirmedOwner || Array.from(doc.querySelectorAll('article'))
     .filter(element => (element.textContent || '').trim().length > 500 &&
+      !isForeignPreview(element) &&
       !element.closest('aside, .related, .related-stories, .sidebar, .comments, nav, footer') &&
       !isExcluded(element) &&
       safeGetComputedStyle(win, element)?.display !== 'none')
@@ -453,7 +463,6 @@ export function findMainContent(win, doc, isExcluded, debugInfo, pushDebugLog) {
     }
   }
   
-  const main = doc.querySelector('main');
   // Special handling for Wikipedia
   const hostname = win.location?.hostname || '';
   if (hostname.includes('wikipedia.org') || hostname.includes('wikimedia.org')) {

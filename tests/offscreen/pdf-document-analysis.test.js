@@ -3,6 +3,7 @@ const loader = vi.hoisted(() => ({ loadPdfDocument: vi.fn(), destroyPdfDocument:
 vi.mock('../../scripts/offscreen/pdf/core/pdf-loader.js', () => loader);
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logDebug: vi.fn(), logWarn: vi.fn(), logError: vi.fn(), criticalLog: vi.fn(), logToServiceWorker: vi.fn() }));
 import { extractPdfContent } from '../../scripts/offscreen/pdf/extract.js';
+import { analyzePdfMetrics } from '../../scripts/offscreen/pdf/analyzers/metrics.js';
 
 function fixture(failedPage) {
   const pages = Array.from({ length: 12 }, (_, index) => {
@@ -48,4 +49,15 @@ it('does not disguise an unreadable page as an empty page', async () => {
   const { pdf } = fixture(7);
   await expect(extractPdfContent('https://example.com/study.pdf')).rejects.toMatchObject({ translationKey: 'errorPdfIncomplete', translationParams: { pages: '7' } });
   expect(loader.destroyPdfDocument).toHaveBeenCalledExactlyOnceWith(pdf);
+});
+
+it('measures visible text rather than the number of separately painted glyphs', () => {
+  const text = 'Field notes record the previous measurement and the current value.';
+  const smallLabels = Array.from({ length: 26 }, (_, index) =>
+    ({ str: String(index % 10), fontSize: 7, y: 50 + index }));
+  const single = [{ str: text, fontSize: 11.4, y: 90 }];
+  const split = text.split(' ').map(str => ({ str, fontSize: 11.4, y: 90 }));
+  for (const body of [single, split]) {
+    expect(analyzePdfMetrics([...smallLabels, ...body], 1)).toMatchObject({ baseFontSize: 11.5, medianFontSize: 11.4 });
+  }
 });

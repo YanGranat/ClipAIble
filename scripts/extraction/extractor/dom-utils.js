@@ -14,10 +14,17 @@ export function isExternalLinkAdornment(element) {
   return link?.matches('a[href][data-extlink]') === true;
 }
 
-/** Identify controls that share the current article or follow its publisher. */
+/** Identify reading-adjacent controls, not authored links. */
 export function isPublisherLinkAction(element) {
+  const sectionEdit = element.closest('.mw-editsection');
+  if (sectionEdit?.querySelector('a[href]') && !sectionEdit.closest('pre,code,math')) return true;
   const link = element.closest('a[href]');
   if (!link) return false;
+  // A dedicated action inside the caption downloads its owning figure, not a cited resource.
+  const caption = link.closest('figcaption');
+  const actionLabel = node => Array.from(node.classList).some(name => /^(?:image|media)[-_]download(?:[-_](?:link|button))?$/i.test(name));
+  if (caption?.closest('figure')?.querySelector('img,picture') &&
+      (actionLabel(link) || (link.parentElement !== caption && actionLabel(link.parentElement)))) return true;
   const doc = link.ownerDocument;
   try {
     const target = new URL(link.getAttribute('href'), doc.baseURI);
@@ -189,6 +196,40 @@ export function isSourceExcluded(element, exclusions = []) {
   });
 }
 
+/** A deferred renderer owns only the single hidden MathML source directly before it. */
+function readLazyMathPair(source, excluded) {
+  const math = source.firstElementChild;
+  if (!source.matches('span') || source.children.length !== 1 || math.localName !== 'math' ||
+      math.namespaceURI !== 'http://www.w3.org/1998/Math/MathML' || !math.textContent?.trim() ||
+      Array.from(source.childNodes).some(node => node !== math && (node.nodeType !== 3 || node.textContent?.trim()))) return null;
+  const renderer = source.nextElementSibling;
+  const placeholder = renderer?.firstElementChild;
+  if (!renderer?.matches('mjx-container') || renderer.children.length !== 1 ||
+      !placeholder?.matches('mjx-lazy[data-mjx-lazy]') || placeholder.children.length !== 0 ||
+      renderer.textContent?.trim() || renderer.closest('pre,code,[hidden]') ||
+      excluded(renderer) || [math, ...math.querySelectorAll('*')].some(excluded)) return null;
+  const win = renderer.ownerDocument.defaultView;
+  const style = win && safeGetComputedStyle(win, renderer);
+  if (style?.display === 'none' || ['hidden', 'collapse'].includes(style?.visibility)) return null;
+  for (let node = source.nextSibling; node !== renderer; node = node.nextSibling) {
+    if (node.nodeType !== 3 || node.textContent?.trim()) return null;
+  }
+  return { renderer };
+}
+
+function isHiddenMathSource(source, style) {
+  if (!source.matches('span') || source.firstElementChild?.localName !== 'math') return false;
+  if (style?.display === 'none' || /** @type {HTMLElement} */ (source).style.display === 'none' ||
+      source.hasAttribute('hidden')) return true;
+  // A one-pixel accessibility copy can override its own display style.
+  if (style?.position !== 'absolute' && style?.position !== 'fixed') return false;
+  const clipped = /^rect\(0px,0px,0px,0px\)$/u.test((style.clip || '').replace(/\s/gu, '')) ||
+    style.clipPath === 'inset(50%)' || [style.overflowX, style.overflowY].every(value => /^(?:hidden|clip)$/u.test(value));
+  if (!clipped) return false;
+  const { width, height } = source.getBoundingClientRect();
+  return width > 0 && width <= 1 && height > 0 && height <= 1;
+}
+
 /** Clone readable source content without changing its DOM or interpreting literal text. */
 export function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
   const clone = element.cloneNode(true);
@@ -212,6 +253,15 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     if (excluded(original)) { copy.remove(); continue; }
     const literal = original.closest('pre,code,math,mjx-container,.MathJax,.katex');
     const style = original.ownerDocument.defaultView ? safeGetComputedStyle(original.ownerDocument.defaultView, original) : null;
+    if (!literal && isHiddenMathSource(original, style)) {
+      const pair = readLazyMathPair(original, excluded);
+      const rendererCopy = pair && copies[originals.indexOf(pair.renderer, index + 1)];
+      if (rendererCopy) {
+        rendererCopy.replaceChildren(copy.firstElementChild);
+        copy.remove();
+        continue;
+      }
+    }
     if (!literal && (original.matches('script,style,template,noscript,input,select,textarea') || style?.display === 'none' || (!style && original.hasAttribute('hidden')))) {
       copy.remove();
       continue;

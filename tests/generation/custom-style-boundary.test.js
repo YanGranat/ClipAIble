@@ -28,4 +28,16 @@ describe('document custom style boundary', () => {
     expect(dom.window.getComputedStyle(dom.window.document.body).backgroundColor).toBe('rgb(48, 48, 48)');
     dom.window.close();
   });
+
+  it.each([
+    [{ bgColor: '#ffffff', textColor: '#202020' }, 'rgb(32, 32, 32)'],
+    [{ bgColor: '#222222', textColor: '#eeeeee' }, 'rgb(238, 238, 238)']
+  ])('keeps inline and fenced code readable in the selected palette', (palette, ink) => {
+    const styles = applyCustomStyles('pre code {color: #aaa;}', 'multi', { ...colors, ...palette });
+    const dom = new JSDOM(`<style>${styles}</style><pre><code>x</code></pre><p><code>x</code></p>`);
+    const { document, getComputedStyle } = dom.window;
+    for (const code of document.querySelectorAll('code')) expect(getComputedStyle(code).color).toBe(ink);
+    expect(getComputedStyle(document.querySelector('pre code')).backgroundColor).toBe('rgba(0, 0, 0, 0)');
+    dom.window.close();
+  });
 });

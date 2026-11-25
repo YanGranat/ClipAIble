@@ -30,13 +30,14 @@ export function beginPdfOperation(operationId, processingRunId = null, kind = 'r
   return transact(jobs => { jobs.add({ processingRunId, kind }, operationId); });
 }
 
-export function putPdfOperationBlob(operationId, processingRunId, pageNum, blob, kind = 'render') {
-  if (!validId(operationId) || !Number.isInteger(pageNum) || pageNum < 0 || !(blob instanceof Blob) || !blob.size) return Promise.reject(new Error('Invalid PDF data result'));
+export function putPdfOperationBlob(operationId, processingRunId, pageNum, blob, kind = 'render', regionIndex = 0) {
+  if (!validId(operationId) || !Number.isInteger(pageNum) || pageNum < 0 || !Number.isInteger(regionIndex) ||
+      regionIndex < 0 || !(blob instanceof Blob) || !blob.size) return Promise.reject(new Error('Invalid PDF data result'));
   return transact((jobs, pages, result) => {
     const request = jobs.get(operationId);
     request.onsuccess = () => {
       if (!request.result || request.result.processingRunId !== processingRunId || request.result.kind !== kind) return result(null);
-      const ref = `${operationId}:${pageNum}`;
+      const ref = `${operationId}:${pageNum}${regionIndex ? `:${regionIndex}` : ''}`;
       pages.put({ operationId, processingRunId, kind, blob }, ref);
       result(ref);
     };
@@ -45,7 +46,7 @@ export function putPdfOperationBlob(operationId, processingRunId, pageNum, blob,
 
 /** Consume one decoded page without putting image bytes in a runtime message. */
 export function takePdfOperationBlob(ref, processingRunId = null, kind = 'render') {
-  if (typeof ref !== 'string' || !/^[a-f\d-]{36}:\d+$/i.test(ref)) return Promise.reject(new Error('Invalid PDF page reference'));
+  if (typeof ref !== 'string' || !/^[a-f\d-]{36}:\d+(?::[1-9]\d*)?$/i.test(ref)) return Promise.reject(new Error('Invalid PDF page reference'));
   return transact((_jobs, pages, result) => {
     const request = pages.get(ref);
     request.onsuccess = () => {

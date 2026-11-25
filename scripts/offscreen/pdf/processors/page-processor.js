@@ -13,6 +13,7 @@ import { extractPageGraphics, detectTableRegionsFromGraphics } from '../utils/gr
 import { DEFAULT_METRICS } from '../constants.js';
 import { extractPaintedTables } from '../utils/grid-cells.js';
 import { authoredFigureCaption } from '../figure-region.js';
+import { findEquationRegions } from '../equation-regions.js';
 
 /** Order the elements within one reading region, then let the page concatenate its regions. */
 function orderRegion(elements) {
@@ -47,8 +48,37 @@ function partitionAtPaintedTables(physical, baseFontSize) {
 }
 
 /** Group lines after reserving the original painted table positions. */
-function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery) {
-  let elements = processLinesByColumns(lines, viewport, metrics, groupLinesIntoElements, proseRecovery);
+function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery, equations) {
+  const replacements = new Map();
+  const ownedLines = new Set();
+  for (const equation of equations) {
+    if (!lines.includes(equation.marker)) continue;
+    replacements.set(equation.marker, equation.image);
+    for (const line of equation.owned) ownedLines.add(line);
+  }
+  const group = (columnLines, columnMetrics) => {
+    const elements = [];
+    let start = 0;
+    for (let index = 0; index < columnLines.length; index++) {
+      const line = columnLines[index];
+      const image = replacements.get(line);
+      if (!image) continue;
+      elements.push(...groupLinesIntoElements(columnLines.slice(start, index), columnMetrics), {
+        ...image, minY: line.y, maxY: line.y
+      });
+      start = index + 1;
+    }
+    elements.push(...groupLinesIntoElements(columnLines.slice(start), columnMetrics));
+    return elements;
+  };
+  let elements = processLinesByColumns(lines, viewport, metrics, replacements.size ? group : groupLinesIntoElements, proseRecovery);
+  if (replacements.size) {
+    const imageRefs = elements.map(element => element.pdfPageImageRef);
+    if ([...replacements.values()].some(image => imageRefs.filter(ref => ref === image.pdfPageImageRef).length !== 1)) {
+      const restored = lines.filter(line => !replacements.has(line)).concat([...ownedLines]).sort((a, b) => a.y - b.y || a.x - b.x);
+      elements = processLinesByColumns(restored, viewport, metrics, groupLinesIntoElements, proseRecovery);
+    }
+  }
   if (!elements.some(element => element.recoveredProseRegion)) {
     try {
       elements = splitTableBlocksFromColumn1(elements, metrics);
@@ -67,17 +97,18 @@ function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery)
 /**
  * Process a single PDF page and extract elements
  * Supports multi-column layouts by detecting columns and processing each separately
- * @param {{getTextContent: function(): Promise<{items?: Array<any>, styles?: Record<string, {ascent?: number}>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, cleanup: function(): void, commonObjs?: Object}} page - PDF.js page object
+ * @param {{getTextContent: function(): Promise<{items?: Array<any>, styles?: Record<string, {ascent?: number}>}>, getViewport: function({scale: number}): any, getOperatorList: function(): Promise<any>, getStructTree?: function(): Promise<any>, cleanup: function(): void, commonObjs?: Object}} page - PDF.js page object
  * @param {number} pageNum - Page number
  * @param {{gapThreshold?: number, baseFontSize?: number, [key: string]: any}} metrics - PDF metrics
  * @param {(page: Object, pageNum: number) => Promise<Object|null>} [preserveImagePage] - Keep a visible page with no text layer
  * @param {(page: Object, pageNum: number, textItems: any[], caption: any, tables: any[], captionAscent?: number) => Promise<any>} [preserveFigure] - Retain a disjoint mixed-page figure
+ * @param {(page: Object, pageNum: number, crops: any[]) => Promise<any[]>} [preserveEquations] - Retain disjoint display equations
  * @returns {Promise<Array<any>>} Array of extracted elements
  * @throws {Error} If text extraction fails
  * @throws {Error} If page processing fails
  */
 
-export async function processPage(page, pageNum, metrics, preserveImagePage, preserveFigure) {
+export async function processPage(page, pageNum, metrics, preserveImagePage, preserveFigure, preserveEquations) {
   try {
     const viewport = page.getViewport({ scale: 1.0 });
     
@@ -183,14 +214,31 @@ export async function processPage(page, pageNum, metrics, preserveImagePage, pre
       { ...textContent, items: remaining }, page.commonObjs);
     physical = extractPaintedTables(lines, metrics.graphicsData?.[pageNum], baseFontSize);
   }
+  let equations = [];
+  if (preserveEquations) {
+    const regions = findEquationRegions(physical.remainingLines, viewport, baseFontSize, physical.tables);
+    // Tagged content can carry authored math or alternative text that a crop cannot replace.
+    let taggedOrUnknown = true;
+    if (regions.length) {
+      try { taggedOrUnknown = typeof page.getStructTree !== 'function' || Boolean(await page.getStructTree()); }
+      catch (error) { logWarn('[PDF] Structure tree unavailable for equation preservation', { pageNum, error: error.message }); }
+    }
+    if (regions.length && !taggedOrUnknown) {
+      const images = await preserveEquations(page, pageNum, regions.map(region => region.crop));
+      equations = regions.flatMap((region, index) => images[index] ? [{ ...region, image: images[index] }] : []);
+      const reserved = new Set(equations.flatMap(equation => [...equation.owned]));
+      physical.remainingLines = physical.remainingLines.filter(line => !reserved.has(line)).concat(equations.map(equation => equation.marker))
+        .sort((a, b) => a.y - b.y || a.x - b.x);
+    }
+  }
   const regions = partitionAtPaintedTables(physical, baseFontSize);
   let result;
   if (!regions) {
-    const elements = classifyReadingRegion(physical.remainingLines, viewport, metrics, pageNum, physical.tables.length ? 'disabled' : 'fallback');
+    const elements = classifyReadingRegion(physical.remainingLines, viewport, metrics, pageNum, physical.tables.length ? 'disabled' : 'fallback', equations);
     result = orderRegion(elements.concat(physical.tables));
   } else {
     result = regions.flatMap(({ lines, table }) => {
-      const elements = orderRegion(classifyReadingRegion(lines, viewport, metrics, pageNum, 'preferred'));
+      const elements = orderRegion(classifyReadingRegion(lines, viewport, metrics, pageNum, 'preferred', equations));
       return table ? elements.concat(table) : elements;
     });
   }

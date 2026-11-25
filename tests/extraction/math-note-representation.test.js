@@ -3,7 +3,7 @@ import { JSDOM } from 'jsdom';
 import { execFileSync } from 'node:child_process';
 import { handleList } from '../../scripts/extraction/extractor/parse.js';
 import { processMathElements, serializeReadingHtml } from '../../scripts/extraction/extractor/inline-content.js';
-import { listHtml } from '../../scripts/generation/document-content.js';
+import { documentMarkdown, documentText, listHtml } from '../../scripts/generation/document-content.js';
 
 const documents = [];
 const namespace = 'http://www.w3.org/1998/Math/MathML';
@@ -22,6 +22,61 @@ function formula(markup, tex = 'x^2') {
 afterEach(() => { documents.splice(0).forEach(dom => dom.window.close()); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('Portable semantic math representation', () => {
+  const sourceMath = (markup, attributes = '') => `<span style="display:none" ${attributes}><math xmlns="${namespace}">${markup}</math></span>`;
+  const lazy = '<mjx-container><mjx-lazy data-mjx-lazy="18"></mjx-lazy></mjx-container>';
+
+  it('reads adjacent hidden MathML only through its empty deferred renderer in every document consumer', async () => {
+    const dom = page('<p>Observed value ' + sourceMath('<msub><mi>v</mi><mn>8</mn></msub>') + lazy +
+      ' is compared with ' + sourceMath('<msup><mi>w</mi><mn>5</mn></msup>') + lazy + ' in the next trial.</p>');
+    const before = dom.window.document.body.innerHTML;
+    const run = dom.window.eval(extractor.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: 'article', title: 'h1' });
+    const item = result.content.find(item => item.type === 'paragraph');
+    const html = 'Observed value <span class="math">v<sub>8</sub></span> is compared with <span class="math">w<sup>5</sup></span> in the next trial.';
+    expect(item.html).toBe(html);
+    expect(documentText(item)).toBe(html);
+    expect(documentMarkdown(item)).toBe('Observed value v<sub>8</sub> is compared with w<sup>5</sup> in the next trial.');
+    expect(dom.window.document.body.innerHTML).toBe(before);
+  });
+
+  it('keeps deferred math in a split reading range despite an accessibility display override', async () => {
+    const source = sourceMath('<msub><mi>v</mi><mn>8</mn></msub>', 'class="assistive"');
+    const clipped = sourceMath('<msup><mi>w</mi><mn>5</mn></msup>', 'class="assistive"').replace(' style="display:none"', '');
+    const dom = page('<div id="notes">First observed value ' + source + lazy + ' is recorded.' +
+      '<p>Partitioned observation.</p> The second value ' + clipped + lazy + ' is also recorded.</div>');
+    const getStyle = dom.window.getComputedStyle.bind(dom.window);
+    vi.spyOn(dom.window, 'getComputedStyle').mockImplementation(element => {
+      const style = getStyle(element);
+      if (element.matches('.assistive')) Object.assign(style, { display: 'block', position: 'absolute', clip: 'rect(0px, 0px, 0px, 0px)' });
+      return style;
+    });
+    const rect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(dom.window.HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      return this.matches('.assistive') ? { width: 1, height: 1 } : rect.call(this);
+    });
+    const run = dom.window.eval(extractor.replace('export async function', 'async function') + '\nextractAutomaticallyInlined;');
+    const result = await run(dom.window.location.href, false, { content: '#notes', title: 'h1' });
+    expect(result.content.filter(item => item.type === 'paragraph').map(item => documentMarkdown(item))).toEqual([
+      'First observed value v<sub>8</sub> is recorded.',
+      'Partitioned observation.',
+      'The second value w<sup>5</sup> is also recorded.'
+    ]);
+  });
+
+  it('does not import unrelated, explicitly excluded, or already rendered alternatives', () => {
+    const invisible = sourceMath('<msub><mi>secret</mi><mn>6</mn></msub>');
+    const rendered = '<mjx-container><mjx-math aria-hidden="true">rendered copy</mjx-math>' +
+      '<mjx-assistive-mml><math><msub><mi>q</mi><mn>3</mn></msub></math></mjx-assistive-mml></mjx-container>';
+    const dom = page(
+      '<p>Before ' + invisible + ' intervening words ' + lazy + ' after.</p>' +
+      '<p>Before ' + sourceMath('<mi>excluded value</mi>', 'class="exclude"') + lazy + ' after.</p>' +
+      '<p>Before ' + invisible + rendered + ' after.</p>' +
+      '<p>Before ' + invisible + lazy.replace('<mjx-container>', '<mjx-container hidden>') + ' after.</p>');
+    const actual = Array.from(dom.window.document.querySelectorAll('p'), item => serializeReadingHtml(item, ['.exclude']));
+    expect(actual[0]).toContain('intervening words');
+    expect(actual[2]).toBe('Before <span class="math">q<sub>3</sub></span> after.');
+    expect(actual.join(' ')).not.toMatch(/secret|excluded value|rendered copy/);
+  });
   it('keeps MathJax SVG expressions from the same source nodes in ordinary and partitioned prose', async () => {
     const rendered = '<mjx-container class="MathJax" jax="SVG"><svg role="img"><g></g></svg></mjx-container>';
     const dom = page('<div id="notes">A complete first result is ' + rendered + '.<p>The second result is ' + rendered + '.</p>End of observations.</div>');

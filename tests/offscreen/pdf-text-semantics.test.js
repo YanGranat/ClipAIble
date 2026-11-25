@@ -34,6 +34,21 @@ it('removes only repeated isolated small-print margins, preserving body titles a
   expect(findRunningMargins(lines.slice(0, 2), 1, 12)).toEqual([]);
 });
 
+it('recognizes large mirrored running headers but preserves an independently placed title', () => {
+  const line = (pageNum, text, x, y, fontSize, width) => ({
+    pageNum, text, x, y, fontSize, items: [{ x, width, fontSize, viewportHeight: 800, viewportWidth: 600 }]
+  });
+  const pages = [1, 2, 3, 4, 5].flatMap(page => {
+    const left = page % 2 === 0;
+    const title = page === 1 ? 'FIELD SURVEY' : left ? 'SURVEY RECORD' : 'RECORD SURVEY';
+    return [line(page, title, page === 1 ? 190 : left ? 36 : 462, 32, 13, 90),
+      line(page, 'Observations remain stable after recalibration.', 36, 74, 11, 265)];
+  });
+  const margins = findRunningMargins(pages, 5, 11);
+  expect(margins.map(item => item.pageNum)).toEqual([2, 3, 4, 5]);
+  expect(findRunningMargins(pages.filter(item => item.pageNum !== 4), 5, 11)).toEqual([]);
+});
+
 it('joins wrapped words without erasing a printed compound hyphen', () => {
   expect(joinPdfText('infor-', 'mation')).toBe('infor-mation');
   expect(joinPdfText('well-', 'known')).toBe('well-known');

@@ -120,6 +120,29 @@ describe('Reading graphic ownership', () => {
     await expect(captureReadingGraphics(win, [doc.querySelector('canvas')], { referenceRoots: [root], extractionDeadline: Date.now() - 1 }, {})).rejects.toMatchObject({ code: 'IMAGE_TIMEOUT' });
   });
 
+  it.each([0, 255])('uses the source link only for an empty canvas (alpha %d)', async alpha => {
+    const { win, doc, root } = page(`<div id="measurements"><canvas aria-label="Interactive chart"></canvas>
+      <p>The observed measurements are described in this caption from the original article.</p></div>`);
+    const canvas = doc.querySelector('canvas');
+    canvas.getBoundingClientRect = () => ({ top: 0, left: 0, right: 8, bottom: 8, width: 8, height: 8 });
+    const context = { drawImage: vi.fn(), fillRect: vi.fn(), getImageData: () => ({ data: new Uint8Array([255, 255, 255, alpha]) }) };
+    win.HTMLCanvasElement.prototype.getContext = () => context;
+    win.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=';
+    const state = { referenceRoots: [root], processedImages: new Set(), addedHeadings: new Set(), content: [], debugInfo: null };
+    const elements = [canvas, doc.querySelector('p')];
+    state.readingGraphics = await captureReadingGraphics(win, elements, state, CONSTANTS);
+    const items = parseElements(win, elements, state, CONSTANTS, doc.URL);
+    expect(items.some(item => item.text?.includes('The observed measurements'))).toBe(true);
+    if (alpha > 0) {
+      expect(items[0]).toMatchObject({ type: 'image', isGraphic: true, alt: 'Interactive chart' });
+      expect(context.globalCompositeOperation).toBe('destination-over');
+    } else {
+      expect(context.fillRect).not.toHaveBeenCalled();
+      expect(items[0]).toEqual({ type: 'paragraph', html: '<a href="https://example.test/report#measurements">Interactive chart</a>',
+        text: '<a href="https://example.test/report#measurements">Interactive chart</a>' });
+    }
+  });
+
   it('retains a visibility override while rejecting a display-none ancestor', () => {
     const { doc, owner } = page('<figure style="visibility:hidden"><svg role="img"><path style="visibility:visible"/></svg></figure><div style="display:none"><svg role="img" style="visibility:visible"/></div><aside style="visibility:hidden"><svg role="img"/></aside>');
     expect(owner('figure svg')).toBe(doc.querySelector('figure'));

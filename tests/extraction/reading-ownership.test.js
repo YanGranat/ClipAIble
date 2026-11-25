@@ -7,13 +7,15 @@ const pages = [];
 let source;
 beforeAll(async () => { source = await generateExtractAutomaticallyInlined(); });
 afterEach(() => { pages.splice(0).forEach(page => page.window.close()); });
-async function extract(body, selectors = {}) {
+async function extract(body, selectors = {}, prepare = () => {}) {
   const page = new JSDOM(`<!doctype html><title>Field report</title>${body}`, { url: 'https://example.test/report', runScripts: 'outside-only' });
   pages.push(page);
   page.window.console.log = () => {};
+  prepare(page.window.document);
   page.window.eval(source.replace('export async function', 'async function') + '\nwindow.extract = extractAutomaticallyInlined;');
   const before = page.window.document.documentElement.outerHTML;
-  const result = await page.window.extract(page.window.location.href, false, { content: 'article', title: 'h1', ...selectors });
+  const result = await page.window.extract(page.window.location.href, false,
+    selectors === null ? null : { content: 'article', title: 'h1', ...selectors });
   expect(result.error).toBeUndefined();
   expect(page.window.document.documentElement.outerHTML).toBe(before);
   const node = page.window.document.createElement('div');
@@ -23,6 +25,70 @@ async function extract(body, selectors = {}) {
   return { ...result, plain: node.textContent.replace(/\s+/g, ' ').trim() };
 }
 describe('Reading ownership', () => {
+  it('retains visible shadow code between surrounding prose without reading component controls', async () => {
+    const html = '<article><h1>Field report</h1><p>Opening explanation.</p>' +
+      '<code-sample id="sample"></code-sample><code-sample hidden></code-sample>' +
+      '<p>The closing explanation follows the example.</p></article>';
+    const result = await extract(html, {}, doc => {
+      const [shown, hidden] = doc.querySelectorAll('code-sample');
+      shown.attachShadow({ mode: 'open' }).innerHTML =
+        '<button>Copy example</button><pre class="language-html"><code>&lt;output&gt;1&lt;/output&gt;</code></pre>' +
+        '<pre style="display:none"><code>Hidden code.</code></pre>';
+      hidden.attachShadow({ mode: 'open' }).innerHTML = '<pre><code>Hidden template.</code></pre>';
+      for (const pre of shown.shadowRoot.querySelectorAll('pre')) {
+        pre.getBoundingClientRect = () => ({ width: 160, height: 35 });
+      }
+    });
+    expect(result.content.map(item => item.type)).toEqual(['paragraph', 'code', 'paragraph']);
+    expect(result.content[1]).toMatchObject({ id: 'sample', text: '<output>1</output>', language: 'html', format: 'text' });
+    expect(JSON.stringify(result.content)).not.toMatch(/Copy example|Hidden code|Hidden template/);
+  });
+
+  it('chooses a titled reading landmark instead of the secondary articles inside it', async () => {
+    const prose = 'During the first trial, the recorder collected observations from several independent stations.';
+    const closing = 'The final check established that the stations agreed within the stated uncertainty.';
+    const teaser = label => '<article><a href="/topics">Topics</a><h3>' + label + '</h3><div>' +
+      'A preview describes a separate study and gives enough background to fill a card. '.repeat(8) +
+      '</div><a href="/work/' + label.toLowerCase() + '">Continue reading</a></article>';
+    const body = '<main><h1>Field report</h1><section><p>' + prose + '</p></section><section><p>' +
+      closing + '</p></section><section><h2>More reports</h2><div>' + teaser('Signal') + teaser('Weather') + '</div></section></main>';
+    const result = await extract(body, null);
+    expect(result.plain).toBe(prose + ' ' + closing);
+  });
+
+  it('preserves article prose in compound layout labels without admitting adjacent interface regions', async () => {
+    const intro = 'The station follows several independent protocols to establish the calibration.';
+    const result = await extract('<main><header class="layout__header"><h1>Field report</h1><section><p>' + intro +
+      '</p></section></header><article><div id="non-sidebar-content"><p>The sampling took place before sunrise.</p>' +
+      '<aside class="sidebar"><p>Open the discussion panel.</p></aside><header class="banner"><p>Sign up for updates.</p></header>' +
+      '<p>The comparison establishes the new baseline.</p></div></article></main>', { content: 'main' });
+    expect(result.plain).toContain(intro);
+    expect(result.plain).toContain('The sampling took place before sunrise.');
+    expect(result.plain).toContain('The comparison establishes the new baseline.');
+    expect(result.plain).not.toContain('discussion panel');
+  });
+
+  it('keeps document-owned linked articles that carry separately authored prose', async () => {
+    const result = await extract('<main><h1>Field report</h1><p>The group recorded the observations in two linked notes.</p><section>' +
+      '<article><h2><a href="/work/a">Observations</a></h2><p>The first intersection exceeded the threshold in the repeat measurement.</p>' +
+      '<p>The additional instrument independently confirmed that the distance was within tolerance.</p></article>' +
+      '<article><h2><a href="/work/b">Follow-up</a></h2><p>The second intersection was within tolerance during the afternoon test.</p>' +
+      '<p>The instrument was then returned to storage before the temperature fell again.</p></article></section></main>', { content: 'main' });
+    expect(result.plain).toContain('first intersection');
+    expect(result.plain).toContain('second intersection');
+  });
+
+  it('preserves compact linked sections when their headings are intra-document destinations', async () => {
+    const result = await extract('<main><h1>Field report</h1><p>Read <a href="#east">the eastern brief</a> and ' +
+      '<a href="#west">the western brief</a> for corresponding results.</p><section><h2>Briefs</h2>' +
+      '<article><h3 id="east"><a href="/work/east">The eastern brief</a></h3><p>The first sample confirmed the result.</p></article>' +
+      '<article><h3 id="west"><a href="/work/west">The western brief</a></h3><p>The second sample established the boundary.</p></article>' +
+      '</section></main>', { content: 'main' });
+    expect(result.plain).toContain('The first sample confirmed the result.');
+    expect(result.plain).toContain('The second sample established the boundary.');
+    expect(result.content.some(item => item.id === 'east')).toBe(true);
+  });
+
   it('keeps short authored units in a selected body while respecting actual UI owners', async () => {
     const result = await extract('<h1>Field report</h1><nav><p>Publisher navigation.</p></nav><h2>2035</h2><div>Q7</div><aside><p>An authored summary remains available.</p></aside><div data-module="ad"><p>A promoted result must stay out.</p></div>', { content: 'body' });
     expect(result.plain).toBe('2035 Q7 An authored summary remains available.');
@@ -88,6 +154,20 @@ describe('Reading ownership', () => {
     expect(result.plain).not.toContain('Join the discussion');
   });
 
+  it('retains actual references and caption credits but not section editing or asset download controls', async () => {
+    const result = await extract('<article><h1>Field report</h1><div><h2>Measurements</h2>' +
+      '<span class="mw-editsection">[<a href="/edit?section=2">edit</a>]</span></div>' +
+      '<p>See the <a href="/edit?section=2">revision notes</a> for the updated baseline.</p>' +
+      '<figure><img src="/chart.png" width="640" height="480"><figcaption>Photograph by the observatory. ' +
+      '<a download href="/notes.csv">Data notes</a><div class="image-download"><a href="/media/download">Download image</a></div></figcaption></figure></article>');
+    const serialized = JSON.stringify(result.content);
+    expect(serialized).not.toContain('[<a');
+    expect(serialized).not.toContain('Download image');
+    expect(serialized).toContain('revision notes');
+    expect(serialized).toContain('Photograph by the observatory.');
+    expect(serialized).toContain('Data notes');
+  });
+
   it('keeps a titled aside linked from another selected reading root', async () => {
     const html = '<main><h1>Field report</h1><section class="contents"><a href="#method">Calibration method</a></section>' +
       '<div class="body"><p>The first observation.</p><aside id="method" class="sidebar"><h3>Calibration method</h3>' +
@@ -129,6 +209,34 @@ describe('Reading ownership', () => {
     const result = await extract(html);
     expect(result.content.filter(item => item.type === 'image').map(item => item.src)).toEqual(['https://example.test/measuring.png']);
     expect(result.plain).not.toContain('weekly updates');
+  });
+
+  it('excludes an independent off-site signup panel and retains anchored or quoted invitations', async () => {
+    const signup = '<h2>Stay informed</h2><p>Subscribe to our newsletter to receive new posts.</p>' +
+      '<div><a href="https://forms.example.net/enroll">Join our newsletter</a></div>';
+    const result = await extract('<article><h1>Field report</h1><p>An article with a documented <a href="#signage">example</a>.</p>' +
+      '<div>' + signup + '</div>' +
+      '<section><h2 id="signage">Recorded invitation</h2><p>Subscribe to our newsletter on the printed card.</p>' +
+      '<div><a href="https://forms.example.net/sample">Join our newsletter</a></div></section>' +
+      '<blockquote><p>Subscribe to our newsletter was the opening line of the exhibit.</p></blockquote>' +
+      '<p>The concluding observation remains available.</p></article>');
+    expect(result.plain).not.toMatch(/Stay informed|receive new posts/);
+    expect(result.plain).toContain('Recorded invitation');
+    expect(result.plain).toContain('opening line of the exhibit');
+    expect(result.plain).toContain('The concluding observation');
+  });
+
+  it('separates header taxonomy and live counters from dated fields and authored body references', async () => {
+    const html = '<article><div><a href="/search?topic=harbor">[ Harbor ]</a></div><h1>Field report</h1>' +
+      '<div data-view-counter-url="/catalog/counter"><div><time datetime="2024-05-04">May 4, 2024</time></div>' +
+      '<span data-view-count>5,555 <span class="sr-only">Views</span></span></div>' +
+      '<p>The report cites <a href="/search?topic=harbor">[ Harbor ]</a> as a reference and describes <span data-view-count>42 views</span> in a recorded sample.</p>' +
+      '<p>Date and count units are part of the independent experiment.</p></article>';
+    const result = await extract(html);
+    expect(result.plain).not.toMatch(/5,555|^\[ Harbor \]/);
+    expect(result.plain).toContain('The report cites [ Harbor ] as a reference');
+    expect(result.plain).toContain('42 views');
+    expect([result.plain, result.publishDate].join(' ')).toMatch(/May 4, 2024|2024-05-04|2024-05-03T/);
   });
 
   it('omits the source headline after masthead metadata while keeping later headings and links', async () => {

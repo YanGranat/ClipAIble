@@ -61,15 +61,18 @@ describe('PDF pipeline integrity', () => {
   });
 
   it.each([
-    [{ outputFormat: 'pdf' }, true],
-    [{ outputFormat: 'markdown' }, true],
-    [{ outputFormat: 'audio' }, false],
-    [{ outputFormat: 'markdown', extractionOnly: true }, false],
-  ])('uses text-layer extraction with the appropriate visual-page policy for %o', async (options, preserveImagePages) => {
+    [{ outputFormat: 'pdf' }, true, true],
+    [{ outputFormat: 'markdown' }, true, true],
+    [{ outputFormat: 'epub' }, true, true],
+    [{ outputFormat: 'fb2' }, true, true],
+    [{ outputFormat: 'audio' }, false, false],
+    [{ outputFormat: 'pdf', language: 'ja' }, true, false],
+    [{ outputFormat: 'markdown', extractionOnly: true }, false, false],
+  ])('uses text-layer extraction with the appropriate visual-page policy for %o', async (options, preserveImagePages, preserveOriginalEquations) => {
     extractPdfContent.mockResolvedValue({ title: 'Document', content: [{ type: 'paragraph', text: 'Native text.' }] });
     await processPdfDocument({ ...input, mode: 'automatic', ...options }, 'https://example.org/document.pdf');
     expect(extractPdfContent).toHaveBeenCalledWith('https://example.org/document.pdf', pdfBytes,
-      expect.objectContaining({ preserveImagePages }));
+      expect.objectContaining({ preserveImagePages, preserveOriginalEquations }));
     expect(callAIWithImageAndHistory).not.toHaveBeenCalled();
   });
   it('reads an allowed local PDF directly without requesting a picker or viewer extraction', async () => {
