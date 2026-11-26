@@ -8,6 +8,8 @@ export const OPENAI_TTS_MAX_SPEED = 1.5;
 export const OPENAI_TTS_MAX_INPUT = 4096;
 
 export const DEFAULT_GOOGLE_TTS_MODEL = 'gemini-3.8-flash-tts';
+const GOOGLE_TTS_FLASH_LITE_MODEL = 'gemini-3.8-flash-lite-tts';
+export const DEFAULT_GOOGLE_TTS_VOICE = 'Callirrhoe';
 export const DEFAULT_ELEVENLABS_TTS_MODEL = 'eleven_v4';
 export const DEFAULT_ELEVENLABS_TTS_VOICE = 'WQP7cQUF5aAS6Axh5yaa';
 export const DEFAULT_QWEN_TTS_MODEL = 'qwen-audio-3.1-tts-flash';
@@ -15,11 +17,59 @@ export const DEFAULT_QWEN_TTS_VOICE = 'longanhuan_v3.1';
 
 export const GOOGLE_TTS_MODELS = [
   { id: DEFAULT_GOOGLE_TTS_MODEL, name: 'Gemini 3.8 Flash TTS' },
-  { id: 'gemini-3.8-flash-lite-tts', name: 'Gemini 3.8 Flash-Lite TTS' },
-  { id: 'gemini-3.1-flash-tts-preview', name: 'Gemini 3.1 Flash TTS Preview', deprecated: true },
-  { id: 'gemini-2.5-pro-preview-tts', name: 'Gemini 2.5 Pro TTS Preview', deprecated: true },
-  { id: 'gemini-2.5-flash-preview-tts', name: 'Gemini 2.5 Flash TTS Preview', deprecated: true }
+  { id: GOOGLE_TTS_FLASH_LITE_MODEL, name: 'Gemini 3.8 Flash-Lite TTS' }
 ];
+
+const retiredGoogleTtsReplacements = new Map([
+  ['gemini-2.5-flash-preview-tts', GOOGLE_TTS_FLASH_LITE_MODEL],
+  ['gemini-2.5-pro-preview-tts', DEFAULT_GOOGLE_TTS_MODEL],
+  ['gemini-3.1-flash-tts-preview', DEFAULT_GOOGLE_TTS_MODEL]
+]);
+
+export const GOOGLE_TTS_VOICES = [
+  DEFAULT_GOOGLE_TTS_VOICE, 'Zephyr', 'Puck', 'Charon', 'Kore', 'Fenrir', 'Leda', 'Orus', 'Aoede', 'Autonoe',
+  'Enceladus', 'Iapetus', 'Umbriel', 'Algieba', 'Despina', 'Erinome', 'Algenib', 'Rasalgethi', 'Laomedeia',
+  'Achernar', 'Alnilam', 'Schedar', 'Gacrux', 'Pulcherrima', 'Achird', 'Zubenelgenubi', 'Vindemiatrix',
+  'Sadachbia', 'Sadaltager', 'Sulafat'
+];
+
+/** @param {string | null | undefined} model */
+export function resolveGoogleTtsModel(model) {
+  return model == null || model === '' ? DEFAULT_GOOGLE_TTS_MODEL : (retiredGoogleTtsReplacements.get(model) ?? model);
+}
+
+/** @param {string | null | undefined} voice */
+export function resolveGoogleTtsVoice(voice) {
+  if (voice == null || voice === '') return DEFAULT_GOOGLE_TTS_VOICE;
+  const normalized = String(voice).trim().toLowerCase();
+  return GOOGLE_TTS_VOICES.find(id => id.toLowerCase() === normalized) || null;
+}
+
+/** @param {string} model */
+export function isSupportedGoogleTtsModel(model) {
+  return GOOGLE_TTS_MODELS.some(entry => entry.id === model);
+}
+
+/**
+ * Resolve saved aliases before contacting Google.
+ * @param {string | null | undefined} model
+ * @param {string | null | undefined} voice
+ */
+export function resolveGoogleTtsSelection(model, voice) {
+  const resolvedModel = resolveGoogleTtsModel(model);
+  if (!isSupportedGoogleTtsModel(resolvedModel)) {
+    throw Object.assign(new Error('Select a supported model in Google TTS settings.'), {
+      translationKey: 'errorModelNotFound', translationParams: { model: String(resolvedModel) }
+    });
+  }
+  const resolvedVoice = resolveGoogleTtsVoice(voice);
+  if (!resolvedVoice) {
+    throw Object.assign(new Error('Select a supported voice in Google TTS settings.'), {
+      translationKey: 'selectNarratorVoice', translationParams: {}
+    });
+  }
+  return { model: resolvedModel, voice: resolvedVoice };
+}
 
 export const ELEVENLABS_TTS_MODELS = [
   { id: DEFAULT_ELEVENLABS_TTS_MODEL, name: 'Eleven v4' },
@@ -60,7 +110,7 @@ export const ELEVENLABS_TTS_VOICES = [
 export function getDefaultTtsVoice(provider, qwenModel = DEFAULT_QWEN_TTS_MODEL) {
   if (provider === 'qwen') return isQwenAudioModel(qwenModel) ? DEFAULT_QWEN_TTS_VOICE : 'Elias';
   if (provider === 'elevenlabs') return DEFAULT_ELEVENLABS_TTS_VOICE;
-  if (provider === 'google') return 'Callirrhoe';
+  if (provider === 'google') return DEFAULT_GOOGLE_TTS_VOICE;
   if (provider === 'respeecher') return 'samantha';
   if (provider === 'offline') return 'en_US-lessac-medium';
   return DEFAULT_OPENAI_TTS_VOICE;
@@ -82,10 +132,6 @@ export function getQwenTtsEndpoint(model = DEFAULT_QWEN_TTS_MODEL, workspaceId =
   const regions = { singapore: 'ap-southeast-1', beijing: 'cn-beijing' };
   if (!Object.hasOwn(regions, region)) throw configurationError('errorQwenRegionUnsupported', 'Select a supported Qwen region.');
   return `https://${workspace}.${regions[region]}.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer`;
-}
-
-export function isModernGoogleTtsModel(model) {
-  return model === 'gemini-3.8-flash-tts' || model === 'gemini-3.8-flash-lite-tts';
 }
 
 export function isQwenAudioModel(model) {

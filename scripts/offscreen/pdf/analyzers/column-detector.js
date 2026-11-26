@@ -640,6 +640,7 @@ export function processLinesByColumns(lines, viewport, metrics, processFunction,
     // for each column to correctly identify paragraph breaks.
     const columnMetrics = { ...metrics };
     columnMetrics.columnIndex = colIdx; // Mark as column-specific for logging
+    if (proseRegions.length) columnMetrics.recoveredProseRegion = column.role;
     // Pass visual structure to help distinguish column gaps from paragraph gaps
     columnMetrics.visualStructure = metrics.visualStructure || null;
     if (column.lines.length >= 2) {

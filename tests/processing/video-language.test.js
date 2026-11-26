@@ -22,9 +22,36 @@ describe('Video caption language selection', () => {
     deps.process.mockResolvedValue([{ type: 'paragraph', text: 'Sample transcript' }]);
   });
 
-  it.each(['youtube', 'vimeo'])('passes the selected target language to %s', async platform => {
-    await processVideoPage({ language: 'fr', tabId: 7, model: 'sample-model', apiKey: 'placeholder' }, { platform, videoId: 'sample-video' });
-    expect(deps[platform]).toHaveBeenCalledWith(7, 'fr', 'de');
+  it('passes the selected target and detected source languages to YouTube', async () => {
+    await processVideoPage({ language: 'fr', tabId: 7, model: 'sample-model', apiKey: 'placeholder' }, { platform: 'youtube', videoId: 'sample-video' });
+    expect(deps.youtube).toHaveBeenCalledWith(7, 'fr', 'de');
+  });
+
+  it('passes the selected target to Vimeo without sending video metadata for unused source-language inference', async () => {
+    await processVideoPage({ language: 'ua', tabId: 7, model: 'sample-model', apiKey: 'placeholder' }, { platform: 'vimeo', videoId: 'sample-video' });
+    expect(deps.vimeo).toHaveBeenCalledWith(7, 'uk');
+    expect(chrome.scripting.executeScript).not.toHaveBeenCalled();
+    expect(deps.detect).not.toHaveBeenCalled();
+    expect(deps.process).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes the YouTube metadata snapshot even when a resource parks the load event', async () => {
+    const win = { addEventListener: vi.fn() };
+    const doc = { title: 'YouTube', readyState: 'interactive', querySelector: selector =>
+      selector === '#description yt-formatted-string' ? { textContent: 'An independently observed demonstration.' } : null };
+    let captured;
+    chrome.scripting.executeScript.mockImplementationOnce(async ({ func, args }) => {
+      // Evaluate the actual serialized function without waiting for a load event.
+      captured = Function('document', 'window', 'args', `return (${func.toString()})(...args);`)(doc, win, args || []);
+      return [{ result: captured instanceof Promise ? null : captured }];
+    });
+    await processVideoPage({ tabId: 7, title: 'Captured video title', model: 'sample-model', apiKey: 'placeholder' },
+      { platform: 'youtube', videoId: 'sample-video' });
+    expect(captured).toEqual({ title: 'Captured video title', description: 'An independently observed demonstration.' });
+    expect(win.addEventListener).not.toHaveBeenCalled();
+    expect(deps.detect).toHaveBeenCalledWith([{ type: 'text', text: 'Captured video title\nAn independently observed demonstration.' }],
+      'placeholder', 'sample-model', {});
+    expect(deps.youtube).toHaveBeenCalledWith(7, 'auto', 'de');
   });
 
   it('normalizes the supported Ukrainian locale for caption tracks', async () => {

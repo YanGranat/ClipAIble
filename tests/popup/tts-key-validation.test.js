@@ -94,4 +94,20 @@ describe('Google TTS key validation', () => {
     expect(input.dataset.encrypted).toBeUndefined();
     expect(deps.showToast).toHaveBeenCalledExactlyOnceWith('failedToSave', 'error', { key: 'failedToSave' });
   });
+
+  it('does not show a stale validation error after a newer key was saved', async () => {
+    const input = deps.elements.googleTtsApiKey;
+    let releaseError;
+    deps.t.mockImplementation(key => key === 'invalidKeyFormat'
+      ? new Promise(resolve => { releaseError = resolve; }) : Promise.resolve(key));
+    input.value = 'invalid key draft';
+    const earlier = save();
+    await vi.waitFor(() => expect(releaseError).toBeTypeOf('function'));
+    input.value = 'synthetic-next-key';
+    await save();
+    releaseError('invalidKeyFormat');
+    await earlier;
+    expect(chrome.storage.local.set).toHaveBeenCalledTimes(1);
+    expect(deps.showToast).toHaveBeenCalledExactlyOnceWith('googleTtsKeySaved', 'success', { key: 'googleTtsKeySaved' });
+  });
 });

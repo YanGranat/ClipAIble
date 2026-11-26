@@ -38,97 +38,42 @@ export async function processVideoPage(data, videoInfo) {
   let subtitles, metadata;
   let detectedVideoLanguage = 'en'; // Default to English
 
-  // CRITICAL: AI-based language detection from video metadata (title, description)
-  // This ensures we get subtitles in the correct language (same as article language detection)
-  try {
-    log('🌍 Detecting video language via AI analysis of metadata');
-
-    const metadataResults = await chrome.scripting.executeScript({
-      target: { tabId },
-      world: 'MAIN',
-      func: () => {
-        // CRITICAL: Wait for page to be ready before extracting metadata
-        return new Promise((resolve) => {
-          const extractMetadata = () => {
-            // Check if essential YouTube elements are loaded
-            const titleSelectors = [
-              'h1.ytd-watch-metadata yt-formatted-string',
-              'h1.ytd-video-primary-info-renderer yt-formatted-string',
-              'h1 yt-formatted-string.ytd-watch-metadata',
-              'ytd-watch-metadata h1',
-              'h1.title'
-            ];
-
-            const descriptionSelectors = [
-              '#description yt-formatted-string',
-              'ytd-text-inline-expander#description yt-formatted-string',
-              '#description-inline-expander yt-formatted-string',
-              'yt-formatted-string.content'
-            ];
-
-            let title = document.title || '';
-            let description = '';
-
-            // Try to get title from various selectors
-            for (const selector of titleSelectors) {
-              const el = document.querySelector(selector);
-              if (el?.textContent?.trim()) {
-                title = el.textContent.trim();
-                break;
-              }
-            }
-
-            // Try to get description from various selectors
-            for (const selector of descriptionSelectors) {
-              const el = document.querySelector(selector);
-              if (el?.textContent?.trim()) {
-                description = el.textContent.trim();
-                break;
-              }
-            }
-
-            // Return immediately if we have at least title
-            if (title && title !== 'YouTube') {
-              resolve({ title, description });
-            } else if (document.readyState === 'complete') {
-              // Page is fully loaded but no title found - use document.title as fallback
-              resolve({ title: document.title || 'Untitled', description });
-            } else {
-              // Not ready yet, wait a bit
-              setTimeout(extractMetadata, 300);
-            }
-          };
-
-          // Start extraction
-          if (document.readyState === 'complete') {
-            extractMetadata();
-          } else {
-            window.addEventListener('load', extractMetadata);
-          }
-        });
+  // Only YouTube uses the detected source language to choose a caption track.
+  if (platform === 'youtube') {
+    try {
+      const metadataResults = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        args: [data.title || ''],
+        func: capturedTitle => {
+          const read = selectors => selectors.map(selector => document.querySelector(selector)?.textContent?.trim()).find(Boolean) || '';
+          const title = read([
+            'h1.ytd-watch-metadata yt-formatted-string',
+            'h1.ytd-video-primary-info-renderer yt-formatted-string',
+            'h1 yt-formatted-string.ytd-watch-metadata',
+            'ytd-watch-metadata h1',
+            'h1.title'
+          ]);
+          const description = read([
+            '#description yt-formatted-string',
+            'ytd-text-inline-expander#description yt-formatted-string',
+            '#description-inline-expander yt-formatted-string',
+            'yt-formatted-string.content'
+          ]);
+          // Subtitles own their readiness and deadlines. A poster or another
+          // pending page resource must not hold this metadata snapshot open.
+          return { title: [title, document.title, capturedTitle].find(value => value && value !== 'YouTube') || '', description };
+        }
+      });
+      const videoMetadata = metadataResults?.[0]?.result;
+      if (videoMetadata?.title) {
+        const contentForAI = [{ type: 'text', text: `${videoMetadata.title}\n${videoMetadata.description || ''}` }];
+        detectedVideoLanguage = await detectContentLanguage(contentForAI, apiKey, model, getAIRequestOptions(data));
+        log('Video source language detected', { detectedVideoLanguage });
       }
-    });
-
-    const videoMetadata = metadataResults?.[0]?.result;
-    if (videoMetadata?.title && videoMetadata.title !== 'YouTube') {
-      // Use AI to detect video language from title and description
-      const textForDetection = `${videoMetadata.title}\n${videoMetadata.description || ''}`;
-      const contentForAI = [{ type: 'text', text: textForDetection }];
-
-      detectedVideoLanguage = await detectContentLanguage(contentForAI, apiKey, model, getAIRequestOptions(data));
-      log('🌍 Video language detected via AI', {
-        detectedVideoLanguage,
-        title: videoMetadata.title,
-        descriptionLength: videoMetadata.description?.length || 0,
-        method: 'AI analysis of video metadata'
-      });
-    } else {
-      logWarn('Could not extract video metadata, using default language', {
-        metadata: videoMetadata
-      });
+    } catch (error) {
+      logWarn('Failed to detect video language via AI, using default', error);
     }
-  } catch (error) {
-    logWarn('Failed to detect video language via AI, using default', error);
   }
 
   await checkCancellation('subtitle extraction', data.processingRunId);
@@ -138,7 +83,7 @@ export async function processVideoPage(data, videoInfo) {
   try {
     const subtitlesData = platform === 'youtube'
       ? await extractYouTubeSubtitles(tabId, targetLanguage, captionSourceLanguage)
-      : await extractVimeoSubtitles(tabId, targetLanguage, captionSourceLanguage);
+      : await extractVimeoSubtitles(tabId, targetLanguage);
 
     subtitles = subtitlesData.subtitles;
     metadata = subtitlesData.metadata;

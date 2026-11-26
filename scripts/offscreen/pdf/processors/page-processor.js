@@ -14,6 +14,7 @@ import { DEFAULT_METRICS } from '../constants.js';
 import { extractPaintedTables } from '../utils/grid-cells.js';
 import { authoredFigureCaption } from '../figure-region.js';
 import { findEquationRegions } from '../equation-regions.js';
+import { findNumberedListRegions } from './numbered-list-regions.js';
 
 /** Order the elements within one reading region, then let the page concatenate its regions. */
 function orderRegion(elements) {
@@ -56,6 +57,19 @@ function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery,
     replacements.set(equation.marker, equation.image);
     for (const line of equation.owned) ownedLines.add(line);
   }
+  const groupText = (columnLines, columnMetrics) => {
+    if (columnMetrics.recoveredProseRegion !== 'lane') return groupLinesIntoElements(columnLines, columnMetrics);
+    const numbered = findNumberedListRegions(columnLines, metrics.baseFontSize || DEFAULT_METRICS.BASE_FONT_SIZE);
+    if (!numbered.length) return groupLinesIntoElements(columnLines, columnMetrics);
+    const elements = [];
+    let start = 0;
+    for (const region of numbered) {
+      elements.push(...groupLinesIntoElements(columnLines.slice(start, region.start), columnMetrics), region.element);
+      start = region.end;
+    }
+    elements.push(...groupLinesIntoElements(columnLines.slice(start), columnMetrics));
+    return elements;
+  };
   const group = (columnLines, columnMetrics) => {
     const elements = [];
     let start = 0;
@@ -63,20 +77,20 @@ function classifyReadingRegion(lines, viewport, metrics, pageNum, proseRecovery,
       const line = columnLines[index];
       const image = replacements.get(line);
       if (!image) continue;
-      elements.push(...groupLinesIntoElements(columnLines.slice(start, index), columnMetrics), {
+      elements.push(...groupText(columnLines.slice(start, index), columnMetrics), {
         ...image, minY: line.y, maxY: line.y
       });
       start = index + 1;
     }
-    elements.push(...groupLinesIntoElements(columnLines.slice(start), columnMetrics));
+    elements.push(...groupText(columnLines.slice(start), columnMetrics));
     return elements;
   };
-  let elements = processLinesByColumns(lines, viewport, metrics, replacements.size ? group : groupLinesIntoElements, proseRecovery);
+  let elements = processLinesByColumns(lines, viewport, metrics, replacements.size ? group : groupText, proseRecovery);
   if (replacements.size) {
     const imageRefs = elements.map(element => element.pdfPageImageRef);
     if ([...replacements.values()].some(image => imageRefs.filter(ref => ref === image.pdfPageImageRef).length !== 1)) {
       const restored = lines.filter(line => !replacements.has(line)).concat([...ownedLines]).sort((a, b) => a.y - b.y || a.x - b.x);
-      elements = processLinesByColumns(restored, viewport, metrics, groupLinesIntoElements, proseRecovery);
+      elements = processLinesByColumns(restored, viewport, metrics, groupText, proseRecovery);
     }
   }
   if (!elements.some(element => element.recoveredProseRegion)) {

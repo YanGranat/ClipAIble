@@ -22,7 +22,7 @@ describe('Vimeo caption language preference', () => {
     else dom.window.__INITIAL_STATE__ = { video };
     expect((await extractVimeoSubtitles(7, 'fr')).subtitles).toEqual([{ start: 1, duration: 2, text: 'Preferred caption' }]);
     expect(fetchTrack).toHaveBeenCalledOnce();
-    expect(fetchTrack).toHaveBeenCalledWith('https://example.org/preferred.vtt');
+    expect(fetchTrack).toHaveBeenCalledWith('https://example.org/preferred.vtt', expect.objectContaining({ signal: expect.anything() }));
   });
 
   it.each([['ua', 'uk'], ['pt-BR', 'pt'], ['fr', 'fr-CA']])('matches %s to the available %s caption locale', async (target, available) => {
@@ -62,17 +62,16 @@ describe('Vimeo caption language preference', () => {
     expect(fetchTrack).not.toHaveBeenCalled();
   });
 
-  it('loads preferred native cues when the matching track was disabled', async () => {
+  it('reads preferred native cues without leaving the matching track enabled', async () => {
     let mode = 'disabled';
     const preferred = { kind: 'subtitles', language: 'fr',
       get mode() { return mode; }, set mode(value) { mode = value; },
-      get cues() { return mode === 'showing' ? cue('Preferred caption') : null; } };
+      get cues() { return mode === 'disabled' ? null : cue('Preferred caption'); } };
     Object.defineProperty(dom.window.document.querySelector('video'), 'textTracks', { value: [
       { kind: 'subtitles', language: 'en', mode: 'showing', cues: cue('Fallback caption') }, preferred
     ] });
-    dom.window.setTimeout = callback => { callback(); return 0; };
     expect((await extractVimeoSubtitles(7, 'fr')).subtitles[0].text).toBe('Preferred caption');
-    expect(mode).toBe('showing');
+    expect(mode).toBe('disabled');
     expect(fetchTrack).not.toHaveBeenCalled();
   });
 

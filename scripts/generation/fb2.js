@@ -1,4 +1,4 @@
-import { imageDataError } from '../utils/html/image-bytes.js';
+import { assertImageResultsUsable } from '../utils/html/image-bytes.js';
 import { fb2ListParagraphs } from './fb2-list.js';
 import { downloadBlob } from '../api/blob-download.js';
 import { documentText, documentPlainText, documentMarkdown, tableCellHtml, listHtml, prepareDocumentContent, localDocumentName, flatTableProjection } from './document-content.js';
@@ -316,8 +316,7 @@ async function collectFb2Images(content, updateState, options) {
   );
   
   if (options?.processingRunId !== undefined && isCancelled(options.processingRunId)) throw new DOMException('Processing cancelled', 'AbortError');
-  const rejected = results.find(result => result.errorCode?.startsWith('IMAGE_') && result.errorCode !== 'IMAGE_FETCH_FAILED');
-  if (rejected) throw imageDataError(rejected.errorCode);
+  assertImageResultsUsable(results);
 
   // Process results
   for (const { item, imageSource, index } of results) {

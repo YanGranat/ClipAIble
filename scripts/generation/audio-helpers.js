@@ -6,7 +6,7 @@ import { log, logDebug } from '../utils/logging.js';
 import { AUDIO_CONFIG } from './audio-prep.js';
 import { tSync } from '../locales.js';
 import { getUILanguageCached } from '../utils/pipeline-helpers.js';
-import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint } from '../api/tts-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, resolveGoogleTtsSelection } from '../api/tts-catalog.js';
 import { validateOpenAiVoice } from '../api/openai-tts.js';
 
 // Language to TTS instruction mapping
@@ -139,6 +139,7 @@ export async function validateAudioParams(params, provider) {
     getQwenTtsEndpoint(params.qwenModel || DEFAULT_QWEN_TTS_MODEL, params.qwenWorkspaceId, params.qwenRegion);
   }
   if (provider === 'openai') validateOpenAiVoice(params.voice, uiLang);
+  if (provider === 'google') resolveGoogleTtsSelection(params.googleTtsModel, params.googleTtsVoice);
 }
 
 /**

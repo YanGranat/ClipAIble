@@ -86,6 +86,11 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
     expect(result.subtitles).toEqual([{ start: 1.25, duration: 2.25, text: 'A short caption.' }]);
   });
 
+  it('normalizes fetched cue text and decodes escaped operators exactly once', async () => {
+    const result = await track('WEBVTT\n\n00:00:01.000 --> 00:00:02.500\n<v Speaker>A &amp; B &lt; C\n<b>Pass&nbsp;1</b> &amp;lt;\n');
+    expect(result.subtitles).toEqual([{ start: 1, duration: 1.5, text: 'A & B < C Pass 1 &lt;' }]);
+  });
+
   it('keeps cue identifiers, comments, and style blocks out of subtitle text', async () => {
     const result = await track('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nFirst caption.\n\nNOTE editorial annotation\nThis is a comment.\n\nSTYLE\n::cue { color: lime; }\n\nREGION\nid:example\n\nsecond-cue\n00:00:03.000 --> 00:00:04.000\nSecond caption.\n');
     expect(result.subtitles).toEqual([
@@ -116,13 +121,35 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
     ];
     await track('WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nA caption.\n');
     expect(fetchTrack).toHaveBeenCalledOnce();
-    expect(fetchTrack).toHaveBeenCalledWith('https://example.com/manual.vtt');
+    expect(fetchTrack).toHaveBeenCalledWith('https://example.com/manual.vtt', expect.objectContaining({ signal: expect.anything() }));
   });
 
   it('continues to the player cue fallback when a track fetch fails', async () => {
     fetchTrack.mockRejectedValue(new Error('Track unavailable'));
     dom.window.player = { textTracks: [{ kind: 'subtitles', mode: 'showing', cues: [{ startTime: 1, endTime: 3, text: 'Player caption.' }] }] };
     expect((await extractVimeoSubtitles(7)).subtitles).toEqual([{ start: 1, duration: 2, text: 'Player caption.' }]);
+  });
+
+  it.each(['headers', 'body'])('bounds a stalled declared track at the %s phase and reads the available fallback', async phase => {
+    const execute = chrome.scripting.executeScript.getMockImplementation();
+    chrome.scripting.executeScript.mockImplementation(args => execute({ ...args, args: [5, args.args[1], args.args[2]] }));
+    const gates = [];
+    fetchTrack.mockImplementation((url, { signal } = {}) => {
+      const waitForAbort = () => new Promise((_, reject) => {
+        signal?.addEventListener('abort', () => { gates.push(phase); reject(signal.reason); }, { once: true });
+      });
+      return phase === 'headers' ? waitForAbort() : Promise.resolve({ ok: true, text: waitForAbort });
+    });
+    dom.window.player = { textTracks: [{ kind: 'captions', mode: 'showing', cues: [{ startTime: 3, endTime: 5, text: 'Independent fallback cue.' }] }] };
+    let timer;
+    try {
+      const result = await Promise.race([
+        extractVimeoSubtitles(7),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Caption attempt remained pending')), 350); })
+      ]);
+      expect(gates).toEqual([phase]);
+      expect(result.subtitles).toEqual([{ start: 3, duration: 2, text: 'Independent fallback cue.' }]);
+    } finally { clearTimeout(timer); }
   });
 
   it('keeps actual cue timings from a video element', async () => {
@@ -148,6 +175,34 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
     expect(existing.mode).toBe('showing');
     expect(sourceTrack.mode).toBe('disabled');
     expect(fetchTrack).not.toHaveBeenCalled();
+  });
+
+  it('continues to available native captions when its preferred track fails to load', async () => {
+    delete dom.window.vimeoPlayerConfig;
+    const { added, existing, sourceTrack } = installPublishedTrack('error');
+    const result = await extractVimeoSubtitles(7, 'fr');
+    expect(result.subtitles).toEqual([{ start: 2, duration: 1, text: 'Other language.' }]);
+    expect(added).toHaveLength(1);
+    expect(existing.mode).toBe('showing');
+    expect(sourceTrack.mode).toBe('disabled');
+  });
+
+  it('reads a disabled script-created track without displaying it or changing its final mode', async () => {
+    delete dom.window.vimeoPlayerConfig;
+    const video = dom.window.document.createElement('video');
+    let mode = 'disabled';
+    const changes = [];
+    const track = {
+      kind: 'captions', language: 'fr',
+      get mode() { return mode; },
+      set mode(value) { changes.push(value); mode = value; },
+      get cues() { return mode === 'disabled' ? null : [{ startTime: 4, endTime: 5.5, text: 'Script-created cue.' }]; }
+    };
+    Object.defineProperty(video, 'textTracks', { value: [track] });
+    dom.window.document.body.append(video);
+    expect((await extractVimeoSubtitles(7, 'fr')).subtitles).toEqual([{ start: 4, duration: 1.5, text: 'Script-created cue.' }]);
+    expect(changes).toEqual(['hidden', 'disabled']);
+    expect(track.mode).toBe('disabled');
   });
 
   it('reports unavailable captions without treating chapters or controls as transcript', async () => {
@@ -179,7 +234,7 @@ describe('Vimeo MAIN-world subtitle extraction', () => {
     }
     const result = await track('WEBVTT\n\n00:00:04.000 --> 00:00:05.500\nTracked caption.\n');
     expect(result.subtitles).toEqual([{ start: 4, duration: 1.5, text: 'Tracked caption.' }]);
-    expect(fetchTrack).toHaveBeenCalledWith(url);
+    expect(fetchTrack).toHaveBeenCalledWith(url, expect.objectContaining({ signal: expect.anything() }));
   });
 
   it('rejects visible page labels without any caption track or timed cue', async () => {

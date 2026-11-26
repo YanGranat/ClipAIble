@@ -10,7 +10,7 @@ import { getOriginalTextIfTranslated } from './translate.js';
 import { pushDebugLog, incrementContentType } from './debug.js';
 import { serializeReadingHtml, encodeOriginalText, preserveClonedMathInputs, preserveRangeMathInputs } from './inline-content.js';
 import { CANDIDATE_SELECTOR } from './constants.js';
-import { isReadingOwned, isLayoutTable, isFlowContainer, isReferencedReadingAside } from './reading-context.js';
+import { isDocumentHeadline, isReadingOwned, isLayoutTable, isFlowContainer, isReferencedReadingAside } from './reading-context.js';
 import { collectAnnotationTargets, emittedReadingIds, reuseAnnotationCitations } from './annotations.js';
 import { projectAtomicMedia } from './atomic-media.js';
 
@@ -34,13 +34,44 @@ export function collectCandidateElements(mainContent) {
     .filter(element => element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length);
 }
 
-/** Read published literal examples from open components without copying their controls. */
+/** Light children of an open component participate only through an assigned slot. */
+function isComposedLightElement(element) {
+  for (let node = element; node.parentElement; node = node.parentElement) {
+    if (node.parentElement.shadowRoot && !node.assignedSlot) return false;
+  }
+  return true;
+}
+
+/** Locate rendered literal examples instead of treating light templates as examples. */
 function visibleShadowCode(host) {
-  if (!host.shadowRoot || host.closest('table,pre,code,[hidden],[inert]') || host.querySelector('pre')) return [];
+  if (!host.shadowRoot || host.closest('table,pre,code,[hidden],[inert]')) return [];
   const win = host.ownerDocument.defaultView;
   return Array.from(host.shadowRoot.querySelectorAll('pre:has(> code)')).filter(pre =>
     !pre.closest('pre pre,[hidden],[inert],form,[role="dialog"],[contenteditable]:not([contenteditable="false"])') &&
-    !!pre.textContent.trim() && isElementVisible(win, pre));
+    isElementVisible(win, pre));
+}
+
+/** Project both literal shadow nodes and the light nodes that fill their code slots. */
+function readShadowCode(pre, exclusions) {
+  const win = pre.ownerDocument.defaultView;
+  const slotted = [];
+  const read = node => {
+    if (node.nodeType === 3) return node.textContent || '';
+    if (node.nodeType !== 1 || node.matches('script,style,template,noscript,button,[role~="button"],[aria-hidden="true"],[hidden],[inert]') ||
+        isSourceExcluded(node, exclusions)) return '';
+    const style = safeGetComputedStyle(win, node);
+    if (style?.display === 'none' || ['hidden', 'collapse'].includes(style?.visibility)) return '';
+    if (node.tagName === 'BR') return '\n';
+    // A slot has no literal text of its own when light nodes have been assigned.
+    if (node.tagName === 'SLOT') {
+      const assigned = node.assignedNodes({ flatten: true });
+      slotted.push(...assigned.filter(child => child.nodeType === 1 && child.assignedSlot));
+      return assigned.map(read).join('');
+    }
+    return Array.from((node.shadowRoot || node).childNodes, read).join('');
+  };
+  const text = Array.from(pre.children).filter(child => child.tagName === 'CODE').map(read).join('\n');
+  return { item: text.trim() ? handleCode(pre, text) : null, slotted };
 }
 
 /** Project a selected wrapper that the regular parser does not recognize as a block.
@@ -76,7 +107,7 @@ export function filterCandidateElements(win, allElements, constants, debugInfo, 
     const tagName = el.tagName.toLowerCase();
     const isImageOrFigure = tagName === 'img' || tagName === 'figure';
     
-    if (isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
+    if (!isComposedLightElement(el) || isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
       if (isImageOrFigure) {
         excludedImageCount++;
         // Debug log for excluded images/figures
@@ -193,11 +224,12 @@ export function partitionCandidateElements(elements, graphics = new Map(), readi
       ...readingBoundaries.filter(child => child !== element && element.contains(child))])].sort(compareDomOrder);
     const originalText = element.getAttribute('data-original-text');
     const inlineMedia = element.tagName === 'P' && descendants.some(child => child.matches('img,iframe,video,audio,svg,canvas'));
+    const inlineShadowCode = element.tagName === 'P' && shadowHosts.some(host => element.contains(host) && host !== element);
     const inlineBoundary = !/^H[1-6]$/.test(element.tagName) && element.tagName !== 'FIGURE' &&
       descendants.some(child => readingBoundaries.includes(child));
     const richFigure = element.tagName === 'FIGURE' && hasFigureBodyText(element);
     const flowContainer = isFlowContainer(element) || explicitFlowRoots.has(element);
-    if ((!flowContainer && !inlineMedia && !inlineBoundary && !richFigure) || descendants.length === 0 || originalText?.trim()) {
+    if ((!flowContainer && !inlineMedia && !inlineShadowCode && !inlineBoundary && !richFigure) || descendants.length === 0 || originalText?.trim()) {
       entries.push({ element });
       for (const child of Array.from(element.querySelectorAll('*'))) {
         if (selected.has(child)) append(child);
@@ -283,9 +315,12 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
     const tagName = element.tagName.toLowerCase();
     const selectedTitle = element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) ||
       isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR));
-    const inferredTitle = tagName === 'h1' && element === state.titleElement && content.every(item =>
+    // A matching H1 after authored material is a body heading unless the page declares its headline role.
+    const declaredHeadline = tagName === 'h1' && (element.matches('[itemprop~="headline"],[data-type="document-title"]') ||
+      Array.from(element.classList).some(name => /(?:^|[-_])(?:page|article|post|entry)[-_](?:title|headline)$/i.test(name)));
+    const inferredTitle = tagName === 'h1' && element === state.titleElement && ((declaredHeadline && isDocumentHeadline(element)) || content.every(item =>
       item.type === 'subtitle' || item.type === 'separator' || item.isStandfirst || item.isFeatured ||
-      item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || ''));
+      item.type === 'paragraph' && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || '')));
     if (selectedTitle || inferredTitle) {
       for (const child of Array.from(element.querySelectorAll('*'))) consumed.add(child);
       continue;
@@ -297,17 +332,20 @@ export function parseElements(win, elements, state, constants, baseUrl, annotati
       continue;
     }
 
-    const shadowCode = visibleShadowCode(element);
-    if (shadowCode.length) {
-      for (const [index, source] of shadowCode.entries()) {
-        const item = handleCode(source);
-        if (!item) continue;
-        content.push({ ...item, ...(index === 0 && element.id ? { id: element.id } : {}) });
-        incrementContentType(state.debugInfo, 'code');
-        processedCount++;
+    let emittedShadowCode = false;
+    for (const source of visibleShadowCode(element)) {
+      const { item, slotted } = readShadowCode(source, state.selectionExclusions);
+      if (!item) continue;
+      content.push({ ...item, ...(!emittedShadowCode && element.id ? { id: element.id } : {}) });
+      emittedShadowCode = true;
+      for (const slot of slotted) {
+        consumed.add(slot);
+        for (const child of slot.querySelectorAll('*')) consumed.add(child);
       }
-      continue;
+      incrementContentType(state.debugInfo, 'code');
+      processedCount++;
     }
+    if (emittedShadowCode) continue;
 
     if (element === state.standfirstElement) {
       const html = serializeReadingHtml(element, state.selectionExclusions, state.referenceRoots);
@@ -778,12 +816,13 @@ export function handleBlockquote(element, excludedSelectors = [], referenceRoots
 /**
  * Handle code element
  * @param {Element} element - Code element
+ * @param {string|null} [composedText] - Projected text for an open shadow code block
  * @returns {ContentItem|null} - Content item or null
  */
-export function handleCode(element) {
-  let text = '';
-  
-  if (element.tagName === 'PRE') {
+export function handleCode(element, composedText = null) {
+  let text = composedText;
+
+  if (text === null && element.tagName === 'PRE') {
     // Replace <br> with newlines
     const clone = element.cloneNode(true);
     const brs = (/** @type {HTMLElement} */ (clone)).querySelectorAll('br');
@@ -791,7 +830,7 @@ export function handleCode(element) {
       br.replaceWith('\n');
     }
     text = (/** @type {HTMLElement} */ (clone)).textContent || '';
-  } else {
+  } else if (text === null) {
     text = (element.textContent || '').trim();
   }
   

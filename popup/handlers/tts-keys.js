@@ -5,12 +5,13 @@ import { saveApiKeySettings } from '../../scripts/utils/encryption.js';
 import { isApiKeyToken } from '../utils/api-key-validation.js';
 
 const keySaves = new WeakMap();
+const getShortKeyError = key => key.length < 10 ? 'keyTooShort' : null;
+const getTokenError = key => isApiKeyToken(key) ? null : 'invalidKeyFormat';
 
 /**
  * Generic function to save TTS API key
  * @param {Object} config - Configuration
  * @param {HTMLInputElement} config.input - Input element
- * @param {HTMLElement} config.saveButton - Save button element
  * @param {HTMLElement} [config.toggleButton] - Toggle button element
  * @param {string} config.storageKey - Storage key
  * @param {Function} config.encryptApiKey - Encrypt API key function
@@ -18,13 +19,12 @@ const keySaves = new WeakMap();
  * @param {Function} config.logError - Error logging function
  * @param {Function} config.showToast - Show toast function
  * @param {Function} config.t - Translation function
- * @param {Function} config.validateKey - Optional key validation function
+ * @param {(key: string) => string | null} config.getValidationError - Key validation error translation key
  * @param {string} config.keyName - Key name for error messages
  */
 async function saveTtsApiKey(config) {
   const {
     input,
-    saveButton,
     toggleButton,
     storageKey,
     encryptApiKey,
@@ -32,7 +32,7 @@ async function saveTtsApiKey(config) {
     logError,
     showToast,
     t,
-    validateKey,
+    getValidationError,
     keyName
   } = config;
 
@@ -54,16 +54,12 @@ async function saveTtsApiKey(config) {
     return;
   }
   
-  if (!/^[\x20-\x7E]+$/.test(key)) {
-    const invalidKeyText = await t('invalidKeyFormat');
-    if (revision === field.requested) showToast(invalidKeyText, 'error', { key: 'invalidKeyFormat' });
+  const validationError = /^[\x20-\x7E]+$/.test(key) ? getValidationError(key) : 'invalidKeyFormat';
+  if (validationError) {
+    const message = await t(validationError);
+    if (revision === field.requested) showToast(message, 'error', { key: validationError });
     return;
   }
-  
-  if (validateKey && !await validateKey(key)) {
-    return;
-  }
-  if (revision < field.accepted) return;
   field.accepted = revision;
 
   try {
@@ -118,7 +114,6 @@ export function setupTtsKeyHandlers(deps) {
     elements.saveElevenlabsApiKey.addEventListener('click', async () => {
       await saveTtsApiKey({
         input: elements.elevenlabsApiKey,
-        saveButton: elements.saveElevenlabsApiKey,
         toggleButton: elements.toggleElevenlabsApiKey,
         storageKey: STORAGE_KEYS.STORAGE_ELEVENLABS_API_KEY,
         encryptApiKey,
@@ -126,13 +121,7 @@ export function setupTtsKeyHandlers(deps) {
         logError,
         showToast,
         t,
-        validateKey: (key) => {
-          if (key.length < 10) {
-            t('keyTooShort').then(msg => showToast(msg, 'error', { key: 'keyTooShort' }));
-            return false;
-          }
-          return true;
-        },
+        getValidationError: getShortKeyError,
         keyName: 'Elevenlabs'
       });
     });
@@ -143,7 +132,6 @@ export function setupTtsKeyHandlers(deps) {
     elements.saveQwenApiKey.addEventListener('click', async () => {
       await saveTtsApiKey({
         input: elements.qwenApiKey,
-        saveButton: elements.saveQwenApiKey,
         toggleButton: elements.toggleQwenApiKey,
         storageKey: STORAGE_KEYS.STORAGE_QWEN_API_KEY,
         encryptApiKey,
@@ -151,13 +139,7 @@ export function setupTtsKeyHandlers(deps) {
         logError,
         showToast,
         t,
-        validateKey: (key) => {
-          if (key.length < 10) {
-            t('keyTooShort').then(msg => showToast(msg, 'error', { key: 'keyTooShort' }));
-            return false;
-          }
-          return true;
-        },
+        getValidationError: getShortKeyError,
         keyName: 'Qwen'
       });
     });
@@ -168,7 +150,6 @@ export function setupTtsKeyHandlers(deps) {
     elements.saveRespeecherApiKey.addEventListener('click', async () => {
       await saveTtsApiKey({
         input: elements.respeecherApiKey,
-        saveButton: elements.saveRespeecherApiKey,
         toggleButton: elements.toggleRespeecherApiKey,
         storageKey: STORAGE_KEYS.STORAGE_RESPEECHER_API_KEY,
         encryptApiKey,
@@ -176,13 +157,7 @@ export function setupTtsKeyHandlers(deps) {
         logError,
         showToast,
         t,
-        validateKey: (key) => {
-          if (key.length < 10) {
-            t('keyTooShort').then(msg => showToast(msg, 'error', { key: 'keyTooShort' }));
-            return false;
-          }
-          return true;
-        },
+        getValidationError: getShortKeyError,
         keyName: 'Respeecher'
       });
     });
@@ -193,7 +168,6 @@ export function setupTtsKeyHandlers(deps) {
     elements.saveGoogleTtsApiKey.addEventListener('click', async () => {
       await saveTtsApiKey({
         input: elements.googleTtsApiKey,
-        saveButton: elements.saveGoogleTtsApiKey,
         toggleButton: elements.toggleGoogleTtsApiKey,
         storageKey: STORAGE_KEYS.STORAGE_GOOGLE_TTS_API_KEY,
         encryptApiKey,
@@ -201,14 +175,7 @@ export function setupTtsKeyHandlers(deps) {
         logError,
         showToast,
         t,
-        validateKey: async (key) => {
-          if (!isApiKeyToken(key)) {
-            const invalidKeyText = await t('invalidKeyFormat');
-            showToast(invalidKeyText, 'error', { key: 'invalidKeyFormat' });
-            return false;
-          }
-          return true;
-        },
+        getValidationError: getTokenError,
         keyName: 'GoogleTts'
       });
     });
@@ -219,7 +186,6 @@ export function setupTtsKeyHandlers(deps) {
     elements.saveGoogleApiKey.addEventListener('click', async () => {
       await saveTtsApiKey({
         input: elements.googleApiKey,
-        saveButton: elements.saveGoogleApiKey,
         toggleButton: elements.toggleGoogleApiKey,
         storageKey: STORAGE_KEYS.GOOGLE_API_KEY,
         encryptApiKey,
@@ -227,14 +193,7 @@ export function setupTtsKeyHandlers(deps) {
         logError,
         showToast,
         t,
-        validateKey: async (key) => {
-          if (!isApiKeyToken(key)) {
-            const invalidGoogleKeyText = await t('invalidKeyFormat');
-            showToast(invalidGoogleKeyText, 'error', { key: 'invalidKeyFormat' });
-            return false;
-          }
-          return true;
-        },
+        getValidationError: getTokenError,
         keyName: 'Google'
       });
     });

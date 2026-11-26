@@ -1429,11 +1429,10 @@ function extractYouTubeSubtitlesInlined(contentScriptAvailable, waitInterval, re
  * Extract subtitles from Vimeo page
  * @param {number} tabId - Tab ID
  * @param {string} [targetLanguage] - Target language ('auto' or language code like 'en', 'ru')
- * @param {string} [detectedVideoLanguage] - Detected video language from AI (e.g., 'en', 'ru')
  * @returns {Promise<Object>} {subtitles: Array, metadata: Object}
  */
-export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', detectedVideoLanguage = 'en') {
-  log('Extracting Vimeo subtitles', { tabId, targetLanguage, detectedVideoLanguage });
+export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto') {
+  log('Extracting Vimeo subtitles', { tabId, targetLanguage });
   
   let results;
   try {
@@ -1441,7 +1440,7 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', dete
     target: { tabId },
     world: 'MAIN',
     func: extractVimeoSubtitlesInlined,
-    args: [CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2, targetLanguage]
+    args: [CONFIG.VIDEO_SUBTITLES_RETRY_DELAY_2, targetLanguage, CONFIG.VIDEO_SUBTITLES_TIMEOUT]
   });
     log('Vimeo script executed', { 
       hasResults: !!results,
@@ -1504,14 +1503,17 @@ export async function extractVimeoSubtitles(tabId, targetLanguage = 'auto', dete
  * Returns Promise so executeScript can wait for result
  * @param {number} retryDelay2 - Second retry delay for video subtitles (ms)
  * @param {string} targetLanguage - Preferred caption language, or auto
+ * @param {number} timeout - Total caption discovery budget (ms)
  */
-function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
+function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage, timeout) {
   const logError = console.error.bind(console, '[ClipAIble]');
   return (async () => {
     try {
       // CRITICAL: This runs in MAIN world where modules are not available
       // console.error is acceptable here as logging module cannot be imported
-      const subtitles = [];
+      const deadline = performance.now() + timeout;
+      const remaining = () => Math.max(0, Math.floor(deadline - performance.now()));
+      const resourceBudget = () => Math.min(retryDelay2 * 5, remaining());
       let metadata = {
         title: document.title.replace(' on Vimeo', ''),
         author: '',
@@ -1524,21 +1526,29 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
       const captionTracks = tracks => Array.isArray(tracks)
         ? tracks.filter(track => track && (!track.kind || track.kind === 'captions' || track.kind === 'subtitles'))
         : [];
-      const preferredTrack = tracks => {
-        const target = languageCode(targetLanguage);
-        if (!target || target === 'auto') return null;
-        const language = track => languageCode(track.language || track.lang || track.srclang);
-        const captions = captionTracks(tracks);
-        const exact = captions.filter(track => language(track) === target);
-        const matching = exact.length ? exact : captions.filter(track => language(track).split('-')[0] === target.split('-')[0]);
-        return matching.find(track => !track.auto) || matching[0] || null;
+      const target = languageCode(targetLanguage);
+      const languagePriority = track => {
+        if (!target || target === 'auto') return 0;
+        const language = languageCode(track.language || track.lang || track.srclang);
+        return language === target ? 2 : language.split('-')[0] === target.split('-')[0] ? 1 : 0;
+      };
+      const rankedTracks = (tracks, fallbackPriority) => captionTracks(tracks).sort((left, right) =>
+        languagePriority(right) - languagePriority(left) ||
+        (languagePriority(left) ? Number(!!left.auto) - Number(!!right.auto) : 0) ||
+        fallbackPriority(right) - fallbackPriority(left));
+      const nativeTrackPriority = track => track.mode === 'showing' ? 2 : track.cues?.length ? 1 : 0;
+      const normalizeCueText = text => text.trim().replace(/\s+/g, ' ');
+      const parseCueText = text => {
+        if (typeof VTTCue === 'function') return new VTTCue(0, 1, text).getCueAsHTML().textContent || '';
+        const entities = { amp: '&', lt: '<', gt: '>', nbsp: '\u00a0', lrm: '\u200e', rlm: '\u200f' };
+        return text.replace(/<[^>]*>/g, '').replace(/&(amp|lt|gt|nbsp|lrm|rlm);/g, (_, name) => entities[name]);
       };
       const readCues = cues => Array.from(cues || [], cue => {
-        const text = cue.getCueAsHTML?.()?.textContent ?? String(cue.text || '').replace(/<[^>]*>/g, '');
+        const text = cue.getCueAsHTML?.()?.textContent ?? parseCueText(String(cue.text || ''));
         return {
           start: cue.startTime,
           duration: cue.endTime - cue.startTime,
-          text: text.trim().replace(/\s+/g, ' ')
+          text: normalizeCueText(text)
         };
       }).filter(cue => cue.text && Number.isFinite(cue.start) && Number.isFinite(cue.duration) && cue.duration > 0);
       /**
@@ -1547,7 +1557,8 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
        * @param {HTMLTrackElement} source
        */
       const loadPublishedTrack = (player, source) => {
-        if (!/^https?:\/\//i.test(source.src)) return Promise.resolve([]);
+        const budget = resourceBudget();
+        if (!budget || !/^https?:\/\//i.test(source.src)) return Promise.resolve([]);
         const media = document.createElement('video');
         media.crossOrigin = player.crossOrigin;
         const track = document.createElement('track');
@@ -1565,7 +1576,7 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
             track.remove();
             resolve(cues);
           };
-          const timer = setTimeout(finish, retryDelay2 * 5);
+          const timer = setTimeout(finish, budget);
           track.addEventListener('load', finish, { once: true });
           track.addEventListener('error', finish, { once: true });
           track.track.mode = 'hidden';
@@ -1610,9 +1621,7 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
           const start = timestamp(timing[1]);
           const end = timestamp(timing[2]);
           if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
-          const text = lines.slice(timingIndex + 1).map(line =>
-            line.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()
-          ).filter(Boolean).join(' ');
+          const text = normalizeCueText(parseCueText(lines.slice(timingIndex + 1).join('\n')));
           if (text) subtitles.push({ start, duration: end - start, text });
         }
         return subtitles;
@@ -1622,13 +1631,19 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
         data?.textTracks, data?.request?.text_tracks
       ].find(Array.isArray);
       const readDeclaredTrack = async data => {
-        const tracks = captionTracks(declaredTracks(data));
-        const track = preferredTrack(tracks) || tracks.find(t => t.kind === 'captions' && !t.auto) ||
-          tracks.find(t => t.kind === 'captions') || tracks[0];
+        const tracks = declaredTracks(data);
+        const [track] = rankedTracks(tracks, candidate => candidate.kind === 'captions' ? (candidate.auto ? 1 : 2) : 0);
         const source = track?.src || track?.url;
-        if (!source) return [];
-        const response = await fetch(source);
-        return response.ok ? parseWebVTT(await response.text()) : [];
+        const budget = resourceBudget();
+        if (!source || !budget) return [];
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), budget);
+        try {
+          const response = await fetch(source, { signal: controller.signal });
+          return response.ok ? parseWebVTT(await response.text()) : [];
+        } finally {
+          clearTimeout(timer);
+        }
       };
       
       // ============================================
@@ -1655,11 +1670,8 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
         try {
           // Try to get text tracks from player
           if (player.textTracks && player.textTracks.length > 0) {
-            const tracks = captionTracks(Array.from(player.textTracks));
-            const selectedTrack = preferredTrack(tracks) || tracks.find(t => (t.kind === 'captions' || t.kind === 'subtitles') && t.mode === 'showing') ||
-                                tracks.find(t => t.kind === 'captions' || t.kind === 'subtitles') ||
-                                tracks[0];
-            const parsedSubtitles = readCues(selectedTrack?.cues);
+            const [track] = rankedTracks(Array.from(player.textTracks), nativeTrackPriority);
+            const parsedSubtitles = readCues(track?.cues);
             if (parsedSubtitles.length > 0) return { subtitles: parsedSubtitles, metadata };
           }
         } catch (e) {
@@ -1673,24 +1685,27 @@ function extractVimeoSubtitlesInlined(retryDelay2, targetLanguage) {
       const videoElement = document.querySelector('video');
       if (videoElement && videoElement.textTracks && videoElement.textTracks.length > 0) {
         try {
-          const tracks = Array.from(videoElement.textTracks);
-          const activeTrack = preferredTrack(tracks) || tracks.find(t =>
-            (t.kind === 'subtitles' || t.kind === 'captions') && t.mode === 'showing'
-          ) || tracks.find(t =>
-            t.kind === 'subtitles' || t.kind === 'captions'
-          );
-          if (activeTrack) {
+          const tracks = rankedTracks(Array.from(videoElement.textTracks), nativeTrackPriority);
+          const sources = Array.from(videoElement.querySelectorAll('track'));
+          for (const activeTrack of tracks) {
             let parsedSubtitles = readCues(activeTrack.cues);
-            const source = Array.from(videoElement.querySelectorAll('track')).find(element => element.track === activeTrack);
+            const source = sources.find(element => element.track === activeTrack);
             if (parsedSubtitles.length === 0 && source?.getAttribute('src')) {
               parsedSubtitles = await loadPublishedTrack(videoElement, source);
-            } else if (parsedSubtitles.length === 0 && activeTrack.mode !== 'showing') {
-              // A script-created TextTrack has no independent source element.
-              activeTrack.mode = 'showing';
-              for (let attempt = 0; attempt < 5; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, retryDelay2));
-                parsedSubtitles = readCues(activeTrack.cues);
-                if (parsedSubtitles.length > 0) break;
+            } else if (parsedSubtitles.length === 0 && remaining() > 0) {
+              // Disabled in-band cues can be read in hidden mode without displaying them.
+              const activate = activeTrack.mode === 'disabled';
+              try {
+                if (activate) activeTrack.mode = 'hidden';
+                const cueDeadline = performance.now() + resourceBudget();
+                for (;;) {
+                  parsedSubtitles = readCues(activeTrack.cues);
+                  const delay = Math.min(retryDelay2, Math.floor(cueDeadline - performance.now()));
+                  if (parsedSubtitles.length || delay <= 0 || activeTrack.mode === 'disabled') break;
+                  await new Promise(resolve => setTimeout(resolve, delay));
+                }
+              } finally {
+                if (activate && activeTrack.mode === 'hidden') activeTrack.mode = 'disabled';
               }
             }
             if (parsedSubtitles.length > 0) return { subtitles: parsedSubtitles, metadata };

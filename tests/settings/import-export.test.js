@@ -114,6 +114,24 @@ describe('selector cache storage transactions', () => {
 });
 
 describe('settings import and export', () => {
+  it('exports and imports the current Google TTS model for a saved preview', async () => {
+    const oldSettings = { google_tts_model: 'gemini-2.5-flash-preview-tts', google_tts_voice: 'Charon',
+      google_tts_prompt: 'Read calmly.' };
+    const currentSettings = { ...oldSettings, google_tts_model: 'gemini-3.8-flash-lite-tts' };
+    stored = { ...oldSettings };
+    expect(JSON.parse(await exportSettings()).settings).toMatchObject(currentSettings);
+    expect(stored).toEqual(oldSettings);
+    stored = {};
+    await importSettings(JSON.stringify({ settings: oldSettings }));
+    expect(stored).toEqual({ ...currentSettings, use_selector_cache: true, enable_selector_caching: true });
+  });
+
+  it('keeps an explicitly saved current voice model when overwrite is off', async () => {
+    stored = { google_tts_model: 'gemini-3.8-flash-tts' };
+    await importSettings(JSON.stringify({ settings: { google_tts_model: 'gemini-2.5-flash-preview-tts' } }));
+    expect(stored.google_tts_model).toBe('gemini-3.8-flash-tts');
+  });
+
   it('rejects non-string scalar settings and malformed nested settings', async () => {
     const result = await importSettings(JSON.stringify({ version: 3, settings: {
       openai_model: { id: 'sample' }, google_tts_voice: ['sample'], ui_language: true,

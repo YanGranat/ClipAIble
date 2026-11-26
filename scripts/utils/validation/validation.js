@@ -1,7 +1,7 @@
 // @ts-check
 // Validation utilities for ClipAIble extension
 
-import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE } from '../../api/tts-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, getQwenTtsEndpoint, OPENAI_TTS_VOICES, DEFAULT_OPENAI_TTS_VOICE, resolveGoogleTtsSelection } from '../../api/tts-catalog.js';
 import { setError, ERROR_CODES } from '../../state/processing.js';
 import { getUILanguage, tSync } from '../../locales.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, IMAGE_TRANSLATION_PROVIDERS, getImageTranslationApiKey, isGeminiImageModel, isImageTranslationEnabled } from '../../api/image-translation-catalog.js';
@@ -107,6 +107,13 @@ export async function validateAudioApiKeys(data, stopKeepAlive) {
   if (provider === 'qwen') {
     try {
       getQwenTtsEndpoint(data.qwenModel || DEFAULT_QWEN_TTS_MODEL, data.qwenWorkspaceId, data.qwenRegion);
+    } catch (error) {
+      return fail(error.translationKey, error.translationParams);
+    }
+  }
+  if (provider === 'google') {
+    try {
+      resolveGoogleTtsSelection(data.googleTtsModel, data.googleTtsVoice);
     } catch (error) {
       return fail(error.translationKey, error.translationParams);
     }

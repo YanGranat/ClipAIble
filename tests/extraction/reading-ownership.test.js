@@ -44,6 +44,54 @@ describe('Reading ownership', () => {
     expect(JSON.stringify(result.content)).not.toMatch(/Copy example|Hidden code|Hidden template/);
   });
 
+  it.each([null, {}])('projects slot assignments once and excludes unrendered light templates (%j)', async selectors => {
+    const opening = 'The recorded sensor values establish a measured baseline at every station. An independent recording of each trial follows the calibration procedure and prevents unrelated measurements from getting into the comparison. After each reading, the evaluation team moves independently to the next sample and checks the selected range. The same process continues between the calibration and analysis steps.';
+    const html = '<article><h1>Field report</h1><p>' + opening + '</p>' +
+      '<code-example><pre><code>UNRENDERED_SOURCE</code></pre></code-example>' +
+      '<p>Before the sample. <slot-example><span slot="literal"><code>const sample = detector.read(23);</code></span>' +
+      '<span slot="unassigned">UNASSIGNED_TEXT</span></slot-example> After the sample.</p>' +
+      '<slot-example><code slot="literal">detector.reset();</code>' +
+      '<p slot="note">An independent note applies after reset.</p></slot-example></article>';
+    const result = await extract(html, selectors, doc => {
+      const open = (host, markup) => {
+        const root = host.attachShadow({ mode: 'open' });
+        root.innerHTML = markup;
+        for (const pre of root.querySelectorAll('pre')) pre.getBoundingClientRect = () => ({ width: 155, height: 35 });
+      };
+      open(doc.querySelector('code-example'), '<pre class="language-js"><code>detector.initialize(31);</code></pre>');
+      for (const host of doc.querySelectorAll('slot-example')) {
+        open(host, '<pre class="language-js"><code><slot name="literal">FALLBACK_TEXT</slot></code></pre><slot name="note"></slot>');
+      }
+    });
+    expect(result.content.map(({ type, text }) => [type, text])).toEqual([
+      ['paragraph', opening], ['code', 'detector.initialize(31);'],
+      ['paragraph', 'Before the sample.'], ['code', 'const sample = detector.read(23);'],
+      ['paragraph', 'After the sample.'], ['code', 'detector.reset();'], ['paragraph', 'An independent note applies after reset.']
+    ]);
+    expect(JSON.stringify(result.content)).not.toMatch(/UNRENDERED_SOURCE|UNASSIGNED_TEXT|FALLBACK_TEXT/);
+  });
+
+  it('retains a textual disclosure and body links without duplicating the page headline and profile icons', async () => {
+    const result = await extract('<article><p>Independent editorial disclosure precedes the report.</p>' +
+      '<h1 id="publication" class="report-page-title"><report-heading><span slot="headline">Field report</span>' +
+      '<span slot="control">Hidden authoring control</span></report-heading></h1>' +
+      '<div><a rel="me" href="/profiles/social" aria-label="Contributor account">' +
+      '<img src="/profile-marker.png" width="120" height="120" alt="Profile graphic"></a></div>' +
+      '<p>A contributor provided details in <a rel="me" href="/profiles/details">the author profile</a>.</p>' +
+      '<h2 id="section">Field report</h2><p>' +
+      'Supporting evidence is independently recorded from the calibrated instrument before the next measurement. '.repeat(6) +
+      '</p></article>', null, doc => {
+      doc.querySelector('report-heading').attachShadow({ mode: 'open' }).innerHTML =
+        '<slot name="headline"></slot><div hidden><slot name="control"></slot></div>';
+    });
+    expect(result.title).toBe('Field report');
+    expect(result.titleFragmentIds).toEqual(['publication']);
+    expect(result.content.filter(item => item.type === 'heading').map(({ level, text }) => [level, text])).toEqual([[2, 'Field report']]);
+    expect(result.plain).toContain('Independent editorial disclosure precedes the report.');
+    expect(result.plain).toContain('A contributor provided details in the author profile.');
+    expect(JSON.stringify(result.content)).not.toMatch(/Profile graphic|profile-marker\.png|\/profiles\/social|Hidden authoring control/);
+  });
+
   it('chooses a titled reading landmark instead of the secondary articles inside it', async () => {
     const prose = 'During the first trial, the recorder collected observations from several independent stations.';
     const closing = 'The final check established that the stations agreed within the stated uncertainty.';

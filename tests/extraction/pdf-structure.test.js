@@ -96,7 +96,6 @@ describe('PDF structure conservation with the packaged parser', () => {
     expect(tables.map(table => table.rows)).toEqual(structureOracle.tables);
     expect(tables.map(table => [table.rowCount, table.columnCount, table.hasHeaders])).toEqual([[3, 3, true], [3, 3, true]]);
     expect(result.content.map(element => [element.type, element.text])).toEqual([
-      ['heading', structureOracle.title],
       ['paragraph', structureOracle.paragraphs[0]],
       ['heading', structureOracle.headings[0]],
       ['paragraph', structureOracle.paragraphs[1]],
@@ -107,7 +106,7 @@ describe('PDF structure conservation with the packaged parser', () => {
       ['heading', structureOracle.headings[2]],
       ['paragraph', `${structureOracle.paragraphs[3]} Slanted field annotation.`]
     ]);
-    expect(result.content.filter(element => element.type === 'heading').map(element => element.level)).toEqual([1, 2, 2, 2]);
+    expect(result.content.filter(element => element.type === 'heading').map(element => element.level)).toEqual([2, 2, 2]);
     const tail = result.content.at(-1);
     expect(tail.lines.map(line => line.isItalic)).toEqual([false, true]);
     const fonts = [...new Set(result.content.flatMap(element => element.lines || []).flatMap(line => line.items || []).map(item => item.realFontName))];
@@ -127,12 +126,12 @@ describe('PDF structure conservation with the packaged parser', () => {
     const result = await extractPdfContent('https://example.com/notes.pdf');
     expect(result.title).toBe(readingOrderOracle.title);
     expect(result.content.map(element => [element.type, element.text])).toEqual([
-      ['heading', readingOrderOracle.title], ['heading', readingOrderOracle.headings[0]],
+      ['heading', readingOrderOracle.headings[0]],
       ['paragraph', readingOrderOracle.paragraphs[0].join(' ')],
       ['heading', readingOrderOracle.headings[1]], ['paragraph', readingOrderOracle.paragraphs[1].join(' ')],
       ['heading', readingOrderOracle.headings[2]], ['paragraph', readingOrderOracle.paragraphs[2].join(' ')]
     ]);
-    expect(result.content.map(element => element.pageNum)).toEqual([1, 1, 1, 3, 3, 3, 3]);
+    expect(result.content.map(element => element.pageNum)).toEqual([1, 1, 3, 3, 3, 3]);
   });
 
 
@@ -145,7 +144,7 @@ describe('PDF structure conservation with the packaged parser', () => {
     expect(result.title).toBe(title);
     const text = result.content.map(item => item.text).join(' ').replace(/\s+/g, ' ');
     expect(text).toBe([
-      title, introduction, ...mixedLayoutLane('Upper', 'Left'), ...mixedLayoutLane('Upper', 'Right'),
+      introduction, ...mixedLayoutLane('Upper', 'Left'), ...mixedLayoutLane('Upper', 'Right'),
       rows.flat().join(' '), ...mixedLayoutLane('Lower', 'Left'), ...mixedLayoutLane('Lower', 'Right', lowerRightLength), conclusion
     ].join(' '));
   });

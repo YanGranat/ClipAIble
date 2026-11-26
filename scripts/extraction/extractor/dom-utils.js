@@ -20,6 +20,13 @@ export function isPublisherLinkAction(element) {
   if (sectionEdit?.querySelector('a[href]') && !sectionEdit.closest('pre,code,math')) return true;
   const link = element.closest('a[href]');
   if (!link) return false;
+  // Standalone icon-only identity links are profile controls, not illustrations.
+  if (link.matches('[rel~="me"]') && link.querySelector('svg,img,picture') &&
+      !link.closest('p,blockquote,pre,code,math,figure,figcaption,li,dd,dt,table')) {
+    const label = link.cloneNode(true);
+    for (const graphic of /** @type {Element} */ (label).querySelectorAll('svg,img,picture')) graphic.remove();
+    if (!label.textContent?.trim()) return true;
+  }
   // A dedicated action inside the caption downloads its owning figure, not a cited resource.
   const caption = link.closest('figcaption');
   const actionLabel = node => Array.from(node.classList).some(name => /^(?:image|media)[-_]download(?:[-_](?:link|button))?$/i.test(name));
@@ -234,15 +241,15 @@ function isHiddenMathSource(source, style) {
 export function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
   const clone = element.cloneNode(true);
   copyMap?.set(element, clone);
+  const win = element.ownerDocument.defaultView;
   const excluded = node => {
     const region = node.closest(INTERFACE_REGIONS);
     return (region && !(disclosed && region === element)) || isExternalLinkAdornment(node) ||
-      isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
+      isPublisherLinkAction(node) || isSourceExcluded(node, exclusions) || (win && isHiddenSlotAssignment(win, node));
   };
   if (excluded(element)) { clone.replaceChildren(); return clone; }
   const originals = Array.from(element.querySelectorAll('*'));
   const copies = Array.from(clone.querySelectorAll('*'));
-  const win = element.ownerDocument.defaultView;
   const rootStyle = disclosed && win ? safeGetComputedStyle(win, element) : null;
   const hidden = value => value === 'hidden' || value === 'collapse';
   const disclosureVisibility = hidden(rootStyle?.visibility) ? rootStyle.visibility : null;
@@ -301,6 +308,16 @@ export function cloneReadingContent(element, exclusions = [], copyMap = null, { 
     }
   }
   return clone;
+}
+
+/** The light parent's CSS cannot expose text assigned inside a hidden shadow wrapper. */
+function isHiddenSlotAssignment(win, element) {
+  for (let slot = element.assignedSlot; slot; slot = slot.assignedSlot) {
+    for (let parent = slot; parent; parent = parent.parentElement) {
+      if (safeGetComputedStyle(win, parent)?.display === 'none') return true;
+    }
+  }
+  return false;
 }
 
 /** Read source destinations owned by a rendered title or heading. */

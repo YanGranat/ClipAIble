@@ -197,6 +197,12 @@ export function groupConsecutiveListItems(elements, metrics = {}) {
   for (let i = 0; i < elements.length; i++) {
     const element = elements[i];
     
+    if (element.type === 'list' && Array.isArray(element.items)) {
+      if (currentList) processed.push(currentList);
+      currentList = null;
+      processed.push(element);
+      continue;
+    }
     if (element.type === 'list') {
       if (currentList && !sameListColumn(currentList, element)) {
         processed.push(currentList);

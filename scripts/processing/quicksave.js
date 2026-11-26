@@ -14,7 +14,7 @@ import {
   getAudioSpeedFromSettings
 } from '../utils/settings-helpers.js';
 import { CONFIG, STYLE_PRESETS } from '../utils/config.js';
-import { DEFAULT_GOOGLE_TTS_MODEL, DEFAULT_QWEN_TTS_MODEL } from '../api/tts-catalog.js';
+import { DEFAULT_QWEN_TTS_MODEL, resolveGoogleTtsModel } from '../api/tts-catalog.js';
 import { DEFAULT_IMAGE_TRANSLATION_PROVIDER, isImageTranslationEnabled, readGeminiImageModel } from '../api/image-translation-catalog.js';
 
 /**
@@ -148,7 +148,7 @@ export async function prepareQuickSaveData(settings, outputFormat, tabId, html, 
     openaiInstructions: settings.openai_instructions || null,
     googleTtsApiKey: settings.google_tts_api_key || null,
     geminiApiKey: settings.gemini_api_key || null,
-    googleTtsModel: settings.google_tts_model || DEFAULT_GOOGLE_TTS_MODEL,
+    googleTtsModel: resolveGoogleTtsModel(settings.google_tts_model),
     qwenModel: settings.qwen_model || DEFAULT_QWEN_TTS_MODEL,
     qwenWorkspaceId: settings.qwen_workspace_id || '',
     qwenRegion: settings.qwen_region || 'singapore',

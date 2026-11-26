@@ -266,7 +266,13 @@ export function initProcessing(deps) {
     };
   }
 
-  // Handle Save PDF button click
+  function sourcePageChanged() {
+    return Object.assign(new Error('The page changed before its content could be captured.'), {
+      translationKey: 'errorPageNotReady', translationParams: {}
+    });
+  }
+
+  // Handle the document save action.
   async function handleSavePdf() {
     const attempt = ++latestSaveAttempt;
     const settings = Object.fromEntries(Object.entries(elements).map(([key, element]) => {
@@ -319,9 +325,10 @@ export function initProcessing(deps) {
       timestamp: Date.now()
     });
     
-    // Get the appropriate API key based on selected provider
     try {
       const currentProvider = () => attempt === latestSaveAttempt && (!elements.apiProviderSelect || elements.apiProviderSelect.value === provider);
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!currentProvider()) return;
       const apiKey = modelReady ? await resolveProviderApiKey(settings.apiKey, provider, decryptApiKey, t) : '';
       if (!currentProvider()) return;
       // Check API key only if not using automatic mode
@@ -331,10 +338,6 @@ export function initProcessing(deps) {
         return;
       }
 
-      // CRITICAL: Get current active tab at the moment of button click
-      // This ensures we process the page that is currently active, not the one where popup was opened
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
       if (!tab) {
         // Use user-friendly error message directly
         const friendly = await createUserFriendlyError('tabNotFound', {});
@@ -389,7 +392,7 @@ export function initProcessing(deps) {
       } catch { /* Other pages use the existing content acquisition path. */ }
       if (localPdfUrl) {
         const currentTab = await chrome.tabs.get(tab.id);
-        if (currentTab.url !== localPdfUrl) throw new Error('The page changed before processing started.');
+        if (currentTab.url !== localPdfUrl) throw sourcePageChanged();
         // PDF processing acquires its own bytes, including file selection when needed.
         pageData = { html: '<!doctype html><html><body></body></html>', images: [], url: localPdfUrl, title: tab.title || '' };
       }
@@ -540,8 +543,6 @@ export function initProcessing(deps) {
         timestamp: Date.now()
       });
       
-      // CRITICAL: Always use URL and title from pageData (from executeScript or content script)
-      // Content script returns { html, metadata: { url, title, ... }, images }; executeScript returns { html, url, title, images }
       if (pageData.metadata && !pageData.url) {
         pageData.url = pageData.metadata.url;
         if (pageData.metadata.title) pageData.title = pageData.metadata.title;
@@ -564,15 +565,8 @@ export function initProcessing(deps) {
         throw Object.assign(new Error(friendly.message), friendly);
       }
       
-      // Log URL mismatch warning if URLs don't match
       if (tab.url && actualUrl !== tab.url) {
-        log('=== handleSavePdf: URL mismatch detected ===', {
-          pageDataUrl: actualUrl,
-          tabUrl: tab.url,
-          message: 'Page URL differs from tab URL - using page URL from executeScript result',
-          willUsePageDataUrl: true,
-          timestamp: Date.now()
-        });
+        throw sourcePageChanged();
       }
 
       // Get Google API key if needed
@@ -606,15 +600,12 @@ export function initProcessing(deps) {
         timestamp: Date.now()
       });
 
-      // Send to background script for processing
-      // CRITICAL: Use actualUrl (from pageData.url) which is the URL at the moment of button click
-      // This ensures we process the correct page even if user switched tabs after opening popup
       if (!currentProvider()) return;
       const response = await chrome.runtime.sendMessage({
         action: 'processArticle',
         data: {
           html: pageData.html,
-          url: actualUrl,  // Use actual page URL from executeScript result (at button click moment)
+          url: actualUrl,
           title: pageData.title || tab.title,
           apiKey: apiKey,
           provider: provider,

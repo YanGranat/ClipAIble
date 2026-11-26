@@ -6,6 +6,7 @@ import { buildTTSOptions } from '../../scripts/generation/audio-helpers.js';
 import { normalizePiperVoiceId } from '../../scripts/api/piper-voices-mapping.js';
 import { getVoiceFromSettings } from '../../scripts/utils/storage/settings-helpers.js';
 import { textToSpeech, chunksToSpeech } from '../../scripts/api/tts.js';
+import { prepareQuickSaveData } from '../../scripts/processing/quicksave.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ log: vi.fn(), logWarn: vi.fn(), logDebug: vi.fn(), logError: vi.fn() }));
 vi.mock('../../scripts/utils/retry.js', () => ({ callWithRetry: (operation, options) => operation({ signal: options?.signal ?? new AbortController().signal, deadline: Date.now() + 600000 }) }));
@@ -40,15 +41,71 @@ describe('Gemini synthesis generations', () => {
     expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Kore' });
   });
   it.each([
-    'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts', 'gemini-2.5-flash-preview-tts'
-  ])('keeps a saved %s selection and wraps its PCM once', async model => {
+    'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'
+  ])('upgrades a saved %s before one request and keeps the selected voice', async model => {
     googleResponse([1, 0, 2, 0], 'audio/L16;rate=22050');
-    const result = new Uint8Array(await google('Article.', 'synthetic-key', { model, voice: 'Kore', prompt: 'Calmly' }));
-    expect(fetch.mock.calls[0][0]).toContain(`/models/${model}:generateContent`);
-    expect(requestBody().contents[0].parts[0].text).toContain('Calmly');
-    expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ prebuiltVoiceConfig: { voiceName: 'kore' } });
+    const result = new Uint8Array(await google('Article.', 'synthetic-key', { model, voice: 'kore', prompt: 'Calmly' }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-tts:generateContent');
+    expect(requestBody().contents[0].parts).toEqual([{ text: 'Article.', speech_metadata: { style: 'Calmly' } }]);
+    expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Kore' });
     expect(new DataView(result.buffer).getUint32(24, true)).toBe(22050);
     expect([...result.slice(44)]).toEqual([1, 0, 2, 0]);
+  });
+  it('replaces a saved 2.5 Flash Preview before sending a single current-schema request', async () => {
+    googleResponse([1, 0, 2, 0], 'audio/L16;rate=24000');
+    const model = 'gemini-2.5-flash-preview-tts';
+    const result = new Uint8Array(await google('Article.', 'synthetic-key', { model, voice: 'Kore', prompt: 'Calmly' }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-lite-tts:generateContent');
+    expect(requestBody().contents[0].parts).toEqual([{ text: 'Article.', speech_metadata: { style: 'Calmly' } }]);
+    expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Kore' });
+    expect([...result.slice(44)]).toEqual([1, 0, 2, 0]);
+  });
+  it('preserves an explicitly selected Flash-Lite model and another prebuilt voice', async () => {
+    googleResponse(wav(), 'audio/wav');
+    await google('Article.', 'synthetic-key', { model: 'gemini-3.8-flash-lite-tts', voice: 'Leda' });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-lite-tts:generateContent');
+    expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Leda' });
+  });
+  it('upgrades a context-menu settings snapshot without changing its Gemini text model or saved voice', async () => {
+    const settings = {
+      api_provider: 'gemini', model_by_provider: { gemini: 'gemini-4-argon' },
+      extraction_mode: 'automatic', audio_provider: 'google',
+      google_tts_api_key: 'synthetic-tts-key', google_tts_model: 'gemini-2.5-flash-preview-tts',
+      google_tts_voice: 'Charon', google_tts_prompt: 'Calmly'
+    };
+    const original = structuredClone(settings);
+    const data = await prepareQuickSaveData(settings, 'audio', 1, '', 'https://example.com/article', 'Article');
+    googleResponse(wav(), 'audio/wav');
+    await textToSpeech('Article.', data.googleTtsApiKey, {
+      provider: data.audioProvider, model: data.model, voice: data.googleTtsVoice,
+      googleTtsModel: data.googleTtsModel, googleTtsPrompt: data.googleTtsPrompt
+    });
+    expect(data.model).toBe('gemini-4-argon');
+    expect(data.googleTtsModel).toBe('gemini-3.8-flash-lite-tts');
+    expect(settings).toEqual(original);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-lite-tts:generateContent');
+    expect(fetch.mock.calls[0][1].headers['x-goog-api-key']).toBe('synthetic-tts-key');
+    expect(requestBody().generationConfig.speechConfig.voiceConfig).toEqual({ voice: 'Charon' });
+  });
+  it.each([
+    [{ model: 'unknown-tts-model' }, 'errorModelNotFound'],
+    [{ voice: 'Unavailable voice' }, 'selectNarratorVoice']
+  ])('rejects the saved unsupported choice before a request: %o', async (options, translationKey) => {
+    googleResponse(wav(), 'audio/wav');
+    await expect(google('Article.', 'synthetic-key', options)).rejects.toMatchObject({ translationKey });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('does not fall back to a different model after an HTTP error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 404 })));
+    await expect(google('Article.', 'synthetic-key', { model: 'gemini-3.8-flash-lite-tts' })).rejects.toMatchObject({
+      status: 404, translationKey: 'errorModelNotFound', translationParams: { model: 'gemini-3.8-flash-lite-tts' }
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toContain('/models/gemini-3.8-flash-lite-tts:generateContent');
   });
   it.each([
     [[1, 0], 'audio/wav', 'STOP', /Invalid WAV/],

@@ -137,6 +137,26 @@ export function shouldIgnoreMetadataTitle(title) {
   return ignoredTitles.includes(lower);
 }
 
+/** Consume a rendered title only while still in the first page's front matter. */
+function removeMetadataTitleHeading(elements, title) {
+  if (elements.length < 2) return; // Keep a title-only page exportable.
+  const normalize = text => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+  const target = normalize(title);
+  for (const [index, element] of elements.entries()) {
+    if (element.pageNum !== 1) break;
+    if (element.type === 'heading') {
+      if (typeof element.text === 'string' && normalize(element.text) === target) {
+        elements.splice(index, 1);
+        return;
+      }
+      continue;
+    }
+    // A short unwrapped publisher label may precede the title. Stop at body content.
+    if (element.type !== 'paragraph' || element.recoveredProseRegion === 'lane' ||
+      element.lines?.length !== 1 || /[.!?][\p{Pe}\p{Pf}]*$/u.test(element.text?.trim() || '')) break;
+  }
+}
+
 /**
  * Extract title from multiple sources with fallback strategy
  * Priority:
@@ -167,6 +187,7 @@ export function extractTitle({ metadataTitle, elements, url }) {
   // Priority 1: Metadata title (if not ignored)
   if (metadataTitle && !shouldIgnoreMetadataTitle(metadataTitle)) {
     title = metadataTitle.trim();
+    removeMetadataTitleHeading(finalElements, title);
     log('[PDF v3] Title extracted from metadata', { title });
     return { title, elements: finalElements };
   }

@@ -1,4 +1,4 @@
-import { imageDataError } from '../utils/html/image-bytes.js';
+import { assertImageResultsUsable } from '../utils/html/image-bytes.js';
 import { downloadBlob } from '../api/blob-download.js';
 import { documentText, documentPlainText, documentMarkdown, renderTableHtml, listHtml, prepareDocumentContent, localDocumentName } from './document-content.js';
 // @ts-check
@@ -866,8 +866,7 @@ async function embedEpubImages(zip, content, updateState, options) {
   );
   
   if (options?.processingRunId !== undefined && isCancelled(options.processingRunId)) throw new DOMException('Processing cancelled', 'AbortError');
-  const rejected = results.find(result => result.errorCode?.startsWith('IMAGE_') && result.errorCode !== 'IMAGE_FETCH_FAILED');
-  if (rejected) throw imageDataError(rejected.errorCode);
+  assertImageResultsUsable(results);
 
   // Process results and add to ZIP
   for (const { item, imageData, index } of results) {

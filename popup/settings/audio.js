@@ -4,17 +4,49 @@
 
 import { logWarn } from '../../scripts/utils/logging.js';
 import { CONFIG } from '../../scripts/utils/config.js';
-import { ELEVENLABS_TTS_MODELS, ELEVENLABS_TTS_VOICES, GOOGLE_TTS_MODELS, QWEN_TTS_MODELS, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getElevenLabsCapabilities, isQwenAudioModel, isQwenVoiceCompatible } from '../../scripts/api/tts-catalog.js';
+import {
+  ELEVENLABS_TTS_MODELS, ELEVENLABS_TTS_VOICES, GOOGLE_TTS_MODELS, OPENAI_TTS_VOICES, OPENAI_TTS_MAX_SPEED,
+  QWEN_TTS_MODELS, QWEN_AUDIO_VOICES, QWEN_LEGACY_VOICES, getDefaultTtsVoice, getElevenLabsCapabilities,
+  isQwenAudioModel, isQwenVoiceCompatible, isSupportedGoogleTtsModel, resolveGoogleTtsModel, resolveGoogleTtsVoice
+} from '../../scripts/api/tts-catalog.js';
 import { normalizePiperVoiceId } from '../../scripts/api/piper-voices-mapping.js';
-import { OPENAI_TTS_VOICES, OPENAI_TTS_MAX_SPEED } from '../../scripts/api/tts-catalog.js';
 import { tSync } from '../../scripts/locales.js';
 
 export function restoreTtsSelect(select, value) {
   if (!select || !value) return;
   if (![...select.options].some(option => option.value === value)) {
-    select.add(new Option(value, value));
+    const option = select.ownerDocument.createElement('option');
+    option.value = value;
+    option.textContent = value;
+    select.add(option);
   }
   select.value = value;
+}
+
+function restoreGoogleTtsOption(select, value, unavailableKey, params) {
+  if (!select) return;
+  for (const option of [...select.options]) {
+    if (option.dataset.savedGoogleTtsOption) option.remove();
+  }
+  if (params) {
+    const option = select.ownerDocument.createElement('option');
+    option.value = value;
+    option.dataset.savedGoogleTtsOption = 'true';
+    option.disabled = true;
+    option.dataset.i18n = unavailableKey;
+    option.dataset.i18nParams = JSON.stringify(params);
+    option.textContent = tSync(unavailableKey, select.ownerDocument.documentElement.lang, params);
+    select.add(option);
+  }
+  restoreTtsSelect(select, value);
+}
+
+/** Restore effective selections without writing over a newer saved preference. */
+export function restoreGoogleTtsPreferences(elements, savedModel, savedVoice) {
+  const model = resolveGoogleTtsModel(savedModel);
+  const voice = resolveGoogleTtsVoice(savedVoice);
+  restoreGoogleTtsOption(elements.googleTtsModel, model, 'modelUnavailable', isSupportedGoogleTtsModel(model) ? null : { model });
+  restoreGoogleTtsOption(elements.googleTtsVoice, voice || savedVoice, 'voiceUnavailable', voice ? null : { voice: savedVoice });
 }
 
 /**
@@ -138,7 +170,9 @@ export function initAudio(deps) {
     
     elements.audioVoice.innerHTML = '';
     
-    if (provider === 'elevenlabs') {
+    if (provider === 'google') {
+      return; // Gemini uses the separate Google TTS voice setting.
+    } else if (provider === 'elevenlabs') {
       populateVoices(provider, ELEVENLABS_TTS_VOICES, currentValue);
     } else if (provider === 'qwen') {
       const model = elements.qwenModel?.value;

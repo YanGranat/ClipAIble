@@ -23,6 +23,14 @@ export function imageDataError(code) {
   return Object.assign(new Error(message), { code, translationKey, translationParams });
 }
 
+/** A remote image that cannot be fetched may remain a passive source link. */
+export function assertImageResultsUsable(results) {
+  const rejected = results.find(({ errorCode }) => typeof errorCode === 'string' &&
+    errorCode.startsWith('IMAGE_') && errorCode !== 'IMAGE_FETCH_FAILED' &&
+    errorCode !== 'IMAGE_UNSAFE_REDIRECT');
+  if (rejected) throw imageDataError(rejected.errorCode);
+}
+
 export function detectImageMime(bytes) {
   const starts = values => values.every((value, index) => bytes[index] === value);
   const ascii = (start, end) => String.fromCharCode(...bytes.subarray(start, end));

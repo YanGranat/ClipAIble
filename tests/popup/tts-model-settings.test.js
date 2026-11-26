@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { initAudio, restoreTtsSelect } from '../../popup/settings/audio.js';
+import { initAudio, restoreGoogleTtsPreferences, restoreTtsSelect } from '../../popup/settings/audio.js';
 import { STORAGE_KEYS } from '../../popup/constants.js';
 import { setupAudioHandlers } from '../../popup/handlers/audio.js';
 import { debouncedSaveSettings } from '../../popup/utils/settings-helpers.js';
 import { CONFIG } from '../../scripts/utils/config.js';
+import { GOOGLE_TTS_VOICES } from '../../scripts/api/tts-catalog.js';
 
 vi.mock('../../scripts/utils/logging.js', () => ({ logWarn: vi.fn() }));
 let dom, elements, audio, saves, voices;
@@ -36,18 +37,62 @@ it('uses current defaults and keeps a saved older model and custom voice visible
   expect(elements.googleTtsModel.value).toBe('saved-unknown-model');
 });
 
-it('keeps deprecated speech models out of new choices and restores saved selections', () => {
-  const deprecatedModels = [
-    [elements.googleTtsModel, 'gemini-3.1-flash-tts-preview'],
-    [elements.googleTtsModel, 'gemini-2.5-pro-preview-tts'],
-    [elements.googleTtsModel, 'gemini-2.5-flash-preview-tts'],
-    [elements.elevenlabsModel, 'eleven_turbo_v2_5']
-  ];
-  for (const [select, model] of deprecatedModels) {
-    expect([...select.options].some(option => option.value === model)).toBe(false);
-    restoreTtsSelect(select, model);
-    expect(select.value).toBe(model);
+it.each(['gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'])(
+  'restores the effective model for saved %s without resetting the Google voice', model => {
+    restoreGoogleTtsPreferences(elements, model, 'charon');
+    expect(elements.googleTtsModel.value).toBe('gemini-3.8-flash-tts');
+    expect([...elements.googleTtsModel.options].map(option => option.value)).toEqual(['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts']);
+    expect(elements.googleTtsVoice.value).toBe('Charon');
+    expect(elements.googleTtsVoice.selectedOptions[0].disabled).toBe(false);
+    expect(saves).not.toHaveBeenCalled();
   }
+);
+
+it('shows only current models when restoring a saved 2.5 Flash Preview', () => {
+  const model = 'gemini-2.5-flash-preview-tts';
+  expect([...elements.googleTtsModel.options].some(option => option.value === model)).toBe(false);
+  restoreGoogleTtsPreferences(elements, model, 'Charon');
+  expect(elements.googleTtsModel.value).toBe('gemini-3.8-flash-lite-tts');
+  expect([...elements.googleTtsModel.options].map(option => option.value))
+    .toEqual(['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts']);
+  expect(elements.googleTtsModel.selectedOptions[0].disabled).toBe(false);
+  expect(elements.googleTtsVoice.value).toBe('Charon');
+  expect(saves).not.toHaveBeenCalled();
+});
+
+it('retains explicit Flash-Lite and labels an unavailable saved choice until the next restore', () => {
+  restoreGoogleTtsPreferences(elements, 'sample-model', 'Unknown voice');
+  expect(elements.googleTtsModel.value).toBe('sample-model');
+  expect(elements.googleTtsModel.selectedOptions[0].disabled).toBe(true);
+  expect(elements.googleTtsModel.selectedOptions[0].dataset.i18n).toBe('modelUnavailable');
+  expect(elements.googleTtsVoice.value).toBe('Unknown voice');
+  expect(elements.googleTtsVoice.selectedOptions[0].disabled).toBe(true);
+  expect(elements.googleTtsVoice.selectedOptions[0].dataset.i18n).toBe('voiceUnavailable');
+  restoreGoogleTtsPreferences(elements, 'gemini-3.8-flash-lite-tts', 'Kore');
+  expect(elements.googleTtsModel.value).toBe('gemini-3.8-flash-lite-tts');
+  expect(elements.googleTtsVoice.value).toBe('Kore');
+  expect(elements.googleTtsVoice.querySelector('[data-i18n="voiceUnavailable"]')).toBeNull();
+  expect(saves).not.toHaveBeenCalled();
+});
+
+it('keeps Google voice options synchronized with the provider and does not write the hidden generic voice', () => {
+  expect([...elements.googleTtsVoice.options].map(option => option.value)).toEqual(GOOGLE_TTS_VOICES);
+  voices.current.openai = 'marin';
+  voices.current.google = 'stale-generic-voice';
+  restoreGoogleTtsPreferences(elements, undefined, 'Sulafat');
+  elements.audioProvider.value = 'google'; audio.updateAudioProviderUI();
+  expect(elements.audioVoiceGroup.style.display).toBe('none');
+  expect(elements.audioVoice.options).toHaveLength(0);
+  expect(elements.googleTtsVoice.value).toBe('Sulafat');
+  expect(saves).not.toHaveBeenCalled();
+  elements.audioProvider.value = 'openai'; audio.updateAudioProviderUI();
+  expect(elements.audioVoice.value).toBe('marin');
+});
+
+it('keeps deprecated ElevenLabs rows out of new choices but restores saved ones', () => {
+  expect([...elements.elevenlabsModel.options].some(option => option.value === 'eleven_turbo_v2_5')).toBe(false);
+  restoreTtsSelect(elements.elevenlabsModel, 'eleven_turbo_v2_5');
+  expect(elements.elevenlabsModel.value).toBe('eleven_turbo_v2_5');
   expect(saves).not.toHaveBeenCalled();
 });
 

@@ -1,6 +1,6 @@
 // @ts-check
 
-import { getDocumentFragmentTarget, INTERFACE_REGIONS } from './dom-utils.js';
+import { getDocumentFragmentTarget, readArticleMetadataText, INTERFACE_REGIONS } from './dom-utils.js';
 
 const DECLARED_BODY = '[itemprop~="articleBody"],.instapaper_body';
 export const EDITORIAL_CONTAINERS = 'article,[role~="article"],' + DECLARED_BODY;
@@ -22,7 +22,7 @@ function ownHeadings(element) {
 export function isDocumentHeadline(heading) {
   if (!heading || heading.closest(INTERFACE_REGIONS)) return false;
   const doc = heading.ownerDocument;
-  const label = normalizedLabel(heading.textContent);
+  const label = normalizedLabel(readArticleMetadataText(heading));
   const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute('content')].map(normalizedLabel);
   return !!label && titles.some(title => title === label ||
     [' | ', ' — ', ' – ', ' - '].some(separator => title.startsWith(label + separator)));

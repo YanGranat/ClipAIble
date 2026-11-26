@@ -4,7 +4,7 @@
 import { log, logWarn, logError } from '../logging.js';
 import { getUILanguage, formatStatusUpdate } from '../../locales.js';
 import { isValidExternalUrl } from '../security.js';
-import { MAX_IMAGE_BYTES, detectImageMime, imageDataError, imageDataUrlBytes, readImageBytes } from './image-bytes.js';
+import { MAX_IMAGE_BYTES, assertImageResultsUsable, detectImageMime, imageDataError, imageDataUrlBytes, readImageBytes } from './image-bytes.js';
 import { normalizeImageBlob } from '../../api/image-rasterization.js';
 import { getProcessingSignal } from '../../state/processing.js';
 import { CONFIG } from '../config.js';
@@ -264,61 +264,25 @@ export async function embedImages(html, content, updateState, escapeAttr, option
   if (options.processingRunId && getProcessingSignal(options.processingRunId).aborted) {
     throw getProcessingSignal(options.processingRunId).reason;
   }
-  const rejected = results.find(result => typeof result.errorCode === 'string' && result.errorCode.startsWith('IMAGE_') && result.errorCode !== 'IMAGE_FETCH_FAILED');
-  if (rejected) throw imageDataError(rejected.errorCode);
-  
-  // Replace URLs in HTML
-  let result = html;
-  let embedded = 0;
-  let failed = 0;
-  
-  for (const { img, base64, index } of results) {
-    if (!base64) {
-      failed++;
-      continue;
-    }
-    
-    try {
-      // CRITICAL: Use data-original-src for matching because it contains the original URL
-      // The src attribute may have escaped characters (like &amp;) that don't match the original URL
-      const escapedSrc = escapeAttr(img.src);
-      const regexSafe = escapedSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      
-      // First, try to find by data-original-src (more reliable - contains original URL)
-      const dataAttrRegex = new RegExp(`data-original-src="${regexSafe}"`, 'g');
-      if (dataAttrRegex.test(result)) {
-        // Found by data-original-src - replace the src attribute while keeping data-original-src
-        result = result.replace(
-          new RegExp(`(src="[^"]*")([^>]*data-original-src="${regexSafe}")`, 'g'),
-          (match, src, rest) => `src="${escapeAttr(base64)}"${rest}`
-        );
-        embedded++;
-        log(`Image ${index + 1} embedded via data-original-src`);
-      } else {
-        // Fallback: try to find by src attribute (may have escaped characters)
-        const regex = new RegExp(`src="${regexSafe}"`, 'g');
-        const beforeLength = result.length;
-        result = result.replace(regex, () => `src="${escapeAttr(base64)}"`);
-        
-        if (result.length !== beforeLength) {
-          embedded++;
-          log(`Image ${index + 1} embedded successfully`);
-        } else {
-          logWarn(`Image ${index + 1} src not found in HTML`, { 
-            escapedSrc: escapedSrc.substring(0, 100),
-            originalSrc: img.src.substring(0, 100)
-          });
-          failed++;
-        }
-      }
-    } catch (e) {
-      failed++;
-      logWarn(`Image ${index + 1} embed failed`, { src: img.src, error: e.message });
-    }
+  assertImageResultsUsable(results);
+
+  const bySource = new Map();
+  for (const { img, base64 } of results) {
+    const source = escapeAttr(img.src);
+    if (base64 || !bySource.has(source)) bySource.set(source, { img, base64 });
   }
-  
-  log('embedImages complete', { embedded, failed, total: images.length });
-  return result;
+
+  // Print only decoded image bytes. Unavailable remote images are links,
+  // so the print document does not retry them as network subresources.
+  return html.replace(/<img\b[^>]*>/gi, tag => {
+    const source = /\ssrc="([^"]*)"/i.exec(tag);
+    if (!source || !bySource.has(source[1])) return tag;
+    const { img, base64 } = bySource.get(source[1]);
+    if (base64) return tag.replace(source[0], () => ' src="' + escapeAttr(base64) + '"');
+    if (!isValidExternalUrl(img.src)) return '';
+    const alt = /\salt="([^"]*)"/i.exec(tag)?.[1] || escapeAttr(img.alt || img.src);
+    return '<a href="' + source[1] + '">' + alt + '</a>';
+  });
 }
 
 

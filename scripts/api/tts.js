@@ -327,19 +327,19 @@ async function textToSpeechRespeecher(text, apiKey, options = {}) {
 }
 
 /**
- * Convert text to speech using Google Gemini 2.5 Pro TTS API
- * @param {string} text - Text to convert (max 5000 characters)
+ * Convert text to speech using the Google Gemini TTS API
+ * @param {string} text - Text to convert
  * @param {string} apiKey - Google API key (same as Gemini API key)
  * @param {Partial<import('../types.js').TTSOptions>} [options={}] - TTS options
  * @returns {Promise<ArrayBuffer>} Audio data as ArrayBuffer (WAV format, 24kHz, 16-bit, mono)
- * @throws {Error} If text is empty or too long (max 5000 characters)
+ * @throws {Error} If text is empty or exceeds the provider limit
  * @throws {Error} If API key is missing
  * @throws {Error} If Google TTS API request fails
  * @throws {Error} If network error occurs
  */
 async function textToSpeechGoogle(text, apiKey, options = {}) {
   const {
-    voice = GOOGLE_TTS_CONFIG.DEFAULT_VOICE,
+    voice,
     prompt = null,
     googleTtsPrompt = null,
     model = DEFAULT_GOOGLE_TTS_MODEL,

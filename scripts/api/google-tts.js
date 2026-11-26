@@ -8,73 +8,23 @@ import { CONFIG } from '../utils/config.js';
 import { callWithRetry } from '../utils/retry.js';
 import { checkCancellation } from '../utils/pipeline-helpers.js';
 import { handleApiError, handleTimeoutError, handleNetworkError } from '../utils/api-error-handler.js';
-import { DEFAULT_GOOGLE_TTS_MODEL, GOOGLE_TTS_MODELS, isModernGoogleTtsModel } from './tts-catalog.js';
+import { resolveGoogleTtsSelection } from './tts-catalog.js';
 
 /**
  * Google Gemini TTS API configuration
  * @readonly
  * @const {{
- *   MODELS: Array<string>,
- *   MODEL: string,
  *   API_BASE: string,
- *   MAX_INPUT: number,
- *   DEFAULT_VOICE: string,
- *   VOICES: Array<{id: string, name: string}>
+ *   MAX_INPUT: number
  * }}
  */
 export const GOOGLE_TTS_CONFIG = {
-  // Supported TTS models (using Generative Language API endpoint)
-  // Note: These models work with generativelanguage.googleapis.com endpoint
-  MODELS: GOOGLE_TTS_MODELS.map(model => model.id),
-  
-  // Default model
-  MODEL: DEFAULT_GOOGLE_TTS_MODEL,
-  
   // API endpoint base URL
   // Generative Language API - uses API key via x-goog-api-key header
   API_BASE: 'https://generativelanguage.googleapis.com/v1beta',
   
   // Character bound; the API also enforces its model token budget.
-  MAX_INPUT: 24000,
-  
-  // Default voice (Callirrhoe from documentation)
-  DEFAULT_VOICE: 'Callirrhoe',
-  
-  // Available voices for Gemini 2.5 TTS (verified against actual API response)
-  // Updated based on actual API error message listing supported voices
-  // API returns: achernar, achird, algenib, algieba, alnilam, aoede, autonoe, callirrhoe, charon, despina, enceladus, erinome, fenrir, gacrux, iapetus, kore, laomedeia, leda, orus, puck, pulcherrima, rasalgethi, sadachbia, sadaltager, schedar, sulafat, umbriel, vindemiatrix, zephyr, zubenelgenubi
-  VOICES: [
-    { id: 'Zephyr', name: 'Zephyr (Bright)' },
-    { id: 'Puck', name: 'Puck (Optimistic)' },
-    { id: 'Charon', name: 'Charon (Informative)' },
-    { id: 'Kore', name: 'Kore (Firm)' },
-    { id: 'Fenrir', name: 'Fenrir (Excitable)' },
-    { id: 'Leda', name: 'Leda (Youthful)' },
-    { id: 'Orus', name: 'Orus (Firm)' },
-    { id: 'Aoede', name: 'Aoede (Breezy)' },
-    { id: 'Callirrhoe', name: 'Callirrhoe (Easy-going)' },
-    { id: 'Autonoe', name: 'Autonoe (Bright)' },
-    { id: 'Enceladus', name: 'Enceladus (Breathy)' },
-    { id: 'Iapetus', name: 'Iapetus (Clear)' },
-    { id: 'Umbriel', name: 'Umbriel (Easy-going)' },
-    { id: 'Algieba', name: 'Algieba (Smooth)' },
-    { id: 'Despina', name: 'Despina (Smooth)' },
-    { id: 'Erinome', name: 'Erinome (Clear)' },
-    { id: 'Algenib', name: 'Algenib (Gravelly)' },
-    { id: 'Rasalgethi', name: 'Rasalgethi (Informative)' },
-    { id: 'Laomedeia', name: 'Laomedeia (Optimistic)' },
-    { id: 'Achernar', name: 'Achernar (Soft)' },
-    { id: 'Alnilam', name: 'Alnilam (Firm)' },
-    { id: 'Schedar', name: 'Schedar (Even)' },
-    { id: 'Gacrux', name: 'Gacrux (Mature)' },
-    { id: 'Pulcherrima', name: 'Pulcherrima (Forward)' },
-    { id: 'Achird', name: 'Achird (Friendly)' },
-    { id: 'Zubenelgenubi', name: 'Zubenelgenubi (Casual)' },
-    { id: 'Vindemiatrix', name: 'Vindemiatrix (Gentle)' },
-    { id: 'Sadachbia', name: 'Sadachbia (Lively)' },
-    { id: 'Sadaltager', name: 'Sadaltager (Knowledgeable)' },
-    { id: 'Sulafat', name: 'Sulafat (Warm)' }
-  ]
+  MAX_INPUT: 24000
 };
 
 /**
@@ -89,14 +39,9 @@ export const GOOGLE_TTS_CONFIG = {
  * @throws {Error} If network error occurs
  */
 export async function textToSpeech(text, apiKey, options = {}) {
-  const {
-    voice = GOOGLE_TTS_CONFIG.DEFAULT_VOICE,
-    prompt = null,
-    model = GOOGLE_TTS_CONFIG.MODEL
-  } = options;
-  
-  log('Google Gemini TTS start', { textLength: text?.length, voice });
-  
+  const { model, voice } = resolveGoogleTtsSelection(options.model, options.voice);
+  const style = options.prompt?.trim();
+
   if (!text || text.length === 0) {
     throw new Error('No text provided for TTS');
   }
@@ -119,153 +64,48 @@ export async function textToSpeech(text, apiKey, options = {}) {
     throw new Error('API key appears to be masked. Please re-enter your Google API key.');
   }
   
-  // Validate voice - must be in the list of valid voices (NO FALLBACK)
-  const validVoice = GOOGLE_TTS_CONFIG.VOICES.find(v => v.id === voice);
-  if (!validVoice) {
-    throw new Error(`Invalid Google TTS voice "${voice}". Supported voices: ${GOOGLE_TTS_CONFIG.VOICES.map(v => v.id).join(', ')}`);
-  }
-  
-  const modernModel = isModernGoogleTtsModel(model);
-  const voiceNameForApi = modernModel ? validVoice.id : validVoice.id.toLowerCase();
-  
-  // Validate model (NO FALLBACK)
-  if (!GOOGLE_TTS_CONFIG.MODELS.includes(model)) {
-    throw new Error(`Invalid Google TTS model "${model}". Supported models: ${GOOGLE_TTS_CONFIG.MODELS.join(', ')}`);
-  }
-  const validModel = model;
-  
+  const requestBody = {
+    contents: [{ parts: [{ text, ...(style ? { speech_metadata: { style } } : {}) }] }],
+    generationConfig: {
+      responseModalities: ['AUDIO'],
+      speechConfig: { voiceConfig: { voice } }
+    }
+  };
+  const endpointUrl = `${GOOGLE_TTS_CONFIG.API_BASE}/models/${model}:generateContent`;
+  logDebug('Google TTS request', { model, voice, textLength: text.length, hasStyle: !!style });
+
   let response;
-    // Generative Language API - prompt and text are combined in contents field
-    // Format: "Say {prompt}: {text}" - API handles this correctly and prompt is NOT spoken
-    // NO FALLBACKS - if this fails, error is thrown immediately
-    
-    // Combine prompt and text if prompt is provided
-    // Format: "Say {prompt}: {text}" or just "{text}" if no prompt
-    let contentsText = text;
-    if (prompt && !modernModel) {
-      // Format prompt as instruction for the entire text
-      // Example from documentation: "Say cheerfully: Have a wonderful day!"
-      // API correctly processes this format and does NOT speak the prompt part
-      contentsText = `Say ${prompt.trim()}: ${text}`;
-      log('Style prompt combined with text (API handles correctly, prompt not spoken)', {
-        prompt,
-        promptLength: prompt.length,
-        combinedTextLength: contentsText.length
-      });
-    }
-    
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            { text: contentsText, ...(modernModel && prompt?.trim() ? { speech_metadata: { style: prompt.trim() } } : {}) }
-          ]
+  try {
+    response = await callWithRetry(async ({ signal }) => {
+      await checkCancellation('Google TTS request', options.processingRunId);
+      const fetchResponse = await fetchBufferedResponse(endpointUrl, {
+        signal,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey.trim() },
+        body: JSON.stringify(requestBody)
+      }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('Google TTS response', options.processingRunId) });
+
+      if (!fetchResponse.ok) {
+        logWarn('Google TTS request rejected', { model, status: fetchResponse.status });
+        const error = await handleApiError(fetchResponse, 'Google Gemini TTS');
+        if (fetchResponse.status === 404) {
+          Object.assign(error, { translationKey: 'errorModelNotFound', translationParams: { model } });
         }
-      ],
-      generationConfig: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: modernModel ? { voice: voiceNameForApi } : { prebuiltVoiceConfig: { voiceName: voiceNameForApi } }
-        }
+        throw error;
       }
-    };
-    
-    // Use Generative Language API endpoint with model in URL
-    const endpointUrl = `${GOOGLE_TTS_CONFIG.API_BASE}/models/${validModel}:generateContent`;
-    
-    logDebug('Google TTS request', { 
-      url: endpointUrl, 
-      model: validModel,
-      voice: validVoice,
-      voiceNameForApi: voiceNameForApi,
-      originalVoice: voice,
-      textLength: text.length,
-      hasPrompt: !!prompt,
-      promptLength: prompt ? prompt.length : 0,
-      requestBodyKeys: Object.keys(requestBody),
-      contentsTextLength: contentsText.length
+      return fetchResponse;
+    }, {
+      signal: options.signal,
+      checkCancelled: () => checkCancellation('Google TTS retry', options.processingRunId),
+      onRetry: (attempt, delay) => log(`Google Gemini TTS API retry attempt ${attempt}, waiting ${delay}ms...`)
     });
-    
-    try {
-      response = await callWithRetry(
-        async ({ signal }) => {
-          await checkCancellation('Google TTS request', options.processingRunId);
-          
-          try {
-            // Generative Language API: API key via x-goog-api-key header
-            const fetchResponse = await fetchBufferedResponse(endpointUrl, {
-              signal,
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'x-goog-api-key': apiKey.trim()
-              },
-              body: JSON.stringify(requestBody)
-            }, CONFIG.API_TIMEOUT_MS, { checkCancelled: () => checkCancellation('TTS response', options.processingRunId) });
-            
-            if (!fetchResponse.ok) {
-              // Log response details for errors to help diagnose
-              try {
-                // Clone response before reading to avoid consuming it
-                const clonedResponse = fetchResponse.clone();
-                const errorBody = await clonedResponse.text();
-                const errorJson = errorBody ? (() => {
-                  try {
-                    return JSON.parse(errorBody);
-                  } catch {
-                    return { raw: errorBody };
-                  }
-                })() : { empty: true };
-                
-                  logWarn(`Google TTS ${fetchResponse.status} response`, { 
-                    url: endpointUrl, 
-                    status: fetchResponse.status,
-                    statusText: fetchResponse.statusText,
-                    errorBody: errorBody,
-                    errorJson: errorJson,
-                    requestBodyKeys: Object.keys(requestBody),
-                    hasPrompt: !!prompt
-                  });
-              } catch (e) {
-                logWarn(`Failed to read ${fetchResponse.status} response body`, { error: e.message, stack: e.stack });
-              }
-              // NO FALLBACKS - if Generative Language API fails, error is thrown immediately
-              // This helps identify issues during testing
-              
-              const error = await handleApiError(fetchResponse, 'Google Gemini TTS');
-              throw error;
-            }
-            
-            return fetchResponse;
-          } catch (e) {
-            throw e;
-          }
-        },
-        {
-          signal: options.signal,
-          checkCancelled: () => checkCancellation('Google TTS retry', options.processingRunId),
-          onRetry: (attempt, delay) => {
-            log(`Google Gemini TTS API retry attempt ${attempt}, waiting ${delay}ms...`);
-          }
-        }
-      );
-    } catch (fetchError) {
-      options.signal?.throwIfAborted();
-      await checkCancellation('Google TTS response', options.processingRunId);
-      if (fetchError.name === 'AbortError') {
-        throw await handleTimeoutError('Google Gemini TTS');
-      }
-      
-      if (fetchError.status) {
-        throw fetchError; // Already handled by handleApiError
-      }
-      
-      throw await handleNetworkError(fetchError, 'Google Gemini TTS');
-    }
-    
-    if (!response) {
-      throw new Error('Google Gemini TTS did not return a response');
-    }
+  } catch (fetchError) {
+    options.signal?.throwIfAborted();
+    await checkCancellation('Google TTS response', options.processingRunId);
+    if (fetchError.name === 'AbortError') throw await handleTimeoutError('Google Gemini TTS');
+    if (fetchError.status) throw fetchError;
+    throw await handleNetworkError(fetchError, 'Google Gemini TTS');
+  }
   
   // Parse JSON response
   let responseData;
@@ -321,7 +161,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   }
   
   // Decode base64 to ArrayBuffer
-  // Both APIs return base64-encoded PCM audio (24kHz, 16-bit, mono)
+  // Google returns WAV by default and can return raw PCM.
   let pcmData;
   try {
     const binaryString = atob(base64Data);
@@ -342,7 +182,7 @@ export async function textToSpeech(text, apiKey, options = {}) {
   const hasWavHeader = isWavBuffer(pcmData);
   const wavResponse = /^audio\/(?:wav|x-wav|wave)(?:;|$)/i.test(audioMimeType || '');
   if (wavResponse && !hasWavHeader) throw new Error('Invalid WAV audio from Google Gemini TTS');
-  if (modernModel && !audioMimeType && !hasWavHeader) throw new Error('Missing audio format from Google Gemini TTS');
+  if (!audioMimeType && !hasWavHeader) throw new Error('Missing audio format from Google Gemini TTS');
   if (!hasWavHeader && audioMimeType && !/^audio\/(?:l16|pcm)(?:;|$)/i.test(audioMimeType)) {
     throw new Error('Unsupported audio format from Google Gemini TTS');
   }
@@ -359,12 +199,4 @@ export async function textToSpeech(text, apiKey, options = {}) {
   });
   
   return audioBuffer;
-}
-
-/**
- * Get all available voices
- * @returns {Array<{id: string, name: string}>} Array of all voice objects
- */
-export function getAllVoices() {
-  return GOOGLE_TTS_CONFIG.VOICES;
 }

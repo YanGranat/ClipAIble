@@ -16,8 +16,7 @@ import { ELEMENT_IDS, STORAGE_KEYS } from './constants.js';
 import { initApiKeys } from './settings/api-keys.js';
 import { initModels } from './settings/models.js';
 import { initStyles } from './settings/styles.js';
-import { restoreTtsSelect } from './settings/audio.js';
-import { initAudio } from './settings/audio.js';
+import { initAudio, restoreGoogleTtsPreferences, restoreTtsSelect } from './settings/audio.js';
 import { initUIVisibility } from './settings/ui-visibility.js';
 
 /**
@@ -843,16 +842,10 @@ export function initSettings(deps) {
         }
       }
       
-      if (result[STORAGE_KEYS.GOOGLE_TTS_MODEL] && elements.googleTtsModel) {
-        restoreTtsSelect(elements.googleTtsModel, String(result[STORAGE_KEYS.GOOGLE_TTS_MODEL]));
-      }
+      restoreGoogleTtsPreferences(elements, result[STORAGE_KEYS.GOOGLE_TTS_MODEL], result[STORAGE_KEYS.GOOGLE_TTS_VOICE]);
       
       if (result[STORAGE_KEYS.OPENAI_INSTRUCTIONS] !== undefined) {
         elements.openaiInstructions.value = String(result[STORAGE_KEYS.OPENAI_INSTRUCTIONS]);
-      }
-      
-      if (result[STORAGE_KEYS.GOOGLE_TTS_VOICE] && elements.googleTtsVoice) {
-        elements.googleTtsVoice.value = String(result[STORAGE_KEYS.GOOGLE_TTS_VOICE]);
       }
       
       if (result[STORAGE_KEYS.GOOGLE_TTS_PROMPT] !== undefined && elements.googleTtsPrompt) {

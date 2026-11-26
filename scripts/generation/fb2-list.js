@@ -22,7 +22,10 @@ export function fb2ListParagraphs(html) {
     if (token.name === 'ul' || token.name === 'ol') {
       flush();
       if (token.closing) lists.pop();
-      else lists.push({ ordered: token.name === 'ol', number: Number(token.attrs.find(attr => attr.name === 'start')?.value) || 1 });
+      else {
+        const start = Number(token.attrs.find(attr => attr.name === 'start')?.value.trim() || '1');
+        lists.push({ ordered: token.name === 'ol', number: Number.isSafeInteger(start) ? start : 1 });
+      }
     } else if (token.name === 'li') {
       flush();
       if (token.closing) items.pop();

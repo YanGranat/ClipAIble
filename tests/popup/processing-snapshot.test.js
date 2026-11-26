@@ -6,7 +6,7 @@ import { initializeDOMElements } from '../../popup/utils/init-helpers.js';
 
 const page = { html: '<article><p>Independent survey observations.</p></article>', url: 'https://example.test/survey', title: 'Survey' };
 const runId = 'df1b9f52-8b6b-4dc0-80b4-0fefb7b69265';
-let elements, processing, releasePage;
+let elements, processing, releasePage, decryptApiKey, showToast;
 beforeEach(() => {
   vi.resetAllMocks();
   releasePage = null;
@@ -31,9 +31,11 @@ beforeEach(() => {
   chrome.tabs.sendMessage = vi.fn(() => new Promise(resolve => { releasePage = resolve; }));
   chrome.runtime.sendMessage.mockResolvedValue({ started: true, processingRunId: runId });
   const noop = vi.fn();
+  decryptApiKey = vi.fn(async value => value);
+  showToast = vi.fn();
   processing = initProcessing({ elements, t: async key => key, log: noop, logError: noop, logWarn: noop,
-    showToast: noop, setStatus: noop, setProgress: noop, stopTimerDisplay: noop,
-    decryptApiKey: async value => value, getProviderFromModel: () => 'openai',
+    showToast, setStatus: noop, setProgress: noop, stopTimerDisplay: noop,
+    decryptApiKey, getProviderFromModel: () => 'openai',
     startStatePolling: noop, checkProcessingState: async () => {}, stateRefs: {} });
 });
 
@@ -106,4 +108,32 @@ it('preserves the clicked document settings and keys during page acquisition', a
   elements.googleTtsApiKey.value = 'synthetic-later-key';
   finish(); await operation;
   expect(packet()).toMatchObject({ generateToc: true, bgColor: '#123456', googleTtsApiKey: 'synthetic-speech-key' });
+});
+
+it('selects the source tab before asynchronous credential work', async () => {
+  elements.apiKey.value = '****stored';
+  elements.apiKey.dataset.encrypted = 'synthetic-ciphertext';
+  let releaseKey;
+  decryptApiKey.mockImplementationOnce(() => new Promise(resolve => { releaseKey = resolve; }));
+  let activeTab = { id: 8, url: page.url };
+  chrome.tabs.query.mockImplementation(async () => [activeTab]);
+  chrome.tabs.sendMessage.mockImplementation(async id => id === 8 ? page : {
+    ...page, url: 'https://example.test/other', title: 'Other survey'
+  });
+  const operation = processing.handleSavePdf();
+  await vi.waitFor(() => expect(releaseKey).toBeTypeOf('function'));
+  activeTab = { id: 9, url: 'https://example.test/other' };
+  releaseKey('synthetic-key');
+  await operation;
+  expect(packet()).toMatchObject({ tabId: 8, url: page.url });
+});
+
+it('does not export a replacement document that arrives during the initial capture', async () => {
+  const operation = processing.handleSavePdf();
+  await vi.waitFor(() => expect(releasePage).toBeTypeOf('function'), { timeout: 2000 });
+  releasePage({ ...page, url: 'https://example.test/other', title: 'Other survey' });
+  await operation;
+  expect(packet()).toBeUndefined();
+  expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error', { key: 'errorPageNotReady', params: {} });
+  expect(elements.savePdfBtn.disabled).toBe(false);
 });

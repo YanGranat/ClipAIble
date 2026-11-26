@@ -18,7 +18,7 @@ API keys are stored using AES-256-GCM encryption with a non-extractable, install
 
 ## External requests
 
-AI extraction, translation, summaries, and key claims send the required page content and metadata to the selected AI service. Depending on the extraction mode, this can include page HTML, extracted text, or rendered PDF pages. For video exports, the selected AI service can receive the title and description to help select a subtitle track. It receives the subtitles to structure an article.
+AI extraction, translation, summaries, and key claims send the required page content and metadata to the selected AI service. Depending on the extraction mode, this can include page HTML, extracted text, or rendered PDF pages. For YouTube exports, the selected AI service can receive the title and description to help select a subtitle track. For YouTube and Vimeo, it receives the subtitles to structure an article.
 
 With Gemini image translation, the article AI service receives images for text detection. Google Gemini receives images that the detector flags as needing translation. With OpenAI image translation, both detection and editing use OpenAI.
 

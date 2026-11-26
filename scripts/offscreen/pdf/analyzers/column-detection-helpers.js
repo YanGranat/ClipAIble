@@ -178,6 +178,19 @@ export function calculateLineRight(line, baseFontSize) {
   return lineRight;
 }
 
+/** Compare each lane's overlapping baselines with the other lane's row grid. */
+function hasIndependentBaselines(lane, other, top, bottom, tolerance) {
+  const ownY = lane.map(row => row.y).filter(y => y >= top && y <= bottom).sort((a, b) => a - b);
+  const otherY = other.map(row => row.y).sort((a, b) => a - b);
+  let otherIndex = 0;
+  let independent = 0;
+  for (const y of ownY) {
+    while (otherY[otherIndex] < y - tolerance) otherIndex++;
+    if (otherIndex === otherY.length || otherY[otherIndex] > y + tolerance) independent++;
+  }
+  return independent >= Math.max(3, ownY.length / 3);
+}
+
 /**
  * Recover two sustained prose lanes when small inline fragments connect their X clusters.
  * Keep spanning headings and trailing notes in their own reading regions.
@@ -195,7 +208,20 @@ export function recoverProseColumnRegions(lines, viewport, baseFontSize) {
     if (band && row.x - band[0].x <= baseFontSize * 0.75) band.push(row);
     else bands.push([row]);
   }
-  const lanes = bands.filter(band => band.length >= Math.max(7, prose.length * 0.18));
+  const minimumLaneSize = Math.max(7, prose.length * 0.18);
+  let lanes = bands.filter(band => band.length >= minimumLaneSize);
+  const includesIndents = lanes.length !== 2;
+  if (includesIndents) {
+    // First-line and hanging indents can create multiple starts within one lane.
+    // Bound the width from the group's first start so merging cannot chain across a gutter.
+    const indented = [];
+    for (const band of bands) {
+      const group = indented.at(-1);
+      if (group && band.at(-1).x - group[0].x <= baseFontSize * 2) group.push(...band);
+      else indented.push([...band]);
+    }
+    lanes = indented.filter(group => group.length >= minimumLaneSize);
+  }
   if (lanes.length !== 2) return [];
   const [left, right] = lanes;
   if (right[0].x - left[0].x < viewport.width * 0.2) return [];
@@ -207,6 +233,8 @@ export function recoverProseColumnRegions(lines, viewport, baseFontSize) {
   const sharedTop = Math.max(Math.min(...leftY), Math.min(...rightY));
   const sharedBottom = Math.min(Math.max(...leftY), Math.max(...rightY));
   if (sharedBottom - sharedTop < baseFontSize * 6) return [];
+  if (includesIndents && (!hasIndependentBaselines(left, right, sharedTop, sharedBottom, baseFontSize * 0.2) ||
+    !hasIndependentBaselines(right, left, sharedTop, sharedBottom, baseFontSize * 0.2))) return [];
 
   const gutter = (leftEdge + rightEdge) / 2;
   const top = Math.min(...leftY, ...rightY) - baseFontSize;

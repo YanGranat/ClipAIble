@@ -40,3 +40,15 @@ it.each(['unknown', '__proto__', 'constructor'])('rejects unsupported audio prov
   expect(await validateAudioApiKeys({ outputFormat: 'audio', audioProvider: provider }, vi.fn())).toBe(false);
   expect(setError).toHaveBeenCalledWith(expect.objectContaining({ translationKey: 'errorUnknownAudioProvider', translationParams: { provider } }), expect.any(Function), undefined);
 });
+
+it.each([
+  [{ googleTtsModel: 'no-longer-available' }, 'errorModelNotFound', { model: 'no-longer-available' }],
+  [{ googleTtsVoice: 'Unknown voice' }, 'selectNarratorVoice', {}]
+])('rejects unsupported Google settings before article processing: %o', async (options, translationKey, translationParams) => {
+  setError.mockClear(); chrome.storage.local.get.mockClear();
+  const stop = vi.fn();
+  const data = { outputFormat: 'audio', audioProvider: 'google', googleTtsApiKey: 'synthetic-key', processingRunId: 'sample-run', ...options };
+  expect(await validateAudioApiKeys(data, stop)).toBe(false);
+  expect(setError).toHaveBeenCalledWith(expect.objectContaining({ code: 'validation-error', translationKey, translationParams }), stop, 'sample-run');
+  expect(chrome.storage.local.get.mock.calls.some(([keys]) => keys.includes('openai_api_key'))).toBe(false);
+});

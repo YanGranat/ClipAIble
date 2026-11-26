@@ -184,7 +184,8 @@ export function richMarkdown(value, sourceUrl = '') {
   }).join('');
   const renderList = (node, indentation = '', depth = 0) => {
     if (depth > 64) return flattenedText(node);
-    let number = Number(node.attrs.find(attr => attr.name === 'start')?.value) || 1;
+    const start = Number(node.attrs.find(attr => attr.name === 'start')?.value.trim() || '1');
+    let number = Number.isSafeInteger(start) ? start : 1;
     const output = [];
     for (const child of node.children) {
       if (typeof child === 'string') { if (child.trim()) output.push(indentation + markdownText(child)); continue; }

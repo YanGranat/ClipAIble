@@ -747,7 +747,12 @@ th {
 
 @media print {
   .table-of-contents {
-    page-break-inside: avoid;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
+  .toc-list a {
+    display: block;
     break-inside: avoid;
   }
 }

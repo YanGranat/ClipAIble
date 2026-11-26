@@ -35,13 +35,25 @@ it('rejects typed image validation failures without retaining unsafe input marku
   await expect(embedImages('<img src="data:text/html,example">', [{ type: 'image', src: 'data:text/html,example' }], null, escapeAttr)).rejects.toMatchObject({ code: 'IMAGE_UNSUPPORTED_TYPE' });
 });
 
-it('preserves ordinary remote-image network fallback while exposing typed validation errors', async () => {
+it('keeps an ordinary unavailable image as a link without retrying it in the print document', async () => {
   fetch.mockResolvedValueOnce(new Response('', { status: 404 }));
   const source = 'https://example.org/missing.png';
-  expect(await embedImages(`<img src="${source}">`, [{ type: 'image', src: source }], null, escapeAttr)).toContain(`src="${source}"`);
+  const html = await embedImages(`<img src="${source}">`, [{ type: 'image', src: source, alt: 'Reference sample' }], null, escapeAttr);
+  expect(html).toBe(`<a href="${source}">Reference sample</a>`);
+  expect(fetch).toHaveBeenCalledOnce();
   await expect(imageToBase64('data:image/png;base64,invalid!')).rejects.toMatchObject({
     code: 'IMAGE_INVALID_DATA', message: 'The image could not be read.', translationKey: 'errorImageUnavailable'
   });
+});
+
+it('does not lose an article when a remote image redirects to an unobservable destination', async () => {
+  const source = 'https://example.org/plot.png';
+  fetch.mockResolvedValueOnce({ type: 'opaqueredirect' });
+  const html = await embedImages(`<figure><img src="${source}" data-original-src="${source}"><figcaption>Control plot</figcaption></figure><p>Independent observations</p>`,
+    [{ type: 'image', src: source, alt: 'Observation plot' }], null, escapeAttr);
+  expect(html).toBe(`<figure><a href="${source}">Observation plot</a><figcaption>Control plot</figcaption></figure><p>Independent observations</p>`);
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(normalizeImageBlob).not.toHaveBeenCalled();
 });
 
 it.each(['javascript:run()', 'http://127.0.0.1/image.png', 'file:///substackcdn.com/image/fetch/https%3A%2F%2Fexample.org%2Fplot.png'])('rejects an unsafe original URL before any network request %s', async url => {

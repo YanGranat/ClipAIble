@@ -55,6 +55,19 @@ describe('custom select keyboard behavior', () => {
     expect(change).not.toHaveBeenCalled();
   });
 
+  it('restores dynamic option values with punctuation without parsing them as selectors', async () => {
+    const error = vi.fn(event => event.preventDefault());
+    window.addEventListener('error', error);
+    const value = 'Saved voice "A"';
+    select.add(new dom.window.Option('Unavailable voice', value));
+    select.value = value;
+    await flush();
+    expect(select.value).toBe(value);
+    expect(document.getElementById('choiceValue').textContent).toBe('Unavailable voice');
+    expect(error).not.toHaveBeenCalled();
+    expect(change).not.toHaveBeenCalled();
+  });
+
   it('rejects an obsolete choice before the rendered list observes native changes', async () => {
     trigger.click();
     const removed = document.querySelector('#choiceOptions [data-value="p"]');

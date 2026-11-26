@@ -327,6 +327,15 @@ var clipaibleArticleExtractor = (() => {
     if (sectionEdit?.querySelector("a[href]") && !sectionEdit.closest("pre,code,math")) return true;
     const link = element.closest("a[href]");
     if (!link) return false;
+    if (link.matches('[rel~="me"]') && link.querySelector("svg,img,picture") && !link.closest("p,blockquote,pre,code,math,figure,figcaption,li,dd,dt,table")) {
+      const label = link.cloneNode(true);
+      for (
+        const graphic of
+        /** @type {Element} */
+        label.querySelectorAll("svg,img,picture")
+      ) graphic.remove();
+      if (!label.textContent?.trim()) return true;
+    }
     const caption = link.closest("figcaption");
     const actionLabel = (node) => Array.from(node.classList).some((name) => /^(?:image|media)[-_]download(?:[-_](?:link|button))?$/i.test(name));
     if (caption?.closest("figure")?.querySelector("img,picture") && (actionLabel(link) || link.parentElement !== caption && actionLabel(link.parentElement))) return true;
@@ -438,9 +447,10 @@ var clipaibleArticleExtractor = (() => {
   function cloneReadingContent(element, exclusions = [], copyMap = null, { disclosed = false } = {}) {
     const clone = element.cloneNode(true);
     copyMap?.set(element, clone);
+    const win = element.ownerDocument.defaultView;
     const excluded2 = (node) => {
       const region = node.closest(INTERFACE_REGIONS);
-      return region && !(disclosed && region === element) || isExternalLinkAdornment(node) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions);
+      return region && !(disclosed && region === element) || isExternalLinkAdornment(node) || isPublisherLinkAction(node) || isSourceExcluded(node, exclusions) || win && isHiddenSlotAssignment(win, node);
     };
     if (excluded2(element)) {
       clone.replaceChildren();
@@ -448,7 +458,6 @@ var clipaibleArticleExtractor = (() => {
     }
     const originals = Array.from(element.querySelectorAll("*"));
     const copies = Array.from(clone.querySelectorAll("*"));
-    const win = element.ownerDocument.defaultView;
     const rootStyle = disclosed && win ? safeGetComputedStyle(win, element) : null;
     const hidden2 = (value) => value === "hidden" || value === "collapse";
     const disclosureVisibility = hidden2(rootStyle?.visibility) ? rootStyle.visibility : null;
@@ -507,6 +516,14 @@ var clipaibleArticleExtractor = (() => {
       }
     }
     return clone;
+  }
+  function isHiddenSlotAssignment(win, element) {
+    for (let slot = element.assignedSlot; slot; slot = slot.assignedSlot) {
+      for (let parent = slot; parent; parent = parent.parentElement) {
+        if (safeGetComputedStyle(win, parent)?.display === "none") return true;
+      }
+    }
+    return false;
   }
   function readSourceFragmentIds(element, exclusions = []) {
     if (!element || isSourceExcluded(element, exclusions)) return [];
@@ -995,7 +1012,7 @@ var clipaibleArticleExtractor = (() => {
   function isDocumentHeadline(heading) {
     if (!heading || heading.closest(INTERFACE_REGIONS)) return false;
     const doc = heading.ownerDocument;
-    const label = normalizedLabel(heading.textContent);
+    const label = normalizedLabel(readArticleMetadataText(heading));
     const titles = [doc.title, doc.querySelector('meta[property="og:title"]')?.getAttribute("content")].map(normalizedLabel);
     return !!label && titles.some((title) => title === label || [" | ", " — ", " – ", " - "].some((separator) => title.startsWith(label + separator)));
   }
@@ -5760,10 +5777,35 @@ var clipaibleArticleExtractor = (() => {
   function collectCandidateElements(mainContent) {
     return [mainContent, ...Array.from(mainContent.querySelectorAll("*"))].filter((element) => element.matches(CANDIDATE_SELECTOR) || visibleShadowCode(element).length);
   }
+  function isComposedLightElement(element) {
+    for (let node = element; node.parentElement; node = node.parentElement) {
+      if (node.parentElement.shadowRoot && !node.assignedSlot) return false;
+    }
+    return true;
+  }
   function visibleShadowCode(host) {
-    if (!host.shadowRoot || host.closest("table,pre,code,[hidden],[inert]") || host.querySelector("pre")) return [];
+    if (!host.shadowRoot || host.closest("table,pre,code,[hidden],[inert]")) return [];
     const win = host.ownerDocument.defaultView;
-    return Array.from(host.shadowRoot.querySelectorAll("pre:has(> code)")).filter((pre) => !pre.closest('pre pre,[hidden],[inert],form,[role="dialog"],[contenteditable]:not([contenteditable="false"])') && !!pre.textContent.trim() && isElementVisible(win, pre));
+    return Array.from(host.shadowRoot.querySelectorAll("pre:has(> code)")).filter((pre) => !pre.closest('pre pre,[hidden],[inert],form,[role="dialog"],[contenteditable]:not([contenteditable="false"])') && isElementVisible(win, pre));
+  }
+  function readShadowCode(pre, exclusions) {
+    const win = pre.ownerDocument.defaultView;
+    const slotted = [];
+    const read = (node) => {
+      if (node.nodeType === 3) return node.textContent || "";
+      if (node.nodeType !== 1 || node.matches('script,style,template,noscript,button,[role~="button"],[aria-hidden="true"],[hidden],[inert]') || isSourceExcluded(node, exclusions)) return "";
+      const style = safeGetComputedStyle(win, node);
+      if (style?.display === "none" || ["hidden", "collapse"].includes(style?.visibility)) return "";
+      if (node.tagName === "BR") return "\n";
+      if (node.tagName === "SLOT") {
+        const assigned = node.assignedNodes({ flatten: true });
+        slotted.push(...assigned.filter((child) => child.nodeType === 1 && child.assignedSlot));
+        return assigned.map(read).join("");
+      }
+      return Array.from((node.shadowRoot || node).childNodes, read).join("");
+    };
+    const text = Array.from(pre.children).filter((child) => child.tagName === "CODE").map(read).join("\n");
+    return { item: text.trim() ? handleCode(pre, text) : null, slotted };
   }
   function collectExplicitFlowRoots(roots) {
     const selected = new Set(roots);
@@ -5781,7 +5823,7 @@ var clipaibleArticleExtractor = (() => {
     const filteredElements = allElements.filter((el) => {
       const tagName = el.tagName.toLowerCase();
       const isImageOrFigure = tagName === "img" || tagName === "figure";
-      if (isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
+      if (!isComposedLightElement(el) || isExcluded(win, el, constants, readingRoots, tocRoots, selectedIllustrations.has(el))) {
         if (isImageOrFigure) {
           excludedImageCount++;
         } else excludedByType[tagName] = (excludedByType[tagName] || 0) + 1;
@@ -5881,10 +5923,11 @@ var clipaibleArticleExtractor = (() => {
       ])].sort(compareDomOrder);
       const originalText = element.getAttribute("data-original-text");
       const inlineMedia = element.tagName === "P" && descendants.some((child) => child.matches("img,iframe,video,audio,svg,canvas"));
+      const inlineShadowCode = element.tagName === "P" && shadowHosts.some((host) => element.contains(host) && host !== element);
       const inlineBoundary = !/^H[1-6]$/.test(element.tagName) && element.tagName !== "FIGURE" && descendants.some((child) => readingBoundaries.includes(child));
       const richFigure = element.tagName === "FIGURE" && hasFigureBodyText(element);
       const flowContainer = isFlowContainer(element) || explicitFlowRoots.has(element);
-      if (!flowContainer && !inlineMedia && !inlineBoundary && !richFigure || descendants.length === 0 || originalText?.trim()) {
+      if (!flowContainer && !inlineMedia && !inlineShadowCode && !inlineBoundary && !richFigure || descendants.length === 0 || originalText?.trim()) {
         entries.push({ element });
         for (const child of Array.from(element.querySelectorAll("*"))) {
           if (selected.has(child)) append(child);
@@ -5957,7 +6000,8 @@ var clipaibleArticleExtractor = (() => {
       if (state.captionOwners.has(container || element)) continue;
       const tagName = element.tagName.toLowerCase();
       const selectedTitle = element === state.selectedTitleElement && (/^h[1-6]$/.test(tagName) || isFlowContainer(element) && !element.querySelector(CANDIDATE_SELECTOR));
-      const inferredTitle = tagName === "h1" && element === state.titleElement && content.every((item) => item.type === "subtitle" || item.type === "separator" || item.isStandfirst || item.isFeatured || item.type === "paragraph" && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || ""));
+      const declaredHeadline = tagName === "h1" && (element.matches('[itemprop~="headline"],[data-type="document-title"]') || Array.from(element.classList).some((name) => /(?:^|[-_])(?:page|article|post|entry)[-_](?:title|headline)$/i.test(name)));
+      const inferredTitle = tagName === "h1" && element === state.titleElement && (declaredHeadline && isDocumentHeadline(element) || content.every((item) => item.type === "subtitle" || item.type === "separator" || item.isStandfirst || item.isFeatured || item.type === "paragraph" && /^<a\b[^>]*>[^<]{1,80}<\/a>$/i.test(item.html?.trim() || "")));
       if (selectedTitle || inferredTitle) {
         for (const child of Array.from(element.querySelectorAll("*"))) consumed.add(child);
         continue;
@@ -5966,17 +6010,20 @@ var clipaibleArticleExtractor = (() => {
         skippedCount++;
         continue;
       }
-      const shadowCode = visibleShadowCode(element);
-      if (shadowCode.length) {
-        for (const [index, source] of shadowCode.entries()) {
-          const item = handleCode(source);
-          if (!item) continue;
-          content.push({ ...item, ...index === 0 && element.id ? { id: element.id } : {} });
-          incrementContentType(state.debugInfo, "code");
-          processedCount++;
+      let emittedShadowCode = false;
+      for (const source of visibleShadowCode(element)) {
+        const { item, slotted } = readShadowCode(source, state.selectionExclusions);
+        if (!item) continue;
+        content.push({ ...item, ...!emittedShadowCode && element.id ? { id: element.id } : {} });
+        emittedShadowCode = true;
+        for (const slot of slotted) {
+          consumed.add(slot);
+          for (const child of slot.querySelectorAll("*")) consumed.add(child);
         }
-        continue;
+        incrementContentType(state.debugInfo, "code");
+        processedCount++;
       }
+      if (emittedShadowCode) continue;
       if (element === state.standfirstElement) {
         const html = serializeReadingHtml(element, state.selectionExclusions, state.referenceRoots);
         if (html) content.push({
@@ -6359,9 +6406,9 @@ var clipaibleArticleExtractor = (() => {
       html: text
     };
   }
-  function handleCode(element) {
-    let text = "";
-    if (element.tagName === "PRE") {
+  function handleCode(element, composedText = null) {
+    let text = composedText;
+    if (text === null && element.tagName === "PRE") {
       const clone = element.cloneNode(true);
       const brs = (
         /** @type {HTMLElement} */
@@ -6372,7 +6419,7 @@ var clipaibleArticleExtractor = (() => {
       }
       text = /** @type {HTMLElement} */
       clone.textContent || "";
-    } else {
+    } else if (text === null) {
       text = (element.textContent || "").trim();
     }
     if (!text) return null;

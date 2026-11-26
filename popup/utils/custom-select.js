@@ -139,13 +139,9 @@ export function initCustomSelect(selectId, options = {}) {
     const currentValue = select.value;
     populateOptions();
     // Restore value after repopulation
-    if (currentValue && select instanceof HTMLSelectElement) {
+    if (currentValue) {
       select.value = currentValue;
-      const selectedOption = optionsDiv.querySelector(`[data-value="${currentValue}"]`);
-      if (selectedOption) {
-        selectedOption.classList.add('selected');
-        valueSpan.textContent = selectedOption.textContent;
-      }
+      showSelectedOption(select, optionsDiv, valueSpan);
     }
   });
   observer.observe(select, { childList: true, subtree: true });

@@ -9,6 +9,12 @@ import { getUILanguageCached } from '../utils/pipeline-helpers.js';
 import { getExtensionVersion } from '../utils/config.js';
 import { DOCUMENT_FONT_FAMILIES, isDocumentColor } from '../utils/styles-validation.js';
 import { GEMINI_IMAGE_MODELS, IMAGE_TRANSLATION_PROVIDERS } from '../api/image-translation-catalog.js';
+import { resolveGoogleTtsModel } from '../api/tts-catalog.js';
+
+/** Keep missing and empty settings unchanged when transferring a backup. */
+function transferSetting(key, value) {
+  return key === 'google_tts_model' && typeof value === 'string' && value ? resolveGoogleTtsModel(value) : value;
+}
 
 function importError(key, language, params = {}) {
   return Object.assign(new Error(tSync(key, language, params)), { translationKey: key, translationParams: params });
@@ -157,7 +163,7 @@ export async function exportSettings(includeStats = false, includeCache = false)
     // Note: API keys are NOT in STORAGE_KEYS_TO_EXPORT, so they're never exported
     for (const key of STORAGE_KEYS_TO_EXPORT) {
       if (settings[key] !== undefined && settings[key] !== null) {
-        exportData.settings[key] = settings[key];
+        exportData.settings[key] = transferSetting(key, settings[key]);
       }
     }
     
@@ -466,7 +472,7 @@ export async function importSettings(jsonData, options = {}) {
         }
         
         if (overwriteExisting || currentSettings[key] === undefined || currentSettings[key] === null) {
-          settingsToImport[key] = data.settings[key];
+          settingsToImport[key] = transferSetting(key, data.settings[key]);
           result.settingsImported++;
         } else {
           result.settingsSkipped++;
